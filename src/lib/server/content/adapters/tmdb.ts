@@ -121,7 +121,26 @@ async function tmdbRequest<T>(path: string, params: Record<string, string | numb
     if (value !== undefined) url.searchParams.set(key, String(value));
   });
   if (!token && apiKey) url.searchParams.set('api_key', apiKey);
-  return fetchJson<T>(url.toString(), { headers: token ? { authorization: `Bearer ${token}` } : undefined });
+
+  try {
+    return await fetchJson<T>(url.toString(), { headers: token ? { authorization: `Bearer ${token}` } : undefined });
+  } catch (error) {
+    // Netlify users sometimes paste a TMDB v3 API key into the v4 token variable.
+    // Retry that value as a query API key once, without weakening the normal Bearer path.
+    if (token && !apiKey && error instanceof ContentServiceError && (error.status === 401 || error.status === 403)) {
+      const legacyUrl = new URL(url);
+      legacyUrl.searchParams.set('api_key', token);
+      try {
+        return await fetchJson<T>(legacyUrl.toString());
+      } catch {
+        throw new ContentServiceError('TMDB authentication failed. Use a valid v4 Read Access Token in TMDB_READ_ACCESS_TOKEN or a v3 API key in TMDB_API_KEY.', { code: 'CONFIG_MISSING', status: 401 });
+      }
+    }
+    if (error instanceof ContentServiceError && (error.status === 401 || error.status === 403)) {
+      throw new ContentServiceError('TMDB authentication failed. Check the configured TMDB credential.', { code: 'CONFIG_MISSING', status: 401 });
+    }
+    throw error;
+  }
 }
 
 const listPolicy = { ttlMs: 1000 * 60 * 4, staleWhileRevalidateMs: 1000 * 60 * 10 };
