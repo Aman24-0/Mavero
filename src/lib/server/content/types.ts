@@ -70,8 +70,17 @@ export type ContentList = {
   source: ContentSource;
 };
 
+export type SearchSort = 'release-asc' | 'release-desc';
+
+export type SearchFilters = {
+  ott?: string;
+  genre?: string;
+  sort?: SearchSort;
+};
+
 export type ContentSearchResult = ContentList & {
   query: string;
+  filters?: SearchFilters;
 };
 
 export type ContentErrorCode = 'CONFIG_MISSING' | 'UPSTREAM_ERROR' | 'RATE_LIMITED' | 'INVALID_RESPONSE' | 'NOT_FOUND';

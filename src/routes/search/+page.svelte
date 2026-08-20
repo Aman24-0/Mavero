@@ -1,9 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { Search, LoaderCircle } from 'lucide-svelte';
+  import { Search, LoaderCircle, ChevronDown } from 'lucide-svelte';
   import type { PageData } from './$types';
-  import type { ContentType } from '$lib/server/content/types';
+  import type { ContentType, SearchFilters, SearchSort } from '$lib/server/content/types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
 
@@ -11,18 +11,62 @@
 
   let query = data.query;
   let type: 'All' | 'Movies' | 'Series' | 'Anime' = data.type === 'movie' ? 'Movies' : data.type === 'series' ? 'Series' : data.type === 'anime' ? 'Anime' : 'All';
+  let ott = data.filters?.ott ?? '';
+  let genre = data.filters?.genre ?? '';
+  let sort: SearchSort | '' = data.filters?.sort ?? '';
   let results: MediaItem[] = data.items;
   let loading = false;
   let errorMessage = data.errorMessage ?? '';
   let timer: ReturnType<typeof setTimeout> | undefined;
+
   const types = [
     { label: 'Movies', value: 'Movies' },
     { label: 'Shows', value: 'Series' },
     { label: 'Anime', value: 'Anime' }
   ] as const;
 
+  const ottOptions = [
+    { key: 'netflix', label: 'Netflix', icon: 'N' },
+    { key: 'prime-video', label: 'Prime Video', icon: 'P' },
+    { key: 'disney-plus', label: 'Disney+', icon: 'D' },
+    { key: 'apple-tv', label: 'Apple TV+', icon: 'TV' },
+    { key: 'max', label: 'Max', icon: 'M' },
+    { key: 'hulu', label: 'Hulu', icon: 'H' },
+    { key: 'paramount-plus', label: 'Paramount+', icon: 'P+' },
+    { key: 'peacock', label: 'Peacock', icon: 'P' },
+    { key: 'crunchyroll', label: 'Crunchyroll', icon: 'C' },
+    { key: 'discovery-plus', label: 'Discovery+', icon: 'D+' },
+    { key: 'mubi', label: 'MUBI', icon: 'M' },
+    { key: 'youtube', label: 'YouTube Premium', icon: 'YT' },
+    { key: 'google-play', label: 'Google Play', icon: 'G' },
+    { key: 'amazon-video', label: 'Amazon Video', icon: 'A' },
+    { key: 'jiocinema', label: 'JioCinema', icon: 'J' },
+    { key: 'zee5', label: 'ZEE5', icon: 'Z' },
+    { key: 'sonyliv', label: 'Sony LIV', icon: 'S' },
+    { key: 'sunnxt', label: 'Sun Nxt', icon: 'SN' },
+    { key: 'mx-player', label: 'MX Player', icon: 'MX' },
+    { key: 'aha', label: 'aha', icon: 'A' }
+  ];
+
+  const genreOptions = [
+    { key: '28', label: 'Action' },
+    { key: '12', label: 'Adventure' },
+    { key: '35', label: 'Comedy' },
+    { key: '80', label: 'Crime' },
+    { key: '99', label: 'Documentary' },
+    { key: '18', label: 'Drama' },
+    { key: '14', label: 'Fantasy' },
+    { key: '27', label: 'Horror' },
+    { key: '9648', label: 'Mystery' },
+    { key: '878', label: 'Sci-Fi' }
+  ];
+
   function typeParam(value: typeof type): ContentType | undefined {
     return value === 'Movies' ? 'movie' : value === 'Series' ? 'series' : value === 'Anime' ? 'anime' : undefined;
+  }
+
+  function filterParams() {
+    return { ott: ott || undefined, genre: genre || undefined, sort: sort || undefined } satisfies SearchFilters;
   }
 
   function syncUrl() {
@@ -31,6 +75,9 @@
     if (normalized) urlParams.set('q', normalized); else urlParams.delete('q');
     const selectedType = typeParam(type);
     if (selectedType) urlParams.set('type', selectedType); else urlParams.delete('type');
+    if (ott) urlParams.set('ott', ott); else urlParams.delete('ott');
+    if (genre) urlParams.set('genre', genre); else urlParams.delete('genre');
+    if (sort) urlParams.set('sort', sort); else urlParams.delete('sort');
     void goto(`${page.url.pathname}${urlParams.toString() ? `?${urlParams.toString()}` : ''}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
 
@@ -53,6 +100,8 @@
       const params = new URLSearchParams({ q: normalized });
       const selectedType = typeParam(type);
       if (selectedType) params.set('type', selectedType);
+      const filters = filterParams();
+      Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, String(value)); });
       const response = await fetch(`/api/content/search?${params.toString()}`);
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.error?.message || 'Search is temporarily unavailable.');
@@ -68,11 +117,19 @@
   function selectType(value: 'Movies' | 'Series' | 'Anime') {
     type = type === value ? 'All' : value;
     syncUrl();
+    if (query.trim()) void runSearch(); else results = [];
+  }
+
+  function selectFilter(key: 'ott' | 'genre' | 'sort', value: string) {
+    if (key === 'ott') ott = ott === value ? '' : value;
+    if (key === 'genre') genre = genre === value ? '' : value;
+    if (key === 'sort') sort = sort === value ? '' : value as SearchSort;
+    syncUrl();
     if (query.trim()) void runSearch();
-    else results = [];
   }
 
   $: visibleResults = results.filter((item) => type === 'All' || item.type === (type === 'Movies' ? 'movie' : type === 'Series' ? 'series' : 'anime'));
+  $: selectedOtt = ottOptions.find((option) => option.key === ott);
 </script>
 
 <svelte:head>
@@ -91,6 +148,11 @@
     <div class="filter-chips" role="group" aria-label="Filter search by type">
       {#each types as item}<button class:active={type === item.value} class="filter-chip" aria-pressed={type === item.value} onclick={() => selectType(item.value)}>{item.label}</button>{/each}
     </div>
+    <div class="filter-selects" aria-label="Additional search filters">
+      <label class="select-field"><span class="select-label">OTT</span><span class="select-control"><span class="select-icon">{selectedOtt?.icon ?? 'A'}</span><select aria-label="Filter by OTT service" value={ott} onchange={(event) => selectFilter('ott', event.currentTarget.value)}><option value="">All OTT</option>{#each ottOptions as option}<option value={option.key}>{option.icon} {option.label}</option>{/each}</select><ChevronDown size={14} /></span></label>
+      <label class="select-field"><span class="select-label">Genre</span><span class="select-control"><select aria-label="Filter by genre" value={genre} onchange={(event) => selectFilter('genre', event.currentTarget.value)}><option value="">All genres</option>{#each genreOptions as option}<option value={option.key}>{option.label}</option>{/each}</select><ChevronDown size={14} /></span></label>
+      <label class="select-field"><span class="select-label">Sort</span><span class="select-control"><select aria-label="Sort by release date" value={sort} onchange={(event) => selectFilter('sort', event.currentTarget.value)}><option value="">Release date</option><option value="release-asc">Old to new</option><option value="release-desc">New to old</option></select><ChevronDown size={14} /></span></label>
+    </div>
   </section>
 
   {#if errorMessage}<div class="search-error" role="alert">{errorMessage}</div>{/if}
@@ -102,22 +164,33 @@
       <div class="results-grid">{#each visibleResults as item}<MediaCard {item} compact />{/each}</div>
     </section>
   {:else if query.trim() && !loading}
-    <section class="empty-search" aria-live="polite"><div class="empty-mark">/</div><h2>No matching stories.</h2><p>Try another title or switch the content filter.</p></section>
+    <section class="empty-search" aria-live="polite"><div class="empty-mark">/</div><h2>No matching stories.</h2><p>Try another title or adjust the filters.</p></section>
   {:else if !loading}
-    <section class="search-prompt" aria-live="polite"><span>Search the MAVERO catalog</span><small>Movies, shows, and anime from one quiet interface.</small></section>
+    <section class="search-prompt" aria-live="polite"><span>Search the MAVERO catalog</span><small>Choose a title, then refine it by service, genre, or release date.</small></section>
   {/if}
 </div>
 
 <style>
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .search-page { min-height: calc(100dvh - 68px); padding-top: 26px; padding-bottom: 70px; }
-  .search-panel { width: min(780px, 100%); margin-inline: auto; }
+  .search-panel { width: min(860px, 100%); margin-inline: auto; }
   .search-large { margin: 0; padding: 14px 16px; }
   .search-large input { font-size: .92rem; }
   .filter-chips { display: flex; justify-content: center; gap: 7px; margin-top: 10px; }
-  .filter-chip { min-height: 32px; border: 1px solid var(--line); border-radius: 999px; padding: 0 14px; color: var(--muted); background: transparent; font-size: .67rem; font-weight: 800; transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out; }
-  .filter-chip:hover, .filter-chip.active { color: var(--ink); border-color: rgba(155,135,245,.5); background: var(--accent-soft); }
+  .filter-chip { min-height: 34px; border: 1px solid var(--line); border-radius: 999px; padding: 0 17px; color: var(--muted); background: transparent; cursor: pointer; font-size: .67rem; font-weight: 800; transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
+  .filter-chip:hover, .filter-chip.active { color: var(--ink); border-color: rgba(155,135,245,.6); background: var(--accent-soft); }
+  .filter-chip:active { transform: scale(.97); }
+  .filter-selects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+  .select-field { display: grid; gap: 5px; min-width: 0; }
+  .select-label { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .52rem; letter-spacing: .08em; text-transform: uppercase; }
+  .select-control { display: flex; align-items: center; gap: 7px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; color: var(--muted); background: rgba(255,255,255,.025); }
+  .select-control:focus-within { border-color: rgba(155,135,245,.6); box-shadow: 0 0 0 3px rgba(155,135,245,.09); }
+  .select-control select { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--ink); background: transparent; cursor: pointer; font: inherit; font-size: .67rem; }
+  .select-control option { color: #18151f; background: #fff; }
+  .select-icon { display: grid; flex: 0 0 21px; place-items: center; width: 21px; height: 21px; border-radius: 6px; color: var(--ink); background: var(--accent-soft); font-family: 'DM Mono', monospace; font-size: .48rem; font-weight: 800; }
+  .select-control :global(svg) { flex: 0 0 auto; color: var(--muted-deep); pointer-events: none; }
   .search-loading, .search-error { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .62rem; }
+  .search-loading :global(svg) { animation: spin 1s linear infinite; }
   .search-error { color: #d4b27c; }
   .results-section { margin-top: 32px; }
   .result-summary { display: flex; align-items: baseline; gap: 10px; margin-bottom: 13px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
@@ -129,6 +202,8 @@
   .empty-mark { color: var(--accent); font-family: 'DM Mono', monospace; font-size: 1.4rem; }
   .empty-search h2 { margin: 0; color: var(--ink); font-size: 1rem; letter-spacing: -.03em; }
   .empty-search p { max-width: 280px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 640px) { .search-page { padding-top: 16px; } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
+  @media (max-width: 640px) { .search-page { padding-top: 16px; } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; padding: 0 8px; } .filter-selects { grid-template-columns: 1fr; gap: 7px; } .select-field { grid-template-columns: 52px minmax(0, 1fr); align-items: center; } .select-label { padding-left: 2px; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
+  @media (prefers-reduced-motion: reduce) { .filter-chip, .search-loading :global(svg) { transition: none; animation: none; } }
 </style>

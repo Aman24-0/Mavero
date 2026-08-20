@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season } from '../types';
+import { ContentServiceError, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters } from '../types';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -46,6 +46,31 @@ type TmdbEpisode = { id: number; episode_number?: number; season_number?: number
 type TmdbSeason = { season_number?: number; name?: string; episode_count?: number; air_date?: string; poster_path?: string | null; episodes?: TmdbEpisode[] };
 
 type TmdbMedia = TmdbMovie | TmdbTv;
+type TmdbProviderRegion = { flatrate?: { provider_id?: number }[]; buy?: { provider_id?: number }[]; rent?: { provider_id?: number }[] };
+type TmdbWatchProviders = { results?: Record<string, TmdbProviderRegion> };
+
+export const tmdbOttProviders = [
+  { key: 'netflix', label: 'Netflix', providerId: 8, icon: 'N' },
+  { key: 'prime-video', label: 'Prime Video', providerId: 119, icon: 'P' },
+  { key: 'disney-plus', label: 'Disney+', providerId: 337, icon: 'D' },
+  { key: 'apple-tv', label: 'Apple TV+', providerId: 350, icon: 'TV' },
+  { key: 'max', label: 'Max', providerId: 1899, icon: 'M' },
+  { key: 'hulu', label: 'Hulu', providerId: 15, icon: 'H' },
+  { key: 'paramount-plus', label: 'Paramount+', providerId: 531, icon: 'P+' },
+  { key: 'peacock', label: 'Peacock', providerId: 386, icon: 'P' },
+  { key: 'crunchyroll', label: 'Crunchyroll', providerId: 269, icon: 'C' },
+  { key: 'discovery-plus', label: 'Discovery+', providerId: 510, icon: 'D+' },
+  { key: 'mubi', label: 'MUBI', providerId: 11, icon: 'M' },
+  { key: 'youtube', label: 'YouTube Premium', providerId: 188, icon: 'YT' },
+  { key: 'google-play', label: 'Google Play', providerId: 3, icon: 'G' },
+  { key: 'amazon-video', label: 'Amazon Video', providerId: 10, icon: 'A' },
+  { key: 'jiocinema', label: 'JioCinema', providerId: 2206, icon: 'J' },
+  { key: 'zee5', label: 'ZEE5', providerId: 232, icon: 'Z' },
+  { key: 'sonyliv', label: 'Sony LIV', providerId: 237, icon: 'S' },
+  { key: 'sunnxt', label: 'Sun Nxt', providerId: 309, icon: 'SN' },
+  { key: 'mx-player', label: 'MX Player', providerId: 2285, icon: 'MX' },
+  { key: 'aha', label: 'aha', providerId: 532, icon: 'A' }
+] as const;
 
 const BASE_URL = 'https://api.themoviedb.org/3';
 const IMAGE_URL = 'https://image.tmdb.org/t/p';
@@ -168,13 +193,37 @@ export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page =
   return { ...value, source: { ...value.source, stale } };
 }
 
-export async function searchTmdb(query: string, type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
+async function matchesOtt(type: Exclude<ContentType, 'anime'>, id: number, ottKey: string) {
+  const provider = tmdbOttProviders.find((candidate) => candidate.key === ottKey);
+  if (!provider) return true;
+  try {
+    const result = await tmdbRequest<TmdbWatchProviders>(`/${type === 'movie' ? 'movie' : 'tv'}/${id}/watch/providers`);
+    const region = result.results?.IN ?? result.results?.US;
+    const providers = [...(region?.flatrate ?? []), ...(region?.buy ?? []), ...(region?.rent ?? [])];
+    return providers.some((candidate) => candidate.provider_id === provider.providerId);
+  } catch {
+    return false;
+  }
+}
+
+function releaseDate(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
+  return type === 'movie' ? (raw as TmdbMovie).release_date ?? '' : (raw as TmdbTv).first_air_date ?? '';
+}
+
+export async function searchTmdb(query: string, type: Exclude<ContentType, 'anime'>, page = 1, filters: SearchFilters = {}): Promise<ContentList> {
   const normalized = query.trim();
-  const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}`;
+  const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}:${filters.ott ?? ''}:${filters.genre ?? ''}:${filters.sort ?? ''}`;
   const { value, stale } = await getOrSet(key, { ttlMs: 1000 * 60 * 2, staleWhileRevalidateMs: 1000 * 60 * 5 }, async () => {
     const path = type === 'movie' ? '/search/movie' : '/search/tv';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { query: normalized, page, include_adult: false });
-    const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type));
+    let rawItems = (result.results ?? []).filter((item) => item.poster_path);
+    if (filters.genre) rawItems = rawItems.filter((item) => item.genre_ids?.includes(Number(filters.genre)));
+    if (filters.ott) {
+      const matches = await Promise.all(rawItems.map((item) => matchesOtt(type, item.id, filters.ott as string)));
+      rawItems = rawItems.filter((_, index) => matches[index]);
+    }
+    if (filters.sort) rawItems.sort((left, right) => releaseDate(left, type).localeCompare(releaseDate(right, type)) * (filters.sort === 'release-desc' ? -1 : 1));
+    const items = rawItems.map((item) => mapTmdb(item, type));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };

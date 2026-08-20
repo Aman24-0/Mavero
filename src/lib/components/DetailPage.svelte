@@ -78,10 +78,12 @@
     <section class="detail-layout" aria-labelledby="detail-title">
       <div class="detail-poster"><img src={item.poster} alt={`${item.title} poster`} /></div>
       <div class="detail-copy">
-        <div class="eyebrow">{formatType(type)}{#if item.genres[0]} / {item.genres[0]}{/if}</div>
-        <h1 id="detail-title">{item.title}</h1>
-        <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.runtime}</span><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
-        <p>{item.description}</p>
+        <div class="detail-lead">
+          <div class="eyebrow">{formatType(type)}{#if item.genres[0]} / {item.genres[0]}{/if}</div>
+          <h1 id="detail-title">{item.title}</h1>
+          <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.runtime}</span><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
+        </div>
+        <p class="detail-description">{item.description}</p>
         <div class="detail-actions"><a class="btn btn-primary" href={`/watch/${type}/${item.id}`}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={toggleSaved} aria-pressed={saved}><Heart size={15} fill={saved ? 'currentColor' : 'none'} /> {saved ? 'Saved' : 'My list'}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
         {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
         <div class="detail-grid"><div class="detail-stat"><span>Genres</span><strong>{item.genres.slice(0, 2).join(' · ') || '—'}</strong></div><div class="detail-stat"><span>Audio</span><strong>Original · Sub</strong></div><div class="detail-stat"><span>Quality</span><strong>Full HD · 4K</strong></div></div>
@@ -102,8 +104,9 @@
   .detail-poster { overflow: hidden; border-radius: 14px; aspect-ratio: 2 / 3; background: var(--surface); box-shadow: 0 16px 45px rgba(0,0,0,.25); }
   .detail-poster img { width: 100%; height: 100%; object-fit: cover; }
   .detail-copy { min-width: 0; padding-top: 4px; }
+  .detail-lead { min-width: 0; }
   .detail-copy h1 { max-width: 820px; margin: 7px 0 10px; font-size: clamp(2.5rem, 5vw, 5.5rem); letter-spacing: -.08em; line-height: .92; }
-  .detail-copy > p { max-width: 680px; margin: 18px 0 0; color: #b2b5be; font-size: .9rem; line-height: 1.68; }
+  .detail-description { max-width: 680px; margin: 18px 0 0; color: #b2b5be; font-size: .9rem; line-height: 1.68; }
   .rating { display: inline-flex; align-items: center; gap: 4px; color: #f6cf88; }
   .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
   .action-icon { border-color: var(--line); }
@@ -114,5 +117,5 @@
   .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(420px, 100%); margin-top: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.035); }
   .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .7rem; }
   .save-error { margin-top: 8px; color: #d4b27c; font-family: 'DM Mono', monospace; font-size: .57rem; }
-  @media (max-width: 640px) { .detail-backdrop { height: 390px; } .detail-wrap::before { height: 470px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; padding: 24px 0 28px; } .detail-copy { display: contents; } .detail-copy > .eyebrow, .detail-copy > h1, .detail-copy > .meta-row { grid-column: 2; } .detail-copy > p, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { font-size: 2.35rem; } .detail-copy > p { margin-top: 15px; font-size: .84rem; } .detail-grid { gap: 6px; } .detail-stat { padding: 9px; } }
+  @media (max-width: 640px) { .detail-backdrop { height: 390px; } .detail-wrap::before { height: 470px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 24px 0 28px; align-items: start; } .detail-poster { border-radius: 13px; } .detail-copy { display: contents; } .detail-copy > .detail-lead { grid-column: 2; min-width: 0; } .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { margin-top: 6px; font-size: clamp(1.9rem, 8vw, 2.5rem); line-height: .98; } .detail-description { margin-top: 18px; font-size: .84rem; } .detail-grid { gap: 6px; } .detail-stat { padding: 9px; } }
 </style>

@@ -1,7 +1,7 @@
 import { getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbSeason, searchTmdb } from './adapters/tmdb';
 import { getAniListDetail, getAniListDiscover, getAniListTrending, searchAniList } from './adapters/anilist';
 import { media } from '$data/content';
-import type { ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem } from './types';
+import type { ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
 
 function fixtureSource(): NormalizedMediaItem['source'] {
@@ -46,20 +46,26 @@ export async function popular(type: ContentType, page = 1): Promise<ContentList>
   }
 }
 
-export async function search(query: string, type?: ContentType, page = 1): Promise<ContentSearchResult> {
+function applyAnimeFilters(items: NormalizedMediaItem[], filters: SearchFilters) {
+  let filtered = filters.genre ? items.filter((item) => item.genres.some((genre) => genre.toLowerCase() === filters.genre?.toLowerCase())) : [...items];
+  if (filters.sort) filtered.sort((left, right) => (left.year - right.year) * (filters.sort === 'release-desc' ? -1 : 1));
+  return filtered;
+}
+
+export async function search(query: string, type?: ContentType, page = 1, filters: SearchFilters = {}): Promise<ContentSearchResult> {
   const normalized = query.trim();
-  if (!normalized) return { query: normalized, items: [], page, hasNextPage: false, source: fixtureSource() };
+  if (!normalized) return { query: normalized, items: [], page, hasNextPage: false, filters, source: fixtureSource() };
   try {
     if (type === 'anime') {
       const result = await searchAniList(normalized, page);
-      return { ...result, query: normalized };
+      return { ...result, items: applyAnimeFilters(result.items, filters), query: normalized, filters };
     }
     if (type === 'movie' || type === 'series') {
-      const result = await searchTmdb(normalized, type, page);
-      return { ...result, query: normalized };
+      const result = await searchTmdb(normalized, type, page, filters);
+      return { ...result, query: normalized, filters };
     }
 
-    const [movies, series, anime] = await Promise.allSettled([searchTmdb(normalized, 'movie', page), searchTmdb(normalized, 'series', page), searchAniList(normalized, page)]);
+    const [movies, series, anime] = await Promise.allSettled([searchTmdb(normalized, 'movie', page, filters), searchTmdb(normalized, 'series', page, filters), searchAniList(normalized, page)]);
     const tmdbResults = [movies, series].filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled');
     const animeResults = anime.status === 'fulfilled' ? [anime] : [];
     if (!tmdbResults.length) {
@@ -68,14 +74,15 @@ export async function search(query: string, type?: ContentType, page = 1): Promi
     }
     const fulfilled = [...tmdbResults, ...animeResults];
     const sources = fulfilled.map((result) => result.value.source);
-    return { query: normalized, items: fulfilled.flatMap((result) => result.value.items), page, hasNextPage: fulfilled.some((result) => result.value.hasNextPage), source: { provider: sources.every((item) => item.provider === sources[0].provider) ? sources[0].provider : 'fixtures', fetchedAt: new Date().toISOString(), stale: sources.some((item) => item.stale) } };
+    const items = applyAnimeFilters(fulfilled.flatMap((result) => result.value.items), filters);
+    return { query: normalized, items, page, hasNextPage: fulfilled.some((result) => result.value.hasNextPage), filters, source: { provider: sources.every((item) => item.provider === sources[0].provider) ? sources[0].provider : 'fixtures', fetchedAt: new Date().toISOString(), stale: sources.some((item) => item.stale) } };
   } catch (error) {
     // In mixed "All" search, never present AniList/fixture data as if it were a successful TMDB catalog search.
     // Keep fixture fallback for explicit type searches and discovery/detail flows.
     if (!type && error instanceof ContentServiceError && canFallback(error)) throw error;
     if (!canFallback(error)) throw error;
     const items = media.filter((item) => `${item.title} ${item.genres.join(' ')}`.toLowerCase().includes(normalized.toLowerCase()) && (!type || item.type === type)).map((item) => ({ ...item, source: fixtureSource() } as NormalizedMediaItem));
-    return { query: normalized, items, page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
+    return { query: normalized, items, page, hasNextPage: false, filters, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
   }
 }
 
