@@ -1,6 +1,5 @@
-import { getTmdbDetail, getTmdbDiscover, getTmdbSeason, searchTmdb } from './adapters/tmdb';
-import { getAniListDetail, getAniListDiscover, searchAniList } from './adapters/anilist';
-import { getTmdbPopular } from './adapters/tmdb';
+import { getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbSeason, searchTmdb } from './adapters/tmdb';
+import { getAniListDetail, getAniListDiscover, getAniListTrending, searchAniList } from './adapters/anilist';
 import { media } from '$data/content';
 import type { ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem } from './types';
 import { ContentServiceError } from './types';
@@ -29,7 +28,7 @@ function canFallback(error: unknown) {
 
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {
   try {
-    if (type === 'anime') return await getAniListDiscover(page);
+    if (type === 'anime') return await getAniListTrending(page);
     return await getTmdbDiscover(type, page);
   } catch (error) {
     if (!canFallback(error)) throw error;

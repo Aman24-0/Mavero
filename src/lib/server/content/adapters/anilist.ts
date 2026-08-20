@@ -123,6 +123,13 @@ const listQuery = `query ($page: Int, $search: String, $season: MediaSeason, $se
   }
 }`;
 
+const trendingQuery = `query ($page: Int) {
+  Page(page: $page, perPage: 18) {
+    pageInfo { currentPage hasNextPage lastPage }
+    media(type: ANIME, sort: [TRENDING_DESC, SCORE_DESC], isAdult: false) { ${mediaFields} }
+  }
+}`;
+
 const detailQuery = `query ($id: Int!) {
   Media(id: $id, type: ANIME) { ${mediaFields} relations { edges { relationType node { ${mediaFields} } } } }
 }`;
@@ -133,6 +140,17 @@ export async function getAniListDiscover(page = 1): Promise<ContentList> {
     const data = await aniListRequest<AniListPage>(listQuery, { page });
     const pageData = data.Page;
     const items = (pageData?.media ?? []).filter((item) => item.coverImage?.large || item.coverImage?.extraLarge).map((item) => mapAniList(item, 'Popular anime'));
+    return { items, page: pageData?.pageInfo?.currentPage ?? page, hasNextPage: Boolean(pageData?.pageInfo?.hasNextPage), source: source() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+export async function getAniListTrending(page = 1): Promise<ContentList> {
+  const key = `anilist:trending:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const data = await aniListRequest<AniListPage>(trendingQuery, { page });
+    const pageData = data.Page;
+    const items = (pageData?.media ?? []).filter((item) => item.coverImage?.large || item.coverImage?.extraLarge).map((item) => mapAniList(item, 'Trending anime'));
     return { items, page: pageData?.pageInfo?.currentPage ?? page, hasNextPage: Boolean(pageData?.pageInfo?.hasNextPage), source: source() };
   });
   return { ...value, source: { ...value.source, stale } };
