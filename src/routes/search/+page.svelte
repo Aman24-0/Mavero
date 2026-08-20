@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { Search, ArrowUpRight, SlidersHorizontal, LoaderCircle } from 'lucide-svelte';
+  import { Search, ArrowUpRight, LoaderCircle } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { ContentType } from '$lib/server/content/types';
   import type { MediaItem } from '$data/content';
@@ -86,7 +86,7 @@
     {#each types as item}
       <button class:active={type === item} class="mode-tab" aria-pressed={type === item} onclick={() => selectType(item)}>{item}</button>
     {/each}
-    <button class="mode-tab"><SlidersHorizontal size={14} aria-hidden="true" /> More filters</button>
+
   </div>
 
   {#if errorMessage}<div class="search-error" role="alert">{errorMessage}</div>{/if}
@@ -107,15 +107,15 @@
 <style>
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   em { color: var(--accent); font-style: normal; }
-  .search-large { margin-top: 9px; padding: 18px 17px; }
-  .search-large input { font-size: 1rem; }
+  .search-large { margin-top: 6px; padding: 15px 16px; }
+  .search-large input { font-size: .95rem; }
   kbd { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .6rem; white-space: nowrap; }
   .search-loading, .search-error { display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .62rem; }
   .search-error { color: #d4b27c; }
-  .results-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 21px 14px; }
+  .results-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 18px 12px; }
   .empty-search { display: grid; place-items: center; min-height: 320px; margin-top: 45px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: center; }
   .empty-search h2 { margin: 10px 0 6px; font-size: 2rem; letter-spacing: -.06em; }
   .empty-search p { max-width: 350px; margin: 0 0 22px; color: var(--muted); font-size: .82rem; line-height: 1.6; }
   @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 640px) { .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; } .page-heading h1 { font-size: 3.15rem; } }
+  @media (max-width: 640px) { .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } .page-heading h1 { font-size: 3.15rem; } }
 </style>
