@@ -7,7 +7,7 @@
   export let compact = false;
 </script>
 
-<a class="card" href={`/${item.type}/${item.id}`} aria-label={`Open ${item.title}`}>
+<a class="card" href={item.resumeHref ?? `/${item.type}/${item.id}`} aria-label={item.resumeHref ? `Resume ${item.title}` : `Open ${item.title}`}>
   <div class="poster" style={`--poster-accent: ${item.accent}`}>
     <img src={item.poster} alt="" loading="lazy" />
     {#if item.tags?.[0]}

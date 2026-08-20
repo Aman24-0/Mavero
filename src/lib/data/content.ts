@@ -15,6 +15,7 @@ export type MediaItem = {
   accent: string;
   progress?: number;
   progressLabel?: string;
+  resumeHref?: string;
   status?: string;
   episodes?: number;
   seasons?: number;

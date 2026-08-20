@@ -1,34 +1,60 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, Settings2, ShieldCheck } from 'lucide-svelte';
-  import { continueWatching, media } from '$data/content';
+  import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
+  import EmptyState from '$components/EmptyState.svelte';
+  import ErrorState from '$components/ErrorState.svelte';
+  import { getContinueWatching, getLocalFavorites, getLocalPersistenceState, getRecentlyWatched } from '$lib/client/progress/service';
+  import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
 
-  let saved = false;
+  let continueItems: MediaItem[] = [];
+  let recentItems: MediaItem[] = [];
+  let favoriteItems: MediaItem[] = [];
+  let watchedSeconds = 0;
+  let storageMessage = 'Preparing local storage…';
+  let loaded = false;
+  let errorMessage = '';
+
+  async function loadLocalState() {
+    errorMessage = '';
+    try {
+      const [continueRecords, recentRecords, favoriteRecords, state] = await Promise.all([getContinueWatching(), getRecentlyWatched(), getLocalFavorites(), getLocalPersistenceState()]);
+      continueItems = continueRecords.map(progressToMedia);
+      recentItems = recentRecords.map(progressToMedia);
+      favoriteItems = favoriteRecords.map(favoriteToMedia);
+      watchedSeconds = recentRecords.reduce((total, record) => total + record.currentTime, 0);
+      storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
+      loaded = true;
+    } catch {
+      errorMessage = 'Local progress is unavailable right now, but browsing and playback remain available.';
+      loaded = true;
+    }
+  }
+
+  onMount(() => { void loadLocalState(); });
+
+  $: watchedLabel = watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`;
 </script>
 
-<svelte:head>
-  <title>Profile — Mavero</title>
-</svelte:head>
+<svelte:head><title>Profile — Mavero</title></svelte:head>
 
 <div class="container-wide profile-page">
-  <section class="profile-header">
-    <div class="profile-avatar">AM</div>
-    <div><div class="eyebrow">MAVERO / Your space</div><h1>Welcome back, Alex.</h1><p>Pick up where you left off, or make room for something new.</p></div>
-    <a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a>
-  </section>
+  <section class="profile-header"><div class="profile-avatar">AM</div><div><div class="eyebrow">MAVERO / Your space</div><h1>Welcome back, Alex.</h1><p>Pick up where you left off, or make room for something new.</p></div><a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a></section>
 
-  <div class="profile-grid">
-    <section class="profile-card profile-card-main"><div class="eyebrow">Guest mode</div><h2>Your watch history lives here.</h2><p>Mavero saves your progress on this device automatically. Sign in when you want it available everywhere.</p><div class="sync-row"><span><ShieldCheck size={15} /> Local & private</span><span>IndexedDB ready</span></div></section>
-    <section class="profile-card"><div class="eyebrow">Your activity</div><div class="activity-list"><div><Clock3 size={15} /><span><strong>3h 42m</strong><small>Watched this week</small></span></div><div><Heart size={15} /><span><strong>12 titles</strong><small>Saved to your list</small></span></div></div></section>
-  </div>
+  <div class="profile-grid"><section class="profile-card profile-card-main"><div class="eyebrow">Guest mode</div><h2>Your watch history lives here.</h2><p>Mavero saves your progress on this device automatically. Sign in when you want it available everywhere.</p><div class="sync-row"><span><ShieldCheck size={15} /> {storageMessage}</span><span>{loaded ? 'Ready' : 'Loading'}</span></div></section><section class="profile-card"><div class="eyebrow">Your activity</div><div class="activity-list"><div><Clock3 size={15} /><span><strong>{watchedLabel}</strong><small>Watched locally</small></span></div><div><Heart size={15} /><span><strong>{favoriteItems.length} title{favoriteItems.length === 1 ? '' : 's'}</strong><small>Saved on this device</small></span></div></div></section></div>
 
-  <section class="section"><div class="section-head"><div><div class="eyebrow">Pick up the thread</div><h2 class="section-title">Continue watching</h2></div><a class="section-link" href="/discover">Browse more <ArrowUpRight size={14} /></a></div>{#if continueWatching.length}<div class="profile-rail">{#each continueWatching as item}<MediaCard {item} compact />{/each}</div>{:else}<div class="profile-empty">Nothing here yet. Start watching something to build your library.</div>{/if}</section>
+  {#if errorMessage}<ErrorState eyebrow="MAVERO / Local state" title="Your local library is resting." message={errorMessage} retry={loadLocalState} />{/if}
 
-  <section class="section"><div class="section-head"><div><div class="eyebrow">Saved for later</div><h2 class="section-title">My list</h2></div><button class="section-link list-button" onclick={() => (saved = !saved)}><Bookmark size={14} fill={saved ? 'currentColor' : 'none'} /> {saved ? 'Saved' : 'Save a title'}</button></div><div class="profile-rail">{#each media.slice(3, 7) as item}<MediaCard {item} />{/each}</div></section>
+  <section class="section"><div class="section-head"><div><div class="eyebrow">Pick up the thread</div><h2 class="section-title">Continue watching</h2></div><a class="section-link" href="/discover">Browse more <ArrowUpRight size={14} /></a></div>{#if !loaded}<div class="profile-empty">Loading your local progress…</div>{:else if continueItems.length}<div class="profile-rail">{#each continueItems as item}<MediaCard {item} compact />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / Continue watching" title="Nothing here yet." message="Start watching something and your next visit will pick up from the saved position." actionLabel="Find a story" actionHref="/discover" />{/if}</section>
+
+  <section class="section"><div class="section-head"><div><div class="eyebrow">Saved for later</div><h2 class="section-title">My list</h2></div><span class="section-link"><Bookmark size={14} /> Local library</span></div>{#if !loaded}<div class="profile-empty">Loading your local library…</div>{:else if favoriteItems.length}<div class="profile-rail">{#each favoriteItems as item}<MediaCard {item} />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / My list" title="Keep a title close." message="Use My list on a detail page to save titles to this device." actionLabel="Browse Discover" actionHref="/discover" />{/if}</section>
+
+  <section class="section"><div class="section-head"><div><div class="eyebrow">Recently watched</div><h2 class="section-title">Your trail</h2></div></div>{#if recentItems.length}<div class="profile-rail">{#each recentItems as item}<MediaCard {item} compact />{/each}</div>{:else if loaded}<div class="profile-empty">Your recent trail will appear after your first playback session.</div>{/if}</section>
 
   <section class="cinelog-banner"><div class="cinelog-mark">CL</div><div><div class="eyebrow">A separate product, made for tracking</div><h2>Track everything you watch.</h2><p>Organize your movies, series, and anime with CineLog.</p></div><a class="btn btn-primary" href="https://cinelog.app" target="_blank" rel="noreferrer">Open CineLog <ArrowUpRight size={15} /></a></section>
 
-  <section class="preferences"><div><div class="eyebrow">Preferences</div><h2>Keep it yours.</h2></div><div class="preference-items"><span><Settings2 size={15} /> Playback settings</span><span><Bookmark size={15} /> Manage my list</span></div></section>
+  <section class="preferences"><div><div class="eyebrow">Preferences</div><h2>Keep it yours.</h2></div><div class="preference-items"><span><Settings2 size={15} /> Playback settings</span><span><Bookmark size={15} /> Local library on this device</span></div></section>
 </div>
 
 <style>
@@ -61,6 +87,5 @@
   .preferences h2 { margin: 8px 0 0; font-size: 1.7rem; letter-spacing: -.06em; }
   .preference-items { display: grid; gap: 10px; align-content: start; }
   .preference-items span { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: .77rem; }
-  .list-button { border: 0; background: none; cursor: pointer; }
   @media (max-width: 720px) { .profile-header { grid-template-columns: 52px minmax(0, 1fr); padding-top: 108px; } .profile-avatar { width: 52px; height: 52px; } .profile-header .btn { grid-column: 1 / -1; justify-self: start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 42vw; } .cinelog-banner { grid-template-columns: 42px 1fr; } .cinelog-mark { width: 42px; height: 42px; border-radius: 12px; } .cinelog-banner .btn { grid-column: 1 / -1; justify-self: start; } }
 </style>

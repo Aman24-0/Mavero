@@ -41,3 +41,11 @@ The Search empty state `/search?q=zzzz-no-match&type=movie` rendered the intende
 The final live anime detail check after clearing the development cache confirmed normalized AniList recommendations: Attack on Titan Season 2 (2017, 8.5, 12 episodes), Junior High (2015, 7.0), OVA (2013, 7.7), No Regrets (2015, 8.3), and Lost Girls (2017, 7.7), with live artwork.
 
 Shell and browser inspection confirmed desktop viewport rendering at 1280px, a mobile navigation with safe-area CSS at max-width 640px, responsive collection/detail/episode layouts, and four discovered `prefers-reduced-motion` rules. The AppShell and Discover GSAP timelines check `matchMedia('(prefers-reduced-motion: reduce)')` before running entrance motion; skeleton shimmer and loading animations are also disabled under the reduced-motion media query.
+
+## Phase 4 local-progress verification
+
+The movie player `/watch/movie/afterlight` showed local storage status, wrote preview progress on navigation away, and reopened with `Resume at 0:14` and a restored timeline position. Profile showed Continue Watching and recently watched state from IndexedDB.
+
+The canonical series route `/watch/series/nocturne-city/2/4` preserved `S02 E04` context. After preview playback and leaving the player, Profile showed `Nocturne City` with `S02 E04 · 44m left` and a resume link back to `/watch/series/nocturne-city/2/4` alongside the movie record.
+
+The initial anime episode verification exposed a player content-resolution issue: the shell used the Afterlight fixture for live `anime-16498`. A server-side watch loader was added. Rechecking `/watch/anime/anime-16498/1/3` now renders `Watching Attack on Titan`, `S01 E03`, the correct anime detail link, and local progress status while keeping provider-safe playback messaging.

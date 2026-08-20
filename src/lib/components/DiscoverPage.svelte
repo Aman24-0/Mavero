@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getContinueWatching } from '$lib/client/progress/service';
+  import { progressToMedia } from '$lib/client/progress/presenter';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { ArrowUpRight, Play, Plus, Search, SlidersHorizontal, Sparkles } from 'lucide-svelte';
@@ -13,7 +15,10 @@
   export let movies: MediaItem[] = fixtureMovies;
   export let series: MediaItem[] = fixtureSeries;
   export let anime: MediaItem[] = fixtureAnime;
-  export let continueItems: MediaItem[] = fixtureContinueWatching;
+  export   let continueItems: MediaItem[] = fixtureContinueWatching;
+  let localContinueLoaded = false;
+  let localContinueItems: MediaItem[] = fixtureContinueWatching;
+
 
   const initialMode = page.url.searchParams.get('type');
   let activeMode = initialMode === 'movie' ? 'Movies' : initialMode === 'series' ? 'Series' : initialMode === 'anime' ? 'Anime' : 'All';
@@ -55,6 +60,7 @@
     : [];
 
   onMount(async () => {
+    void getContinueWatching().then((records) => { localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
     const { gsap } = await import('gsap');
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduceMotion || !intro) return;
@@ -112,8 +118,8 @@
       {#if activeMode === 'All' || activeMode === 'Anime'}
         <ContentRail title="The anime edit" eyebrow="From another world" items={filteredAnime} href="/discover/anime" />
       {/if}
-      {#if continueItems.length}
-        <ContentRail title="Continue watching" eyebrow="Pick up where you left off" items={continueItems} href="/profile" compact />
+      {#if (localContinueLoaded ? localContinueItems : continueItems).length}
+        <ContentRail title="Continue watching" eyebrow="Pick up where you left off" items={localContinueLoaded ? localContinueItems : continueItems} href="/profile" compact />
       {/if}
       <section class="quiet-banner">
         <div><div class="eyebrow">MAVERO / The short list</div><h2>Less scrolling.<br /><em>More finding.</em></h2></div>
