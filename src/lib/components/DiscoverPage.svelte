@@ -5,19 +5,20 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { ArrowUpRight, Play, Plus, Search, SlidersHorizontal, Sparkles } from 'lucide-svelte';
-  import { featured as fixtureFeatured, media as fixtureMedia, continueWatching as fixtureContinueWatching, trendingMovies as fixtureMovies, trendingSeries as fixtureSeries, trendingAnime as fixtureAnime, type MediaItem } from '$data/content';
+  import type { MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import FilterBar from '$components/FilterBar.svelte';
   import type { FilterState } from '$components/filter-types';
 
-  export let featuredItem: MediaItem = fixtureFeatured;
-  export let movies: MediaItem[] = fixtureMovies;
-  export let series: MediaItem[] = fixtureSeries;
-  export let anime: MediaItem[] = fixtureAnime;
-  export   let continueItems: MediaItem[] = fixtureContinueWatching;
+  export let featuredItem: MediaItem | undefined;
+  export let movies: MediaItem[] = [];
+  export let series: MediaItem[] = [];
+  export let anime: MediaItem[] = [];
+  export let continueItems: MediaItem[] = [];
+  export let errorMessage = '';
   let localContinueLoaded = false;
-  let localContinueItems: MediaItem[] = fixtureContinueWatching;
+  let localContinueItems: MediaItem[] = [];
 
 
   const initialMode = page.url.searchParams.get('type');
@@ -80,24 +81,27 @@
 </svelte:head>
 
 <div bind:this={intro}>
-  <section class="hero" aria-labelledby="hero-title">
-    <div class="hero-media" style={`background-image: url('${featuredItem.backdrop}')`}></div>
-    <div class="container-wide hero-content">
-      <div class="hero-kicker" data-reveal><Sparkles size={13} /> {featuredItem.tags?.[0] ?? 'Featured story'}</div>
-      <h1 id="hero-title" data-reveal>{featuredItem.title}</h1>
-      <p class="hero-description" data-reveal>{featuredItem.description}</p>
-      <div class="meta-row" data-reveal>
-        <strong>{featuredItem.year}</strong><span class="dot"></span><span>{featuredItem.runtime}</span><span class="dot"></span><span>{featuredItem.maturity}</span><span class="dot"></span><span>{featuredItem.genres.slice(0, 2).join(' · ')}</span>
+  {#if featuredItem}
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-media" style={`background-image: url('${featuredItem.backdrop}')`}></div>
+      <div class="container-wide hero-content">
+        <div class="hero-kicker" data-reveal><Sparkles size={13} /> {featuredItem.tags?.[0] ?? 'Featured story'}</div>
+        <h1 id="hero-title" data-reveal>{featuredItem.title}</h1>
+        <p class="hero-description" data-reveal>{featuredItem.description}</p>
+        <div class="meta-row" data-reveal>
+          <strong>{featuredItem.year}</strong><span class="dot"></span><span>{featuredItem.runtime}</span><span class="dot"></span><span>{featuredItem.maturity}</span><span class="dot"></span><span>{featuredItem.genres.slice(0, 2).join(' · ')}</span>
+        </div>
+        <div class="hero-actions" data-reveal>
+          <a class="btn btn-primary" href={`/watch/${featuredItem.type}/${featuredItem.id}`}><Play size={15} fill="currentColor" /> Start watching</a>
+          <a class="btn btn-secondary" href={`/${featuredItem.type}/${featuredItem.id}`}><ArrowUpRight size={15} /> Details</a>
+        </div>
       </div>
-      <div class="hero-actions" data-reveal>
-        <a class="btn btn-primary" href={`/watch/${featuredItem.type}/${featuredItem.id}`}><Play size={15} fill="currentColor" /> Start watching</a>
-        <a class="btn btn-secondary" href={`/${featuredItem.type}/${featuredItem.id}`}><ArrowUpRight size={15} /> Details</a>
-      </div>
-    </div>
-    <div class="hero-signal" aria-hidden="true"><b>01</b><span>Now showing</span></div>
-  </section>
+      <div class="hero-signal" aria-hidden="true"><b>01</b><span>Now showing</span></div>
+    </section>
+  {/if}
 
   <div class="container-wide main-content">
+    {#if errorMessage}<div class="catalog-warning" role="alert">{errorMessage}</div>{/if}
     <div class="search-band" role="search" aria-label="Quick search">
       <Search size={16} aria-hidden="true" />
       <label class="sr-only" for="discover-search">Search MAVERO</label>
@@ -143,6 +147,7 @@
 
 <style>
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .catalog-warning { margin: 18px 0 0; padding: 14px 16px; border: 1px solid rgba(212, 178, 124, .35); color: #d4b27c; font-family: 'DM Mono', monospace; font-size: .68rem; line-height: 1.55; }
   .quiet-banner { display: grid;
  grid-template-columns: 1.3fr .9fr auto; align-items: end; gap: 36px; margin-top: 64px; padding: 34px 0 8px; border-top: 1px solid var(--line); }
   .quiet-banner h2 { margin: 8px 0 0; color: var(--ink); font-size: clamp(2rem, 4vw, 3.8rem); line-height: .98; letter-spacing: -.07em; }

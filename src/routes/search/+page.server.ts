@@ -1,6 +1,6 @@
-import { search, getFixtureContent } from '$lib/server/content/service';
+import { getFixtureContent, search } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
-import { isContentType, type ContentType } from '$lib/server/content/types';
+import { ContentServiceError, isContentType, type ContentType } from '$lib/server/content/types';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url }) => {
@@ -11,9 +11,16 @@ export const load: PageServerLoad = async ({ url }) => {
   if (!query) {
     const types: ContentType[] = type ? [type] : ['movie', 'series', 'anime'];
     const items = types.flatMap((entry) => getFixtureContent(entry)).map(toMediaItem);
-    return { query, type, items };
+    return { query, type, items, errorMessage: '' };
   }
 
-  const result = await search(query, type);
-  return { query: result.query, type, items: result.items.map(toMediaItem) };
+  try {
+    const result = await search(query, type);
+    return { query: result.query, type, items: result.items.map(toMediaItem), errorMessage: '' };
+  } catch (error) {
+    const errorMessage = error instanceof ContentServiceError
+      ? error.message
+      : 'Search is temporarily unavailable. Please try again.';
+    return { query, type, items: [], errorMessage };
+  }
 };

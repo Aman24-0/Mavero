@@ -13,7 +13,7 @@
   let type: 'All' | 'Movies' | 'Series' | 'Anime' = data.type === 'movie' ? 'Movies' : data.type === 'series' ? 'Series' : data.type === 'anime' ? 'Anime' : 'All';
   let results: MediaItem[] = data.items;
   let loading = false;
-  let errorMessage = '';
+  let errorMessage = data.errorMessage ?? '';
   let timer: ReturnType<typeof setTimeout> | undefined;
   const types = ['All', 'Movies', 'Series', 'Anime'] as const;
 

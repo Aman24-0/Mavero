@@ -5,4 +5,4 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<DiscoverPage featuredItem={data.featured} movies={data.movies} series={data.series} anime={data.anime} />
+  <DiscoverPage featuredItem={data.featured} movies={data.movies} series={data.series} anime={data.anime} errorMessage={data.errorMessage ?? ''} />
