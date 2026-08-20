@@ -26,8 +26,12 @@
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-<AppShell currentPath={page.url.pathname} user={data.user}>
-  {#snippet children()}
-    {@render pageChildren()}
-  {/snippet}
-</AppShell>
+{#if page.url.pathname.startsWith('/watch/')}
+  {@render pageChildren()}
+{:else}
+  <AppShell currentPath={page.url.pathname} user={data.user}>
+    {#snippet children()}
+      {@render pageChildren()}
+    {/snippet}
+  </AppShell>
+{/if}

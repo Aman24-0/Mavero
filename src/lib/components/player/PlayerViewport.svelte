@@ -93,7 +93,7 @@
     <div class="empty-viewport" aria-hidden="true"><span class="empty-orb"></span></div>
   {/if}
 
-  <div class="viewport-shade" aria-hidden="true"></div>
+  {#if source?.type !== 'embed'}<div class="viewport-shade" aria-hidden="true"></div>{/if}
   <div class="state-label" aria-live="polite">
     {#if state === 'buffering'}Buffering…{:else if state === 'preparing' || state === 'resolving'}Preparing playback…{:else if state === 'switching-source'}Switching source…{:else if state === 'embed-loading'}Loading embed…{/if}
   </div>
@@ -103,6 +103,8 @@
   .viewport { position: relative; display: grid; min-height: clamp(220px, 56vw, 690px); overflow: hidden; background: #060607; isolation: isolate; }
   .viewport video, .viewport iframe { position: relative; z-index: 1; width: 100%; height: 100%; min-height: inherit; border: 0; object-fit: contain; background: #060607; }
   .viewport iframe { display: block; }
+  .viewport.embed { min-height: 0; }
+  .viewport.embed iframe { aspect-ratio: 16 / 9; }
   .viewport-shade { position: absolute; z-index: 2; inset: auto 0 0; height: 38%; pointer-events: none; background: linear-gradient(0deg, rgba(4,4,6,.72), transparent); }
   .state-label { position: absolute; z-index: 3; top: 18px; left: 18px; color: rgba(248,247,242,.68); font-family: 'DM Mono', monospace; font-size: .58rem; letter-spacing: .08em; text-transform: uppercase; text-shadow: 0 1px 12px #000; }
   .empty-viewport { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 43%, rgba(155,135,245,.18), transparent 26%), linear-gradient(145deg, #0d0d13, #060607 70%); }

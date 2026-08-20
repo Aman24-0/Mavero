@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Captions, Check, ChevronDown, ChevronLeft, ChevronRight, ListVideo, LoaderCircle, RotateCcw, Settings2, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, ListVideo, LoaderCircle, Maximize2, RotateCcw, Settings2, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
@@ -37,7 +37,6 @@
   let selectedSubtitle = '';
   let sourceMenuOpen = false;
   let episodeMenuOpen = false;
-  let settingsOpen = false;
   let controlsVisible = true;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingSeek = initialProgress;
@@ -68,12 +67,13 @@
     const handleKeydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, select, textarea, button, [contenteditable="true"]')) return;
+      if (source?.type !== 'direct') return;
       if (event.key === ' ' || event.key.toLowerCase() === 'k') { event.preventDefault(); void togglePlay(); }
       else if (event.key === 'ArrowLeft') { event.preventDefault(); seekBy(-10); }
       else if (event.key === 'ArrowRight') { event.preventDefault(); seekBy(10); }
       else if (event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); }
       else if (event.key.toLowerCase() === 'f') { event.preventDefault(); void toggleFullscreen(); }
-      else if (event.key === 'Escape') { sourceMenuOpen = false; episodeMenuOpen = false; settingsOpen = false; }
+      else if (event.key === 'Escape') { sourceMenuOpen = false; episodeMenuOpen = false; }
     };
     const showControls = () => {
       controlsVisible = true;
@@ -217,7 +217,6 @@
 
   function chooseSource(sourceId: string) {
     sourceMenuOpen = false;
-    settingsOpen = false;
     if (sourceId !== source?.sourceId) onSourceChange(sourceId);
   }
 
@@ -257,7 +256,7 @@
     <div class="header-actions">
       {#if episodes.length}<button class="header-button compact" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={() => { episodeMenuOpen = !episodeMenuOpen; sourceMenuOpen = false; }}><ListVideo size={17} /><span>Episodes</span></button>{/if}
       {#if sourceOptions.length}<button class="header-button compact" type="button" aria-label="Open source list" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={17} /><span>Sources</span></button>{/if}
-      <button class="header-button compact" type="button" aria-label="Player settings" aria-expanded={settingsOpen} onclick={() => { settingsOpen = !settingsOpen; sourceMenuOpen = false; episodeMenuOpen = false; }}><Settings2 size={17} /></button>
+      <button class="header-button compact orientation-button" type="button" aria-label="Toggle landscape player" onclick={() => void toggleFullscreen()}><Maximize2 size={17} /><span>Landscape</span></button>
     </div>
   </header>
 
@@ -281,9 +280,11 @@
     {/if}
   </section>
 
-  <div class="controls-layer" class:visible={controlsVisible}>
-    <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} pictureInPicture={pictureInPictureSupported} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
-  </div>
+  {#if source?.type === 'direct'}
+    <div class="controls-layer" class:visible={controlsVisible}>
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} pictureInPicture={pictureInPictureSupported} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
+    </div>
+  {/if}
 
   {#if sourceMenuOpen}
     <div class="drawer source-drawer" role="dialog" aria-label="Available playback sources">
@@ -300,31 +301,25 @@
     </div>
   {/if}
 
-  {#if settingsOpen}
-    <div class="settings-popover" role="dialog" aria-label="Player settings">
-      <div class="drawer-head"><div><span class="eyebrow">MAVERO player</span><h2>Settings</h2></div><button class="close-button" type="button" aria-label="Close settings" onclick={() => settingsOpen = false}><X size={17} /></button></div>
-      <div class="setting-row"><span>Playback speed</span><strong>{playbackRate}×</strong></div>
-      <div class="setting-row"><span>Subtitles</span><strong>{selectedSubtitle ? 'On' : 'Off'}</strong></div>
-      <div class="setting-row"><span>Source</span><strong>{source?.metadata?.sourceName ?? 'Preparing'}</strong></div>
-    </div>
-  {/if}
+
 </div>
 
 <style>
   .player-shell { --player-bg: #050506; position: relative; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
-  .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: calc(18px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 18px; background: linear-gradient(180deg, rgba(4,4,6,.9), transparent); }
-  .header-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; border: 1px solid transparent; border-radius: 10px; padding: 0 10px; color: rgba(255,255,255,.8); background: rgba(5,5,7,.48); cursor: pointer; font: inherit; font-size: .68rem; transition: background 160ms ease-out, border-color 160ms ease-out, transform 160ms ease-out; }
+  .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: calc(16px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 16px; background: linear-gradient(180deg, rgba(4,4,6,.92), rgba(4,4,6,.32) 70%, transparent); }
+  .header-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; padding: 0 11px; color: rgba(255,255,255,.82); background: rgba(12,11,17,.58); cursor: pointer; font: inherit; font-size: .68rem; transition: background 160ms ease-out, border-color 160ms ease-out, transform 160ms ease-out; }
   .header-button:hover, .header-button:focus-visible { border-color: rgba(194,181,255,.52); background: rgba(40,32,60,.82); }
   .header-button:active { transform: scale(.97); }
   .header-title { display: grid; justify-items: center; gap: 4px; min-width: 0; color: #fff; text-align: center; text-shadow: 0 1px 14px #000; }
   .header-title strong { max-width: min(48vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
   .header-title span { color: rgba(255,255,255,.53); font-family: 'DM Mono', monospace; font-size: .56rem; }
   .header-actions { display: flex; gap: 5px; }
-  .stage-wrap { position: relative; display: grid; min-height: 100dvh; align-content: center; padding: 76px clamp(0px, 3vw, 42px) 104px; }
-  .stage-wrap :global(.viewport) { width: 100%; max-height: calc(100dvh - 180px); border-radius: 12px; box-shadow: 0 22px 80px rgba(0,0,0,.38); }
-  .controls-layer { position: absolute; z-index: 6; right: 0; bottom: 34px; left: 0; opacity: 1; transition: opacity 220ms ease-out; pointer-events: auto; }
+  .stage-wrap { position: relative; display: grid; min-height: 100dvh; place-items: center; padding: calc(72px + env(safe-area-inset-top)) clamp(12px, 3vw, 42px) calc(30px + env(safe-area-inset-bottom)); }
+  .stage-wrap :global(.viewport) { width: min(100%, calc((100dvh - 112px) * 1.7778)); aspect-ratio: 16 / 9; min-height: 0; max-height: calc(100dvh - 112px); border-radius: 14px; box-shadow: 0 22px 80px rgba(0,0,0,.38); }
+  .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 112px) * 1.7778)); }
+  .controls-layer { position: absolute; z-index: 6; right: clamp(12px, 3vw, 42px); bottom: calc(28px + env(safe-area-inset-bottom)); left: clamp(12px, 3vw, 42px); opacity: 1; transition: opacity 220ms ease-out; pointer-events: auto; }
   .controls-layer:not(.visible) { opacity: 0; pointer-events: none; }
-  .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 24%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translateX(50%); border: 1px solid rgba(194,181,255,.26); border-radius: 15px; padding: 15px 16px; color: #fff; background: rgba(12,11,18,.88); box-shadow: 0 20px 60px rgba(0,0,0,.34); backdrop-filter: blur(22px); }
+  .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid rgba(194,181,255,.26); border-radius: 15px; padding: 15px 16px; color: #fff; background: rgba(12,11,18,.88); box-shadow: 0 20px 60px rgba(0,0,0,.34); backdrop-filter: blur(22px); }
   .message-card strong { display: block; font-size: .75rem; }
   .message-card p { margin: 5px 0 0; color: rgba(255,255,255,.58); font-size: .66rem; line-height: 1.45; }
   .message-icon { display: grid; flex: 0 0 34px; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #f2c4ac; background: rgba(242,196,172,.1); }
@@ -337,10 +332,8 @@
   .episode-stepper { position: absolute; z-index: 5; right: 50%; bottom: 125px; display: flex; align-items: center; gap: 12px; transform: translateX(50%); color: rgba(255,255,255,.63); font-family: 'DM Mono', monospace; font-size: .58rem; }
   .round-step { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(255,255,255,.15); border-radius: 50%; color: #fff; background: rgba(7,7,10,.62); cursor: pointer; }
   .round-step:disabled { cursor: not-allowed; opacity: .25; }
-  .drawer, .settings-popover { position: absolute; z-index: 12; border: 1px solid rgba(194,181,255,.22); background: rgba(13,12,19,.95); box-shadow: 0 24px 90px rgba(0,0,0,.5); backdrop-filter: blur(28px); }
-  .drawer { top: 76px; right: clamp(16px, 4vw, 48px); width: min(360px, calc(100% - 32px)); max-height: min(70dvh, 620px); overflow: auto; border-radius: 16px; }
+  .drawer { position: absolute; z-index: 12; top: 76px; right: clamp(16px, 4vw, 48px); width: min(360px, calc(100% - 32px)); max-height: min(70dvh, 620px); overflow: auto; border: 1px solid rgba(194,181,255,.22); border-radius: 16px; background: rgba(13,12,19,.95); box-shadow: 0 24px 90px rgba(0,0,0,.5); backdrop-filter: blur(28px); }
   .episode-drawer { width: min(420px, calc(100% - 32px)); }
-  .settings-popover { top: 76px; right: clamp(16px, 4vw, 48px); width: min(300px, calc(100% - 32px)); border-radius: 16px; padding: 16px; }
   .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 19px 18px 13px; }
   .drawer-head h2 { margin: 5px 0 0; font-size: 1.1rem; letter-spacing: -.05em; }
   .close-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; color: rgba(255,255,255,.72); background: rgba(255,255,255,.06); cursor: pointer; }
@@ -354,9 +347,8 @@
   .option-mark > span { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.25); }
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'DM Mono', monospace; font-size: .65rem; }
   .drawer-note { margin: 0; padding: 0 18px 18px; color: rgba(255,255,255,.4); font-size: .61rem; line-height: 1.5; }
-  .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 2px; border-top: 1px solid rgba(255,255,255,.08); color: rgba(255,255,255,.56); font-size: .67rem; }
-  .setting-row strong { color: #fff; font-size: .63rem; font-weight: 600; text-align: right; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 640px) { .player-header { padding-top: calc(10px + env(safe-area-inset-top)); padding-bottom: 10px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; justify-content: center; padding: 0; } .header-title strong { max-width: 42vw; font-size: .69rem; } .stage-wrap { padding: calc(60px + env(safe-area-inset-top)) 0 calc(100px + env(safe-area-inset-bottom)); align-content: center; } .stage-wrap :global(.viewport) { max-height: 76dvh; border-radius: 0; } .message-card { bottom: 21%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .episode-stepper { bottom: calc(92px + env(safe-area-inset-bottom)); } .drawer, .settings-popover { top: calc(62px + env(safe-area-inset-top)); right: 12px; } }
+  @media (max-width: 640px) { .player-header { padding-top: calc(10px + env(safe-area-inset-top)); padding-bottom: 10px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; justify-content: center; padding: 0; } .header-title strong { max-width: 42vw; font-size: .69rem; } .stage-wrap { padding: calc(62px + env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom)); } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; } .message-card { bottom: 50%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .episode-stepper { bottom: calc(34px + env(safe-area-inset-bottom)); } .drawer { top: calc(62px + env(safe-area-inset-top)); right: 12px; width: calc(100% - 24px); max-height: 72dvh; } }
+  @media (orientation: landscape) and (max-height: 560px) { .player-header { padding-top: 8px; padding-bottom: 8px; } .stage-wrap { padding-top: 56px; padding-bottom: 16px; } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 72px) * 1.7778)); max-height: calc(100dvh - 72px); } }
   @media (prefers-reduced-motion: reduce) { :global(.spin) { animation: none; } .header-button, .controls-layer { transition: none; } }
 </style>
