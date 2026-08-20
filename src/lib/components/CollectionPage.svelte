@@ -1,15 +1,43 @@
 <script lang="ts">
-  import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
+  import { ArrowLeft, ChevronDown } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
   import { media as fixtureMedia, formatType, type MediaItem } from '$data/content';
+  import FilterBar from '$components/FilterBar.svelte';
+  import type { FilterState } from '$components/filter-types';
   import MediaCard from '$components/MediaCard.svelte';
+  import EmptyState from '$components/EmptyState.svelte';
 
   export let type: ContentType = 'movie';
   export let contentItems: MediaItem[] = fixtureMedia.filter((item) => item.type === type);
+
+  const validSorts = ['For you', 'Top rated', 'Newest'];
+  const currentFilters = (): FilterState => ({
+    genre: page.url.searchParams.get('genre') || 'All',
+    sort: validSorts.includes(page.url.searchParams.get('sort') || '') ? page.url.searchParams.get('sort') || 'For you' : 'For you',
+    year: page.url.searchParams.get('year') || 'All'
+  });
+
+  let filterState = currentFilters();
+  let showAdvanced = false;
   $: items = contentItems;
   $: label = formatType(type);
-  let sort = 'For you';
-  const sorts = ['For you', 'Top rated', 'Newest'];
+  $: genres = [...new Set(contentItems.flatMap((item) => item.genres))].sort();
+  $: filteredItems = contentItems
+    .filter((item) => filterState.genre === 'All' || item.genres.includes(filterState.genre))
+    .filter((item) => filterState.year === 'All' || String(item.year) === filterState.year)
+    .sort((a, b) => filterState.sort === 'Top rated' ? b.rating - a.rating : filterState.sort === 'Newest' ? b.year - a.year : 0);
+
+  function updateFilters(next: FilterState) {
+    filterState = next;
+    const params = new URLSearchParams();
+    if (next.genre !== 'All') params.set('genre', next.genre);
+    if (next.sort !== 'For you') params.set('sort', next.sort);
+    if (next.year !== 'All') params.set('year', next.year);
+    params.set('page', page.url.searchParams.get('page') || '1');
+    void goto(`${page.url.pathname}?${params.toString()}`, { replaceState: true, noScroll: true, keepFocus: true });
+  }
 </script>
 
 <svelte:head><title>{label}s — Mavero</title></svelte:head>
@@ -17,17 +45,26 @@
 <div class="container-wide collection-page">
   <a class="back-link" href="/discover"><ArrowLeft size={15} /> Back to Discover</a>
   <section class="page-heading"><div class="eyebrow">MAVERO / Explore</div><h1>{label}s<br /><em>in focus.</em></h1><p>A focused collection for the nights when you know the kind of world you want to step into.</p></section>
-  <div class="collection-tools"><div class="mode-tabs">{#each sorts as item}<button class:active={sort === item} class="mode-tab" onclick={() => (sort = item)}>{item}</button>{/each}</div><button class="mode-tab"><SlidersHorizontal size={14} /> Filters <ChevronDown size={13} /></button></div>
-  <div class="results-grid">{#each items as item}<MediaCard {item} compact />{/each}</div>
+  <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /><button class:active={showAdvanced} class="mode-tab advanced-toggle" onclick={() => (showAdvanced = !showAdvanced)}><ChevronDown size={13} /> {showAdvanced ? 'Hide filters' : 'More filters'}</button></div>
+  {#if showAdvanced}<div class="advanced-filter-note">Filters are URL-synchronized, composable, and page-aware. The `page` query parameter is reserved for future continuous loading.</div>{/if}
+  {#if filteredItems.length}
+    <div class="results-grid">{#each filteredItems as item}<MediaCard {item} compact />{/each}</div>
+  {:else}
+    <EmptyState eyebrow={`MAVERO / No ${label.toLowerCase()} matches`} title="A quieter cut." message="Try clearing one of your filters or explore the full collection." actionLabel={`View all ${label.toLowerCase()}`} actionHref={`/discover/${type === 'movie' ? 'movies' : type === 'series' ? 'series' : 'anime'}`} />
+  {/if}
+  <div class="load-sentinel" aria-hidden="true" data-next-page="2"></div>
 </div>
 
 <style>
   em { color: var(--accent); font-style: normal; }
   .back-link { display: inline-flex; align-items: center; gap: 8px; padding-top: 30px; color: var(--muted); font-size: .72rem; font-weight: 800; text-decoration: none; }
   .collection-page .page-heading { padding-top: 55px; }
-  .collection-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 6px 0 30px; }
-  .collection-tools .mode-tabs { margin: 0; }
-  .results-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px 14px; padding-bottom: 90px; }
+  .collection-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 30px; }
+  .advanced-toggle { display: inline-flex; align-items: center; gap: 6px; }
+  .advanced-toggle.active { color: var(--ink); border-color: rgba(155,135,245,.45); background: var(--accent-soft); }
+  .advanced-filter-note { margin: -14px 0 22px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .59rem; line-height: 1.5; }
+  .results-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px 14px; padding-bottom: 30px; }
+  .load-sentinel { height: 1px; margin-top: 20px; }
   @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 640px) { .back-link { padding-top: 101px; } .collection-page .page-heading { padding-top: 48px; } .collection-tools { align-items: start; flex-direction: column; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; } }
+  @media (max-width: 640px) { .back-link { padding-top: 101px; } .collection-page .page-heading { padding-top: 48px; } .collection-tools { align-items: stretch; flex-direction: column; } .advanced-toggle { align-self: flex-start; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; } }
 </style>

@@ -5,4 +5,4 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<DetailPage id={data.item.id} type="series" dataItem={data.item} />
+<DetailPage id={data.item.id} type="series" dataItem={data.item} recommendationItems={data.recommendations} />

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
+  import { navigating } from '$app/state';
   import { Search, UserRound, Compass, Menu, ChevronDown } from 'lucide-svelte';
+  import RouteLoading from '$components/RouteLoading.svelte';
 
   let { children, currentPath = '/' }: { children: Snippet; currentPath?: string } = $props();
   let shell: HTMLElement;
@@ -60,6 +62,8 @@
   <main>
     {@render children()}
   </main>
+
+  {#if navigating.to}<RouteLoading />{/if}
 
   <nav class="mobile-nav" aria-label="Mobile navigation">
     <a class:active={isActive('/discover')} href="/discover" aria-label="Discover"><Compass size={18} strokeWidth={1.8} /><span>Discover</span></a>

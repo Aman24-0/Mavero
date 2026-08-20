@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type ContentList, type ContentSource, type ContentType, type Episode, type NormalizedMediaItem, type Season } from '../types';
+import { ContentServiceError, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season } from '../types';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -150,7 +150,7 @@ export async function searchTmdb(query: string, type: Exclude<ContentType, 'anim
   return { ...value, source: { ...value.source, stale } };
 }
 
-export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externalId: string): Promise<NormalizedMediaItem> {
+export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externalId: string): Promise<ContentDetail> {
   const numericId = Number(externalId);
   if (!Number.isInteger(numericId) || numericId <= 0) {
     throw new ContentServiceError('The TMDB content identifier is invalid.', { code: 'NOT_FOUND', status: 404 });
@@ -159,7 +159,9 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
   const { value, stale } = await getOrSet(key, detailPolicy, async () => {
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
     const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations' });
-    return mapTmdb(raw, type);
+    const item = mapTmdb(raw, type);
+    const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => candidate.poster_path).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
+    return { ...item, recommendations };
   });
   return { ...value, source: { ...value.source, stale } };
 }

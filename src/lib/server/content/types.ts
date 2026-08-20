@@ -59,6 +59,10 @@ export type NormalizedMediaItem = {
   trailerKey?: string;
 };
 
+export type ContentDetail = NormalizedMediaItem & {
+  recommendations?: NormalizedMediaItem[];
+};
+
 export type ContentList = {
   items: NormalizedMediaItem[];
   page: number;

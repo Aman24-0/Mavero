@@ -3,13 +3,15 @@
   import type { ContentType } from '$data/content';
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
+  import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
 
   export let id = 'afterlight';
   export let type: ContentType = 'movie';
   export let dataItem: MediaItem | undefined = undefined;
+  export let recommendationItems: MediaItem[] = [];
   let saved = false;
   $: item = dataItem ?? getMedia(id);
-  $: recommendations = media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 4);
+  $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 4);
 </script>
 
 <svelte:head>
@@ -33,6 +35,7 @@
         <div class="hero-actions"><a class="btn btn-primary" href={`/watch/${type}/${item.id}`}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={() => (saved = !saved)}><Plus size={15} /> {saved ? 'In my list' : 'My list'}</button><button class="icon-btn" aria-label={`Share ${item.title}`}><Share2 size={16} /></button><button class="icon-btn" aria-label={`Favorite ${item.title}`}><Heart size={16} /></button></div>
       </div>
     </section>
+    {#if type === 'series'}<SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} />{/if}
     <ContentRail title="You may also like" eyebrow="Keep exploring" items={recommendations} href="/discover" compact />
   </div>
 </div>

@@ -1,7 +1,7 @@
-import { getTmdbDetail, getTmdbDiscover, searchTmdb } from './adapters/tmdb';
+import { getTmdbDetail, getTmdbDiscover, getTmdbSeason, searchTmdb } from './adapters/tmdb';
 import { getAniListDetail, getAniListDiscover, searchAniList } from './adapters/anilist';
 import { media } from '$data/content';
-import type { ContentList, ContentSearchResult, ContentType, NormalizedMediaItem } from './types';
+import type { ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem } from './types';
 import { ContentServiceError } from './types';
 
 function fixtureSource(): NormalizedMediaItem['source'] {
@@ -61,13 +61,33 @@ export async function search(query: string, type?: ContentType, page = 1): Promi
   }
 }
 
-export async function getDetail(type: ContentType, id: string): Promise<NormalizedMediaItem> {
+export async function getSeriesSeason(id: string, seasonNumber: number) {
+  const cleanId = id.replace(/^series-/, '');
+  if (/^\d+$/.test(cleanId)) return getTmdbSeason(cleanId, seasonNumber);
+  const fixture = media.find((item) => item.type === 'series' && item.id === cleanId);
+  const count = fixture?.episodes ?? 8;
+  return {
+    number: seasonNumber,
+    title: `Season ${seasonNumber}`,
+    episodeCount: count,
+    episodes: Array.from({ length: count }, (_, index) => ({
+      id: `${cleanId}-s${seasonNumber}-e${index + 1}`,
+      number: index + 1,
+      season: seasonNumber,
+      title: `Episode ${index + 1}`,
+      overview: fixture?.description,
+      runtime: '44m'
+    }))
+  };
+}
+
+export async function getDetail(type: ContentType, id: string): Promise<ContentDetail> {
   try {
     if (type === 'anime') return await getAniListDetail(id.replace(/^anime-/, ''));
     return await getTmdbDetail(type, id.replace(/^(movie|series)-/, ''));
   } catch (error) {
     const fixture = fixtureDetail(type, id);
-    if (fixture && canFallback(error)) return { ...fixture, source: { ...fixture.source, stale: true } };
+    if (fixture && (canFallback(error) || (error instanceof ContentServiceError && error.code === 'NOT_FOUND'))) return { ...fixture, source: { ...fixture.source, stale: true } };
     throw error;
   }
 }

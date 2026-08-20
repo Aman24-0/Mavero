@@ -5,8 +5,8 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params }) => {
   try {
-    const item = await getDetail('anime', params.id);
-    return { item: toMediaItem(item) };
+    const detail = await getDetail('anime', params.id);
+    return { item: toMediaItem(detail), recommendations: (detail.recommendations ?? []).map(toMediaItem) };
   } catch {
     throw error(404, 'Anime not found');
   }

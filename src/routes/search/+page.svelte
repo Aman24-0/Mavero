@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { Search, ArrowUpRight, SlidersHorizontal, LoaderCircle } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { ContentType } from '$lib/server/content/types';
@@ -26,6 +28,11 @@
 
   async function runSearch() {
     const normalized = query.trim();
+    const urlParams = new URLSearchParams(page.url.searchParams);
+    if (normalized) urlParams.set('q', normalized); else urlParams.delete('q');
+    const selectedType = typeParam(type);
+    if (selectedType) urlParams.set('type', selectedType); else urlParams.delete('type');
+    void goto(`${page.url.pathname}${urlParams.toString() ? `?${urlParams.toString()}` : ''}`, { replaceState: true, noScroll: true, keepFocus: true });
     if (!normalized) {
       results = data.items;
       errorMessage = '';

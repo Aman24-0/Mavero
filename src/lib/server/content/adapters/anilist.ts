@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type ContentList, type ContentSource, type NormalizedMediaItem } from '../types';
+import { ContentServiceError, type ContentDetail, type ContentList, type ContentSource, type NormalizedMediaItem } from '../types';
 
 type AniListMedia = {
   id: number;
@@ -124,7 +124,7 @@ const listQuery = `query ($page: Int, $search: String, $season: MediaSeason, $se
 }`;
 
 const detailQuery = `query ($id: Int!) {
-  Media(id: $id, type: ANIME) { ${mediaFields} relations { edges { relationType node { id title { romaji english native } } } } }
+  Media(id: $id, type: ANIME) { ${mediaFields} relations { edges { relationType node { ${mediaFields} } } } }
 }`;
 
 export async function getAniListDiscover(page = 1): Promise<ContentList> {
@@ -150,7 +150,7 @@ export async function searchAniList(query: string, page = 1): Promise<ContentLis
   return { ...value, source: { ...value.source, stale } };
 }
 
-export async function getAniListDetail(externalId: string): Promise<NormalizedMediaItem> {
+export async function getAniListDetail(externalId: string): Promise<ContentDetail> {
   const numericId = Number(externalId);
   if (!Number.isInteger(numericId) || numericId <= 0) {
     throw new ContentServiceError('The AniList content identifier is invalid.', { code: 'NOT_FOUND', status: 404 });
@@ -159,7 +159,9 @@ export async function getAniListDetail(externalId: string): Promise<NormalizedMe
   const { value, stale } = await getOrSet(key, detailPolicy, async () => {
     const data = await aniListRequest<{ Media?: AniListMedia }>(detailQuery, { id: numericId });
     if (!data.Media) throw new ContentServiceError('The anime title was not found.', { code: 'NOT_FOUND', status: 404 });
-    return mapAniList(data.Media);
+    const item = mapAniList(data.Media);
+    const recommendations = (data.Media.relations?.edges ?? []).filter((edge) => edge.node && ['SEQUEL', 'PREQUEL', 'SIDE_STORY', 'SPIN_OFF'].includes(edge.relationType ?? '')).slice(0, 6).map((edge) => mapAniList(edge.node!, 'Related anime'));
+    return { ...item, recommendations };
   });
   return { ...value, source: { ...value.source, stale } };
 }
