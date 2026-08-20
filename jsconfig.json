@@ -10,9 +10,5 @@
     "sourceMap": true,
     "strict": true,
     "moduleResolution": "bundler"
-  },
-  "exclude": [
-    ".svelte-kit/cloudflare",
-    "worker-configuration.d.ts"
-  ]
+  }
 }

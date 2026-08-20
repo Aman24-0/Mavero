@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/private';
-import { PUBLIC_SUPABASE_URL } from '$env/static/public';
+import { env as publicEnv } from '$env/dynamic/public';
 import { getDetail } from '$lib/server/content/service';
 import type { Database } from '$lib/server/supabase/database.types';
 import type { NormalizedMediaItem } from '$lib/server/content/types';
@@ -13,7 +13,7 @@ type ResolverClient = SupabaseClient<Database>;
 
 function serviceClient(): ResolverClient {
   if (!env.PRIVATE_SUPABASE_SERVICE_ROLE_KEY) throw new ResolverError('RESOLUTION_UNAVAILABLE');
-  return createClient<Database>(PUBLIC_SUPABASE_URL, env.PRIVATE_SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }, global: { fetch } });
+  return createClient<Database>(publicEnv.PUBLIC_SUPABASE_URL, env.PRIVATE_SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }, global: { fetch } });
 }
 
 async function loadTrustedConfig(client: ResolverClient, request: ResolverRequest): Promise<TrustedResolutionConfig> {

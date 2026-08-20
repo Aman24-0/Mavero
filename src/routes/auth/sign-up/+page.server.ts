@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { friendlyAuthMessage, safeRedirectPath } from '$lib/server/supabase/server';
-import { PUBLIC_SUPABASE_AUTH_REDIRECT_URL } from '$env/static/public';
+import { env as publicEnv } from '$env/dynamic/public';
 import type { Actions } from './$types';
 
 export const actions: Actions = {
@@ -8,7 +8,7 @@ export const actions: Actions = {
     const formData = await request.formData();
     const email = String(formData.get('email') ?? '').trim().toLowerCase();
     if (!email) return fail(400, { message: 'Enter the email used for your MAVERO account.', email });
-    const { error } = await locals.supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: PUBLIC_SUPABASE_AUTH_REDIRECT_URL || new URL('/auth/callback', url).toString() } });
+    const { error } = await locals.supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: publicEnv.PUBLIC_SUPABASE_AUTH_REDIRECT_URL || new URL('/auth/callback', url).toString() } });
     if (error) return fail(400, { message: friendlyAuthMessage(error.message, 'sign-up'), email });
     return { success: true, message: 'If that account needs confirmation, a fresh email is on its way.', email };
   },
@@ -27,7 +27,7 @@ export const actions: Actions = {
     const { data, error } = await locals.supabase.auth.signUp({
       email,
       password,
-      options: { data: { display_name: displayName }, emailRedirectTo: PUBLIC_SUPABASE_AUTH_REDIRECT_URL || new URL('/auth/callback', url).toString() },
+      options: { data: { display_name: displayName }, emailRedirectTo: publicEnv.PUBLIC_SUPABASE_AUTH_REDIRECT_URL || new URL('/auth/callback', url).toString() },
     });
 
     if (error) return fail(400, { message: friendlyAuthMessage(error.message, 'sign-up'), displayName, email });
