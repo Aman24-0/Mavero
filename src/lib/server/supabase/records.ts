@@ -1,5 +1,5 @@
 import type { Json, Tables, TablesInsert } from './database.types';
-import { favoriteKey, progressKey, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/client/progress/types';
+import { favoriteKey, normalizeWatchlistStatus, progressKey, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/client/progress/types';
 
 export type CloudHistoryEvent = {
   eventKey: string;
@@ -78,6 +78,7 @@ export function favoriteFromRow(row: Tables<'favorites'>): FavoriteRecord {
     contentType: contentType(row.content_type),
     contentId: row.content_id,
     snapshot: snapshotFromJson(row.snapshot),
+    status: normalizeWatchlistStatus(row.status),
     createdAt: Date.parse(row.created_at),
     updatedAt: Date.parse(row.updated_at),
   };
@@ -90,6 +91,7 @@ export function favoriteToRow(userId: string, record: FavoriteRecord): TablesIns
     content_type: record.contentType,
     content_id: record.contentId,
     snapshot: record.snapshot as unknown as Json,
+    status: normalizeWatchlistStatus(record.status),
     created_at: new Date(record.createdAt).toISOString(),
     updated_at: new Date(record.updatedAt).toISOString(),
   };

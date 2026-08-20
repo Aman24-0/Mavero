@@ -2,12 +2,15 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Search, LoaderCircle, ChevronDown } from 'lucide-svelte';
+  import SelectionSheet from '$components/SelectionSheet.svelte';
   import type { PageData } from './$types';
   import type { ContentType, SearchFilters, SearchSort } from '$lib/server/content/types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
 
   export let data: PageData;
+
+  type SearchSelectionOption = { key: string; label: string; icon?: string; description?: string };
 
   let query = data.query;
   let type: 'All' | 'Movies' | 'Series' | 'Anime' = data.type === 'movie' ? 'Movies' : data.type === 'series' ? 'Series' : data.type === 'anime' ? 'Anime' : 'All';
@@ -18,6 +21,7 @@
   let loading = false;
   let errorMessage = data.errorMessage ?? '';
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let activeSheet: 'ott' | 'genre' | 'sort' | null = null;
 
   const types = [
     { label: 'Movies', value: 'Movies' },
@@ -124,12 +128,31 @@
     if (key === 'ott') ott = ott === value ? '' : value;
     if (key === 'genre') genre = genre === value ? '' : value;
     if (key === 'sort') sort = sort === value ? '' : value as SearchSort;
+    activeSheet = null;
     syncUrl();
     if (query.trim()) void runSearch();
   }
 
+  function openSheet(kind: 'ott' | 'genre' | 'sort') {
+    activeSheet = kind;
+  }
+
+  function sheetSelection(value: string) {
+    if (!activeSheet) return;
+    selectFilter(activeSheet, value);
+  }
+
   $: visibleResults = results.filter((item) => type === 'All' || item.type === (type === 'Movies' ? 'movie' : type === 'Series' ? 'series' : 'anime'));
   $: selectedOtt = ottOptions.find((option) => option.key === ott);
+  $: selectedGenre = genreOptions.find((option) => option.key === genre);
+  $: selectedSort = sort === 'release-asc' ? 'Old to new' : sort === 'release-desc' ? 'New to old' : 'Release date';
+  $: sheetTitle = activeSheet === 'ott' ? 'Streaming service' : activeSheet === 'genre' ? 'Genre' : 'Release date';
+  $: sheetOptions = activeSheet === 'ott'
+    ? [{ key: '', label: 'All OTT', icon: 'A' }, ...ottOptions]
+    : activeSheet === 'genre'
+      ? [{ key: '', label: 'All genres' }, ...genreOptions]
+      : [{ key: '', label: 'Release date' }, { key: 'release-asc', label: 'Old to new', description: 'Earliest releases first' }, { key: 'release-desc', label: 'New to old', description: 'Newest releases first' }] as SearchSelectionOption[];
+  $: sheetSelected = activeSheet === 'ott' ? ott : activeSheet === 'genre' ? genre : sort;
 </script>
 
 <svelte:head>
@@ -149,9 +172,9 @@
       {#each types as item}<button class:active={type === item.value} class="filter-chip" aria-pressed={type === item.value} onclick={() => selectType(item.value)}>{item.label}</button>{/each}
     </div>
     <div class="filter-selects" aria-label="Additional search filters">
-      <label class="select-field"><span class="select-label">OTT</span><span class="select-control"><span class="select-icon">{selectedOtt?.icon ?? 'A'}</span><select aria-label="Filter by OTT service" value={ott} onchange={(event) => selectFilter('ott', event.currentTarget.value)}><option value="">All OTT</option>{#each ottOptions as option}<option value={option.key}>{option.icon} {option.label}</option>{/each}</select><ChevronDown size={14} /></span></label>
-      <label class="select-field"><span class="select-label">Genre</span><span class="select-control"><select aria-label="Filter by genre" value={genre} onchange={(event) => selectFilter('genre', event.currentTarget.value)}><option value="">All genres</option>{#each genreOptions as option}<option value={option.key}>{option.label}</option>{/each}</select><ChevronDown size={14} /></span></label>
-      <label class="select-field"><span class="select-label">Sort</span><span class="select-control"><select aria-label="Sort by release date" value={sort} onchange={(event) => selectFilter('sort', event.currentTarget.value)}><option value="">Release date</option><option value="release-asc">Old to new</option><option value="release-desc">New to old</option></select><ChevronDown size={14} /></span></label>
+      <button class="filter-trigger" class:active={Boolean(ott)} type="button" aria-label="Choose OTT service" aria-haspopup="dialog" aria-expanded={activeSheet === 'ott'} onclick={() => openSheet('ott')}><span class="select-label">OTT</span><span class="trigger-value"><span class="select-icon">{selectedOtt?.icon ?? 'A'}</span><span>{selectedOtt?.label ?? 'All OTT'}</span><ChevronDown size={14} /></span></button>
+      <button class="filter-trigger" class:active={Boolean(genre)} type="button" aria-label="Choose genre" aria-haspopup="dialog" aria-expanded={activeSheet === 'genre'} onclick={() => openSheet('genre')}><span class="select-label">Genre</span><span class="trigger-value"><span>{selectedGenre?.label ?? 'All genres'}</span><ChevronDown size={14} /></span></button>
+      <button class="filter-trigger" class:active={Boolean(sort)} type="button" aria-label="Choose release sorting" aria-haspopup="dialog" aria-expanded={activeSheet === 'sort'} onclick={() => openSheet('sort')}><span class="select-label">Sort</span><span class="trigger-value"><span>{selectedSort}</span><ChevronDown size={14} /></span></button>
     </div>
   </section>
 
@@ -170,6 +193,8 @@
   {/if}
 </div>
 
+<SelectionSheet open={activeSheet !== null} title={sheetTitle} options={sheetOptions} selected={sheetSelected} onClose={() => activeSheet = null} onSelect={sheetSelection} />
+
 <style>
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .search-page { min-height: calc(100dvh - 68px); padding-top: 26px; padding-bottom: 70px; }
@@ -181,14 +206,15 @@
   .filter-chip:hover, .filter-chip.active { color: var(--ink); border-color: rgba(155,135,245,.6); background: var(--accent-soft); }
   .filter-chip:active { transform: scale(.97); }
   .filter-selects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
-  .select-field { display: grid; gap: 5px; min-width: 0; }
+  .filter-trigger { display: grid; gap: 6px; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: rgba(255,255,255,.025); text-align: left; cursor: pointer; transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
+  .filter-trigger:hover, .filter-trigger:focus-visible { color: var(--ink); border-color: rgba(155,135,245,.6); outline: 0; box-shadow: 0 0 0 3px rgba(155,135,245,.09); }
+  .filter-trigger:active { transform: scale(.98); }
+  .filter-trigger.active { border-color: rgba(155,135,245,.68); background: rgba(155,135,245,.1); box-shadow: inset 0 0 0 1px rgba(155,135,245,.12); }
   .select-label { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .52rem; letter-spacing: .08em; text-transform: uppercase; }
-  .select-control { display: flex; align-items: center; gap: 7px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; color: var(--muted); background: rgba(255,255,255,.025); }
-  .select-control:focus-within { border-color: rgba(155,135,245,.6); box-shadow: 0 0 0 3px rgba(155,135,245,.09); }
-  .select-control select { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--ink); background: transparent; cursor: pointer; font: inherit; font-size: .67rem; }
-  .select-control option { color: #18151f; background: #fff; }
+  .trigger-value { display: flex; align-items: center; min-width: 0; gap: 7px; color: var(--ink); font-size: .67rem; }
+  .trigger-value > span:not(.select-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trigger-value :global(svg) { flex: 0 0 auto; margin-left: auto; color: var(--muted-deep); }
   .select-icon { display: grid; flex: 0 0 21px; place-items: center; width: 21px; height: 21px; border-radius: 6px; color: var(--ink); background: var(--accent-soft); font-family: 'DM Mono', monospace; font-size: .48rem; font-weight: 800; }
-  .select-control :global(svg) { flex: 0 0 auto; color: var(--muted-deep); pointer-events: none; }
   .search-loading, .search-error { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .62rem; }
   .search-loading :global(svg) { animation: spin 1s linear infinite; }
   .search-error { color: #d4b27c; }
@@ -204,6 +230,6 @@
   .empty-search p { max-width: 280px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 640px) { .search-page { padding-top: 16px; } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; padding: 0 8px; } .filter-selects { grid-template-columns: 1fr; gap: 7px; } .select-field { grid-template-columns: 52px minmax(0, 1fr); align-items: center; } .select-label { padding-left: 2px; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
+  @media (max-width: 640px) { .search-page { padding-top: 16px; } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; padding: 0 8px; } .filter-selects { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .filter-trigger { padding: 8px 7px; } .trigger-value { font-size: .58rem; } .select-icon { flex-basis: 18px; width: 18px; height: 18px; font-size: .42rem; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
   @media (prefers-reduced-motion: reduce) { .filter-chip, .search-loading :global(svg) { transition: none; animation: none; } }
 </style>

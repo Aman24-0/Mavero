@@ -22,6 +22,7 @@ export type Database = {
           favorite_key: string
           id: string
           snapshot: Json
+          status: string
           updated_at: string
           user_id: string
         }
@@ -32,6 +33,7 @@ export type Database = {
           favorite_key: string
           id?: string
           snapshot?: Json
+          status?: string
           updated_at?: string
           user_id: string
         }
@@ -42,6 +44,7 @@ export type Database = {
           favorite_key?: string
           id?: string
           snapshot?: Json
+          status?: string
           updated_at?: string
           user_id?: string
         }

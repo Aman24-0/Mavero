@@ -3,19 +3,28 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { ArrowLeft, ArrowRight, Heart, Play, Share2, Star } from 'lucide-svelte';
+  import SelectionSheet from '$components/SelectionSheet.svelte';
   import type { ContentType } from '$data/content';
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
-  import { isFavorite, toggleFavorite } from '$lib/client/progress/service';
+  import { deleteFavorite, getFavoriteStatus, setFavoriteStatus } from '$lib/client/progress/service';
+  import type { WatchlistStatus } from '$lib/client/progress/types';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
 
   export let id = 'afterlight';
   export let type: ContentType = 'movie';
   export let dataItem: MediaItem | undefined = undefined;
   export let recommendationItems: MediaItem[] = [];
-  let saved = false;
+  let watchlistStatus: WatchlistStatus | null = null;
+  let statusSheetOpen = false;
   let saveError = '';
+  const statusOptions = [
+    { key: 'watching', label: 'Watching', icon: '▶', description: 'Keep this in your current rotation.' },
+    { key: 'planned', label: 'Planned', icon: '＋', description: 'Save it for a future night.' },
+    { key: 'completed', label: 'Completed', icon: '✓', description: 'Mark this story as finished.' },
+    { key: 'remove', label: 'Remove from My List', icon: '×', description: 'Take it out of your saved library.' },
+  ];
   $: item = dataItem ?? getMedia(id);
   $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6);
   $: canonicalUrl = `${page.url.origin}/${type}/${item.id}`;
@@ -23,22 +32,39 @@
 
   onMount(() => {
     let active = true;
-    void isFavorite(type, item.id).then((value) => { if (active) saved = value; });
+    void getFavoriteStatus(type, item.id).then((value) => { if (active) watchlistStatus = value; });
     return () => { active = false; };
   });
 
-  async function toggleSaved() {
+  function openStatusSheet() {
+    statusSheetOpen = true;
+  }
+
+  function closeStatusSheet() {
+    statusSheetOpen = false;
+  }
+
+  async function chooseStatus(key: string) {
+    closeStatusSheet();
     try {
-      const result = await toggleFavorite(type, item.id, { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description });
-      saved = result.saved;
-      if (page.data.user) {
-        if (result.saved) void syncAuthenticatedState();
-        else void deleteCloudFavorite(type, item.id);
+      if (key === 'remove') {
+        await deleteFavorite(type, item.id);
+        watchlistStatus = null;
+        if (page.data.user) void deleteCloudFavorite(type, item.id);
+      } else if (key === 'watching' || key === 'planned' || key === 'completed') {
+        const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+        const record = await setFavoriteStatus(type, item.id, snapshot, key);
+        watchlistStatus = record.status ?? key;
+        if (page.data.user) void syncAuthenticatedState();
       }
       saveError = '';
     } catch {
       saveError = 'This device could not update your local list.';
     }
+  }
+
+  function statusLabel(status: WatchlistStatus | null) {
+    return status ? status.charAt(0).toUpperCase() + status.slice(1) : 'My list';
   }
 
   function goBack(event: MouseEvent) {
@@ -84,7 +110,7 @@
           <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.runtime}</span><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
         </div>
         <p class="detail-description">{item.description}</p>
-        <div class="detail-actions"><a class="btn btn-primary" href={`/watch/${type}/${item.id}`}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={toggleSaved} aria-pressed={saved}><Heart size={15} fill={saved ? 'currentColor' : 'none'} /> {saved ? 'Saved' : 'My list'}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
+        <div class="detail-actions"><a class="btn btn-primary" href={`/watch/${type}/${item.id}`}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}><Heart size={15} fill={watchlistStatus ? 'currentColor' : 'none'} /> {statusLabel(watchlistStatus)}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
         {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
         <div class="detail-grid"><div class="detail-stat"><span>Genres</span><strong>{item.genres.slice(0, 2).join(' · ') || '—'}</strong></div><div class="detail-stat"><span>Audio</span><strong>Original · Sub</strong></div><div class="detail-stat"><span>Quality</span><strong>Full HD · 4K</strong></div></div>
         {#if type !== 'movie'}<div class="episode-strip"><div><div class="eyebrow">Episode guide</div><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? 12} episodes</strong></div><a class="icon-btn" href={`/${type}/${item.id}#episodes`} aria-label="Open episode list"><ArrowRight size={16} /></a></div>{/if}
@@ -93,6 +119,7 @@
     {#if type === 'series'}<SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} />{/if}
     {#if recommendations.length}<ContentRail title="You may also like" eyebrow="Keep exploring" items={recommendations} href="/discover" compact />{/if}
   </div>
+  <SelectionSheet open={statusSheetOpen} title="Add to My List" options={statusOptions} selected={watchlistStatus ?? ''} onClose={closeStatusSheet} onSelect={chooseStatus} />
 </div>
 
 <style>

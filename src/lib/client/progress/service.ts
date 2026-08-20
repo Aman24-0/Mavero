@@ -1,5 +1,5 @@
 import { getFavorite, getLocalProgressState, getProgress, listFavorites, listProgress, putFavorite, putProgress, removeFavorite, removeProgress } from './database';
-import { clampTime, completionFor, favoriteKey, progressKey, type CloudProgressRecord, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord } from './types';
+import { clampTime, completionFor, favoriteKey, normalizeWatchlistStatus, progressKey, type CloudProgressRecord, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord, type WatchlistStatus } from './types';
 import { mergeProgress } from '../../shared/progress-merge';
 
 export { mergeProgress } from '../../shared/progress-merge';
@@ -47,19 +47,28 @@ export async function deleteProgress(context: PlaybackContext) {
   return removeProgress(context);
 }
 
-export async function saveFavorite(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot, now = Date.now()): Promise<FavoriteRecord> {
+export async function saveFavorite(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot, now = Date.now(), status: WatchlistStatus = 'planned'): Promise<FavoriteRecord> {
   const existing = await getFavorite(contentType, contentId);
-  return putFavorite({ key: favoriteKey(contentType, contentId), contentType, contentId, snapshot, createdAt: existing?.createdAt ?? now, updatedAt: now });
+  return putFavorite({ key: favoriteKey(contentType, contentId), contentType, contentId, snapshot, status: normalizeWatchlistStatus(status), createdAt: existing?.createdAt ?? now, updatedAt: now });
+}
+
+export async function setFavoriteStatus(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot, status: WatchlistStatus, now = Date.now()) {
+  return saveFavorite(contentType, contentId, snapshot, now, status);
 }
 
 export async function toggleFavorite(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot) {
   const existing = await getFavorite(contentType, contentId);
   if (existing) {
     await removeFavorite(contentType, contentId);
-    return { saved: false };
+    return { saved: false, status: undefined };
   }
-  await saveFavorite(contentType, contentId, snapshot);
-  return { saved: true };
+  const record = await saveFavorite(contentType, contentId, snapshot);
+  return { saved: true, status: record.status };
+}
+
+export async function getFavoritesByStatus(status?: WatchlistStatus) {
+  const records = await listFavorites();
+  return status ? records.filter((record) => record.status === status) : records;
 }
 
 export async function getLocalFavorites() {
@@ -68,6 +77,15 @@ export async function getLocalFavorites() {
 
 export async function isFavorite(contentType: LocalContentType, contentId: string) {
   return Boolean(await getFavorite(contentType, contentId));
+}
+
+export async function getFavoriteStatus(contentType: LocalContentType, contentId: string): Promise<WatchlistStatus | null> {
+  const record = await getFavorite(contentType, contentId);
+  return record ? normalizeWatchlistStatus(record.status) : null;
+}
+
+export async function deleteFavorite(contentType: LocalContentType, contentId: string) {
+  return removeFavorite(contentType, contentId);
 }
 
 export async function getLocalPersistenceState() {

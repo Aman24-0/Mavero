@@ -1,7 +1,7 @@
-import { favoriteKey, isFavoriteRecord, isPlaybackRecord, progressKey, type FavoriteRecord, type FavoriteRecord as Favorite, type LocalProgressState, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord } from './types';
+import { favoriteKey, isFavoriteRecord, isPlaybackRecord, normalizeWatchlistStatus, progressKey, type FavoriteRecord, type LocalProgressState, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord } from './types';
 
 const DB_NAME = 'mavero-local';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const PROGRESS_STORE = 'watch_progress';
 const FAVORITES_STORE = 'favorites';
 
@@ -43,6 +43,7 @@ function openDatabase(): Promise<IDBDatabase | null> {
         if (favorites) {
           if (!favorites.indexNames.contains('updatedAt')) favorites.createIndex('updatedAt', 'updatedAt', { unique: false });
           if (!favorites.indexNames.contains('createdAt')) favorites.createIndex('createdAt', 'createdAt', { unique: false });
+          if (!favorites.indexNames.contains('status')) favorites.createIndex('status', 'status', { unique: false });
         }
       };
       request.onsuccess = () => {
@@ -121,23 +122,29 @@ export async function removeProgress(context: PlaybackContext) {
   await run(PROGRESS_STORE, 'readwrite', (store) => store.delete(key));
 }
 
+function normalizeFavorite(record: FavoriteRecord) {
+  return { ...record, status: normalizeWatchlistStatus(record.status) };
+}
+
 export async function getFavorite(contentType: FavoriteRecord['contentType'], contentId: string) {
   const key = favoriteKey(contentType, contentId);
   const result = await run<FavoriteRecord | undefined>(FAVORITES_STORE, 'readonly', (store) => store.get(key));
-  if (result && isFavoriteRecord(result)) return result;
-  return memoryFavorites.get(key);
+  if (result && isFavoriteRecord(result)) return normalizeFavorite(result);
+  const memory = memoryFavorites.get(key);
+  return memory ? normalizeFavorite(memory) : undefined;
 }
 
 export async function listFavorites() {
   const result = await run<FavoriteRecord[]>(FAVORITES_STORE, 'readonly', (store) => store.getAll());
-  if (result) return result.filter(isFavoriteRecord).sort((a, b) => b.updatedAt - a.updatedAt);
-  return [...memoryFavorites.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  if (result) return result.filter(isFavoriteRecord).map(normalizeFavorite).sort((a, b) => b.updatedAt - a.updatedAt);
+  return [...memoryFavorites.values()].map(normalizeFavorite).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function putFavorite(record: Favorite) {
-  memoryFavorites.set(record.key, record);
-  await run(FAVORITES_STORE, 'readwrite', (store) => store.put(record));
-  return record;
+export async function putFavorite(record: FavoriteRecord) {
+  const safe = normalizeFavorite(record);
+  memoryFavorites.set(safe.key, safe);
+  await run(FAVORITES_STORE, 'readwrite', (store) => store.put(safe));
+  return safe;
 }
 
 export async function removeFavorite(contentType: FavoriteRecord['contentType'], contentId: string) {

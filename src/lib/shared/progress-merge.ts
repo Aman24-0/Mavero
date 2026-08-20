@@ -1,4 +1,4 @@
-import type { CloudProgressRecord, FavoriteRecord, WatchProgressRecord } from '../client/progress/types';
+import { normalizeWatchlistStatus, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord } from '$lib/client/progress/types';
 
 export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgressRecord[]) {
   const merged = new Map<string, WatchProgressRecord>();
@@ -11,7 +11,8 @@ export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgress
 
 export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[]) {
   const merged = new Map<string, FavoriteRecord>();
-  for (const record of [...local, ...cloud]) {
+  for (const rawRecord of [...local, ...cloud]) {
+    const record = { ...rawRecord, status: normalizeWatchlistStatus(rawRecord.status) };
     const existing = merged.get(record.key);
     if (!existing || record.updatedAt > existing.updatedAt || (record.updatedAt === existing.updatedAt && record.createdAt < existing.createdAt)) merged.set(record.key, record);
   }
