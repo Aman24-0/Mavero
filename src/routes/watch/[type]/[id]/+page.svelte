@@ -5,6 +5,7 @@
   import { formatType } from '$data/content';
   import type { PageData } from './$types';
   import { createProgressWriter, getLocalPersistenceState, getResumeProgress } from '$lib/client/progress/service';
+  import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import type { PlaybackContext } from '$lib/client/progress/types';
 
   export let data: PageData;
@@ -19,6 +20,8 @@
   let localState = 'Preparing local progress…';
   let writer: ReturnType<typeof createProgressWriter> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let startedHistory = false;
+  let lastHistoryAt = 0;
 
   $: duration = duration || (type === 'movie' ? 7694 : type === 'series' ? 2640 : 1440);
   $: progress = duration > 0 ? Math.min(100, Math.round((currentTime / duration) * 100)) : 0;
@@ -43,13 +46,22 @@
       if (!playing || !writer) return;
       currentTime = Math.min(duration, currentTime + 1);
       writer.update(currentTime, duration, currentTime >= duration);
+      if (page.data.user && !startedHistory) {
+        startedHistory = true;
+        void sendHistory('started');
+      }
+      if (page.data.user && currentTime - lastHistoryAt >= 60) {
+        lastHistoryAt = currentTime;
+        void sendHistory('progressed');
+      }
       if (currentTime >= duration) {
         playing = false;
         void writer.complete(currentTime, duration);
+        if (page.data.user) { void sendHistory('completed'); void syncAuthenticatedState(); }
       }
     }, 1000);
 
-    const flushWhenHidden = () => { if (document.hidden) void writer?.pause(); };
+    const flushWhenHidden = () => { if (document.hidden) { void writer?.pause(); if (page.data.user) void syncAuthenticatedState(); } };
     const flushBeforeUnload = () => { void writer?.flush(); };
     document.addEventListener('visibilitychange', flushWhenHidden);
     window.addEventListener('beforeunload', flushBeforeUnload);
@@ -63,9 +75,15 @@
     };
   });
 
+  async function sendHistory(eventType: 'started' | 'progressed' | 'completed') {
+    if (!page.data.user) return;
+    await recordCloudHistory({ eventKey: `${context.contentType}:${context.contentId}:${context.season ?? '-'}:${context.episode ?? '-'}:${eventType}:${Math.floor(currentTime)}`, eventType, contentType: context.contentType, contentId: context.contentId, season: context.season, episode: context.episode, currentTime, duration, completionState: eventType === 'completed' ? 'completed' : 'in_progress', snapshot: { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description }, occurredAt: Date.now() });
+  }
+
   function togglePlayback() {
     playing = !playing;
-    if (!playing) void writer?.pause();
+    if (playing && page.data.user && !startedHistory) { startedHistory = true; void sendHistory('started'); }
+    if (!playing) { void writer?.pause(); if (page.data.user) void syncAuthenticatedState(); }
   }
 
   function seek(event: Event) {

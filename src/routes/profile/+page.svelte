@@ -1,48 +1,101 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, Settings2, ShieldCheck } from 'lucide-svelte';
+  import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, Settings2, ShieldCheck, Cloud, LogOut } from 'lucide-svelte';
+  import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
   import { getContinueWatching, getLocalFavorites, getLocalPersistenceState, getRecentlyWatched } from '$lib/client/progress/service';
   import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
+  import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
 
-  let continueItems: MediaItem[] = [];
-  let recentItems: MediaItem[] = [];
-  let favoriteItems: MediaItem[] = [];
-  let watchedSeconds = 0;
-  let storageMessage = 'Preparing local storage…';
-  let loaded = false;
-  let errorMessage = '';
+  let { data }: { data: PageData } = $props();
+  let continueItems = $state<MediaItem[]>([]);
+  let recentItems = $state<MediaItem[]>([]);
+  let favoriteItems = $state<MediaItem[]>([]);
+  let watchedSeconds = $state(0);
+  let storageMessage = $state('Preparing local storage…');
+  let loaded = $state(false);
+  let errorMessage = $state('');
+  let syncStatus = $state<SyncStatus>('pending');
+
+  function accountName() {
+    const metadata = data.user?.user_metadata;
+    return typeof metadata?.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name : data.user?.email?.split('@')[0] ?? 'Alex';
+  }
+
+  function historyToMedia(record: { content_id: string; content_type: string; snapshot: unknown; season?: number | null; episode?: number | null; position_seconds: number; duration: number }): MediaItem {
+    const snapshot = record.snapshot && typeof record.snapshot === 'object' && !Array.isArray(record.snapshot) ? record.snapshot as Record<string, unknown> : {};
+    const type = record.content_type === 'series' || record.content_type === 'anime' ? record.content_type : 'movie';
+    return {
+      id: record.content_id,
+      title: typeof snapshot.title === 'string' ? snapshot.title : 'Untitled',
+      year: typeof snapshot.year === 'number' ? snapshot.year : 0,
+      type,
+      runtime: typeof snapshot.runtime === 'string' ? snapshot.runtime : '',
+      rating: typeof snapshot.rating === 'number' ? snapshot.rating : 0,
+      genres: Array.isArray(snapshot.genres) ? snapshot.genres.filter((value): value is string => typeof value === 'string') : [],
+      description: typeof snapshot.description === 'string' ? snapshot.description : '',
+      poster: typeof snapshot.poster === 'string' ? snapshot.poster : '',
+      backdrop: typeof snapshot.backdrop === 'string' ? snapshot.backdrop : '',
+      accent: '#9b87f5',
+      resumeHref: type === 'movie' || !record.season || !record.episode ? `/watch/${type}/${record.content_id}` : `/watch/${type}/${record.content_id}/${record.season}/${record.episode}`,
+      progress: record.duration > 0 ? Math.round((record.position_seconds / record.duration) * 100) : 0,
+    };
+  }
+
+  function syncStatusLabel(status: SyncStatus) {
+    return ({ synced: 'Synced across devices', syncing: 'Syncing your library…', pending: 'Sync pending', offline: 'Offline · Local cache active', error: 'Cloud sync will retry later' } satisfies Record<SyncStatus, string>)[status];
+  }
 
   async function loadLocalState() {
     errorMessage = '';
     try {
-      const [continueRecords, recentRecords, favoriteRecords, state] = await Promise.all([getContinueWatching(), getRecentlyWatched(), getLocalFavorites(), getLocalPersistenceState()]);
-      continueItems = continueRecords.map(progressToMedia);
-      recentItems = recentRecords.map(progressToMedia);
-      favoriteItems = favoriteRecords.map(favoriteToMedia);
-      watchedSeconds = recentRecords.reduce((total, record) => total + record.currentTime, 0);
-      storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
+      const state = await getLocalPersistenceState();
+      if (data.user) {
+        const cloud = await syncAuthenticatedState();
+        syncStatus = cloud.status;
+        continueItems = cloud.progress.filter((record) => record.completionState !== 'completed' && record.currentTime > 0).map(progressToMedia);
+        favoriteItems = cloud.favorites.map(favoriteToMedia);
+        const historyResponse = await fetch('/api/account/history?limit=20');
+        if (historyResponse.ok) {
+          const historyBody = await historyResponse.json() as { history?: Array<{ content_id: string; content_type: string; snapshot: unknown; season?: number | null; episode?: number | null; position_seconds: number; duration: number }> };
+          recentItems = (historyBody.history ?? []).map(historyToMedia);
+        } else {
+          recentItems = cloud.progress.map(progressToMedia);
+        }
+        watchedSeconds = recentItems.reduce((total, item) => total + (item.progress ?? 0), 0);
+        storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
+      } else {
+        const [continueRecords, recentRecords, favoriteRecords] = await Promise.all([getContinueWatching(), getRecentlyWatched(), getLocalFavorites()]);
+        continueItems = continueRecords.map(progressToMedia);
+        recentItems = recentRecords.map(progressToMedia);
+        favoriteItems = favoriteRecords.map(favoriteToMedia);
+        watchedSeconds = recentRecords.reduce((total, record) => total + record.currentTime, 0);
+        storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
+      }
       loaded = true;
     } catch {
-      errorMessage = 'Local progress is unavailable right now, but browsing and playback remain available.';
+      syncStatus = getSyncStatus();
+      errorMessage = 'Your library is temporarily unavailable, but browsing and playback remain available.';
       loaded = true;
     }
   }
 
   onMount(() => { void loadLocalState(); });
 
-  $: watchedLabel = watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`;
+  let isAuthenticated = $derived(Boolean(data.user));
+
+  let watchedLabel = $derived(watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`);
 </script>
 
 <svelte:head><title>Profile — Mavero</title></svelte:head>
 
 <div class="container-wide profile-page">
-  <section class="profile-header"><div class="profile-avatar">AM</div><div><div class="eyebrow">MAVERO / Your space</div><h1>Welcome back, Alex.</h1><p>Pick up where you left off, or make room for something new.</p></div><a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a></section>
+  <section class="profile-header"><div class="profile-avatar">{accountName().slice(0, 2).toUpperCase()}</div><div><div class="eyebrow">MAVERO / Your space</div><h1>Welcome back, {accountName()}.</h1><p>{isAuthenticated ? 'Your library follows you across devices.' : 'Pick up where you left off, or make room for something new.'}</p></div>{#if isAuthenticated}<form class="inline-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn btn-secondary"><LogOut size={15} /> Sign out</button></form>{:else}<a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a>{/if}</section>
 
-  <div class="profile-grid"><section class="profile-card profile-card-main"><div class="eyebrow">Guest mode</div><h2>Your watch history lives here.</h2><p>Mavero saves your progress on this device automatically. Sign in when you want it available everywhere.</p><div class="sync-row"><span><ShieldCheck size={15} /> {storageMessage}</span><span>{loaded ? 'Ready' : 'Loading'}</span></div></section><section class="profile-card"><div class="eyebrow">Your activity</div><div class="activity-list"><div><Clock3 size={15} /><span><strong>{watchedLabel}</strong><small>Watched locally</small></span></div><div><Heart size={15} /><span><strong>{favoriteItems.length} title{favoriteItems.length === 1 ? '' : 's'}</strong><small>Saved on this device</small></span></div></div></section></div>
+  <div class="profile-grid"><section class="profile-card profile-card-main"><div class="eyebrow">{isAuthenticated ? 'Cloud library' : 'Guest mode'}</div><h2>{isAuthenticated ? 'Your story travels with you.' : 'Your watch history lives here.'}</h2><p>{isAuthenticated ? 'MAVERO reconciles this device with your cloud library without losing newer local progress.' : 'MAVERO saves your progress on this device automatically. Sign in when you want it available everywhere.'}</p><div class="sync-row"><span><ShieldCheck size={15} /> {storageMessage}</span><span>{isAuthenticated ? syncStatusLabel(syncStatus) : loaded ? 'Ready' : 'Loading'}</span></div></section><section class="profile-card"><div class="eyebrow">Your activity</div><div class="activity-list"><div><Clock3 size={15} /><span><strong>{watchedLabel}</strong><small>{isAuthenticated ? 'Cloud history' : 'Watched locally'}</small></span></div><div><Heart size={15} /><span><strong>{favoriteItems.length} title{favoriteItems.length === 1 ? '' : 's'}</strong><small>{isAuthenticated ? 'Synced My List' : 'Saved on this device'}</small></span></div></div></section></div>
 
   {#if errorMessage}<ErrorState eyebrow="MAVERO / Local state" title="Your local library is resting." message={errorMessage} retry={loadLocalState} />{/if}
 

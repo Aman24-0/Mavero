@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import { ArrowLeft, ArrowUpRight, Heart, Play, Plus, Share2, Star } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
   import { isFavorite, toggleFavorite } from '$lib/client/progress/service';
+  import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
 
   export let id = 'afterlight';
   export let type: ContentType = 'movie';
@@ -26,6 +28,10 @@
     try {
       const result = await toggleFavorite(type, item.id, { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description });
       saved = result.saved;
+      if (page.data.user) {
+        if (result.saved) void syncAuthenticatedState();
+        else void deleteCloudFavorite(type, item.id);
+      }
       saveError = '';
     } catch {
       saveError = 'This device could not update your local list.';

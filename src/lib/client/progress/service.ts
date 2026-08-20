@@ -1,5 +1,8 @@
 import { getFavorite, getLocalProgressState, getProgress, listFavorites, listProgress, putFavorite, putProgress, removeFavorite, removeProgress } from './database';
 import { clampTime, completionFor, favoriteKey, progressKey, type CloudProgressRecord, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord } from './types';
+import { mergeProgress } from '../../shared/progress-merge';
+
+export { mergeProgress } from '../../shared/progress-merge';
 
 export const COMPLETION_THRESHOLD = 0.9;
 export const DEFAULT_FLUSH_INTERVAL = 12_000;
@@ -122,15 +125,6 @@ export function progressLabel(record: WatchProgressRecord) {
 
 export function progressPercent(record: WatchProgressRecord) {
   return record.duration > 0 ? Math.min(100, Math.round((record.currentTime / record.duration) * 100)) : 0;
-}
-
-export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgressRecord[]) {
-  const merged = new Map<string, WatchProgressRecord>();
-  for (const record of [...local, ...cloud]) {
-    const existing = merged.get(record.key);
-    if (!existing || record.updatedAt > existing.updatedAt || (record.updatedAt === existing.updatedAt && record.currentTime > existing.currentTime)) merged.set(record.key, record);
-  }
-  return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export type FutureCloudProgressAdapter = {

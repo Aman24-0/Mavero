@@ -3,8 +3,9 @@
   import { navigating } from '$app/state';
   import { Search, UserRound, Compass, Menu, ChevronDown } from 'lucide-svelte';
   import RouteLoading from '$components/RouteLoading.svelte';
+  import type { User } from '@supabase/supabase-js';
 
-  let { children, currentPath = '/' }: { children: Snippet; currentPath?: string } = $props();
+  let { children, currentPath = '/', user = null }: { children: Snippet; currentPath?: string; user?: User | null } = $props();
   let shell: HTMLElement;
   let navOpen = $state(false);
 
@@ -15,6 +16,10 @@
   ];
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
+  const avatarLabel = (account: User | null | undefined) => {
+    const name = typeof account?.user_metadata?.display_name === 'string' ? account.user_metadata.display_name : account?.email ?? '';
+    return name.split(/\\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'AM';
+  };
 
   onMount(async () => {
     const { gsap } = await import('gsap');
@@ -41,7 +46,7 @@
 
     <div class="topbar-actions">
       <a class="icon-btn" href="/search" aria-label="Search MAVERO"><Search size={17} strokeWidth={1.8} /></a>
-      <a class="avatar" href="/profile" aria-label="Open profile">AM</a>
+      <a class="avatar" href="/profile" aria-label="Open profile">{avatarLabel(user)}</a>
       <button class="icon-btn menu-trigger" aria-label="Open navigation" aria-expanded={navOpen} onclick={() => (navOpen = !navOpen)}>
         <Menu size={17} strokeWidth={1.8} />
       </button>

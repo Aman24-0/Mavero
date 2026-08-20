@@ -1,11 +1,22 @@
 <script lang="ts">
   import '$lib/../app.css';
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import AppShell from '$components/AppShell.svelte';
   import type { Snippet } from 'svelte';
+  import type { LayoutData } from './$types';
+  import { syncAuthenticatedState } from '$lib/client/progress/cloud';
 
-  let { children: pageChildren }: { children: Snippet } = $props();
+  let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
   const title = 'Mavero — Discover. Watch.';
+
+  onMount(() => {
+    if (!data.user) return;
+    void syncAuthenticatedState();
+    const retry = () => { if (navigator.onLine) void syncAuthenticatedState(); };
+    window.addEventListener('online', retry);
+    return () => window.removeEventListener('online', retry);
+  });
 </script>
 
 <svelte:head>
@@ -15,7 +26,7 @@
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-<AppShell currentPath={page.url.pathname}>
+<AppShell currentPath={page.url.pathname} user={data.user}>
   {#snippet children()}
     {@render pageChildren()}
   {/snippet}
