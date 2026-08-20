@@ -2,7 +2,7 @@
   import { page } from '$app/state';
   import { ArrowLeft, Mail, LockKeyhole, ShieldCheck } from 'lucide-svelte';
 
-  type AuthForm = { message?: string; email?: string };
+  type AuthForm = { message?: string; email?: string; success?: boolean };
   let { form }: { form?: AuthForm } = $props();
   const queryMessage = page.url.searchParams.get('error') === 'confirmation'
     ? 'That confirmation link could not be completed. Please try signing in again.'
@@ -11,7 +11,11 @@
       : '';
 </script>
 
-<svelte:head><title>Sign in — Mavero</title></svelte:head>
+<svelte:head>
+  <title>Sign in — Mavero</title>
+  <meta name="description" content="Sign in to sync your MAVERO library across devices." />
+  <meta name="robots" content="noindex,nofollow" />
+</svelte:head>
 
 <div class="auth-wrap container-wide">
   <a class="back-link" href="/profile"><ArrowLeft size={15} /> Back to Profile</a>
@@ -19,13 +23,14 @@
     <div class="eyebrow">MAVERO / Cross-device sync</div>
     <h1>Keep your place<br /><em>everywhere.</em></h1>
     <p>Sign in to sync Continue Watching, favorites, and history across your devices. You can keep exploring without an account.</p>
-    {#if form?.message || queryMessage}<div class="auth-message" role="alert">{form?.message ?? queryMessage}</div>{/if}
-    <form method="POST">
+    {#if form?.message || queryMessage}<div class:success={form?.success} class="auth-message" role="alert">{form?.message ?? queryMessage}</div>{/if}
+    {#if !form?.success}<form method="POST" action="?/signIn">
       <input type="hidden" name="next" value={page.url.searchParams.get('next') ?? '/profile'} />
       <label>Email<div class="auth-input"><Mail size={15} /><input name="email" value={form?.email ?? ''} type="email" placeholder="you@example.com" autocomplete="email" required /></div></label>
       <label>Password<div class="auth-input"><LockKeyhole size={15} /><input name="password" type="password" placeholder="Your password" autocomplete="current-password" required /></div></label>
       <button class="btn btn-primary" type="submit">Continue</button>
-    </form>
+    </form>{/if}
+    {#if !form?.success}<details class="reset-details"><summary>Forgot your password?</summary><form method="POST" action="?/reset"><label>Account email<div class="auth-input"><Mail size={15} /><input name="email" value={form?.email ?? ''} type="email" placeholder="you@example.com" autocomplete="email" required /></div></label><button class="btn btn-secondary" type="submit">Send reset link</button></form></details>{/if}
     <p class="auth-switch">New to MAVERO? <a href="/auth/sign-up">Create an account</a></p>
     <div class="auth-note"><ShieldCheck size={15} /> Your guest progress stays local until you choose to sync it.</div>
   </div>
@@ -43,6 +48,9 @@
   .auth-input { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted-deep); background: rgba(255,255,255,.03); }
   .auth-input input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: .8rem; }
   .auth-message { margin-top: 18px; padding: 11px 12px; border: 1px solid rgba(255, 139, 139, .28); border-radius: 10px; color: #ffb1b1; background: rgba(255, 115, 115, .08); font-size: .72rem; line-height: 1.5; }
+  .auth-message.success { border-color: rgba(123, 220, 171, .28); color: var(--success); background: rgba(123, 220, 171, .08); }
+  .reset-details { margin-top: 18px; color: var(--muted); font-size: .7rem; }
+  .reset-details summary { cursor: pointer; color: var(--accent); font-weight: 800; }
   .auth-switch { margin: 18px 0 0; text-align: center; }
   .auth-switch a { color: var(--accent); font-weight: 800; }
   .auth-note { display: flex; align-items: center; gap: 7px; margin-top: 18px; color: var(--success); font-family: 'DM Mono', monospace; font-size: .58rem; line-height: 1.5; }

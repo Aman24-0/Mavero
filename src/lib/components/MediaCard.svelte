@@ -9,7 +9,7 @@
 
 <a class="card" href={item.resumeHref ?? `/${item.type}/${item.id}`} aria-label={item.resumeHref ? `Resume ${item.title}` : `Open ${item.title}`}>
   <div class="poster" style={`--poster-accent: ${item.accent}`}>
-    <img src={item.poster} alt="" loading="lazy" />
+    <img src={item.poster} alt={`${item.title} poster`} loading="lazy" width="720" height="1080" />
     {#if item.tags?.[0]}
       <span class="card-tag">{item.tags[0]}</span>
     {/if}
@@ -22,7 +22,7 @@
     <h3 class="card-title">{item.title}</h3>
     <div class="card-meta">{item.year} <span>·</span> {formatType(item.type)} <span>·</span> {item.runtime}</div>
     {#if item.progress}
-      <div class="progress-track" aria-label={`${item.progress}% watched`}><span style={`width: ${item.progress}%`}></span></div>
+      <div class="progress-track" role="progressbar" aria-label={`${item.progress}% watched`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item.progress}><span style={`width: ${item.progress}%`}></span></div>
       <div class="card-progress">{item.progressLabel}</div>
     {/if}
   </div>

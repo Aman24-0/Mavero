@@ -66,6 +66,12 @@
 
 <svelte:head>
   <title>Search — Mavero</title>
+  <meta name="description" content="Search movies, series, and anime across the MAVERO catalog." />
+  <link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} />
+  <meta property="og:title" content="Search — Mavero" />
+  <meta property="og:description" content="Search movies, series, and anime across the MAVERO catalog." />
+  <meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} />
+  <meta name="robots" content="noindex,follow" />
 </svelte:head>
 
 <div class="container-wide">
@@ -75,12 +81,12 @@
     <p>Search the full Mavero universe across movies, series, and anime. Start with a title, a genre, or a mood.</p>
   </section>
 
-  <div class="search-band search-large"><Search size={19} /><input bind:value={query} oninput={scheduleSearch} aria-label="Search titles" placeholder="What are you in the mood for?" /><kbd>⌘ K</kbd></div>
-  <div class="mode-tabs" aria-label="Filter by content type">
+  <div class="search-band search-large" role="search" aria-label="Catalog search"><Search size={19} aria-hidden="true" /><label class="sr-only" for="catalog-search">Search titles</label><input id="catalog-search" bind:value={query} oninput={scheduleSearch} aria-label="Search titles" placeholder="What are you in the mood for?" /><kbd aria-label="Keyboard shortcut Command K">⌘ K</kbd></div>
+  <div class="mode-tabs" role="group" aria-label="Filter by content type">
     {#each types as item}
-      <button class:active={type === item} class="mode-tab" onclick={() => selectType(item)}>{item}</button>
+      <button class:active={type === item} class="mode-tab" aria-pressed={type === item} onclick={() => selectType(item)}>{item}</button>
     {/each}
-    <button class="mode-tab"><SlidersHorizontal size={14} /> More filters</button>
+    <button class="mode-tab"><SlidersHorizontal size={14} aria-hidden="true" /> More filters</button>
   </div>
 
   {#if errorMessage}<div class="search-error" role="alert">{errorMessage}</div>{/if}
@@ -99,6 +105,7 @@
 </div>
 
 <style>
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   em { color: var(--accent); font-style: normal; }
   .search-large { margin-top: 9px; padding: 18px 17px; }
   .search-large input { font-size: 1rem; }

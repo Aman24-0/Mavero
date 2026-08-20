@@ -20,11 +20,11 @@
   --display: clamp(2.65rem, 5vw, 5.8rem);
 }
 
-html { background: var(--base); scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; background: var(--base); }
+html { background: var(--base); scroll-behavior: smooth; scroll-padding-top: 84px; }
+body { margin: 0; min-width: 320px; background: var(--base); -webkit-tap-highlight-color: transparent; }
 button, input { font: inherit; }
 button { cursor: pointer; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 ::selection { background: var(--accent); color: var(--base); }
 
 .page-shell {
@@ -164,11 +164,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 @media (max-width: 640px) {
   .container-wide { width: min(100% - 40px, 1440px); }
-  .topbar { position: fixed; width: 100%; box-sizing: border-box; }
+  .topbar { position: fixed; width: 100%; box-sizing: border-box; height: calc(68px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
   .desktop-nav, .topbar-actions .icon-btn:first-child { display: none; }
   .topbar-actions { gap: 8px; }
   .page-shell { padding-bottom: 74px; }
-  .hero { min-height: 650px; margin-top: 68px; }
+  .hero { min-height: 650px; margin-top: calc(68px + env(safe-area-inset-top)); }
   .hero-media { background-position: 60% center; }
   .hero::after { background: linear-gradient(90deg, rgba(8,9,11,.91), rgba(8,9,11,.29)), linear-gradient(0deg, var(--base) 0%, rgba(8,9,11,.15) 60%); }
   .hero-content { padding: 70px 0 52px; }

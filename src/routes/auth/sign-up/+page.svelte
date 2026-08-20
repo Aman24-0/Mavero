@@ -5,7 +5,11 @@
   let { form }: { form?: AuthForm } = $props();
 </script>
 
-<svelte:head><title>Create account — Mavero</title></svelte:head>
+<svelte:head>
+  <title>Create account — Mavero</title>
+  <meta name="description" content="Create a MAVERO account to sync your library across devices." />
+  <meta name="robots" content="noindex,nofollow" />
+</svelte:head>
 
 <div class="auth-wrap container-wide">
   <a class="back-link" href="/profile"><ArrowLeft size={15} /> Back to Profile</a>

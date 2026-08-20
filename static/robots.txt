@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /auth/
+Disallow: /profile
+Disallow: /admin
+Disallow: /api/
+Disallow: /watch/
+
+Sitemap: /sitemap.xml

@@ -17,6 +17,8 @@
   let saveError = '';
   $: item = dataItem ?? getMedia(id);
   $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 4);
+  $: canonicalUrl = `${page.url.origin}/${type}/${item.id}`;
+  $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
 
   onMount(() => {
     let active = true;
@@ -42,6 +44,17 @@
 <svelte:head>
   <title>{item.title} — Mavero</title>
   <meta name="description" content={item.description} />
+  <link rel="canonical" href={canonicalUrl} />
+  <meta property="og:type" content="video.movie" />
+  <meta property="og:title" content={`${item.title} — Mavero`} />
+  <meta property="og:description" content={item.description} />
+  <meta property="og:url" content={canonicalUrl} />
+  <meta property="og:image" content={item.backdrop || item.poster} />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={`${item.title} — Mavero`} />
+  <meta name="twitter:description" content={item.description} />
+  <meta name="twitter:image" content={item.backdrop || item.poster} />
+  <script type="application/ld+json">{structuredData}</script>
 </svelte:head>
 
 <div class="detail-wrap">

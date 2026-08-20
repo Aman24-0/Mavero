@@ -40,13 +40,21 @@
   }
 </script>
 
-<svelte:head><title>{label}s — Mavero</title></svelte:head>
+<svelte:head>
+  <title>{label}s — Mavero</title>
+  <meta name="description" content={`Explore MAVERO’s focused collection of ${label.toLowerCase()} stories.`} />
+  <link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} />
+  <meta property="og:title" content={`${label}s — Mavero`} />
+  <meta property="og:description" content={`Explore MAVERO’s focused collection of ${label.toLowerCase()} stories.`} />
+  <meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} />
+  <meta name="twitter:card" content="summary" />
+</svelte:head>
 
 <div class="container-wide collection-page">
   <a class="back-link" href="/discover"><ArrowLeft size={15} /> Back to Discover</a>
   <section class="page-heading"><div class="eyebrow">MAVERO / Explore</div><h1>{label}s<br /><em>in focus.</em></h1><p>A focused collection for the nights when you know the kind of world you want to step into.</p></section>
-  <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /><button class:active={showAdvanced} class="mode-tab advanced-toggle" onclick={() => (showAdvanced = !showAdvanced)}><ChevronDown size={13} /> {showAdvanced ? 'Hide filters' : 'More filters'}</button></div>
-  {#if showAdvanced}<div class="advanced-filter-note">Filters are URL-synchronized, composable, and page-aware. The `page` query parameter is reserved for future continuous loading.</div>{/if}
+  <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /><button class:active={showAdvanced} class="mode-tab advanced-toggle" aria-expanded={showAdvanced} aria-controls="advanced-filter-note" onclick={() => (showAdvanced = !showAdvanced)}><ChevronDown size={13} /> {showAdvanced ? 'Hide filters' : 'More filters'}</button></div>
+  {#if showAdvanced}<div id="advanced-filter-note" class="advanced-filter-note" role="region" aria-label="Advanced filter information">Filters are URL-synchronized, composable, and page-aware. The `page` query parameter is reserved for future continuous loading.</div>{/if}
   {#if filteredItems.length}
     <div class="results-grid">{#each filteredItems as item}<MediaCard {item} compact />{/each}</div>
   {:else}

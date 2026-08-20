@@ -12,7 +12,10 @@
   function refreshHealth() { healthMessage = 'Health snapshot queued · last checked just now'; }
 </script>
 
-<svelte:head><title>Admin — Mavero</title></svelte:head>
+<svelte:head>
+  <title>Admin — Mavero</title>
+  <meta name="robots" content="noindex,nofollow" />
+</svelte:head>
 
 <div class="admin-shell">
   <aside class="admin-nav" aria-label="Admin navigation">

@@ -90,7 +90,11 @@
   let watchedLabel = $derived(watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`);
 </script>
 
-<svelte:head><title>Profile — Mavero</title></svelte:head>
+<svelte:head>
+  <title>Profile — Mavero</title>
+  <meta name="description" content="Manage your MAVERO library, Continue Watching, favorites, and synced history." />
+  <meta name="robots" content="noindex,nofollow" />
+</svelte:head>
 
 <div class="container-wide profile-page">
   <section class="profile-header"><div class="profile-avatar">{accountName().slice(0, 2).toUpperCase()}</div><div><div class="eyebrow">MAVERO / Your space</div><h1>Welcome back, {accountName()}.</h1><p>{isAuthenticated ? 'Your library follows you across devices.' : 'Pick up where you left off, or make room for something new.'}</p></div>{#if isAuthenticated}<form class="inline-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn btn-secondary"><LogOut size={15} /> Sign out</button></form>{:else}<a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a>{/if}</section>

@@ -16,6 +16,10 @@
   ];
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') navOpen = false;
+  }
+
   const avatarLabel = (account: User | null | undefined) => {
     const name = typeof account?.user_metadata?.display_name === 'string' ? account.user_metadata.display_name : account?.email ?? '';
     return name.split(/\\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'AM';
@@ -29,6 +33,8 @@
   });
 </script>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 <svelte:head>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
@@ -40,25 +46,25 @@
 
     <nav class="desktop-nav" aria-label="Primary navigation">
       {#each primaryLinks as link}
-        <a class:active={isActive(link.key)} class="nav-link" href={link.href}>{link.label}</a>
+        <a class:active={isActive(link.key)} class="nav-link" href={link.href} aria-current={isActive(link.key) ? 'page' : undefined}>{link.label}</a>
       {/each}
     </nav>
 
     <div class="topbar-actions">
       <a class="icon-btn" href="/search" aria-label="Search MAVERO"><Search size={17} strokeWidth={1.8} /></a>
       <a class="avatar" href="/profile" aria-label="Open profile">{avatarLabel(user)}</a>
-      <button class="icon-btn menu-trigger" aria-label="Open navigation" aria-expanded={navOpen} onclick={() => (navOpen = !navOpen)}>
+      <button class="icon-btn menu-trigger" aria-label={navOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={navOpen} aria-controls="mobile-menu" onclick={() => (navOpen = !navOpen)}>
         <Menu size={17} strokeWidth={1.8} />
       </button>
     </div>
   </header>
 
   {#if navOpen}
-    <div class="mobile-menu" role="dialog" aria-label="Navigation menu">
+    <div id="mobile-menu" class="mobile-menu" role="region" aria-label="Navigation menu">
       <div class="mobile-menu-inner">
         <span class="eyebrow">MAVERO / Navigate</span>
         {#each primaryLinks as link}
-          <a class:active={isActive(link.key)} href={link.href} onclick={() => (navOpen = false)}>{link.label}<ChevronDown size={16} /></a>
+          <a class:active={isActive(link.key)} href={link.href} aria-current={isActive(link.key) ? 'page' : undefined} onclick={() => (navOpen = false)}>{link.label}<ChevronDown size={16} /></a>
         {/each}
       </div>
     </div>
@@ -71,9 +77,9 @@
   {#if navigating.to}<RouteLoading />{/if}
 
   <nav class="mobile-nav" aria-label="Mobile navigation">
-    <a class:active={isActive('/discover')} href="/discover" aria-label="Discover"><Compass size={18} strokeWidth={1.8} /><span>Discover</span></a>
-    <a class:active={isActive('/search')} href="/search" aria-label="Search"><Search size={18} strokeWidth={1.8} /><span>Search</span></a>
-    <a class:active={isActive('/profile')} href="/profile" aria-label="Profile"><UserRound size={18} strokeWidth={1.8} /><span>Profile</span></a>
+    <a class:active={isActive('/discover')} href="/discover" aria-current={isActive('/discover') ? 'page' : undefined} aria-label="Discover"><Compass size={18} strokeWidth={1.8} /><span>Discover</span></a>
+    <a class:active={isActive('/search')} href="/search" aria-current={isActive('/search') ? 'page' : undefined} aria-label="Search"><Search size={18} strokeWidth={1.8} /><span>Search</span></a>
+    <a class:active={isActive('/profile')} href="/profile" aria-current={isActive('/profile') ? 'page' : undefined} aria-label="Profile"><UserRound size={18} strokeWidth={1.8} /><span>Profile</span></a>
   </nav>
 </div>
 

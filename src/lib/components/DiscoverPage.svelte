@@ -71,6 +71,12 @@
 <svelte:head>
   <title>Mavero — Discover. Watch.</title>
   <meta name="description" content="Discover movies, series, and anime on MAVERO." />
+  <link rel="canonical" href={page.url.origin}/>
+  <meta property="og:title" content="Mavero — Discover. Watch." />
+  <meta property="og:description" content="Discover movies, series, and anime on MAVERO." />
+  <meta property="og:url" content={page.url.origin}/>
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
 </svelte:head>
 
 <div bind:this={intro}>
@@ -92,17 +98,18 @@
   </section>
 
   <div class="container-wide main-content">
-    <div class="search-band">
-      <Search size={16} />
-      <input bind:value={query} aria-label="Search MAVERO" placeholder="Search a title, genre, or feeling" />
+    <div class="search-band" role="search" aria-label="Quick search">
+      <Search size={16} aria-hidden="true" />
+      <label class="sr-only" for="discover-search">Search MAVERO</label>
+      <input id="discover-search" bind:value={query} aria-label="Search MAVERO" placeholder="Search a title, genre, or feeling" />
       <a class="section-link" href="/search">Open search <ArrowUpRight size={13} /></a>
     </div>
 
-    <div class="mode-tabs" aria-label="Content type filters">
+    <div class="mode-tabs" role="group" aria-label="Content type filters">
       {#each modes as mode}
-        <button class:active={activeMode === mode} class="mode-tab" onclick={() => selectMode(mode)}>{mode}</button>
+        <button class:active={activeMode === mode} class="mode-tab" aria-pressed={activeMode === mode} onclick={() => selectMode(mode)}>{mode}</button>
       {/each}
-      <button class="mode-tab" aria-label="Open filters"><SlidersHorizontal size={14} /> Filters</button>
+      <button class="mode-tab" aria-label="Open filters"><SlidersHorizontal size={14} aria-hidden="true" /> Filters</button>
     </div>
     <FilterBar value={filterState} {genres} onChange={updateFilters} />
 
@@ -135,7 +142,9 @@
 </div>
 
 <style>
-  .quiet-banner { display: grid; grid-template-columns: 1.3fr .9fr auto; align-items: end; gap: 36px; margin-top: 64px; padding: 34px 0 8px; border-top: 1px solid var(--line); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .quiet-banner { display: grid;
+ grid-template-columns: 1.3fr .9fr auto; align-items: end; gap: 36px; margin-top: 64px; padding: 34px 0 8px; border-top: 1px solid var(--line); }
   .quiet-banner h2 { margin: 8px 0 0; color: var(--ink); font-size: clamp(2rem, 4vw, 3.8rem); line-height: .98; letter-spacing: -.07em; }
   .quiet-banner h2 em { color: var(--accent); font-style: normal; }
   .quiet-banner p { max-width: 270px; margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.65; }
