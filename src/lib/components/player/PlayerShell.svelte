@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, ListVideo, LoaderCircle, Maximize2, RotateCcw, Settings2, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, ListVideo, Maximize2, RotateCcw, Settings2, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
@@ -272,7 +272,7 @@
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span>{#if hasNextEpisode}<button class="small-button" type="button" onclick={() => chooseAdjacentEpisode(1)}>Next episode <ChevronRight size={14} /></button>{/if}</div>
     {:else if state === 'preparing' || state === 'resolving' || state === 'switching-source' || state === 'embed-loading'}
-      <div class="loading-card" role="status"><LoaderCircle size={17} class="spin" /><span>{state === 'switching-source' ? 'Switching source…' : state === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…'}</span></div>
+      <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{state === 'switching-source' ? 'Switching source' : state === 'embed-loading' ? 'Starting your stream' : 'Loading player'}</strong><small>{state === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…'}</small></span></div>
     {/if}
 
     {#if currentEpisode && (hasPreviousEpisode || hasNextEpisode)}
@@ -327,7 +327,12 @@
   .small-button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; border: 1px solid rgba(194,181,255,.35); border-radius: 8px; padding: 0 9px; color: #fff; background: rgba(155,135,245,.16); cursor: pointer; font: inherit; font-size: .61rem; white-space: nowrap; }
   .small-button.secondary { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.06); }
   .completion-card { color: #d8ccff; }
-  .loading-card { color: rgba(255,255,255,.78); font-size: .68rem; }
+  .loading-card { min-width: min(260px, calc(100% - 36px)); justify-content: center; color: rgba(255,255,255,.78); font-size: .68rem; }
+  .loading-ring { display: grid; flex: 0 0 38px; place-items: center; width: 38px; height: 38px; border: 1px solid rgba(255,255,255,.12); border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 24%, rgba(194,181,255,.95) 42%, rgba(155,135,245,.2) 72%, transparent 100%); animation: spin 1.2s linear infinite; }
+  .loading-ring > span { width: 28px; height: 28px; border-radius: 50%; background: #0c0b12; }
+  .loading-copy { display: grid; gap: 4px; text-align: left; }
+  .loading-copy strong { color: #fff; font-size: .72rem; }
+  .loading-copy small { color: rgba(255,255,255,.48); font-family: 'DM Mono', monospace; font-size: .53rem; }
   :global(.spin) { animation: spin 1s linear infinite; }
   .episode-stepper { position: absolute; z-index: 5; right: 50%; bottom: 125px; display: flex; align-items: center; gap: 12px; transform: translateX(50%); color: rgba(255,255,255,.63); font-family: 'DM Mono', monospace; font-size: .58rem; }
   .round-step { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(255,255,255,.15); border-radius: 50%; color: #fff; background: rgba(7,7,10,.62); cursor: pointer; }
@@ -350,5 +355,5 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 640px) { .player-header { padding-top: calc(10px + env(safe-area-inset-top)); padding-bottom: 10px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; justify-content: center; padding: 0; } .header-title strong { max-width: 42vw; font-size: .69rem; } .stage-wrap { padding: calc(62px + env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom)); } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; } .message-card { bottom: 50%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .episode-stepper { bottom: calc(34px + env(safe-area-inset-bottom)); } .drawer { top: calc(62px + env(safe-area-inset-top)); right: 12px; width: calc(100% - 24px); max-height: 72dvh; } }
   @media (orientation: landscape) and (max-height: 560px) { .player-header { padding-top: 8px; padding-bottom: 8px; } .stage-wrap { padding-top: 56px; padding-bottom: 16px; } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 72px) * 1.7778)); max-height: calc(100dvh - 72px); } }
-  @media (prefers-reduced-motion: reduce) { :global(.spin) { animation: none; } .header-button, .controls-layer { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .controls-layer { transition: none; } }
 </style>
