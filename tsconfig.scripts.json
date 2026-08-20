@@ -1,0 +1,13 @@
+{
+  "extends": "./jsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "$lib/*": ["src/lib/*"],
+      "$components/*": ["src/lib/components/*"],
+      "$data/*": ["src/lib/data/*"],
+      "$styles/*": ["src/lib/styles/*"]
+    }
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts"]
+}

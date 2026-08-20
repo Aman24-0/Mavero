@@ -1,59 +1,64 @@
-# MAVERO Deployment Preparation
+# MAVERO Deployment
 
-MAVERO is prepared for a provider-neutral **SvelteKit Node deployment**. No Vercel project has been created or linked, and CineLog-V2 is not part of the deployment architecture.
+MAVERO is a standalone SvelteKit application. CineLog-V2 is not part of its deployment architecture, and no Vercel project has been created or linked.
 
-## Selected production path
+## Current deployment target
 
-MAVERO uses `@sveltejs/adapter-node`. This adapter produces a conventional Node server in `build/`, making the application portable to Vercel through a later adapter change, a Node-capable VM/container, Netlify through a later provider adapter, Cloudflare through a later runtime-specific adapter, or another SvelteKit-compatible host.
+For the requested Cloudflare deployment, MAVERO now uses `@sveltejs/adapter-cloudflare` with a Workers configuration in `wrangler.jsonc`. The generated Worker uses the SvelteKit Cloudflare runtime and static asset binding. The project remains portable at the SvelteKit source level; a later Node, Netlify, or Vercel deployment would require selecting that provider’s adapter and corresponding build configuration.
 
-The adapter was selected because the current requirement is preparation only, not a provider-specific deployment. It avoids creating a provider lock-in while preserving the server runtime required by Supabase SSR Auth, protected account endpoints, TMDB server adapters, and SvelteKit form actions.
-
-## Commands
+Cloudflare deployment commands are:
 
 | Purpose | Command |
 |---|---|
 | Install | `pnpm install --frozen-lockfile` |
 | Development | `pnpm dev` |
 | Type and Svelte validation | `pnpm check` |
-| Production build | `pnpm build` |
-| Production start | `pnpm start` |
-| Direct Node start | `node build` |
+| Cloudflare production build | `pnpm build` |
+| Local Worker preview | `pnpm preview` or `wrangler dev` |
+| Cloudflare deployment | `pnpm deploy` or `wrangler deploy` |
+| Generate Worker bindings | `pnpm gen` or `wrangler types` |
 
-The build output is generated under `build/`. The production process listens on `HOST` and `PORT` when provided. The Node adapter accepts the standard `ORIGIN` setting for absolute URL generation and secure Auth redirects.
+The Cloudflare Worker name is `mavero`, with `workers_dev` and preview URLs enabled in `wrangler.jsonc`. Wrangler OAuth authorization must be completed by an account owner or authorized Cloudflare user before `wrangler deploy` can upload the Worker.
 
 ## Runtime requirements
 
-The portable baseline is Node.js 20 or newer and pnpm 9 or newer. The host must support long-lived Node request handling, HTTPS termination or a trusted reverse proxy, environment-variable injection, and outbound HTTPS requests to Supabase, TMDB when configured, and AniList.
+The target runtime is Cloudflare Workers with the SvelteKit Cloudflare adapter. The Worker must support the configured static `ASSETS` binding and server-side environment bindings. Supabase, AniList, and any later approved server-side content or provider requests must use outbound HTTPS. No provider endpoint or playback integration is activated by the deployment configuration.
 
-A reverse proxy should forward the original protocol and host correctly. If a provider terminates TLS before Node, configure its equivalent of `ORIGIN`, `PROTOCOL_HEADER`, `HOST_HEADER`, and `ADDRESS_HEADER` according to the provider’s trust model. Do not blindly enable forwarded-header trust on an untrusted public interface.
+## Environment variables and secrets
 
-## Environment variables
+The repository contains `.env.example` without real values. Real secrets must be supplied through local development files or the deployment provider’s encrypted secret store and must never be committed.
 
-The repository contains `.env.example` without real values. Real secrets must be supplied by the deployment platform and must never be committed.
+| Variable | Development | Cloudflare production | Exposure |
+|---|---|---|---|
+| `PUBLIC_SUPABASE_URL` | Dedicated MAVERO project URL | Worker variable | Public runtime configuration |
+| `PUBLIC_SUPABASE_PUBLISHABLE_KEY` | MAVERO publishable key | Worker variable | Public runtime configuration |
+| `PUBLIC_SUPABASE_AUTH_REDIRECT_URL` | `http://localhost:3000/` or active local origin | Production HTTPS origin | Public URL only |
+| `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` | Optional local server-only resolver credential | Required as an encrypted Worker secret for private Phase 7B registry/template lookup | Never expose to the browser |
+| `TMDB_READ_ACCESS_TOKEN` | Optional server-only token | Worker secret if live TMDB server access is enabled | Server-only |
+| `TMDB_API_KEY` | Optional server-only fallback | Worker secret if required | Server-only |
+| `ORIGIN` | Local origin when used by a compatible runtime | Provider-specific; not required by the Worker adapter unless application code uses it | Server configuration |
+| `HOST` | Node-only fallback setting | Not used by the Worker runtime | Server configuration |
+| `PORT` | Node-only fallback setting | Not used by the Worker runtime | Server configuration |
 
-| Variable | Development | Staging | Production | Exposure |
-|---|---|---|---|---|
-| `PUBLIC_SUPABASE_URL` | Dedicated MAVERO project URL | Dedicated MAVERO staging/project URL | Dedicated MAVERO production project URL | Public runtime configuration |
-| `PUBLIC_SUPABASE_PUBLISHABLE_KEY` | MAVERO publishable key | Staging publishable key | Production publishable key | Public runtime configuration |
-| `PUBLIC_SUPABASE_AUTH_REDIRECT_URL` | `http://localhost:3000/` or the active local origin | Staging HTTPS origin | Production HTTPS origin | Public URL only |
-| `SUPABASE_URL` | Optional server alias if used by deployment tooling | Optional | Optional | Server configuration |
-| `SUPABASE_SERVICE_ROLE_KEY` | Not required by MAVERO Phase 6 | Not required | Not required | Never add to client; do not set unless a later approved server-only feature needs it |
-| `TMDB_READ_ACCESS_TOKEN` | Optional server-only token | Server-only token | Server-only token | Server-only |
-| `TMDB_API_KEY` | Optional server-only fallback | Server-only key | Server-only key | Server-only |
-| `ORIGIN` | Local origin when needed | Staging HTTPS origin | Production HTTPS origin | Server configuration |
-| `HOST` | `0.0.0.0` when exposing a container | Provider-specific | Provider-specific | Server configuration |
-| `PORT` | `5173` or provider-provided port | Provider-provided | Provider-provided | Server configuration |
+The `PUBLIC_` prefix is reserved for values safe to expose in the browser. Supabase service-role credentials, provider credentials, and any future adapter secret must not use a `PUBLIC_` prefix. For Cloudflare, set private values through Wrangler’s encrypted secret flow rather than placing them in `wrangler.jsonc`.
 
-The `PUBLIC_` prefix is reserved for values safe to expose in the browser. TMDB credentials and any future Supabase secret must not use a `PUBLIC_` prefix.
+## Cloudflare deployment preparation
+
+The local configuration was generated and verified with Wrangler’s SvelteKit detection. The successful production build uses `@sveltejs/adapter-cloudflare`, and the Worker preview was smoke-tested locally. The remaining provider-side step is Cloudflare OAuth authorization for the account that owns the deployment. After authorization, run:
+
+```bash
+pnpm deploy
+wrangler secret put PRIVATE_SUPABASE_SERVICE_ROLE_KEY
+```
+
+Set the secret before exercising valid resolver requests in production. Do not place the value in GitHub, `wrangler.jsonc`, `package.json`, client code, or any `PUBLIC_` environment variable.
 
 ## Supabase Auth production preparation
 
-Before production launch, set the Supabase project Site URL to the real MAVERO HTTPS origin and add only the required redirect URLs to the project allowlist. Set `PUBLIC_SUPABASE_AUTH_REDIRECT_URL` to the same production origin or to the approved `/auth/callback` route used by the deployment. Keep the local `localhost` value only in a development-specific environment file.
+Set the Supabase Site URL to the real MAVERO HTTPS origin and add only the required redirect URLs to the project allowlist. Set `PUBLIC_SUPABASE_AUTH_REDIRECT_URL` to the approved production origin or callback route. Keep the localhost value only in a development-specific environment file.
 
-Verify sign-in, sign-up confirmation, callback exchange, password reset/confirmation, sign-out, and invalid redirect handling after the production origin is known. Phase 6 code uses same-origin-safe redirect validation and never trusts a client-provided user ID.
+Verify sign-in, sign-up confirmation, callback exchange, password reset/confirmation, sign-out, invalid redirect handling, guest discovery, and authenticated cloud synchronization after the production origin is known.
 
-## Provider-specific work intentionally deferred
+## Phase boundaries
 
-No Vercel project was created or linked because the user selected preparation-only mode and the connected Hobby team has a usage restriction. A future provider phase must choose the provider, configure its build output and environment secret store, set the production domain, update Supabase Auth allowlists, and verify the provider’s SvelteKit adapter/runtime behavior.
-
-No streaming provider integration, third-party embed, provider resolution, provider scraping, DRM work, or Admin provider CRUD is included in this preparation.
+Phase 7B adds only the provider-agnostic Source Resolver and safe playback-resolution endpoint. It does not integrate real third-party streaming providers, call provider APIs, scrape providers, bypass DRM or access controls, activate embeds, forward provider secrets, or implement the Mavero Player. A later approved provider phase must be reviewed separately for security, legal scope, credentials, redirect policy, and runtime behavior.

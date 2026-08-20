@@ -7,12 +7,16 @@ declare global {
       supabase: SupabaseClient<Database>;
       safeGetSession: () => Promise<{ session: Session | null; user: User | null }>;
       session: Session | null;
-      user: User | null;
+      user: User | null
     }
 
-    interface PageData {
-      session: Session | null;
-      user: User | null;
+    interface PageData { session: Session | null; user: User | null }
+
+    interface Platform {
+      env: Env;
+      ctx: ExecutionContext;
+      caches: CacheStorage;
+      cf?: IncomingRequestCfProperties
     }
   }
 }

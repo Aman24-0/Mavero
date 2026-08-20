@@ -74,6 +74,365 @@ export type Database = {
         }
         Relationships: []
       }
+      streaming_categories: {
+        Row: {
+          created_at: string
+          description: string | null
+          enabled: boolean
+          id: string
+          name: string
+          ordering: number
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          name: string
+          ordering?: number
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          name?: string
+          ordering?: number
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      streaming_config_meta: {
+        Row: {
+          id: number
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          id?: number
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          id?: number
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
+      streaming_providers: {
+        Row: {
+          adapter_id: string | null
+          capabilities: Json
+          created_at: string
+          description: string | null
+          enabled: boolean
+          icon: string | null
+          id: string
+          integration_type: string
+          name: string
+          notes: string | null
+          slug: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          adapter_id?: string | null
+          capabilities?: Json
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          icon?: string | null
+          id?: string
+          integration_type?: string
+          name: string
+          notes?: string | null
+          slug: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          adapter_id?: string | null
+          capabilities?: Json
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          icon?: string | null
+          id?: string
+          integration_type?: string
+          name?: string
+          notes?: string | null
+          slug?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      streaming_public_categories: {
+        Row: {
+          description: string | null
+          enabled: boolean
+          id: string
+          name: string
+          ordering: number
+          slug: string
+        }
+        Insert: {
+          description?: string | null
+          enabled: boolean
+          id: string
+          name: string
+          ordering: number
+          slug: string
+        }
+        Update: {
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          name?: string
+          ordering?: number
+          slug?: string
+        }
+        Relationships: []
+      }
+      streaming_public_providers: {
+        Row: {
+          capabilities: Json
+          description: string | null
+          enabled: boolean
+          icon: string | null
+          id: string
+          integration_type: string
+          name: string
+          slug: string
+          status: string
+        }
+        Insert: {
+          capabilities?: Json
+          description?: string | null
+          enabled: boolean
+          icon?: string | null
+          id: string
+          integration_type: string
+          name: string
+          slug: string
+          status: string
+        }
+        Update: {
+          capabilities?: Json
+          description?: string | null
+          enabled?: boolean
+          icon?: string | null
+          id?: string
+          integration_type?: string
+          name?: string
+          slug?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      streaming_public_source_categories: {
+        Row: {
+          category_id: string
+          created_at: string
+          ordering: number
+          source_id: string
+        }
+        Insert: {
+          category_id: string
+          created_at: string
+          ordering: number
+          source_id: string
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          ordering?: number
+          source_id?: string
+        }
+        Relationships: []
+      }
+      streaming_public_sources: {
+        Row: {
+          audio_languages: string[]
+          capabilities: Json
+          description: string | null
+          enabled: boolean
+          id: string
+          identifier_mode: string
+          integration_type: string | null
+          language: string | null
+          name: string
+          ordering: number
+          provider_id: string
+          quality_capability: string[]
+          slug: string
+          status: string
+          subtitle_capability: boolean
+          visibility: string
+        }
+        Insert: {
+          audio_languages?: string[]
+          capabilities?: Json
+          description?: string | null
+          enabled: boolean
+          id: string
+          identifier_mode: string
+          integration_type?: string | null
+          language?: string | null
+          name: string
+          ordering: number
+          provider_id: string
+          quality_capability?: string[]
+          slug: string
+          status: string
+          subtitle_capability?: boolean
+          visibility: string
+        }
+        Update: {
+          audio_languages?: string[]
+          capabilities?: Json
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          identifier_mode?: string
+          integration_type?: string | null
+          language?: string | null
+          name?: string
+          ordering?: number
+          provider_id?: string
+          quality_capability?: string[]
+          slug?: string
+          status?: string
+          subtitle_capability?: boolean
+          visibility?: string
+        }
+        Relationships: []
+      }
+      streaming_source_categories: {
+        Row: {
+          category_id: string
+          created_at: string
+          ordering: number
+          source_id: string
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          ordering?: number
+          source_id: string
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          ordering?: number
+          source_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "streaming_source_categories_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "streaming_source_categories_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      streaming_sources: {
+        Row: {
+          anime_template: string | null
+          audio_languages: string[]
+          capabilities: Json
+          created_at: string
+          description: string | null
+          enabled: boolean
+          id: string
+          identifier_mode: string
+          integration_type: string | null
+          language: string | null
+          movie_template: string | null
+          name: string
+          notes: string | null
+          ordering: number
+          provider_id: string
+          quality_capability: string[]
+          series_template: string | null
+          slug: string
+          status: string
+          subtitle_capability: boolean
+          updated_at: string
+          visibility: string
+        }
+        Insert: {
+          anime_template?: string | null
+          audio_languages?: string[]
+          capabilities?: Json
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          identifier_mode?: string
+          integration_type?: string | null
+          language?: string | null
+          movie_template?: string | null
+          name: string
+          notes?: string | null
+          ordering?: number
+          provider_id: string
+          quality_capability?: string[]
+          series_template?: string | null
+          slug: string
+          status?: string
+          subtitle_capability?: boolean
+          updated_at?: string
+          visibility?: string
+        }
+        Update: {
+          anime_template?: string | null
+          audio_languages?: string[]
+          capabilities?: Json
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          id?: string
+          identifier_mode?: string
+          integration_type?: string | null
+          language?: string | null
+          movie_template?: string | null
+          name?: string
+          notes?: string | null
+          ordering?: number
+          provider_id?: string
+          quality_capability?: string[]
+          series_template?: string | null
+          slug?: string
+          status?: string
+          subtitle_capability?: boolean
+          updated_at?: string
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "streaming_sources_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       watch_history: {
         Row: {
           completion_state: string
@@ -190,7 +549,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      is_admin: { Args: never; Returns: boolean }
+      refresh_streaming_public_config: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never

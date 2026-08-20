@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { ArrowLeft, Captions, ChevronDown, Maximize, Pause, Play, Settings2, Volume2 } from 'lucide-svelte';
+  import { ArrowLeft, Captions, Maximize, Pause, Play, Settings2, Volume2 } from 'lucide-svelte';
   import { formatType } from '$data/content';
   import type { PageData } from './$types';
   import { createProgressWriter, getLocalPersistenceState, getResumeProgress } from '$lib/client/progress/service';
@@ -14,7 +14,10 @@
   $: season = Number(page.url.searchParams.get('season') || '') || undefined;
   $: episode = Number(page.url.searchParams.get('episode') || '') || undefined;
   let playing = false;
-  let server = 'MAVERO Direct';
+  let selectedSourceId = '';
+  let resolutionState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+  let resolutionMessage = '';
+  let resolvedSourceType: 'direct' | 'embed' | undefined;
   let currentTime = 0;
   let duration = 0;
   let localState = 'Preparing local progress…';
@@ -23,6 +26,9 @@
   let startedHistory = false;
   let lastHistoryAt = 0;
 
+  $: sources = data.streamingConfig.sources;
+  $: selectedSource = sources.find((source) => source.id === selectedSourceId) ?? sources[0];
+  $: server = selectedSource?.name ?? 'Configuration pending';
   $: duration = duration || (type === 'movie' ? 7694 : type === 'series' ? 2640 : 1440);
   $: progress = duration > 0 ? Math.min(100, Math.round((currentTime / duration) * 100)) : 0;
   $: context = ({ contentType: type, contentId: item.id, season, episode } satisfies PlaybackContext);
@@ -80,6 +86,28 @@
     await recordCloudHistory({ eventKey: `${context.contentType}:${context.contentId}:${context.season ?? '-'}:${context.episode ?? '-'}:${eventType}:${Math.floor(currentTime)}`, eventType, contentType: context.contentType, contentId: context.contentId, season: context.season, episode: context.episode, currentTime, duration, completionState: eventType === 'completed' ? 'completed' : 'in_progress', snapshot: { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description }, occurredAt: Date.now() });
   }
 
+  async function prepareSelectedSource() {
+    if (!selectedSource) return;
+    resolutionState = 'loading';
+    resolutionMessage = 'Checking source configuration…';
+    resolvedSourceType = undefined;
+    try {
+      const response = await fetch('/api/playback/resolve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sourceId: selectedSource.id, contentId: item.id, mediaType: type, season, episode }),
+      });
+      const payload = await response.json() as { ok?: boolean; source?: { type?: 'direct' | 'embed' }; error?: { message?: string } };
+      if (!response.ok || !payload.ok || !payload.source?.type) throw new Error(payload.error?.message ?? 'This source is currently unavailable.');
+      resolutionState = 'ready';
+      resolvedSourceType = payload.source.type;
+      resolutionMessage = `Source prepared as ${payload.source.type}. Playback remains inactive in Phase 7B.`;
+    } catch (error) {
+      resolutionState = 'error';
+      resolutionMessage = error instanceof Error ? error.message : 'This source is currently unavailable.';
+    }
+  }
+
   function togglePlayback() {
     playing = !playing;
     if (playing && page.data.user && !startedHistory) { startedHistory = true; void sendHistory('started'); }
@@ -113,7 +141,7 @@
 
     <div class="player-controls"><button class="icon-btn" aria-label={playing ? 'Pause' : 'Play'} onclick={togglePlayback}>{#if playing}<Pause size={16} fill="currentColor" />{:else}<Play size={16} fill="currentColor" />{/if}</button><span class="player-time">{timeLabel}</span><input class="progress-input" type="range" min="0" max={duration} step="1" value={currentTime} oninput={seek} aria-label={`${progress}% watched`} /><span class="player-time">{durationLabel}</span><button class="icon-btn" aria-label="Volume"><Volume2 size={16} /></button><button class="icon-btn" aria-label="Subtitles"><Captions size={16} /></button></div>
 
-    <section class="player-bottom container-wide"><div><div class="eyebrow">Source selection</div><h2>Choose a source</h2></div><div class="source-row"><button class="source-chip active" onclick={() => (server = 'MAVERO Direct')}>MAVERO Direct <span>Experimental</span></button><button class="source-chip" onclick={() => (server = 'VidLink')}>VidLink <span>Embed · Available</span></button><button class="source-chip" onclick={() => (server = 'Mapple Player')}>Mapple Player <span>Embed · Unknown</span></button><button class="source-chip" aria-label="More source options"><ChevronDown size={15} /></button></div><p class="player-disclaimer">Providers are database-driven and must be individually authorized before activation. Playback controls, source selection, and progress sync remain owned by the Mavero shell.</p></section>
+    <section class="player-bottom container-wide"><div><div class="eyebrow">Source selection</div><h2>Choose a source</h2></div>{#if sources.length}<div class="source-row">{#each sources as source}<button class:active={selectedSource?.id === source.id} class="source-chip" onclick={() => { selectedSourceId = source.id; resolutionState = 'idle'; resolutionMessage = ''; }}>{source.name} <span>{source.status} · {source.integration_type ?? 'Provider default'}</span></button>{/each}</div><div class="source-resolution"><button class="source-resolve-btn" disabled={resolutionState === 'loading'} onclick={prepareSelectedSource}>{resolutionState === 'loading' ? 'Preparing…' : 'Prepare selected source'}</button>{#if resolutionMessage}<span class:success={resolutionState === 'ready'} class:error={resolutionState === 'error'} aria-live="polite">{resolutionMessage}{#if resolvedSourceType} · Safe result received{/if}</span>{/if}</div>{:else}<div class="source-empty">No public sources are configured yet.</div>{/if}<p class="player-disclaimer">Providers are database-driven and must be individually authorized before activation. Phase 7B only requests a normalized safe source result; it does not start playback, call providers from the browser, or bypass provider controls.</p></section>
   </main>
 </div>
 
@@ -128,6 +156,14 @@
   .source-row { display: flex; flex-wrap: wrap; gap: 8px; }
   .source-chip { display: inline-flex; align-items: center; gap: 9px; min-height: 42px; border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; color: var(--muted); background: rgba(255,255,255,.03); font-size: .7rem; font-weight: 800; }
   .source-chip span { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .53rem; font-weight: 400; }
+  .source-empty { padding: 18px 0; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .58rem; }
+  .source-resolution { display: flex; align-items: center; flex-wrap: wrap; gap: 11px; margin-top: 15px; }
+  .source-resolve-btn { border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; color: var(--ink); background: rgba(255,255,255,.04); cursor: pointer; font: inherit; font-size: .64rem; }
+  .source-resolve-btn:hover:not(:disabled) { border-color: rgba(155,135,245,.5); background: var(--accent-soft); }
+  .source-resolve-btn:disabled { cursor: wait; opacity: .6; }
+  .source-resolution span { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; }
+  .source-resolution .success { color: var(--success); }
+  .source-resolution .error { color: #e6b6a4; }
   .source-chip:hover, .source-chip.active { color: var(--ink); border-color: rgba(155,135,245,.5); background: var(--accent-soft); }
   .player-disclaimer { max-width: 650px; margin-top: 19px; color: var(--muted-deep); font-size: .7rem; line-height: 1.6; }
   .progress-input { flex: 1; min-width: 100px; accent-color: var(--accent); }
