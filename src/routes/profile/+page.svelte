@@ -115,20 +115,20 @@
 </div>
 
 <style>
-  .profile-page { padding-bottom: 90px; }
-  .profile-header { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 84px 0 42px; }
-  .profile-avatar { display: grid; place-items: center; width: 68px; height: 68px; border: 1px solid rgba(255,255,255,.18); border-radius: 50%; color: #0d0b14; background: linear-gradient(145deg, #dbb7a5, #8672a5); font-size: .9rem; font-weight: 800; }
+  .profile-page { padding-bottom: 64px; }
+  .profile-header { display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; align-items: center; gap: 15px; padding: 48px 0 28px; }
+  .profile-avatar { display: grid; place-items: center; width: 60px; height: 60px; border: 1px solid rgba(255,255,255,.18); border-radius: 50%; color: #0d0b14; background: linear-gradient(145deg, #dbb7a5, #8672a5); font-size: .9rem; font-weight: 800; }
   .profile-header h1 { margin: 7px 0 7px; font-size: clamp(2rem, 4vw, 4rem); line-height: .98; letter-spacing: -.07em; }
   .profile-header p { margin: 0; color: var(--muted); font-size: .84rem; }
-  .profile-grid { display: grid; grid-template-columns: 1.4fr .8fr; gap: 14px; }
-  .profile-card { min-height: 160px; padding: 22px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
+  .profile-grid { display: grid; grid-template-columns: 1.35fr .8fr; gap: 12px; }
+  .profile-card { min-height: 136px; padding: 18px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
   .profile-card-main { background: radial-gradient(circle at 80% 20%, rgba(155,135,245,.13), transparent 19rem), var(--surface); }
   .profile-card h2 { max-width: 440px; margin: 11px 0 8px; font-size: 1.75rem; letter-spacing: -.06em; }
   .profile-card p { max-width: 510px; margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.65; }
-  .sync-row { display: flex; gap: 18px; margin-top: 25px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .59rem; }
+  .sync-row { display: flex; gap: 18px; margin-top: 18px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .59rem; }
   .sync-row span { display: inline-flex; align-items: center; gap: 6px; }
   .sync-row span:first-child { color: var(--success); }
-  .activity-list { display: grid; gap: 16px; margin-top: 22px; }
+  .activity-list { display: grid; gap: 12px; margin-top: 15px; }
   .activity-list > div { display: flex; align-items: center; gap: 10px; color: var(--accent); }
   .activity-list span { display: grid; gap: 3px; }
   .activity-list strong { color: var(--ink); font-size: .88rem; }
@@ -136,13 +136,13 @@
   .profile-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(160px, 1fr); gap: 14px; overflow-x: auto; scrollbar-width: none; }
   .profile-rail::-webkit-scrollbar { display: none; }
   .profile-empty { padding: 36px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
-  .cinelog-banner { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 16px; margin-top: 65px; padding: 22px; border: 1px solid rgba(155,135,245,.25); border-radius: 18px; background: rgba(155,135,245,.07); }
+  .cinelog-banner { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 42px; padding: 18px; border: 1px solid rgba(155,135,245,.25); border-radius: 18px; background: rgba(155,135,245,.07); }
   .cinelog-mark { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; color: #0d0b14; background: var(--accent); font-size: .85rem; font-weight: 800; }
   .cinelog-banner h2 { margin: 7px 0 4px; font-size: 1.35rem; letter-spacing: -.05em; }
   .cinelog-banner p { margin: 0; color: var(--muted); font-size: .75rem; }
-  .preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 42px 0 0; }
+  .preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 30px 0 0; }
   .preferences h2 { margin: 8px 0 0; font-size: 1.7rem; letter-spacing: -.06em; }
   .preference-items { display: grid; gap: 10px; align-content: start; }
   .preference-items span { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: .77rem; }
-  @media (max-width: 720px) { .profile-header { grid-template-columns: 52px minmax(0, 1fr); padding-top: 108px; } .profile-avatar { width: 52px; height: 52px; } .profile-header .btn { grid-column: 1 / -1; justify-self: start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 42vw; } .cinelog-banner { grid-template-columns: 42px 1fr; } .cinelog-mark { width: 42px; height: 42px; border-radius: 12px; } .cinelog-banner .btn { grid-column: 1 / -1; justify-self: start; } }
+  @media (max-width: 720px) { .profile-header { grid-template-columns: 52px minmax(0, 1fr); padding-top: 84px; } .profile-avatar { width: 52px; height: 52px; } .profile-header .btn { grid-column: 1 / -1; justify-self: start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 42vw; } .cinelog-banner { grid-template-columns: 42px 1fr; } .cinelog-mark { width: 42px; height: 42px; border-radius: 12px; } .cinelog-banner .btn { grid-column: 1 / -1; justify-self: start; } }
 </style>

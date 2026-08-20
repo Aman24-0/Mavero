@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { ArrowLeft, ChevronDown } from 'lucide-svelte';
+  import { ArrowLeft } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
   import { media as fixtureMedia, formatType, type MediaItem } from '$data/content';
   import FilterBar from '$components/FilterBar.svelte';
@@ -20,8 +20,6 @@
   });
 
   let filterState = currentFilters();
-  let showAdvanced = false;
-  $: items = contentItems;
   $: label = formatType(type);
   $: genres = [...new Set(contentItems.flatMap((item) => item.genres))].sort();
   $: filteredItems = contentItems
@@ -51,10 +49,9 @@
 </svelte:head>
 
 <div class="container-wide collection-page">
-  <a class="back-link" href="/discover"><ArrowLeft size={15} /> Back to Discover</a>
-  <section class="page-heading"><div class="eyebrow">MAVERO / Explore</div><h1>{label}s<br /><em>in focus.</em></h1><p>A focused collection for the nights when you know the kind of world you want to step into.</p></section>
-  <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /><button class:active={showAdvanced} class="mode-tab advanced-toggle" aria-expanded={showAdvanced} aria-controls="advanced-filter-note" onclick={() => (showAdvanced = !showAdvanced)}><ChevronDown size={13} /> {showAdvanced ? 'Hide filters' : 'More filters'}</button></div>
-  {#if showAdvanced}<div id="advanced-filter-note" class="advanced-filter-note" role="region" aria-label="Advanced filter information">Filters are URL-synchronized, composable, and page-aware. The `page` query parameter is reserved for future continuous loading.</div>{/if}
+  <a class="back-link" href="/discover"><ArrowLeft size={15} /> Discover</a>
+  <section class="collection-heading"><div class="eyebrow">MAVERO / Explore</div><div class="heading-row"><div><h1>{label}s <em>in focus.</em></h1><p>Browse the latest {label.toLowerCase()} stories, ranked and ready for tonight.</p></div><div class="collection-count"><strong>{filteredItems.length}</strong><span>titles</span></div></div></section>
+  <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /></div>
   {#if filteredItems.length}
     <div class="results-grid">{#each filteredItems as item}<MediaCard {item} compact />{/each}</div>
   {:else}
@@ -65,14 +62,17 @@
 
 <style>
   em { color: var(--accent); font-style: normal; }
-  .back-link { display: inline-flex; align-items: center; gap: 8px; padding-top: 30px; color: var(--muted); font-size: .72rem; font-weight: 800; text-decoration: none; }
-  .collection-page .page-heading { padding-top: 55px; }
-  .collection-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 30px; }
-  .advanced-toggle { display: inline-flex; align-items: center; gap: 6px; }
-  .advanced-toggle.active { color: var(--ink); border-color: rgba(155,135,245,.45); background: var(--accent-soft); }
-  .advanced-filter-note { margin: -14px 0 22px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .59rem; line-height: 1.5; }
-  .results-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px 14px; padding-bottom: 30px; }
-  .load-sentinel { height: 1px; margin-top: 20px; }
+  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 24px; color: var(--muted); font-size: .68rem; font-weight: 800; text-decoration: none; }
+  .back-link:hover { color: var(--ink); }
+  .collection-heading { padding: 30px 0 18px; }
+  .heading-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
+  .collection-heading h1 { margin: 7px 0 0; font-size: clamp(2.35rem, 5vw, 4.7rem); line-height: .95; letter-spacing: -.075em; }
+  .collection-heading p { max-width: 520px; margin: 12px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.55; }
+  .collection-count { display: grid; justify-items: end; gap: 2px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
+  .collection-count strong { color: var(--ink); font-family: Manrope, sans-serif; font-size: 1.65rem; letter-spacing: -.06em; }
+  .collection-tools { margin: 0 0 22px; }
+  .results-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 20px 13px; padding-bottom: 28px; }
+  .load-sentinel { height: 1px; }
   @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 640px) { .back-link { padding-top: 101px; } .collection-page .page-heading { padding-top: 48px; } .collection-tools { align-items: stretch; flex-direction: column; } .advanced-toggle { align-self: flex-start; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; } }
+  @media (max-width: 640px) { .back-link { padding-top: 84px; } .collection-heading { padding: 24px 0 14px; } .heading-row { align-items: start; } .collection-heading h1 { font-size: 2.75rem; } .collection-count { padding-top: 5px; } .collection-tools { margin-bottom: 18px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 11px; } }
 </style>
