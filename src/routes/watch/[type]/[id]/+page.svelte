@@ -40,6 +40,7 @@
 
   $: if (browser && playbackKey !== writerKey) void setupProgressContext();
   $: if (!selectedSourceId && sourceOptions.length) selectedSourceId = sourceOptions[0].id;
+  $: if (browser && progressReady && selectedSourceId && resolutionState === 'idle') void prepareSource();
 
   onMount(() => {
     active = true;
