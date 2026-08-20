@@ -1,5 +1,8 @@
 <script lang="ts">
   import CollectionPage from '$components/CollectionPage.svelte';
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
 </script>
 
-<CollectionPage type="movie" />
+<CollectionPage type="movie" contentItems={data.items} />

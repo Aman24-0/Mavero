@@ -1,16 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ArrowUpRight, Play, Plus, Search, SlidersHorizontal, Sparkles } from 'lucide-svelte';
-  import { featured, media, continueWatching, trendingMovies, trendingSeries, trendingAnime } from '$data/content';
+  import { featured as fixtureFeatured, media as fixtureMedia, continueWatching as fixtureContinueWatching, trendingMovies as fixtureMovies, trendingSeries as fixtureSeries, trendingAnime as fixtureAnime, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
+
+  export let featuredItem: MediaItem = fixtureFeatured;
+  export let movies: MediaItem[] = fixtureMovies;
+  export let series: MediaItem[] = fixtureSeries;
+  export let anime: MediaItem[] = fixtureAnime;
+  export let continueItems: MediaItem[] = fixtureContinueWatching;
 
   let activeMode = 'All';
   let query = '';
   let intro: HTMLElement;
+  $: contentMedia = [...movies, ...series, ...anime];
 
   const modes = ['All', 'Movies', 'Series', 'Anime'];
   $: filteredMedia = query.trim()
-    ? media.filter((item) => `${item.title} ${item.genres.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()))
+    ? contentMedia.filter((item) => `${item.title} ${item.genres.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()))
     : [];
 
   onMount(async () => {
@@ -28,17 +35,17 @@
 
 <div bind:this={intro}>
   <section class="hero" aria-labelledby="hero-title">
-    <div class="hero-media" style={`background-image: url('${featured.backdrop}')`}></div>
+    <div class="hero-media" style={`background-image: url('${featuredItem.backdrop}')`}></div>
     <div class="container-wide hero-content">
-      <div class="hero-kicker" data-reveal><Sparkles size={13} /> {featured.tags?.[0] ?? 'Featured story'}</div>
-      <h1 id="hero-title" data-reveal>{featured.title}</h1>
-      <p class="hero-description" data-reveal>{featured.description}</p>
+      <div class="hero-kicker" data-reveal><Sparkles size={13} /> {featuredItem.tags?.[0] ?? 'Featured story'}</div>
+      <h1 id="hero-title" data-reveal>{featuredItem.title}</h1>
+      <p class="hero-description" data-reveal>{featuredItem.description}</p>
       <div class="meta-row" data-reveal>
-        <strong>{featured.year}</strong><span class="dot"></span><span>{featured.runtime}</span><span class="dot"></span><span>{featured.maturity}</span><span class="dot"></span><span>{featured.genres.slice(0, 2).join(' · ')}</span>
+        <strong>{featuredItem.year}</strong><span class="dot"></span><span>{featuredItem.runtime}</span><span class="dot"></span><span>{featuredItem.maturity}</span><span class="dot"></span><span>{featuredItem.genres.slice(0, 2).join(' · ')}</span>
       </div>
       <div class="hero-actions" data-reveal>
-        <a class="btn btn-primary" href={`/watch/${featured.type}/${featured.id}`}><Play size={15} fill="currentColor" /> Start watching</a>
-        <a class="btn btn-secondary" href={`/movie/${featured.id}`}><ArrowUpRight size={15} /> Details</a>
+        <a class="btn btn-primary" href={`/watch/${featuredItem.type}/${featuredItem.id}`}><Play size={15} fill="currentColor" /> Start watching</a>
+        <a class="btn btn-secondary" href={`/${featuredItem.type}/${featuredItem.id}`}><ArrowUpRight size={15} /> Details</a>
       </div>
     </div>
     <div class="hero-signal" aria-hidden="true"><b>01</b><span>Now showing</span></div>
@@ -62,16 +69,16 @@
       <ContentRail title={`Results for “${query}”`} eyebrow="Quick search" items={filteredMedia} href="/search" compact />
     {:else}
       {#if activeMode === 'All' || activeMode === 'Movies'}
-        <ContentRail title="Trending movies" eyebrow="Make tonight count" items={trendingMovies} href="/discover/movies" />
+        <ContentRail title="Trending movies" eyebrow="Make tonight count" items={movies} href="/discover/movies" />
       {/if}
       {#if activeMode === 'All' || activeMode === 'Series'}
-        <ContentRail title="Stories worth staying for" eyebrow="Series" items={trendingSeries} href="/discover/series" />
+        <ContentRail title="Stories worth staying for" eyebrow="Series" items={series} href="/discover/series" />
       {/if}
       {#if activeMode === 'All' || activeMode === 'Anime'}
-        <ContentRail title="The anime edit" eyebrow="From another world" items={trendingAnime} href="/discover/anime" />
+        <ContentRail title="The anime edit" eyebrow="From another world" items={anime} href="/discover/anime" />
       {/if}
-      {#if continueWatching.length}
-        <ContentRail title="Continue watching" eyebrow="Pick up where you left off" items={continueWatching} href="/profile" compact />
+      {#if continueItems.length}
+        <ContentRail title="Continue watching" eyebrow="Pick up where you left off" items={continueItems} href="/profile" compact />
       {/if}
       <section class="quiet-banner">
         <div><div class="eyebrow">MAVERO / The short list</div><h2>Less scrolling.<br /><em>More finding.</em></h2></div>

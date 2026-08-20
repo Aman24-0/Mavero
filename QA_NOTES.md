@@ -17,3 +17,11 @@
 
 - `/movie/afterlight` rendered the branded detail page with backdrop, poster, metadata, watch action, My List control, and a recommendation rail.
 - `/watch/movie/afterlight` initially returned a 500 because `progress` was initialized before the reactive content lookup completed during SSR. The route was corrected so progress initializes safely after content resolution; the page now renders with a Mavero player shell, source selector, progress control, subtitle/fullscreen controls, and a clear authorization-safe disclaimer.
+
+## Phase 2 content-layer verification
+
+The home route now loads through the server-side discovery loader. Because no TMDB credentials are present in the sandbox, movie and series rails correctly fall back to the existing fixtures; AniList is publicly queryable and the anime rail rendered live artwork and titles such as Attack on Titan, Demon Slayer, and Fullmetal Alchemist: Brotherhood.
+
+The Search route rendered a server-backed `attack` query with 18 live AniList results, including typed cards, normalized years, ratings, episodes, and AniList CDN artwork. No API keys or upstream credentials appeared in the browser output.
+
+The `/anime/anime-16498` detail route rendered live AniList metadata, poster artwork, normalized genres, rating, episode count, status-ready detail layout, watch action, and preserved recommendations from the existing MAVERO component architecture.

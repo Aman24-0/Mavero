@@ -1,11 +1,12 @@
 <script lang="ts">
   import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
-  import { media, formatType } from '$data/content';
+  import { media as fixtureMedia, formatType, type MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
 
   export let type: ContentType = 'movie';
-  $: items = media.filter((item) => item.type === type);
+  export let contentItems: MediaItem[] = fixtureMedia.filter((item) => item.type === type);
+  $: items = contentItems;
   $: label = formatType(type);
   let sort = 'For you';
   const sorts = ['For you', 'Top rated', 'Newest'];

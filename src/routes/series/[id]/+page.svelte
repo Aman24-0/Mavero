@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { page } from '$app/state';
   import DetailPage from '$components/DetailPage.svelte';
-  $: id = page.params.id ?? 'nocturne-city';
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
 </script>
 
-<DetailPage {id} type="series" />
+<DetailPage id={data.item.id} type="series" dataItem={data.item} />

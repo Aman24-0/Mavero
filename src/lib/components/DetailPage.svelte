@@ -1,13 +1,14 @@
 <script lang="ts">
   import { ArrowLeft, ArrowUpRight, Heart, Play, Plus, Share2, Star } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
-  import { getMedia, formatType, media } from '$data/content';
+  import { getMedia, media, formatType, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
 
   export let id = 'afterlight';
   export let type: ContentType = 'movie';
+  export let dataItem: MediaItem | undefined = undefined;
   let saved = false;
-  $: item = getMedia(id);
+  $: item = dataItem ?? getMedia(id);
   $: recommendations = media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 4);
 </script>
 
@@ -26,10 +27,10 @@
         <div class="eyebrow">{formatType(type)} / {item.genres[0]}</div>
         <h1>{item.title}</h1>
         <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.runtime}</span><span class="dot"></span><span>{item.maturity}</span><span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span></div>
-        <p>{item.description} In Mavero, the details are quiet so the story can do the talking.</p>
+        <p>{item.description}</p>
         <div class="detail-grid"><div class="detail-stat"><span>Genres</span><strong>{item.genres.join(' · ')}</strong></div><div class="detail-stat"><span>Audio</span><strong>Original · Sub</strong></div><div class="detail-stat"><span>Experience</span><strong>Full HD · 4K</strong></div></div>
         {#if type !== 'movie'}<div class="episode-strip"><div><div class="eyebrow">Now available</div><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? 12} episodes</strong></div><button class="icon-btn" aria-label="Open episode list"><ArrowUpRight size={16} /></button></div>{/if}
-        <div class="hero-actions"><a class="btn btn-primary" href={`/watch/${type}/${item.id}`}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={() => (saved = !saved)}><Plus size={15} /> {saved ? 'In my list' : 'My list'}</button><button class="icon-btn" aria-label="Share ${item.title}"><Share2 size={16} /></button><button class="icon-btn" aria-label="Favorite ${item.title}"><Heart size={16} /></button></div>
+        <div class="hero-actions"><a class="btn btn-primary" href={`/watch/${type}/${item.id}`}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={() => (saved = !saved)}><Plus size={15} /> {saved ? 'In my list' : 'My list'}</button><button class="icon-btn" aria-label={`Share ${item.title}`}><Share2 size={16} /></button><button class="icon-btn" aria-label={`Favorite ${item.title}`}><Heart size={16} /></button></div>
       </div>
     </section>
     <ContentRail title="You may also like" eyebrow="Keep exploring" items={recommendations} href="/discover" compact />
