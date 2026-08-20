@@ -17,3 +17,11 @@ The reference player inspiration uses a provider-owned playback surface, compact
 5. Provider embeds must fit cleanly in portrait and landscape. The provider iframe should occupy the responsive viewport without extra black/empty regions caused by the outer MAVERO control shell.
 6. Keep source selection and provider error/retry UI, but organize them outside the provider player.
 7. Do not begin Phase 7E.
+
+## Live verification after redesign
+
+Production deploy `6a8728eeb5174df68783c0a5` is ready. The live Dune watch route renders without AppShell’s browse header or mobile bottom navigation. The visible shell contains Back, Sources, and Landscape actions only; no outer play, timeline, volume, quality, or fullscreen controls appear while the provider source is unavailable. The source drawer remains available and lists Vidsrc Embed as an experimental embed source. The live test currently reports Source unavailable because the selected Vidsrc source is not resolving in this environment; this is a provider/resolver state, not a layout failure.
+
+## Final live provider verification
+
+After the final deploy `6a872a19922de553b269f98d`, the Dune watch route automatically resolves the Vidsrc source. The provider iframe loads successfully and displays its own playback controls inside the iframe. MAVERO’s surrounding shell displays only Back, Sources, and Landscape; no MAVERO duplicate play/timeline/volume/quality/fullscreen layer is present. The provider viewport is centered in the portrait browser viewport with a responsive 16:9 frame.
