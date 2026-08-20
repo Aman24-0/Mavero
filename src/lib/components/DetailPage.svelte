@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import { ArrowLeft, ArrowRight, Heart, Play, Share2, Star } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
@@ -40,6 +41,12 @@
     }
   }
 
+  function goBack(event: MouseEvent) {
+    event.preventDefault();
+    if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
+    else void goto('/discover');
+  }
+
   async function shareItem() {
     try {
       if (navigator.share) await navigator.share({ title: item.title, text: `Watch ${item.title} on MAVERO`, url: canonicalUrl });
@@ -67,7 +74,7 @@
 <div class="detail-wrap">
   <div class="detail-backdrop" style={`background-image: url('${item.backdrop || item.poster}')`}></div>
   <div class="container-wide">
-    <a class="back-link" href="/discover"><ArrowLeft size={15} /> Discover</a>
+    <a class="back-link" href="/discover" onclick={goBack}><ArrowLeft size={15} /> Back</a>
     <section class="detail-layout" aria-labelledby="detail-title">
       <div class="detail-poster"><img src={item.poster} alt={`${item.title} poster`} /></div>
       <div class="detail-copy">
@@ -107,5 +114,5 @@
   .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(420px, 100%); margin-top: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.035); }
   .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .7rem; }
   .save-error { margin-top: 8px; color: #d4b27c; font-family: 'DM Mono', monospace; font-size: .57rem; }
-  @media (max-width: 640px) { .detail-backdrop { height: 390px; } .detail-wrap::before { height: 470px; } .back-link { padding-top: 84px; } .detail-layout { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; padding: 24px 0 28px; } .detail-copy { display: contents; } .detail-copy > .eyebrow, .detail-copy > h1, .detail-copy > .meta-row { grid-column: 2; } .detail-copy > p, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { font-size: 2.35rem; } .detail-copy > p { margin-top: 15px; font-size: .84rem; } .detail-grid { gap: 6px; } .detail-stat { padding: 9px; } }
+  @media (max-width: 640px) { .detail-backdrop { height: 390px; } .detail-wrap::before { height: 470px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; padding: 24px 0 28px; } .detail-copy { display: contents; } .detail-copy > .eyebrow, .detail-copy > h1, .detail-copy > .meta-row { grid-column: 2; } .detail-copy > p, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { font-size: 2.35rem; } .detail-copy > p { margin-top: 15px; font-size: .84rem; } .detail-grid { gap: 6px; } .detail-stat { padding: 9px; } }
 </style>

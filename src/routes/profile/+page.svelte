@@ -1,17 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, Settings2, ShieldCheck, Cloud, LogOut } from 'lucide-svelte';
+  import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, Settings2, ShieldCheck, LogOut } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
-  import { getContinueWatching, getLocalFavorites, getLocalPersistenceState, getRecentlyWatched } from '$lib/client/progress/service';
+  import { getLocalFavorites, getLocalPersistenceState, getRecentlyWatched } from '$lib/client/progress/service';
   import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
 
   let { data }: { data: PageData } = $props();
-  let continueItems = $state<MediaItem[]>([]);
   let recentItems = $state<MediaItem[]>([]);
   let favoriteItems = $state<MediaItem[]>([]);
   let watchedSeconds = $state(0);
@@ -56,7 +55,6 @@
       if (data.user) {
         const cloud = await syncAuthenticatedState();
         syncStatus = cloud.status;
-        continueItems = cloud.progress.filter((record) => record.completionState !== 'completed' && record.currentTime > 0).map(progressToMedia);
         favoriteItems = cloud.favorites.map(favoriteToMedia);
         const historyResponse = await fetch('/api/account/history?limit=20');
         if (historyResponse.ok) {
@@ -68,8 +66,7 @@
         watchedSeconds = recentItems.reduce((total, item) => total + (item.progress ?? 0), 0);
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
       } else {
-        const [continueRecords, recentRecords, favoriteRecords] = await Promise.all([getContinueWatching(), getRecentlyWatched(), getLocalFavorites()]);
-        continueItems = continueRecords.map(progressToMedia);
+        const [recentRecords, favoriteRecords] = await Promise.all([getRecentlyWatched(), getLocalFavorites()]);
         recentItems = recentRecords.map(progressToMedia);
         favoriteItems = favoriteRecords.map(favoriteToMedia);
         watchedSeconds = recentRecords.reduce((total, record) => total + record.currentTime, 0);
@@ -97,21 +94,21 @@
 </svelte:head>
 
 <div class="container-wide profile-page">
-  <section class="profile-header"><div class="profile-avatar">{accountName().slice(0, 2).toUpperCase()}</div><div><div class="eyebrow">MAVERO / Your space</div><h1>Welcome back, {accountName()}.</h1><p>{isAuthenticated ? 'Your library follows you across devices.' : 'Pick up where you left off, or make room for something new.'}</p></div>{#if isAuthenticated}<form class="inline-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn btn-secondary"><LogOut size={15} /> Sign out</button></form>{:else}<a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a>{/if}</section>
+  <section class="profile-header"><div class="profile-avatar">{accountName().slice(0, 2).toUpperCase()}</div><div><div class="eyebrow">MAVERO / Your space</div><h1>Welcome back, {accountName()}.</h1><p>{isAuthenticated ? 'Your library follows you across devices.' : 'Pick up where you left off, or make room for something new.'}</p></div>{#if !isAuthenticated}<a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a>{:else}<span class="account-status">Cloud account</span>{/if}</section>
 
   <div class="profile-grid"><section class="profile-card profile-card-main"><div class="eyebrow">{isAuthenticated ? 'Cloud library' : 'Guest mode'}</div><h2>{isAuthenticated ? 'Your story travels with you.' : 'Your watch history lives here.'}</h2><p>{isAuthenticated ? 'MAVERO reconciles this device with your cloud library without losing newer local progress.' : 'MAVERO saves your progress on this device automatically. Sign in when you want it available everywhere.'}</p><div class="sync-row"><span><ShieldCheck size={15} /> {storageMessage}</span><span>{isAuthenticated ? syncStatusLabel(syncStatus) : loaded ? 'Ready' : 'Loading'}</span></div></section><section class="profile-card"><div class="eyebrow">Your activity</div><div class="activity-list"><div><Clock3 size={15} /><span><strong>{watchedLabel}</strong><small>{isAuthenticated ? 'Cloud history' : 'Watched locally'}</small></span></div><div><Heart size={15} /><span><strong>{favoriteItems.length} title{favoriteItems.length === 1 ? '' : 's'}</strong><small>{isAuthenticated ? 'Synced My List' : 'Saved on this device'}</small></span></div></div></section></div>
 
   {#if errorMessage}<ErrorState eyebrow="MAVERO / Local state" title="Your local library is resting." message={errorMessage} retry={loadLocalState} />{/if}
 
-  <section class="section"><div class="section-head"><div><div class="eyebrow">Pick up the thread</div><h2 class="section-title">Continue watching</h2></div><a class="section-link" href="/discover">Browse more <ArrowUpRight size={14} /></a></div>{#if !loaded}<div class="profile-empty">Loading your local progress…</div>{:else if continueItems.length}<div class="profile-rail">{#each continueItems as item}<MediaCard {item} compact />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / Continue watching" title="Nothing here yet." message="Start watching something and your next visit will pick up from the saved position." actionLabel="Find a story" actionHref="/discover" />{/if}</section>
-
   <section class="section"><div class="section-head"><div><div class="eyebrow">Saved for later</div><h2 class="section-title">My list</h2></div><span class="section-link"><Bookmark size={14} /> Local library</span></div>{#if !loaded}<div class="profile-empty">Loading your local library…</div>{:else if favoriteItems.length}<div class="profile-rail">{#each favoriteItems as item}<MediaCard {item} />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / My list" title="Keep a title close." message="Use My list on a detail page to save titles to this device." actionLabel="Browse Discover" actionHref="/discover" />{/if}</section>
 
   <section class="section"><div class="section-head"><div><div class="eyebrow">Recently watched</div><h2 class="section-title">Your trail</h2></div></div>{#if recentItems.length}<div class="profile-rail">{#each recentItems as item}<MediaCard {item} compact />{/each}</div>{:else if loaded}<div class="profile-empty">Your recent trail will appear after your first playback session.</div>{/if}</section>
 
-  <section class="cinelog-banner"><div class="cinelog-mark">CL</div><div><div class="eyebrow">A separate product, made for tracking</div><h2>Track everything you watch.</h2><p>Organize your movies, series, and anime with CineLog.</p></div><a class="btn btn-primary" href="https://cinelog.app" target="_blank" rel="noreferrer">Open CineLog <ArrowUpRight size={15} /></a></section>
+  <section class="cinelog-banner"><div class="cinelog-mark">CL</div><div><div class="eyebrow">A separate product, made for tracking</div><h2>Track everything you watch.</h2><p>Organize your movies, series, and anime with CineLog.</p></div><a class="btn btn-primary" href="https://cinelogv2.vercel.app" target="_blank" rel="noreferrer">Open CineLog <ArrowUpRight size={15} /></a></section>
 
   <section class="preferences"><div><div class="eyebrow">Preferences</div><h2>Keep it yours.</h2></div><div class="preference-items"><span><Settings2 size={15} /> Playback settings</span><span><Bookmark size={15} /> Local library on this device</span></div></section>
+
+  {#if isAuthenticated}<form class="signout-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn signout-btn"><LogOut size={15} /> Sign out</button></form>{/if}
 </div>
 
 <style>
@@ -120,6 +117,10 @@
   .profile-avatar { display: grid; place-items: center; width: 60px; height: 60px; border: 1px solid rgba(255,255,255,.18); border-radius: 50%; color: #0d0b14; background: linear-gradient(145deg, #dbb7a5, #8672a5); font-size: .9rem; font-weight: 800; }
   .profile-header h1 { margin: 7px 0 7px; font-size: clamp(2rem, 4vw, 4rem); line-height: .98; letter-spacing: -.07em; }
   .profile-header p { margin: 0; color: var(--muted); font-size: .84rem; }
+  .account-status { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
+  .signout-form { display: flex; justify-content: flex-end; margin-top: 24px; }
+  .signout-btn { color: #ffadb8; border-color: rgba(236,91,111,.28); background: rgba(236,91,111,.08); }
+  .signout-btn:hover { color: #ffd9de; border-color: rgba(236,91,111,.5); background: rgba(236,91,111,.15); }
   .profile-grid { display: grid; grid-template-columns: 1.35fr .8fr; gap: 12px; }
   .profile-card { min-height: 136px; padding: 18px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
   .profile-card-main { background: radial-gradient(circle at 80% 20%, rgba(155,135,245,.13), transparent 19rem), var(--surface); }
@@ -144,5 +145,5 @@
   .preferences h2 { margin: 8px 0 0; font-size: 1.7rem; letter-spacing: -.06em; }
   .preference-items { display: grid; gap: 10px; align-content: start; }
   .preference-items span { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: .77rem; }
-  @media (max-width: 720px) { .profile-header { grid-template-columns: 52px minmax(0, 1fr); padding-top: 84px; } .profile-avatar { width: 52px; height: 52px; } .profile-header .btn { grid-column: 1 / -1; justify-self: start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 42vw; } .cinelog-banner { grid-template-columns: 42px 1fr; } .cinelog-mark { width: 42px; height: 42px; border-radius: 12px; } .cinelog-banner .btn { grid-column: 1 / -1; justify-self: start; } }
+  @media (max-width: 720px) { .profile-header { grid-template-columns: 52px minmax(0, 1fr); padding-top: 84px; } .profile-avatar { width: 52px; height: 52px; } .profile-header .btn { grid-column: 1 / -1; justify-self: start; } .signout-form { justify-content: flex-start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 42vw; } .cinelog-banner { grid-template-columns: 42px 1fr; } .cinelog-mark { width: 42px; height: 42px; border-radius: 12px; } .cinelog-banner .btn { grid-column: 1 / -1; justify-self: start; } }
 </style>

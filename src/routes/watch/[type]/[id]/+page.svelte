@@ -177,16 +177,20 @@
 
 <svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
 
-{#if progressReady}
+{#if progressReady && resolutionState !== 'loading'}
   <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} />
 {:else}
-  <main class="watch-loading" aria-live="polite"><div class="loading-orb"></div><span>Preparing your watch session…</span><small>{localState}</small></main>
+  <main class="watch-loading" aria-live="polite"><div class="loading-ring" aria-hidden="true"><span></span></div><div class="loading-copy"><strong>{progressReady ? 'Starting your stream' : 'Loading player'}</strong><span>{progressReady ? 'Connecting to your provider…' : 'Preparing your watch session…'}</span></div><small>{progressReady ? resolutionMessage || 'Finding the best available source' : localState}</small></main>
 {/if}
 
 <style>
-  .watch-loading { display: grid; place-items: center; align-content: center; gap: 14px; min-height: 100dvh; color: var(--muted); background: #050506; font-family: 'DM Mono', monospace; font-size: .66rem; text-align: center; }
+  .watch-loading { display: grid; place-items: center; align-content: center; gap: 18px; min-height: 100dvh; color: var(--muted); background: radial-gradient(circle at 50% 43%, rgba(155,135,245,.12), transparent 24rem), #050506; font-family: 'DM Mono', monospace; font-size: .66rem; text-align: center; }
+  .loading-ring { display: grid; place-items: center; width: 72px; height: 72px; border: 1px solid rgba(255,255,255,.1); border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 24%, rgba(194,181,255,.95) 42%, rgba(155,135,245,.2) 72%, transparent 100%); box-shadow: 0 0 0 14px rgba(155,135,245,.045), 0 0 60px rgba(155,135,245,.22); animation: spin 1.2s linear infinite; }
+  .loading-ring span { width: 58px; height: 58px; border-radius: 50%; background: #07070a; box-shadow: inset 0 0 22px rgba(155,135,245,.12); }
+  .loading-copy { display: grid; gap: 6px; }
+  .loading-copy strong { color: var(--ink); font-family: Manrope, sans-serif; font-size: .92rem; letter-spacing: -.02em; }
+  .loading-copy span { color: var(--muted); font-size: .6rem; }
   .watch-loading small { color: var(--muted-deep); font-size: .55rem; }
-  .loading-orb { width: 58px; height: 58px; border: 1px solid rgba(194,181,255,.5); border-radius: 50%; box-shadow: 0 0 0 16px rgba(155,135,245,.05), 0 0 54px rgba(155,135,245,.2); animation: pulse 1.7s ease-in-out infinite; }
-  @keyframes pulse { 50% { transform: scale(1.07); opacity: .58; } }
-  @media (prefers-reduced-motion: reduce) { .loading-orb { animation: none; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .loading-ring { animation: none; } }
 </style>

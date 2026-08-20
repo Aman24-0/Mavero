@@ -26,7 +26,7 @@
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/watch/')}
+{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname)}
   {@render pageChildren()}
 {:else}
   <AppShell currentPath={page.url.pathname} user={data.user}>

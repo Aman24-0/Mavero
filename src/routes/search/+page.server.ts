@@ -1,4 +1,4 @@
-import { getFixtureContent, search } from '$lib/server/content/service';
+import { search } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { ContentServiceError, isContentType, type ContentType } from '$lib/server/content/types';
 import type { PageServerLoad } from './$types';
@@ -8,11 +8,7 @@ export const load: PageServerLoad = async ({ url }) => {
   const typeValue = url.searchParams.get('type');
   const type = isContentType(typeValue) ? typeValue : undefined;
 
-  if (!query) {
-    const types: ContentType[] = type ? [type] : ['movie', 'series', 'anime'];
-    const items = types.flatMap((entry) => getFixtureContent(entry)).map(toMediaItem);
-    return { query, type, items, errorMessage: '' };
-  }
+  if (!query) return { query, type, items: [], errorMessage: '' };
 
   try {
     const result = await search(query, type);

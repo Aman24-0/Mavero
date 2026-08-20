@@ -157,6 +157,17 @@ export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page 
   return { ...value, source: { ...value.source, stale } };
 }
 
+export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
+  const key = `tmdb:popular:${type}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const path = type === 'movie' ? '/movie/popular' : '/tv/popular';
+    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
+    const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type, 'Popular'));
+    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
 export async function searchTmdb(query: string, type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
   const normalized = query.trim();
   const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}`;
