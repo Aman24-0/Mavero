@@ -50,11 +50,19 @@ export async function search(query: string, type?: ContentType, page = 1): Promi
     }
 
     const [movies, series, anime] = await Promise.allSettled([searchTmdb(normalized, 'movie', page), searchTmdb(normalized, 'series', page), searchAniList(normalized, page)]);
-    const fulfilled = [movies, series, anime].filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled');
-    if (!fulfilled.length) throw new ContentServiceError('All content providers failed during search.', { code: 'UPSTREAM_ERROR', status: 502 });
+    const tmdbResults = [movies, series].filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled');
+    const animeResults = anime.status === 'fulfilled' ? [anime] : [];
+    if (!tmdbResults.length) {
+      const failure = [movies, series].find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
+      throw failure instanceof ContentServiceError ? failure : new ContentServiceError('TMDB search is unavailable.', { code: 'UPSTREAM_ERROR', status: 502 });
+    }
+    const fulfilled = [...tmdbResults, ...animeResults];
     const sources = fulfilled.map((result) => result.value.source);
     return { query: normalized, items: fulfilled.flatMap((result) => result.value.items), page, hasNextPage: fulfilled.some((result) => result.value.hasNextPage), source: { provider: sources.every((item) => item.provider === sources[0].provider) ? sources[0].provider : 'fixtures', fetchedAt: new Date().toISOString(), stale: sources.some((item) => item.stale) } };
   } catch (error) {
+    // In mixed "All" search, never present AniList/fixture data as if it were a successful TMDB catalog search.
+    // Keep fixture fallback for explicit type searches and discovery/detail flows.
+    if (!type && error instanceof ContentServiceError && canFallback(error)) throw error;
     if (!canFallback(error)) throw error;
     const items = media.filter((item) => `${item.title} ${item.genres.join(' ')}`.toLowerCase().includes(normalized.toLowerCase()) && (!type || item.type === type)).map((item) => ({ ...item, source: fixtureSource() } as NormalizedMediaItem));
     return { query: normalized, items, page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
