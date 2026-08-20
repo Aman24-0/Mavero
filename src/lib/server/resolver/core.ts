@@ -1,4 +1,4 @@
-import { createDefaultAdapters } from './adapters';
+import { createDefaultAdapterIds, createDefaultAdapters } from './adapters';
 import { ResolverError, asResolverError } from './errors';
 import { normalizeContentIdentifiers } from './identifiers';
 import { allowedEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
@@ -25,9 +25,17 @@ function experimentalPlaybackAllowed(config: TrustedResolutionConfig): boolean {
   return sourceValue === true || providerValue === true;
 }
 
+function providerStatusAllowsPlayback(config: TrustedResolutionConfig): boolean {
+  return activeProviderStatuses.has(config.provider.status)
+    || (config.provider.status === 'experimental' && experimentalPlaybackAllowed(config));
+}
+
 function adapterFor(config: TrustedResolutionConfig, dependencies: ResolverDependencies): ProviderAdapter | undefined {
   const type = (config.source.integration_type ?? config.provider.integration_type) as IntegrationType;
-  return dependencies.adapters?.[type] ?? createDefaultAdapters()[type];
+  const adapterId = config.provider.adapter_id;
+  return (adapterId ? dependencies.adaptersById?.[adapterId] ?? createDefaultAdapterIds()[adapterId] : undefined)
+    ?? dependencies.adapters?.[type]
+    ?? createDefaultAdapters()[type];
 }
 
 function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']>>, context: Parameters<ProviderAdapter['resolve']>[0]): SourceResult {
@@ -53,7 +61,7 @@ export async function resolveSourceFromConfig(request: ResolverRequest, config: 
   if (!config.source) throw new ResolverError('SOURCE_NOT_FOUND');
   if (config.source.provider_id !== config.provider.id) throw new ResolverError('PROVIDER_RESPONSE_INVALID');
   if (!config.provider.enabled) throw new ResolverError('PROVIDER_DISABLED');
-  if (!activeProviderStatuses.has(config.provider.status)) throw new ResolverError('PROVIDER_DISABLED');
+  if (!providerStatusAllowsPlayback(config)) throw new ResolverError('PROVIDER_DISABLED');
   if (!config.source.enabled) throw new ResolverError('SOURCE_DISABLED');
   if (config.source.visibility !== 'public') throw new ResolverError('SOURCE_DISABLED');
   if (!activeSourceStatuses.has(config.source.status) && !experimentalPlaybackAllowed(config)) throw new ResolverError('SOURCE_MAINTENANCE');

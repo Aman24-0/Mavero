@@ -110,6 +110,7 @@ export type AdapterResult = {
 
 export interface ProviderAdapter {
   readonly integrationType: IntegrationType;
+  readonly adapterId?: string;
   resolve(context: ResolverContext): Promise<AdapterResult | null>;
 }
 
@@ -117,4 +118,5 @@ export type ResolverDependencies = {
   loadContent?: (request: ResolverRequest) => Promise<NormalizedMediaItem>;
   loadConfig?: (request: ResolverRequest) => Promise<TrustedResolutionConfig>;
   adapters?: Partial<Record<IntegrationType, ProviderAdapter>>;
+  adaptersById?: Record<string, ProviderAdapter>;
 };

@@ -3,6 +3,7 @@ import { resolveTemplate, templateForContext } from './template';
 import { validatePlaybackUrl, allowedEmbedOriginsFromCapabilities, protocolForUrl } from './safe-url';
 import type { AdapterResult, ProviderAdapter, ResolverContext } from './types';
 import type { IntegrationType } from '$lib/server/streaming/types';
+import { vidsrcProviderAdapter } from './vidsrc';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
   const sourceCapabilities = context.config.source.capabilities;
@@ -60,6 +61,10 @@ export const customProviderAdapter: ProviderAdapter = {
 
 export function createDefaultAdapters(): Record<IntegrationType, ProviderAdapter> {
   return { template: templateProviderAdapter, direct: directProviderAdapter, embed: embedProviderAdapter, api: apiProviderAdapter, custom: customProviderAdapter };
+}
+
+export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
+  return { [vidsrcProviderAdapter.adapterId ?? 'vidsrc-embed']: vidsrcProviderAdapter };
 }
 
 export function createMockAdapter(integrationType: IntegrationType, result: AdapterResult | null | (() => AdapterResult | null)): ProviderAdapter {

@@ -35,3 +35,12 @@ A read-only live check of `https://vidsrc.wiki/embed/movie/533535` and `https://
 Both user-provided Vidsrc embed paths were reachable but returned a WordPress slash-normalization redirect (`301`) rather than a documented provider API response. `https://vidsrc.wiki/robots.txt` was reachable. `https://vidsrc.wiki/terms` returned `404`, so no terms/authorization page was available at that conventional path. The site response identifies WordPress/Hostinger infrastructure, which does not establish catalog licensing or authorization. No media URLs, player internals, or redirect destinations were extracted.
 
 **Phase 7D decision:** current verification is insufficient to establish legitimate authorized use of Vidsrc as a MAVERO playback provider. Under the Phase 7D specification, the provider must remain unintegrated/disabled and the provider-specific implementation must stop rather than force a production adapter.
+
+## Revised-policy ordinary embed verification
+
+The user-provided URLs were opened as ordinary public pages without inspecting cross-origin internals or extracting media URLs:
+
+- `https://vidsrc.wiki/embed/movie/533535/` loaded as a page titled `VidSrc` and exposed a visible `Server` selector with `Pro 1`.
+- `https://vidsrc.wiki/embed/tv/79744/1/1/` loaded as a page titled `VidSrc` and exposed the same `Server` selector with `Pro 1`.
+
+This confirms that the supplied URL patterns are technically representable as `embed` sources for movie and TV/episode contexts. It does not establish direct media behavior, licensing, or permission to remove provider-controlled ads/redirects. No hidden media URLs, DOM internals, or cross-origin player state were accessed.

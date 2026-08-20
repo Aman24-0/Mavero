@@ -1,141 +1,250 @@
-# MAVERO Phase 7D Provider-Selection Gate Report
+# MAVERO Phase 7D Completion Report — Experimental Vidsrc Embed
 
-**Status:** Provider integration blocked at the verification gate; no unverified provider code was implemented.
+**Project:** MAVERO
 
-**Selected candidate for evaluation:** Vidsrc, based on the user’s explicit request.
+**Phase:** 7D — First Verified Streaming Provider Integration under the revised user-supplied provider policy
 
-**Scope respected:** One candidate only. No second provider, no provider fallback, no Phase 7E work, no player architecture changes, no ad/redirect bypass, no hidden media extraction, and no cross-origin player manipulation.
+**Status:** Implemented as one **experimental, unverified, disabled-by-default embed provider**. No Phase 7E work has started.
 
-## Executive decision
+> Vidsrc is not described as licensed, endorsed, or officially approved by MAVERO. The implementation uses only the ordinary public embed URL pattern supplied by the user and does not remove provider-controlled advertisements, redirects, popups, or cross-origin player behavior.
 
-Vidsrc was not approved for implementation because current verification did not establish a legitimate authorization basis for MAVERO to redistribute or embed its movie and episode catalog. The candidate’s public pages make self-described embed/API claims, but the checked material did not provide verifiable licensing, authorization terms for third-party applications, a formal API contract, or a documented permission model for the requested catalog.
+## 1. Technical integration type
 
-Under the Phase 7D specification, an unverified provider must remain unintegrated or disabled/experimental and the provider-specific implementation must stop. MAVERO therefore remains on the existing provider-agnostic Phase 7B/7C architecture.
+Vidsrc is integrated as an **embed** provider. It is never classified as direct media. The adapter returns a normalized Phase 7B `AdapterResult` with `type: "embed"`, and Phase 7B performs the final safe URL validation before the Phase 7C PlayerShell receives the result.
 
-## 1. Candidate and requested behavior
-
-The candidate was the Vidsrc service represented by the user-provided URLs:
+The ordinary public patterns verified for the requested candidate are:
 
 ```text
-https://vidsrc.wiki/embed/movie/533535
-https://vidsrc.wiki/embed/tv/79744/1/1
+Movie:   https://vidsrc.wiki/embed/movie/{tmdb_id}/
+TV:      https://vidsrc.wiki/embed/tv/{tmdb_id}/{season}/{episode}/
 ```
 
-The requested product behavior was an iframe-based movie/series provider with source selection, mobile landscape behavior, and removal of provider-controlled advertisements and redirects. The last request cannot be implemented: removing provider ads, redirecting behavior, popups, or cross-origin player controls would require bypassing provider-controlled behavior and is outside the safe MAVERO integration boundary.
+The public movie and TV episode pages loaded as VidSrc pages and exposed a visible server selector. No hidden media URL, internal player request, cross-origin DOM, or protected endpoint was inspected.
 
-## 2. Current web verification
+## 2. Provider adapter
 
-The following public sources were checked read-only:
+The isolated adapter is located at `src/lib/server/resolver/vidsrc.ts` and is registered through `src/lib/server/resolver/adapters.ts` under the adapter ID `vidsrc-embed`.
 
-| Source | Result | Decision relevance |
+The adapter:
+
+| Responsibility | Implementation |
+|---|---|
+| Integration type | `embed` only |
+| Adapter ID | `vidsrc-embed` |
+| Movie path | `/embed/movie/{tmdb_id}/` |
+| TV episode path | `/embed/tv/{tmdb_id}/{season}/{episode}/` |
+| Anime | Explicitly unsupported |
+| URL origin | Exact `https://vidsrc.wiki` allowlist |
+| URL protocol | HTTPS only through existing resolver validation |
+| Source result | Normalized embed result only |
+| Provider-specific UI | None; existing PlayerShell remains unchanged |
+
+Resolver dispatch now checks the trusted database `adapter_id` before falling back to the generic integration type. This keeps Vidsrc-specific mapping on the server and prevents the browser from selecting an adapter or constructing a provider URL.
+
+## 3. Identifier mapping
+
+Vidsrc uses TMDB identifiers for the requested URL pattern. The adapter consumes `ContentIdentifiers.tmdbId`, which is populated by the existing normalized metadata layer. The browser does not perform TMDB/IMDb/AniList conversion.
+
+A movie request requires `tmdbId`. A TV request requires `tmdbId`, `season`, and `episode`. Missing identifiers produce the existing typed resolver error rather than a malformed provider URL.
+
+## 4. Movie support
+
+Movie support is implemented through the server-side template:
+
+```text
+https://vidsrc.wiki/embed/movie/{tmdb_id}/
+```
+
+The adapter validates the exact configured template, resolves the TMDB identifier through the allowlisted placeholder resolver, validates the final HTTPS origin, and returns an embed `SourceResult`.
+
+## 5. TV and episode support
+
+TV episode support is implemented through the server-side template:
+
+```text
+https://vidsrc.wiki/embed/tv/{tmdb_id}/{season}/{episode}/
+```
+
+The existing Phase 7B request parser validates the episode scope. The adapter rejects missing or invalid episode context through the existing typed error model. The Phase 7C PlayerShell remains responsible for episode navigation and progress; no provider-specific progress storage was added.
+
+## 6. Anime support
+
+Anime support is explicitly disabled for Vidsrc in both provider and source capabilities. Anime requests return `UNSUPPORTED_MEDIA_TYPE`. MAVERO’s future provider architecture remains capable of adding anime through another separately approved adapter.
+
+## 7. Database configuration
+
+Migration `supabase/migrations/20260820018000_phase7d_vidsrc_experimental.sql` seeds the provider and source through the existing Phase 7A registry architecture.
+
+| Field | Provider | Source |
 |---|---|---|
-| [Vidsrc domain directory][1] | Self-described official-domain page claiming embed/API availability and listing changing domains | Does not establish licensing or authorization for MAVERO |
-| `https://vidsrc.wiki/` | HTTP 200; WordPress-backed public site response | Does not establish playback rights or integration authorization |
-| `https://vidsrc.wiki/embed/movie/533535` | HTTP 301 slash-normalization redirect | Shows URL reachability only; no API contract or rights evidence |
-| `https://vidsrc.wiki/embed/tv/79744/1/1` | HTTP 301 slash-normalization redirect | Shows URL reachability only; no series/episode contract or rights evidence |
-| `https://vidsrc.wiki/robots.txt` | HTTP 200 | Does not establish authorization |
-| `https://vidsrc.wiki/terms` | HTTP 404 | No conventional public terms page was available at the checked path |
+| Name/slug | `Vidsrc` / `vidsrc` | `Vidsrc Embed` / `vidsrc-embed` |
+| Status | `experimental` | `experimental` |
+| Enabled | `false` | `false` |
+| Visibility | — | `public` when explicitly enabled |
+| Integration type | `embed` | `embed` |
+| Adapter ID | `vidsrc-embed` | — |
+| Identifier mode | — | `tmdb_id` |
+| Anime capability | `false` | `false` |
+| Direct capability | `false` | `false` |
+| Allowed embed origin | `https://vidsrc.wiki` | `https://vidsrc.wiki` |
 
-No media URL, hidden API, player-internal request, redirect destination, or protected content was extracted. No scraping or anti-bot circumvention was performed.
+The migration was applied to the MAVERO Supabase project `whekhqimzrafhsrmswbn`. Post-application verification confirmed the provider/source are experimental and disabled. The public mirror query returned no Vidsrc row while disabled.
 
-## 3. Authorization and legitimate-use assessment
+## 8. Admin controls
 
-The domain directory claims that Vidsrc provides streaming links and embeds, but a self-description is not sufficient evidence that the underlying movie and episode catalog is licensed for third-party redistribution or that MAVERO is authorized to use it. The checked domain directory also did not list the user-provided `vidsrc.wiki` host among its displayed active domains at verification time.
+No provider-specific frontend button was added. The existing Admin provider/source management controls remain the activation surface. An Admin can review and change provider/source enabled state, status, visibility, ordering, and categories through the Phase 7A architecture.
 
-Because the authorization basis is unverified, MAVERO cannot safely ship a live Vidsrc adapter. The correct outcome is to keep the candidate disabled and document the blocker rather than call the provider a legitimate production source.
+A transactional lifecycle check temporarily enabled the Vidsrc provider/source, confirmed that the public mirror exposed the source while enabled, and rolled the transaction back. A post-rollback query confirmed:
 
-## 4. Integration type decision
+```text
+provider_enabled: false
+source_enabled: false
+status: experimental
+public_mirror_id: null
+```
 
-No provider integration type was activated. If a future authorized review approves Vidsrc, the only technically acceptable shape for this candidate would be an `embed` result, never a direct media result. The Phase 7C PlayerShell would remain provider-agnostic and would receive only a validated server-generated `SourceResult`.
+The production configuration therefore remains disabled by default and requires explicit Admin action.
 
-The future safe flow would be:
+## 9. Resolver integration
+
+The end-to-end server flow remains:
 
 ```text
 Watch page
   → sourceId only
-  → server-side adapter
-  → validated embed SourceResult
-  → existing PlayerShell iframe guard
+  → POST /api/playback/resolve
+  → trusted Supabase provider/source lookup
+  → adapter_id = vidsrc-embed
+  → Vidsrc embed adapter
+  → exact-origin and HTTPS validation
+  → normalized embed SourceResult
+  → Phase 7C PlayerShell
 ```
 
-The browser would not construct provider URLs from arbitrary input. Provider-controlled advertisements and redirects would remain provider-controlled; no “remove ads” or bypass button would be added.
+The browser cannot override provider templates, supply an arbitrary provider URL, select a different adapter ID, or request direct playback from this provider.
 
-## 5. Capability and identifier status
+## 10. Player integration
 
-Movie, series, and episode support were not approved because the candidate’s legitimate integration contract could not be established. The provided URL shapes suggest movie and TV/episode path patterns, but URL shape is not proof of documented API behavior, stable response format, authorization, or playback rights.
+The Phase 7C PlayerShell was not modified for Vidsrc. It already supports normalized embed results through its controlled iframe path. The player continues to provide its own Back, Retry, Change Source, fullscreen, focus, loading, and error states.
 
-No TMDB, IMDb, AniList, or MAL identifier mapping was implemented. No unnecessary metadata request was added.
+Provider-controlled advertising, redirects, popups, and navigation remain inside the provider boundary. No ad-removal button, redirect bypass, popup circumvention, cross-origin DOM manipulation, hidden stream extraction, DRM bypass, anti-bot bypass, CAPTCHA bypass, or iframe permission escalation was implemented.
 
-Anime support remains false for this candidate until a separately verified, authorized capability is established.
+MAVERO can request fullscreen and best-effort orientation for its own player shell where the browser allows it. It cannot universally force a cross-origin provider iframe to rotate or change its internal layout.
 
-## 6. Credentials and environment variables
+## 11. Security boundaries
 
-No Vidsrc credentials were requested, added, or stored. No new environment variable was introduced. Existing MAVERO secrets remain server-side only.
+The implementation preserves these protections:
 
-## 7. Resolver, database, and Admin impact
+- Exact HTTPS origin allowlisting for `https://vidsrc.wiki`.
+- No arbitrary server-side URL fetching.
+- No private-hostname or credential-bearing URL acceptance.
+- No client-supplied raw playback URL.
+- No direct-media classification.
+- No hidden media URL extraction.
+- No cross-origin DOM inspection or player manipulation.
+- No DRM, authentication, paywall, access-control, anti-bot, CAPTCHA, or CORS circumvention.
+- No provider secrets or new credentials.
+- No provider-specific data stored in public configuration beyond safe capabilities and source identity.
+- Disabled provider/source rejected by the resolver.
+- Experimental status requires explicit capability opt-in and enabled provider/source state.
 
-No provider or source rows were inserted or modified. No public source was added to the Phase 7A mirror tables. No adapter was registered in the Phase 7B resolver. Existing Admin enable/disable, maintenance, visibility, ordering, and category controls remain unchanged.
+## 12. Verification status
 
-This preserves the rule that activation must be database-controlled and that no frontend deployment is required to disable a source once an authorized source exists.
+The revised policy permits an unverified user-supplied provider to be implemented through its ordinary public interface when the provider is marked experimental/unverified and the implementation does not circumvent technical protections. Vidsrc is therefore marked **experimental and unverified**, not licensed, authorized, endorsed, or production-approved by MAVERO.
 
-## 8. Security boundary
+The ordinary public movie and TV/episode pages were minimally verified in a browser. Both supplied URL patterns loaded as Vidsrc pages and exposed a visible `Pro 1` server selector. The verification did not inspect internal player behavior or extract media URLs.
 
-The following unsafe operations were not performed and were not implemented:
+## 13. Known limitations
 
-- Provider ad or redirect removal.
-- Hidden media URL extraction.
-- Cross-origin DOM inspection or manipulation.
-- DRM, authentication, paywall, access-control, or anti-bot circumvention.
-- Browser-supplied arbitrary provider URL resolution.
-- Provider iframe permission escalation.
+Vidsrc is disabled by default and is not presented as an authorized or licensed catalog. Public-page reachability does not guarantee playback availability, content rights, stable response behavior, or device compatibility. Provider-controlled ads, redirects, popups, server selection, and player layout remain outside MAVERO control. The provider is embed-only; no direct media URL is returned. Anime is disabled. Fullscreen/orientation behavior inside a cross-origin provider iframe cannot be universally forced.
 
-The Phase 7C iframe guard remains the only approved embed path: HTTPS validation, controlled sandbox permissions, limited fullscreen/presentation permissions, safe user-facing errors, and explicit source switching.
+## 14. Test results
 
-## 9. Timeouts, validation, caching, and errors
-
-No provider adapter was shipped, so no Vidsrc request, timeout policy, response parser, cache, or provider-specific error mapping was added. The existing Phase 7B resolver timeout/error/security model remains unchanged.
-
-If an authorized provider is selected in a future attempt, the adapter must validate response shape, media type, source identity, expiry, and embed origin before returning a `SourceResult`. Temporary playback URLs must not be persisted as permanent source configuration.
-
-## 10. Live verification result
-
-The controlled live verification established only public URL reachability and redirect behavior. It did not establish legitimate playback authorization or a documented provider API contract. The result is therefore **verification failed for production integration**, not successful provider playback.
-
-No aggressive polling was used. No player stream was downloaded or extracted.
-
-## 11. Tests and QA
-
-No provider-specific tests were added because the provider did not pass the selection gate. Existing MAVERO Phase 7C player tests, resolver tests, build, and browser QA remain valid because the player and resolver architecture were not modified during this gate.
-
-The Phase 7D research artifact is:
+The deterministic Vidsrc suite passed:
 
 ```text
-PHASE_7D_PROVIDER_RESEARCH_NOTES.md
+Phase 7D Vidsrc adapter tests passed.
 ```
 
-## 12. Files changed
+Coverage includes:
 
-Only provider-selection documentation was added:
+| Scenario | Result |
+|---|---|
+| Valid movie TMDB ID | Passed; normalized embed URL |
+| Valid TV episode | Passed; normalized embed URL with season/episode |
+| Missing TMDB identifier | Passed; typed missing-identifier failure |
+| Anime request | Passed; unsupported-media failure |
+| Malicious configured origin/template | Passed; invalid-template failure |
+| Disabled provider | Passed; provider-disabled failure |
+| Disabled source | Passed; source-disabled failure |
+| Experimental provider/source enabled with opt-in | Passed |
+| Experimental provider/source without opt-in | Passed; provider-disabled failure |
+| Direct classification attempt | Passed; adapter remains embed-only |
+| Public mirror disabled state | Passed; no public Vidsrc row |
+| Admin lifecycle transaction | Passed; temporary exposure rolled back |
 
-- `PHASE_7D_PROVIDER_RESEARCH_NOTES.md`
-- `MAVERO_PHASE_7D_REPORT.md`
+## 15. Browser verification
 
-No application source, database migration, provider adapter, dependency, environment variable, PlayerShell, or Admin behavior was changed.
+The supplied movie and TV episode embed URLs were opened through ordinary browser navigation. Both rendered a VidSrc page with a visible server selector. No internal frame inspection or provider-control manipulation was performed.
 
-## 13. Recommended next candidate
+The MAVERO PlayerShell integration is covered by the normalized adapter tests and the existing Phase 7C browser QA. Since the database source remains disabled by default, it does not appear in normal public source selection until an Admin explicitly enables it. This is intentional.
 
-The strongest safer candidates are **Internet Archive**, for openly licensed public-domain or Creative Commons items with item-level rights and documented public media files, or **YouTube**, for official authorized iframe embeds where the content owner permits embedding. Neither candidate is integrated in this Phase 7D gate.
+## 16. Regression validation
 
-Internet Archive was passively verified as having an openly licensed `Sintel` item with public MP4 derivatives, but this does not automatically map to MAVERO’s TMDB catalog and would require item-level rights/content mapping before implementation. YouTube’s official IFrame Player API documents an authorized embed model, but it is not a general full-length movie/series provider and would require a narrowly defined content capability.
+The following available suites passed after the Vidsrc integration:
 
-## Final boundary
+- Phase 4 progress tests.
+- Phase 6 Auth safety tests.
+- Phase 7A validation tests.
+- Phase 7A public configuration contract tests.
+- Phase 7B resolver tests.
+- Phase 7C player contract tests.
+- Phase 7D Vidsrc adapter tests.
+- `pnpm check` with 0 errors and 0 warnings.
+- `pnpm build` using `@sveltejs/adapter-netlify`.
+- `git diff --check`.
 
-Phase 7D stops at the provider-selection gate. No Vidsrc adapter was implemented, no provider was activated, and no Phase 7E work started. MAVERO waits for a future explicit approval of a provider with verifiable authorization and documented integration terms.
+The existing two-user Phase 6 RLS fixture remains dependent on a User B credential that previously returned `Invalid login credentials`; that external fixture-state issue is unrelated to the Vidsrc adapter.
+
+## 17. Files changed
+
+| File | Change |
+|---|---|
+| `src/lib/server/resolver/vidsrc.ts` | Isolated experimental Vidsrc embed adapter |
+| `src/lib/server/resolver/adapters.ts` | Adapter-ID registry |
+| `src/lib/server/resolver/core.ts` | Trusted adapter-ID dispatch and explicit experimental status handling |
+| `src/lib/server/resolver/types.ts` | Optional adapter ID and adapter-by-ID dependency contract |
+| `supabase/migrations/20260820018000_phase7d_vidsrc_experimental.sql` | Disabled-by-default provider/source seed migration |
+| `scripts/phase7d_vidsrc_test.ts` | Deterministic Vidsrc resolver/security tests |
+| `PHASE_7D_PROVIDER_RESEARCH_NOTES.md` | Current ordinary-interface verification notes |
+| `MAVERO_PHASE_7D_REPORT.md` | This completion report |
+
+No Phase 7A, 7B, or 7C player architecture was redesigned. No extra dependency was added.
+
+## 18. Build result
+
+```text
+pnpm build — passed
+Using @sveltejs/adapter-netlify
+```
+
+## 19. Svelte-check result
+
+```text
+pnpm check
+svelte-check found 0 errors and 0 warnings
+```
+
+## 20. Final phase boundary
+
+The revised Phase 7D implementation is complete. Vidsrc remains **experimental and disabled by default**. No second provider, automatic fallback, health monitoring, ranking, provider optimization, or Phase 7E work has started.
+
+MAVERO stops after revised Phase 7D and waits for explicit approval before Phase 7E.
 
 ## References
 
-[1]: https://vidsrc.domains/ "VidSrc official-domain page checked during provider verification"
-[2]: https://archive.org/developers/metadata.html "Internet Archive Item Metadata API documentation"
-[3]: https://archive.org/developers/items.html "Internet Archive Items documentation"
-[4]: https://developers.google.com/youtube/iframe_api_reference "YouTube IFrame Player API reference"
-[5]: https://developer.themoviedb.org/reference/movie-watch-providers "TMDB movie watch-provider metadata reference"
+[1]: https://vidsrc.domains/ "Vidsrc public domain-directory page reviewed during candidate evaluation"
+[2]: https://vidsrc.wiki/embed/movie/533535/ "Vidsrc movie embed page minimally verified"
+[3]: https://vidsrc.wiki/embed/tv/79744/1/1/ "Vidsrc TV episode embed page minimally verified"
+[4]: https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe "MDN iframe element reference"
+[5]: https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API "MDN Fullscreen API reference"
