@@ -8,6 +8,7 @@
 
   export let open = false;
   export let title = 'Choose an option';
+  export let eyebrow = 'MAVERO / Filter';
   export let options: SelectionOption[] = [];
   export let selected = '';
   export let onClose: () => void = () => {};
@@ -31,7 +32,7 @@
       <div class="sheet-handle" aria-hidden="true"></div>
       <header class="sheet-header">
         <div>
-          <div class="eyebrow">MAVERO / Filter</div>
+          <div class="eyebrow">{eyebrow}</div>
           <h2 id="selection-sheet-title">{title}</h2>
         </div>
         <button class="sheet-close" type="button" aria-label="Close {title}" onclick={onClose}>×</button>

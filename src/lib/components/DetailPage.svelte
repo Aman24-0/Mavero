@@ -119,7 +119,7 @@
     {#if type === 'series'}<SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} />{/if}
     {#if recommendations.length}<ContentRail title="You may also like" eyebrow="Keep exploring" items={recommendations} href="/discover" compact />{/if}
   </div>
-  <SelectionSheet open={statusSheetOpen} title="Add to My List" options={statusOptions} selected={watchlistStatus ?? ''} onClose={closeStatusSheet} onSelect={chooseStatus} />
+  <SelectionSheet open={statusSheetOpen} eyebrow="MAVERO / My List" title="Add to My List" options={statusOptions} selected={watchlistStatus ?? ''} onClose={closeStatusSheet} onSelect={chooseStatus} />
 </div>
 
 <style>
