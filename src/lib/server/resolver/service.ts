@@ -12,8 +12,10 @@ import type { ResolverDependencies, ResolverRequest, TrustedResolutionConfig } f
 type ResolverClient = SupabaseClient<Database>;
 
 function serviceClient(): ResolverClient {
-  if (!env.PRIVATE_SUPABASE_SERVICE_ROLE_KEY) throw new ResolverError('RESOLUTION_UNAVAILABLE');
-  return createClient<Database>(publicEnv.PUBLIC_SUPABASE_URL, env.PRIVATE_SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }, global: { fetch } });
+  const supabaseUrl = publicEnv.PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = env.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) throw new ResolverError('RESOLUTION_UNAVAILABLE');
+  return createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }, global: { fetch } }) as ResolverClient;
 }
 
 async function loadTrustedConfig(client: ResolverClient, request: ResolverRequest): Promise<TrustedResolutionConfig> {

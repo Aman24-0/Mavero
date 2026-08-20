@@ -1,13 +1,16 @@
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type SetAllCookies } from '@supabase/ssr';
 import { env as publicEnv } from '$env/dynamic/public';
 import type { Handle } from '@sveltejs/kit';
 import type { Database } from '$lib/server/supabase/database.types';
 
 export const handle: Handle = async ({ event, resolve }) => {
-  event.locals.supabase = createServerClient<Database>(publicEnv.PUBLIC_SUPABASE_URL, publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
+  const supabaseUrl = publicEnv.PUBLIC_SUPABASE_URL;
+  const publishableKey = publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!supabaseUrl || !publishableKey) throw new Error('MAVERO Supabase public configuration is missing.');
+  event.locals.supabase = createServerClient<Database>(supabaseUrl, publishableKey, {
     cookies: {
       getAll: () => event.cookies.getAll(),
-      setAll: (cookiesToSet) => {
+      setAll: (cookiesToSet: Parameters<SetAllCookies>[0]) => {
         cookiesToSet.forEach(({ name, value, options }) => {
           event.cookies.set(name, value, { ...options, path: '/' });
         });
