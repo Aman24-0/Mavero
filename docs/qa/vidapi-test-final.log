@@ -1,0 +1,15 @@
+
+> mavero@0.0.1 test /home/ubuntu/Mavero
+> pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_peachify_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_rivestream_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_nxsha_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_nhdapi_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_mapple_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_cinesrc_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_vidphantom_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_yapgrid_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_vidapi_tw_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_vidapi_qzz_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_remediation_test.ts
+
+Phase 7E Peachify generic-template and resolver tests passed.
+Phase 7E RiveStream generic-template and resolver tests passed.
+Phase 7E Nxsha generic-template and resolver tests passed.
+Phase 7E NHDAPI generic-template and resolver tests passed.
+Phase 7E Mapple generic-template and resolver tests passed.
+Phase 7E CineSrc generic-template and resolver tests passed.
+Phase 7E VidPhantom generic-template and resolver tests passed.
+Phase 7E YapGrid generic-template and resolver tests passed.
+Phase 7E VidAPI.tw generic-template and resolver tests passed.
+Phase 7E VidAPI.qzz.io generic-template and resolver tests passed.
+Phase 7E remediation tests passed: truthful redirects, mutation outcomes, sandbox policy, source ordering, and player boundaries.
