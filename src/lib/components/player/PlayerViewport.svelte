@@ -10,7 +10,7 @@
   export let sandboxEnabled = true;
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
-  $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute(source?.sandboxPolicy) : undefined;
+  $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute('required') : undefined;
   $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${sandboxEnabled ? 'sandbox-on' : 'sandbox-off'}`;
 
   const dispatch = createEventDispatcher<{
