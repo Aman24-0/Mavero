@@ -17,8 +17,8 @@
 
   $: contentType = (page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
   $: item = data.item;
-  $: season = Number(page.url.searchParams.get('season') || '') || undefined;
-  $: episode = Number(page.url.searchParams.get('episode') || '') || undefined;
+  let season = Number(page.url.searchParams.get('season') || '') || undefined;
+  let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
   $: currentEpisode = season !== undefined && episode !== undefined ? data.episodes.find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
   $: playbackContext = ({ contentType, contentId: item.id, season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
   $: playbackKey = [playbackContext.contentType, playbackContext.contentId, playbackContext.season ?? '-', playbackContext.episode ?? '-'].join(':');
@@ -200,6 +200,8 @@
   }
 
   async function handleEpisodeChange(target: PlayerEpisodeTarget) {
+    season = target.season;
+    episode = target.episode;
     const params = new URLSearchParams(page.url.searchParams);
     params.set('season', String(target.season));
     params.set('episode', String(target.episode));
