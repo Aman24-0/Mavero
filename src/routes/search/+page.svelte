@@ -128,7 +128,7 @@
   $: selectedSort = sort === 'release-asc' ? 'Old to new' : sort === 'release-desc' ? 'New to old' : 'Release date';
   $: sheetTitle = activeSheet === 'ott' ? 'Streaming service' : activeSheet === 'genre' ? 'Genre' : 'Release date';
   $: sheetOptions = activeSheet === 'ott'
-    ? [{ key: '', label: 'All OTT', icon: 'A' }, ...ottOptions]
+    ? [{ key: '', label: 'All OTT' }, ...ottOptions]
     : activeSheet === 'genre'
       ? [{ key: '', label: 'All genres' }, ...genreOptions]
       : [{ key: '', label: 'Release date' }, { key: 'release-asc', label: 'Old to new', description: 'Earliest releases first' }, { key: 'release-desc', label: 'New to old', description: 'Newest releases first' }] as SearchSelectionOption[];
@@ -152,7 +152,7 @@
       {#each types as item}<button class:active={type === item.value} class="filter-chip" aria-pressed={type === item.value} onclick={() => selectType(item.value)}>{item.label}</button>{/each}
     </div>
     <div class="filter-selects" aria-label="Additional search filters">
-      <button class="filter-trigger" class:active={Boolean(ott)} type="button" aria-label="Choose OTT service" aria-haspopup="dialog" aria-expanded={activeSheet === 'ott'} onclick={() => openSheet('ott')}><span class="select-label">OTT</span><span class="trigger-value"><span class="select-icon">{#if selectedOtt?.logoUrl}<img src={selectedOtt.logoUrl} alt="" loading="lazy" onerror={(event) => { (event.currentTarget as HTMLImageElement).hidden = true; }} />{:else}<span class="select-fallback">A</span>{/if}</span><span>{selectedOtt?.label ?? 'All OTT'}</span><ChevronDown size={14} /></span></button>
+      <button class="filter-trigger" class:active={Boolean(ott)} type="button" aria-label="Choose OTT service" aria-haspopup="dialog" aria-expanded={activeSheet === 'ott'} onclick={() => openSheet('ott')}><span class="select-label">OTT</span><span class="trigger-value">{#if selectedOtt?.logoUrl}<span class="select-icon"><img src={selectedOtt.logoUrl} alt="" loading="lazy" onerror={(event) => { (event.currentTarget as HTMLImageElement).hidden = true; }} /></span>{/if}<span>{selectedOtt?.label ?? 'All OTT'}</span><ChevronDown size={14} /></span></button>
       <button class="filter-trigger" class:active={Boolean(genre)} type="button" aria-label="Choose genre" aria-haspopup="dialog" aria-expanded={activeSheet === 'genre'} onclick={() => openSheet('genre')}><span class="select-label">Genre</span><span class="trigger-value"><span>{selectedGenre?.label ?? 'All genres'}</span><ChevronDown size={14} /></span></button>
       <button class="filter-trigger" class:active={Boolean(sort)} type="button" aria-label="Choose release sorting" aria-haspopup="dialog" aria-expanded={activeSheet === 'sort'} onclick={() => openSheet('sort')}><span class="select-label">Sort</span><span class="trigger-value"><span>{selectedSort}</span><ChevronDown size={14} /></span></button>
     </div>
