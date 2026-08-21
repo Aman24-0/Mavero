@@ -201,9 +201,8 @@
   .trigger-value > span:not(.select-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .trigger-value :global(svg) { flex: 0 0 auto; margin-left: auto; color: var(--muted-deep); }
   .select-icon { display: grid; flex: 0 0 21px; place-items: center; width: 21px; height: 21px; overflow: hidden; border-radius: 6px; color: var(--ink); background: var(--accent-soft); font-family: 'DM Mono', monospace; font-size: .48rem; font-weight: 800; }
-  .select-icon img, .select-fallback { grid-area: 1 / 1; }
+  .select-icon img { grid-area: 1 / 1; }
   .select-icon img { width: 15px; height: 15px; object-fit: contain; border-radius: 3px; }
-  .select-fallback { display: grid; place-items: center; width: 100%; height: 100%; }
   .search-loading, .search-error { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .62rem; }
   .search-loading :global(svg) { animation: spin 1s linear infinite; }
   .search-error { color: #d4b27c; }
