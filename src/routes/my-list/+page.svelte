@@ -8,10 +8,11 @@
   import MediaCard from '$components/MediaCard.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
-  import { getLocalFavorites, getLocalPersistenceState } from '$lib/client/progress/service';
+  import { getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords } from '$lib/client/progress/service';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, type SyncStatus } from '$lib/client/progress/cloud';
   import { normalizeWatchlistStatus, type FavoriteRecord, type WatchlistStatus } from '$lib/client/progress/types';
+  import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
 
   let { data }: { data: PageData } = $props();
   let records = $state<FavoriteRecord[]>([]);
@@ -60,11 +61,12 @@
       const state = await getLocalPersistenceState();
       if (data.user) {
         const cloud = await syncAuthenticatedState();
-        records = cloud.favorites;
+        records = mergeFavoritesWithProgress(cloud.favorites, cloud.progress);
         syncStatus = cloud.status;
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
       } else {
-        records = await getLocalFavorites();
+        const [favorites, progress] = await Promise.all([getLocalFavorites(), getLocalProgressRecords()]);
+        records = mergeFavoritesWithProgress(favorites, progress);
         syncStatus = 'pending';
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
       }

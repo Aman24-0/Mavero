@@ -3,6 +3,7 @@
     key: string;
     label: string;
     icon?: string;
+    image?: string;
     description?: string;
   };
 
@@ -41,7 +42,7 @@
         {#each options as option}
           <button id={`option-${option.key}`} class:active={selected === option.key} class="sheet-option" type="button" role="option" aria-selected={selected === option.key} onclick={() => choose(option.key)}>
             <span class="option-leading">
-              {#if option.icon}<span class="option-icon" aria-hidden="true">{option.icon}</span>{/if}
+              {#if option.image || option.icon}<span class="option-icon" aria-hidden="true">{#if option.image}<img src={option.image} alt="" loading="lazy" onerror={(event) => { (event.currentTarget as HTMLImageElement).hidden = true; }} />{/if}{#if option.icon}<span class="option-fallback">{option.icon}</span>{/if}</span>{/if}
               <span class="option-copy"><strong>{option.label}</strong>{#if option.description}<small>{option.description}</small>{/if}</span>
             </span>
             <span class="option-indicator" aria-hidden="true">{selected === option.key ? '●' : '○'}</span>
@@ -69,7 +70,9 @@
   .sheet-option:active { transform: scale(.99); }
   .sheet-option.active { color: var(--ink); background: rgba(155,135,245,.1); }
   .option-leading { display: flex; align-items: center; min-width: 0; gap: 11px; }
-  .option-icon { display: grid; flex: 0 0 30px; place-items: center; width: 30px; height: 30px; border: 1px solid rgba(155,135,245,.25); border-radius: 9px; color: var(--ink); background: rgba(155,135,245,.13); font-family: 'DM Mono', monospace; font-size: .55rem; font-weight: 800; }
+  .option-icon { display: grid; flex: 0 0 30px; place-items: center; width: 30px; height: 30px; overflow: hidden; border: 1px solid rgba(155,135,245,.25); border-radius: 9px; color: var(--ink); background: rgba(155,135,245,.13); font-family: 'DM Mono', monospace; font-size: .55rem; font-weight: 800; }
+  .option-icon img { width: 19px; height: 19px; object-fit: contain; border-radius: 4px; }
+  .option-fallback { display: grid; place-items: center; width: 100%; height: 100%; }
   .option-copy { display: grid; gap: 3px; min-width: 0; }
   .option-copy strong { overflow: hidden; color: inherit; font-size: .83rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
   .option-copy small { color: var(--muted-deep); font-size: .65rem; }

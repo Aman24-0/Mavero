@@ -1,6 +1,6 @@
 import { getFavorite, getLocalProgressState, getProgress, listFavorites, listProgress, putFavorite, putProgress, removeFavorite, removeProgress } from './database';
 import { clampTime, completionFor, favoriteKey, normalizeWatchlistStatus, progressKey, type CloudProgressRecord, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord, type WatchlistStatus } from './types';
-import { mergeProgress } from '../../shared/progress-merge';
+import { continueWatchingRecords, mergeProgress } from '../../shared/progress-merge';
 
 export { mergeProgress } from '../../shared/progress-merge';
 
@@ -35,8 +35,12 @@ export async function getResumeProgress(context: PlaybackContext) {
 }
 
 export async function getContinueWatching() {
-  const records = await listProgress();
-  return records.filter((record) => record.completionState !== 'completed' && record.currentTime > 0).sort((a, b) => b.lastWatchedAt - a.lastWatchedAt);
+  const [progress, favorites] = await Promise.all([listProgress(), listFavorites()]);
+  return continueWatchingRecords(progress, favorites);
+}
+
+export async function getLocalProgressRecords() {
+  return listProgress();
 }
 
 export async function getRecentlyWatched(limit = 20) {
@@ -68,7 +72,23 @@ export async function toggleFavorite(contentType: LocalContentType, contentId: s
 
 export async function getFavoritesByStatus(status?: WatchlistStatus) {
   const records = await listFavorites();
-  return status ? records.filter((record) => record.status === status) : records;
+  return status ? records.filter((record) => normalizeWatchlistStatus(record.status) === status) : records;
+}
+
+export async function promoteProgressToWatching(progressRecords: WatchProgressRecord[]) {
+  const favorites = await listFavorites();
+  const byKey = new Map<string, FavoriteRecord>();
+  for (const record of favorites) byKey.set(record.key, { ...record, status: normalizeWatchlistStatus(record.status) });
+  const inProgress = progressRecords.filter((record) => record.completionState !== 'completed' && record.currentTime > 0);
+  for (const progress of inProgress) {
+    const key = favoriteKey(progress.contentType, progress.contentId);
+    const existing = byKey.get(key);
+    if (existing && normalizeWatchlistStatus(existing.status) === 'completed') continue;
+    if (existing && normalizeWatchlistStatus(existing.status) === 'watching') continue;
+    const saved = await saveFavorite(progress.contentType, progress.contentId, progress.snapshot, Date.now(), 'watching');
+    byKey.set(key, saved);
+  }
+  return [...byKey.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getLocalFavorites() {

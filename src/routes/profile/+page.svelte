@@ -6,9 +6,10 @@
   import MediaCard from '$components/MediaCard.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
-  import { getContinueWatching, getLocalFavorites, getLocalPersistenceState, getRecentlyWatched } from '$lib/client/progress/service';
+  import { getContinueWatching, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, getRecentlyWatched } from '$lib/client/progress/service';
   import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
+  import { continueWatchingRecords, mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
 
   let { data }: { data: PageData } = $props();
   let recentItems = $state<MediaItem[]>([]);
@@ -56,8 +57,8 @@
       if (data.user) {
         const cloud = await syncAuthenticatedState();
         syncStatus = cloud.status;
-        favoriteItems = cloud.favorites.map(favoriteToMedia);
-        continueItems = cloud.progress.filter((record) => record.completionState !== 'completed' && record.currentTime > 0).map(progressToMedia);
+        favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress).map(favoriteToMedia);
+        continueItems = continueWatchingRecords(cloud.progress, cloud.favorites).map(progressToMedia);
         const historyResponse = await fetch('/api/account/history?limit=20');
         if (historyResponse.ok) {
           const historyBody = await historyResponse.json() as { history?: Array<{ content_id: string; content_type: string; snapshot: unknown; season?: number | null; episode?: number | null; position_seconds: number; duration: number }> };
@@ -68,10 +69,10 @@
         watchedSeconds = recentItems.reduce((total, item) => total + (item.progress ?? 0), 0);
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
       } else {
-        const [recentRecords, favoriteRecords, continueRecords] = await Promise.all([getRecentlyWatched(), getLocalFavorites(), getContinueWatching()]);
+        const [recentRecords, favoriteRecords, continueRecords, progressRecords] = await Promise.all([getRecentlyWatched(), getLocalFavorites(), getContinueWatching(), getLocalProgressRecords()]);
         recentItems = recentRecords.map(progressToMedia);
         continueItems = continueRecords.map(progressToMedia);
-        favoriteItems = favoriteRecords.map(favoriteToMedia);
+        favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords).map(favoriteToMedia);
         watchedSeconds = recentRecords.reduce((total, record) => total + record.currentTime, 0);
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
       }

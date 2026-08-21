@@ -7,10 +7,11 @@
   import type { ContentType, SearchFilters, SearchSort } from '$lib/server/content/types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
+  import { ottProviders } from '$lib/shared/ott';
 
   export let data: PageData;
 
-  type SearchSelectionOption = { key: string; label: string; icon?: string; description?: string };
+  type SearchSelectionOption = { key: string; label: string; icon?: string; image?: string; description?: string };
 
   let query = data.query;
   let type: 'All' | 'Movies' | 'Series' | 'Anime' = data.type === 'movie' ? 'Movies' : data.type === 'series' ? 'Series' : data.type === 'anime' ? 'Anime' : 'All';
@@ -29,28 +30,7 @@
     { label: 'Anime', value: 'Anime' }
   ] as const;
 
-  const ottOptions = [
-    { key: 'netflix', label: 'Netflix', icon: 'N' },
-    { key: 'prime-video', label: 'Prime Video', icon: 'P' },
-    { key: 'disney-plus', label: 'Disney+', icon: 'D' },
-    { key: 'apple-tv', label: 'Apple TV+', icon: 'TV' },
-    { key: 'max', label: 'Max', icon: 'M' },
-    { key: 'hulu', label: 'Hulu', icon: 'H' },
-    { key: 'paramount-plus', label: 'Paramount+', icon: 'P+' },
-    { key: 'peacock', label: 'Peacock', icon: 'P' },
-    { key: 'crunchyroll', label: 'Crunchyroll', icon: 'C' },
-    { key: 'discovery-plus', label: 'Discovery+', icon: 'D+' },
-    { key: 'mubi', label: 'MUBI', icon: 'M' },
-    { key: 'youtube', label: 'YouTube Premium', icon: 'YT' },
-    { key: 'google-play', label: 'Google Play', icon: 'G' },
-    { key: 'amazon-video', label: 'Amazon Video', icon: 'A' },
-    { key: 'jiocinema', label: 'JioCinema', icon: 'J' },
-    { key: 'zee5', label: 'ZEE5', icon: 'Z' },
-    { key: 'sonyliv', label: 'Sony LIV', icon: 'S' },
-    { key: 'sunnxt', label: 'Sun Nxt', icon: 'SN' },
-    { key: 'mx-player', label: 'MX Player', icon: 'MX' },
-    { key: 'aha', label: 'aha', icon: 'A' }
-  ];
+  const ottOptions = ottProviders.map((provider) => ({ key: provider.key, label: provider.label, icon: provider.icon, image: provider.logoUrl, logoUrl: provider.logoUrl }));
 
   const genreOptions = [
     { key: '28', label: 'Action' },
@@ -172,7 +152,7 @@
       {#each types as item}<button class:active={type === item.value} class="filter-chip" aria-pressed={type === item.value} onclick={() => selectType(item.value)}>{item.label}</button>{/each}
     </div>
     <div class="filter-selects" aria-label="Additional search filters">
-      <button class="filter-trigger" class:active={Boolean(ott)} type="button" aria-label="Choose OTT service" aria-haspopup="dialog" aria-expanded={activeSheet === 'ott'} onclick={() => openSheet('ott')}><span class="select-label">OTT</span><span class="trigger-value"><span class="select-icon">{selectedOtt?.icon ?? 'A'}</span><span>{selectedOtt?.label ?? 'All OTT'}</span><ChevronDown size={14} /></span></button>
+      <button class="filter-trigger" class:active={Boolean(ott)} type="button" aria-label="Choose OTT service" aria-haspopup="dialog" aria-expanded={activeSheet === 'ott'} onclick={() => openSheet('ott')}><span class="select-label">OTT</span><span class="trigger-value"><span class="select-icon">{#if selectedOtt?.logoUrl}<img src={selectedOtt.logoUrl} alt="" loading="lazy" onerror={(event) => { (event.currentTarget as HTMLImageElement).hidden = true; }} />{/if}<span class="select-fallback">{selectedOtt?.icon ?? 'A'}</span></span><span>{selectedOtt?.label ?? 'All OTT'}</span><ChevronDown size={14} /></span></button>
       <button class="filter-trigger" class:active={Boolean(genre)} type="button" aria-label="Choose genre" aria-haspopup="dialog" aria-expanded={activeSheet === 'genre'} onclick={() => openSheet('genre')}><span class="select-label">Genre</span><span class="trigger-value"><span>{selectedGenre?.label ?? 'All genres'}</span><ChevronDown size={14} /></span></button>
       <button class="filter-trigger" class:active={Boolean(sort)} type="button" aria-label="Choose release sorting" aria-haspopup="dialog" aria-expanded={activeSheet === 'sort'} onclick={() => openSheet('sort')}><span class="select-label">Sort</span><span class="trigger-value"><span>{selectedSort}</span><ChevronDown size={14} /></span></button>
     </div>
@@ -214,7 +194,10 @@
   .trigger-value { display: flex; align-items: center; min-width: 0; gap: 7px; color: var(--ink); font-size: .67rem; }
   .trigger-value > span:not(.select-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .trigger-value :global(svg) { flex: 0 0 auto; margin-left: auto; color: var(--muted-deep); }
-  .select-icon { display: grid; flex: 0 0 21px; place-items: center; width: 21px; height: 21px; border-radius: 6px; color: var(--ink); background: var(--accent-soft); font-family: 'DM Mono', monospace; font-size: .48rem; font-weight: 800; }
+  .select-icon { display: grid; flex: 0 0 21px; place-items: center; width: 21px; height: 21px; overflow: hidden; border-radius: 6px; color: var(--ink); background: var(--accent-soft); font-family: 'DM Mono', monospace; font-size: .48rem; font-weight: 800; }
+  .select-icon img, .select-fallback { grid-area: 1 / 1; }
+  .select-icon img { width: 15px; height: 15px; object-fit: contain; border-radius: 3px; }
+  .select-fallback { display: grid; place-items: center; width: 100%; height: 100%; }
   .search-loading, .search-error { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .62rem; }
   .search-loading :global(svg) { animation: spin 1s linear infinite; }
   .search-error { color: #d4b27c; }
@@ -230,6 +213,6 @@
   .empty-search p { max-width: 280px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  @media (max-width: 640px) { .search-page { padding-top: 16px; } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; padding: 0 8px; } .filter-selects { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .filter-trigger { padding: 8px 7px; } .trigger-value { font-size: .58rem; } .select-icon { flex-basis: 18px; width: 18px; height: 18px; font-size: .42rem; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
+  @media (max-width: 640px) { .search-page { padding-top: calc(68px + env(safe-area-inset-top) + 16px); } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; padding: 0 8px; } .filter-selects { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .filter-trigger { padding: 8px 7px; } .trigger-value { font-size: .58rem; } .select-icon { flex-basis: 18px; width: 18px; height: 18px; font-size: .42rem; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
   @media (prefers-reduced-motion: reduce) { .filter-chip, .search-loading :global(svg) { transition: none; animation: none; } }
 </style>

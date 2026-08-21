@@ -27,5 +27,6 @@ export function progressToMedia(record: WatchProgressRecord): MediaItem {
 
 export function favoriteToMedia(record: FavoriteRecord): MediaItem {
   const status = record.status ?? 'planned';
-  return { ...base(record.snapshot, record), tags: [status.charAt(0).toUpperCase() + status.slice(1)] };
+  const item = base(record.snapshot, record);
+  return { ...item, resumeHref: status === 'watching' ? `/watch/${record.contentType}/${record.contentId}` : undefined, tags: [status.charAt(0).toUpperCase() + status.slice(1)] };
 }

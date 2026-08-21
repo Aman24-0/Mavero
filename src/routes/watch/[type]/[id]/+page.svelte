@@ -7,7 +7,7 @@
   import { normalizePlayerSource } from '$lib/shared/player-guards';
   import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource } from '$lib/shared/player';
   import type { PageData } from './$types';
-  import { createProgressWriter, getLocalPersistenceState, getResumeProgress } from '$lib/client/progress/service';
+  import { createProgressWriter, getLocalPersistenceState, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import type { PlaybackContext } from '$lib/client/progress/types';
 
@@ -37,6 +37,7 @@
   let active = true;
   let startedHistory = false;
   let lastHistoryAt = 0;
+  let watchingSavedForSession = false;
 
   $: if (browser && playbackKey !== writerKey) void setupProgressContext();
   $: if (!selectedSourceId && sourceOptions.length) selectedSourceId = sourceOptions[0].id;
@@ -70,6 +71,7 @@
   async function setupProgressContext() {
     if (!browser || !playbackKey || playbackKey === writerKey) return;
     writerKey = playbackKey;
+    watchingSavedForSession = false;
     progressReady = false;
     await writer?.flush();
     writer?.dispose();
@@ -117,6 +119,16 @@
       resolvedSource = safeSource;
       resolutionState = 'ready';
       resolutionMessage = safeSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.';
+      if (!watchingSavedForSession) {
+        watchingSavedForSession = true;
+        const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+        try {
+          await setFavoriteStatus(contentType, item.id, snapshot, 'watching');
+          if (page.data.user) void syncAuthenticatedState();
+        } catch {
+          // Playback remains available even if local list promotion is unavailable.
+        }
+      }
     } catch (error) {
       resolvedSource = null;
       resolutionState = 'error';

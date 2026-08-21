@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getContinueWatching } from '$lib/client/progress/service';
+  import { syncAuthenticatedState } from '$lib/client/progress/cloud';
+  import { continueWatchingRecords } from '$lib/shared/progress-merge';
   import { progressToMedia } from '$lib/client/progress/presenter';
   import { page } from '$app/state';
   import { ArrowRight, Play, Sparkles } from 'lucide-svelte';
@@ -25,7 +27,14 @@
   $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length);
 
   onMount(async () => {
-    void getContinueWatching().then((records) => { localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
+    const loadContinue = async () => {
+      if (page.data.user) {
+        const cloud = await syncAuthenticatedState();
+        return continueWatchingRecords(cloud.progress, cloud.favorites);
+      }
+      return getContinueWatching();
+    };
+    void loadContinue().then((records) => { localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
     const { gsap } = await import('gsap');
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduceMotion || !intro) return;

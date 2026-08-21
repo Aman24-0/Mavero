@@ -1,5 +1,5 @@
 import { listFavorites, listProgress, putFavorite, putProgress } from './database';
-import { mergeFavorites, mergeProgress } from '$lib/shared/progress-merge';
+import { mergeFavorites, mergeFavoritesWithProgress, mergeProgress } from '$lib/shared/progress-merge';
 import type { FavoriteRecord, WatchProgressRecord } from './types';
 import type { FutureCloudProgressAdapter } from './service';
 
@@ -65,7 +65,7 @@ async function runAuthenticatedState(fetcher: typeof fetch = fetch): Promise<Syn
     }
 
     const progress = mergeProgress(localProgress, cloud.progress);
-    const favorites = mergeFavorites(localFavorites, cloud.favorites);
+    const favorites = mergeFavoritesWithProgress(mergeFavorites(localFavorites, cloud.favorites), progress);
     const written = await writeCloud(fetcher, progress, favorites);
     if (!written) {
       setSyncStatus('pending');

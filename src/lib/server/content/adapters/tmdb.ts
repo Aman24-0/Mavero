@@ -2,6 +2,7 @@ import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
 import { ContentServiceError, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters } from '../types';
+import { ottProviders } from '$lib/shared/ott';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -49,28 +50,7 @@ type TmdbMedia = TmdbMovie | TmdbTv;
 type TmdbProviderRegion = { flatrate?: { provider_id?: number }[]; buy?: { provider_id?: number }[]; rent?: { provider_id?: number }[] };
 type TmdbWatchProviders = { results?: Record<string, TmdbProviderRegion> };
 
-export const tmdbOttProviders = [
-  { key: 'netflix', label: 'Netflix', providerId: 8, icon: 'N' },
-  { key: 'prime-video', label: 'Prime Video', providerId: 119, icon: 'P' },
-  { key: 'disney-plus', label: 'Disney+', providerId: 337, icon: 'D' },
-  { key: 'apple-tv', label: 'Apple TV+', providerId: 350, icon: 'TV' },
-  { key: 'max', label: 'Max', providerId: 1899, icon: 'M' },
-  { key: 'hulu', label: 'Hulu', providerId: 15, icon: 'H' },
-  { key: 'paramount-plus', label: 'Paramount+', providerId: 531, icon: 'P+' },
-  { key: 'peacock', label: 'Peacock', providerId: 386, icon: 'P' },
-  { key: 'crunchyroll', label: 'Crunchyroll', providerId: 269, icon: 'C' },
-  { key: 'discovery-plus', label: 'Discovery+', providerId: 510, icon: 'D+' },
-  { key: 'mubi', label: 'MUBI', providerId: 11, icon: 'M' },
-  { key: 'youtube', label: 'YouTube Premium', providerId: 188, icon: 'YT' },
-  { key: 'google-play', label: 'Google Play', providerId: 3, icon: 'G' },
-  { key: 'amazon-video', label: 'Amazon Video', providerId: 10, icon: 'A' },
-  { key: 'jiocinema', label: 'JioCinema', providerId: 2206, icon: 'J' },
-  { key: 'zee5', label: 'ZEE5', providerId: 232, icon: 'Z' },
-  { key: 'sonyliv', label: 'Sony LIV', providerId: 237, icon: 'S' },
-  { key: 'sunnxt', label: 'Sun Nxt', providerId: 309, icon: 'SN' },
-  { key: 'mx-player', label: 'MX Player', providerId: 2285, icon: 'MX' },
-  { key: 'aha', label: 'aha', providerId: 532, icon: 'A' }
-] as const;
+export const tmdbOttProviders = ottProviders;
 
 const BASE_URL = 'https://api.themoviedb.org/3';
 const IMAGE_URL = 'https://image.tmdb.org/t/p';
