@@ -20,6 +20,7 @@
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
+  export let resolutionKind: 'provider-error' | 'unsupported' | 'unavailable' = 'provider-error';
 
   let viewport: PlayerViewport;
   let videoElement: HTMLVideoElement | undefined;
@@ -56,7 +57,7 @@
   $: nextSourceId = adjacentSource(sourceOptions, source?.sourceId, 1);
   $: hasPreviousSource = Boolean(previousSourceId);
   $: hasNextSource = Boolean(nextSourceId);
-  $: effectiveState = resolving ? 'switching-source' : resolutionError ? 'provider-error' : state;
+  $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
   $: embedReady = Boolean(source?.type === 'embed' && isEmbedOriginAllowed(source) && !sourceIsExpired(source));
   $: episodeIndex = currentEpisode ? episodes.findIndex((episode) => episode.season === currentEpisode?.season && episode.number === currentEpisode?.episode) : -1;
   $: hasPreviousEpisode = episodeIndex > 0;
@@ -289,7 +290,7 @@
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
-        <div><strong>{effectiveState === 'provider-error' ? 'Provider unavailable' : effectiveState === 'source-unavailable' ? 'Source unavailable' : effectiveState === 'embed-unavailable' ? 'Embed unavailable' : 'Playback could not be started'}</strong><p>{resolutionError || errorMessage || 'Choose another authorized source and try again.'}</p></div>
+        <div><strong>{effectiveState === 'provider-error' ? 'Provider unavailable' : effectiveState === 'unsupported' ? 'Unsupported title type' : effectiveState === 'unavailable' ? 'Server unavailable' : effectiveState === 'source-unavailable' ? 'Source unavailable' : effectiveState === 'embed-unavailable' ? 'Embed unavailable' : 'Playback could not be started'}</strong><p>{resolutionError || errorMessage || 'Choose another authorized source and try again.'}</p></div>
         <div class="message-actions"><button class="small-button" type="button" onclick={retry}><RotateCcw size={14} /> Retry</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Change source</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
