@@ -149,9 +149,10 @@
       lastHistoryAt = event.currentTime;
       void sendHistory('progressed', event.currentTime, duration);
     }
-    if (event.completed && page.data.user) {
-      void sendHistory('completed', event.currentTime, duration);
-      void syncAuthenticatedState();
+    if (event.completed) {
+      const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+      void setFavoriteStatus(contentType, item.id, snapshot, 'completed').then(() => { if (page.data.user) void syncAuthenticatedState(); });
+      if (page.data.user) void sendHistory('completed', event.currentTime, duration);
     }
   }
 
