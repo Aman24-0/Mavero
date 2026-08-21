@@ -1,5 +1,6 @@
 import type { Json, Tables, TablesInsert, TablesUpdate } from '$lib/server/supabase/database.types';
 import { providerStatuses, integrationTypes, sourceVisibilities, identifierModes } from '$lib/shared/streaming';
+import type { ProviderHealthSummary, RuntimeHealthRow } from './health';
 
 export { providerStatuses, integrationTypes, sourceVisibilities, identifierModes };
 export type ProviderStatus = (typeof providerStatuses)[number];
@@ -12,6 +13,7 @@ export type StreamingSourceRow = Tables<'streaming_sources'>;
 export type StreamingCategoryRow = Tables<'streaming_categories'>;
 export type StreamingSourceCategoryRow = Tables<'streaming_source_categories'>;
 export type StreamingConfigMetaRow = Tables<'streaming_config_meta'>;
+export type { ProviderHealthSummary, RuntimeHealthRow };
 
 export type ProviderInsert = TablesInsert<'streaming_providers'>;
 export type ProviderUpdate = TablesUpdate<'streaming_providers'>;

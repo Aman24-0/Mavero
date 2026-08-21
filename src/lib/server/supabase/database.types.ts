@@ -436,6 +436,69 @@ export type Database = {
           },
         ]
       }
+      streaming_provider_health: {
+        Row: {
+          consecutive_failures: number
+          cooldown_until: string | null
+          created_at: string
+          failure_count: number
+          last_checked_at: string | null
+          last_failure_at: string | null
+          last_failure_type: string | null
+          last_success_at: string | null
+          provider_id: string
+          source_id: string
+          status: string
+          success_count: number
+          updated_at: string
+        }
+        Insert: {
+          consecutive_failures?: number
+          cooldown_until?: string | null
+          created_at?: string
+          failure_count?: number
+          last_checked_at?: string | null
+          last_failure_at?: string | null
+          last_failure_type?: string | null
+          last_success_at?: string | null
+          provider_id: string
+          source_id: string
+          status?: string
+          success_count?: number
+          updated_at?: string
+        }
+        Update: {
+          consecutive_failures?: number
+          cooldown_until?: string | null
+          created_at?: string
+          failure_count?: number
+          last_checked_at?: string | null
+          last_failure_at?: string | null
+          last_failure_type?: string | null
+          last_success_at?: string | null
+          provider_id?: string
+          source_id?: string
+          status?: string
+          success_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "streaming_provider_health_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "streaming_provider_health_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       watch_history: {
         Row: {
           completion_state: string

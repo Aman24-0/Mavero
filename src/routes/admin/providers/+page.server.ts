@@ -2,13 +2,17 @@ import { fail, redirect } from '@sveltejs/kit';
 import { isRedirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
-import { createProvider, deleteProvider, listAdminProviders, updateProvider } from '$lib/server/streaming/admin-service';
+import { createProvider, deleteProvider, listAdminProviders, listProviderHealthSummaries, updateProvider } from '$lib/server/streaming/admin-service';
 import { parseId, parseProviderForm } from '$lib/server/streaming/validation';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin/providers' });
-  return { providers: await listAdminProviders(locals.supabase), notice: url.searchParams.get('notice') };
+  const [providers, health] = await Promise.all([
+    listAdminProviders(locals.supabase),
+    listProviderHealthSummaries(locals.supabase),
+  ]);
+  return { providers, health, notice: url.searchParams.get('notice') };
 };
 
 export const actions: Actions = {

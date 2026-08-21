@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, TablesInsert } from '$lib/server/supabase/database.types';
 import { invalidatePublicStreamingConfig } from './public-config';
-import type { CategoryInsert, CategoryUpdate, ProviderInsert, ProviderUpdate, SourceInsert, SourceUpdate, StreamingCategoryRow, StreamingProviderRow, StreamingSourceCategoryRow, StreamingSourceRow, AdminOverview } from './types';
+import type { CategoryInsert, CategoryUpdate, ProviderInsert, ProviderUpdate, SourceInsert, SourceUpdate, StreamingCategoryRow, StreamingProviderRow, StreamingSourceCategoryRow, StreamingSourceRow, AdminOverview, ProviderHealthSummary } from './types';
+import { listProviderHealthSummaries as loadProviderHealthSummaries } from './health-service';
 
 type StreamingClient = SupabaseClient<Database>;
 
@@ -54,6 +55,10 @@ export async function listAdminProviders(client: StreamingClient): Promise<Strea
   const { data, error } = await client.from('streaming_providers').select('*').order('name');
   if (error) throwRegistryError('List providers', error);
   return data ?? [];
+}
+
+export async function listProviderHealthSummaries(client: StreamingClient): Promise<Record<string, ProviderHealthSummary>> {
+  return loadProviderHealthSummaries(client);
 }
 
 export async function listAdminSources(client: StreamingClient): Promise<StreamingSourceRow[]> {

@@ -106,7 +106,7 @@
     writer = createProgressWriter({ ...playbackContext, selectedSourceId, snapshot });
   }
 
-  async function prepareSource(sourceId = selectedSourceId) {
+  async function prepareSource(sourceId = selectedSourceId, allowFallback = true) {
     const selected = sourceOptions.find((source) => source.id === sourceId);
     if (!selected) {
       resolvedSource = null;
@@ -123,7 +123,7 @@
       const response = await fetch('/api/playback/resolve', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode })
+        body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode, enableFallback: allowFallback })
       });
       const payload = await response.json() as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
       const safeSource = normalizePlayerSource(payload.source);
@@ -132,6 +132,8 @@
         error.code = payload.error?.code;
         throw error;
       }
+      if (safeSource.sourceId !== selectedSourceId) await replaceProgressSource(safeSource.sourceId);
+      selectedSourceId = safeSource.sourceId;
       resolvedSource = safeSource;
       resolutionState = 'ready';
       resolutionMessage = safeSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.';
@@ -196,7 +198,7 @@
   }
 
   function handleSourceChange(sourceId: string) {
-    void prepareSource(sourceId);
+    void prepareSource(sourceId, false);
   }
 
   async function handleEpisodeChange(target: PlayerEpisodeTarget) {

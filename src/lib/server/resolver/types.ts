@@ -12,6 +12,7 @@ export type ResolverRequest = {
   mediaType: ResolverMediaType;
   season?: number;
   episode?: number;
+  allowFallback?: boolean;
 };
 
 export type ContentIdentifiers = {

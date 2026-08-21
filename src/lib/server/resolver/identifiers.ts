@@ -27,6 +27,8 @@ export function parseResolverRequest(input: unknown): ResolverRequest {
   const request: ResolverRequest = { sourceId: input.sourceId, contentId: input.contentId, mediaType: input.mediaType };
   if (season !== undefined) request.season = season;
   if (episode !== undefined) request.episode = episode;
+  const fallbackFlag = typeof input.enableFallback === 'boolean' ? input.enableFallback : input.allowFallback;
+  if (typeof fallbackFlag === 'boolean') request.allowFallback = fallbackFlag;
   return request;
 }
 

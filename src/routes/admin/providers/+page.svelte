@@ -12,6 +12,9 @@
   const integrationLabels = { template: 'Template', api: 'API', direct: 'Direct', embed: 'Embed', custom: 'Custom' };
   const sandboxPolicyLabels = { required: 'Required — secure sandbox', optional: 'Optional — secure by default', unrestricted: 'Unrestricted — warning' };
   const providerSandboxPolicy = (provider: PageData['providers'][number]) => sandboxPolicyFromCapabilities(provider.capabilities);
+  const healthStateLabels = { healthy: 'Healthy', degraded: 'Degraded', unhealthy: 'Unhealthy', cooldown: 'Cooldown', unknown: 'Unknown' } as const;
+  const healthFor = (providerId: string) => data.health?.[providerId];
+  const healthChecked = (providerId: string) => healthFor(providerId)?.lastCheckedAt ? new Date(healthFor(providerId)!.lastCheckedAt!).toLocaleString() : 'Not checked';
 </script>
 
 <svelte:head><title>Provider Registry — Mavero</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
@@ -39,7 +42,7 @@
 
   {#if data.providers.length === 0}<div class="empty"><ShieldCheck size={22} /> <h2>No providers yet</h2><p>Create the first configuration record above. It will remain disabled until explicitly enabled.</p></div>{:else}<div class="registry-list">{#each data.providers as provider}
     <details class="record">
-      <summary><div class="record-main"><span class="provider-icon">{provider.icon || 'M'}</span><div><strong>{provider.name}</strong><span>{provider.slug} · {integrationLabels[provider.integration_type as keyof typeof integrationLabels]}</span></div></div><div class="record-meta"><span class:good={provider.enabled} class:warning={!provider.enabled}>{provider.enabled ? 'Enabled' : 'Disabled'}</span><span>{providerStatusLabels[provider.status as keyof typeof providerStatusLabels]}</span><ChevronDown size={15} /></div></summary>
+      <summary><div class="record-main"><span class="provider-icon">{provider.icon || 'M'}</span><div><strong>{provider.name}</strong><span>{provider.slug} · {integrationLabels[provider.integration_type as keyof typeof integrationLabels]}</span></div></div><div class="record-meta"><span class:good={provider.enabled} class:warning={!provider.enabled}>{provider.enabled ? 'Enabled' : 'Disabled'}</span><span>{providerStatusLabels[provider.status as keyof typeof providerStatusLabels]}</span><span class="health" class:health-good={healthFor(provider.id)?.state === 'healthy'} class:health-warn={healthFor(provider.id)?.state === 'degraded' || healthFor(provider.id)?.state === 'unknown'} class:health-bad={healthFor(provider.id)?.state === 'unhealthy' || healthFor(provider.id)?.state === 'cooldown'} title={`Runtime health · ${healthChecked(provider.id)}`}>Health: {healthStateLabels[healthFor(provider.id)?.state ?? 'unknown']}</span><ChevronDown size={15} /></div></summary>
       <form method="POST" action="?/updateProvider" class="registry-form compact">
         <input type="hidden" name="id" value={provider.id} />
         <div class="form-grid two"><label>Name<input name="name" required maxlength="120" value={provider.name} /></label><label>Slug<input name="slug" required maxlength="120" value={provider.slug} /></label></div>
@@ -98,6 +101,10 @@
   .record-meta { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .55rem; }
   .record-meta .good { color: var(--success); }
   .record-meta .warning { color: #d4b27c; }
+  .record-meta .health { padding-left: 7px; border-left: 1px solid var(--line); }
+  .record-meta .health-good { color: var(--success); }
+  .record-meta .health-warn { color: #d4b27c; }
+  .record-meta .health-bad { color: #e6b6a4; }
   .empty { margin-top: 15px; padding: 45px 20px; text-align: center; border: 1px dashed var(--line); border-radius: 14px; } .security-note { color: #d4b27c; font-size: .55rem; line-height: 1.45; }
   .empty h2 { margin: 10px 0 5px; font-size: 1rem; }
   .empty p { margin: 0; color: var(--muted); font-size: .72rem; }
