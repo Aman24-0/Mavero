@@ -4,6 +4,7 @@ import { normalizeContentIdentifiers } from './identifiers';
 import { allowedEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
 import type { ProviderAdapter, ResolverDependencies, ResolverRequest, SourceResult, TrustedResolutionConfig } from './types';
+import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
 import type { IntegrationType } from '$lib/server/streaming/types';
 
 const activeProviderStatuses = new Set(['active']);
@@ -52,6 +53,7 @@ function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']
     qualities: result.qualities,
     headers: result.headers,
     expiresAt: result.expiresAt,
+    sandboxPolicy: sandboxPolicyFromCapabilities(context.config.source.capabilities, context.config.provider.capabilities),
     metadata: { ...result.metadata, sourceName: context.config.source.name, providerName: context.config.provider.name },
   };
 }

@@ -1,4 +1,5 @@
 import type { PlayerSource } from './player';
+import { isSandboxPolicy } from './sandbox-policy';
 
 function isHttpsUrl(value: unknown) {
   if (typeof value !== 'string' || !value) return false;
@@ -15,6 +16,7 @@ export function isPlayablePlayerSource(value: unknown): value is PlayerSource {
   const source = value as Partial<PlayerSource>;
   if (source.type !== 'direct' && source.type !== 'embed') return false;
   if (!isHttpsUrl(source.url)) return false;
+  if (source.sandboxPolicy !== undefined && !isSandboxPolicy(source.sandboxPolicy)) return false;
   return typeof source.sourceId === 'string' && typeof source.providerId === 'string';
 }
 

@@ -1,4 +1,4 @@
-import type { PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerSource } from './player';
+import type { PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerSource, PlayerSourceOption } from './player';
 import { isEmbedOriginAllowed, isPlayablePlayerSource, sourceIsExpired } from './player-guards';
 
 export function stateForSource(source: PlayerSource | null, now = Date.now()): PlayerPlaybackState {
@@ -14,6 +14,13 @@ export function clampSeek(value: number, duration: number) {
   if (!Number.isFinite(value)) return 0;
   if (!Number.isFinite(duration) || duration <= 0) return Math.max(0, value);
   return Math.min(duration, Math.max(0, value));
+}
+
+export function adjacentSource(options: PlayerSourceOption[], currentSourceId: string | undefined, delta: -1 | 1) {
+  if (!currentSourceId) return undefined;
+  const index = options.findIndex((option) => option.id === currentSourceId);
+  if (index < 0) return undefined;
+  return options[index + delta]?.id;
 }
 
 export function adjacentEpisode(episodes: PlayerEpisode[], current: PlayerEpisodeTarget | null, delta: -1 | 1) {

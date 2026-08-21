@@ -2,6 +2,7 @@
   import { Check, ChevronDown, Plus, ShieldCheck, Trash2 } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import { integrationTypes, providerStatuses } from '$lib/shared/streaming';
+  import { sandboxPolicies, sandboxPolicyDescription, sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
   import type { ActionData, PageData } from './$types';
 
   export let data: PageData;
@@ -9,6 +10,8 @@
 
   const providerStatusLabels = { active: 'Active', disabled: 'Disabled', maintenance: 'Maintenance', experimental: 'Experimental', unavailable: 'Unavailable' };
   const integrationLabels = { template: 'Template', api: 'API', direct: 'Direct', embed: 'Embed', custom: 'Custom' };
+  const sandboxPolicyLabels = { required: 'Required — secure sandbox', optional: 'Optional — secure by default', unrestricted: 'Unrestricted — warning' };
+  const providerSandboxPolicy = (provider: PageData['providers'][number]) => sandboxPolicyFromCapabilities(provider.capabilities);
 </script>
 
 <svelte:head><title>Provider Registry — Mavero</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
@@ -27,6 +30,7 @@
       <div class="form-grid three"><label>Integration type<select name="integration_type">{#each integrationTypes as type}<option value={type}>{integrationLabels[type]}</option>{/each}</select></label><label>Status<select name="status">{#each providerStatuses as status}<option value={status}>{providerStatusLabels[status]}</option>{/each}</select></label><label class="check"><input type="checkbox" name="enabled" /> Enabled for public config</label></div>
       <div class="form-grid two"><label>Icon / display token<input name="icon" maxlength="120" placeholder="spark / logo token" /></label><label>Adapter ID<input name="adapter_id" maxlength="80" placeholder="reserved-adapter-id" /></label></div>
       <label>Description<textarea name="description" maxlength="500" rows="2" placeholder="Safe display description."></textarea></label>
+      <label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as policy}<option value={policy}>{sandboxPolicyLabels[policy]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription('required')}</small></label>
       <label>Capabilities JSON<textarea name="capabilities" rows="3" placeholder="JSON object, e.g. movies=true">&#123;&quot;movies&quot;:true&#125;</textarea></label>
       <label>Admin notes<textarea name="notes" maxlength="2000" rows="2" placeholder="Internal notes; never returned by public config."></textarea></label>
       <div class="form-actions"><button class="btn btn-primary" type="submit"><Plus size={14} /> Create provider</button><span class="hint">No third-party calls are made.</span></div>
@@ -42,11 +46,12 @@
         <div class="form-grid three"><label>Integration type<select name="integration_type">{#each integrationTypes as type}<option value={type} selected={provider.integration_type === type}>{integrationLabels[type]}</option>{/each}</select></label><label>Status<select name="status">{#each providerStatuses as status}<option value={status} selected={provider.status === status}>{providerStatusLabels[status]}</option>{/each}</select></label><label class="check"><input type="checkbox" name="enabled" checked={provider.enabled} /> Enabled for public config</label></div>
         <div class="form-grid two"><label>Icon / display token<input name="icon" maxlength="120" value={provider.icon ?? ''} /></label><label>Adapter ID<input name="adapter_id" maxlength="80" value={provider.adapter_id ?? ''} /></label></div>
         <label>Description<textarea name="description" maxlength="500" rows="2">{provider.description ?? ''}</textarea></label>
+        <label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as candidate}<option value={candidate} selected={providerSandboxPolicy(provider) === candidate}>{sandboxPolicyLabels[candidate]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription(providerSandboxPolicy(provider))}</small></label>
         <label>Capabilities JSON<textarea name="capabilities" rows="3">{JSON.stringify(provider.capabilities ?? {}, null, 2)}</textarea></label>
         <label>Admin notes<textarea name="notes" maxlength="2000" rows="2">{provider.notes ?? ''}</textarea></label>
         <div class="form-actions"><button class="btn btn-primary" type="submit">Save changes</button></div>
       </form>
-      <div class="form-actions secondary-actions"><form method="POST" action="?/toggleProvider" class="inline-form"><input type="hidden" name="id" value={provider.id} /><input type="hidden" name="enabled" value={provider.enabled ? 'false' : 'true'} /><button class="btn btn-secondary" type="submit">{provider.enabled ? 'Disable' : 'Enable'}</button></form><form method="POST" action="?/deleteProvider" class="inline-form" onsubmit={() => confirm(`Delete ${provider.name}? Providers with dependent sources cannot be deleted.`)}><input type="hidden" name="id" value={provider.id} /><button class="btn btn-danger" type="submit"><Trash2 size={14} /> Delete</button></form></div>
+      <div class="form-actions secondary-actions"><form method="POST" action="?/toggleProvider" class="inline-form" onsubmit={(event) => { const button = (event.currentTarget as HTMLFormElement).querySelector('button'); if (button) button.disabled = true; }}><input type="hidden" name="id" value={provider.id} /><input type="hidden" name="enabled" value={provider.enabled ? 'false' : 'true'} /><button class="btn btn-secondary" type="submit">{provider.enabled ? 'Disable' : 'Enable'}</button></form><form method="POST" action="?/deleteProvider" class="inline-form" onsubmit={() => confirm(`Delete ${provider.name}? Providers with dependent sources cannot be deleted.`)}><input type="hidden" name="id" value={provider.id} /><button class="btn btn-danger" type="submit"><Trash2 size={14} /> Delete</button></form></div>
     </details>
   {/each}</div>{/if}
 </AdminShell>
@@ -93,7 +98,7 @@
   .record-meta { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .55rem; }
   .record-meta .good { color: var(--success); }
   .record-meta .warning { color: #d4b27c; }
-  .empty { margin-top: 15px; padding: 45px 20px; text-align: center; border: 1px dashed var(--line); border-radius: 14px; }
+  .empty { margin-top: 15px; padding: 45px 20px; text-align: center; border: 1px dashed var(--line); border-radius: 14px; } .security-note { color: #d4b27c; font-size: .55rem; line-height: 1.45; }
   .empty h2 { margin: 10px 0 5px; font-size: 1rem; }
   .empty p { margin: 0; color: var(--muted); font-size: .72rem; }
   @media (max-width: 700px) { .heading-row { align-items: start; flex-direction: column; } .form-grid.two, .form-grid.three { grid-template-columns: 1fr; } .record-meta span:nth-child(2) { display: none; } }

@@ -5,7 +5,7 @@
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
-  import { adjacentEpisode, clampSeek } from '$lib/shared/player-state';
+  import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -17,6 +17,9 @@
   export let onSourceChange: (sourceId: string) => void = () => {};
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
   export let onClose: () => void = () => {};
+  export let resolving = false;
+  export let resolutionError = '';
+  export let resolutionMessage = '';
 
   let viewport: PlayerViewport;
   let videoElement: HTMLVideoElement | undefined;
@@ -48,6 +51,12 @@
   $: selectedQualityOption = qualities.find((quality) => quality.url === selectedQuality) as PlayerQualityOption | undefined;
   $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
   $: sourceReady = Boolean(source && isPlayablePlayerSource(source) && !sourceIsExpired(source));
+  $: sourceIndex = source ? sourceOptions.findIndex((option) => option.id === source.sourceId) : -1;
+  $: previousSourceId = adjacentSource(sourceOptions, source?.sourceId, -1);
+  $: nextSourceId = adjacentSource(sourceOptions, source?.sourceId, 1);
+  $: hasPreviousSource = Boolean(previousSourceId);
+  $: hasNextSource = Boolean(nextSourceId);
+  $: effectiveState = resolving ? 'switching-source' : resolutionError ? 'provider-error' : state;
   $: embedReady = Boolean(source?.type === 'embed' && isEmbedOriginAllowed(source) && !sourceIsExpired(source));
   $: episodeIndex = currentEpisode ? episodes.findIndex((episode) => episode.season === currentEpisode?.season && episode.number === currentEpisode?.episode) : -1;
   $: hasPreviousEpisode = episodeIndex > 0;
@@ -217,7 +226,16 @@
 
   function chooseSource(sourceId: string) {
     sourceMenuOpen = false;
-    if (sourceId !== source?.sourceId) onSourceChange(sourceId);
+    if (sourceId !== source?.sourceId) {
+      state = 'switching-source';
+      errorMessage = '';
+      onSourceChange(sourceId);
+    }
+  }
+
+  function chooseAdjacentSource(delta: -1 | 1) {
+    const nextId = adjacentSource(sourceOptions, source?.sourceId, delta);
+    if (nextId) chooseSource(nextId);
   }
 
   function chooseEpisode(target: PlayerEpisodeTarget) {
@@ -242,6 +260,11 @@
 
   function retry() {
     errorMessage = '';
+    if (source?.sourceId) {
+      state = 'switching-source';
+      onSourceChange(source.sourceId);
+      return;
+    }
     if (videoElement) { videoElement.load(); pendingSeek = currentTime; }
     state = source?.type === 'embed' ? 'embed-loading' : 'preparing';
   }
@@ -255,24 +278,24 @@
     <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
     <div class="header-actions">
       {#if episodes.length}<button class="header-button compact" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={() => { episodeMenuOpen = !episodeMenuOpen; sourceMenuOpen = false; }}><ListVideo size={17} /><span>Episodes</span></button>{/if}
-      {#if sourceOptions.length}<button class="header-button compact" type="button" aria-label="Open source list" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={17} /><span>Sources</span></button>{/if}
+      {#if sourceOptions.length}<button class="header-button compact step-button" type="button" aria-label="Previous server" disabled={!hasPreviousSource} onclick={() => chooseAdjacentSource(-1)}><ChevronLeft size={17} /><span>Previous</span></button><button class="header-button compact" type="button" aria-label="Open source list" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={17} /><span>Sources</span></button><button class="header-button compact step-button" type="button" aria-label="Next server" disabled={!hasNextSource} onclick={() => chooseAdjacentSource(1)}><ChevronRight size={17} /><span>Next</span></button>{/if}
       <button class="header-button compact orientation-button" type="button" aria-label="Toggle landscape player" onclick={() => void toggleFullscreen()}><Maximize2 size={17} /><span>Landscape</span></button>
     </div>
   </header>
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} poster={content.backdrop ?? content.poster ?? ''} title={content.title} {state} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
+    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
 
-    {#if errorMessage || state === 'error' || state === 'source-unavailable' || state === 'unsupported-format' || state === 'embed-unavailable'}
+    {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
-        <div><strong>{state === 'source-unavailable' ? 'Source unavailable' : state === 'embed-unavailable' ? 'Embed unavailable' : 'Playback could not be started'}</strong><p>{errorMessage || 'Choose another authorized source and try again.'}</p></div>
+        <div><strong>{effectiveState === 'provider-error' ? 'Provider unavailable' : effectiveState === 'source-unavailable' ? 'Source unavailable' : effectiveState === 'embed-unavailable' ? 'Embed unavailable' : 'Playback could not be started'}</strong><p>{resolutionError || errorMessage || 'Choose another authorized source and try again.'}</p></div>
         <div class="message-actions"><button class="small-button" type="button" onclick={retry}><RotateCcw size={14} /> Retry</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Change source</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span>{#if hasNextEpisode}<button class="small-button" type="button" onclick={() => chooseAdjacentEpisode(1)}>Next episode <ChevronRight size={14} /></button>{/if}</div>
-    {:else if state === 'preparing' || state === 'resolving' || state === 'switching-source' || state === 'embed-loading'}
-      <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{state === 'switching-source' ? 'Switching source' : state === 'embed-loading' ? 'Starting your stream' : 'Loading player'}</strong><small>{state === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…'}</small></span></div>
+    {:else if effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading'}
+      <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching server' : effectiveState === 'embed-loading' ? 'Starting your stream' : 'Loading player'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
     {/if}
 
     {#if currentEpisode && (hasPreviousEpisode || hasNextEpisode)}
@@ -289,8 +312,8 @@
   {#if sourceMenuOpen}
     <div class="drawer source-drawer" role="dialog" aria-label="Available playback sources">
       <div class="drawer-head"><div><span class="eyebrow">Source resolver</span><h2>Choose a source</h2></div><button class="close-button" type="button" aria-label="Close source list" onclick={() => sourceMenuOpen = false}><X size={17} /></button></div>
-      <div class="drawer-list">{#each sourceOptions as option}<button class="drawer-option" class:active={option.id === source?.sourceId} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{/each}</div>
-      <p class="drawer-note">Every source is resolved and validated by MAVERO before it reaches this player.</p>
+      <div class="drawer-list">{#each sourceOptions as option}<button class="drawer-option" class:active={option.id === source?.sourceId} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}{#if option.sandboxPolicy} · sandbox: {option.sandboxPolicy}{/if}</small></span></button>{/each}</div>
+      <p class="drawer-note">Every source is resolved and validated by MAVERO before it reaches this player. A provider may still reject the configured iframe permissions; MAVERO cannot inspect or bypass that cross-origin decision.</p>
     </div>
   {/if}
 
@@ -309,6 +332,7 @@
   .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: calc(16px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 16px; background: linear-gradient(180deg, rgba(4,4,6,.92), rgba(4,4,6,.32) 70%, transparent); }
   .header-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; padding: 0 11px; color: rgba(255,255,255,.82); background: rgba(12,11,17,.58); cursor: pointer; font: inherit; font-size: .68rem; transition: background 160ms ease-out, border-color 160ms ease-out, transform 160ms ease-out; }
   .header-button:hover, .header-button:focus-visible { border-color: rgba(194,181,255,.52); background: rgba(40,32,60,.82); }
+  .header-button:disabled { cursor: not-allowed; opacity: .3; }
   .header-button:active { transform: scale(.97); }
   .header-title { display: grid; justify-items: center; gap: 4px; min-width: 0; color: #fff; text-align: center; text-shadow: 0 1px 14px #000; }
   .header-title strong { max-width: min(48vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }

@@ -12,7 +12,9 @@ function form(values: Record<string, string | boolean>): FormData {
 
 const provider = parseProviderForm(form({ name: 'Fixture Provider', slug: 'fixture-provider', status: 'experimental', integration_type: 'template', capabilities: '{"movies":true}', enabled: false }));
 assert.equal(provider.slug, 'fixture-provider');
-assert.deepEqual(provider.capabilities, { movies: true });
+assert.deepEqual(provider.capabilities, { movies: true, sandbox_policy: 'required' });
+const unrestrictedProvider = parseProviderForm(form({ name: 'Unrestricted Provider', slug: 'unrestricted-provider', status: 'experimental', integration_type: 'embed', sandbox_policy: 'unrestricted', capabilities: '{"movie":true}' }));
+assert.equal(unrestrictedProvider.capabilities.sandbox_policy, 'unrestricted');
 
 assert.throws(() => parseProviderForm(form({ name: 'Bad Provider', slug: 'bad_slug', status: 'experimental', integration_type: 'template' })), StreamingValidationError);
 assert.throws(() => parseProviderForm(form({ name: 'Bad Provider', slug: 'bad-provider', status: 'unknown', integration_type: 'template' })), StreamingValidationError);
@@ -21,6 +23,7 @@ assert.throws(() => parseProviderForm(form({ name: 'Bad Provider', slug: 'bad-pr
 const source = parseSourceForm(form({ provider_id: '3e7181a3-3999-4844-92bf-4f0afbc5b70f', name: 'Fixture Source', slug: 'fixture-source', identifier_mode: 'tmdb_id', status: 'experimental', visibility: 'internal', ordering: '2', movie_template: 'configured-only', audio_languages: 'English, Hindi' }));
 assert.equal(source.ordering, 2);
 assert.deepEqual(source.audio_languages, ['English', 'Hindi']);
+assert.equal(source.capabilities.sandbox_policy, 'required');
 assert.throws(() => parseSourceForm(form({ provider_id: 'not-a-uuid', name: 'Bad Source', slug: 'bad-source', identifier_mode: 'custom', status: 'experimental', visibility: 'public' })), StreamingValidationError);
 assert.throws(() => parseSourceForm(form({ provider_id: '3e7181a3-3999-4844-92bf-4f0afbc5b70f', name: 'Bad Source', slug: 'bad-source', identifier_mode: 'custom', status: 'experimental', visibility: 'public', ordering: '-1' })), StreamingValidationError);
 

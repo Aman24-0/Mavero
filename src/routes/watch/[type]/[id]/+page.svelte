@@ -6,6 +6,7 @@
   import PlayerShell from '$lib/components/player/PlayerShell.svelte';
   import { normalizePlayerSource } from '$lib/shared/player-guards';
   import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource } from '$lib/shared/player';
+  import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
   import type { PageData } from './$types';
   import { createProgressWriter, getLocalPersistenceState, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -20,13 +21,14 @@
   $: currentEpisode = season !== undefined && episode !== undefined ? data.episodes.find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
   $: playbackContext = ({ contentType, contentId: item.id, season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
   $: playbackKey = [playbackContext.contentType, playbackContext.contentId, playbackContext.season ?? '-', playbackContext.episode ?? '-'].join(':');
-  $: sourceOptions = data.streamingConfig.sources.map((source) => ({ id: source.id, name: source.name, status: source.status, integrationType: source.integration_type ?? undefined }));
+  $: sourceOptions = data.streamingConfig.sources.map((source) => ({ id: source.id, name: source.name, status: source.status, integrationType: source.integration_type ?? undefined, sandboxPolicy: sandboxPolicyFromCapabilities(source.capabilities, data.streamingConfig.providers.find((provider) => provider.id === source.provider_id)?.capabilities) }));
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
   $: playerContent = ({ id: item.id, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
 
   let selectedSourceId = '';
   let resolvedSource: PlayerSource | null = null;
-  let resolutionState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+  type ResolutionState = 'idle' | 'resolving' | 'ready' | 'provider-error' | 'unsupported' | 'unavailable' | 'network-error';
+  let resolutionState: ResolutionState = 'idle';
   let resolutionMessage = '';
   let resumeTime = 0;
   let duration = 0;
@@ -98,13 +100,13 @@
     const selected = sourceOptions.find((source) => source.id === sourceId);
     if (!selected) {
       resolvedSource = null;
-      resolutionState = 'error';
+      resolutionState = 'unavailable';
       resolutionMessage = 'No authorized source is available for this title.';
       return;
     }
     await replaceProgressSource(sourceId);
     selectedSourceId = sourceId;
-    resolutionState = 'loading';
+    resolutionState = 'resolving';
     resolutionMessage = 'Resolving a safe playback source…';
     resolvedSource = null;
     try {
@@ -113,9 +115,13 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode })
       });
-      const payload = await response.json() as { ok?: boolean; source?: unknown; error?: { message?: string } };
+      const payload = await response.json() as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
       const safeSource = normalizePlayerSource(payload.source);
-      if (!response.ok || !payload.ok || !safeSource) throw new Error(payload.error?.message ?? 'This source is currently unavailable.');
+      if (!response.ok || !payload.ok || !safeSource) {
+        const error = new Error(payload.error?.message ?? 'This source is currently unavailable.') as Error & { code?: string };
+        error.code = payload.error?.code;
+        throw error;
+      }
       resolvedSource = safeSource;
       resolutionState = 'ready';
       resolutionMessage = safeSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.';
@@ -131,8 +137,15 @@
       }
     } catch (error) {
       resolvedSource = null;
-      resolutionState = 'error';
-      resolutionMessage = error instanceof Error ? error.message : 'This source is currently unavailable.';
+      const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined;
+      resolutionState = code === 'UNSUPPORTED_MEDIA_TYPE' ? 'unsupported' : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE' ? 'unavailable' : code ? 'provider-error' : 'network-error';
+      resolutionMessage = code === 'UNSUPPORTED_MEDIA_TYPE'
+        ? 'This provider does not support this title type.'
+        : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE'
+          ? 'This provider is unavailable. Choose another server.'
+          : error instanceof Error
+            ? error.message
+            : 'The provider could not be reached. Try again or choose another server.';
     }
   }
 
@@ -191,8 +204,8 @@
 
 <svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
 
-{#if progressReady && resolutionState !== 'loading'}
-  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} />
+{#if progressReady}
+  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState !== 'ready' && resolutionState !== 'idle' ? resolutionMessage : ''} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} />
 {:else}
   <main class="watch-loading" aria-live="polite"><div class="loading-ring" aria-hidden="true"><span></span></div><div class="loading-copy"><strong>{progressReady ? 'Starting your stream' : 'Loading player'}</strong><span>{progressReady ? 'Connecting to your provider…' : 'Preparing your watch session…'}</span></div><small>{progressReady ? resolutionMessage || 'Finding the best available source' : localState}</small></main>
 {/if}

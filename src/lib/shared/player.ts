@@ -1,4 +1,6 @@
 export type PlayerSourceType = 'direct' | 'embed' | 'unavailable' | 'error';
+import type { SandboxPolicy } from './sandbox-policy';
+
 export type PlayerProtocol = 'hls' | 'dash' | 'mp4' | 'file' | 'unknown';
 
 export type PlayerSubtitleTrack = {
@@ -23,6 +25,7 @@ export type PlayerSource = {
   subtitles?: PlayerSubtitleTrack[];
   qualities?: PlayerQualityOption[];
   headers?: { referer?: string; origin?: string };
+  sandboxPolicy?: SandboxPolicy;
   expiresAt?: string;
   metadata?: {
     title?: string;
@@ -43,6 +46,7 @@ export type PlayerSourceOption = {
   name: string;
   status?: string;
   integrationType?: string;
+  sandboxPolicy?: SandboxPolicy;
 };
 
 export type PlayerEpisode = {
@@ -91,6 +95,9 @@ export type PlayerPlaybackState =
   | 'unsupported-format'
   | 'embed-loading'
   | 'embed-unavailable'
+  | 'provider-error'
+  | 'unsupported'
+  | 'unavailable'
   | 'offline';
 
 export const playbackSpeeds = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;

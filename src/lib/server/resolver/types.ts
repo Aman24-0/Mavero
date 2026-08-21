@@ -1,4 +1,5 @@
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
+import type { SandboxPolicy } from '$lib/shared/sandbox-policy';
 import type { IntegrationType, StreamingProviderRow, StreamingSourceRow } from '$lib/server/streaming/types';
 
 export type ResolverMediaType = ContentType;
@@ -81,6 +82,7 @@ export type SourceResult = {
   qualities?: QualitySource[];
   headers?: SafePlaybackHeaders;
   expiresAt?: string;
+  sandboxPolicy?: SandboxPolicy;
   metadata?: SafeSourceMetadata;
   error?: ResolverErrorShape;
 };
@@ -105,6 +107,7 @@ export type AdapterResult = {
   subtitles?: SubtitleSource[];
   qualities?: QualitySource[];
   expiresAt?: string;
+  sandboxPolicy?: SandboxPolicy;
   metadata?: SafeSourceMetadata;
 };
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import type { PlayerPlaybackState, PlayerSource } from '$lib/shared/player';
+  import { iframeSandboxAttribute } from '$lib/shared/sandbox-policy';
 
   export let source: PlayerSource | null = null;
   export let mediaUrl: string | null = null;
@@ -8,6 +9,7 @@
   export let title = 'MAVERO playback';
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
+  $: sandboxAttribute = iframeSandboxAttribute(source?.sandboxPolicy);
 
   const dispatch = createEventDispatcher<{
     loadedmetadata: void;
@@ -84,7 +86,7 @@
       title={`${title} provider embed`}
       loading="eager"
       allow="autoplay; fullscreen; picture-in-picture"
-      sandbox="allow-forms allow-presentation allow-same-origin allow-scripts"
+      sandbox={sandboxAttribute}
       referrerpolicy="no-referrer"
       allowfullscreen
       on:load={() => dispatch('embedload')}

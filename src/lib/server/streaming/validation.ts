@@ -1,4 +1,5 @@
 import { identifierModes, integrationTypes, providerStatuses, sourceVisibilities, type IdentifierMode, type IntegrationType, type JsonObject, type ProviderStatus, type SourceVisibility } from './types';
+import { sandboxPolicies, withSandboxPolicy, type SandboxPolicy } from '$lib/shared/sandbox-policy';
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const adapterPattern = /^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
@@ -91,7 +92,7 @@ export function parseProviderForm(form: FormData) {
     enabled: booleanValue(form.get('enabled')),
     integration_type: enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType,
     adapter_id: adapterId,
-    capabilities: jsonObject(form.get('capabilities'), 'Capabilities'),
+    capabilities: withSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities'), enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicies, 'required') as SandboxPolicy),
     notes: text(form.get('notes'), 'Notes', 2000),
   };
 }
@@ -112,7 +113,7 @@ export function parseSourceForm(form: FormData) {
       const value = String(form.get('integration_type') ?? '').trim();
       return value ? enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType : null;
     })(),
-    capabilities: jsonObject(form.get('capabilities'), 'Capabilities'),
+    capabilities: withSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities'), enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicies, 'required') as SandboxPolicy),
     movie_template: template(form.get('movie_template'), 'Movie template'),
     series_template: template(form.get('series_template'), 'Series template'),
     anime_template: template(form.get('anime_template'), 'Anime template'),
