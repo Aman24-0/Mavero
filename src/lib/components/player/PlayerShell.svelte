@@ -291,14 +291,16 @@
 
   <div bind:this={playerRoot} class="player-shell" class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
   <header class="player-header">
-    <button class="header-button" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
-    <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
+    <div class="header-title-row">
+      <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
+      <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
+      <button class="header-button compact orientation-button" type="button" aria-label="Toggle landscape player" onclick={() => void toggleFullscreen()}><Maximize2 size={17} /><span>Landscape</span></button>
+    </div>
     <div class="header-actions">
       <button class="header-button compact" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={17} /><span>Details</span></button>
       {#if episodes.length}<button class="header-button compact" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={() => { episodeMenuOpen = !episodeMenuOpen; sourceMenuOpen = false; }}><ListVideo size={17} /><span>Episodes</span></button>{/if}
       {#if sourceOptions.length}<button class="header-button compact step-button" type="button" aria-label="Previous server" disabled={!hasPreviousSource} onclick={() => chooseAdjacentSource(-1)}><ChevronLeft size={17} /><span>Previous</span></button><button class="header-button compact" type="button" aria-label="Open source list" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={17} /><span>Sources</span></button><button class="header-button compact step-button" type="button" aria-label="Next server" disabled={!hasNextSource} onclick={() => chooseAdjacentSource(1)}><ChevronRight size={17} /><span>Next</span></button>{/if}
       {#if source?.type === 'embed'}<button class:active={effectiveSandboxEnabled} class:off={!effectiveSandboxEnabled} class="header-button compact sandbox-button" type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={17} />{:else}<ShieldOff size={17} />{/if}<span>Sandbox {effectiveSandboxEnabled ? 'On' : 'Off'}</span></button>{/if}
-      <button class="header-button compact orientation-button" type="button" aria-label="Toggle landscape player" onclick={() => void toggleFullscreen()}><Maximize2 size={17} /><span>Landscape</span></button>
     </div>
   </header>
 
@@ -348,8 +350,11 @@
 
 <style>
   .player-shell { --player-bg: #050506; position: relative; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
-  .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: calc(16px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 16px; background: linear-gradient(180deg, rgba(4,4,6,.92), rgba(4,4,6,.32) 70%, transparent); }
-  .header-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; padding: 0 11px; color: rgba(255,255,255,.82); background: rgba(12,11,17,.58); cursor: pointer; font: inherit; font-size: .68rem; transition: background 160ms ease-out, border-color 160ms ease-out, transform 160ms ease-out; }
+  .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: grid; gap: 10px; padding: calc(12px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 14px; background: linear-gradient(180deg, rgba(4,4,6,.94), rgba(4,4,6,.42) 76%, transparent); }
+  .header-title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; min-height: 40px; }
+  .header-title-row .header-nav { justify-self: start; }
+  .header-title-row .orientation-button { justify-self: end; }
+  .header-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; padding: 0 11px; color: rgba(255,255,255,.82); background: rgba(12,11,17,.58); cursor: pointer; font: inherit; font-size: .68rem; transition: background 160ms ease-out, border-color 160ms ease-out, transform 160ms ease-out; }
   .header-button:hover, .header-button:focus-visible { border-color: rgba(194,181,255,.52); background: rgba(40,32,60,.82); }
   .header-button:disabled { cursor: not-allowed; opacity: .3; }
   .header-button:active { transform: scale(.97); }
@@ -358,10 +363,10 @@
   .header-title { display: grid; justify-items: center; gap: 4px; min-width: 0; color: #fff; text-align: center; text-shadow: 0 1px 14px #000; }
   .header-title strong { max-width: min(48vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
   .header-title span { color: rgba(255,255,255,.53); font-family: 'DM Mono', monospace; font-size: .56rem; }
-  .header-actions { display: flex; gap: 5px; }
-  .stage-wrap { position: relative; display: grid; min-height: 100dvh; place-items: center; padding: calc(72px + env(safe-area-inset-top)) clamp(12px, 3vw, 42px) calc(30px + env(safe-area-inset-bottom)); }
-  .stage-wrap :global(.viewport) { width: min(100%, calc((100dvh - 112px) * 1.7778)); aspect-ratio: 16 / 9; min-height: 0; max-height: calc(100dvh - 112px); border-radius: 14px; box-shadow: 0 22px 80px rgba(0,0,0,.38); }
-  .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 112px) * 1.7778)); }
+  .header-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
+  .stage-wrap { position: relative; display: grid; min-height: 100dvh; place-items: center; padding: calc(118px + env(safe-area-inset-top)) clamp(12px, 3vw, 42px) calc(30px + env(safe-area-inset-bottom)); }
+  .stage-wrap :global(.viewport) { width: min(100%, calc((100dvh - 158px) * 1.7778)); aspect-ratio: 16 / 9; min-height: 0; max-height: calc(100dvh - 158px); border-radius: 14px; box-shadow: 0 22px 80px rgba(0,0,0,.38); }
+  .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 158px) * 1.7778)); }
   .controls-layer { position: absolute; z-index: 6; right: clamp(12px, 3vw, 42px); bottom: calc(28px + env(safe-area-inset-bottom)); left: clamp(12px, 3vw, 42px); opacity: 1; transition: opacity 220ms ease-out; pointer-events: auto; }
   .controls-layer:not(.visible) { opacity: 0; pointer-events: none; }
   .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid rgba(194,181,255,.26); border-radius: 15px; padding: 15px 16px; color: #fff; background: rgba(12,11,18,.88); box-shadow: 0 20px 60px rgba(0,0,0,.34); backdrop-filter: blur(22px); }
@@ -382,7 +387,7 @@
   .episode-stepper { position: absolute; z-index: 5; right: 50%; bottom: 125px; display: flex; align-items: center; gap: 12px; transform: translateX(50%); color: rgba(255,255,255,.63); font-family: 'DM Mono', monospace; font-size: .58rem; }
   .round-step { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(255,255,255,.15); border-radius: 50%; color: #fff; background: rgba(7,7,10,.62); cursor: pointer; }
   .round-step:disabled { cursor: not-allowed; opacity: .25; }
-  .drawer { position: absolute; z-index: 12; top: 76px; right: clamp(16px, 4vw, 48px); width: min(360px, calc(100% - 32px)); max-height: min(70dvh, 620px); overflow: auto; border: 1px solid rgba(194,181,255,.22); border-radius: 16px; background: rgba(13,12,19,.95); box-shadow: 0 24px 90px rgba(0,0,0,.5); backdrop-filter: blur(28px); }
+  .drawer { position: absolute; z-index: 12; top: calc(116px + env(safe-area-inset-top)); right: clamp(16px, 4vw, 48px); width: min(360px, calc(100% - 32px)); max-height: min(70dvh, 620px); overflow: auto; border: 1px solid rgba(194,181,255,.22); border-radius: 16px; background: rgba(13,12,19,.95); box-shadow: 0 24px 90px rgba(0,0,0,.5); backdrop-filter: blur(28px); }
   .episode-drawer { width: min(420px, calc(100% - 32px)); }
   .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 19px 18px 13px; }
   .drawer-head h2 { margin: 5px 0 0; font-size: 1.1rem; letter-spacing: -.05em; }
@@ -398,7 +403,7 @@
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'DM Mono', monospace; font-size: .65rem; }
   .drawer-note { margin: 0; padding: 0 18px 18px; color: rgba(255,255,255,.4); font-size: .61rem; line-height: 1.5; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 640px) { .player-header { padding-top: calc(10px + env(safe-area-inset-top)); padding-bottom: 10px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; justify-content: center; padding: 0; } .header-title strong { max-width: 42vw; font-size: .69rem; } .stage-wrap { padding: calc(62px + env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom)); } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; } .message-card { bottom: 50%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .episode-stepper { bottom: calc(34px + env(safe-area-inset-bottom)); } .drawer { top: calc(62px + env(safe-area-inset-top)); right: 12px; width: calc(100% - 24px); max-height: 72dvh; } }
-  @media (orientation: landscape) and (max-height: 560px) { .player-header { padding-top: 8px; padding-bottom: 8px; } .stage-wrap { padding-top: 56px; padding-bottom: 16px; } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 72px) * 1.7778)); max-height: calc(100dvh - 72px); } }
+  @media (max-width: 640px) { .player-header { gap: 7px; padding-top: calc(9px + env(safe-area-inset-top)); padding-bottom: 9px; } .header-title-row { gap: 8px; min-height: 38px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; min-height: 38px; padding: 0; } .header-actions { flex-wrap: nowrap; gap: 6px; } .header-title strong { max-width: 48vw; font-size: .72rem; } .header-title span { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .stage-wrap { padding: calc(105px + env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom)); } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; } .message-card { bottom: 50%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .episode-stepper { bottom: calc(34px + env(safe-area-inset-bottom)); } .drawer { top: calc(104px + env(safe-area-inset-top)); right: 12px; width: calc(100% - 24px); max-height: 72dvh; } }
+  @media (orientation: landscape) and (max-height: 560px) { .player-header { gap: 6px; padding-top: 7px; padding-bottom: 7px; } .header-title-row { min-height: 32px; gap: 8px; } .header-title-row .header-button, .header-actions .header-button { min-height: 32px; min-width: 34px; padding: 0 8px; } .header-actions { flex-wrap: nowrap; gap: 6px; } .header-actions .header-button span, .header-title-row .orientation-button span { display: none; } .stage-wrap { padding-top: calc(86px + env(safe-area-inset-top)); padding-bottom: 16px; } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 108px) * 1.7778)); max-height: calc(100dvh - 108px); } .drawer { top: calc(84px + env(safe-area-inset-top)); } }
   @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .controls-layer { transition: none; } }
 </style>
