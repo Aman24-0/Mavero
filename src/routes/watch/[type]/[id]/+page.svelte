@@ -41,7 +41,16 @@
   let startedHistory = false;
   let lastHistoryAt = 0;
   let watchingSavedForSession = false;
+  let activePlaybackKey = '';
 
+  $: if (browser && playbackKey !== activePlaybackKey) {
+    activePlaybackKey = playbackKey;
+    resolvedSource = null;
+    resolutionState = 'idle';
+    resolutionMessage = '';
+    progressReady = false;
+    watchingSavedForSession = false;
+  }
   $: if (browser && playbackKey !== writerKey) void setupProgressContext();
   $: if (!selectedSourceId && sourceOptions.length) selectedSourceId = sourceOptions[0].id;
   $: if (browser && progressReady && selectedSourceId && resolutionState === 'idle') void prepareSource();
