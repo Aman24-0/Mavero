@@ -3,6 +3,7 @@ import { isRedirect, redirect } from '@sveltejs/kit';
 import { classifyAdminMutationError, type AdminMutationResult } from '../src/lib/server/streaming/mutation-result';
 import { iframeSandboxAttribute, sandboxPolicyFromCapabilities, sandboxPolicyDescription, withSandboxPolicy } from '../src/lib/shared/sandbox-policy';
 import { favoriteToMedia } from '../src/lib/client/progress/presenter';
+import { appendReturnTo, safeReturnTo } from '../src/lib/shared/navigation';
 import { adjacentSource, stateForSource } from '../src/lib/shared/player-state';
 import { isPlayablePlayerSource, normalizePlayerSource } from '../src/lib/shared/player-guards';
 import type { PlayerSource, PlayerSourceOption } from '../src/lib/shared/player';
@@ -60,6 +61,10 @@ assert.equal('message' in timeout, true);
 const watchingMedia = favoriteToMedia({ key: 'movie:438631', contentType: 'movie', contentId: '438631', status: 'watching', snapshot: { title: 'Dune', poster: '/dune.jpg' }, createdAt: 1, updatedAt: 2 });
 assert.equal(watchingMedia.resumeHref, '/watch/movie/438631');
 assert.equal(watchingMedia.resumeHref?.includes('autoplay'), false);
+assert.equal(appendReturnTo('/watch/movie/438631', '/my-list?status=watching'), '/watch/movie/438631?from=%2Fmy-list%3Fstatus%3Dwatching');
+assert.equal(safeReturnTo('/search?q=dune'), '/search?q=dune');
+assert.equal(safeReturnTo('https://example.com'), null);
+assert.equal(safeReturnTo('//example.com'), null);
 const unknown: AdminMutationResult = { status: 'unknown', message: 'ambiguous' };
 assert.equal(unknown.status, 'unknown');
 

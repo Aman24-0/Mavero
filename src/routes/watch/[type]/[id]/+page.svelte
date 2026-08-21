@@ -7,6 +7,7 @@
   import { normalizePlayerSource } from '$lib/shared/player-guards';
   import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource } from '$lib/shared/player';
   import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
+  import { safeReturnTo } from '$lib/shared/navigation';
   import type { PageData } from './$types';
   import { createProgressWriter, getLocalPersistenceState, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -197,8 +198,8 @@
   }
 
   function closePlayer() {
-    if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
-    else void goto(`/${contentType}/${item.id}`);
+    const returnTo = safeReturnTo(page.url.searchParams.get('from'));
+    void goto(returnTo ?? `/${contentType}/${item.id}`, { replaceState: true, keepFocus: true });
   }
 </script>
 

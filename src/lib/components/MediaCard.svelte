@@ -1,13 +1,16 @@
 <script lang="ts">
+  import { page } from '$app/state';
   import { Star } from 'lucide-svelte';
+  import { appendReturnTo } from '$lib/shared/navigation';
   import type { MediaItem } from '$data/content';
   import { formatType } from '$data/content';
 
   export let item: MediaItem;
   export let compact = false;
+  $: cardHref = item.resumeHref ? appendReturnTo(item.resumeHref, `${page.url.pathname}${page.url.search}${page.url.hash}`) : `/${item.type}/${item.id}`;
 </script>
 
-<a class="card" href={item.resumeHref ?? `/${item.type}/${item.id}`} aria-label={item.resumeHref ? `Resume ${item.title}` : `Open ${item.title}`}>
+<a class="card" href={cardHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Open ${item.title}`}>
   <div class="poster" style={`--poster-accent: ${item.accent}`}>
     <img src={item.poster} alt={`${item.title} poster`} loading="lazy" width="720" height="1080" />
     {#if item.tags?.[0] && !compact}
