@@ -94,6 +94,9 @@ export const supabaseCloudProgressAdapter: FutureCloudProgressAdapter = {
 
 export async function deleteCloudFavorite(contentType: string, contentId: string, fetcher: typeof fetch = fetch) {
   try {
+    if (syncInFlight) {
+      try { await syncInFlight; } catch { /* deletion still gets its own request */ }
+    }
     const response = await fetcher(`/api/account/favorites?contentType=${encodeURIComponent(contentType)}&contentId=${encodeURIComponent(contentId)}`, { method: 'DELETE' });
     return response.ok;
   } catch {

@@ -108,6 +108,12 @@ export async function deleteFavorite(contentType: LocalContentType, contentId: s
   return removeFavorite(contentType, contentId);
 }
 
+export async function deleteFavoriteAndProgress(contentType: LocalContentType, contentId: string) {
+  await removeFavorite(contentType, contentId);
+  const matchingProgress = (await listProgress()).filter((record) => record.contentType === contentType && record.contentId === contentId);
+  await Promise.all(matchingProgress.map((record) => removeProgress({ contentType: record.contentType, contentId: record.contentId, season: record.season, episode: record.episode })));
+}
+
 export async function getLocalPersistenceState() {
   return getLocalProgressState();
 }

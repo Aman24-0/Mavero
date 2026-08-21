@@ -183,7 +183,8 @@
   }
 
   function closePlayer() {
-    void goto(`/${contentType}/${item.id}`);
+    if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
+    else void goto(`/${contentType}/${item.id}`);
   }
 </script>
 

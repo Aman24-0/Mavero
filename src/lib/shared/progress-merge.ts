@@ -25,16 +25,18 @@ export function mergeFavoritesWithProgress(favorites: FavoriteRecord[], progress
     if (record.completionState === 'completed' || record.currentTime <= 0) continue;
     const key = favoriteKey(record.contentType, record.contentId);
     const existing = merged.get(key);
-    if (existing && normalizeWatchlistStatus(existing.status) === 'completed') continue;
     const timestamp = Math.max(record.updatedAt, record.lastWatchedAt);
+    const createdAt = existing?.createdAt ?? timestamp;
+    const updatedAt = Math.max(existing?.updatedAt ?? 0, timestamp);
+    if (existing) continue;
     merged.set(key, {
       key,
       contentType: record.contentType,
       contentId: record.contentId,
       snapshot: record.snapshot,
       status: 'watching',
-      createdAt: existing?.createdAt ?? timestamp,
-      updatedAt: Math.max(existing?.updatedAt ?? 0, timestamp),
+      createdAt,
+      updatedAt,
     });
   }
   return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);

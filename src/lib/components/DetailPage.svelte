@@ -8,7 +8,7 @@
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
-  import { deleteFavorite, getFavoriteStatus, setFavoriteStatus } from '$lib/client/progress/service';
+  import { deleteFavoriteAndProgress, getFavoriteStatus, setFavoriteStatus } from '$lib/client/progress/service';
   import type { WatchlistStatus } from '$lib/client/progress/types';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
 
@@ -34,6 +34,15 @@
   onMount(() => {
     let active = true;
     void getFavoriteStatus(type, item.id).then((value) => { if (active) watchlistStatus = value; });
+    const autoplay = page.url.searchParams.get('autoplay') === '1';
+    if (autoplay && typeof window !== 'undefined') {
+      const params = new URLSearchParams(page.url.searchParams);
+      params.delete('autoplay');
+      const query = params.toString();
+      const cleanDetail = `/${type}/${item.id}${query ? `?${query}` : ''}`;
+      window.history.replaceState(window.history.state, '', cleanDetail);
+      void goto(`/watch/${type}/${item.id}${query ? `?${query}` : ''}`);
+    }
     return () => { active = false; };
   });
 
@@ -49,9 +58,9 @@
     closeStatusSheet();
     try {
       if (key === 'remove') {
-        await deleteFavorite(type, item.id);
+        await deleteFavoriteAndProgress(type, item.id);
         watchlistStatus = null;
-        if (page.data.user) void deleteCloudFavorite(type, item.id);
+        if (page.data.user && !(await deleteCloudFavorite(type, item.id))) saveError = 'Local list updated; cloud removal will retry.';
       } else if (key === 'watching' || key === 'planned' || key === 'completed') {
         const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
         const record = await setFavoriteStatus(type, item.id, snapshot, key);

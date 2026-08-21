@@ -6,14 +6,12 @@
   import MediaCard from '$components/MediaCard.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
-  import { getContinueWatching, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, getRecentlyWatched } from '$lib/client/progress/service';
-  import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
+  import { getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords } from '$lib/client/progress/service';
+  import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
-  import { continueWatchingRecords, mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
+  import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
 
   let { data }: { data: PageData } = $props();
-  let recentItems = $state<MediaItem[]>([]);
-  let continueItems = $state<MediaItem[]>([]);
   let favoriteItems = $state<MediaItem[]>([]);
   let watchedSeconds = $state(0);
   let storageMessage = $state('Preparing local storage…');
@@ -24,26 +22,6 @@
   function accountName() {
     const metadata = data.user?.user_metadata;
     return typeof metadata?.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name : data.user?.email?.split('@')[0] ?? 'Alex';
-  }
-
-  function historyToMedia(record: { content_id: string; content_type: string; snapshot: unknown; season?: number | null; episode?: number | null; position_seconds: number; duration: number }): MediaItem {
-    const snapshot = record.snapshot && typeof record.snapshot === 'object' && !Array.isArray(record.snapshot) ? record.snapshot as Record<string, unknown> : {};
-    const type = record.content_type === 'series' || record.content_type === 'anime' ? record.content_type : 'movie';
-    return {
-      id: record.content_id,
-      title: typeof snapshot.title === 'string' ? snapshot.title : 'Untitled',
-      year: typeof snapshot.year === 'number' ? snapshot.year : 0,
-      type,
-      runtime: typeof snapshot.runtime === 'string' ? snapshot.runtime : '',
-      rating: typeof snapshot.rating === 'number' ? snapshot.rating : 0,
-      genres: Array.isArray(snapshot.genres) ? snapshot.genres.filter((value): value is string => typeof value === 'string') : [],
-      description: typeof snapshot.description === 'string' ? snapshot.description : '',
-      poster: typeof snapshot.poster === 'string' ? snapshot.poster : '',
-      backdrop: typeof snapshot.backdrop === 'string' ? snapshot.backdrop : '',
-      accent: '#9b87f5',
-      resumeHref: type === 'movie' || !record.season || !record.episode ? `/watch/${type}/${record.content_id}` : `/watch/${type}/${record.content_id}/${record.season}/${record.episode}`,
-      progress: record.duration > 0 ? Math.round((record.position_seconds / record.duration) * 100) : 0,
-    };
   }
 
   function syncStatusLabel(status: SyncStatus) {
@@ -58,22 +36,12 @@
         const cloud = await syncAuthenticatedState();
         syncStatus = cloud.status;
         favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress).map(favoriteToMedia);
-        continueItems = continueWatchingRecords(cloud.progress, cloud.favorites).map(progressToMedia);
-        const historyResponse = await fetch('/api/account/history?limit=20');
-        if (historyResponse.ok) {
-          const historyBody = await historyResponse.json() as { history?: Array<{ content_id: string; content_type: string; snapshot: unknown; season?: number | null; episode?: number | null; position_seconds: number; duration: number }> };
-          recentItems = (historyBody.history ?? []).map(historyToMedia);
-        } else {
-          recentItems = cloud.progress.map(progressToMedia);
-        }
-        watchedSeconds = recentItems.reduce((total, item) => total + (item.progress ?? 0), 0);
+        watchedSeconds = cloud.progress.reduce((total, record) => total + record.currentTime, 0);
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
       } else {
-        const [recentRecords, favoriteRecords, continueRecords, progressRecords] = await Promise.all([getRecentlyWatched(), getLocalFavorites(), getContinueWatching(), getLocalProgressRecords()]);
-        recentItems = recentRecords.map(progressToMedia);
-        continueItems = continueRecords.map(progressToMedia);
+        const [favoriteRecords, progressRecords] = await Promise.all([getLocalFavorites(), getLocalProgressRecords()]);
         favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords).map(favoriteToMedia);
-        watchedSeconds = recentRecords.reduce((total, record) => total + record.currentTime, 0);
+        watchedSeconds = progressRecords.reduce((total, record) => total + record.currentTime, 0);
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
       }
       loaded = true;
@@ -93,7 +61,7 @@
 
 <svelte:head>
   <title>Profile — Mavero</title>
-  <meta name="description" content="Manage your MAVERO library, Continue Watching, favorites, and synced history." />
+  <meta name="description" content="Manage your MAVERO My List and synced MAVERO library." />
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
@@ -106,8 +74,6 @@
 
   <section class="section"><div class="section-head"><div><div class="eyebrow">Saved for later</div><h2 class="section-title">My list</h2></div><a class="section-link" href="/my-list"><Bookmark size={14} /> View all <ArrowUpRight size={13} /></a></div>{#if !loaded}<div class="profile-empty">Loading your local library…</div>{:else if favoriteItems.length}<div class="profile-rail">{#each favoriteItems as item}<MediaCard {item} />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / My list" title="Keep a title close." message="Use My list on a detail page to save titles to this device." actionLabel="Browse Discover" actionHref="/discover" />{/if}</section>
 
-  <section class="section"><div class="section-head"><div><div class="eyebrow">Continue watching</div><h2 class="section-title">Pick up where you left off</h2></div><a class="section-link" href="/my-list?status=watching"><Clock3 size={14} /> View all <ArrowUpRight size={13} /></a></div>{#if continueItems.length}<div class="profile-rail">{#each continueItems as item}<MediaCard {item} compact />{/each}</div>{:else if loaded}<div class="profile-empty">Your in-progress titles will appear here after you start watching.</div>{/if}</section>
-  <section class="section"><div class="section-head"><div><div class="eyebrow">Recently watched</div><h2 class="section-title">Your trail</h2></div></div>{#if recentItems.length}<div class="profile-rail">{#each recentItems as item}<MediaCard {item} compact />{/each}</div>{:else if loaded}<div class="profile-empty">Your recent trail will appear after your first playback session.</div>{/if}</section>
 
   <section class="cinelog-banner"><div class="cinelog-mark">CL</div><div><div class="eyebrow">A separate product, made for tracking</div><h2>Track everything you watch.</h2><p>Organize your movies, series, and anime with CineLog.</p></div><a class="btn btn-primary" href="https://cinelogv2.vercel.app" target="_blank" rel="noreferrer">Open CineLog <ArrowUpRight size={15} /></a></section>
 

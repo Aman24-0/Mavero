@@ -42,7 +42,7 @@
         {#each options as option}
           <button id={`option-${option.key}`} class:active={selected === option.key} class="sheet-option" type="button" role="option" aria-selected={selected === option.key} onclick={() => choose(option.key)}>
             <span class="option-leading">
-              {#if option.image || option.icon}<span class="option-icon" aria-hidden="true">{#if option.image}<img src={option.image} alt="" loading="lazy" onerror={(event) => { (event.currentTarget as HTMLImageElement).hidden = true; }} />{/if}{#if option.icon}<span class="option-fallback">{option.icon}</span>{/if}</span>{/if}
+              {#if option.image || option.icon}<span class="option-icon" aria-hidden="true">{#if option.image}<img src={option.image} alt="" loading="lazy" onerror={(event) => { (event.currentTarget as HTMLImageElement).hidden = true; }} />{:else if option.icon}<span class="option-fallback">{option.icon}</span>{/if}</span>{/if}
               <span class="option-copy"><strong>{option.label}</strong>{#if option.description}<small>{option.description}</small>{/if}</span>
             </span>
             <span class="option-indicator" aria-hidden="true">{selected === option.key ? '●' : '○'}</span>
