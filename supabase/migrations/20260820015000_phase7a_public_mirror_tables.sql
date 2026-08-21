@@ -67,10 +67,10 @@ security definer
 set search_path = public
 as $$
 begin
-  delete from public.streaming_public_source_categories;
-  delete from public.streaming_public_sources;
-  delete from public.streaming_public_categories;
-  delete from public.streaming_public_providers;
+  delete from public.streaming_public_source_categories where true;
+  delete from public.streaming_public_sources where true;
+  delete from public.streaming_public_categories where true;
+  delete from public.streaming_public_providers where true;
 
   insert into public.streaming_public_providers (id, name, slug, description, icon, status, enabled, integration_type, capabilities)
   select id, name, slug, description, icon, status, enabled, integration_type, capabilities

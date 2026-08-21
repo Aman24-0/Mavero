@@ -67,10 +67,10 @@ security definer
 set search_path = public
 as $$
 begin
-  delete from public.streaming_public_source_categories;
-  delete from public.streaming_public_sources;
-  delete from public.streaming_public_categories;
-  delete from public.streaming_public_providers;
+  delete from public.streaming_public_source_categories where true;
+  delete from public.streaming_public_sources where true;
+  delete from public.streaming_public_categories where true;
+  delete from public.streaming_public_providers where true;
 
   insert into public.streaming_public_providers (id, name, slug, description, icon, status, enabled, integration_type, capabilities)
   select id, name, slug, description, icon, status, enabled, integration_type, capabilities
@@ -99,25 +99,39 @@ $$;
 
 revoke all on function public.refresh_streaming_public_config() from public, anon, authenticated;
 
+create or replace function public.refresh_streaming_public_config_trigger()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.refresh_streaming_public_config();
+  return null;
+end;
+$$;
+
+revoke all on function public.refresh_streaming_public_config_trigger() from public, anon, authenticated;
+
 drop trigger if exists streaming_providers_refresh_public on public.streaming_providers;
 create trigger streaming_providers_refresh_public
 after insert or update or delete on public.streaming_providers
-for each statement execute function public.refresh_streaming_public_config();
+for each statement execute function public.refresh_streaming_public_config_trigger();
 
 drop trigger if exists streaming_sources_refresh_public on public.streaming_sources;
 create trigger streaming_sources_refresh_public
 after insert or update or delete on public.streaming_sources
-for each statement execute function public.refresh_streaming_public_config();
+for each statement execute function public.refresh_streaming_public_config_trigger();
 
 drop trigger if exists streaming_categories_refresh_public on public.streaming_categories;
 create trigger streaming_categories_refresh_public
 after insert or update or delete on public.streaming_categories
-for each statement execute function public.refresh_streaming_public_config();
+for each statement execute function public.refresh_streaming_public_config_trigger();
 
 drop trigger if exists streaming_source_categories_refresh_public on public.streaming_source_categories;
 create trigger streaming_source_categories_refresh_public
 after insert or update or delete on public.streaming_source_categories
-for each statement execute function public.refresh_streaming_public_config();
+for each statement execute function public.refresh_streaming_public_config_trigger();
 
 alter table public.streaming_public_providers enable row level security;
 alter table public.streaming_public_sources enable row level security;
