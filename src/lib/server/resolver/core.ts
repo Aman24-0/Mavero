@@ -53,7 +53,7 @@ function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']
     qualities: result.qualities,
     headers: result.headers,
     expiresAt: result.expiresAt,
-    sandboxPolicy: sandboxPolicyFromCapabilities(context.config.source.capabilities, context.config.provider.capabilities),
+    sandboxPolicy: sandboxPolicyFromCapabilities(context.config.provider.capabilities, context.config.source.capabilities),
     metadata: { ...result.metadata, sourceName: context.config.source.name, providerName: context.config.provider.name },
   };
 }

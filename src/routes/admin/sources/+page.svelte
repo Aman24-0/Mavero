@@ -13,7 +13,7 @@
   const visibilityLabels = { public: 'Public', internal: 'Internal', hidden: 'Hidden' };
   const identifierLabels = { tmdb_id: 'TMDB ID', anilist_id: 'AniList ID', imdb_id: 'IMDb ID', slug: 'Slug', custom: 'Custom' };
   const sandboxPolicyLabels = { required: 'Required — secure sandbox', optional: 'Optional — secure by default', unrestricted: 'Unrestricted — warning' };
-  const sourceSandboxPolicy = (source: PageData['sources'][number]) => sandboxPolicyFromCapabilities(source.capabilities, data.providers.find((provider) => provider.id === source.provider_id)?.capabilities);
+  const sourceSandboxPolicy = (source: PageData['sources'][number]) => sandboxPolicyFromCapabilities(data.providers.find((provider) => provider.id === source.provider_id)?.capabilities, source.capabilities);
   const providerName = (id: string) => data.providers.find((provider) => provider.id === id)?.name ?? 'Unknown provider';
 </script>
 

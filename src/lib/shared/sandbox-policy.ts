@@ -12,8 +12,13 @@ export function isSandboxPolicy(value: unknown): value is SandboxPolicy {
   return typeof value === 'string' && sandboxPolicies.includes(value as SandboxPolicy);
 }
 
-export function sandboxPolicyFromCapabilities(...capabilities: unknown[]): SandboxPolicy {
-  for (const capability of capabilities) {
+/**
+ * Resolves the effective policy from provider capabilities first, then source
+ * capabilities. Provider policy is authoritative when explicitly configured;
+ * missing or malformed values fall back to the secure default.
+ */
+export function sandboxPolicyFromCapabilities(providerCapabilities: unknown, sourceCapabilities?: unknown): SandboxPolicy {
+  for (const capability of [providerCapabilities, sourceCapabilities]) {
     if (!isRecord(capability)) continue;
     const value = capability.sandbox_policy;
     if (isSandboxPolicy(value)) return value;
