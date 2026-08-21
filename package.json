@@ -13,7 +13,7 @@
     "preview": "pnpm run build && vite preview",
     "start": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
-    "test": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_peachify_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_remediation_test.ts"
+    "test": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_peachify_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_rivestream_test.ts && pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase7e_remediation_test.ts"
   },
   "devDependencies": {
     "@sveltejs/adapter-netlify": "^6.0.4",
