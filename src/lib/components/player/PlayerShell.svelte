@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, ListVideo, Maximize2, RotateCcw, Settings2, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
@@ -17,6 +17,7 @@
   export let onSourceChange: (sourceId: string) => void = () => {};
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
   export let onClose: () => void = () => {};
+  export let onDetails: () => void = () => {};
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
@@ -46,6 +47,8 @@
   let pendingSeek = initialProgress;
   let lastProgressReport = 0;
   let sourceIdentity = '';
+  let sandboxEnabled = true;
+  let sandboxSourceIdentity = '';
 
   $: qualities = source?.qualities ?? [];
   $: subtitles = source?.subtitles ?? [];
@@ -59,6 +62,11 @@
   $: hasNextSource = Boolean(nextSourceId);
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
   $: embedReady = Boolean(source?.type === 'embed' && isEmbedOriginAllowed(source) && !sourceIsExpired(source));
+  $: if (source?.sourceId && source.sourceId !== sandboxSourceIdentity) {
+    sandboxSourceIdentity = source.sourceId;
+    sandboxEnabled = source.sandboxPolicy !== 'unrestricted';
+  }
+  $: effectiveSandboxEnabled = source?.type === 'embed' ? sandboxEnabled : true;
   $: episodeIndex = currentEpisode ? episodes.findIndex((episode) => episode.season === currentEpisode?.season && episode.number === currentEpisode?.episode) : -1;
   $: hasPreviousEpisode = episodeIndex > 0;
   $: hasNextEpisode = episodeIndex >= 0 && episodeIndex < episodes.length - 1;
@@ -170,6 +178,14 @@
   function handleMediaError() { playing = false; state = 'error'; errorMessage = 'Playback could not be started. Try again or choose another source.'; revealControls(); }
   function handleEmbedLoad() { state = 'playing'; errorMessage = ''; }
 
+  function toggleSandbox() {
+    if (source?.type !== 'embed') return;
+    sandboxEnabled = !sandboxEnabled;
+    state = 'embed-loading';
+    errorMessage = '';
+    revealControls();
+  }
+
   function seek(time: number) {
     if (!videoElement || !Number.isFinite(time)) return;
     currentTime = clampSeek(time, duration);
@@ -278,14 +294,16 @@
     <button class="header-button" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
     <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
     <div class="header-actions">
+      <button class="header-button compact" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={17} /><span>Details</span></button>
       {#if episodes.length}<button class="header-button compact" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={() => { episodeMenuOpen = !episodeMenuOpen; sourceMenuOpen = false; }}><ListVideo size={17} /><span>Episodes</span></button>{/if}
       {#if sourceOptions.length}<button class="header-button compact step-button" type="button" aria-label="Previous server" disabled={!hasPreviousSource} onclick={() => chooseAdjacentSource(-1)}><ChevronLeft size={17} /><span>Previous</span></button><button class="header-button compact" type="button" aria-label="Open source list" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={17} /><span>Sources</span></button><button class="header-button compact step-button" type="button" aria-label="Next server" disabled={!hasNextSource} onclick={() => chooseAdjacentSource(1)}><ChevronRight size={17} /><span>Next</span></button>{/if}
+      {#if source?.type === 'embed'}<button class:active={effectiveSandboxEnabled} class:off={!effectiveSandboxEnabled} class="header-button compact sandbox-button" type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={17} />{:else}<ShieldOff size={17} />{/if}<span>Sandbox {effectiveSandboxEnabled ? 'On' : 'Off'}</span></button>{/if}
       <button class="header-button compact orientation-button" type="button" aria-label="Toggle landscape player" onclick={() => void toggleFullscreen()}><Maximize2 size={17} /><span>Landscape</span></button>
     </div>
   </header>
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
+    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
@@ -335,6 +353,8 @@
   .header-button:hover, .header-button:focus-visible { border-color: rgba(194,181,255,.52); background: rgba(40,32,60,.82); }
   .header-button:disabled { cursor: not-allowed; opacity: .3; }
   .header-button:active { transform: scale(.97); }
+  .sandbox-button.active { border-color: rgba(155,135,245,.46); color: #e7e0ff; }
+  .sandbox-button.off { border-color: rgba(231,190,159,.5); color: #f0c7ad; background: rgba(112,67,43,.25); }
   .header-title { display: grid; justify-items: center; gap: 4px; min-width: 0; color: #fff; text-align: center; text-shadow: 0 1px 14px #000; }
   .header-title strong { max-width: min(48vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
   .header-title span { color: rgba(255,255,255,.53); font-family: 'DM Mono', monospace; font-size: .56rem; }

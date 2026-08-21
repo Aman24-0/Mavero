@@ -8,8 +8,9 @@
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
-  import { deleteFavoriteAndProgress, getFavoriteStatus, setFavoriteStatus } from '$lib/client/progress/service';
+  import { deleteFavoriteAndProgress, getFavoriteStatus, getLocalProgressRecords, setFavoriteStatus } from '$lib/client/progress/service';
   import type { WatchlistStatus } from '$lib/client/progress/types';
+  import { latestResumeEpisode } from '$lib/client/progress/presenter';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { appendReturnTo } from '$lib/shared/navigation';
 
@@ -20,6 +21,7 @@
   let watchlistStatus: WatchlistStatus | null = null;
   let statusSheetOpen = false;
   let saveError = '';
+  let resumeEpisode: { season: number; episode: number } | undefined;
   const statusOptions = [
     { key: 'watching', label: 'Watching', icon: '▶', description: 'Keep this in your current rotation.' },
     { key: 'planned', label: 'Planned', icon: '＋', description: 'Save it for a future night.' },
@@ -30,12 +32,25 @@
   $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6);
   $: statusSheetOptions = watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove');
   $: canonicalUrl = `${page.url.origin}/${type}/${item.id}`;
-  $: watchHref = appendReturnTo(`/watch/${type}/${item.id}`, `${page.url.pathname}${page.url.search}${page.url.hash}`);
+  $: watchPath = type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`;
+  $: watchHref = appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`);
   $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
 
   onMount(() => {
     let active = true;
-    void getFavoriteStatus(type, item.id).then((value) => { if (active) watchlistStatus = value; });
+    void (async () => {
+      const status = await getFavoriteStatus(type, item.id);
+      if (!active) return;
+      watchlistStatus = status;
+      if (type !== 'movie' && status === 'watching') {
+        try {
+          const progress = await getLocalProgressRecords();
+          if (active) resumeEpisode = latestResumeEpisode(type, item.id, progress);
+        } catch {
+          // S01E01 remains the safe first-play default.
+        }
+      }
+    })();
     const autoplay = page.url.searchParams.get('autoplay') === '1';
     if (autoplay && typeof window !== 'undefined') {
       const params = new URLSearchParams(page.url.searchParams);
@@ -81,8 +96,12 @@
 
   function goBack(event: MouseEvent) {
     event.preventDefault();
-    if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
-    else void goto('/discover');
+    const returnTo = page.url.searchParams.get('from');
+    if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) {
+      void goto(returnTo, { replaceState: true, keepFocus: true });
+      return;
+    }
+    void goto('/discover', { replaceState: true, keepFocus: true });
   }
 
   async function shareItem() {

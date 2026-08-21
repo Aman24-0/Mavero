@@ -7,9 +7,11 @@
   export let mediaUrl: string | null = null;
   export let poster = '';
   export let title = 'MAVERO playback';
+  export let sandboxEnabled = true;
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
-  $: sandboxAttribute = iframeSandboxAttribute(source?.sandboxPolicy);
+  $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute(source?.sandboxPolicy) : undefined;
+  $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${sandboxEnabled ? 'sandbox-on' : 'sandbox-off'}`;
 
   const dispatch = createEventDispatcher<{
     loadedmetadata: void;
@@ -81,16 +83,18 @@
       {/each}
     </video>
   {:else if source?.type === 'embed' && source.url}
-    <iframe
-      src={source.url}
-      title={`${title} provider embed`}
-      loading="eager"
-      allow="autoplay; fullscreen; picture-in-picture"
-      sandbox={sandboxAttribute}
-      referrerpolicy="no-referrer"
-      allowfullscreen
-      on:load={() => dispatch('embedload')}
-    ></iframe>
+    {#key iframeKey}
+      <iframe
+        src={source.url}
+        title={`${title} provider embed`}
+        loading="eager"
+        allow="autoplay; fullscreen; picture-in-picture"
+        sandbox={sandboxAttribute}
+        referrerpolicy="no-referrer"
+        allowfullscreen
+        on:load={() => dispatch('embedload')}
+      ></iframe>
+    {/key}
   {:else}
     <div class="empty-viewport" aria-hidden="true"><span class="empty-orb"></span></div>
   {/if}

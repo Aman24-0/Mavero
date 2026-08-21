@@ -16,6 +16,7 @@
 
   let { data }: { data: PageData } = $props();
   let records = $state<FavoriteRecord[]>([]);
+  let progressRecords = $state<import('$lib/client/progress/types').WatchProgressRecord[]>([]);
   let loaded = $state(false);
   let errorMessage = $state('');
   let storageMessage = $state('Preparing your library…');
@@ -34,7 +35,7 @@
 
   let selectedStatus = $derived(statusFromUrl());
   let visibleRecords = $derived(records.filter((record) => !selectedStatus || normalizeWatchlistStatus(record.status) === selectedStatus));
-  let visibleItems = $derived(visibleRecords.map((record) => favoriteToMedia({ ...record, status: normalizeWatchlistStatus(record.status) })));
+  let visibleItems = $derived(visibleRecords.map((record) => favoriteToMedia({ ...record, status: normalizeWatchlistStatus(record.status) }, progressRecords)));
   let totalCount = $derived(records.length);
   let visibleLabel = $derived(selectedStatus ? statusOptions.find((option) => option.value === selectedStatus)?.label ?? 'My List' : 'Everything saved');
 
@@ -61,11 +62,13 @@
       const state = await getLocalPersistenceState();
       if (data.user) {
         const cloud = await syncAuthenticatedState();
+        progressRecords = cloud.progress;
         records = mergeFavoritesWithProgress(cloud.favorites, cloud.progress);
         syncStatus = cloud.status;
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
       } else {
         const [favorites, progress] = await Promise.all([getLocalFavorites(), getLocalProgressRecords()]);
+        progressRecords = progress;
         records = mergeFavoritesWithProgress(favorites, progress);
         syncStatus = 'pending';
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
