@@ -84,38 +84,39 @@
 </div>
 
 <style>
-  .profile-page { padding-bottom: 64px; }
-  .profile-header { display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; align-items: center; gap: 15px; padding: 48px 0 28px; }
-  .profile-avatar { display: grid; place-items: center; width: 60px; height: 60px; border: 1px solid rgba(255,255,255,.18); border-radius: 50%; color: #0d0b14; background: linear-gradient(145deg, #dbb7a5, #8672a5); font-size: .9rem; font-weight: 800; }
-  .profile-header h1 { margin: 7px 0 7px; font-size: clamp(2rem, 4vw, 4rem); line-height: .98; letter-spacing: -.07em; }
-  .profile-header p { margin: 0; color: var(--muted); font-size: .84rem; }
-  .account-status { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
-  .signout-form { display: flex; justify-content: flex-end; margin-top: 24px; }
-  .signout-btn { color: #ffadb8; border-color: rgba(236,91,111,.28); background: rgba(236,91,111,.08); }
-  .signout-btn:hover { color: #ffd9de; border-color: rgba(236,91,111,.5); background: rgba(236,91,111,.15); }
-  .profile-grid { display: grid; grid-template-columns: 1.35fr .8fr; gap: 12px; }
-  .profile-card { min-height: 136px; padding: 18px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
-  .profile-card-main { background: radial-gradient(circle at 80% 20%, rgba(155,135,245,.13), transparent 19rem), var(--surface); }
-  .profile-card h2 { max-width: 440px; margin: 11px 0 8px; font-size: 1.75rem; letter-spacing: -.06em; }
-  .profile-card p { max-width: 510px; margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.65; }
-  .sync-row { display: flex; gap: 18px; margin-top: 18px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .59rem; }
+  .profile-page { padding-bottom: 72px; }
+  .profile-header { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 48px 0 30px; border-bottom: 1px solid var(--line); }
+  .profile-avatar { display: grid; place-items: center; width: 64px; height: 64px; border: 1px solid rgba(212,168,106,.48); border-radius: 50%; color: var(--base); background: linear-gradient(145deg, var(--accent-strong), var(--secondary)); font-family: 'Space Grotesk', sans-serif; font-size: .9rem; font-weight: 700; }
+  .profile-header h1 { margin: 7px 0 7px; font-family: 'Space Grotesk', sans-serif; font-size: clamp(2rem, 4vw, 3.8rem); line-height: .98; letter-spacing: -.07em; }
+  .profile-header p { margin: 0; color: var(--muted); font-size: .82rem; }
+  .account-status { color: var(--secondary); font-family: 'DM Mono', monospace; font-size: .58rem; letter-spacing: .08em; text-transform: uppercase; }
+  .signout-form { display: flex; justify-content: flex-end; margin-top: 26px; }
+  .signout-btn { color: #f2b2ba; border-color: rgba(229,143,151,.32); background: rgba(229,143,151,.08); }
+  .signout-btn:hover { color: #ffe0e3; border-color: rgba(229,143,151,.56); background: rgba(229,143,151,.14); }
+  .profile-grid { display: grid; grid-template-columns: 1.35fr .8fr; gap: 14px; margin-top: 22px; }
+  .profile-card { min-height: 145px; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+  .profile-card-main { background: radial-gradient(circle at 88% 18%, rgba(145,182,173,.12), transparent 19rem), var(--surface); }
+  .profile-card h2 { max-width: 440px; margin: 11px 0 8px; font-family: 'Space Grotesk', sans-serif; font-size: 1.7rem; letter-spacing: -.06em; }
+  .profile-card p { max-width: 510px; margin: 0; color: var(--muted); font-size: .77rem; line-height: 1.65; }
+  .sync-row { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 18px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .57rem; }
   .sync-row span { display: inline-flex; align-items: center; gap: 6px; }
   .sync-row span:first-child { color: var(--success); }
   .activity-list { display: grid; gap: 12px; margin-top: 15px; }
-  .activity-list > div { display: flex; align-items: center; gap: 10px; color: var(--accent); }
+  .activity-list > div { display: flex; align-items: center; gap: 10px; color: var(--accent-strong); }
   .activity-list span { display: grid; gap: 3px; }
   .activity-list strong { color: var(--ink); font-size: .88rem; }
   .activity-list small { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .58rem; }
-  .profile-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(160px, 1fr); gap: 14px; overflow-x: auto; scrollbar-width: none; }
+  .profile-page :global(.section) { margin-top: 42px; }
+  .profile-rail { display: grid; grid-auto-flow: column; grid-auto-columns: 172px; gap: 15px; overflow-x: auto; scrollbar-width: none; }
   .profile-rail::-webkit-scrollbar { display: none; }
   .profile-empty { padding: 36px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
-  .cinelog-banner { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 42px; padding: 18px; border: 1px solid rgba(155,135,245,.25); border-radius: 18px; background: rgba(155,135,245,.07); }
-  .cinelog-mark { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; color: #0d0b14; background: var(--accent); font-size: .85rem; font-weight: 800; }
-  .cinelog-banner h2 { margin: 7px 0 4px; font-size: 1.35rem; letter-spacing: -.05em; }
+  .cinelog-banner { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 15px; margin-top: 46px; padding: 20px; border: 1px solid rgba(145,182,173,.28); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(145,182,173,.1), rgba(212,168,106,.055)); }
+  .cinelog-mark { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; color: var(--base); background: var(--secondary); font-size: .85rem; font-weight: 800; }
+  .cinelog-banner h2 { margin: 7px 0 4px; font-family: 'Space Grotesk', sans-serif; font-size: 1.3rem; letter-spacing: -.05em; }
   .cinelog-banner p { margin: 0; color: var(--muted); font-size: .75rem; }
-  .preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 30px 0 0; }
-  .preferences h2 { margin: 8px 0 0; font-size: 1.7rem; letter-spacing: -.06em; }
+  .preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 34px 0 0; }
+  .preferences h2 { margin: 8px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 1.65rem; letter-spacing: -.06em; }
   .preference-items { display: grid; gap: 10px; align-content: start; }
   .preference-items span { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: .77rem; }
-  @media (max-width: 720px) { .profile-header { grid-template-columns: 52px minmax(0, 1fr); padding-top: 84px; } .profile-avatar { width: 52px; height: 52px; } .profile-header .btn { grid-column: 1 / -1; justify-self: start; } .signout-form { justify-content: flex-start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 42vw; } .cinelog-banner { grid-template-columns: 42px 1fr; } .cinelog-mark { width: 42px; height: 42px; border-radius: 12px; } .cinelog-banner .btn { grid-column: 1 / -1; justify-self: start; } }
+  @media (max-width: 720px) { .profile-header { grid-template-columns: 52px minmax(0, 1fr); padding-top: 84px; } .profile-avatar { width: 52px; height: 52px; } .profile-header .btn { grid-column: 1 / -1; justify-self: start; } .signout-form { justify-content: flex-start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 41vw; } .cinelog-banner { grid-template-columns: 42px 1fr; } .cinelog-mark { width: 42px; height: 42px; border-radius: 12px; } .cinelog-banner .btn { grid-column: 1 / -1; justify-self: start; } }
 </style>

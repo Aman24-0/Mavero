@@ -61,18 +61,17 @@
 </div>
 
 <style>
-  em { color: var(--accent); font-style: normal; }
-  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 24px; color: var(--muted); font-size: .68rem; font-weight: 800; text-decoration: none; }
+  em { color: var(--accent-strong); font-style: normal; }
+  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 24px; color: var(--muted); font-size: .67rem; font-weight: 800; text-decoration: none; }
   .back-link:hover { color: var(--ink); }
-  .collection-heading { padding: 30px 0 18px; }
+  .collection-heading { padding: 30px 0 20px; }
   .heading-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
-  .collection-heading h1 { margin: 7px 0 0; font-size: clamp(2.35rem, 5vw, 4.7rem); line-height: .95; letter-spacing: -.075em; }
-  .collection-heading p { max-width: 520px; margin: 12px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.55; }
-  .collection-count { display: grid; justify-items: end; gap: 2px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
-  .collection-count strong { color: var(--ink); font-family: Manrope, sans-serif; font-size: 1.65rem; letter-spacing: -.06em; }
-  .collection-tools { margin: 0 0 22px; }
-  .results-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 20px 13px; padding-bottom: 28px; }
+  .collection-heading h1 { margin: 7px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: clamp(2.25rem, 5vw, 4.35rem); line-height: .95; letter-spacing: -.075em; }
+  .collection-heading p { max-width: 520px; margin: 12px 0 0; color: var(--muted); font-size: .8rem; line-height: 1.55; }
+  .collection-count { display: grid; justify-items: end; gap: 2px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .56rem; text-transform: uppercase; }
+  .collection-count strong { color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: 1.65rem; letter-spacing: -.06em; }
+  .collection-tools { margin: 0 0 24px; }
+  .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 172px)); justify-content: start; gap: 25px 15px; padding-bottom: 28px; }
   .load-sentinel { height: 1px; }
-  @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (max-width: 640px) { .back-link { padding-top: 84px; } .collection-heading { padding: 24px 0 14px; } .heading-row { align-items: start; } .collection-heading h1 { font-size: 2.75rem; } .collection-count { padding-top: 5px; } .collection-tools { margin-bottom: 18px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 11px; } }
 </style>

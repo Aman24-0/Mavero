@@ -162,26 +162,27 @@
 </div>
 
 <style>
-  .detail-wrap { position: relative; overflow: hidden; padding-bottom: 48px; }
-  .detail-backdrop { position: absolute; inset: 0 0 auto; z-index: -1; height: 520px; background-position: center; background-size: cover; opacity: .22; filter: saturate(.7); }
-  .detail-wrap::before { content: ''; position: absolute; inset: 0 0 auto; z-index: -1; height: 600px; background: linear-gradient(90deg, var(--base) 5%, rgba(8,9,11,.78) 48%, rgba(8,9,11,.16) 100%), linear-gradient(0deg, var(--base), transparent 72%); }
-  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 24px; color: var(--muted); font-size: .68rem; font-weight: 800; text-decoration: none; }
+  .detail-wrap { position: relative; overflow: hidden; padding-bottom: 64px; }
+  .detail-backdrop { position: absolute; inset: 0 0 auto; z-index: -1; height: 600px; background-position: center 20%; background-size: cover; opacity: .28; filter: saturate(.65) contrast(1.04); }
+  .detail-wrap::before { content: ''; position: absolute; inset: 0 0 auto; z-index: -1; height: 680px; background: linear-gradient(90deg, var(--base) 6%, rgba(8,11,13,.84) 48%, rgba(8,11,13,.18) 100%), linear-gradient(0deg, var(--base) 4%, transparent 74%); }
+  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 24px; color: var(--muted); font-size: .67rem; font-weight: 800; text-decoration: none; }
   .back-link:hover { color: var(--ink); }
-  .detail-poster { overflow: hidden; border-radius: 14px; aspect-ratio: 2 / 3; background: var(--surface); box-shadow: 0 16px 45px rgba(0,0,0,.25); }
+  .detail-poster { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); aspect-ratio: 2 / 3; background: var(--surface); box-shadow: var(--shadow-lg); }
   .detail-poster img { width: 100%; height: 100%; object-fit: cover; }
-  .detail-copy { min-width: 0; padding-top: 4px; }
+  .detail-copy { min-width: 0; padding-top: 5px; }
   .detail-lead { min-width: 0; }
-  .detail-copy h1 { max-width: 820px; margin: 7px 0 10px; font-size: clamp(2.5rem, 5vw, 5.5rem); letter-spacing: -.08em; line-height: .92; }
-  .detail-description { max-width: 680px; margin: 18px 0 0; color: #b2b5be; font-size: .9rem; line-height: 1.68; }
-  .rating { display: inline-flex; align-items: center; gap: 4px; color: #f6cf88; }
-  .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
-  .action-icon { border-color: var(--line); }
-  .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 650px; margin: 18px 0 0; }
-  .detail-stat { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.025); }
+  .detail-copy h1 { max-width: 820px; margin: 7px 0 12px; font-family: 'Space Grotesk', sans-serif; font-size: clamp(2.5rem, 5vw, 5.3rem); letter-spacing: -.08em; line-height: .93; }
+  .detail-description { max-width: 680px; margin: 20px 0 0; color: var(--ink-soft); font-size: .9rem; line-height: 1.75; }
+  .rating { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-strong); }
+  .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 23px; }
+  .action-icon { border-color: var(--line-strong); }
+  .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; max-width: 650px; margin: 20px 0 0; }
+  .detail-stat { padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(228,235,232,.035); }
   .detail-stat span { display: block; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .54rem; text-transform: uppercase; }
   .detail-stat strong { display: block; margin-top: 4px; overflow: hidden; color: var(--ink); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
-  .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(420px, 100%); margin-top: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.035); }
+  .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(440px, 100%); margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(228,235,232,.045); }
   .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .7rem; }
-  .save-error { margin-top: 8px; color: #d4b27c; font-family: 'DM Mono', monospace; font-size: .57rem; }
-  @media (max-width: 640px) { .detail-backdrop { height: 390px; } .detail-wrap::before { height: 470px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 24px 0 28px; align-items: start; } .detail-poster { border-radius: 13px; } .detail-copy { display: contents; } .detail-copy > .detail-lead { grid-column: 2; min-width: 0; } .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { margin-top: 6px; font-size: clamp(1.9rem, 8vw, 2.5rem); line-height: .98; } .detail-description { margin-top: 18px; font-size: .84rem; } .detail-grid { gap: 6px; } .detail-stat { padding: 9px; } }
+  .save-error { margin-top: 9px; color: var(--warning); font-family: 'DM Mono', monospace; font-size: .57rem; }
+  @media (max-width: 900px) { .detail-layout { grid-template-columns: 185px minmax(0, 1fr); gap: 24px; } }
+  @media (max-width: 640px) { .detail-backdrop { height: 420px; } .detail-wrap::before { height: 500px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 16px; padding: 24px 0 30px; align-items: start; } .detail-poster { border-radius: var(--radius-md); } .detail-copy { display: contents; } .detail-copy > .detail-lead { grid-column: 2; min-width: 0; } .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { margin-top: 6px; font-size: clamp(1.9rem, 8vw, 2.5rem); line-height: .98; } .detail-description { margin-top: 18px; font-size: .84rem; } .detail-grid { gap: 6px; } .detail-stat { padding: 9px; } }
 </style>

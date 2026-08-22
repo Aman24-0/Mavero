@@ -58,11 +58,12 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-media" style={`background-image: url('${featuredItem.backdrop || featuredItem.poster}')`}></div>
       <div class="container-wide hero-content">
-        <div class="hero-kicker" data-reveal><Sparkles size={13} /> Tonight’s edit</div>
+        <div class="hero-topline" data-reveal><div class="hero-kicker"><Sparkles size={13} /> Tonight’s edit</div><span class="hero-count">01 / FEATURED</span></div>
         <h1 id="hero-title" data-reveal>{featuredItem.title}</h1>
         <p class="hero-description" data-reveal>{featuredItem.description}</p>
         <div class="meta-row" data-reveal><strong>{featuredItem.year}</strong><span class="dot"></span><span>{featuredItem.runtime}</span><span class="dot"></span><span>{featuredItem.maturity}</span><span class="dot"></span><span>{featuredItem.genres.slice(0, 2).join(' · ')}</span></div>
         <div class="hero-actions" data-reveal><a class="btn btn-primary" href={`/watch/${featuredItem.type}/${featuredItem.id}`}><Play size={15} fill="currentColor" /> Watch now</a><a class="btn btn-secondary" href={`/${featuredItem.type}/${featuredItem.id}`}>View details <ArrowRight size={14} /></a></div>
+        <div class="hero-credit" data-reveal>Curated for your next watch</div>
       </div>
       <div class="hero-signal" aria-hidden="true"><b>01</b><span>Featured</span></div>
     </section>
@@ -86,7 +87,10 @@
 </div>
 
 <style>
-  .catalog-warning { margin: 14px 0 0; padding: 11px 13px; border: 1px solid rgba(212,178,124,.35); color: #d4b27c; font-family: 'DM Mono', monospace; font-size: .64rem; line-height: 1.5; }
+  .hero-topline { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  .hero-count, .hero-credit { color: rgba(243,240,233,.5); font-family: 'DM Mono', monospace; font-size: .56rem; letter-spacing: .1em; text-transform: uppercase; }
+  .hero-credit { margin-top: 18px; color: var(--muted-deep); text-transform: none; letter-spacing: .03em; }
+  .catalog-warning { margin: 14px 0 0; padding: 11px 13px; border: 1px solid rgba(224,174,114,.35); color: var(--warning); font-family: 'DM Mono', monospace; font-size: .62rem; line-height: 1.5; }
   .footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 38px 0 20px; text-align: center; }
   .footer strong { color: var(--ink); letter-spacing: .18em; }
   .footer span { color: var(--muted-deep); }

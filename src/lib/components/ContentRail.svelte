@@ -10,16 +10,16 @@
   export let compact = false;
 </script>
 
-<section class="section" aria-labelledby={`rail-${title.toLowerCase().replaceAll(' ', '-')}`}>
+<section class:compact class="section" aria-labelledby={`rail-${title.toLowerCase().replaceAll(' ', '-')}`}>
   <div class="section-head">
-    <div>
+    <div class="section-heading-copy">
       {#if eyebrow}<div class="eyebrow">{eyebrow}</div>{/if}
       <h2 class="section-title" id={`rail-${title.toLowerCase().replaceAll(' ', '-')}`}>{title}</h2>
     </div>
-    <a class="section-link" href={href}>View all <ArrowRight size={14} /></a>
+    <a class="section-link" href={href} aria-label={`View all ${title}`}>View all <ArrowRight size={14} /></a>
   </div>
-  <div class="rail" class:compact={compact} role="list">
-    {#each items as item}
+  <div class="rail" class:compact role="list" aria-label={title}>
+    {#each items as item (item.type + ':' + item.id)}
       <div role="listitem"><MediaCard {item} {compact} /></div>
     {/each}
   </div>

@@ -20,11 +20,12 @@
 </div>
 
 <style>
-  .filter-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: 12px; background: rgba(16,18,22,.72); }
-  .filter-label { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .56rem; text-transform: uppercase; }
-  label { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 8px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.025); font-size: .63rem; }
-  label span { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .51rem; text-transform: uppercase; }
-  select { max-width: 115px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: .63rem; font-weight: 800; }
-  option { color: #101216; }
+  .filter-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(16,22,25,.78); box-shadow: inset 0 1px 0 rgba(243,240,233,.025); }
+  .filter-label { display: inline-flex; align-items: center; gap: 6px; padding: 0 7px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .55rem; letter-spacing: .08em; text-transform: uppercase; }
+  label { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: rgba(228,235,232,.035); font-size: .62rem; }
+  label:focus-within { border-color: rgba(212,168,106,.56); }
+  label span { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .5rem; text-transform: uppercase; }
+  select { max-width: 115px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: .62rem; font-weight: 800; }
+  option { color: #11171a; }
   @media (max-width: 640px) { .filter-bar { width: 100%; } .filter-label { flex: 0 0 auto; } label { flex: 1; justify-content: space-between; min-width: 0; } select { max-width: 74px; } }
 </style>

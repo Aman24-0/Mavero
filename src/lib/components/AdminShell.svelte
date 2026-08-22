@@ -27,15 +27,15 @@
 </div>
 
 <style>
-  .admin-shell { display: grid; grid-template-columns: 205px minmax(0, 1fr); min-height: 100vh; background: var(--bg); }
-  .admin-nav { position: sticky; top: 0; height: 100vh; padding: 28px 12px; border-right: 1px solid var(--line); background: rgba(10,11,14,.84); }
-  .admin-brand { display: block; margin: 0 0 34px; color: var(--ink); font-family: 'DM Mono', monospace; font-size: .68rem; letter-spacing: .1em; text-decoration: none; }
-  .admin-brand span { display: block; margin-top: 7px; color: var(--muted-deep); font-size: .52rem; letter-spacing: .04em; }
-  nav { display: grid; gap: 4px; }
-  nav a { display: flex; align-items: center; gap: 9px; padding: 10px 11px; border-radius: 9px; color: var(--muted); font-size: .73rem; text-decoration: none; transition: color .18s ease, background .18s ease; }
-  nav a:hover, nav a.active { color: var(--ink); background: var(--accent-soft); }
-  .admin-note { position: absolute; right: 12px; bottom: 25px; left: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  .admin-shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; background: var(--base); }
+  .admin-nav { position: sticky; top: 0; height: 100vh; padding: 30px 16px; border-right: 1px solid var(--line); background: rgba(10,14,16,.88); }
+  .admin-brand { display: block; margin: 0 0 34px; color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: .78rem; font-weight: 700; letter-spacing: .14em; text-decoration: none; }
+  .admin-brand span { display: block; margin-top: 7px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .5rem; letter-spacing: .05em; }
+  nav { display: grid; gap: 5px; }
+  nav a { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--muted); font-size: .72rem; text-decoration: none; transition: color 180ms var(--ease-out), background 180ms var(--ease-out), border-color 180ms var(--ease-out); }
+  nav a:hover, nav a.active { color: var(--ink); border-color: rgba(212,168,106,.18); background: var(--accent-soft); }
+  .admin-note { position: absolute; right: 16px; bottom: 25px; left: 16px; padding: 13px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
   .admin-note p { margin: 7px 0 0; color: var(--muted-deep); font-size: .64rem; line-height: 1.5; }
-  .admin-content { width: min(1120px, 100%); padding: 58px clamp(20px, 5vw, 72px) 80px; }
+  .admin-content { width: min(1180px, 100%); padding: 58px clamp(20px, 5vw, 78px) 80px; }
   @media (max-width: 760px) { .admin-shell { display: block; } .admin-nav { position: static; height: auto; padding: 18px 16px 10px; border-right: 0; border-bottom: 1px solid var(--line); } .admin-brand { margin-bottom: 13px; } nav { display: flex; overflow-x: auto; gap: 4px; scrollbar-width: none; } nav::-webkit-scrollbar { display: none; } nav a { flex: 0 0 auto; } .admin-note { display: none; } .admin-content { padding: 30px 16px 56px; } }
 </style>

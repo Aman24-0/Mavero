@@ -11,12 +11,12 @@
   <div class="eyebrow">{eyebrow}</div>
   <h2>{title}</h2>
   <p>{message}</p>
-  {#if retry}<button class="btn btn-secondary" onclick={retry}><RefreshCw size={15} /> Try again</button>{/if}
+  {#if retry}<button class="btn btn-secondary" type="button" onclick={retry}><RefreshCw size={15} /> Try again</button>{/if}
 </section>
 
 <style>
-  .error-state { display: grid; place-items: center; min-height: 280px; margin-top: 30px; padding: 34px 20px; border: 1px solid rgba(212,178,124,.24); border-radius: 18px; background: rgba(212,178,124,.04); text-align: center; }
-  .error-mark { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 15px; border: 1px solid rgba(212,178,124,.35); border-radius: 50%; color: #d4b27c; }
-  .error-state h2 { margin: 8px 0 7px; font-size: 1.8rem; letter-spacing: -.06em; }
-  .error-state p { max-width: 390px; margin: 0 0 20px; color: var(--muted); font-size: .8rem; line-height: 1.65; }
+  .error-state { display: grid; place-items: center; min-height: 260px; margin-top: 28px; padding: 34px 20px; border: 1px solid rgba(224,174,114,.28); border-radius: var(--radius-lg); background: linear-gradient(135deg, rgba(224,174,114,.06), rgba(8,11,13,.12)); text-align: center; }
+  .error-mark { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 15px; border: 1px solid rgba(224,174,114,.4); border-radius: 50%; color: var(--warning); background: rgba(224,174,114,.06); }
+  .error-state h2 { margin: 8px 0 7px; font-family: 'Space Grotesk', sans-serif; font-size: 1.65rem; letter-spacing: -.06em; }
+  .error-state p { max-width: 390px; margin: 0 0 20px; color: var(--muted); font-size: .78rem; line-height: 1.65; }
 </style>
