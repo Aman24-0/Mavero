@@ -7,12 +7,13 @@
 
   export let item: MediaItem;
   export let compact = false;
+  export let editorial = false;
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
   $: cardHref = item.resumeHref ? appendReturnTo(item.resumeHref, returnTo) : `/${item.type}/${item.id}`;
   $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
 </script>
 
-<div class:compact class="card-wrap">
+<div class:compact class:editorial class="card-wrap">
   <a class="card" href={cardHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Open ${item.title}`}>
     <div class="poster" style={`--poster-accent: ${item.accent}`}>
       <img src={item.poster} alt={`${item.title} poster`} loading="lazy" width="720" height="1080" />
@@ -35,6 +36,12 @@
 
 <style>
   .card-wrap { position: relative; min-width: 0; }
+  .card-wrap.editorial .poster { border-color: rgba(244,241,234,.11); box-shadow: 0 10px 28px rgba(0,0,0,.24); }
+  .card-wrap.editorial .card-copy { padding-top: 11px; }
+  .card-wrap.editorial .card-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; }
+  .card-wrap.editorial .card-meta { color: var(--muted); }
+  .card-wrap.editorial .poster-type { color: rgba(244,241,234,.82); }
+  .card-wrap.editorial .card-tag { border-color: rgba(244,241,234,.12); background: rgba(9,10,12,.52); }
   .card { display: block; }
   .poster { isolation: isolate; }
   .poster-type { position: absolute; right: 10px; bottom: 10px; z-index: 1; color: rgba(243,240,233,.72); font-family: 'DM Mono', monospace; font-size: .48rem; letter-spacing: .1em; text-transform: uppercase; }
