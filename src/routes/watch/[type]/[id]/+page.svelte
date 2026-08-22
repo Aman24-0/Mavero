@@ -38,6 +38,8 @@
   let writer: ReturnType<typeof createProgressWriter> | undefined;
   let writerKey = '';
   let active = true;
+  let resolutionRequestId = 0;
+  let resolutionController: AbortController | undefined;
   let startedHistory = false;
   let lastHistoryAt = 0;
   let watchingSavedForSession = false;
@@ -45,6 +47,9 @@
 
   $: if (browser && playbackKey !== activePlaybackKey) {
     activePlaybackKey = playbackKey;
+    resolutionRequestId += 1;
+    resolutionController?.abort();
+    resolutionController = undefined;
     resolvedSource = null;
     resolutionState = 'idle';
     resolutionMessage = '';
@@ -76,6 +81,9 @@
 
   onDestroy(() => {
     active = false;
+    resolutionRequestId += 1;
+    resolutionController?.abort();
+    resolutionController = undefined;
     void writer?.flush();
     writer?.dispose();
   });
@@ -107,6 +115,9 @@
   }
 
   async function prepareSource(sourceId = selectedSourceId, allowFallback = true) {
+    const requestId = ++resolutionRequestId;
+    resolutionController?.abort();
+    resolutionController = undefined;
     const selected = sourceOptions.find((source) => source.id === sourceId);
     if (!selected) {
       resolvedSource = null;
@@ -114,7 +125,10 @@
       resolutionMessage = 'No authorized source is available for this title.';
       return;
     }
+    const controller = new AbortController();
+    resolutionController = controller;
     await replaceProgressSource(sourceId);
+    if (!active || requestId !== resolutionRequestId) return;
     selectedSourceId = sourceId;
     resolutionState = 'resolving';
     resolutionMessage = 'Resolving a safe playback source…';
@@ -123,9 +137,11 @@
       const response = await fetch('/api/playback/resolve', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode, enableFallback: allowFallback })
+        body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode, enableFallback: allowFallback }),
+        signal: controller.signal
       });
       const payload = await response.json() as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
+      if (!active || requestId !== resolutionRequestId) return;
       const safeSource = normalizePlayerSource(payload.source);
       if (!response.ok || !payload.ok || !safeSource) {
         const error = new Error(payload.error?.message ?? 'This source is currently unavailable.') as Error & { code?: string };
@@ -133,6 +149,7 @@
         throw error;
       }
       if (safeSource.sourceId !== selectedSourceId) await replaceProgressSource(safeSource.sourceId);
+      if (!active || requestId !== resolutionRequestId) return;
       selectedSourceId = safeSource.sourceId;
       resolvedSource = safeSource;
       resolutionState = 'ready';
@@ -142,12 +159,13 @@
         const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
         try {
           await setFavoriteStatus(contentType, item.id, snapshot, 'watching');
-          if (page.data.user) void syncAuthenticatedState();
+          if (active && requestId === resolutionRequestId && page.data.user) void syncAuthenticatedState();
         } catch {
           // Playback remains available even if local list promotion is unavailable.
         }
       }
     } catch (error) {
+      if (!active || requestId !== resolutionRequestId || (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError')) return;
       resolvedSource = null;
       const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined;
       resolutionState = code === 'UNSUPPORTED_MEDIA_TYPE' ? 'unsupported' : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE' ? 'unavailable' : code ? 'provider-error' : 'network-error';
@@ -158,6 +176,8 @@
           : error instanceof Error
             ? error.message
             : 'The provider could not be reached. Try again or choose another server.';
+    } finally {
+      if (requestId === resolutionRequestId) resolutionController = undefined;
     }
   }
 
