@@ -12,8 +12,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   }
 
   try {
-    const source = await resolveSource(locals.supabase, body);
-    return json({ ok: true, source }, { headers: { 'cache-control': 'no-store' } });
+    const result = await resolveSource(locals.supabase, body);
+    if (result && typeof result === 'object' && 'selectedStream' in result) {
+      const decision = result as { selectedStream: unknown; alternatives: unknown[]; qualities: unknown[]; audioTracks: unknown[]; subtitles: unknown[]; diagnostics: unknown; error?: unknown };
+      return json({ ok: Boolean(decision.selectedStream), decision, source: decision.selectedStream, error: decision.error }, { status: decision.selectedStream ? 200 : 503, headers: { 'cache-control': 'no-store' } });
+    }
+    return json({ ok: true, source: result }, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     const resolverError = asResolverError(error);
     if (resolverError.code === 'INTERNAL_RESOLUTION_ERROR') console.error('[Playback] Resolution failed', resolverError.cause);

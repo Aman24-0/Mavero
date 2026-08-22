@@ -16,6 +16,13 @@ export type PlayerQualityOption = {
   bitrate?: number;
 };
 
+export type PlayerAudioTrack = {
+  id: string;
+  language?: string;
+  label?: string;
+  default?: boolean;
+};
+
 export type PlayerSource = {
   type: PlayerSourceType;
   url: string | null;
@@ -24,6 +31,7 @@ export type PlayerSource = {
   mediaType: 'movie' | 'series' | 'anime';
   subtitles?: PlayerSubtitleTrack[];
   qualities?: PlayerQualityOption[];
+  audioTracks?: PlayerAudioTrack[];
   headers?: { referer?: string; origin?: string };
   sandboxPolicy?: SandboxPolicy;
   expiresAt?: string;

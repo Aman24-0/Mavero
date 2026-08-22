@@ -9,6 +9,8 @@ import { ResolverError } from './errors';
 import { parseResolverRequest } from './identifiers';
 import { resolveWithBoundedFallback, type FallbackCandidate } from './fallback';
 import { rankProviderSourceList } from './ranking';
+import { aggregateWithExistingHealth } from '$lib/server/aggregation/service';
+import type { UnifiedStreamDecision } from '$lib/server/aggregation/types';
 import { loadSourceHealthMap, recordRuntimeFailure, recordRuntimeSuccess } from '$lib/server/streaming/health-service';
 import type { ResolverDependencies, ResolverRequest, TrustedResolutionConfig } from './types';
 
@@ -34,7 +36,7 @@ async function loadTrustedConfig(client: ResolverClient, request: ResolverReques
   return { provider: providerResult.data, source: sourceResult.data };
 }
 
-async function loadTrustedFallbackCandidates(primary: TrustedResolutionConfig): Promise<FallbackCandidate[]> {
+export async function loadTrustedFallbackCandidates(primary: TrustedResolutionConfig): Promise<FallbackCandidate[]> {
   const trustedClient = serviceClient();
   const sourceResult = await trustedClient
     .from('streaming_sources')
@@ -79,10 +81,17 @@ async function loadContent(request: ResolverRequest): Promise<NormalizedMediaIte
   }
 }
 
-export async function resolveSource(client: ResolverClient, input: unknown, dependencies: ResolverDependencies = {}, sourceList?: TrustedResolutionConfig[]) {
+export async function resolveSource(client: ResolverClient, input: unknown, dependencies: ResolverDependencies = {}, sourceList?: TrustedResolutionConfig[]): Promise<Awaited<ReturnType<typeof resolveSourceFromConfig>> | UnifiedStreamDecision> {
   const request = parseResolverRequest(input);
   const config = await (dependencies.loadConfig ?? ((value: ResolverRequest) => loadTrustedConfig(client, value)))(request);
   const content = await (dependencies.loadContent ?? loadContent)(request);
+  const aggregate = Boolean(input && typeof input === 'object' && !Array.isArray(input) && (input as Record<string, unknown>).aggregate === true);
+  if (aggregate && request.allowFallback !== false && !dependencies.loadConfig) {
+    const providerConfigs = sourceList?.length
+      ? sourceList
+      : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
+    return aggregateWithExistingHealth(serviceClient(), request, content, providerConfigs, dependencies);
+  }
   if (request.allowFallback === false) return resolveSourceFromConfig(request, config, content, dependencies);
 
   const orderedConfigs = sourceList?.length

@@ -28,6 +28,7 @@
 
   let selectedSourceId = '';
   let resolvedSource: PlayerSource | null = null;
+  let aggregationAlternatives: PlayerSource[] = [];
   type ResolutionState = 'idle' | 'resolving' | 'ready' | 'provider-error' | 'unsupported' | 'unavailable' | 'network-error';
   let resolutionState: ResolutionState = 'idle';
   let resolutionMessage = '';
@@ -46,6 +47,7 @@
   $: if (browser && playbackKey !== activePlaybackKey) {
     activePlaybackKey = playbackKey;
     resolvedSource = null;
+    aggregationAlternatives = [];
     resolutionState = 'idle';
     resolutionMessage = '';
     progressReady = false;
@@ -107,6 +109,7 @@
   }
 
   async function prepareSource(sourceId = selectedSourceId, allowFallback = true) {
+    const automaticAggregation = allowFallback && sourceId === selectedSourceId;
     const selected = sourceOptions.find((source) => source.id === sourceId);
     if (!selected) {
       resolvedSource = null;
@@ -117,26 +120,31 @@
     await replaceProgressSource(sourceId);
     selectedSourceId = sourceId;
     resolutionState = 'resolving';
-    resolutionMessage = 'Resolving a safe playback source…';
+    resolutionMessage = automaticAggregation ? 'Finding the best stream…' : 'Resolving a safe playback source…';
     resolvedSource = null;
+    aggregationAlternatives = [];
     try {
       const response = await fetch('/api/playback/resolve', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode, enableFallback: allowFallback })
+        body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode, enableFallback: allowFallback, aggregate: automaticAggregation })
       });
-      const payload = await response.json() as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
-      const safeSource = normalizePlayerSource(payload.source);
+      const payload = await response.json() as { ok?: boolean; source?: unknown; decision?: { selectedStream?: unknown; alternatives?: unknown[]; error?: { code?: string; message?: string } }; error?: { code?: string; message?: string } };
+      const rawSource = payload.decision?.selectedStream ?? payload.source;
+      const safeSource = normalizePlayerSource(rawSource);
+      const alternatives = (payload.decision?.alternatives ?? []).map((candidate) => normalizePlayerSource(candidate)).filter((candidate): candidate is PlayerSource => Boolean(candidate));
       if (!response.ok || !payload.ok || !safeSource) {
-        const error = new Error(payload.error?.message ?? 'This source is currently unavailable.') as Error & { code?: string };
-        error.code = payload.error?.code;
+        const errorPayload = payload.decision?.error && typeof payload.decision.error === 'object' ? payload.decision.error : payload.error;
+        const error = new Error(errorPayload?.message ?? (automaticAggregation ? 'No playable stream could be found.' : 'This source is currently unavailable.')) as Error & { code?: string };
+        error.code = errorPayload?.code;
         throw error;
       }
-      if (safeSource.sourceId !== selectedSourceId) await replaceProgressSource(safeSource.sourceId);
-      selectedSourceId = safeSource.sourceId;
+      aggregationAlternatives = automaticAggregation ? alternatives : [];
+      if (!automaticAggregation && safeSource.sourceId !== selectedSourceId) await replaceProgressSource(safeSource.sourceId);
+      if (!automaticAggregation) selectedSourceId = safeSource.sourceId;
       resolvedSource = safeSource;
       resolutionState = 'ready';
-      resolutionMessage = safeSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.';
+      resolutionMessage = safeSource.type === 'direct' ? 'MAVERO playback is ready.' : 'Embed playback is ready inside the MAVERO shell.';
       if (!watchingSavedForSession) {
         watchingSavedForSession = true;
         const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
@@ -153,8 +161,10 @@
       resolutionState = code === 'UNSUPPORTED_MEDIA_TYPE' ? 'unsupported' : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE' ? 'unavailable' : code ? 'provider-error' : 'network-error';
       resolutionMessage = code === 'UNSUPPORTED_MEDIA_TYPE'
         ? 'This provider does not support this title type.'
-        : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE'
-          ? 'This provider is unavailable. Choose another server.'
+        : automaticAggregation
+          ? 'No playable stream could be found right now. Try again in a moment.'
+          : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE'
+            ? 'This provider is unavailable. Choose another server.'
           : error instanceof Error
             ? error.message
             : 'The provider could not be reached. Try again or choose another server.';
@@ -201,6 +211,15 @@
     void prepareSource(sourceId, false);
   }
 
+  function handlePlaybackError(): boolean {
+    const next = aggregationAlternatives.shift();
+    if (!next) return false;
+    resolvedSource = next;
+    resolutionState = 'ready';
+    resolutionMessage = next.type === 'direct' ? 'Trying another validated stream…' : 'Trying another safe embed…';
+    return true;
+  }
+
   async function handleEpisodeChange(target: PlayerEpisodeTarget) {
     season = target.season;
     episode = target.episode;
@@ -230,7 +249,7 @@
 <svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
 
 {#if progressReady}
-  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} />
+  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onPlaybackError={handlePlaybackError} />
 {:else}
   <main class="watch-loading" aria-live="polite"><div class="loading-ring" aria-hidden="true"><span></span></div><div class="loading-copy"><strong>{progressReady ? 'Starting your stream' : 'Loading player'}</strong><span>{progressReady ? 'Connecting to your provider…' : 'Preparing your watch session…'}</span></div><small>{progressReady ? resolutionMessage || 'Finding the best available source' : localState}</small></main>
 {/if}

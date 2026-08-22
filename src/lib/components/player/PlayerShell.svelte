@@ -3,7 +3,7 @@
   import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, PanelTopClose, PanelTopOpen, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
-  import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
+  import type { PlayerAudioTrack, PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
 
@@ -18,6 +18,7 @@
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
   export let onClose: () => void = () => {};
   export let onDetails: () => void = () => {};
+  export let onPlaybackError: () => boolean = () => false;
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
@@ -43,6 +44,9 @@
   let errorMessage = '';
   let selectedQuality = '';
   let selectedSubtitle = '';
+  let selectedAudioTrack = '';
+  let detectedAudioTracks: PlayerAudioTrack[] = [];
+  let playbackStarted = false;
   let sourceMenuOpen = false;
   let episodeMenuOpen = false;
   let controlsVisible = true;
@@ -56,6 +60,7 @@
 
   $: qualities = source?.qualities ?? [];
   $: subtitles = source?.subtitles ?? [];
+  $: audioTracks = detectedAudioTracks.length ? detectedAudioTracks : (source?.audioTracks ?? []);
   $: selectedQualityOption = qualities.find((quality) => quality.url === selectedQuality) as PlayerQualityOption | undefined;
   $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
   $: sourceReady = Boolean(source && isPlayablePlayerSource(source) && !sourceIsExpired(source));
@@ -76,6 +81,9 @@
     pendingSeek = currentTime;
     errorMessage = '';
     playing = false;
+    selectedAudioTrack = '';
+    detectedAudioTracks = [];
+    playbackStarted = false;
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
   }
 
@@ -167,6 +175,7 @@
   }
 
   function handlePlay() {
+    playbackStarted = true;
     playing = true;
     state = 'playing';
     errorMessage = '';
@@ -185,8 +194,14 @@
   function handleSeeking() { state = 'seeking'; }
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
   function handleEnded() { playing = false; state = 'completed'; emitProgress('ended'); revealControls(); }
-  function handleMediaError() { playing = false; state = 'error'; errorMessage = 'Playback could not be started. Try again or choose another source.'; revealControls(); }
-  function handleEmbedLoad() { state = 'playing'; errorMessage = ''; }
+  function handleMediaError() {
+    if (!playbackStarted && onPlaybackError()) return;
+    playing = false;
+    state = 'error';
+    errorMessage = 'Playback could not be started. Try again or choose another source.';
+    revealControls();
+  }
+  function handleEmbedLoad() { playbackStarted = true; state = 'playing'; errorMessage = ''; }
 
   function toggleSandbox() {
     if (source?.type !== 'embed') return;
@@ -224,6 +239,15 @@
     selectedQuality = url;
     state = 'preparing';
     playing = false;
+  }
+
+  function setAudioTrack(trackId: string) {
+    selectedAudioTrack = trackId;
+    viewport?.selectAudioTrack(trackId);
+  }
+
+  function handleAudioTracks(event: CustomEvent<PlayerAudioTrack[]>) {
+    detectedAudioTracks = event.detail;
   }
 
   type OrientationController = ScreenOrientation & { lock?: (value: 'landscape' | 'portrait' | 'any' | 'natural' | 'landscape-primary' | 'landscape-secondary' | 'portrait-primary' | 'portrait-secondary') => Promise<void>; unlock?: () => void };
@@ -381,7 +405,7 @@
   </header>
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
+    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:audiotracks={handleAudioTracks} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
@@ -399,7 +423,7 @@
 
   {#if source?.type === 'direct'}
     <div class="controls-layer" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} pictureInPicture={pictureInPictureSupported} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} pictureInPicture={pictureInPictureSupported} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} {audioTracks} selectedAudioTrack={selectedAudioTrack} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onAudioTrack={setAudioTrack} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
     </div>
   {/if}
 

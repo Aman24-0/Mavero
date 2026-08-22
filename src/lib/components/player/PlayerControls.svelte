@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Captions, ChevronLeft, ChevronRight, Maximize, Minimize, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
-  import type { PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
+  import { Captions, ChevronLeft, ChevronRight, Languages, Maximize, Minimize, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  import type { PlayerAudioTrack, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds } from '$lib/shared/player';
 
   export let playing = false;
@@ -16,6 +16,9 @@
   export let selectedSubtitle = '';
   export let qualities: PlayerQualityOption[] = [];
   export let selectedQuality = '';
+  export let audioTracks: PlayerAudioTrack[] = [];
+  export let selectedAudioTrack = '';
+
   export let sourceCount = 0;
   export let onTogglePlay: () => void = () => {};
   export let onSeek: (time: number) => void = () => {};
@@ -24,6 +27,7 @@
   export let onPlaybackRate: (value: number) => void = () => {};
   export let onSubtitle: (value: string) => void = () => {};
   export let onQuality: (value: string) => void = () => {};
+  export let onAudioTrack: (value: string) => void = () => {};
   export let onFullscreen: () => void = () => {};
   export let onPictureInPicture: () => void = () => {};
   export let onStep: (delta: number) => void = () => {};
@@ -76,6 +80,7 @@
       {#if sourceCount > 0}<button class="control-button source-button" type="button" aria-label={`Choose source, ${sourceCount} available`} onclick={onSources}><span>{sourceCount}</span><span class="source-dot"></span></button>{/if}
       {#if subtitles.length}<label class="select-control" aria-label="Subtitles"><Captions size={16} /><select value={selectedSubtitle} onchange={(event) => onSubtitle((event.currentTarget as HTMLSelectElement).value)}><option value="">Subtitles off</option>{#each subtitles as track, index}<option value={track.url}>{track.label ?? track.language ?? `Track ${index + 1}`}</option>{/each}</select></label>{/if}
       {#if qualities.length > 1}<label class="select-control quality" aria-label="Quality"><Settings2 size={15} /><select value={selectedQuality} onchange={(event) => onQuality((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each qualities as quality}<option value={quality.url}>{qualityLabel(quality)}</option>{/each}</select></label>{/if}
+      {#if audioTracks.length > 1}<label class="select-control audio" aria-label="Audio track"><Languages size={15} /><select value={selectedAudioTrack} onchange={(event) => onAudioTrack((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each audioTracks as track}<option value={track.id}>{track.label ?? track.language ?? track.id}</option>{/each}</select></label>{/if}
       <label class="select-control speed" aria-label="Playback speed"><span>{playbackRate}×</span><select value={playbackRate} onchange={(event) => onPlaybackRate(Number((event.currentTarget as HTMLSelectElement).value))}>{#each playbackSpeeds as speed}<option value={speed}>{speed}×</option>{/each}</select></label>
       {#if pictureInPicture}<button class="control-button optional" type="button" aria-label="Picture-in-Picture" onclick={onPictureInPicture}><PictureInPicture2 size={16} /></button>{/if}
       <button class="control-button" type="button" aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} onclick={onFullscreen}>{#if fullscreen}<Minimize size={17} />{:else}<Maximize size={17} />{/if}</button>
@@ -117,7 +122,7 @@
   .select-control option { color: #17151c; background: #f5f1e9; }
   .select-control.speed select { width: 37px; }
   .select-control.speed { padding-left: 9px; }
-  @media (max-width: 840px) { .volume-input, .quality { display: none; } .control-row { gap: 8px; } .right { gap: 2px; } }
+  @media (max-width: 840px) { .volume-input, .quality, .audio { display: none; } .control-row { gap: 8px; } .right { gap: 2px; } }
   @media (max-width: 640px) { .controls { width: calc(100% - 24px); margin-top: -65px; padding-bottom: 11px; } .control-row { gap: 6px; } .control-button { min-width: 40px; min-height: 40px; } .skip { display: none !important; } .time-label { padding: 0 3px; font-size: .56rem; } .select-control.speed { min-width: 40px; padding: 0 4px; } .source-button { min-width: 36px; } }
   @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } }
 </style>
