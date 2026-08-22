@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { navigating } from '$app/state';
+  import { afterNavigate, onNavigate } from '$app/navigation';
   import { Bookmark, Compass, Search, UserRound, Settings2, Bell } from 'lucide-svelte';
   import RouteLoading from '$components/RouteLoading.svelte';
   import type { User } from '@supabase/supabase-js';
 
   let { children, currentPath = '/', user = null }: { children: Snippet; currentPath?: string; user?: User | null } = $props();
   let shell: HTMLElement;
+  let routeTransitioning = $state(false);
 
   const primaryLinks = [
     { label: 'Discover', href: '/discover', key: '/discover', icon: Compass },
@@ -20,6 +21,9 @@
     const name = typeof account?.user_metadata?.display_name === 'string' ? account.user_metadata.display_name : account?.email ?? '';
     return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'AM';
   };
+
+  onNavigate(() => { routeTransitioning = true; });
+  afterNavigate(() => { routeTransitioning = false; });
 
   onMount(async () => {
     const { gsap } = await import('gsap');
@@ -65,7 +69,7 @@
     </header>
 
     <main>{@render children()}</main>
-    {#if navigating.to}<RouteLoading />{/if}
+    {#if routeTransitioning}<RouteLoading />{/if}
   </div>
 
   <nav class="mobile-nav" aria-label="Mobile navigation">
@@ -99,7 +103,7 @@
   .topbar-search span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   kbd { border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .55rem; }
   .mobile-brand { display: none; }
-  @media (max-width: 900px) { .page-shell { display: block; } .app-rail { display: none; } .topbar { grid-template-columns: 1fr auto; } .mobile-brand { display: inline-flex; } .topbar-context { display: none; } .topbar-actions { gap: 7px; } .topbar-search { width: 38px; padding-inline: 10px; } .topbar-search span, .topbar-search kbd { display: none; } }
+  @media (max-width: 900px) { .page-shell { display: block; } .app-rail { display: none; } .topbar { grid-template-columns: 1fr auto; } .mobile-brand { display: inline-flex; } .topbar-context { display: none; } .topbar-actions { gap: 7px; } .topbar-search { display: none; } }
   @media (max-width: 640px) { .topbar { position: fixed; width: 100%; box-sizing: border-box; height: calc(66px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 16px 0; } .notification-btn { display: none; } .topbar-search { border: 0; background: transparent; } .page-shell { padding-bottom: 82px; } .mobile-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 50; display: grid; grid-template-columns: repeat(4, 1fr); padding: 9px 14px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgba(14,16,16,.94); backdrop-filter: blur(20px); } .mobile-nav a { display: grid; place-items: center; gap: 5px; min-height: 46px; color: var(--muted-deep); font-size: .59rem; font-weight: 800; text-decoration: none; } .mobile-nav a.active { color: var(--ink); } .mobile-nav a.active :global(svg) { color: var(--accent-strong); } }
   @media (min-width: 641px) { .mobile-nav { display: none; } }
 </style>

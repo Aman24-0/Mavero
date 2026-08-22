@@ -57,11 +57,11 @@
 <div class="my-list-page">
   <div class="container-wide">
     <header class="list-header">
-      <div class="list-title-block"><div class="eyebrow"><ListVideo size={13} /> Your library</div><h1>My List<span class="title-mark">.</span></h1><p>Keep the stories you want close, then move them through your watch journey.</p></div>
+      <div class="list-title-block"><div class="eyebrow"><ListVideo size={13} /> Your library</div><h1>My List<span class="title-mark">.</span></h1></div>
       <div class="list-status" aria-live="polite"><span class:online={syncStatus === 'synced'}></span>{syncStatusLabel(syncStatus)}</div>
     </header>
 
-    <section class="library-summary" aria-label="Library summary"><div><span>Total titles</span><strong>{totalCount}</strong></div><div><span>Watching now</span><strong>{records.filter((record) => normalizeWatchlistStatus(record.status) === 'watching').length}</strong></div><div><span>Saved for later</span><strong>{records.filter((record) => normalizeWatchlistStatus(record.status) === 'planned').length}</strong></div><div class="summary-note"><Sparkles size={15} /><span>A library that knows where you left off.</span></div></section>
+    <section class="library-summary" aria-label="Library summary"><div><span>Total titles</span><strong>{totalCount}</strong></div><div><span>Watching now</span><strong>{records.filter((record) => normalizeWatchlistStatus(record.status) === 'watching').length}</strong></div><div><span>Saved for later</span><strong>{records.filter((record) => normalizeWatchlistStatus(record.status) === 'planned').length}</strong></div><div class="summary-note"><Sparkles size={15} /><span>Your saved titles and progress</span></div></section>
 
     <nav class="status-nav" aria-label="Filter My List by status">
       <a class:active={!selectedStatus} class="status-chip all-chip" href="/my-list" aria-current={!selectedStatus ? 'page' : undefined}><ListVideo size={15} /><span>All titles</span><b>{totalCount}</b></a>
@@ -73,7 +73,7 @@
     {:else if errorMessage}
       <ErrorState title="My List is taking a pause." message={errorMessage} retry={loadList} />
     {:else if visibleItems.length}
-      <section class="list-section" aria-labelledby="list-section-title"><div class="section-heading"><div><div class="eyebrow">{visibleLabel}</div><h2 id="list-section-title">{visibleItems.length} {visibleItems.length === 1 ? 'title' : 'titles'} in view</h2></div>{#if selectedStatus}<a class="quiet-link" href="/my-list">Show all <ArrowRight size={14} /></a>{/if}</div><div class="media-grid">{#each visibleItems as item (item.type + ':' + item.id)}<MediaCard {item} editorial />{/each}</div></section>
+      <section class="list-section" aria-labelledby="list-section-title"><div class="section-heading"><div><div class="eyebrow">{visibleLabel}</div><h2 id="list-section-title">{visibleItems.length} {visibleItems.length === 1 ? 'title' : 'titles'} in view</h2></div>{#if selectedStatus}<a class="quiet-link" href="/my-list">Show all <ArrowRight size={14} /></a>{/if}</div><div class="media-grid">{#each visibleItems as item (item.type + ':' + item.id)}<MediaCard {item} featured />{/each}</div></section>
     {:else if selectedStatus}
       {@const current = statusOptions.find((option) => option.value === selectedStatus)}<EmptyState eyebrow={`MAVERO / ${current?.label ?? 'My List'}`} title="This shelf is ready." message={current?.description ?? 'Choose a title to begin building this part of your library.'} actionLabel="Browse Discover" actionHref="/discover" />
     {:else}
@@ -86,20 +86,19 @@
 
 <style>
   .my-list-page { min-height: calc(100vh - 78px); padding: 50px 0 78px; }
-  .list-header { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding: 15px 0 30px; border-bottom: 1px solid var(--line); }
+  .list-header { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding: 15px 0 20px; border-bottom: 1px solid var(--line); }
   .list-header h1 { margin-top: 10px; }
   .title-mark { color: var(--accent-strong); }
-  .list-header p { max-width: 480px; margin: 18px 0 0; color: var(--muted); font-size: .8rem; line-height: 1.65; }
   .list-status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
   .list-status span { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
   .list-status span.online { background: var(--success); box-shadow: 0 0 0 4px var(--secondary-soft); }
-  .library-summary { display: grid; grid-template-columns: repeat(3, minmax(110px, .5fr)) 1.35fr; gap: 12px; margin: 24px 0 10px; }
+  .library-summary { display: grid; grid-template-columns: repeat(3, minmax(110px, .5fr)) 1.35fr; gap: 12px; margin: 14px 0 6px; }
   .library-summary > div { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(245,241,232,.025); }
   .library-summary span { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .54rem; text-transform: uppercase; }
   .library-summary strong { color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: 2rem; font-weight: 600; line-height: .8; }
   .library-summary .summary-note { display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 10px; padding: 14px 18px; color: var(--secondary); background: var(--secondary-soft); }
   .library-summary .summary-note span { color: var(--ink-soft); font-family: 'Space Grotesk', sans-serif; font-size: 1.1rem; font-style: normal; line-height: 1.05; text-transform: none; }
-  .status-nav { display: flex; gap: 7px; overflow-x: auto; padding: 20px 0 22px; scrollbar-width: none; }
+  .status-nav { display: flex; gap: 7px; overflow-x: auto; padding: 12px 0 16px; scrollbar-width: none; }
   .status-nav::-webkit-scrollbar { display: none; }
   .status-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 39px; padding: 0 13px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(245,241,232,.025); font-size: .69rem; text-decoration: none; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .status-chip:hover { color: var(--ink); border-color: rgba(167,139,250,.45); transform: translateY(-1px); }
@@ -113,7 +112,7 @@
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 182px)); justify-content: start; gap: 28px 16px; }
   .loading-state { display: grid; place-items: center; gap: 10px; min-height: 280px; color: var(--muted); font-size: .75rem; }
   .loading-state :global(svg) { color: var(--accent-strong); animation: spin 1s linear infinite; }
-  .list-footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; }
+  .list-footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 760px) { .my-list-page { padding-top: 88px; } .list-header { align-items: start; flex-direction: column; } .library-summary { grid-template-columns: repeat(3, 1fr); } .summary-note { grid-column: 1 / -1; } }
   @media (max-width: 560px) { .list-header h1 { font-size: 3.8rem; } .library-summary { gap: 7px; } .library-summary > div { padding: 12px 10px; } .library-summary .summary-note { padding: 13px; } .library-summary strong { font-size: 1.7rem; } .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 11px; } .list-footer { align-items: start; flex-direction: column; } }

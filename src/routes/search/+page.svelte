@@ -177,7 +177,7 @@
 </svelte:head>
 
 <div class="container-wide search-page">
-  <header class="search-intro"><div class="eyebrow">MAVERO / Find your next story</div><h1>Search the catalogue<span>.</span></h1><p>Search across movies, series, and anime, then narrow the shelf when you know what you want.</p></header>
+  <header class="search-intro"><div class="eyebrow">MAVERO / Search</div><h1>Search<span>.</span></h1></header>
   <section class="search-panel" aria-label="Search MAVERO">
     <div class="search-band search-large" role="search"><span class="search-leading" aria-hidden="true"><Search size={18} /></span><label class="sr-only" for="catalog-search">Search titles</label><input id="catalog-search" bind:value={query} oninput={scheduleSearch} aria-label="Search titles" placeholder="Search movies, shows, or anime" />{#if query}<button class="clear-search" type="button" aria-label="Clear search" onclick={() => { query = ''; scheduleSearch(); }}><X size={15} /></button>{/if}</div>
     <div class="filter-chips" role="group" aria-label="Filter search by type">
@@ -200,8 +200,7 @@
     </section>
   {:else if query.trim() && !loading}
     <section class="empty-search" aria-live="polite"><div class="empty-mark">/</div><h2>No matching stories.</h2><p>Try another title or adjust the filters.</p></section>
-  {:else if !loading}
-    <section class="search-prompt" aria-live="polite"><span>Search the MAVERO catalog</span><small>Choose a title, then refine it by service, genre, or release date.</small></section>
+
   {/if}
 </div>
 
@@ -213,7 +212,6 @@
   .search-intro { width: min(920px, 100%); margin: 0 auto 20px; }
   .search-intro h1 { margin: 8px 0 7px; font-family: 'Space Grotesk', sans-serif; font-size: clamp(2.2rem, 4vw, 3.8rem); letter-spacing: -.07em; line-height: 1; }
   .search-intro h1 span { color: var(--accent-strong); }
-  .search-intro p { max-width: 570px; margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.65; }
   .search-panel { width: min(920px, 100%); margin-inline: auto; }
   .search-large { position: relative; min-height: 64px; margin: 0; padding: 0 14px; border-color: rgba(139,92,246,.28); border-radius: 18px; background: linear-gradient(110deg, rgba(20,20,27,.94), rgba(13,14,19,.9)); box-shadow: inset 0 1px 0 rgba(248,250,252,.045), 0 14px 34px rgba(0,0,0,.12); transition: border-color 180ms ease-out, box-shadow 180ms ease-out, background 180ms ease-out; }
   .search-large:focus-within { border-color: rgba(139,92,246,.62); background: linear-gradient(110deg, rgba(35,31,25,.96), rgba(13,14,19,.94)); box-shadow: inset 0 1px 0 rgba(248,250,252,.05), 0 0 0 4px rgba(139,92,246,.08), 0 18px 40px rgba(0,0,0,.18); }
@@ -246,9 +244,8 @@
   .result-summary { display: flex; align-items: baseline; gap: 10px; margin-bottom: 13px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
   .result-summary strong { color: var(--ink); font-family: Manrope, sans-serif; font-size: .88rem; letter-spacing: -.02em; text-transform: none; }
   .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 172px)); justify-content: start; gap: 25px 15px; }
-  .search-prompt, .empty-search { display: grid; place-items: center; gap: 6px; min-height: 210px; margin-top: 34px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); text-align: center; }
-  .search-prompt span { color: var(--ink); font-size: .9rem; font-weight: 800; }
-  .search-prompt small, .empty-search p { margin: 0; color: var(--muted-deep); font-size: .72rem; }
+  .empty-search { display: grid; place-items: center; gap: 6px; min-height: 160px; margin-top: 28px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); text-align: center; }
+  .empty-search p { margin: 0; color: var(--muted-deep); font-size: .72rem; }
   .empty-mark { color: var(--accent); font-family: 'DM Mono', monospace; font-size: 1.4rem; }
   .empty-search h2 { margin: 0; color: var(--ink); font-size: 1rem; letter-spacing: -.03em; }
   .empty-search p { max-width: 280px; }

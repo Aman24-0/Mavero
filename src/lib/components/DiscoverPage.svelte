@@ -4,12 +4,11 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { continueWatchingRecords } from '$lib/shared/progress-merge';
   import { progressToMedia } from '$lib/client/progress/presenter';
-  import { navigating, page } from '$app/state';
+  import { page } from '$app/state';
   import { ArrowLeft, ArrowRight, Play, Sparkles, BookmarkPlus } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
-  import RouteLoading from '$components/RouteLoading.svelte';
 
   export let featuredItem: MediaItem | undefined;
   export let movies: MediaItem[] = [];
@@ -63,7 +62,6 @@
   }
 
   $: localContinue = localContinueLoaded ? localContinueItems : continueItems;
-  $: navigatingAway = Boolean(navigating.to);
   $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length);
   $: gallerySlides = createGallerySlides([...(featuredItem?.type === 'movie' ? [featuredItem] : []), ...popularMovies, ...movies], [...(featuredItem?.type === 'series' ? [featuredItem] : []), ...popularSeries, ...series], [...(featuredItem?.type === 'anime' ? [featuredItem] : []), ...popularAnime, ...anime]);
   $: activeSlide = gallerySlides[galleryIndex];
@@ -158,12 +156,12 @@
 <div bind:this={intro} class="discover-page">
   {#if gallerySlides.length === 6 && activeSlide}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
-    <section class:reduced-motion={reducedMotion} class="editorial-hero" aria-labelledby="gallery-title" aria-roledescription="carousel" tabindex="0" onpointerenter={pauseGallery} onpointerleave={resumeGallery} onfocusin={pauseGallery} onfocusout={resumeGallery} onkeydown={handleGalleryKeydown}>
+    <section class:reduced-motion={reducedMotion} class="streaming-hero" aria-labelledby="gallery-title" aria-roledescription="carousel" tabindex="0" onpointerenter={pauseGallery} onpointerleave={resumeGallery} onfocusin={pauseGallery} onfocusout={resumeGallery} onkeydown={handleGalleryKeydown}>
       <div class="hero-backdrop gallery-ambient" aria-hidden="true" style={`background-image: url(${JSON.stringify(activeSlide.item.backdrop || activeSlide.item.poster)})`}></div>
       <div class="hero-wash" aria-hidden="true"></div>
       <div class="container-wide hero-inner gallery-main">
         <div class="hero-copy gallery-copy" data-reveal>
-          <div class="hero-kicker"><Sparkles size={13} /> Editorial pick <span></span> Tonight</div>
+          <div class="hero-kicker"><Sparkles size={13} /> Featured tonight <span></span> Now streaming</div>
           <div class="hero-category">{activeSlide.category} · Featured story</div>
           <h1 id="gallery-title">{activeSlide.item.title}</h1>
           <p>{activeSlide.item.description}</p>
@@ -200,13 +198,13 @@
         <div class="route-copy"><span class="eyebrow">Start exploring</span><strong>Find a world that feels like yours.</strong></div>
         <div class="route-links"><a href="/discover/movies"><span>Movies</span><small>Latest releases</small><ArrowRight size={13} /></a><a href="/discover/series"><span>Series</span><small>Longer stories</small><ArrowRight size={13} /></a><a href="/discover/anime"><span>Anime</span><small>Another world</small><ArrowRight size={13} /></a></div>
       </nav>
-      {#if localContinue.length}<ContentRail title="Continue watching" eyebrow="Your current rotation" items={localContinue} href="/my-list?status=watching" compact variant="editorial" />{/if}
-      {#if movies.length}<ContentRail title="Trending tonight" eyebrow="What is finding an audience" items={movies} href="/discover/movies" variant="editorial" />{/if}
-      {#if series.length}<ContentRail title="Stories worth staying for" eyebrow="Series with room to unfold" items={series} href="/discover/series" variant="editorial" />{/if}
-      {#if anime.length}<ContentRail title="From another world" eyebrow="Animation beyond the expected" items={anime} href="/discover/anime" variant="editorial" />{/if}
-      {#if popularMovies.length}<ContentRail title="The essential watchlist" eyebrow="Popular movies, carefully chosen" items={popularMovies} href="/discover/movies" variant="editorial" />{/if}
-      {#if popularSeries.length}<ContentRail title="Binge-worthy worlds" eyebrow="Keep the night going" items={popularSeries} href="/discover/series" variant="editorial" />{/if}
-      {#if popularAnime.length}<ContentRail title="Fan favourites" eyebrow="Made for the deep dive" items={popularAnime} href="/discover/anime" variant="editorial" />{/if}
+      {#if localContinue.length}<ContentRail title="Continue watching" eyebrow="Your current rotation" items={localContinue} href="/my-list?status=watching" compact variant="featured" />{/if}
+      {#if movies.length}<ContentRail title="Trending tonight" eyebrow="What is finding an audience" items={movies} href="/discover/movies" variant="featured" />{/if}
+      {#if series.length}<ContentRail title="Stories worth staying for" eyebrow="Series with room to unfold" items={series} href="/discover/series" variant="featured" />{/if}
+      {#if anime.length}<ContentRail title="From another world" eyebrow="Animation beyond the expected" items={anime} href="/discover/anime" variant="featured" />{/if}
+      {#if popularMovies.length}<ContentRail title="The essential watchlist" eyebrow="Popular movies, carefully chosen" items={popularMovies} href="/discover/movies" variant="featured" />{/if}
+      {#if popularSeries.length}<ContentRail title="Binge-worthy worlds" eyebrow="Keep the night going" items={popularSeries} href="/discover/series" variant="featured" />{/if}
+      {#if popularAnime.length}<ContentRail title="Fan favourites" eyebrow="Made for the deep dive" items={popularAnime} href="/discover/anime" variant="featured" />{/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}
@@ -214,10 +212,9 @@
   </div>
 </div>
 
-{#if navigatingAway}<RouteLoading />{/if}
 
 <style>
-  .editorial-hero { position: relative; min-height: min(720px, calc(100dvh - 78px)); overflow: hidden; border-bottom: 1px solid var(--line); background: var(--base); }
+  .streaming-hero { position: relative; min-height: min(720px, calc(100dvh - 78px)); overflow: hidden; border-bottom: 1px solid var(--line); background: var(--base); }
   .hero-backdrop { position: absolute; inset: -4%; background-position: center; background-size: cover; filter: saturate(.63) blur(1px); opacity: .42; transform: scale(1.04); transition: opacity var(--motion-slow) var(--ease-out), background-image var(--motion-slow) var(--ease-out); }
   .hero-wash { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(9,10,11,.98) 0%, rgba(9,10,11,.88) 36%, rgba(9,10,11,.4) 68%, rgba(9,10,11,.72) 100%), linear-gradient(0deg, var(--base) 0%, transparent 42%); }
   .hero-inner { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, .82fr) minmax(420px, 1.18fr); align-items: center; gap: clamp(32px, 7vw, 110px); min-height: min(720px, calc(100dvh - 78px)); padding-top: 48px; padding-bottom: 48px; }
@@ -261,7 +258,7 @@
   .route-links a :global(svg) { grid-row: 1 / span 2; grid-column: 2; color: var(--accent-strong); }
   .catalog-warning { margin: 14px 0 0; padding: 11px 13px; border: 1px solid rgba(226,177,112,.35); color: var(--warning); font-family: 'DM Mono', monospace; font-size: .62rem; line-height: 1.5; }
   @media (max-width: 1050px) { .hero-inner { grid-template-columns: minmax(0, .78fr) minmax(340px, 1.22fr); gap: 34px; } .hero-copy h1 { font-size: clamp(4rem, 7vw, 6.4rem); } }
-  @media (max-width: 720px) { .editorial-hero { min-height: auto; } .hero-inner { display: flex; flex-direction: column; align-items: stretch; min-height: auto; gap: 24px; padding-top: 94px; padding-bottom: 30px; } .hero-stage { order: 1; padding: 0 7px; } .hero-poster-stack { width: min(88vw, 410px); aspect-ratio: .92; } .hero-poster { border-radius: 21px; } .hero-copy { order: 2; max-width: none; } .hero-category { margin-top: 22px; } .hero-copy h1 { max-width: 340px; margin-top: 10px; font-size: clamp(3.25rem, 17vw, 5rem); line-height: .8; } .hero-copy p { max-width: 360px; font-size: .8rem; line-height: 1.58; } .hero-meta { margin-top: 15px; font-size: .54rem; } .hero-actions { margin-top: 19px; } .hero-note { margin-top: 21px; } .discover-routes { align-items: stretch; flex-direction: column; gap: 14px; margin-bottom: 30px; } .route-links { gap: 6px; } .route-links a { min-width: 0; padding: 9px 8px; } .route-links a small { display: none; } .route-links a span { font-size: .63rem; } .route-links a :global(svg) { width: 12px; } }
+  @media (max-width: 720px) { .streaming-hero { min-height: auto; } .hero-inner { display: flex; flex-direction: column; align-items: stretch; min-height: auto; gap: 24px; padding-top: 94px; padding-bottom: 30px; } .hero-stage { order: 1; padding: 0 7px; } .hero-poster-stack { width: min(88vw, 410px); aspect-ratio: .92; } .hero-poster { border-radius: 21px; } .hero-copy { order: 2; max-width: none; } .hero-category { margin-top: 22px; } .hero-copy h1 { max-width: 340px; margin-top: 10px; font-size: clamp(3.25rem, 17vw, 5rem); line-height: .8; } .hero-copy p { max-width: 360px; font-size: .8rem; line-height: 1.58; } .hero-meta { margin-top: 15px; font-size: .54rem; } .hero-actions { margin-top: 19px; } .hero-note { margin-top: 21px; } .discover-routes { align-items: stretch; flex-direction: column; gap: 14px; margin-bottom: 30px; } .route-links { gap: 6px; } .route-links a { min-width: 0; padding: 9px 8px; } .route-links a small { display: none; } .route-links a span { font-size: .63rem; } .route-links a :global(svg) { width: 12px; } }
   @media (prefers-reduced-motion: reduce) { .hero-backdrop, .hero-poster-image, .route-links a, .hero-arrow { transition: none; transform: none; } }
   /* Compatibility hooks retained for the existing discovery contract: gallery-copy, gallery-card-index, gallery-actions, gallery-controls, gallery-dots, gallery-ambient, gallery-pulse, gallery-main, and gallery-stack. */
   /* class="gallery-copy" class="gallery-ambient" class="gallery-pulse" */
