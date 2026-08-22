@@ -1,7 +1,7 @@
-import { getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbSeason, searchTmdb } from './adapters/tmdb';
-import { getAniListDetail, getAniListDiscover, getAniListTrending, searchAniList } from './adapters/anilist';
+import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, searchTmdb, getTmdbSeason } from './adapters/tmdb';
+import { getAniListCollection, getAniListDetail, getAniListDiscover, getAniListTrending, searchAniList } from './adapters/anilist';
 import { media } from '$data/content';
-import type { ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem, SearchFilters } from './types';
+import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
 
 function fixtureSource(): NormalizedMediaItem['source'] {
@@ -33,6 +33,16 @@ export async function discover(type: ContentType, page = 1): Promise<ContentList
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
+  }
+}
+
+export async function collection(type: ContentType, page = 1, filters: CollectionFilters = {}): Promise<ContentList> {
+  try {
+    if (type === 'anime') return await getAniListCollection(page, filters);
+    return await getTmdbCollection(type, page, filters);
+  } catch (error) {
+    if (!canFallback(error)) throw error;
+    return { items: fixturesFor(type).slice(0, 20), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
   }
 }
 

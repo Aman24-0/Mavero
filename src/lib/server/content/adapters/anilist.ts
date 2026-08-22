@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type ContentDetail, type ContentList, type ContentSource, type NormalizedMediaItem } from '../types';
+import { ContentServiceError, type CollectionFilters, type ContentDetail, type ContentList, type ContentSource, type NormalizedMediaItem } from '../types';
 
 type AniListMedia = {
   id: number;
@@ -130,6 +130,13 @@ const trendingQuery = `query ($page: Int) {
   }
 }`;
 
+const collectionQuery = `query ($page: Int, $genre: String, $seasonYear: Int, $sort: [MediaSort!]) {
+  Page(page: $page, perPage: 20) {
+    pageInfo { currentPage hasNextPage lastPage }
+    media(type: ANIME, genre: $genre, seasonYear: $seasonYear, sort: $sort, isAdult: false) { ${mediaFields} }
+  }
+}`;
+
 const detailQuery = `query ($id: Int!) {
   Media(id: $id, type: ANIME) { ${mediaFields} relations { edges { relationType node { ${mediaFields} } } } }
 }`;
@@ -151,6 +158,23 @@ export async function getAniListTrending(page = 1): Promise<ContentList> {
     const data = await aniListRequest<AniListPage>(trendingQuery, { page });
     const pageData = data.Page;
     const items = (pageData?.media ?? []).filter((item) => item.coverImage?.large || item.coverImage?.extraLarge).map((item) => mapAniList(item, 'Trending anime'));
+    return { items, page: pageData?.pageInfo?.currentPage ?? page, hasNextPage: Boolean(pageData?.pageInfo?.hasNextPage), source: source() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+export async function getAniListCollection(page = 1, filters: CollectionFilters = {}): Promise<ContentList> {
+  const seasonYear = filters.year && /^\d{4}$/.test(filters.year) ? Number(filters.year) : undefined;
+  const sort = filters.sort === 'Top rated'
+    ? ['SCORE_DESC', 'POPULARITY_DESC']
+    : filters.sort === 'Newest'
+      ? ['START_DATE_DESC', 'POPULARITY_DESC']
+      : ['POPULARITY_DESC', 'SCORE_DESC'];
+  const key = `anilist:collection:${page}:${filters.genre ?? ''}:${seasonYear ?? ''}:${filters.sort ?? ''}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const data = await aniListRequest<AniListPage>(collectionQuery, { page, genre: filters.genre || undefined, seasonYear, sort });
+    const pageData = data.Page;
+    const items = (pageData?.media ?? []).filter((item) => item.coverImage?.large || item.coverImage?.extraLarge).map((item) => mapAniList(item, 'Anime collection'));
     return { items, page: pageData?.pageInfo?.currentPage ?? page, hasNextPage: Boolean(pageData?.pageInfo?.hasNextPage), source: source() };
   });
   return { ...value, source: { ...value.source, stale } };

@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters } from '../types';
+import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters } from '../types';
 import { ottProviders } from '$lib/shared/ott';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
@@ -157,6 +157,27 @@ export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page 
     const path = type === 'movie' ? '/trending/movie/week' : '/trending/tv/week';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
     const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type, 'Trending'));
+    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, page = 1, filters: CollectionFilters = {}): Promise<ContentList> {
+  const genreId = filters.genre ? Object.entries(genreNames).find(([, label]) => label.toLowerCase() === filters.genre?.toLowerCase())?.[0] ?? (/^\d+$/.test(filters.genre) ? filters.genre : undefined) : undefined;
+  const year = filters.year && /^\d{4}$/.test(filters.year) ? Number(filters.year) : undefined;
+  const sortBy = filters.sort === 'Top rated' ? 'vote_average.desc' : filters.sort === 'Newest' ? type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc' : 'popularity.desc';
+  const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
+    const params: Record<string, string | number | boolean | undefined> = {
+      page,
+      include_adult: false,
+      sort_by: sortBy,
+      with_genres: genreId,
+      ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year })
+    };
+    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
+    const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };

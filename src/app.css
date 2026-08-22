@@ -170,7 +170,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @media (max-width: 640px) {
   .container-wide { width: min(100% - 32px, 1400px); }
   .topbar { position: fixed; width: 100%; box-sizing: border-box; height: calc(68px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
-  .desktop-nav, .topbar-actions .icon-btn:first-child { display: none; }
+  .desktop-nav, .topbar-actions .icon-btn:first-child, .topbar-actions .avatar { display: none; }
   .topbar-actions { gap: 8px; }
   .page-shell { padding-bottom: 78px; }
   .hero { min-height: 570px; margin-top: calc(68px + env(safe-area-inset-top)); }

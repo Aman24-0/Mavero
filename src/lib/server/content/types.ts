@@ -71,6 +71,13 @@ export type ContentList = {
 };
 
 export type SearchSort = 'release-asc' | 'release-desc';
+export type CollectionSort = 'For you' | 'Top rated' | 'Newest';
+
+export type CollectionFilters = {
+  genre?: string;
+  year?: string;
+  sort?: CollectionSort;
+};
 
 export type SearchFilters = {
   ott?: string;

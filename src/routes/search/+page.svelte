@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { onDestroy } from 'svelte';
+  import { replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { Search, LoaderCircle, ChevronDown, X } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
@@ -22,6 +23,9 @@
   let loading = false;
   let errorMessage = data.errorMessage ?? '';
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let requestController: AbortController | undefined;
+  let requestSequence = 0;
+  let routeActive = true;
   let activeSheet: 'ott' | 'genre' | 'sort' | null = null;
 
   const types = [
@@ -53,7 +57,12 @@
     return { ott: ott || undefined, genre: genre || undefined, sort: sort || undefined } satisfies SearchFilters;
   }
 
+  function isSearchRouteActive() {
+    return routeActive && page.url.pathname === '/search';
+  }
+
   function syncUrl() {
+    if (!isSearchRouteActive()) return;
     const urlParams = new URLSearchParams(page.url.searchParams);
     const normalized = query.trim();
     if (normalized) urlParams.set('q', normalized); else urlParams.delete('q');
@@ -62,7 +71,7 @@
     if (ott) urlParams.set('ott', ott); else urlParams.delete('ott');
     if (genre) urlParams.set('genre', genre); else urlParams.delete('genre');
     if (sort) urlParams.set('sort', sort); else urlParams.delete('sort');
-    void goto(`${page.url.pathname}${urlParams.toString() ? `?${urlParams.toString()}` : ''}`, { replaceState: true, noScroll: true, keepFocus: true });
+    replaceState(`${page.url.pathname}${urlParams.toString() ? `?${urlParams.toString()}` : ''}`, {});
   }
 
   function scheduleSearch() {
@@ -71,13 +80,20 @@
   }
 
   async function runSearch() {
+    if (!isSearchRouteActive()) return;
     const normalized = query.trim();
     syncUrl();
-    if (!normalized) {
+    if (!normalized || !isSearchRouteActive()) {
+      if (!isSearchRouteActive()) return;
       results = [];
       errorMessage = '';
       return;
     }
+
+    const requestId = ++requestSequence;
+    requestController?.abort();
+    const controller = new AbortController();
+    requestController = controller;
     loading = true;
     errorMessage = '';
     try {
@@ -86,17 +102,32 @@
       if (selectedType) params.set('type', selectedType);
       const filters = filterParams();
       Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, String(value)); });
-      const response = await fetch(`/api/content/search?${params.toString()}`);
+      const response = await fetch(`/api/content/search?${params.toString()}`, { signal: controller.signal });
+      if (requestId !== requestSequence || controller.signal.aborted || !isSearchRouteActive()) return;
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.error?.message || 'Search is temporarily unavailable.');
+      if (requestId !== requestSequence || !isSearchRouteActive()) return;
       results = payload.items as MediaItem[];
     } catch (error) {
+      if (controller.signal.aborted || requestId !== requestSequence || !isSearchRouteActive()) return;
       errorMessage = error instanceof Error ? error.message : 'Search is temporarily unavailable.';
       results = [];
     } finally {
-      loading = false;
+      if (requestId === requestSequence) {
+        loading = false;
+        requestController = undefined;
+      }
     }
   }
+
+  onDestroy(() => {
+    routeActive = false;
+    requestSequence += 1;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    requestController?.abort();
+    requestController = undefined;
+  });
 
   function selectType(value: 'Movies' | 'Series' | 'Anime') {
     type = type === value ? 'All' : value;

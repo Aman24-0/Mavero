@@ -1,6 +1,6 @@
-import { discover, popular } from './service';
+import { collection, discover, popular } from './service';
 import { toMediaItem } from './presenter';
-import type { ContentType, ContentList } from './types';
+import type { CollectionFilters, CollectionSort, ContentType, ContentList } from './types';
 import type { MediaItem } from '$data/content';
 
 type RailResult = { items: MediaItem[]; error?: string };
@@ -18,9 +18,34 @@ async function loadRail(type: ContentType, kind: RailKind): Promise<RailResult> 
   }
 }
 
-export async function loadCollectionData(type: ContentType) {
-  const rail = await loadRail(type, 'trending');
-  return { items: rail.items, type, errorMessage: rail.error };
+const validCollectionSorts: CollectionSort[] = ['For you', 'Top rated', 'Newest'];
+
+function parseCollectionPage(value: string | null) {
+  const page = Number(value);
+  return Number.isInteger(page) && page >= 1 && page <= 20 ? page : 1;
+}
+
+function parseCollectionFilters(url: URL): CollectionFilters {
+  const genre = url.searchParams.get('genre')?.trim() || undefined;
+  const yearValue = url.searchParams.get('year')?.trim() || undefined;
+  const year = yearValue && /^\d{4}$/.test(yearValue) ? yearValue : undefined;
+  const sortValue = url.searchParams.get('sort')?.trim();
+  const sort = validCollectionSorts.includes(sortValue as CollectionSort) ? sortValue as CollectionSort : undefined;
+  return { genre, year, sort };
+}
+
+export async function loadCollectionData(type: ContentType, url: URL) {
+  const page = parseCollectionPage(url.searchParams.get('page'));
+  const filters = parseCollectionFilters(url);
+  try {
+    const result = await collection(type, page, filters);
+    if (result.source.provider === 'fixtures') {
+      return { items: [], type, page: result.page, hasNextPage: false, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
+    }
+    return { items: result.items.map(toMediaItem), type, page: result.page, hasNextPage: result.hasNextPage, filters, errorMessage: undefined };
+  } catch {
+    return { items: [], type, page, hasNextPage: false, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
+  }
 }
 
 export async function loadDiscoverData() {
