@@ -15,7 +15,7 @@
   let { data }: { data: PageData } = $props();
   let favoriteItems = $state<MediaItem[]>([]);
   let watchedSeconds = $state(0);
-  let storageMessage = $state('Preparing local storage…');
+  let storageMessage = $state('Local cache');
   let loaded = $state(false);
   let errorMessage = $state('');
   let syncStatus = $state<SyncStatus>('pending');
@@ -24,10 +24,24 @@
   async function loadLocalState() {
     errorMessage = '';
     try {
-      const state = await getLocalPersistenceState();
-      if (data.user) { const cloud = await syncAuthenticatedState(); syncStatus = cloud.status; favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions).map((record) => favoriteToMedia(record, cloud.progress)); watchedSeconds = cloud.progress.reduce((total, record) => total + record.currentTime, 0); storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry'; }
-      else { const [favoriteRecords, progressRecords, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]); favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords, deletions).map((record) => favoriteToMedia(record, progressRecords)); watchedSeconds = progressRecords.reduce((total, record) => total + record.currentTime, 0); storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only'; }
+      const [state, favoriteRecords, progressRecords, deletions] = await Promise.all([getLocalPersistenceState(), getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]);
+      const localMerged = mergeFavoritesWithProgress(favoriteRecords, progressRecords, deletions);
+      favoriteItems = localMerged.map((record) => favoriteToMedia(record, progressRecords));
+      watchedSeconds = progressRecords.reduce((total, record) => total + record.currentTime, 0);
+      syncStatus = 'pending';
+      storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local cache' : 'Memory fallback · This session only';
       loaded = true;
+
+      if (data.user) {
+        void syncAuthenticatedState().then((cloud) => {
+          const nextItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions).map((record) => favoriteToMedia(record, cloud.progress));
+          const nextWatchedSeconds = cloud.progress.reduce((total, record) => total + record.currentTime, 0);
+          const changed = JSON.stringify(nextItems) !== JSON.stringify(favoriteItems) || nextWatchedSeconds !== watchedSeconds;
+          if (changed) { favoriteItems = nextItems; watchedSeconds = nextWatchedSeconds; }
+          syncStatus = cloud.status;
+          storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Synced in background' : 'Memory fallback · Cloud sync will retry';
+        }).catch(() => { syncStatus = getSyncStatus(); });
+      }
     } catch { syncStatus = getSyncStatus(); errorMessage = 'Your library is temporarily unavailable, but browsing and playback remain available.'; loaded = true; }
   }
   onMount(() => { void loadLocalState(); });
@@ -51,7 +65,7 @@
 
   {#if errorMessage}<ErrorState eyebrow="MAVERO / Local state" title="Your local library is resting." message={errorMessage} retry={loadLocalState} />{/if}
 
-  <section class="section profile-section"><div class="section-head"><div><div class="eyebrow">Saved for later</div><h2 class="section-title">My list</h2></div><a class="section-link" href="/my-list"><Bookmark size={14} /> View all <ArrowUpRight size={13} /></a></div>{#if !loaded}<div class="profile-empty">Loading your local library…</div>{:else if favoriteItems.length}<div class="profile-rail">{#each favoriteItems as item}<MediaCard {item} featured />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / My list" title="Keep a title close." message="Use My list on a detail page to save titles to this device." actionLabel="Browse Discover" actionHref="/discover" />{/if}</section>
+  <section class="section profile-section"><div class="section-head"><div><div class="eyebrow">Saved for later</div><h2 class="section-title">My list</h2></div><a class="section-link" href="/my-list"><Bookmark size={14} /> View all <ArrowUpRight size={13} /></a></div>    {#if favoriteItems.length}<div class="profile-rail">{#each favoriteItems as item}<MediaCard {item} featured />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / My list" title="Keep a title close." message="Use My list on a detail page to save titles to this device." actionLabel="Browse Discover" actionHref="/discover" />{/if}</section>
 
   <section class="cinelog-banner"><div class="cinelog-mark">CL</div><div><div class="eyebrow">A separate product for tracking</div><h2>CineLog</h2><p>Track everything you watch across movies, series, and anime.</p></div><a class="btn btn-primary" href="https://cinelog.app" target="_blank" rel="noreferrer">Open CineLog <ArrowUpRight size={15} /></a></section>
   <section class="preferences" id="preferences"><div><div class="eyebrow">Preferences</div><h2>Keep it yours.</h2></div><div class="preference-items"><span><Settings2 size={15} /> Playback settings</span><span><Bookmark size={15} /> {storageMessage}</span></div></section>
@@ -84,7 +98,6 @@
   .profile-section { margin-top: 50px; }
   .profile-rail { display: grid; grid-auto-flow: column; grid-auto-columns: 182px; gap: 16px; overflow-x: auto; scrollbar-width: none; }
   .profile-rail::-webkit-scrollbar { display: none; }
-  .profile-empty { padding: 36px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
   .cinelog-banner { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 38px; padding: 16px 18px; border: 1px solid rgba(139,92,246,.28); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(139,92,246,.12), rgba(85,214,194,.04)); }
   .cinelog-mark { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px; color: var(--base); background: var(--accent-strong); font-size: .76rem; font-weight: 800; }
   .cinelog-banner h2 { margin: 5px 0 3px; font-family: 'Space Grotesk', sans-serif; font-size: 1.35rem; font-weight: 600; letter-spacing: -.03em; }

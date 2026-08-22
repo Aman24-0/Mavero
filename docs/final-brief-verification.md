@@ -1,0 +1,5 @@
+# Final brief verification
+
+The final local preview was inspected after the attached cleanup pass. Discover now has no title metadata in the hero and no physically stacked poster deck; the sandbox without live catalog credentials resolves to a bounded catalog error state. The collection route now reads `Series` rather than `Seriess`, uses a compact heading, and presents the filter controls inside a contained bar. On the movie detail route, the poster uses the title’s own poster source, the metadata row is separated as year · maturity · rating, runtime is absent, and the static Genre/Audio/Quality boxes are absent. The trailer action is conditional and therefore hidden for the fixture title when no actual trailer key exists.
+
+The series detail route was also inspected. It shows `2022 · 16+ · ★ 8.7` without season count in the metadata row, keeps the episode guide below the initial detail actions, and exposes the season selector and episode list separately. No static Genre/Audio/Quality information boxes are rendered.

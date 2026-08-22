@@ -2,7 +2,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { ArrowRight, CheckCircle2, Clock3, Eye, ListVideo, LoaderCircle, Sparkles } from 'lucide-svelte';
+  import { ArrowRight, CheckCircle2, Clock3, Eye, ListVideo, Sparkles } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
@@ -20,7 +20,7 @@
   let progressRecords = $state<import('$lib/client/progress/types').WatchProgressRecord[]>([]);
   let loaded = $state(false);
   let errorMessage = $state('');
-  let storageMessage = $state('Preparing your library…');
+  let storageMessage = $state('Local cache');
   let syncStatus = $state<SyncStatus>('pending');
 
   const statusOptions: Array<{ value: WatchlistStatus; label: string; description: string; icon: typeof Eye }> = [
@@ -37,16 +37,29 @@
   function chipHref(status: WatchlistStatus) { const params = new URLSearchParams(page.url.searchParams); if (selectedStatus === status) params.delete('status'); else params.set('status', status); const query = params.toString(); return query ? `/my-list?${query}` : '/my-list'; }
   async function selectStatus(status: WatchlistStatus) { await goto(chipHref(status), { replaceState: true, keepFocus: true, noScroll: true }); }
   function syncStatusLabel(status: SyncStatus) { return ({ synced: 'Synced across devices', syncing: 'Syncing your library…', pending: 'Local-first library', offline: 'Offline · Local cache active', error: 'Cloud sync will retry later' } satisfies Record<SyncStatus, string>)[status]; }
-  async function loadList() {
-    loaded = false; errorMessage = '';
+  async function loadLocalList() {
+    errorMessage = '';
     try {
-      const state = await getLocalPersistenceState();
-      if (data.user) { const cloud = await syncAuthenticatedState(); progressRecords = cloud.progress; records = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions); syncStatus = cloud.status; storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry'; }
-      else { const [favorites, progress, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]); progressRecords = progress; records = mergeFavoritesWithProgress(favorites, progress, deletions); syncStatus = 'pending'; storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only'; }
-    } catch { errorMessage = 'Your saved library is temporarily unavailable. Please try again.'; }
-    finally { loaded = true; }
+      const [state, favorites, progress, deletions] = await Promise.all([getLocalPersistenceState(), getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]);
+      progressRecords = progress;
+      records = mergeFavoritesWithProgress(favorites, progress, deletions);
+      syncStatus = data.user ? 'pending' : 'pending';
+      storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local cache' : 'Memory fallback · This session only';
+      loaded = true;
+
+      if (data.user) {
+        void syncAuthenticatedState().then((cloud) => {
+          const nextProgress = cloud.progress;
+          const nextRecords = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions);
+          const changed = JSON.stringify(nextProgress) !== JSON.stringify(progressRecords) || JSON.stringify(nextRecords) !== JSON.stringify(records);
+          if (changed) { progressRecords = nextProgress; records = nextRecords; }
+          syncStatus = cloud.status;
+          storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Synced in background' : 'Memory fallback · Cloud sync will retry';
+        }).catch(() => { syncStatus = 'error'; });
+      }
+    } catch { errorMessage = 'Your saved library is temporarily unavailable. Please try again.'; loaded = true; }
   }
-  onMount(() => { void loadList(); });
+  onMount(() => { void loadLocalList(); });
 </script>
 
 <svelte:head>
@@ -68,10 +81,8 @@
       {#each statusOptions as option}<a class:active={selectedStatus === option.value} class="status-chip" href={chipHref(option.value)} aria-current={selectedStatus === option.value ? 'page' : undefined} onclick={(event) => { event.preventDefault(); void selectStatus(option.value); }}><option.icon class="status-icon" size={15} /><span>{option.label}</span><b>{records.filter((record) => normalizeWatchlistStatus(record.status) === option.value).length}</b></a>{/each}
     </nav>
 
-    {#if !loaded}
-      <section class="loading-state" aria-live="polite"><LoaderCircle size={22} /><span>Gathering your library…</span></section>
-    {:else if errorMessage}
-      <ErrorState title="My List is taking a pause." message={errorMessage} retry={loadList} />
+    {#if errorMessage}
+      <ErrorState title="My List is taking a pause." message={errorMessage} retry={loadLocalList} />
     {:else if visibleItems.length}
       <section class="list-section" aria-labelledby="list-section-title"><div class="section-heading"><div><div class="eyebrow">{visibleLabel}</div><h2 id="list-section-title">{visibleItems.length} {visibleItems.length === 1 ? 'title' : 'titles'} in view</h2></div>{#if selectedStatus}<a class="quiet-link" href="/my-list">Show all <ArrowRight size={14} /></a>{/if}</div><div class="media-grid">{#each visibleItems as item (item.type + ':' + item.id)}<MediaCard {item} featured />{/each}</div></section>
     {:else if selectedStatus}
@@ -110,11 +121,8 @@
   .quiet-link, .list-footer a { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .68rem; text-decoration: none; }
   .quiet-link:hover, .list-footer a:hover { color: var(--accent-strong); }
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 182px)); justify-content: start; gap: 28px 16px; }
-  .loading-state { display: grid; place-items: center; gap: 10px; min-height: 280px; color: var(--muted); font-size: .75rem; }
-  .loading-state :global(svg) { color: var(--accent-strong); animation: spin 1s linear infinite; }
   .list-footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; }
-  @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 760px) { .my-list-page { padding-top: 88px; } .list-header { align-items: start; flex-direction: column; } .library-summary { grid-template-columns: repeat(3, 1fr); } .summary-note { grid-column: 1 / -1; } }
   @media (max-width: 560px) { .list-header h1 { font-size: 3.8rem; } .library-summary { gap: 7px; } .library-summary > div { padding: 12px 10px; } .library-summary .summary-note { padding: 13px; } .library-summary strong { font-size: 1.7rem; } .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 11px; } .list-footer { align-items: start; flex-direction: column; } }
-  @media (prefers-reduced-motion: reduce) { .status-chip, .loading-state :global(svg) { transition: none; animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .status-chip { transition: none; } }
 </style>

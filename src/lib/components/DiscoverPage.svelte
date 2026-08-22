@@ -80,24 +80,17 @@
   }
 
   function setInitialStack() {
-    if (!animationEngine || gallerySlides.length !== 6) return;
-    galleryCards.forEach((card, index) => animationEngine?.set(card, positionFor(index, galleryIndex)));
+    if (!animationEngine || gallerySlides.length !== 6 || !galleryCards.length) return;
+    animationEngine.set(galleryCards[0], { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, zIndex: 1 });
   }
 
-  function animateStack(fromIndex: number, toIndex: number) {
-    if (!animationEngine || gallerySlides.length !== 6) return;
+  function animateStack(_fromIndex: number, _toIndex: number) {
+    if (!animationEngine || gallerySlides.length !== 6 || !galleryCards.length) return;
     const duration = reducedMotion ? 0.18 : GALLERY_TRANSITION_MS / 1000;
-    const timeline = animationEngine.timeline({ defaults: { duration, ease: reducedMotion ? 'power1.out' : 'expo.inOut', overwrite: true } });
-    galleryCards.forEach((card, index) => {
-      const start = positionFor(index, fromIndex);
-      const end = positionFor(index, toIndex);
-      timeline.set(card, { ...start, zIndex: start.zIndex }, 0);
-      timeline.to(card, { ...end }, 0);
-    });
-    const incoming = galleryCards[toIndex];
-    const outgoing = galleryCards[fromIndex];
-    if (incoming) timeline.set(incoming, { zIndex: 19 }, 0);
-    if (outgoing) { timeline.set(outgoing, { zIndex: 21 }, 0); timeline.set(outgoing, { zIndex: positionFor(fromIndex, toIndex).zIndex }, duration * 0.52); }
+    const card = galleryCards[0];
+    const timeline = animationEngine.timeline({ defaults: { ease: reducedMotion ? 'power1.out' : 'expo.inOut', overwrite: true } });
+    timeline.to(card, { opacity: 0, y: -6, duration: duration * 0.42 });
+    timeline.to(card, { opacity: 1, y: 0, x: 0, scale: 1, rotation: 0, duration: duration * 0.58 });
   }
 
   function queueGalleryRotation() {
@@ -157,28 +150,25 @@
   {#if gallerySlides.length === 6 && activeSlide}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
     <section class:reduced-motion={reducedMotion} class="streaming-hero" aria-labelledby="gallery-title" aria-roledescription="carousel" tabindex="0" onpointerenter={pauseGallery} onpointerleave={resumeGallery} onfocusin={pauseGallery} onfocusout={resumeGallery} onkeydown={handleGalleryKeydown}>
-      <div class="hero-backdrop gallery-ambient" aria-hidden="true" style={`background-image: url(${JSON.stringify(activeSlide.item.backdrop || activeSlide.item.poster)})`}></div>
+      <div class="hero-backdrop gallery-ambient" aria-hidden="true" style={`background-image: url(${JSON.stringify(activeSlide.item.backdrop)})`}></div>
       <div class="hero-wash" aria-hidden="true"></div>
       <div class="container-wide hero-inner gallery-main">
         <div class="hero-copy gallery-copy" data-reveal>
           <div class="hero-kicker"><Sparkles size={13} /> Featured tonight <span></span> Now streaming</div>
-          <div class="hero-category">{activeSlide.category} · Featured story</div>
           <h1 id="gallery-title">{activeSlide.item.title}</h1>
           <p>{activeSlide.item.description}</p>
-          <div class="hero-meta"><strong>{activeSlide.item.year}</strong><i></i><span>{activeSlide.item.runtime}</span><i></i><span>{activeSlide.item.maturity}</span><i></i><span>{activeSlide.item.genres.slice(0, 2).join(' · ')}</span></div>
           <div class="hero-actions gallery-actions"><a class="btn btn-primary" href={`/watch/${activeSlide.item.type}/${activeSlide.item.id}`}><Play size={14} fill="currentColor" /> Play now</a><a class="btn btn-secondary" href={`/${activeSlide.item.type}/${activeSlide.item.id}`}><BookmarkPlus size={14} /> Add to list</a></div>
           <div class="hero-note gallery-pulse"><span class="live-dot"></span><small>Curated for your next watch</small></div>
         </div>
-        <div class="hero-stage" bind:this={galleryStack} aria-label="Six featured titles">
-          <div class="hero-poster-stack gallery-stack">
-            {#each gallerySlides as slide, index}
-              <article class:active={index === galleryIndex} class:outgoing={galleryAnimating && index === departingGalleryIndex} class="hero-poster gallery-card" data-gallery-card aria-hidden="true">
-                <div class="hero-poster-image" style={`background-image: url(${JSON.stringify(slide.item.backdrop || slide.item.poster)})`}></div>
+                  <div class="hero-stage" bind:this={galleryStack} aria-label="Featured title carousel">
+            <div class="hero-poster-stack gallery-stack">
+              <article class:outgoing={galleryAnimating} class="hero-poster gallery-card active" data-gallery-card aria-live="polite">
+                <img class="hero-poster-image" src={activeSlide.item.poster} alt={`${activeSlide.item.title} poster`} loading="eager" width="720" height="1080" />
                 <div class="hero-poster-overlay"></div>
-                <div class="hero-poster-meta gallery-card-index"><span>{slide.category}</span><small>{String(index + 1).padStart(2, '0')}</small></div>
+                <div class="hero-poster-meta gallery-card-index"><small>{String(galleryIndex + 1).padStart(2, '0')} / {gallerySlides.length}</small></div>
               </article>
-            {/each}
-          </div>
+            </div>
+
           <div class="hero-controls gallery-controls" aria-label="Featured title controls">
             <button class="hero-arrow gallery-arrow" type="button" aria-label="Previous title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex - 1 + gallerySlides.length) % gallerySlides.length); }}><ArrowLeft size={15} /></button>
             <div class="hero-dots gallery-dots" role="tablist" aria-label="Choose featured title">
@@ -221,25 +211,20 @@
   .hero-copy { max-width: 555px; }
   .hero-kicker { display: inline-flex; align-items: center; gap: 9px; color: var(--accent-strong); font-family: 'DM Mono', monospace; font-size: .6rem; letter-spacing: .13em; text-transform: uppercase; }
   .hero-kicker span { width: 28px; height: 1px; background: var(--accent); }
-  .hero-category { margin-top: 31px; color: var(--secondary); font-family: 'DM Mono', monospace; font-size: .58rem; letter-spacing: .12em; text-transform: uppercase; }
   .hero-copy h1 { max-width: 640px; margin: 14px 0 14px; color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: clamp(4.2rem, 7.2vw, 8rem); font-weight: 600; letter-spacing: -.07em; line-height: .76; text-wrap: balance; }
   .hero-copy p { max-width: 500px; margin: 0; color: var(--ink-soft); font-size: .88rem; line-height: 1.7; text-wrap: pretty; }
-  .hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 21px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .57rem; }
-  .hero-meta strong { color: var(--ink); }
-  .hero-meta i { width: 3px; height: 3px; border-radius: 50%; background: var(--muted-deep); }
   .hero-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 27px; }
   .hero-note { display: inline-flex; align-items: center; gap: 8px; margin-top: 31px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .54rem; letter-spacing: .05em; text-transform: uppercase; }
   .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--secondary); box-shadow: 0 0 0 5px var(--secondary-soft); }
   .hero-stage { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; }
-  .hero-poster-stack { position: relative; width: min(100%, 790px); aspect-ratio: 1.48; isolation: isolate; transform: none; }
-  .hero-poster { position: absolute; z-index: 1; inset: 0; overflow: hidden; border: 1px solid rgba(248,250,252,.15); border-radius: var(--radius-xl); background: var(--surface); box-shadow: 0 32px 100px rgba(0,0,0,.48); pointer-events: none; transform-origin: 50% 86%; will-change: transform, opacity; }
+  .hero-poster-stack { position: relative; width: min(100%, 360px); aspect-ratio: 2 / 3; isolation: isolate; }
+  .hero-poster { position: absolute; z-index: 1; inset: 0; overflow: hidden; border: 1px solid rgba(248,250,252,.15); border-radius: var(--radius-xl); background: var(--surface); box-shadow: 0 24px 64px rgba(0,0,0,.42); pointer-events: none; will-change: transform, opacity; }
   .hero-poster.active { border-color: rgba(167,139,250,.62); box-shadow: 0 34px 110px rgba(0,0,0,.55), 0 0 0 1px rgba(167,139,250,.08); }
   .hero-poster-image, .hero-poster-overlay { position: absolute; inset: 0; }
-  .hero-poster-image { background-position: center; background-size: cover; filter: saturate(.86) contrast(1.02); transition: transform 900ms var(--ease-out); }
+  .hero-poster-image { width: 100%; height: 100%; object-fit: cover; filter: saturate(.86) contrast(1.02); transition: transform 900ms var(--ease-out); }
   .hero-poster.active .hero-poster-image { transform: scale(1.018); }
   .hero-poster-overlay { background: linear-gradient(180deg, rgba(9,10,11,.06) 10%, rgba(9,10,11,.12) 48%, rgba(9,10,11,.82) 100%), linear-gradient(92deg, rgba(9,10,11,.25), transparent 60%); }
   .hero-poster-meta { position: absolute; top: 22px; right: 24px; left: 24px; display: flex; justify-content: space-between; color: rgba(248,250,252,.78); font-family: 'DM Mono', monospace; font-size: .55rem; letter-spacing: .12em; text-transform: uppercase; }
-  .hero-poster-meta span { color: var(--accent-strong); }
   .hero-controls { position: relative; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 19px; }
   .hero-arrow { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid rgba(248,250,252,.18); border-radius: 50%; color: var(--ink); background: rgba(9,10,11,.58); backdrop-filter: blur(12px); transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .hero-arrow:hover, .hero-arrow:focus-visible { border-color: rgba(167,139,250,.66); color: var(--accent-strong); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
@@ -257,8 +242,8 @@
   .route-links a small { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .5rem; }
   .route-links a :global(svg) { grid-row: 1 / span 2; grid-column: 2; color: var(--accent-strong); }
   .catalog-warning { margin: 14px 0 0; padding: 11px 13px; border: 1px solid rgba(226,177,112,.35); color: var(--warning); font-family: 'DM Mono', monospace; font-size: .62rem; line-height: 1.5; }
-  @media (max-width: 1050px) { .hero-inner { grid-template-columns: minmax(0, .78fr) minmax(340px, 1.22fr); gap: 34px; } .hero-copy h1 { font-size: clamp(4rem, 7vw, 6.4rem); } }
-  @media (max-width: 720px) { .streaming-hero { min-height: auto; } .hero-inner { display: flex; flex-direction: column; align-items: stretch; min-height: auto; gap: 24px; padding-top: 94px; padding-bottom: 30px; } .hero-stage { order: 1; padding: 0 7px; } .hero-poster-stack { width: min(88vw, 410px); aspect-ratio: .92; } .hero-poster { border-radius: 21px; } .hero-copy { order: 2; max-width: none; } .hero-category { margin-top: 22px; } .hero-copy h1 { max-width: 340px; margin-top: 10px; font-size: clamp(3.25rem, 17vw, 5rem); line-height: .8; } .hero-copy p { max-width: 360px; font-size: .8rem; line-height: 1.58; } .hero-meta { margin-top: 15px; font-size: .54rem; } .hero-actions { margin-top: 19px; } .hero-note { margin-top: 21px; } .discover-routes { align-items: stretch; flex-direction: column; gap: 14px; margin-bottom: 30px; } .route-links { gap: 6px; } .route-links a { min-width: 0; padding: 9px 8px; } .route-links a small { display: none; } .route-links a span { font-size: .63rem; } .route-links a :global(svg) { width: 12px; } }
+  @media (max-width: 1050px) { .hero-inner { grid-template-columns: minmax(0, .78fr) minmax(300px, 1.22fr); gap: 34px; } .hero-copy h1 { font-size: clamp(4rem, 7vw, 6.4rem); } }
+  @media (max-width: 720px) { .streaming-hero { min-height: auto; } .hero-inner { display: flex; flex-direction: column; align-items: stretch; min-height: auto; gap: 24px; padding-top: 94px; padding-bottom: 30px; } .hero-stage { order: 1; padding: 0 7px; } .hero-poster-stack { width: min(70vw, 280px); aspect-ratio: 2 / 3; } .hero-poster { border-radius: 21px; } .hero-copy { order: 2; max-width: none; } .hero-copy h1 { max-width: 340px; margin-top: 10px; font-size: clamp(3.25rem, 17vw, 5rem); line-height: .8; } .hero-copy p { max-width: 360px; font-size: .8rem; line-height: 1.58; } .hero-actions { margin-top: 19px; } .hero-note { margin-top: 21px; } .discover-routes { align-items: stretch; flex-direction: column; gap: 14px; margin-bottom: 30px; } .route-links { gap: 6px; } .route-links a { min-width: 0; padding: 9px 8px; } .route-links a small { display: none; } .route-links a span { font-size: .63rem; } .route-links a :global(svg) { width: 12px; } }
   @media (prefers-reduced-motion: reduce) { .hero-backdrop, .hero-poster-image, .route-links a, .hero-arrow { transition: none; transform: none; } }
   /* Compatibility hooks retained for the existing discovery contract: gallery-copy, gallery-card-index, gallery-actions, gallery-controls, gallery-dots, gallery-ambient, gallery-pulse, gallery-main, and gallery-stack. */
   /* class="gallery-copy" class="gallery-ambient" class="gallery-pulse" */

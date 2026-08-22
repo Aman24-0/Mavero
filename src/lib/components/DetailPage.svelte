@@ -22,19 +22,20 @@
   let statusSheetOpen = false;
   let saveError = '';
   let resumeEpisode: { season: number; episode: number } | undefined;
+  let trailerOpen = false;
   const statusOptions = [
     { key: 'watching', label: 'Watching', icon: '▶', description: 'Keep this in your current rotation.' },
     { key: 'planned', label: 'Planned', icon: '＋', description: 'Save it for a future night.' },
     { key: 'completed', label: 'Completed', icon: '✓', description: 'Mark this story as finished.' },
     { key: 'remove', label: 'Remove from My List', icon: '×', description: 'Take it out of your saved library.' },
   ];
-  $: item = dataItem ?? getMedia(id);
+  $: item = dataItem ?? getMedia(id, type);
   $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6);
   $: statusSheetOptions = watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove');
   $: canonicalUrl = `${page.url.origin}/${type}/${item.id}`;
   $: watchPath = type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`;
   $: watchHref = appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`);
-  $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
+  $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
 
   onMount(() => {
     let active = true;
@@ -60,6 +61,14 @@
     }
     return () => { active = false; };
   });
+
+  function openTrailer() {
+    if (item.trailerKey) trailerOpen = true;
+  }
+
+  function closeTrailer() {
+    trailerOpen = false;
+  }
 
   function openStatusSheet() {
     statusSheetOpen = true;
@@ -128,16 +137,16 @@
   <meta property="og:title" content={`${item.title} — Mavero`} />
   <meta property="og:description" content={item.description} />
   <meta property="og:url" content={canonicalUrl} />
-  <meta property="og:image" content={item.backdrop || item.poster} />
+  <meta property="og:image" content={item.backdrop} />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content={`${item.title} — Mavero`} />
   <meta name="twitter:description" content={item.description} />
-  <meta name="twitter:image" content={item.backdrop || item.poster} />
+  <meta name="twitter:image" content={item.backdrop} />
   <script type="application/ld+json">{structuredData}</script>
 </svelte:head>
 
 <div class="detail-wrap">
-  <div class="detail-backdrop" style={`background-image: url('${item.backdrop || item.poster}')`}></div>
+  <div class="detail-backdrop" style={`background-image: url('${item.backdrop}')`}></div>
   <div class="container-wide">
     <a class="back-link" href="/discover" onclick={goBack}><ArrowLeft size={15} /> Back</a>
     <section class="detail-layout" aria-labelledby="detail-title">
@@ -146,12 +155,12 @@
         <div class="detail-lead">
           <div class="eyebrow">{formatType(type)}{#if item.genres[0]} / {item.genres[0]}{/if}</div>
           <h1 id="detail-title">{item.title}</h1>
-          <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.runtime}</span><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
+          <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
         </div>
         <p class="detail-description">{item.description}</p>
-        <div class="detail-actions"><a class="btn btn-primary" href={watchHref}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}><Heart size={15} fill={watchlistStatus ? 'currentColor' : 'none'} /> {statusLabel(watchlistStatus)}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
+        <div class="detail-actions"><a class="btn btn-primary" href={watchHref}><Play size={15} fill="currentColor" /> Watch now</a>{#if item.trailerKey}<button class="btn btn-secondary" type="button" onclick={openTrailer} aria-expanded={trailerOpen}><Play size={14} /> Trailer</button>{/if}<button class="btn btn-secondary" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}><Heart size={15} fill={watchlistStatus ? 'currentColor' : 'none'} /> {statusLabel(watchlistStatus)}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
         {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
-        <div class="detail-grid"><div class="detail-stat"><span>Genres</span><strong>{item.genres.slice(0, 2).join(' · ') || '—'}</strong></div><div class="detail-stat"><span>Audio</span><strong>Original · Sub</strong></div><div class="detail-stat"><span>Quality</span><strong>Full HD · 4K</strong></div></div>
+        {#if trailerOpen && item.trailerKey}<section class="trailer-panel" aria-label={`${item.title} trailer`}><div class="trailer-panel-head"><span>Trailer</span><button class="icon-btn" type="button" onclick={closeTrailer} aria-label="Close trailer"><ArrowLeft size={15} /></button></div><div class="trailer-frame"><iframe src={`https://www.youtube-nocookie.com/embed/${item.trailerKey}?autoplay=1&rel=0`} title={`${item.title} trailer`} allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div></section>{/if}
         {#if type !== 'movie'}<div class="episode-strip"><div><div class="eyebrow">Episode guide</div><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? 12} episodes</strong></div><a class="icon-btn" href={`/${type}/${item.id}#episodes`} aria-label="Open episode list"><ArrowRight size={16} /></a></div>{/if}
       </div>
     </section>
@@ -172,17 +181,19 @@
   .detail-copy { min-width: 0; padding-top: 5px; }
   .detail-lead { min-width: 0; }
   .detail-copy h1 { max-width: 820px; margin: 7px 0 12px; font-family: 'Space Grotesk', sans-serif; font-size: clamp(2.5rem, 5vw, 5.3rem); letter-spacing: -.08em; line-height: .93; }
+  .meta-row { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .63rem; }
+  .meta-row .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--muted-deep); }
   .detail-description { max-width: 680px; margin: 20px 0 0; color: var(--ink-soft); font-size: .9rem; line-height: 1.75; }
   .rating { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-strong); }
   .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 23px; }
+  .trailer-panel { max-width: 700px; margin-top: 18px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(12,14,19,.84); overflow: hidden; }
+  .trailer-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 8px 13px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
+  .trailer-frame { aspect-ratio: 16 / 9; background: #050608; }
+  .trailer-frame iframe { width: 100%; height: 100%; border: 0; }
   .action-icon { border-color: var(--line-strong); }
-  .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; max-width: 650px; margin: 20px 0 0; }
-  .detail-stat { padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(228,235,232,.035); }
-  .detail-stat span { display: block; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .54rem; text-transform: uppercase; }
-  .detail-stat strong { display: block; margin-top: 4px; overflow: hidden; color: var(--ink); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
   .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(440px, 100%); margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(228,235,232,.045); }
   .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .7rem; }
   .save-error { margin-top: 9px; color: var(--warning); font-family: 'DM Mono', monospace; font-size: .57rem; }
   @media (max-width: 900px) { .detail-layout { grid-template-columns: 185px minmax(0, 1fr); gap: 24px; } }
-  @media (max-width: 640px) { .detail-backdrop { height: 420px; } .detail-wrap::before { height: 500px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 16px; padding: 24px 0 30px; align-items: start; } .detail-poster { border-radius: var(--radius-md); } .detail-copy { display: contents; } .detail-copy > .detail-lead { grid-column: 2; min-width: 0; } .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { margin-top: 6px; font-size: clamp(1.9rem, 8vw, 2.5rem); line-height: .98; } .detail-description { margin-top: 18px; font-size: .84rem; } .detail-grid { gap: 6px; } .detail-stat { padding: 9px; } }
+  @media (max-width: 640px) { .detail-backdrop { height: 420px; } .detail-wrap::before { height: 500px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 16px; padding: 24px 0 30px; align-items: start; } .detail-poster { border-radius: var(--radius-md); } .detail-copy { display: contents; } .detail-copy > .detail-lead { grid-column: 2; min-width: 0; } .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .trailer-panel, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { margin-top: 6px; font-size: clamp(1.9rem, 8vw, 2.5rem); line-height: .98; } .detail-description { margin-top: 18px; font-size: .84rem; } }
 </style>
