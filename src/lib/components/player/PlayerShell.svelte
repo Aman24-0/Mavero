@@ -362,6 +362,8 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); }} />
 
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} onclick={handleMaveroControlInteraction} onpointerdown={handleMaveroControlInteraction} role="application" aria-label="MAVERO video player">
   {#if landscapeMode}<button class="landscape-controls-toggle" data-landscape-controls-toggle type="button" aria-label={landscapeControlsExpanded ? 'Collapse MAVERO controls' : 'Expand MAVERO controls'} aria-expanded={landscapeControlsExpanded} onclick={toggleLandscapeControls}>{#if landscapeControlsExpanded}<PanelTopClose size={15} />{:else}<PanelTopOpen size={15} />{/if}</button>{/if}
   <header class="player-header" class:controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
