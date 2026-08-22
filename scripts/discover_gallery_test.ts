@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../src/lib/components/DiscoverPage.svelte', import.meta.url), 'utf8');
 
 assert.match(source, /const GALLERY_ROTATION_MS = 3000/);
-assert.match(source, /const GALLERY_TRANSITION_MS = 720/);
+assert.match(source, /const GALLERY_TRANSITION_MS = 960/);
 assert.match(source, /const GALLERY_SEQUENCE: GalleryCategory\[\] = \['Movie', 'Series', 'Anime', 'Movie', 'Series', 'Anime'\]/);
 assert.match(source, /gallerySlides\.length === 6/);
 assert.match(source, /data-gallery-card/);
@@ -15,7 +15,7 @@ assert.match(source, /clearGalleryTimers/);
 assert.match(source, /return \(\) => \{/);
 assert.match(source, /killTweensOf/);
 assert.match(source, /const \{ gsap \} = await import\('gsap'\)/);
-assert.match(source, /animationEngine\?\.to/);
+assert.match(source, /timeline\.to/);
 assert.match(source, /class:outgoing/);
 assert.match(source, /gallery-card-title/);
 assert.match(source, /gallery-card-actions/);

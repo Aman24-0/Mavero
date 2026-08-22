@@ -25,7 +25,7 @@
   type CardPosition = { x: number; y: number; scale: number; rotation: number; opacity: number; zIndex: number };
 
   const GALLERY_ROTATION_MS = 3000;
-  const GALLERY_TRANSITION_MS = 720;
+  const GALLERY_TRANSITION_MS = 960;
   const GALLERY_SEQUENCE: GalleryCategory[] = ['Movie', 'Series', 'Anime', 'Movie', 'Series', 'Anime'];
 
   let localContinueLoaded = false;
@@ -98,18 +98,22 @@
   function animateStack(fromIndex: number, toIndex: number) {
     if (!animationEngine || gallerySlides.length !== 6) return;
     const duration = reducedMotion ? 0.18 : GALLERY_TRANSITION_MS / 1000;
+    const timeline = animationEngine.timeline({ defaults: { duration, ease: reducedMotion ? 'power1.out' : 'expo.inOut', overwrite: true } });
 
     galleryCards.forEach((card, index) => {
       const start = positionFor(index, fromIndex);
       const end = positionFor(index, toIndex);
-      animationEngine?.set(card, { ...start, zIndex: start.zIndex });
-      animationEngine?.to(card, { ...end, duration, ease: reducedMotion ? 'power1.out' : 'power3.inOut', overwrite: true });
+      timeline.set(card, { ...start, zIndex: start.zIndex }, 0);
+      timeline.to(card, { ...end }, 0);
     });
 
     const incoming = galleryCards[toIndex];
     const outgoing = galleryCards[fromIndex];
-    if (incoming) animationEngine.set(incoming, { zIndex: 20 });
-    if (outgoing) animationEngine.set(outgoing, { zIndex: 14 });
+    if (incoming) timeline.set(incoming, { zIndex: 19 }, 0);
+    if (outgoing) {
+      timeline.set(outgoing, { zIndex: 21 }, 0);
+      timeline.set(outgoing, { zIndex: positionFor(fromIndex, toIndex).zIndex }, duration * 0.52);
+    }
   }
 
   function queueGalleryRotation() {
@@ -250,7 +254,7 @@
           </div>
           <div class="gallery-shadow" aria-hidden="true"></div>
         </div>
-        <p id="gallery-title" class="gallery-hint" data-reveal>Popular stories, physically stacked. Use the card actions to start watching or open details.</p>
+        <div id="gallery-title" class="sr-only">Trending Gallery</div>
       </div>
     </section>
   {/if}
@@ -258,6 +262,14 @@
   <div class="container-wide main-content">
     {#if errorMessage}<div class="catalog-warning" role="alert">{errorMessage}</div>{/if}
     {#if hasCatalog}
+      <nav class="discover-explore" aria-label="Explore MAVERO">
+        <div class="explore-heading"><span class="explore-eyebrow">Explore</span><strong>Find your next world</strong></div>
+        <div class="explore-links">
+          <a href="/discover/movies"><span>Movies</span><ArrowRight size={13} /></a>
+          <a href="/discover/series"><span>Series</span><ArrowRight size={13} /></a>
+          <a href="/discover/anime"><span>Anime</span><ArrowRight size={13} /></a>
+        </div>
+      </nav>
       {#if localContinue.length}<ContentRail title="Continue watching" eyebrow="Pick up where you left off" items={localContinue} href="/my-list?status=watching" compact />{/if}
       {#if movies.length}<ContentRail title="Trending movies" eyebrow="What people are watching" items={movies} href="/discover/movies" />{/if}
       {#if series.length}<ContentRail title="Trending shows" eyebrow="Stories worth staying for" items={series} href="/discover/series" />{/if}
@@ -280,7 +292,7 @@
   .gallery-count { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .58rem; letter-spacing: .08em; }
   .gallery-stage { position: relative; display: grid; place-items: center; min-height: 630px; }
   .gallery-stack { position: relative; width: min(100%, 470px); aspect-ratio: .69; isolation: isolate; }
-  .gallery-card { position: absolute; z-index: 1; inset: 0; display: block; overflow: hidden; border: 1px solid rgba(243,240,233,.15); border-radius: 26px; background: var(--surface); box-shadow: 0 24px 70px rgba(0,0,0,.32); pointer-events: none; transform-origin: 50% 82%; }
+  .gallery-card { position: absolute; z-index: 1; inset: 0; display: block; overflow: hidden; border: 1px solid rgba(243,240,233,.15); border-radius: 26px; background: var(--surface); box-shadow: 0 24px 70px rgba(0,0,0,.32); pointer-events: none; transform-origin: 50% 82%; will-change: transform, opacity; }
   .gallery-card.active { pointer-events: auto; border-color: rgba(212,168,106,.65); box-shadow: 0 32px 100px rgba(0,0,0,.5), 0 0 0 1px rgba(212,168,106,.12); }
   .gallery-card.active:focus-within { outline: 0; box-shadow: 0 32px 100px rgba(0,0,0,.5), 0 0 0 4px rgba(212,168,106,.13); }
   .gallery-card.outgoing { pointer-events: none; }
@@ -300,13 +312,19 @@
   .gallery-card-meta .dot { width: 3px; height: 3px; background: rgba(243,240,233,.45); }
   .gallery-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
   .gallery-card-actions :global(.btn) { min-height: 37px; font-size: .67rem; }
-  .gallery-hint { align-self: end; max-width: 230px; margin: 0; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .57rem; line-height: 1.55; }
+  .discover-explore { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 0 0 36px; padding: 15px 0 16px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .explore-heading { display: grid; gap: 3px; }
+  .explore-eyebrow { color: var(--accent-strong); font-family: 'DM Mono', monospace; font-size: .55rem; letter-spacing: .12em; text-transform: uppercase; }
+  .explore-heading strong { color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: .92rem; letter-spacing: -.035em; }
+  .explore-links { display: flex; align-items: center; gap: 9px; }
+  .explore-links a { display: inline-flex; align-items: center; gap: 9px; min-height: 37px; padding: 0 12px; border: 1px solid rgba(243,240,233,.12); color: var(--muted); font-family: 'DM Mono', monospace; font-size: .58rem; letter-spacing: .04em; text-decoration: none; transition: color 180ms var(--ease-out), border-color 180ms var(--ease-out), background 180ms var(--ease-out), transform 180ms var(--ease-out); }
+  .explore-links a:hover, .explore-links a:focus-visible { border-color: rgba(212,168,106,.52); background: rgba(212,168,106,.07); color: var(--ink); transform: translateY(-1px); outline: 0; }
   .gallery-shadow { position: absolute; z-index: -1; right: -7%; bottom: -4%; left: 7%; height: 14%; border-radius: 50%; background: rgba(0,0,0,.48); filter: blur(28px); }
   .catalog-warning { margin: 14px 0 0; padding: 11px 13px; border: 1px solid rgba(224,174,114,.35); color: var(--warning); font-family: 'DM Mono', monospace; font-size: .62rem; line-height: 1.5; }
   .footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 38px 0 20px; text-align: center; }
   .footer strong { color: var(--ink); letter-spacing: .18em; }
   .footer span { color: var(--muted-deep); }
   @media (max-width: 1040px) { .gallery-content { grid-template-columns: minmax(0, .4fr) minmax(360px, 500px) minmax(0, .4fr); gap: 20px; } .gallery-stage { min-height: 560px; } }
-  @media (max-width: 700px) { .gallery-hero { min-height: auto; } .gallery-content { display: flex; flex-direction: column; align-items: stretch; gap: 10px; min-height: auto; padding-top: 84px; padding-bottom: 34px; } .gallery-heading { margin-top: 0; } .gallery-stage { min-height: 0; padding: 5px 8px 0; } .gallery-stack { width: min(84vw, 340px); } .gallery-card { border-radius: 22px; } .gallery-card-content { padding: 17px; } .gallery-card-title { font-size: clamp(1.85rem, 10vw, 2.7rem); } .gallery-card-copy p { -webkit-line-clamp: 2; line-clamp: 2; font-size: .68rem; } .gallery-card-actions :global(.btn) { min-height: 38px; } .gallery-hint { max-width: none; margin: 10px 0 0; } }
-  @media (prefers-reduced-motion: reduce) { .gallery-card, .gallery-card-image { transition: none; } }
+  @media (max-width: 700px) { .gallery-hero { min-height: auto; } .gallery-content { display: flex; flex-direction: column; align-items: stretch; gap: 10px; min-height: auto; padding-top: 84px; padding-bottom: 34px; } .gallery-heading { margin-top: 0; } .gallery-stage { min-height: 0; padding: 5px 8px 0; } .gallery-stack { width: min(84vw, 340px); } .gallery-card { border-radius: 22px; } .gallery-card-content { padding: 17px; } .gallery-card-title { font-size: clamp(1.85rem, 10vw, 2.7rem); } .gallery-card-copy p { -webkit-line-clamp: 2; line-clamp: 2; font-size: .68rem; } .gallery-card-actions :global(.btn) { min-height: 38px; } .discover-explore { align-items: stretch; flex-direction: column; gap: 13px; margin-bottom: 30px; } .explore-links { width: 100%; } .explore-links a { flex: 1 1 0; justify-content: center; padding: 0 8px; } }
+  @media (prefers-reduced-motion: reduce) { .gallery-card, .gallery-card-image, .explore-links a { transition: none; } }
 </style>
