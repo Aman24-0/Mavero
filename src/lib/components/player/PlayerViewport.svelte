@@ -10,10 +10,11 @@
   export let sandboxEnabled = true;
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
+  export let nativePlayback = false;
 
   $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute('required') : undefined;
   $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${sandboxEnabled ? 'sandbox-on' : 'sandbox-off'}`;
-  $: directKey = source?.type === 'direct' && mediaUrl ? `${source.sourceId}:${mediaUrl}:${source.metadata?.protocol ?? ''}` : '';
+  $: directKey = source?.type === 'direct' && mediaUrl ? `${source.sourceId}:${mediaUrl}:${source.metadata?.protocol ?? ''}:${nativePlayback ? 'native' : 'source'}` : '';
 
   type HlsRuntime = {
     loadSource: (url: string) => void;
@@ -100,6 +101,12 @@
     destroyPlaybackEngines();
     element.removeAttribute('src');
     element.load();
+
+    if (!nativePlayback) {
+      element.src = url;
+      element.load();
+      return;
+    }
 
     if (protocol === 'hls') {
       if (element.canPlayType('application/vnd.apple.mpegurl')) {

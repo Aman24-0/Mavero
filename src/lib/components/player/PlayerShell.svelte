@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, PanelTopClose, PanelTopOpen, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, PanelTopClose, PanelTopOpen, Play as PlayIcon, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerAudioTrack, PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
@@ -19,6 +19,8 @@
   export let onClose: () => void = () => {};
   export let onDetails: () => void = () => {};
   export let onPlaybackError: () => boolean = () => false;
+  export let onUseSourcePlayer: () => void = () => {};
+  export let mode: 'source' | 'native' = 'source';
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
@@ -393,7 +395,7 @@
   <header class="player-header" class:controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
     <div class="header-title-row">
       <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
-      <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
+      <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}{#if mode === 'native'}<small class="mode-badge">Native Player · Experimental</small>{/if}</div>
       <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
     </div>
     <div class="header-actions">
@@ -405,13 +407,13 @@
   </header>
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:audiotracks={handleAudioTracks} />
+    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} nativePlayback={mode === 'native'} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:audiotracks={handleAudioTracks} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
         <div><strong>{effectiveState === 'provider-error' ? 'Provider unavailable' : effectiveState === 'unsupported' ? 'Unsupported title type' : effectiveState === 'unavailable' ? 'Server unavailable' : effectiveState === 'source-unavailable' ? 'Source unavailable' : effectiveState === 'embed-unavailable' ? 'Embed unavailable' : 'Playback could not be started'}</strong><p>{resolutionError || errorMessage || 'Choose another authorized source and try again.'}</p></div>
-        <div class="message-actions"><button class="small-button" type="button" onclick={retry}><RotateCcw size={14} /> Retry</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Change source</button>{/if}</div>
+        <div class="message-actions"><button class="small-button" type="button" onclick={retry}><RotateCcw size={14} /> Retry</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Change source</button>{/if}{#if mode === 'native'}<button class="small-button secondary" type="button" onclick={onUseSourcePlayer}><PlayIcon /> Source Player</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
@@ -478,6 +480,7 @@
   .header-title { display: grid; justify-items: center; gap: 4px; min-width: 0; color: #fff; text-align: center; text-shadow: 0 1px 14px #000; }
   .header-title strong { max-width: min(48vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
   .header-title span { color: rgba(255,255,255,.53); font-family: 'DM Mono', monospace; font-size: .56rem; }
+  .header-title .mode-badge { color: #c8bdff; font-family: 'DM Mono', monospace; font-size: .49rem; letter-spacing: .08em; text-transform: uppercase; }
   .header-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
   .stage-wrap { position: relative; display: grid; min-height: 100dvh; place-items: center; padding: calc(118px + env(safe-area-inset-top)) clamp(12px, 3vw, 42px) calc(30px + env(safe-area-inset-bottom)); }
   .stage-wrap :global(.viewport) { width: min(100%, calc((100dvh - 158px) * 1.7778)); aspect-ratio: 16 / 9; min-height: 0; max-height: calc(100dvh - 158px); border-radius: 14px; box-shadow: 0 22px 80px rgba(0,0,0,.38); }
