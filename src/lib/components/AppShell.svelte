@@ -80,22 +80,22 @@
   .page-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); }
   .app-rail { position: sticky; top: 0; z-index: 45; display: flex; flex-direction: column; height: 100dvh; padding: 28px 17px 24px; border-right: 1px solid var(--line); background: rgba(13, 15, 15, .82); }
   .brand-lockup, .mobile-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
-  .brand-symbol { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid rgba(216,163,78,.65); border-radius: 50%; color: var(--accent-strong); font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.1rem; font-weight: 700; }
+  .brand-symbol { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid rgba(139,92,246,.65); border-radius: 50%; color: var(--accent-strong); font-family: 'Space Grotesk', sans-serif; font-size: 1.1rem; font-weight: 700; }
   .brand-word { font-size: .84rem; font-weight: 800; letter-spacing: .2em; }
   .rail-nav { margin-top: 62px; }
   .rail-label { margin: 0 12px 10px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .53rem; letter-spacing: .14em; text-transform: uppercase; }
   .rail-link { display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--muted); font-size: .72rem; font-weight: 700; text-decoration: none; transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .rail-link:hover { color: var(--ink); background: rgba(245,241,232,.045); transform: translateX(2px); }
-  .rail-link.active { color: var(--ink); border-color: rgba(216,163,78,.22); background: linear-gradient(90deg, var(--accent-soft), transparent); }
+  .rail-link:hover { color: var(--ink); background: rgba(248,250,252,.045); transform: translateX(2px); }
+  .rail-link.active { color: var(--ink); border-color: rgba(139,92,246,.22); background: linear-gradient(90deg, var(--accent-soft), transparent); }
   .rail-link.active :global(svg) { color: var(--accent-strong); }
   .rail-bottom { display: grid; gap: 12px; margin-top: auto; }
   .rail-rule { height: 1px; background: var(--line); }
-  .rail-caption { max-width: 135px; color: var(--muted-deep); font-family: 'Cormorant Garamond', Georgia, serif; font-size: .95rem; font-style: italic; line-height: 1.15; }
+  .rail-caption { max-width: 135px; color: var(--muted-deep); font-family: 'Space Grotesk', sans-serif; font-size: .95rem; font-style: normal; line-height: 1.15; }
   .app-canvas { min-width: 0; }
-  .topbar { position: sticky; top: 0; z-index: 40; display: grid; grid-template-columns: 1fr minmax(250px, 480px) 1fr; align-items: center; height: 78px; padding: 0 clamp(24px, 4vw, 56px); border-bottom: 1px solid rgba(245,241,232,.075); background: rgba(9,10,11,.82); backdrop-filter: blur(24px); }
-  .topbar-context { color: var(--muted); font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.2rem; font-style: italic; }
+  .topbar { position: sticky; top: 0; z-index: 40; display: grid; grid-template-columns: 1fr minmax(250px, 480px) 1fr; align-items: center; height: 78px; padding: 0 clamp(24px, 4vw, 56px); border-bottom: 1px solid rgba(248,250,252,.075); background: rgba(9,10,11,.82); backdrop-filter: blur(24px); }
+  .topbar-context { color: var(--muted); font-family: 'Space Grotesk', sans-serif; font-size: 1.2rem; font-style: normal; }
   .topbar-actions { display: flex; align-items: center; justify-self: end; gap: 10px; }
-  .topbar-search { display: inline-flex; align-items: center; gap: 9px; width: min(34vw, 310px); min-height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted-deep); background: rgba(245,241,232,.035); font-size: .64rem; text-decoration: none; }
+  .topbar-search { display: inline-flex; align-items: center; gap: 9px; width: min(34vw, 310px); min-height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted-deep); background: rgba(248,250,252,.035); font-size: .64rem; text-decoration: none; }
   .topbar-search span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   kbd { border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .55rem; }
   .mobile-brand { display: none; }

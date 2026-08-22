@@ -24,15 +24,15 @@
   .admin-nav { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; padding: 28px 16px 22px; border-right: 1px solid var(--line); background: rgba(13,15,15,.92); }
   .admin-nav-top { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
   .admin-brand { display: grid; grid-template-columns: 28px auto; align-items: center; gap: 9px; color: var(--ink); font-family: 'Manrope', sans-serif; font-size: .78rem; font-weight: 800; letter-spacing: .18em; text-decoration: none; }
-  .admin-brand .brand-symbol { display: grid; grid-row: span 2; place-items: center; width: 28px; height: 28px; border: 1px solid rgba(216,163,78,.62); border-radius: 50%; color: var(--accent-strong); font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.1rem; }
+  .admin-brand .brand-symbol { display: grid; grid-row: span 2; place-items: center; width: 28px; height: 28px; border: 1px solid rgba(139,92,246,.62); border-radius: 50%; color: var(--accent-strong); font-family: 'Space Grotesk', sans-serif; font-size: 1.1rem; }
   .admin-brand small { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .48rem; font-weight: 400; letter-spacing: .05em; }
   .admin-mode { display: inline-flex; align-items: center; gap: 5px; color: var(--secondary); font-family: 'DM Mono', monospace; font-size: .52rem; text-transform: uppercase; }
   .admin-mode :global(svg) { color: var(--secondary); }
   nav { display: grid; gap: 5px; margin-top: 58px; }
   .admin-label { margin: 0 12px 9px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .53rem; letter-spacing: .14em; text-transform: uppercase; }
   nav a { display: flex; align-items: center; gap: 10px; min-height: 43px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--muted); font-size: .72rem; font-weight: 700; text-decoration: none; transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  nav a:hover { color: var(--ink); background: rgba(245,241,232,.045); transform: translateX(2px); }
-  nav a.active { color: var(--ink); border-color: rgba(216,163,78,.25); background: linear-gradient(90deg, var(--accent-soft), transparent); }
+  nav a:hover { color: var(--ink); background: rgba(248,250,252,.045); transform: translateX(2px); }
+  nav a.active { color: var(--ink); border-color: rgba(139,92,246,.25); background: linear-gradient(90deg, var(--accent-soft), transparent); }
   nav a.active :global(svg) { color: var(--accent-strong); }
   .admin-note { margin-top: auto; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
   .admin-note p { margin: 8px 0 0; color: var(--muted-deep); font-size: .64rem; line-height: 1.5; }

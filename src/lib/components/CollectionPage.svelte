@@ -40,10 +40,10 @@
   .back-link:hover { color: var(--accent-strong); transform: translateX(-2px); }
   .collection-heading { padding: 38px 0 25px; }
   .heading-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
-  .collection-heading h1 { margin: 12px 0 0; font-family: 'Cormorant Garamond', Georgia, serif; font-size: clamp(3.5rem, 7vw, 6.4rem); font-weight: 600; line-height: .8; letter-spacing: -.07em; }
+  .collection-heading h1 { margin: 12px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: clamp(3.5rem, 7vw, 6.4rem); font-weight: 600; line-height: .8; letter-spacing: -.07em; }
   .collection-heading p { max-width: 520px; margin: 18px 0 0; color: var(--muted); font-size: .8rem; line-height: 1.6; }
   .collection-count { display: grid; justify-items: end; gap: 4px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .56rem; text-transform: uppercase; }
-  .collection-count strong { color: var(--ink); font-family: 'Cormorant Garamond', Georgia, serif; font-size: 2.2rem; font-weight: 600; line-height: .8; }
+  .collection-count strong { color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: 2.2rem; font-weight: 600; line-height: .8; }
   .collection-tools { margin: 0 0 28px; padding: 13px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 182px)); justify-content: start; gap: 30px 16px; padding-bottom: 34px; }
   .pagination { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; padding: 13px 0 40px; border-top: 1px solid var(--line); }
