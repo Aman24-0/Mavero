@@ -18,7 +18,7 @@
     </div>
     <a class="section-link" href={href}>View all <ArrowRight size={14} /></a>
   </div>
-  <div class="rail" role="list">
+  <div class="rail" class:compact={compact} role="list">
     {#each items as item}
       <div role="listitem"><MediaCard {item} {compact} /></div>
     {/each}

@@ -152,6 +152,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .status { display: inline-flex; align-items: center; gap: 6px; color: var(--success); }
 .status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
+@media (min-width: 901px) {
+  .rail.compact { grid-auto-columns: minmax(150px, 220px); justify-content: start; }
+}
+
 @media (max-width: 900px) {
   .topbar { height: 68px; padding: 0 20px; }
   .desktop-nav { margin-left: 0; }
