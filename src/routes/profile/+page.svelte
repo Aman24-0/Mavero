@@ -7,6 +7,7 @@
   import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
   import { getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords } from '$lib/client/progress/service';
+  import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
@@ -35,12 +36,12 @@
       if (data.user) {
         const cloud = await syncAuthenticatedState();
         syncStatus = cloud.status;
-        favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress).map((record) => favoriteToMedia(record, cloud.progress));
+        favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions).map((record) => favoriteToMedia(record, cloud.progress));
         watchedSeconds = cloud.progress.reduce((total, record) => total + record.currentTime, 0);
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
       } else {
-        const [favoriteRecords, progressRecords] = await Promise.all([getLocalFavorites(), getLocalProgressRecords()]);
-        favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords).map((record) => favoriteToMedia(record, progressRecords));
+        const [favoriteRecords, progressRecords, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]);
+        favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords, deletions).map((record) => favoriteToMedia(record, progressRecords));
         watchedSeconds = progressRecords.reduce((total, record) => total + record.currentTime, 0);
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
       }

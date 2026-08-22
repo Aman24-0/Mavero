@@ -1,4 +1,4 @@
-import { favoriteKey, normalizeWatchlistStatus, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord } from '$lib/client/progress/types';
+import { favoriteKey, normalizeWatchlistStatus, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord } from '$lib/client/progress/types';
 
 export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgressRecord[]) {
   const merged = new Map<string, WatchProgressRecord>();
@@ -9,21 +9,36 @@ export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgress
   return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[]) {
+export function mergeFavoriteDeletions(local: FavoriteDeletionRecord[], cloud: FavoriteDeletionRecord[]) {
+  const merged = new Map<string, FavoriteDeletionRecord>();
+  for (const record of [...local, ...cloud]) {
+    const existing = merged.get(record.key);
+    if (!existing || record.deletedAt > existing.deletedAt) merged.set(record.key, record);
+  }
+  return [...merged.values()].sort((a, b) => b.deletedAt - a.deletedAt);
+}
+
+function isSuppressedByDeletion(record: FavoriteRecord, deletions: FavoriteDeletionRecord[]) {
+  const deletion = deletions.find((candidate) => candidate.key === record.key);
+  return Boolean(deletion && record.updatedAt <= deletion.deletedAt);
+}
+
+export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[], deletions: FavoriteDeletionRecord[] = []) {
   const merged = new Map<string, FavoriteRecord>();
   for (const rawRecord of [...local, ...cloud]) {
     const record = { ...rawRecord, status: normalizeWatchlistStatus(rawRecord.status) };
     const existing = merged.get(record.key);
     if (!existing || record.updatedAt > existing.updatedAt || (record.updatedAt === existing.updatedAt && record.createdAt < existing.createdAt)) merged.set(record.key, record);
   }
-  return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  return [...merged.values()].filter((record) => !isSuppressedByDeletion(record, deletions)).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export function mergeFavoritesWithProgress(favorites: FavoriteRecord[], progress: WatchProgressRecord[]) {
-  const merged = new Map(favorites.map((record) => [record.key, { ...record, status: normalizeWatchlistStatus(record.status) }]));
+export function mergeFavoritesWithProgress(favorites: FavoriteRecord[], progress: WatchProgressRecord[], deletions: FavoriteDeletionRecord[] = []) {
+  const merged = new Map(mergeFavorites(favorites, [], deletions).map((record) => [record.key, { ...record, status: normalizeWatchlistStatus(record.status) }]));
   for (const record of progress) {
     if (record.completionState === 'completed' || record.currentTime <= 0) continue;
     const key = favoriteKey(record.contentType, record.contentId);
+    if (deletions.some((deletion) => deletion.key === key)) continue;
     const existing = merged.get(key);
     const timestamp = Math.max(record.updatedAt, record.lastWatchedAt);
     const createdAt = existing?.createdAt ?? timestamp;

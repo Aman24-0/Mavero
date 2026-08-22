@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      favorite_deletions: {
+        Row: {
+          content_id: string
+          content_type: string
+          deleted_at: string
+          favorite_key: string
+          user_id: string
+        }
+        Insert: {
+          content_id: string
+          content_type: string
+          deleted_at?: string
+          favorite_key: string
+          user_id: string
+        }
+        Update: {
+          content_id?: string
+          content_type?: string
+          deleted_at?: string
+          favorite_key?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       favorites: {
         Row: {
           content_id: string
@@ -127,6 +151,69 @@ export type Database = {
           version?: number
         }
         Relationships: []
+      }
+      streaming_provider_health: {
+        Row: {
+          consecutive_failures: number
+          cooldown_until: string | null
+          created_at: string
+          failure_count: number
+          last_checked_at: string | null
+          last_failure_at: string | null
+          last_failure_type: string | null
+          last_success_at: string | null
+          provider_id: string
+          source_id: string
+          status: string
+          success_count: number
+          updated_at: string
+        }
+        Insert: {
+          consecutive_failures?: number
+          cooldown_until?: string | null
+          created_at?: string
+          failure_count?: number
+          last_checked_at?: string | null
+          last_failure_at?: string | null
+          last_failure_type?: string | null
+          last_success_at?: string | null
+          provider_id: string
+          source_id: string
+          status?: string
+          success_count?: number
+          updated_at?: string
+        }
+        Update: {
+          consecutive_failures?: number
+          cooldown_until?: string | null
+          created_at?: string
+          failure_count?: number
+          last_checked_at?: string | null
+          last_failure_at?: string | null
+          last_failure_type?: string | null
+          last_success_at?: string | null
+          provider_id?: string
+          source_id?: string
+          status?: string
+          success_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "streaming_provider_health_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "streaming_provider_health_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_sources"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       streaming_providers: {
         Row: {
@@ -436,69 +523,6 @@ export type Database = {
           },
         ]
       }
-      streaming_provider_health: {
-        Row: {
-          consecutive_failures: number
-          cooldown_until: string | null
-          created_at: string
-          failure_count: number
-          last_checked_at: string | null
-          last_failure_at: string | null
-          last_failure_type: string | null
-          last_success_at: string | null
-          provider_id: string
-          source_id: string
-          status: string
-          success_count: number
-          updated_at: string
-        }
-        Insert: {
-          consecutive_failures?: number
-          cooldown_until?: string | null
-          created_at?: string
-          failure_count?: number
-          last_checked_at?: string | null
-          last_failure_at?: string | null
-          last_failure_type?: string | null
-          last_success_at?: string | null
-          provider_id: string
-          source_id: string
-          status?: string
-          success_count?: number
-          updated_at?: string
-        }
-        Update: {
-          consecutive_failures?: number
-          cooldown_until?: string | null
-          created_at?: string
-          failure_count?: number
-          last_checked_at?: string | null
-          last_failure_at?: string | null
-          last_failure_type?: string | null
-          last_success_at?: string | null
-          provider_id?: string
-          source_id?: string
-          status?: string
-          success_count?: number
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "streaming_provider_health_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "streaming_providers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "streaming_provider_health_source_id_fkey"
-            columns: ["source_id"]
-            isOneToOne: false
-            referencedRelation: "streaming_sources"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       watch_history: {
         Row: {
           completion_state: string
@@ -617,6 +641,15 @@ export type Database = {
     Functions: {
       is_admin: { Args: never; Returns: boolean }
       refresh_streaming_public_config: { Args: never; Returns: undefined }
+      remove_favorite: {
+        Args: {
+          p_content_id: string
+          p_content_type: string
+          p_deleted_at?: string
+          p_favorite_key: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never

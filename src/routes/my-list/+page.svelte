@@ -9,6 +9,7 @@
   import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
   import { getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords } from '$lib/client/progress/service';
+import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, type SyncStatus } from '$lib/client/progress/cloud';
   import { normalizeWatchlistStatus, type FavoriteRecord, type WatchlistStatus } from '$lib/client/progress/types';
@@ -63,13 +64,13 @@
       if (data.user) {
         const cloud = await syncAuthenticatedState();
         progressRecords = cloud.progress;
-        records = mergeFavoritesWithProgress(cloud.favorites, cloud.progress);
+        records = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions);
         syncStatus = cloud.status;
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
       } else {
-        const [favorites, progress] = await Promise.all([getLocalFavorites(), getLocalProgressRecords()]);
+        const [favorites, progress, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]);
         progressRecords = progress;
-        records = mergeFavoritesWithProgress(favorites, progress);
+        records = mergeFavoritesWithProgress(favorites, progress, deletions);
         syncStatus = 'pending';
         storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only';
       }

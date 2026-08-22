@@ -1,5 +1,6 @@
 import { getFavorite, getLocalProgressState, getProgress, listFavorites, listProgress, putFavorite, putProgress, removeFavorite, removeProgress } from './database';
 import { clampTime, completionFor, favoriteKey, normalizeWatchlistStatus, progressKey, type CloudProgressRecord, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord, type WatchlistStatus } from './types';
+import { listFavoriteDeletions, removeFavoriteDeletion, putFavoriteDeletion } from './database';
 import { continueWatchingRecords, mergeProgress } from '../../shared/progress-merge';
 
 export { mergeProgress } from '../../shared/progress-merge';
@@ -53,6 +54,7 @@ export async function deleteProgress(context: PlaybackContext) {
 
 export async function saveFavorite(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot, now = Date.now(), status: WatchlistStatus = 'planned'): Promise<FavoriteRecord> {
   const existing = await getFavorite(contentType, contentId);
+  await removeFavoriteDeletion(contentType, contentId);
   return putFavorite({ key: favoriteKey(contentType, contentId), contentType, contentId, snapshot, status: normalizeWatchlistStatus(status), createdAt: existing?.createdAt ?? now, updatedAt: now });
 }
 
@@ -63,7 +65,7 @@ export async function setFavoriteStatus(contentType: LocalContentType, contentId
 export async function toggleFavorite(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot) {
   const existing = await getFavorite(contentType, contentId);
   if (existing) {
-    await removeFavorite(contentType, contentId);
+    await removeFavoriteFromMyList(contentType, contentId);
     return { saved: false, status: undefined };
   }
   const record = await saveFavorite(contentType, contentId, snapshot);
@@ -76,12 +78,14 @@ export async function getFavoritesByStatus(status?: WatchlistStatus) {
 }
 
 export async function promoteProgressToWatching(progressRecords: WatchProgressRecord[]) {
-  const favorites = await listFavorites();
+  const [favorites, deletions] = await Promise.all([listFavorites(), listFavoriteDeletions()]);
+  const deletedKeys = new Set(deletions.map((record) => record.key));
   const byKey = new Map<string, FavoriteRecord>();
   for (const record of favorites) byKey.set(record.key, { ...record, status: normalizeWatchlistStatus(record.status) });
   const inProgress = progressRecords.filter((record) => record.completionState !== 'completed' && record.currentTime > 0);
   for (const progress of inProgress) {
     const key = favoriteKey(progress.contentType, progress.contentId);
+    if (deletedKeys.has(key)) continue;
     const existing = byKey.get(key);
     if (existing && normalizeWatchlistStatus(existing.status) === 'completed') continue;
     if (existing && normalizeWatchlistStatus(existing.status) === 'watching') continue;
@@ -104,14 +108,19 @@ export async function getFavoriteStatus(contentType: LocalContentType, contentId
   return record ? normalizeWatchlistStatus(record.status) : null;
 }
 
-export async function deleteFavorite(contentType: LocalContentType, contentId: string) {
-  return removeFavorite(contentType, contentId);
+export async function removeFavoriteFromMyList(contentType: LocalContentType, contentId: string, deletedAt = Date.now()) {
+  const key = favoriteKey(contentType, contentId);
+  await removeFavorite(contentType, contentId);
+  await putFavoriteDeletion({ key, contentType, contentId, deletedAt });
 }
 
+export async function deleteFavorite(contentType: LocalContentType, contentId: string) {
+  return removeFavoriteFromMyList(contentType, contentId);
+}
+
+/** @deprecated Use removeFavoriteFromMyList. Kept as a safe compatibility alias; playback is never deleted. */
 export async function deleteFavoriteAndProgress(contentType: LocalContentType, contentId: string) {
-  await removeFavorite(contentType, contentId);
-  const matchingProgress = (await listProgress()).filter((record) => record.contentType === contentType && record.contentId === contentId);
-  await Promise.all(matchingProgress.map((record) => removeProgress({ contentType: record.contentType, contentId: record.contentId, season: record.season, episode: record.episode })));
+  return removeFavoriteFromMyList(contentType, contentId);
 }
 
 export async function getLocalPersistenceState() {

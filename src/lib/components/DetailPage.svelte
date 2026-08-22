@@ -8,7 +8,7 @@
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
-  import { deleteFavoriteAndProgress, getFavoriteStatus, getLocalProgressRecords, setFavoriteStatus } from '$lib/client/progress/service';
+  import { getFavoriteStatus, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
   import type { WatchlistStatus } from '$lib/client/progress/types';
   import { latestResumeEpisode } from '$lib/client/progress/presenter';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -40,15 +40,13 @@
     let active = true;
     void (async () => {
       const status = await getFavoriteStatus(type, item.id);
+      const progress = await getLocalProgressRecords();
       if (!active) return;
-      watchlistStatus = status;
-      if (type !== 'movie' && status === 'watching') {
-        try {
-          const progress = await getLocalProgressRecords();
-          if (active) resumeEpisode = latestResumeEpisode(type, item.id, progress);
-        } catch {
-          // S01E01 remains the safe first-play default.
-        }
+      const hasActiveProgress = progress.some((record) => record.contentType === type && record.contentId === item.id && record.completionState !== 'completed' && record.currentTime > 0);
+      const effectiveStatus = status ?? (hasActiveProgress ? 'watching' : null);
+      watchlistStatus = effectiveStatus;
+      if (type !== 'movie' && effectiveStatus === 'watching') {
+        resumeEpisode = latestResumeEpisode(type, item.id, progress);
       }
     })();
     const autoplay = page.url.searchParams.get('autoplay') === '1';
@@ -75,16 +73,26 @@
     closeStatusSheet();
     try {
       if (key === 'remove') {
-        await deleteFavoriteAndProgress(type, item.id);
+        await removeFavoriteFromMyList(type, item.id);
         watchlistStatus = null;
-        if (page.data.user && !(await deleteCloudFavorite(type, item.id))) saveError = 'Local list updated; cloud removal will retry.';
+        if (page.data.user) {
+          const deleted = await deleteCloudFavorite(type, item.id);
+          if (!deleted) {
+            saveError = 'Removed from this device; cloud removal will retry automatically.';
+            void syncAuthenticatedState();
+          } else {
+            saveError = '';
+          }
+        } else {
+          saveError = '';
+        }
       } else if (key === 'watching' || key === 'planned' || key === 'completed') {
         const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
         const record = await setFavoriteStatus(type, item.id, snapshot, key);
         watchlistStatus = record.status ?? key;
         if (page.data.user) void syncAuthenticatedState();
       }
-      saveError = '';
+      if (key !== 'remove') saveError = '';
     } catch {
       saveError = 'This device could not update your local list.';
     }

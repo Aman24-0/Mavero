@@ -1,16 +1,18 @@
-import { favoriteKey, isFavoriteRecord, isPlaybackRecord, normalizeWatchlistStatus, progressKey, type FavoriteRecord, type LocalProgressState, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord } from './types';
+import { favoriteKey, isFavoriteDeletionRecord, isFavoriteRecord, isPlaybackRecord, normalizeWatchlistStatus, progressKey, type FavoriteDeletionRecord, type FavoriteRecord, type LocalProgressState, type PlaybackContext, type SaveProgressInput, type WatchProgressRecord } from './types';
 
 const DB_NAME = 'mavero-local';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const PROGRESS_STORE = 'watch_progress';
 const FAVORITES_STORE = 'favorites';
+const FAVORITE_DELETIONS_STORE = 'favorite_deletions';
 
-type StoreName = typeof PROGRESS_STORE | typeof FAVORITES_STORE;
+type StoreName = typeof PROGRESS_STORE | typeof FAVORITES_STORE | typeof FAVORITE_DELETIONS_STORE;
 
 let databasePromise: Promise<IDBDatabase | null> | undefined;
 let status: LocalProgressState = { status: 'indexeddb' };
 const memoryProgress = new Map<string, WatchProgressRecord>();
 const memoryFavorites = new Map<string, FavoriteRecord>();
+const memoryFavoriteDeletions = new Map<string, FavoriteDeletionRecord>();
 
 function canUseIndexedDb() {
   return typeof indexedDB !== 'undefined';
@@ -45,6 +47,8 @@ function openDatabase(): Promise<IDBDatabase | null> {
           if (!favorites.indexNames.contains('createdAt')) favorites.createIndex('createdAt', 'createdAt', { unique: false });
           if (!favorites.indexNames.contains('status')) favorites.createIndex('status', 'status', { unique: false });
         }
+        const favoriteDeletions = db.objectStoreNames.contains(FAVORITE_DELETIONS_STORE) ? request.transaction?.objectStore(FAVORITE_DELETIONS_STORE) : db.createObjectStore(FAVORITE_DELETIONS_STORE, { keyPath: 'key' });
+        if (favoriteDeletions && !favoriteDeletions.indexNames.contains('deletedAt')) favoriteDeletions.createIndex('deletedAt', 'deletedAt', { unique: false });
       };
       request.onsuccess = () => {
         const db = request.result;
@@ -153,11 +157,31 @@ export async function removeFavorite(contentType: FavoriteRecord['contentType'],
   await run(FAVORITES_STORE, 'readwrite', (store) => store.delete(key));
 }
 
+export async function listFavoriteDeletions() {
+  const result = await run<FavoriteDeletionRecord[]>(FAVORITE_DELETIONS_STORE, 'readonly', (store) => store.getAll());
+  if (result) return result.filter(isFavoriteDeletionRecord).sort((a, b) => b.deletedAt - a.deletedAt);
+  return [...memoryFavoriteDeletions.values()].sort((a, b) => b.deletedAt - a.deletedAt);
+}
+
+export async function putFavoriteDeletion(record: FavoriteDeletionRecord) {
+  memoryFavoriteDeletions.set(record.key, record);
+  await run(FAVORITE_DELETIONS_STORE, 'readwrite', (store) => store.put(record));
+  return record;
+}
+
+export async function removeFavoriteDeletion(contentType: FavoriteRecord['contentType'], contentId: string) {
+  const key = favoriteKey(contentType, contentId);
+  memoryFavoriteDeletions.delete(key);
+  await run(FAVORITE_DELETIONS_STORE, 'readwrite', (store) => store.delete(key));
+}
+
 export async function clearLocalData() {
   memoryProgress.clear();
   memoryFavorites.clear();
+  memoryFavoriteDeletions.clear();
   await run(PROGRESS_STORE, 'readwrite', (store) => store.clear());
   await run(FAVORITES_STORE, 'readwrite', (store) => store.clear());
+  await run(FAVORITE_DELETIONS_STORE, 'readwrite', (store) => store.clear());
 }
 
-export { DB_NAME, DB_VERSION, PROGRESS_STORE, FAVORITES_STORE };
+export { DB_NAME, DB_VERSION, PROGRESS_STORE, FAVORITES_STORE, FAVORITE_DELETIONS_STORE };

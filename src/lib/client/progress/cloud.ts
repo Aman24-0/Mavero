@@ -1,6 +1,6 @@
-import { listFavorites, listProgress, putFavorite, putProgress } from './database';
-import { mergeFavorites, mergeFavoritesWithProgress, mergeProgress } from '$lib/shared/progress-merge';
-import type { FavoriteRecord, WatchProgressRecord } from './types';
+import { listFavoriteDeletions, listFavorites, listProgress, putFavorite, putFavoriteDeletion, putProgress, removeFavorite, removeFavoriteDeletion } from './database';
+import { mergeFavoriteDeletions, mergeFavorites, mergeFavoritesWithProgress, mergeProgress } from '$lib/shared/progress-merge';
+import type { FavoriteDeletionRecord, FavoriteRecord, WatchProgressRecord } from './types';
 import type { FutureCloudProgressAdapter } from './service';
 
 export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'offline' | 'error';
@@ -8,6 +8,7 @@ export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'offline' | 'error';
 type CloudSyncResponse = {
   progress: WatchProgressRecord[];
   favorites: FavoriteRecord[];
+  favoriteDeletions: FavoriteDeletionRecord[];
 };
 
 let syncStatus: SyncStatus = 'pending';
@@ -17,6 +18,7 @@ type SyncResult = {
   authenticated: boolean;
   progress: WatchProgressRecord[];
   favorites: FavoriteRecord[];
+  favoriteDeletions: FavoriteDeletionRecord[];
   status: SyncStatus;
   error?: unknown;
 };
@@ -37,11 +39,11 @@ async function readCloud(fetcher: typeof fetch): Promise<CloudSyncResponse | nul
   return await response.json() as CloudSyncResponse;
 }
 
-async function writeCloud(fetcher: typeof fetch, progress: WatchProgressRecord[], favorites: FavoriteRecord[]) {
+async function writeCloud(fetcher: typeof fetch, progress: WatchProgressRecord[], favorites: FavoriteRecord[], favoriteDeletions: FavoriteDeletionRecord[]) {
   const response = await fetcher('/api/account/sync', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ progress, favorites }),
+    body: JSON.stringify({ progress, favorites, favoriteDeletions }),
   });
   if (response.status === 401) return false;
   if (!response.ok) throw new Error('cloud-write-failed');
@@ -58,27 +60,40 @@ export function syncAuthenticatedState(fetcher: typeof fetch = fetch): Promise<S
 async function runAuthenticatedState(fetcher: typeof fetch = fetch): Promise<SyncResult> {
   setSyncStatus('syncing');
   try {
-    const [localProgress, localFavorites, cloud] = await Promise.all([listProgress(), listFavorites(), readCloud(fetcher)]);
+    const [localProgress, localFavorites, localFavoriteDeletions, cloud] = await Promise.all([listProgress(), listFavorites(), listFavoriteDeletions(), readCloud(fetcher)]);
     if (!cloud) {
       setSyncStatus('pending');
-      return { authenticated: false, progress: localProgress, favorites: localFavorites, status: syncStatus };
+      return { authenticated: false, progress: localProgress, favorites: mergeFavorites(localFavorites, [], localFavoriteDeletions), favoriteDeletions: localFavoriteDeletions, status: syncStatus };
     }
 
+    const favoriteDeletions = mergeFavoriteDeletions(localFavoriteDeletions, cloud.favoriteDeletions ?? []);
     const progress = mergeProgress(localProgress, cloud.progress);
-    const favorites = mergeFavoritesWithProgress(mergeFavorites(localFavorites, cloud.favorites), progress);
-    const written = await writeCloud(fetcher, progress, favorites);
+    const favorites = mergeFavoritesWithProgress(mergeFavorites(localFavorites, cloud.favorites, favoriteDeletions), progress, favoriteDeletions);
+    const effectiveDeletions = favoriteDeletions.filter((deletion) => {
+      const favorite = favorites.find((record) => record.key === deletion.key);
+      return !favorite || favorite.updatedAt <= deletion.deletedAt;
+    });
+    const written = await writeCloud(fetcher, progress, favorites, effectiveDeletions);
     if (!written) {
       setSyncStatus('pending');
-      return { authenticated: false, progress: localProgress, favorites: localFavorites, status: syncStatus };
+      return { authenticated: false, progress: localProgress, favorites: localFavorites, favoriteDeletions: localFavoriteDeletions, status: syncStatus };
     }
 
-    await Promise.all([...progress.map(putProgress), ...favorites.map(putFavorite)]);
+    const mergedFavoriteKeys = new Set(favorites.map((record) => record.key));
+    await Promise.all([
+      ...progress.map(putProgress),
+      ...favorites.map(putFavorite),
+      ...effectiveDeletions.map(putFavoriteDeletion),
+      ...localFavoriteDeletions.filter((deletion) => !effectiveDeletions.some((record) => record.key === deletion.key)).map((deletion) => removeFavoriteDeletion(deletion.contentType, deletion.contentId)),
+      ...localFavorites.filter((record) => !mergedFavoriteKeys.has(record.key)).map((record) => removeFavorite(record.contentType, record.contentId)),
+    ]);
     setSyncStatus('synced');
-    return { authenticated: true, progress, favorites, status: syncStatus };
+    return { authenticated: true, progress, favorites, favoriteDeletions: effectiveDeletions, status: syncStatus };
   } catch (error) {
     const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
     setSyncStatus(offline ? 'offline' : 'error');
-    return { authenticated: true, progress: await listProgress(), favorites: await listFavorites(), status: syncStatus, error };
+    const [fallbackProgress, fallbackFavorites, fallbackDeletions] = await Promise.all([listProgress(), listFavorites(), listFavoriteDeletions()]);
+    return { authenticated: true, progress: fallbackProgress, favorites: mergeFavorites(fallbackFavorites, [], fallbackDeletions), favoriteDeletions: fallbackDeletions, status: syncStatus, error };
   }
 }
 
@@ -88,7 +103,7 @@ export const supabaseCloudProgressAdapter: FutureCloudProgressAdapter = {
     return cloud?.progress ?? [];
   },
   async upsert(records) {
-    await writeCloud(fetch, records, []);
+    await writeCloud(fetch, records, [], []);
   },
 };
 

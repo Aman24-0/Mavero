@@ -43,6 +43,13 @@ export type FavoriteRecord = {
   updatedAt: number;
 };
 
+export type FavoriteDeletionRecord = {
+  key: string;
+  contentType: LocalContentType;
+  contentId: string;
+  deletedAt: number;
+};
+
 export function normalizeWatchlistStatus(value: unknown): WatchlistStatus {
   return value === 'watching' || value === 'completed' || value === 'planned' ? value : 'planned';
 }
@@ -95,4 +102,10 @@ export function isFavoriteRecord(value: unknown): value is FavoriteRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Partial<FavoriteRecord>;
   return typeof record.key === 'string' && typeof record.contentId === 'string' && (record.contentType === 'movie' || record.contentType === 'series' || record.contentType === 'anime') && (record.status === undefined || record.status === 'watching' || record.status === 'planned' || record.status === 'completed') && typeof record.createdAt === 'number' && typeof record.updatedAt === 'number' && Boolean(record.snapshot && typeof record.snapshot === 'object');
+}
+
+export function isFavoriteDeletionRecord(value: unknown): value is FavoriteDeletionRecord {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<FavoriteDeletionRecord>;
+  return typeof record.key === 'string' && typeof record.contentId === 'string' && (record.contentType === 'movie' || record.contentType === 'series' || record.contentType === 'anime') && typeof record.deletedAt === 'number' && Number.isFinite(record.deletedAt);
 }

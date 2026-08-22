@@ -1,5 +1,5 @@
 import type { Json, Tables, TablesInsert } from './database.types';
-import { favoriteKey, normalizeWatchlistStatus, progressKey, type ContentSnapshot, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/client/progress/types';
+import { favoriteKey, normalizeWatchlistStatus, progressKey, type ContentSnapshot, type FavoriteDeletionRecord, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/client/progress/types';
 
 export type CloudHistoryEvent = {
   eventKey: string;
@@ -94,6 +94,25 @@ export function favoriteToRow(userId: string, record: FavoriteRecord): TablesIns
     status: normalizeWatchlistStatus(record.status),
     created_at: new Date(record.createdAt).toISOString(),
     updated_at: new Date(record.updatedAt).toISOString(),
+  };
+}
+
+export function favoriteDeletionFromRow(row: Tables<'favorite_deletions'>): FavoriteDeletionRecord {
+  return {
+    key: row.favorite_key,
+    contentType: contentType(row.content_type),
+    contentId: row.content_id,
+    deletedAt: Date.parse(row.deleted_at),
+  };
+}
+
+export function favoriteDeletionToRow(userId: string, record: FavoriteDeletionRecord): TablesInsert<'favorite_deletions'> {
+  return {
+    user_id: userId,
+    favorite_key: favoriteKey(record.contentType, record.contentId),
+    content_type: record.contentType,
+    content_id: record.contentId,
+    deleted_at: new Date(record.deletedAt).toISOString(),
   };
 }
 
