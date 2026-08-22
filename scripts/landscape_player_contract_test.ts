@@ -8,12 +8,15 @@ assert.match(shell, /class:landscape-mode=\{landscapeMode\}/);
 assert.match(shell, /let landscapeControlsExpanded = true/);
 assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/);
 assert.match(shell, /data-landscape-controls-toggle/);
+assert.match(shell, /PanelTopClose/);
+assert.match(shell, /PanelTopOpen/);
 assert.match(shell, /if \(!landscapeMode\) return/);
 assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/);
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{ display: flex; flex: 1 1 auto;/);
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap :global\(\.viewport\)/);
 assert.match(shell, /height: 100%; max-height: none; min-height: 0; aspect-ratio: auto/);
 assert.match(shell, /env\(safe-area-inset-top\)/);
+assert.match(shell, /header-actions[^}]*margin-right: 38px/);
 assert.match(shell, /100svh/);
 
 const landscapeStart = shell.indexOf('async function toggleLandscape()');

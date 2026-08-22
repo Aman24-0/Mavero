@@ -14,3 +14,15 @@ After the correction deployment, the live production route `https://mavero1.netl
 
 
 After the UI refinement, the local fixture route showed no collapse button in Portrait. Entering MAVERO Landscape displayed a dedicated top-right `Collapse MAVERO controls` button, kept the existing Back/Portrait/Details/Previous/Sources/Next row available, and left the player state and source unchanged. The collapse button is rendered only when `landscapeMode` is true.
+
+
+For the final two-fix pass, the local fixture route rendered no collapse/expand control in Portrait. After entering Landscape, the top-right control remained present with the distinct panel-style icon (separate from the Landscape/Portrait `Maximize2` icon), and the compact MAVERO row showed the Sandbox and panel toggle as separate, usable targets without visual overlap or clipping in the 896×504 verification viewport.
+
+
+The live production route was refreshed after the final icon/spacing build. Once the source resolved, the production PlayerShell showed the Sandbox On control alongside the existing compact control row, with no server error page. The sandbox browser viewport was ready for the final Landscape spacing check; this environment cannot visually reproduce a physical Android device's browser chrome.
+
+
+On the live production route with Sandbox enabled, entering Landscape showed the Sandbox control and the dedicated panel-toggle target as separate controls at the right edge. The provider video continued playing while the control interaction was attempted; no iframe remount or playback reset was observed.
+
+
+Live DOM verification after tapping the panel control reported `aria-expanded="false"`, `aria-label="Expand MAVERO controls"`, and `player-header controls-collapsed`. The top-right 32px toggle remained visible while the provider video continued playing across the full stage. A subsequent live screenshot showed only the `Expand MAVERO controls` target and the provider's own `Pro 1` iframe control, confirming the MAVERO row collapsed without stopping playback.

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, Minimize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, PanelTopClose, PanelTopOpen, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
@@ -363,7 +363,7 @@
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); }} />
 
   <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} onclick={handleMaveroControlInteraction} onpointerdown={handleMaveroControlInteraction} role="application" aria-label="MAVERO video player">
-  {#if landscapeMode}<button class="landscape-controls-toggle" data-landscape-controls-toggle type="button" aria-label={landscapeControlsExpanded ? 'Collapse MAVERO controls' : 'Expand MAVERO controls'} aria-expanded={landscapeControlsExpanded} onclick={toggleLandscapeControls}>{#if landscapeControlsExpanded}<Minimize2 size={15} />{:else}<Maximize2 size={15} />{/if}</button>{/if}
+  {#if landscapeMode}<button class="landscape-controls-toggle" data-landscape-controls-toggle type="button" aria-label={landscapeControlsExpanded ? 'Collapse MAVERO controls' : 'Expand MAVERO controls'} aria-expanded={landscapeControlsExpanded} onclick={toggleLandscapeControls}>{#if landscapeControlsExpanded}<PanelTopClose size={15} />{:else}<PanelTopOpen size={15} />{/if}</button>{/if}
   <header class="player-header" class:controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
     <div class="header-title-row">
       <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
@@ -430,7 +430,7 @@
   .player-shell.landscape-mode .header-title-row { display: contents; }
   .player-shell.landscape-mode .header-title { display: grid; flex: 1 1 auto; justify-items: start; min-width: 0; text-align: left; }
   .player-shell.landscape-mode .header-title strong { max-width: 28vw; }
-  .player-shell.landscape-mode .header-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; }
+  .player-shell.landscape-mode .header-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; margin-right: 38px; }
   .player-shell.landscape-mode .header-button { min-width: 32px; min-height: 32px; padding: 0 7px; border-radius: 8px; }
   .player-shell.landscape-mode .header-button span { display: none; }
   .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0 max(0px, env(safe-area-inset-right)) max(0px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left)); }
