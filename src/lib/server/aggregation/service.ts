@@ -82,7 +82,7 @@ function metadataForSelected(selected: UnifiedCandidate, candidates: UnifiedCand
 }
 
 function emptyDiagnostics(): UnifiedAggregationDiagnostics {
-  return { candidateCount: 0, providerCandidates: 0, universalCandidates: 0, providerAttempts: 0, resolverAttempts: [], durationMs: 0, earlyStart: false, backgroundPending: 0, fallbackEvents: [], failures: [] };
+  return { candidateCount: 0, directCandidates: 0, embedCandidates: 0, directStreamAvailable: false, resolutionStatus: 'none', providerCandidates: 0, universalCandidates: 0, providerAttempts: 0, resolverAttempts: [], durationMs: 0, earlyStart: false, backgroundPending: 0, fallbackEvents: [], failures: [] };
 }
 
 async function runBounded<T>(tasks: Array<() => Promise<T>>, workerCount: number, signal: AbortSignal): Promise<T[]> {
@@ -199,20 +199,33 @@ export async function aggregateUnifiedStreams(client: ResolverClient, request: R
   }
   const deduplicated = [...candidateByUrl.values()].sort((left, right) => right.score - left.score || left.sourceOrder - right.sourceOrder || left.id.localeCompare(right.id));
   diagnostics.candidateCount = deduplicated.length;
+  diagnostics.directCandidates = deduplicated.filter((candidate) => candidate.stream.type === 'direct').length;
+  diagnostics.embedCandidates = deduplicated.filter((candidate) => candidate.stream.type === 'embed').length;
+  diagnostics.directStreamAvailable = diagnostics.directCandidates > 0;
   diagnostics.universalCandidates = deduplicated.filter((candidate) => candidate.kind === 'universal-discovery').length;
   diagnostics.resolverAttempts = [...new Set(deduplicated.map((candidate) => candidate.providerId))];
 
-  const selectedCandidate = deduplicated.find((candidate) => candidate.stream.type === 'direct') ?? deduplicated[0];
+  const directCandidates = deduplicated.filter((candidate) => candidate.stream.type === 'direct');
+  const selectedCandidate = directCandidates[0];
   if (!selectedCandidate) {
+    diagnostics.resolutionStatus = signal.aborted ? 'cancelled' : diagnostics.embedCandidates > 0 ? 'embed-only' : 'none';
+    diagnostics.directResolutionFailureReason = signal.aborted
+      ? 'Aggregation was cancelled before a direct media stream could be selected.'
+      : diagnostics.embedCandidates > 0
+        ? 'Candidates were validated as HTTPS embed pages, but no direct media manifest or file was discovered.'
+        : 'No candidate source returned a validated direct media stream.';
     diagnostics.durationMs = Date.now() - startedAt;
-    return { selectedStream: null, alternatives: [], qualities: [], audioTracks: [], subtitles: [], diagnostics, error: { code: 'RESOLUTION_UNAVAILABLE', message: 'No playable stream could be found.', status: 503 } };
+    return { selectedStream: null, alternatives: [], qualities: [], audioTracks: [], subtitles: [], diagnostics, error: { code: 'RESOLUTION_UNAVAILABLE', message: 'No direct playable stream could be found.', status: 503 } };
   }
+  diagnostics.resolutionStatus = 'direct';
   const selectedStream = candidatePlayerSource(selectedCandidate, request.mediaType, 0);
   if (!selectedStream) {
+    diagnostics.resolutionStatus = 'none';
+    diagnostics.directResolutionFailureReason = 'The validated direct candidate could not be prepared for the Native Player.';
     diagnostics.durationMs = Date.now() - startedAt;
     return { selectedStream: null, alternatives: [], qualities: [], audioTracks: [], subtitles: [], diagnostics, error: { code: 'RESOLUTION_UNAVAILABLE', message: 'The selected stream could not be prepared.', status: 503 } };
   }
-  const alternatives = deduplicated.filter((candidate) => candidate.id !== selectedCandidate.id).map((candidate, index) => candidatePlayerSource(candidate, request.mediaType, index + 1)).filter((source): source is PlayerSource => Boolean(source));
+  const alternatives = directCandidates.filter((candidate) => candidate.id !== selectedCandidate.id).map((candidate, index) => candidatePlayerSource(candidate, request.mediaType, index + 1)).filter((source): source is PlayerSource => Boolean(source));
   const metadata = metadataForSelected(selectedCandidate, deduplicated);
   selectedStream.qualities = metadata.qualities;
   selectedStream.audioTracks = metadata.audioTracks;

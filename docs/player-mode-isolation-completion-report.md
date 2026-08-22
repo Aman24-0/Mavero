@@ -1,49 +1,65 @@
-# MAVERO Isolated Source Player and Native Player
+# MAVERO Isolated Source Player and Direct-Stream Native Player
 
-## Scope
+## Scope and correction
 
-This milestone introduces an explicit two-option Watch now flow without replacing the existing playback system. A watch route without a `player` query parameter presents a focused choice screen. **Source Player** is the stable compatibility path. **Native Player** is the experimental path for independently testing Unified Stream Aggregation and MAVERO's native direct playback.
+This correction preserves the explicit two-option Watch now architecture while fixing the Native Player handoff. **Source Player** remains the stable compatibility path. **Native Player** remains experimental and now accepts only a normalized, validated direct media stream. A provider or discovery page URL is not treated as Native playback merely because it can be loaded in an iframe.
 
-The selected mode is URL-addressable through `player=source` or `player=native`, while the current `from`, season, and episode query state is preserved. For a series route without an episode query, the Watch route now uses S01E01 as the explicit initial target for both modes. Existing episode navigation continues to update the current season and episode in place.
+The selected mode is URL-addressable through `player=source` or `player=native`, while `from`, season, and episode state are preserved. For a series route without an episode query, both modes use S01E01 as the explicit initial target. Existing episode navigation remains unchanged.
 
-| Mode | Resolver policy | Player behavior | Source controls |
+| Mode | Resolver policy | Player handoff | Source controls |
 | --- | --- | --- | --- |
-| Source Player | Existing resolver request with `aggregate: false`; normal existing fallback flag preserved. | Existing HTML5 direct/embed path and existing MAVERO PlayerShell. | Existing source drawer, Previous/Next, provider switching, sandbox, Landscape, and fullscreen remain available. |
-| Native Player | Unified aggregation request with `aggregate: true`, 7F eligibility, 7G ranking, public discovery, and bounded resolution. | Native direct HLS/DASH/MP4/WebM path through the existing PlayerShell. | Native mode intentionally hides the source drawer and provider navigation so it remains independently testable. |
+| Source Player | Legacy resolver request with `aggregate: false`; existing fallback semantics preserved. | Existing HTML5 direct/embed path and existing MAVERO PlayerShell. | Existing source drawer, Previous/Next, provider switching, sandbox, Landscape, and fullscreen. |
+| Native Player | Unified aggregation with public discovery, 7F eligibility, 7G ranking, and bounded resolution. | Direct HLS, DASH, MP4, WebM, or another validated browser-compatible media stream only. | Native mode hides provider navigation and source drawer so provider pages are not disguised as Native playback. |
 
 ## Exact separation
 
-The Watch route now waits for an explicit mode before resolving playback. The stable route calls the legacy endpoint shape and does not set `aggregate: true`. Manual source changes continue to call the legacy path with fallback disabled. Only the Native Player initial path sets the aggregation policy. The shared `player-mode.ts` contract centralizes parsing, URL synchronization, and mode-to-resolver policy.
+The Watch route waits for an explicit player choice before resolving playback. Source Player calls the established endpoint behavior and never sets `aggregate: true`. Explicit source changes continue to call the legacy path with fallback disabled. Only Native Player's initial resolution uses the aggregation policy.
 
-The existing `PlayerShell` is shared as the visual playback shell, but `PlayerViewport` receives `nativePlayback={mode === 'native'}`. This means Source Player direct media uses the original browser video `src` behavior and Source Player embeds remain unchanged. HLS.js and dash.js dynamic loaders are activated only for Native Player. No provider was migrated, removed, or rewritten.
+The shared `player-mode.ts` contract centralizes mode parsing, URL synchronization, and resolver policy. `PlayerShell` is still the shared MAVERO-controlled shell, but `PlayerViewport` activates HLS.js and dash.js only when `nativePlayback={mode === 'native'}`. Source Player direct media follows the original HTML5 `src` path, and Source Player embeds remain inside the existing sandboxed iframe boundary.
 
-Native failure does not automatically open Source Player. If Native initialization fails, its clean error state offers an explicit **Source Player** button. Only selecting that button changes the mode URL and enters the stable path. Native initialization may still try its own validated aggregate alternatives; it does not cross into the stable resolver implicitly and does not interrupt an already-started stream.
+## Correct Native aggregation behavior
 
-## Native observability
+The aggregation service still queries eligible configured providers and supported discovery pages in bounded parallelism. It validates and deduplicates candidate URLs, carries real quality/audio/subtitle metadata, and uses the existing 7F health and 7G ranking services. It then filters to `directCandidates` before selecting a stream. The selected Native `PlayerSource` can therefore be handed to MAVERO's own media element.
 
-The aggregate endpoint continues returning diagnostics to the Native Player client contract. It now also writes safe server-side operational diagnostics for Native decisions: candidate counts, provider attempts, selected candidate/source identifiers, direct versus embed type, protocol, quality/audio/subtitle counts, early-start state, and duration. Playback URLs, credentials, tokens, and private data are not logged.
+Embed/page candidates are retained for diagnostics only. If aggregation finds only provider pages or iframe URLs, the decision returns no Native stream with `resolutionStatus: 'embed-only'` and the reason that no direct media manifest or file was discovered. The API returns one neutral user-facing error. It does not silently load the provider page and does not report Native success.
 
-## UI changes
+| Native result | `selectedStream` | Diagnostics |
+| --- | --- | --- |
+| Direct HLS/DASH/MP4/WebM validated | Direct `PlayerSource` | `resolutionStatus: 'direct'`, protocol and metadata counts recorded. |
+| Only embed/page candidates | `null` | `resolutionStatus: 'embed-only'`, direct candidate count `0`, explicit failure reason. |
+| No candidates | `null` | `resolutionStatus: 'none'`, no validated direct stream returned. |
+| Cancelled | `null` | `resolutionStatus: 'cancelled'`. |
 
-The new choice screen is implemented in `src/lib/components/player/PlayerModeChoice.svelte`. It presents stable and experimental cards, current movie/episode context, an explicit Back action, and a clear statement that Native failures never silently switch modes. The existing PlayerShell only adds a compact experimental badge in Native mode and a Native error action for explicit Source Player return. Existing portrait and Landscape behavior is not redesigned.
+Native initialization may try retained validated direct alternatives, but it never crosses into Source Player automatically and never interrupts playback after it has started. If Native fails, the user receives an explicit **Source Player** action. Selecting it changes the mode URL and invokes the stable resolver path.
+
+## Native player capabilities
+
+Plain MP4/WebM remains on the existing video element. Native HLS uses native Safari playback when supported and otherwise dynamically imports HLS.js in the browser. Native DASH dynamically imports dash.js. Loader instances are destroyed or reset on source change and component teardown, stale asynchronous imports are ignored, and media errors use the existing PlayerShell error event. Quality, audio, and subtitle controls use only real metadata or runtime manifest tracks. A single MP4/WebM stream does not receive synthetic quality variants.
+
+Provider-specific controls, download buttons, provider fullscreen actions, and cross-origin DOM access are not part of Native Player. HTTPS embeds remain a legitimate Source Player fallback only; they are not claimed as Native direct playback.
+
+## Observability
+
+The aggregate endpoint emits safe server-side diagnostics for Native decisions: candidate counts, direct versus embed counts, provider attempts, selected candidate/source identifiers, selected stream type, protocol, resolution status, direct-resolution failure reason, quality/audio/subtitle counts, early-start state, and duration. URLs, credentials, tokens, and private data are not logged. The structured decision remains available to the Native route for testing and internal inspection.
 
 ## Testing
 
-The final local verification pass completed with zero exit codes:
+The deterministic aggregation suite now verifies that direct HLS/DASH/MP4 candidates are mapped to Native `PlayerSource` objects, embed-only candidates produce no selected Native stream, duplicate candidates are removed, 7F cooldown candidates are excluded, 7G ranking is respected, failures fall through to other providers, real metadata propagates, cancellation is handled, bounded attempt limits hold, and the legacy manual path remains intact.
+
+The mode-isolation suite verifies the explicit choice screen, URL state, series query preservation, Source Player legacy policy, Native aggregation policy, Native-only loader gating, direct-only Native service filtering, and explicit rather than silent crossover.
 
 | Check | Result |
 | --- | --- |
 | `pnpm check` | Passed with 0 errors and 0 warnings. |
-| `pnpm test` | Passed all prior Phase 7E, 7F, 7G, Landscape, Universal Discovery, Unified Aggregation, and Native Player tests, plus the new player-mode isolation test. |
-| `pnpm build` | Passed using the Netlify adapter. |
-| Player-mode isolation test | Passed URL parsing, mode policy, query preservation, choice screen contracts, Source Player legacy policy, Native aggregation policy, Native-only loader gating, and crossover boundary. |
-| Local browser | Choice screen rendered before resolution; `player=source` entered the stable shell; `player=native` entered the experimental shell and showed clean aggregate failure with an explicit Source Player action. |
-| Series browser attempt | Existing local content loader returned its normal 404 for tested real-data IDs, so no fabricated series playback result is claimed. Deterministic coverage verifies S01E01 default and TV query preservation. |
+| `pnpm test` | Passed all existing Phase 7E, 7F, 7G, Landscape, Universal Discovery, Unified Aggregation, Native Player, and player-mode isolation tests. |
+| `pnpm build` | Passed with the Netlify adapter. |
+| Local browser | Choice screen rendered before resolution; `player=source` entered the stable shell; `player=native` showed the experimental badge and clean direct-stream-unavailable state; explicit Source Player crossover worked. |
+| Series browser | Local content loader returned its existing 404 for the tested real-data IDs; deterministic coverage verifies S01E01 default and TV query preservation without fabricating playback success. |
 
-## Non-goals
+## Safety and non-goals
 
-This change does not make Native Player the default replacement, does not migrate the old playback system, does not alter provider registry behavior, does not start Phase 7H, does not add scrapers/providers, and does not introduce any ad, redirect, DRM, CAPTCHA, anti-bot, geo, paywall, credential, or protected-stream bypass.
+This correction does not migrate or rewrite existing providers, remove the source drawer from Source Player, alter 7F or 7G, make Native Player the default replacement, start Phase 7H, add unrelated providers or scrapers, proxy arbitrary resources, inspect third-party iframe internals, or bypass ads, redirects, DRM, CAPTCHA, anti-bot, geo, paywall, authentication, or access controls.
 
 ## Release status
 
-The implementation is complete locally and is ready for the required single final commit, single push to `origin/main`, and single Netlify production deployment. The release must stop after deployment verification.
+The direct-stream-only correction is complete locally and is ready for the requested single final commit, single push to `origin/main`, and single Netlify deployment. The release must stop after deployment verification.

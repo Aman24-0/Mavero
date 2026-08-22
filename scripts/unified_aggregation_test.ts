@@ -89,6 +89,8 @@ async function run() {
   assert.equal(fallbackDecision.selectedStream?.sourceId, fallback.source.id);
   assert.equal(fallbackDecision.diagnostics.failures.some((failure) => failure.sourceId === failed.source.id), true);
   assert.equal(fallbackDecision.selectedStream?.metadata?.protocol, 'hls');
+  assert.equal(fallbackDecision.diagnostics.resolutionStatus, 'direct');
+  assert.equal(fallbackDecision.diagnostics.directStreamAvailable, true);
 
   const duplicateA = config('provider-duplicate-a', 'source-duplicate-a', 'duplicate-a', { integration_type: 'embed', capabilities: { movie: true, allowed_embed_origins: ['https://embed.example.test'] } });
   const duplicateB = config('provider-duplicate-b', 'source-duplicate-b', 'duplicate-b', { integration_type: 'embed', capabilities: { movie: true, allowed_embed_origins: ['https://embed.example.test'] } });
@@ -96,9 +98,15 @@ async function run() {
     'duplicate-a': createMockAdapter('embed', embed('https://embed.example.test/shared')),
     'duplicate-b': createMockAdapter('embed', embed('https://embed.example.test/shared')),
   }), [], new AbortController().signal);
-  assert.equal(duplicateDecision.selectedStream?.url, 'https://embed.example.test/shared');
+  assert.equal(duplicateDecision.selectedStream, null);
+  assert.equal(duplicateDecision.error?.code, 'RESOLUTION_UNAVAILABLE');
   assert.equal(duplicateDecision.alternatives.length, 0);
   assert.equal(duplicateDecision.diagnostics.candidateCount, 1);
+  assert.equal(duplicateDecision.diagnostics.directCandidates, 0);
+  assert.equal(duplicateDecision.diagnostics.embedCandidates, 1);
+  assert.equal(duplicateDecision.diagnostics.directStreamAvailable, false);
+  assert.equal(duplicateDecision.diagnostics.resolutionStatus, 'embed-only');
+  assert.match(duplicateDecision.diagnostics.directResolutionFailureReason ?? '', /embed pages/);
 
   const metadataConfig = config('provider-metadata', 'source-metadata', 'metadata');
   const metadataDecision = await aggregateUnifiedStreams({} as never, request, runtime([metadataConfig], {
@@ -156,6 +164,7 @@ async function run() {
   const cancelledDecision = await aggregateUnifiedStreams({} as never, request, runtime([cancelledConfig], { cancelled: createMockAdapter('direct', direct('https://cdn.example.test/cancelled.mp4')) }), [], cancelled.signal);
   assert.equal(cancelledDecision.selectedStream, null);
   assert.equal(cancelledDecision.error?.code, 'RESOLUTION_UNAVAILABLE');
+  assert.equal(cancelledDecision.diagnostics.resolutionStatus, 'cancelled');
 
   const boundedCalls = { count: 0 };
   const boundedConfigs = Array.from({ length: 12 }, (_, index) => config(`provider-bounded-${index}`, `source-bounded-${index}`, `bounded-${index}`));

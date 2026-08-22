@@ -30,6 +30,11 @@ export type AggregationFailure = {
 
 export type UnifiedAggregationDiagnostics = {
   candidateCount: number;
+  directCandidates: number;
+  embedCandidates: number;
+  directStreamAvailable: boolean;
+  resolutionStatus: 'direct' | 'embed-only' | 'none' | 'cancelled';
+  directResolutionFailureReason?: string;
   providerCandidates: number;
   universalCandidates: number;
   providerAttempts: number;

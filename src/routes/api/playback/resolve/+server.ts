@@ -25,6 +25,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
         selectedSourceId: diagnostics.selectedSourceId,
         selectedStreamType: diagnostics.selectedStreamType,
         selectedProtocol: diagnostics.selectedProtocol,
+        resolutionStatus: diagnostics.resolutionStatus,
+        directResolutionFailureReason: diagnostics.directResolutionFailureReason,
         qualityCount: decision.qualities.length,
         audioTrackCount: decision.audioTracks.length,
         subtitleCount: decision.subtitles.length,

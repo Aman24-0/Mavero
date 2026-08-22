@@ -5,6 +5,7 @@ import { parsePlayerMode, resolutionPolicyForPlayerMode, withPlayerMode } from '
 const watchRoute = await readFile(new URL('../src/routes/watch/[type]/[id]/+page.svelte', import.meta.url), 'utf8');
 const playerShell = await readFile(new URL('../src/lib/components/player/PlayerShell.svelte', import.meta.url), 'utf8');
 const playerViewport = await readFile(new URL('../src/lib/components/player/PlayerViewport.svelte', import.meta.url), 'utf8');
+const aggregationService = await readFile(new URL('../src/lib/server/aggregation/service.ts', import.meta.url), 'utf8');
 const choice = await readFile(new URL('../src/lib/components/player/PlayerModeChoice.svelte', import.meta.url), 'utf8');
 
 assert.equal(parsePlayerMode('source'), 'source');
@@ -47,5 +48,8 @@ assert.match(playerViewport, /export let nativePlayback = false/);
 assert.match(playerViewport, /if \(!nativePlayback\)/);
 assert.match(playerViewport, /import\('hls\.js'\)/);
 assert.match(playerViewport, /import\('dashjs'\)/);
+assert.match(aggregationService, /const directCandidates = deduplicated\.filter/);
+assert.match(aggregationService, /const selectedCandidate = directCandidates\[0\]/);
+assert.doesNotMatch(aggregationService, /const selectedCandidate = deduplicated\.find\(\(candidate\) => candidate\.stream\.type === 'direct'\) \?\? deduplicated\[0\]/);
 
 console.log('Player mode isolation tests passed: explicit choice, URL state, Source Player legacy policy, Native Player aggregation policy, TV query preservation, failure crossover boundary, and native-loader gating.');
