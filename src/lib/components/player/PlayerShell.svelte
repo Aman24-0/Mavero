@@ -34,6 +34,7 @@
   let volume = 1;
   let playbackRate = 1;
   let fullscreen = false;
+  let landscapeMode = false;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
   let state: PlayerPlaybackState = source ? 'preparing' : 'source-unavailable';
@@ -80,7 +81,9 @@
 
   onMount(() => {
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
-    const handleFullscreen = () => { fullscreen = document.fullscreenElement === playerRoot; };
+    const handleFullscreen = () => {
+      fullscreen = document.fullscreenElement === playerRoot;
+    };
     const handlePictureInPicture = () => { pictureInPicture = document.pictureInPictureElement === videoElement; };
     const handleKeydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -216,16 +219,38 @@
     playing = false;
   }
 
+  type OrientationController = ScreenOrientation & { lock?: (value: 'landscape' | 'portrait' | 'any' | 'natural' | 'landscape-primary' | 'landscape-secondary' | 'portrait-primary' | 'portrait-secondary') => Promise<void>; unlock?: () => void };
+
+  function orientationController() {
+    return screen.orientation as OrientationController;
+  }
+
+  async function toggleLandscape() {
+    const entering = !landscapeMode;
+    landscapeMode = entering;
+    revealControls();
+    try {
+      const orientation = orientationController();
+      if (entering) {
+        // MAVERO's layout mode never invokes or manipulates the provider's fullscreen API.
+        try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; compact CSS mode remains active */ }
+      } else {
+        try { orientation?.unlock?.(); } catch { /* unsupported */ }
+      }
+    } catch {
+      // CSS landscape mode remains usable even when orientation APIs are unavailable.
+      if (!entering) landscapeMode = false;
+    }
+  }
+
   async function toggleFullscreen() {
     try {
       if (!document.fullscreenElement) {
         await playerRoot?.requestFullscreen?.();
-        const orientation = screen.orientation as ScreenOrientation & { lock?: (value: 'landscape' | 'portrait' | 'any' | 'natural' | 'landscape-primary' | 'landscape-secondary' | 'portrait-primary' | 'portrait-secondary') => Promise<void>; unlock?: () => void };
-        try { await orientation.lock?.('landscape'); } catch { /* device/browser declined */ }
-      } else {
+        try { await orientationController()?.lock?.('landscape'); } catch { /* device/browser declined */ }
+      } else if (document.fullscreenElement === playerRoot) {
         await document.exitFullscreen?.();
-        const orientation = screen.orientation as ScreenOrientation & { lock?: (value: 'landscape' | 'portrait' | 'any' | 'natural' | 'landscape-primary' | 'landscape-secondary' | 'portrait-primary' | 'portrait-secondary') => Promise<void>; unlock?: () => void };
-        try { orientation.unlock?.(); } catch { /* unsupported */ }
+        try { orientationController()?.unlock?.(); } catch { /* unsupported */ }
       }
     } catch {
       errorMessage = 'Fullscreen is not available in this browser.';
@@ -289,12 +314,12 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); }} />
 
-  <div bind:this={playerRoot} class="player-shell" class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
+  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
   <header class="player-header">
     <div class="header-title-row">
       <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
       <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
-      <button class="header-button compact orientation-button" type="button" aria-label="Toggle landscape player" onclick={() => void toggleFullscreen()}><Maximize2 size={17} /><span>Landscape</span></button>
+      <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
     </div>
     <div class="header-actions">
       <button class="header-button compact" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={17} /><span>Details</span></button>
@@ -349,7 +374,21 @@
 </div>
 
 <style>
-  .player-shell { --player-bg: #050506; position: relative; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell { --player-bg: #050506; position: relative; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; }
+  .player-shell.landscape-mode .player-header { position: relative; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: rgba(4,4,6,.94); }
+  .player-shell.landscape-mode .header-title-row { display: contents; }
+  .player-shell.landscape-mode .header-title { display: grid; flex: 1 1 auto; justify-items: start; min-width: 0; text-align: left; }
+  .player-shell.landscape-mode .header-title strong { max-width: 28vw; }
+  .player-shell.landscape-mode .header-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; }
+  .player-shell.landscape-mode .header-button { min-width: 32px; min-height: 32px; padding: 0 7px; border-radius: 8px; }
+  .player-shell.landscape-mode .header-button span { display: none; }
+  .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0 max(0px, env(safe-area-inset-right)) max(0px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left)); }
+  .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
+  .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; }
+  .player-shell.landscape-mode .controls-layer { right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); left: max(8px, env(safe-area-inset-left)); }
+  .player-shell.landscape-mode .episode-stepper { bottom: 70px; }
+  .player-shell.landscape-mode .drawer { top: calc(54px + env(safe-area-inset-top)); max-height: min(78dvh, 620px); }
   .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: grid; gap: 10px; padding: calc(12px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 14px; background: linear-gradient(180deg, rgba(4,4,6,.94), rgba(4,4,6,.42) 76%, transparent); }
   .header-title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; min-height: 40px; }
   .header-title-row .header-nav { justify-self: start; }
