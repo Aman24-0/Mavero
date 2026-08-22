@@ -100,6 +100,13 @@ export async function isRuntimeSourceEligible(client: HealthClient, providerId: 
   }
 }
 
+export async function loadSourceHealthMap(client: HealthClient, sourceIds: string[]): Promise<Map<string, RuntimeHealthRow>> {
+  if (!sourceIds.length) return new Map();
+  const { data, error } = await client.from('streaming_provider_health').select('*').in('source_id', sourceIds).limit(2000);
+  if (error) throw error;
+  return new Map((data ?? []).map((row) => [row.source_id, row]));
+}
+
 export async function listProviderHealth(client: HealthClient, providerIds?: string[]): Promise<RuntimeHealthRow[]> {
   let query = client.from('streaming_provider_health').select('*').order('updated_at', { ascending: false }).limit(2000);
   if (providerIds?.length) query = query.in('provider_id', providerIds);

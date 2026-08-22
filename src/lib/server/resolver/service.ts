@@ -8,7 +8,8 @@ import { resolveSourceFromConfig } from './core';
 import { ResolverError } from './errors';
 import { parseResolverRequest } from './identifiers';
 import { resolveWithBoundedFallback, type FallbackCandidate } from './fallback';
-import { isRuntimeSourceEligible, recordRuntimeFailure, recordRuntimeSuccess } from '$lib/server/streaming/health-service';
+import { rankProviderSourceList } from './ranking';
+import { loadSourceHealthMap, recordRuntimeFailure, recordRuntimeSuccess } from '$lib/server/streaming/health-service';
 import type { ResolverDependencies, ResolverRequest, TrustedResolutionConfig } from './types';
 
 export type ResolverClient = SupabaseClient<Database>;
@@ -84,17 +85,20 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
   const content = await (dependencies.loadContent ?? loadContent)(request);
   if (request.allowFallback === false) return resolveSourceFromConfig(request, config, content, dependencies);
 
-  const candidates = sourceList?.length
-    ? sourceList.map((candidate) => ({ config: candidate }))
+  const orderedConfigs = sourceList?.length
+    ? sourceList
     : dependencies.loadConfig
-      ? [{ config }]
-      : await loadTrustedFallbackCandidates(config);
+      ? [config]
+      : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
   const trustedClient = serviceClient();
+  const healthMap = await loadSourceHealthMap(trustedClient, orderedConfigs.map((candidate) => candidate.source.id));
+  const ranking = rankProviderSourceList(request, content, orderedConfigs, healthMap);
+  const candidates: FallbackCandidate[] = ranking.eligible.map((ranked) => ({ config: ranked.config, eligible: true }));
   const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
     allowFallback: true,
     maxAttempts: candidates.length,
     avoidDuplicateProviders: true,
-    isEligible: async (candidate) => isRuntimeSourceEligible(trustedClient, candidate.config.provider.id, candidate.config.source.id),
+    isEligible: async (candidate) => candidate.eligible !== false,
     onSuccess: async (candidate) => recordRuntimeSuccess(trustedClient, candidate.config.provider.id, candidate.config.source.id),
     onFailure: async (candidate, error) => recordRuntimeFailure(trustedClient, candidate.config.provider.id, candidate.config.source.id, error),
   });
