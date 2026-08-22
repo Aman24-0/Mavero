@@ -83,6 +83,7 @@
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
     const handleFullscreen = () => {
       fullscreen = document.fullscreenElement === playerRoot;
+      if (!fullscreen && landscapeMode) landscapeMode = false;
     };
     const handlePictureInPicture = () => { pictureInPicture = document.pictureInPictureElement === videoElement; };
     const handleKeydown = (event: KeyboardEvent) => {
@@ -227,19 +228,22 @@
 
   async function toggleLandscape() {
     const entering = !landscapeMode;
-    landscapeMode = entering;
     revealControls();
     try {
       const orientation = orientationController();
       if (entering) {
-        // MAVERO's layout mode never invokes or manipulates the provider's fullscreen API.
-        try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; compact CSS mode remains active */ }
+        // Fullscreen belongs to MAVERO's shell. The provider iframe is never invoked or manipulated.
+        await playerRoot?.requestFullscreen?.();
+        try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
+        landscapeMode = true;
       } else {
         try { orientation?.unlock?.(); } catch { /* unsupported */ }
+        landscapeMode = false;
+        if (document.fullscreenElement === playerRoot) await document.exitFullscreen?.();
       }
     } catch {
-      // CSS landscape mode remains usable even when orientation APIs are unavailable.
-      if (!entering) landscapeMode = false;
+      landscapeMode = false;
+      errorMessage = 'Landscape mode is not available in this browser.';
     }
   }
 

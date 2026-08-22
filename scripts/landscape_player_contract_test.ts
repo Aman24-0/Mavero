@@ -16,14 +16,15 @@ const landscapeStart = shell.indexOf('async function toggleLandscape()');
 const landscapeEnd = shell.indexOf('async function toggleFullscreen()', landscapeStart);
 assert(landscapeStart >= 0 && landscapeEnd > landscapeStart);
 const landscapeBody = shell.slice(landscapeStart, landscapeEnd);
-assert.doesNotMatch(landscapeBody, /requestFullscreen|exitFullscreen/);
+assert.match(landscapeBody, /requestFullscreen/);
+assert.match(landscapeBody, /exitFullscreen/);
 assert.match(landscapeBody, /lock\?\.\('landscape'\)/);
 
 const fullscreenStart = shell.indexOf('async function toggleFullscreen()');
 const fullscreenEnd = shell.indexOf('async function togglePictureInPicture()', fullscreenStart);
 assert.match(shell.slice(fullscreenStart, fullscreenEnd), /requestFullscreen/);
 assert.match(shell.slice(fullscreenStart, fullscreenEnd), /exitFullscreen/);
-assert.match(shell, /provider's fullscreen API/);
+assert.match(shell, /provider iframe is never invoked or manipulated/);
 assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture"/);
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/);
 
