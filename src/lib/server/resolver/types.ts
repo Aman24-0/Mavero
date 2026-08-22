@@ -42,13 +42,6 @@ export type QualitySource = {
   bitrate?: number;
 };
 
-export type AudioTrackSource = {
-  id: string;
-  language?: string;
-  label?: string;
-  default?: boolean;
-};
-
 export type SafeSourceMetadata = {
   title?: string;
   sourceName?: string;
@@ -88,7 +81,6 @@ export type SourceResult = {
   mediaType: ResolverMediaType;
   subtitles?: SubtitleSource[];
   qualities?: QualitySource[];
-  audioTracks?: AudioTrackSource[];
   headers?: SafePlaybackHeaders;
   expiresAt?: string;
   sandboxPolicy?: SandboxPolicy;
@@ -115,7 +107,6 @@ export type AdapterResult = {
   headers?: SafePlaybackHeaders;
   subtitles?: SubtitleSource[];
   qualities?: QualitySource[];
-  audioTracks?: AudioTrackSource[];
   expiresAt?: string;
   sandboxPolicy?: SandboxPolicy;
   metadata?: SafeSourceMetadata;

@@ -10,7 +10,6 @@ export function toPlayerCompatibleSource(stream: NormalizedStreamResult, mediaTy
     sourceId: `universal:${stream.id}:${index}`,
     mediaType,
     subtitles: stream.subtitles,
-    audioTracks: stream.audioTracks,
     headers: stream.headers,
     metadata: {
       sourceName: stream.resolverId,

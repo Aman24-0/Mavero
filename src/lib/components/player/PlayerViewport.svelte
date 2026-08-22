@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount, tick } from 'svelte';
-  import type { PlayerAudioTrack, PlayerPlaybackState, PlayerProtocol, PlayerSource } from '$lib/shared/player';
+  import { createEventDispatcher } from 'svelte';
+  import type { PlayerPlaybackState, PlayerSource } from '$lib/shared/player';
   import { iframeSandboxAttribute } from '$lib/shared/sandbox-policy';
 
   export let source: PlayerSource | null = null;
@@ -10,33 +10,8 @@
   export let sandboxEnabled = true;
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
-  export let nativePlayback = false;
-
   $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute('required') : undefined;
   $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${sandboxEnabled ? 'sandbox-on' : 'sandbox-off'}`;
-  $: directKey = source?.type === 'direct' && mediaUrl ? `${source.sourceId}:${mediaUrl}:${source.metadata?.protocol ?? ''}:${nativePlayback ? 'native' : 'source'}` : '';
-
-  type HlsRuntime = {
-    loadSource: (url: string) => void;
-    attachMedia: (element: HTMLMediaElement) => void;
-    destroy: () => void;
-    on?: (event: string, listener: (...args: unknown[]) => void) => void;
-    audioTracks?: Array<{ id?: number; lang?: string; name?: string; default?: boolean }>;
-    audioTrack?: number;
-  };
-  type DashRuntime = {
-    initialize: (element: HTMLMediaElement, url: string, autoPlay: boolean) => void;
-    reset: () => void;
-    on?: (event: string, listener: (...args: unknown[]) => void) => void;
-    getTracksFor?: (type: string) => Array<{ id?: string | number; lang?: string; labels?: Array<{ text?: string }> }>;
-    setCurrentTrack?: (track: unknown) => void;
-  };
-
-  let hlsInstance: HlsRuntime | null = null;
-  let dashInstance: DashRuntime | null = null;
-  let mounted = false;
-  let loadedDirectKey = '';
-  let loadToken = 0;
 
   const dispatch = createEventDispatcher<{
     loadedmetadata: void;
@@ -50,122 +25,7 @@
     ended: void;
     error: void;
     embedload: void;
-    audiotracks: PlayerAudioTrack[];
   }>();
-
-  onMount(() => {
-    mounted = true;
-    void syncDirectPlayback();
-    return () => {
-      mounted = false;
-      loadedDirectKey = '';
-      loadToken += 1;
-      destroyPlaybackEngines();
-    };
-  });
-
-  $: if (mounted && directKey && directKey !== loadedDirectKey) {
-    loadedDirectKey = directKey;
-    void syncDirectPlayback();
-  }
-
-  $: if (mounted && !directKey && loadedDirectKey) {
-    loadedDirectKey = '';
-    loadToken += 1;
-    destroyPlaybackEngines();
-  }
-
-  function destroyPlaybackEngines() {
-    try { hlsInstance?.destroy(); } catch { /* cleanup is best effort */ }
-    try { dashInstance?.reset(); } catch { /* cleanup is best effort */ }
-    hlsInstance = null;
-    dashInstance = null;
-  }
-
-  function protocolForSource(): PlayerProtocol {
-    return source?.metadata?.protocol ?? 'unknown';
-  }
-
-  function emitAudioTracks(tracks: PlayerAudioTrack[]) {
-    if (tracks.length) dispatch('audiotracks', tracks);
-  }
-
-  async function syncDirectPlayback() {
-    if (!mounted || source?.type !== 'direct' || !mediaUrl) return;
-    await tick();
-    const element = videoElement;
-    if (!element) return;
-    const token = ++loadToken;
-    const url = mediaUrl;
-    const protocol = protocolForSource();
-    destroyPlaybackEngines();
-    element.removeAttribute('src');
-    element.load();
-
-    if (!nativePlayback) {
-      element.src = url;
-      element.load();
-      return;
-    }
-
-    if (protocol === 'hls') {
-      if (element.canPlayType('application/vnd.apple.mpegurl')) {
-        element.src = url;
-        element.load();
-        return;
-      }
-      try {
-        const module = await import('hls.js');
-        if (token !== loadToken || !mounted || !videoElement) return;
-        if (module.default.isSupported()) {
-          const instance = new module.default({ enableWorker: true }) as unknown as HlsRuntime;
-          const emitHlsTracks = () => {
-            const tracks = (instance.audioTracks ?? []).map((track, index) => ({ id: String(track.id ?? index), language: track.lang, label: track.name, default: track.default }));
-            emitAudioTracks(tracks);
-          };
-          instance.on?.('hlsError', (...args) => { if ((args[1] as { fatal?: boolean } | undefined)?.fatal) dispatch('error'); });
-          instance.on?.('hlsManifestParsed', emitHlsTracks);
-          instance.loadSource(url);
-          instance.attachMedia(videoElement);
-          hlsInstance = instance;
-          return;
-        }
-      } catch {
-        // Fall through to the browser's native error path.
-      }
-    }
-
-    if (protocol === 'dash') {
-      try {
-        const module = await import('dashjs');
-        if (token !== loadToken || !mounted || !videoElement) return;
-        const instance = module.MediaPlayer().create() as DashRuntime;
-        instance.on?.('error', () => dispatch('error'));
-        instance.initialize(videoElement, url, false);
-        dashInstance = instance;
-        const tracks = (instance.getTracksFor?.('audio') ?? []).map((track, index) => ({ id: String(track.id ?? index), language: track.lang, label: track.labels?.[0]?.text ?? track.lang }));
-        emitAudioTracks(tracks);
-        return;
-      } catch {
-        // Fall through to the browser's native error path.
-      }
-    }
-
-    element.src = url;
-    element.load();
-  }
-
-  export function selectAudioTrack(trackId: string) {
-    if (hlsInstance?.audioTracks) {
-      const index = hlsInstance.audioTracks.findIndex((track, position) => String(track.id ?? position) === trackId);
-      if (index >= 0) hlsInstance.audioTrack = index;
-      return;
-    }
-    if (dashInstance?.getTracksFor && dashInstance.setCurrentTrack) {
-      const track = dashInstance.getTracksFor('audio').find((candidate, index) => String(candidate.id ?? index) === trackId);
-      if (track) dashInstance.setCurrentTrack(track);
-    }
-  }
 
   export function play() {
     return videoElement?.play() ?? Promise.reject(new Error('Video playback is unavailable.'));

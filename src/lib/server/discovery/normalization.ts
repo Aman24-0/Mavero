@@ -53,7 +53,6 @@ export function normalizeCandidate(candidate: MediaCandidate): NormalizedStreamR
     language: candidate.language,
     audioLanguage: candidate.audioLanguage,
     subtitles: safeSubtitleTracks(candidate),
-    audioTracks: candidate.audioTracks ?? [],
     headers: candidate.headers,
     metadata: candidate.metadata,
   };

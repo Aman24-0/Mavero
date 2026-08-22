@@ -1,4 +1,4 @@
-import type { AudioTrackSource, PlaybackProtocol, ResolverMediaType, SafePlaybackHeaders, SubtitleSource } from '$lib/server/resolver/types';
+import type { PlaybackProtocol, ResolverMediaType, SafePlaybackHeaders, SubtitleSource } from '$lib/server/resolver/types';
 
 export type DiscoveryMethod =
   | 'html-media'
@@ -24,7 +24,6 @@ export type MediaCandidate = {
   language?: string;
   audioLanguage?: string;
   subtitles?: SubtitleSource[];
-  audioTracks?: AudioTrackSource[];
   headers?: SafePlaybackHeaders;
   metadata?: Record<string, string | number | boolean | null>;
 };
@@ -42,7 +41,6 @@ export type NormalizedStreamResult = {
   language?: string;
   audioLanguage?: string;
   subtitles: SubtitleSource[];
-  audioTracks: AudioTrackSource[];
   headers?: SafePlaybackHeaders;
   metadata?: Record<string, string | number | boolean | null>;
 };
@@ -132,7 +130,6 @@ export type PlayerCompatibleDiscoverySource = {
   sourceId: string;
   mediaType: ResolverMediaType;
   subtitles?: SubtitleSource[];
-  audioTracks?: AudioTrackSource[];
   headers?: SafePlaybackHeaders;
   metadata?: {
     sourceName?: string;

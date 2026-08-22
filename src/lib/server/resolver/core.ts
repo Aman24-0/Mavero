@@ -51,11 +51,10 @@ function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']
     mediaType: context.request.mediaType,
     subtitles: result.subtitles,
     qualities: result.qualities,
-    audioTracks: result.audioTracks,
     headers: result.headers,
     expiresAt: result.expiresAt,
     sandboxPolicy: sandboxPolicyFromCapabilities(context.config.provider.capabilities, context.config.source.capabilities),
-    metadata: { ...result.metadata, protocol: result.metadata?.protocol ?? result.protocol, sourceName: context.config.source.name, providerName: context.config.provider.name },
+    metadata: { ...result.metadata, sourceName: context.config.source.name, providerName: context.config.provider.name },
   };
 }
 
