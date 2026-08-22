@@ -16,6 +16,7 @@ type AniListMedia = {
   episodes?: number | null;
   duration?: number | null;
   averageScore?: number | null;
+  popularity?: number | null;
   genres?: string[] | null;
   coverImage?: { extraLarge?: string | null; large?: string | null; medium?: string | null; color?: string | null } | null;
   bannerImage?: string | null;
@@ -46,6 +47,7 @@ const mediaFields = `
   episodes
   duration
   averageScore
+  popularity
   genres
   coverImage { extraLarge large medium color }
   bannerImage
@@ -87,6 +89,8 @@ function mapAniList(raw: AniListMedia, tag?: string): NormalizedMediaItem {
     maturity: raw.isAdult ? '16+' : '13+',
     runtime: runtime(raw.duration, raw.episodes),
     rating: Math.round((asNumber(raw.averageScore) / 10) * 10) / 10,
+    popularity: asNumber(raw.popularity),
+    voteCount: asNumber(raw.popularity),
     genres: genres.length ? genres.slice(0, 4) : ['Anime'],
     description: stripDescription(raw.description) || 'No synopsis is available yet.',
     poster: raw.coverImage?.extraLarge || raw.coverImage?.large || raw.coverImage?.medium || '',

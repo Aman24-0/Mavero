@@ -14,6 +14,8 @@ type TmdbMovie = {
   backdrop_path?: string | null;
   release_date?: string;
   vote_average?: number;
+  vote_count?: number;
+  popularity?: number;
   genre_ids?: number[];
   genres?: { id: number; name: string }[];
   runtime?: number | null;
@@ -31,6 +33,8 @@ type TmdbTv = {
   backdrop_path?: string | null;
   first_air_date?: string;
   vote_average?: number;
+  vote_count?: number;
+  popularity?: number;
   genre_ids?: number[];
   genres?: { id: number; name: string }[];
   number_of_episodes?: number | null;
@@ -95,6 +99,8 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     maturity: '13+',
     runtime: isMovie ? runtime(movie.runtime) : seasons ? `${seasons} season${seasons === 1 ? '' : 's'}` : 'Series',
     rating,
+    popularity: asNumber(raw.popularity),
+    voteCount: asNumber(raw.vote_count),
     genres: genres.length ? genres.slice(0, 4) : ['Drama'],
     description: asString(raw.overview, 'No synopsis is available yet.'),
     poster: image(raw.poster_path, 'w500'),
@@ -174,7 +180,8 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
       include_adult: false,
       sort_by: sortBy,
       with_genres: genreId,
-      ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year })
+      ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year }),
+      ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {})
     };
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
     const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type));

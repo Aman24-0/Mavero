@@ -36,6 +36,8 @@ export type NormalizedMediaItem = {
   maturity?: string;
   runtime: string;
   rating: number;
+  popularity?: number;
+  voteCount?: number;
   genres: string[];
   description: string;
   poster: string;

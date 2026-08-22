@@ -26,10 +26,36 @@ function canFallback(error: unknown) {
   return isMissingConfig(error) || (error instanceof ContentServiceError && ['UPSTREAM_ERROR', 'RATE_LIMITED', 'INVALID_RESPONSE'].includes(error.code));
 }
 
+function boundedLog(value: number | undefined, divisor: number) {
+  if (!value || value <= 0) return 0;
+  return Math.min(1, Math.log10(value + 1) / divisor);
+}
+
+function audienceConfidence(item: NormalizedMediaItem) {
+  const rating = Math.max(0, Math.min(1, item.rating / 10));
+  const votes = boundedLog(item.voteCount, item.type === 'anime' ? 5 : 4.5);
+  const popularity = boundedLog(item.popularity, item.type === 'anime' ? 5.5 : 3.5);
+  return rating * 0.35 + votes * 0.35 + popularity * 0.30;
+}
+
+function rankForExposure(items: NormalizedMediaItem[], mode: 'for-you' | 'top-rated' | 'newest' = 'for-you') {
+  return [...items].sort((left, right) => {
+    if (mode === 'newest' && right.year !== left.year) return right.year - left.year;
+    const score = audienceConfidence(right) - audienceConfidence(left);
+    if (Math.abs(score) > 0.0001) return score;
+    if (right.rating !== left.rating) return right.rating - left.rating;
+    return left.title.localeCompare(right.title);
+  });
+}
+
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {
   try {
-    if (type === 'anime') return await getAniListTrending(page);
-    return await getTmdbDiscover(type, page);
+    if (type === 'anime') {
+      const result = await getAniListTrending(page);
+      return { ...result, items: rankForExposure(result.items) };
+    }
+    const result = await getTmdbDiscover(type, page);
+    return { ...result, items: rankForExposure(result.items) };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -38,8 +64,12 @@ export async function discover(type: ContentType, page = 1): Promise<ContentList
 
 export async function collection(type: ContentType, page = 1, filters: CollectionFilters = {}): Promise<ContentList> {
   try {
-    if (type === 'anime') return await getAniListCollection(page, filters);
-    return await getTmdbCollection(type, page, filters);
+    if (type === 'anime') {
+      const result = await getAniListCollection(page, filters);
+      return { ...result, items: rankForExposure(result.items, filters.sort === 'Top rated' ? 'top-rated' : filters.sort === 'Newest' ? 'newest' : 'for-you') };
+    }
+    const result = await getTmdbCollection(type, page, filters);
+    return { ...result, items: rankForExposure(result.items, filters.sort === 'Top rated' ? 'top-rated' : filters.sort === 'Newest' ? 'newest' : 'for-you') };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type).slice(0, 20), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -48,8 +78,12 @@ export async function collection(type: ContentType, page = 1, filters: Collectio
 
 export async function popular(type: ContentType, page = 1): Promise<ContentList> {
   try {
-    if (type === 'anime') return await getAniListDiscover(page);
-    return await getTmdbPopular(type, page);
+    if (type === 'anime') {
+      const result = await getAniListDiscover(page);
+      return { ...result, items: rankForExposure(result.items) };
+    }
+    const result = await getTmdbPopular(type, page);
+    return { ...result, items: rankForExposure(result.items) };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -131,4 +165,4 @@ export function getFixtureContent(type: ContentType) {
   return fixturesFor(type);
 }
 
-export const contentServiceInternals = { fixturesFor, fixtureDetail, canFallback };
+export const contentServiceInternals = { fixturesFor, fixtureDetail, canFallback, audienceConfidence, rankForExposure };

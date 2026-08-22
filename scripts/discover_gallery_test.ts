@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/lib/components/DiscoverPage.svelte', import.meta.url), 'utf8');
 
-assert.match(source, /const GALLERY_ROTATION_MS = 3000/);
+assert.match(source, /const GALLERY_ROTATION_MS = 5000/);
 assert.match(source, /const GALLERY_TRANSITION_MS = 960/);
 assert.match(source, /const GALLERY_SEQUENCE: GalleryCategory\[\] = \['Movie', 'Series', 'Anime', 'Movie', 'Series', 'Anime'\]/);
 assert.match(source, /gallerySlides\.length === 6/);
@@ -19,9 +19,14 @@ assert.match(source, /timeline\.to/);
 assert.match(source, /class:outgoing/);
 assert.match(source, /gallery-card-title/);
 assert.match(source, /gallery-card-actions/);
+assert.match(source, /gallery-controls/);
+assert.match(source, /gallery-dots/);
+assert.match(source, /aria-label="Previous title"/);
+assert.match(source, /aria-label="Next title"/);
 assert.match(source, /prefers-reduced-motion: reduce/);
 assert.match(source, /@media \(min-width: 701px\)/);
-assert.match(source, /grid-template-columns: minmax\(0, \.58fr\) minmax\(520px/);
+assert.match(source, /rotation: visibleDepth === 0 \? 0 : \(visibleDepth % 2 \? 0\.32 : -0\.24\)/);
+assert.match(source, /\.gallery-stack \{ width: min\(100%, 1080px\); aspect-ratio: 1\.72;/);
 assert.match(source, /@media \(max-width: 700px\)[\s\S]*?\.gallery-stack \{ width: min\(84vw, 340px\); \}/);
 assert.doesNotMatch(source, /fetch\(/);
 assert.doesNotMatch(source, /gallery-pagination/);

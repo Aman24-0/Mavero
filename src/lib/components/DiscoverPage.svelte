@@ -4,11 +4,12 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { continueWatchingRecords } from '$lib/shared/progress-merge';
   import { progressToMedia } from '$lib/client/progress/presenter';
-  import { page } from '$app/state';
-  import { ArrowRight, Play, Sparkles } from 'lucide-svelte';
+  import { navigating, page } from '$app/state';
+  import { ArrowLeft, ArrowRight, Play, Sparkles } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
+  import RouteLoading from '$components/RouteLoading.svelte';
 
   export let featuredItem: MediaItem | undefined;
   export let movies: MediaItem[] = [];
@@ -24,7 +25,7 @@
   type GallerySlide = { item: MediaItem; category: GalleryCategory };
   type CardPosition = { x: number; y: number; scale: number; rotation: number; opacity: number; zIndex: number };
 
-  const GALLERY_ROTATION_MS = 3000;
+  const GALLERY_ROTATION_MS = 5000;
   const GALLERY_TRANSITION_MS = 960;
   const GALLERY_SEQUENCE: GalleryCategory[] = ['Movie', 'Series', 'Anime', 'Movie', 'Series', 'Anime'];
 
@@ -67,6 +68,7 @@
   }
 
   $: localContinue = localContinueLoaded ? localContinueItems : continueItems;
+  $: navigatingAway = Boolean(navigating.to);
   $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length);
   $: gallerySlides = createGallerySlides([...popularMovies, ...movies], [...popularSeries, ...series], [...popularAnime, ...anime]);
 
@@ -74,11 +76,11 @@
     const depth = gallerySlides.length ? (index - activeIndex + gallerySlides.length) % gallerySlides.length : 0;
     const visibleDepth = Math.min(depth, 5);
     return {
-      x: visibleDepth * 8,
-      y: visibleDepth * 13,
-      scale: 1 - visibleDepth * 0.035,
-      rotation: visibleDepth === 0 ? 0 : (visibleDepth % 2 ? 1.15 : -0.8) * (visibleDepth > 3 ? 0.65 : 1),
-      opacity: 1 - visibleDepth * 0.105,
+      x: visibleDepth * 10,
+      y: visibleDepth * 14,
+      scale: 1 - visibleDepth * 0.028,
+      rotation: visibleDepth === 0 ? 0 : (visibleDepth % 2 ? 0.32 : -0.24) * (visibleDepth > 3 ? 0.72 : 1),
+      opacity: 1 - visibleDepth * 0.09,
       zIndex: 20 - visibleDepth
     };
   }
@@ -252,6 +254,15 @@
               </article>
             {/each}
           </div>
+          <div class="gallery-controls" data-gallery-controls aria-label="Gallery controls">
+            <button class="gallery-arrow" type="button" aria-label="Previous title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex - 1 + gallerySlides.length) % gallerySlides.length); }}><ArrowLeft size={15} /></button>
+            <div class="gallery-dots" role="tablist" aria-label="Choose trending title">
+              {#each gallerySlides as slide, index}
+                <button class:active={index === galleryIndex} class="gallery-dot" type="button" role="tab" aria-selected={index === galleryIndex} aria-label={`Show ${slide.item.title}`} onclick={() => selectGallerySlide(index)}></button>
+              {/each}
+            </div>
+            <button class="gallery-arrow" type="button" aria-label="Next title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex + 1) % gallerySlides.length); }}><ArrowRight size={15} /></button>
+          </div>
           <div class="gallery-shadow" aria-hidden="true"></div>
         </div>
         <div id="gallery-title" class="sr-only">Trending Gallery</div>
@@ -275,7 +286,7 @@
       {#if series.length}<ContentRail title="Trending shows" eyebrow="Stories worth staying for" items={series} href="/discover/series" />{/if}
       {#if anime.length}<ContentRail title="Trending anime" eyebrow="From another world" items={anime} href="/discover/anime" />{/if}
       {#if popularMovies.length}<ContentRail title="Popular movies" eyebrow="The essential watchlist" items={popularMovies} href="/discover/movies" />{/if}
-      {#if popularSeries.length}<ContentRail title="Popular shows" eyebrow="Binge-worthy worlds" items={popularSeries} href="/discover/series" />{/if}
+      {#if popularSeries.length}<ContentRail title="Popular series" eyebrow="Binge-worthy worlds" items={popularSeries} href="/discover/series" />{/if}
       {#if popularAnime.length}<ContentRail title="Popular anime" eyebrow="Fan favourites" items={popularAnime} href="/discover/anime" />{/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
@@ -283,6 +294,8 @@
     <footer class="footer"><strong>MAVERO</strong><span>Discover. Watch.</span></footer>
   </div>
 </div>
+
+{#if navigatingAway}<RouteLoading />{/if}
 
 <style>
   .gallery-hero { position: relative; min-height: min(780px, 88dvh); overflow: hidden; border-bottom: 1px solid rgba(243,240,233,.08); background: radial-gradient(circle at 74% 34%, rgba(145,182,173,.12), transparent 27rem), radial-gradient(circle at 19% 82%, rgba(212,168,106,.08), transparent 24rem), var(--base); }
@@ -319,6 +332,14 @@
   .explore-links { display: flex; align-items: center; gap: 9px; }
   .explore-links a { display: inline-flex; align-items: center; gap: 9px; min-height: 37px; padding: 0 12px; border: 1px solid rgba(243,240,233,.12); color: var(--muted); font-family: 'DM Mono', monospace; font-size: .58rem; letter-spacing: .04em; text-decoration: none; transition: color 180ms var(--ease-out), border-color 180ms var(--ease-out), background 180ms var(--ease-out), transform 180ms var(--ease-out); }
   .explore-links a:hover, .explore-links a:focus-visible { border-color: rgba(212,168,106,.52); background: rgba(212,168,106,.07); color: var(--ink); transform: translateY(-1px); outline: 0; }
+  .gallery-controls { position: relative; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 22px; }
+  .gallery-arrow { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid rgba(243,240,233,.16); border-radius: 50%; color: var(--ink); background: rgba(8,11,13,.55); backdrop-filter: blur(12px); transition: color 180ms var(--ease-out), border-color 180ms var(--ease-out), background 180ms var(--ease-out), transform 180ms var(--ease-out); }
+  .gallery-arrow:hover, .gallery-arrow:focus-visible { border-color: rgba(212,168,106,.62); color: var(--accent-strong); background: rgba(212,168,106,.09); transform: translateY(-1px); outline: 0; }
+  .gallery-arrow:active { transform: scale(.96); }
+  .gallery-dots { display: flex; align-items: center; gap: 6px; min-height: 10px; }
+  .gallery-dot { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 999px; background: rgba(243,240,233,.25); transition: width 180ms var(--ease-out), background 180ms var(--ease-out), transform 180ms var(--ease-out); }
+  .gallery-dot:hover, .gallery-dot:focus-visible { background: rgba(243,240,233,.7); outline: 0; }
+  .gallery-dot.active { width: 24px; background: var(--accent-strong); }
   .gallery-shadow { position: absolute; z-index: -1; right: -7%; bottom: -4%; left: 7%; height: 14%; border-radius: 50%; background: rgba(0,0,0,.48); filter: blur(28px); }
   .catalog-warning { margin: 14px 0 0; padding: 11px 13px; border: 1px solid rgba(224,174,114,.35); color: var(--warning); font-family: 'DM Mono', monospace; font-size: .62rem; line-height: 1.5; }
   .footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 38px 0 20px; text-align: center; }
@@ -326,7 +347,7 @@
   .footer span { color: var(--muted-deep); }
   @media (max-width: 1040px) { .gallery-content { grid-template-columns: minmax(0, .4fr) minmax(360px, 500px) minmax(0, .4fr); gap: 20px; } .gallery-stage { min-height: 560px; } }
   @media (max-width: 700px) { .gallery-hero { min-height: auto; } .gallery-content { display: flex; flex-direction: column; align-items: stretch; gap: 10px; min-height: auto; padding-top: 84px; padding-bottom: 34px; } .gallery-heading { margin-top: 0; } .gallery-stage { min-height: 0; padding: 5px 8px 0; } .gallery-stack { width: min(84vw, 340px); } .gallery-card { border-radius: 22px; } .gallery-card-content { padding: 17px; } .gallery-card-title { font-size: clamp(1.85rem, 10vw, 2.7rem); } .gallery-card-copy p { -webkit-line-clamp: 2; line-clamp: 2; font-size: .68rem; } .gallery-card-actions :global(.btn) { min-height: 38px; } .discover-explore { align-items: stretch; flex-direction: column; gap: 13px; margin-bottom: 30px; } .explore-links { width: 100%; } .explore-links a { flex: 1 1 0; justify-content: center; padding: 0 8px; } }
-  @media (min-width: 701px) { .gallery-content { grid-template-columns: minmax(0, .58fr) minmax(520px, clamp(520px, 43vw, 680px)) minmax(0, .58fr); gap: clamp(18px, 2.4vw, 36px); } .gallery-stage { min-height: clamp(590px, 72dvh, 740px); } .gallery-stack { width: min(100%, clamp(520px, 43vw, 680px)); aspect-ratio: .78; } }
-  @media (min-width: 1050px) { .gallery-content { grid-template-columns: minmax(0, .72fr) minmax(560px, clamp(560px, 42vw, 720px)) minmax(0, .72fr); } .gallery-stack { width: min(100%, clamp(560px, 42vw, 720px)); } }
+  @media (min-width: 701px) { .gallery-content { display: block; min-height: min(820px, 92dvh); padding-top: 76px; padding-bottom: 42px; } .gallery-heading { max-width: 1180px; margin: 0 auto 18px; } .gallery-stage { min-height: clamp(520px, 66dvh, 700px); } .gallery-stack { width: min(100%, 1080px); aspect-ratio: 1.72; margin: 0 auto; } .gallery-card-content { padding: clamp(24px, 3vw, 42px); } .gallery-card-copy { max-width: min(560px, 58%); } .gallery-card-title { font-size: clamp(2.3rem, 4.8vw, 4.7rem); } .gallery-card-copy p { max-width: 500px; font-size: .78rem; } .gallery-controls { margin-top: 18px; } }
+  @media (min-width: 1050px) { .gallery-content { padding-inline: clamp(24px, 3vw, 54px); } .gallery-stack { width: min(100%, 1160px); } }
   @media (prefers-reduced-motion: reduce) { .gallery-card, .gallery-card-image, .explore-links a { transition: none; } }
 </style>
