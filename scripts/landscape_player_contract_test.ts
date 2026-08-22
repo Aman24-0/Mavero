@@ -5,6 +5,10 @@ const shell = readFileSync(new URL('../src/lib/components/player/PlayerShell.sve
 const viewport = readFileSync(new URL('../src/lib/components/player/PlayerViewport.svelte', import.meta.url), 'utf8');
 
 assert.match(shell, /class:landscape-mode=\{landscapeMode\}/);
+assert.match(shell, /let landscapeControlsExpanded = true/);
+assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/);
+assert.match(shell, /data-landscape-controls-toggle/);
+assert.match(shell, /if \(!landscapeMode\) return/);
 assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/);
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{ display: flex; flex: 1 1 auto;/);
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap :global\(\.viewport\)/);
@@ -25,6 +29,10 @@ const fullscreenEnd = shell.indexOf('async function togglePictureInPicture()', f
 assert.match(shell.slice(fullscreenStart, fullscreenEnd), /requestFullscreen/);
 assert.match(shell.slice(fullscreenStart, fullscreenEnd), /exitFullscreen/);
 assert.match(shell, /provider iframe is never invoked or manipulated/);
+assert.match(shell, /aria-label="Open episode list"/);
+assert.doesNotMatch(shell, /class="episode-stepper"/);
+assert.doesNotMatch(shell, /aria-label="Previous episode"/);
+assert.doesNotMatch(shell, /aria-label="Next episode"/);
 assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture"/);
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/);
 

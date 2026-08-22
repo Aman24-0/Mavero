@@ -11,3 +11,6 @@ The production route `https://mavero1.netlify.app/watch/movie/movie-533535?from=
 
 
 After the correction deployment, the live production route `https://mavero1.netlify.app/watch/movie/movie-533535` was opened in the sandbox browser. Clicking MAVERO Landscape changed the action label to `Portrait` and exposed the large provider player area beneath a compact single-row control band. The provider's own server control remained inside the iframe; MAVERO did not invoke or manipulate provider fullscreen. The browser sandbox cannot show Android Chrome's address/footer chrome or reproduce a physical Android device, so actual Chrome UI hiding and the Android system fullscreen notification remain physical-device verification items.
+
+
+After the UI refinement, the local fixture route showed no collapse button in Portrait. Entering MAVERO Landscape displayed a dedicated top-right `Collapse MAVERO controls` button, kept the existing Back/Portrait/Details/Previous/Sources/Next row available, and left the player state and source unchanged. The collapse button is rendered only when `landscapeMode` is true.

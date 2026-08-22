@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, Minimize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
@@ -35,6 +35,8 @@
   let playbackRate = 1;
   let fullscreen = false;
   let landscapeMode = false;
+  let landscapeControlsExpanded = true;
+  let landscapeControlsTimer: ReturnType<typeof setTimeout> | undefined;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
   let state: PlayerPlaybackState = source ? 'preparing' : 'source-unavailable';
@@ -50,6 +52,7 @@
   let sourceIdentity = '';
   let sandboxEnabled = true;
   let sandboxSourceIdentity = '';
+  const LANDSCAPE_CONTROLS_HIDE_MS = 5000;
 
   $: qualities = source?.qualities ?? [];
   $: subtitles = source?.subtitles ?? [];
@@ -68,9 +71,6 @@
     sandboxEnabled = source.sandboxPolicy !== 'unrestricted';
   }
   $: effectiveSandboxEnabled = source?.type === 'embed' ? sandboxEnabled : true;
-  $: episodeIndex = currentEpisode ? episodes.findIndex((episode) => episode.season === currentEpisode?.season && episode.number === currentEpisode?.episode) : -1;
-  $: hasPreviousEpisode = episodeIndex > 0;
-  $: hasNextEpisode = episodeIndex >= 0 && episodeIndex < episodes.length - 1;
   $: if (source?.sourceId && source.sourceId !== sourceIdentity) {
     sourceIdentity = source.sourceId;
     pendingSeek = currentTime;
@@ -83,7 +83,12 @@
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
     const handleFullscreen = () => {
       fullscreen = document.fullscreenElement === playerRoot;
-      if (!fullscreen && landscapeMode) landscapeMode = false;
+      if (!fullscreen && landscapeMode) {
+        landscapeMode = false;
+        landscapeControlsExpanded = true;
+        clearLandscapeControlsTimer();
+        revealControls();
+      }
     };
     const handlePictureInPicture = () => { pictureInPicture = document.pictureInPictureElement === videoElement; };
     const handleKeydown = (event: KeyboardEvent) => {
@@ -100,7 +105,7 @@
     const showControls = () => {
       controlsVisible = true;
       if (hideTimer) clearTimeout(hideTimer);
-      if (playing) hideTimer = setTimeout(() => { controlsVisible = false; }, 2600);
+      if (playing && !landscapeMode) hideTimer = setTimeout(() => { controlsVisible = false; }, 2600);
     };
     document.addEventListener('fullscreenchange', handleFullscreen);
     document.addEventListener('enterpictureinpicture', handlePictureInPicture);
@@ -110,6 +115,7 @@
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
     return () => {
       if (hideTimer) clearTimeout(hideTimer);
+      if (landscapeControlsTimer) clearTimeout(landscapeControlsTimer);
       document.removeEventListener('fullscreenchange', handleFullscreen);
       document.removeEventListener('enterpictureinpicture', handlePictureInPicture);
       document.removeEventListener('leavepictureinpicture', handlePictureInPicture);
@@ -226,6 +232,40 @@
     return screen.orientation as OrientationController;
   }
 
+  function clearLandscapeControlsTimer() {
+    if (landscapeControlsTimer) clearTimeout(landscapeControlsTimer);
+    landscapeControlsTimer = undefined;
+  }
+
+  function scheduleLandscapeControlsCollapse() {
+    clearLandscapeControlsTimer();
+    if (!landscapeMode || !landscapeControlsExpanded) return;
+    landscapeControlsTimer = setTimeout(() => {
+      landscapeControlsExpanded = false;
+      landscapeControlsTimer = undefined;
+    }, LANDSCAPE_CONTROLS_HIDE_MS);
+  }
+
+  function resetLandscapeControlsTimer() {
+    if (!landscapeMode) return;
+    landscapeControlsExpanded = true;
+    scheduleLandscapeControlsCollapse();
+  }
+
+  function handleMaveroControlInteraction(event: Event) {
+    if (!landscapeMode) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-landscape-controls-toggle]')) return;
+    resetLandscapeControlsTimer();
+  }
+
+  function toggleLandscapeControls() {
+    if (!landscapeMode) return;
+    landscapeControlsExpanded = !landscapeControlsExpanded;
+    if (landscapeControlsExpanded) scheduleLandscapeControlsCollapse();
+    else clearLandscapeControlsTimer();
+  }
+
   async function toggleLandscape() {
     const entering = !landscapeMode;
     revealControls();
@@ -236,13 +276,22 @@
         await playerRoot?.requestFullscreen?.();
         try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
         landscapeMode = true;
+        landscapeControlsExpanded = true;
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = undefined;
+        scheduleLandscapeControlsCollapse();
       } else {
         try { orientation?.unlock?.(); } catch { /* unsupported */ }
         landscapeMode = false;
+        landscapeControlsExpanded = true;
+        clearLandscapeControlsTimer();
         if (document.fullscreenElement === playerRoot) await document.exitFullscreen?.();
+        revealControls();
       }
     } catch {
       landscapeMode = false;
+      landscapeControlsExpanded = true;
+      clearLandscapeControlsTimer();
       errorMessage = 'Landscape mode is not available in this browser.';
     }
   }
@@ -289,11 +338,6 @@
     onEpisodeChange(target);
   }
 
-  function chooseAdjacentEpisode(delta: -1 | 1) {
-    const next = adjacentEpisode(episodes, currentEpisode, delta);
-    if (next) chooseEpisode(next);
-  }
-
   function emitProgress(reason: PlayerProgressEvent['reason']) {
     onProgress({ currentTime, duration, completed: state === 'completed' || (duration > 0 && currentTime / duration >= 0.9), reason });
   }
@@ -301,7 +345,7 @@
   function revealControls() {
     controlsVisible = true;
     if (hideTimer) clearTimeout(hideTimer);
-    if (playing) hideTimer = setTimeout(() => { controlsVisible = false; }, 2600);
+    if (playing && !landscapeMode) hideTimer = setTimeout(() => { controlsVisible = false; }, 2600);
   }
 
   function retry() {
@@ -318,8 +362,9 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); }} />
 
-  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
-  <header class="player-header">
+  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} onclick={handleMaveroControlInteraction} onpointerdown={handleMaveroControlInteraction} role="application" aria-label="MAVERO video player">
+  {#if landscapeMode}<button class="landscape-controls-toggle" data-landscape-controls-toggle type="button" aria-label={landscapeControlsExpanded ? 'Collapse MAVERO controls' : 'Expand MAVERO controls'} aria-expanded={landscapeControlsExpanded} onclick={toggleLandscapeControls}>{#if landscapeControlsExpanded}<Minimize2 size={15} />{:else}<Maximize2 size={15} />{/if}</button>{/if}
+  <header class="player-header" class:controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
     <div class="header-title-row">
       <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
       <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
@@ -343,18 +388,15 @@
         <div class="message-actions"><button class="small-button" type="button" onclick={retry}><RotateCcw size={14} /> Retry</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Change source</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
-      <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span>{#if hasNextEpisode}<button class="small-button" type="button" onclick={() => chooseAdjacentEpisode(1)}>Next episode <ChevronRight size={14} /></button>{/if}</div>
+      <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
     {:else if effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading'}
       <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching server' : effectiveState === 'embed-loading' ? 'Starting your stream' : 'Loading player'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
     {/if}
 
-    {#if currentEpisode && (hasPreviousEpisode || hasNextEpisode)}
-      <div class="episode-stepper"><button class="round-step" type="button" disabled={!hasPreviousEpisode} aria-label="Previous episode" onclick={() => chooseAdjacentEpisode(-1)}><ChevronLeft size={18} /></button><span>{currentEpisode.title ?? `Episode ${currentEpisode.episode}`}</span><button class="round-step" type="button" disabled={!hasNextEpisode} aria-label="Next episode" onclick={() => chooseAdjacentEpisode(1)}><ChevronRight size={18} /></button></div>
-    {/if}
   </section>
 
   {#if source?.type === 'direct'}
-    <div class="controls-layer" class:visible={controlsVisible}>
+    <div class="controls-layer" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
       <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} pictureInPicture={pictureInPictureSupported} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
     </div>
   {/if}
@@ -380,7 +422,11 @@
 <style>
   .player-shell { --player-bg: #050506; position: relative; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
   .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; }
-  .player-shell.landscape-mode .player-header { position: relative; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: rgba(4,4,6,.94); }
+  .player-shell.landscape-mode .player-header { position: relative; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: rgba(4,4,6,.94); transition: height 180ms ease-out, min-height 180ms ease-out, opacity 180ms ease-out, transform 180ms ease-out, padding 180ms ease-out; }
+  .player-shell.landscape-mode .player-header.controls-collapsed { height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; transform: translateY(-100%); pointer-events: none; }
+  .landscape-controls-toggle { position: absolute; z-index: 14; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; color: rgba(255,255,255,.82); background: rgba(9,9,12,.74); cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.24); backdrop-filter: blur(12px); }
+  .landscape-controls-toggle:hover, .landscape-controls-toggle:focus-visible { border-color: rgba(194,181,255,.55); background: rgba(40,32,60,.9); }
+  .landscape-controls-toggle:active { transform: scale(.96); }
   .player-shell.landscape-mode .header-title-row { display: contents; }
   .player-shell.landscape-mode .header-title { display: grid; flex: 1 1 auto; justify-items: start; min-width: 0; text-align: left; }
   .player-shell.landscape-mode .header-title strong { max-width: 28vw; }
@@ -391,8 +437,8 @@
   .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; }
   .player-shell.landscape-mode .controls-layer { right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); left: max(8px, env(safe-area-inset-left)); }
-  .player-shell.landscape-mode .episode-stepper { bottom: 70px; }
   .player-shell.landscape-mode .drawer { top: calc(54px + env(safe-area-inset-top)); max-height: min(78dvh, 620px); }
+  .player-shell.landscape-mode .controls-layer.landscape-controls-collapsed { opacity: 0; pointer-events: none; }
   .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: grid; gap: 10px; padding: calc(12px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 14px; background: linear-gradient(180deg, rgba(4,4,6,.94), rgba(4,4,6,.42) 76%, transparent); }
   .header-title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; min-height: 40px; }
   .header-title-row .header-nav { justify-self: start; }
@@ -427,9 +473,6 @@
   .loading-copy strong { color: #fff; font-size: .72rem; }
   .loading-copy small { color: rgba(255,255,255,.48); font-family: 'DM Mono', monospace; font-size: .53rem; }
   :global(.spin) { animation: spin 1s linear infinite; }
-  .episode-stepper { position: absolute; z-index: 5; right: 50%; bottom: 125px; display: flex; align-items: center; gap: 12px; transform: translateX(50%); color: rgba(255,255,255,.63); font-family: 'DM Mono', monospace; font-size: .58rem; }
-  .round-step { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(255,255,255,.15); border-radius: 50%; color: #fff; background: rgba(7,7,10,.62); cursor: pointer; }
-  .round-step:disabled { cursor: not-allowed; opacity: .25; }
   .drawer { position: absolute; z-index: 12; top: calc(116px + env(safe-area-inset-top)); right: clamp(16px, 4vw, 48px); width: min(360px, calc(100% - 32px)); max-height: min(70dvh, 620px); overflow: auto; border: 1px solid rgba(194,181,255,.22); border-radius: 16px; background: rgba(13,12,19,.95); box-shadow: 0 24px 90px rgba(0,0,0,.5); backdrop-filter: blur(28px); }
   .episode-drawer { width: min(420px, calc(100% - 32px)); }
   .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 19px 18px 13px; }
@@ -446,7 +489,7 @@
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'DM Mono', monospace; font-size: .65rem; }
   .drawer-note { margin: 0; padding: 0 18px 18px; color: rgba(255,255,255,.4); font-size: .61rem; line-height: 1.5; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 640px) { .player-header { gap: 7px; padding-top: calc(9px + env(safe-area-inset-top)); padding-bottom: 9px; } .header-title-row { gap: 8px; min-height: 38px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; min-height: 38px; padding: 0; } .header-actions { flex-wrap: nowrap; gap: 6px; } .header-title strong { max-width: 48vw; font-size: .72rem; } .header-title span { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .stage-wrap { padding: calc(105px + env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom)); } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; } .message-card { bottom: 50%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .episode-stepper { bottom: calc(34px + env(safe-area-inset-bottom)); } .drawer { top: calc(104px + env(safe-area-inset-top)); right: 12px; width: calc(100% - 24px); max-height: 72dvh; } }
+  @media (max-width: 640px) { .player-header { gap: 7px; padding-top: calc(9px + env(safe-area-inset-top)); padding-bottom: 9px; } .header-title-row { gap: 8px; min-height: 38px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; min-height: 38px; padding: 0; } .header-actions { flex-wrap: nowrap; gap: 6px; } .header-title strong { max-width: 48vw; font-size: .72rem; } .header-title span { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .stage-wrap { padding: calc(105px + env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom)); } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; } .message-card { bottom: 50%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .drawer { top: calc(104px + env(safe-area-inset-top)); right: 12px; width: calc(100% - 24px); max-height: 72dvh; } }
   @media (orientation: landscape) and (max-height: 560px) { .player-header { gap: 6px; padding-top: 7px; padding-bottom: 7px; } .header-title-row { min-height: 32px; gap: 8px; } .header-title-row .header-button, .header-actions .header-button { min-height: 32px; min-width: 34px; padding: 0 8px; } .header-actions { flex-wrap: nowrap; gap: 6px; } .header-actions .header-button span, .header-title-row .orientation-button span { display: none; } .stage-wrap { padding-top: calc(86px + env(safe-area-inset-top)); padding-bottom: 16px; } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 108px) * 1.7778)); max-height: calc(100dvh - 108px); } .drawer { top: calc(84px + env(safe-area-inset-top)); } }
-  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .controls-layer { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .controls-layer, .player-shell.landscape-mode .player-header { transition: none; } }
 </style>
