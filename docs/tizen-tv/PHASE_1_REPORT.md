@@ -71,15 +71,15 @@ The browser preview reported `Browser-safe mode`, and activating Exit updated th
 
 ## 9. TizenBrew module
 
-`tizenbrew/package.json` is a minimal application module with `packageType: "app"`, `appName`, `version`, `appPath: "app/index.html"`, and an empty `keys` list. It omits `serviceFile`, media keys, and permissions because this proof needs none of them. `tizenbrew/app/index.html` is a bootstrap wrapper; it refuses to invent a remote origin and navigates to `/tv` only when a verified origin is supplied.
+`tizenbrew/package.json` is a minimal application module with `packageType: "app"`, `appName`, `version`, `appPath: "app/index.html"`, and an empty `keys` list. It omits `serviceFile`, media keys, and permissions because this proof needs none of them. `tizenbrew/app/index.html` is a bootstrap wrapper configured with the verified Branch Deploy origin and it navigates to `/tv`.
 
-The metadata follows the current TizenBrew application-module documentation [1]. The current loader serves an application module’s `appPath` through TizenBrew’s local module server [2]. The wrapper’s empty origin is intentional: the exact Netlify feature-preview URL and branch deployment context require dashboard-level verification.
+The metadata follows the current TizenBrew application-module documentation [1]. The current loader serves an application module’s `appPath` through TizenBrew’s local module server [2]. The wrapper now contains the owner-verified Netlify Branch Deploy origin and continues to redirect to `/tv`.
 
 ## 10. Module URL
 
-**Netlify preview isolation requires dashboard-level verification.** The repository confirms `main` as the production branch but does not prove the feature-preview hostname or context-specific environment behavior. No production URL was hardcoded and no Netlify configuration was changed.
+**Netlify branch deployment is now configured for `feature/tizen-tv`.** The owner supplied and verified the dedicated Branch Deploy origin `https://feature-tizen-tv--mavero1.netlify.app/`. The bootstrap’s effective application URL is `https://feature-tizen-tv--mavero1.netlify.app/tv`. Production remains separate at `https://mavero1.netlify.app/`; the production URL is not hardcoded in the TizenBrew bootstrap and no production configuration was changed.
 
-Before real installation, the operator must set the bootstrap document’s `data-mavero-tv-origin` to the dashboard-verified non-production preview origin, confirm that the origin serves `/tv`, and record that URL in the worklog. A feature branch URL must not be guessed from a naming convention.
+The branch URL is ready for the real TizenBrew test. The deployment permalink is not being used as the long-term TizenBrew origin. TizenBrew loading, Samsung TV behavior, native exit, and relaunch remain unverified until hardware testing is performed.
 
 ## 11. Browser testing
 
@@ -119,8 +119,8 @@ The browser preview confirmed that the new route works without Tizen APIs. Full 
 
 ## 14. Known limitations
 
-1. The TizenBrew wrapper origin is intentionally empty until Netlify dashboard preview isolation is verified.
-2. TizenBrew installation/loading was not tested from the real TV in this session.
+1. The verified Branch Deploy origin is configured, but TizenBrew installation/loading was not tested from the real TV in this session.
+2. The Branch Deploy response and final module load still require the real deployment/hardware handoff.
 3. Native Samsung application exit was not tested.
 4. No Samsung remote, lifecycle, relaunch, memory, performance, codec, or network-recovery result is claimed.
 5. The shell uses controlled placeholders rather than real Mavero content.
@@ -130,7 +130,7 @@ The browser preview confirmed that the new route works without Tizen APIs. Full 
 
 ## 15. Phase 2 recommendation
 
-Phase 1 should remain **BLOCKED for completion** until the preview origin is dashboard-verified and the target Samsung TV completes the required launch, remote, Back, native-exit, and relaunch tests. After those gates pass, Phase 2 may build the real TV shell/navigation primitives around this proof, still without touching the player or provider stack.
+Phase 1 should remain **BLOCKED for completion** until the configured Branch Deploy serves the expected `/tv` route and the target Samsung TV completes the required launch, remote, Back, native-exit, and relaunch tests. After those gates pass, Phase 2 may build the real TV shell/navigation primitives around this proof, still without touching the player or provider stack.
 
 If the hardware test exposes a platform mismatch, fix the isolated adapter or module URL strategy first. Do not work around a Tizen limitation by weakening Supabase/auth, caching private data, adding broad permissions, copying TizenTube services, or modifying the stable Web/PWA shell.
 

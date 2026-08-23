@@ -2,7 +2,7 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 implementation is in progress and remains blocked on dashboard-level preview verification and real Samsung TV QA.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 implementation is in progress and remains blocked on real Samsung TV QA. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
 
 | Field | Status |
 |---|---|
@@ -13,8 +13,8 @@ Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 implementa
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
 | Samsung TV hardware QA | **NOT RUN in this implementation session** |
 | Branch | `feature/tizen-tv` |
-| Commit | Initial commit object `c866122e5dc487e0b2a9d1c23d379a701951b89f`; final amended object is recorded in the handoff because a commit cannot contain its own final hash |
-| Merge/deployment status | Phase 1 changes are local until validation; must push to `origin/feature/tizen-tv`; not merged to `main`; no production deployment or Netlify mutation |
+| Commit | `f833418b4a4de1f79add0e210b292e15508f2043` is the initial origin/documentation commit object; final amended object is recorded in the handoff because a commit cannot contain its own final hash |
+| Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; origin/documentation update is pending push; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
 
@@ -186,3 +186,31 @@ The worklog must never be left behind the implementation. Every Tizen implementa
 **Branch:** `feature/tizen-tv`
 **Commit SHA:** Initial commit object before final self-reference amend: `c866122e5dc487e0b2a9d1c23d379a701951b89f`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
 **Merge/deployment status:** Must be pushed to `origin/feature/tizen-tv`; must not be merged into `main`; no production deployment or Netlify mutation performed by Phase 1.
+
+## Phase 1 — Verified Branch Deploy Origin Configuration
+
+**Date:** 23 August 2026
+**Phase:** Phase 1 — Real Samsung TV Validation handoff
+**Status:** Hardware testing pending; no Samsung TV result is claimed.
+
+The project owner verified that the Netlify Branch Deploy is configured for `feature/tizen-tv`. The exact testing origin is:
+
+`https://feature-tizen-tv--mavero1.netlify.app/`
+
+The effective Mavero TV route is:
+
+`https://feature-tizen-tv--mavero1.netlify.app/tv`
+
+The production site remains separate at `https://mavero1.netlify.app/`. The deployment permalink is not being used as the long-term TizenBrew origin, and `main` was not modified.
+
+**TizenBrew bootstrap change:** `tizenbrew/app/index.html` now sets `data-mavero-tv-origin` to the exact verified Branch Deploy origin and continues to redirect to `/tv`.
+
+**Target hardware:** Samsung `UA43AUE60AKLXL`
+**Tizen:** `6.0`
+**TizenBrew:** `2.0.5`
+**Branch:** `feature/tizen-tv`
+
+**Required next action:** Load the application module through TizenBrew on the target TV and complete the launch, shell, remote, focus, navigation, root Back, Cancel, explicit Quit, native Exit, and relaunch checklist from `PHASE_1_REPORT.md`. Record every item as `PASS`, `FAIL`, or `BLOCKED` with exact observed behavior. Do not mark TizenBrew loading, Samsung TV behavior, native exit, or relaunch as passing before real hardware testing.
+
+**Commit:** Initial origin/documentation commit object before final self-reference amend: `f833418b4a4de1f79add0e210b292e15508f2043`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Merge/deployment status:** Push only to `origin/feature/tizen-tv`; do not merge to `main`; no production Netlify change was made.
