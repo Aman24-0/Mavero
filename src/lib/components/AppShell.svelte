@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
   import { Bookmark, Compass, Search, UserRound, Settings2, Clapperboard } from 'lucide-svelte';
+  import { haptic } from '$lib/client/haptics';
 
   let { children, currentPath = '/' }: { children: Snippet; currentPath?: string } = $props();
   let shell: HTMLElement;
@@ -61,7 +62,7 @@
   <nav class="mobile-nav" aria-label="Mobile navigation">
     {#each primaryLinks as link}
       {@const Icon = link.icon}
-      <a class:active={isActive(link.key)} href={link.href} aria-current={isActive(link.key) ? 'page' : undefined} aria-label={link.label}><Icon size={20} strokeWidth={isActive(link.key) ? 2.3 : 1.8} /><span>{link.label}</span></a>
+      <a class:active={isActive(link.key)} href={link.href} aria-current={isActive(link.key) ? 'page' : undefined} aria-label={link.label} onclick={() => { if (!isActive(link.key)) haptic('light'); }}><Icon size={20} strokeWidth={isActive(link.key) ? 2.3 : 1.8} /><span>{link.label}</span></a>
     {/each}
   </nav>
 </div>
@@ -109,7 +110,7 @@
       padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
       background: rgba(8, 8, 13, .96); backdrop-filter: blur(20px);
     }
-    .mobile-nav a { display: grid; place-items: center; gap: 4px; min-height: 46px; color: var(--muted-deep); font-size: .58rem; font-weight: 700; text-decoration: none; }
+    .mobile-nav a { display: grid; place-items: center; gap: 4px; min-height: 48px; color: var(--muted-deep); font-size: .58rem; font-weight: 700; text-decoration: none; }
     .mobile-nav a.active { color: var(--ink); }
     .mobile-nav a.active :global(svg) { color: var(--accent-strong); }
   }

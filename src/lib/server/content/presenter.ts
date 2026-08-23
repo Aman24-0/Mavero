@@ -13,6 +13,7 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     genres: item.genres,
     description: item.description,
     poster: item.poster,
+    posterSmall: item.posterSmall,
     backdrop: item.backdrop,
     backdropSmall: item.backdropSmall,
     accent: item.accent,

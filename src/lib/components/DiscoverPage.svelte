@@ -10,6 +10,7 @@
   import { formatType } from '$lib/data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
+  import { haptic } from '$lib/client/haptics';
 
   export let featuredItem: MediaItem | undefined;
   export let movies: MediaItem[] = [];
@@ -140,7 +141,7 @@
     });
   }
 
-  async function changeGallerySlide(nextIndex: number) {
+  async function changeGallerySlide(nextIndex: number, userInitiated = false) {
     const nextHero = featuredItems[nextIndex];
     if (!nextHero || nextIndex === activeIndex || galleryTransitioning || featuredItems.length < 2) return;
 
@@ -153,6 +154,7 @@
 
     imageLoadFailed = !imageReady;
     activeIndex = nextIndex;
+    if (userInitiated) haptic('light');
 
     if (reducedMotion) {
       galleryTransitioning = false;
@@ -176,7 +178,7 @@
     }
     pauseGallery();
     releaseInteractionPause();
-    void changeGallerySlide(index);
+    void changeGallerySlide(index, true);
   }
 
   function handleGalleryKeydown(event: KeyboardEvent) {
@@ -185,22 +187,22 @@
       event.preventDefault();
       pauseGallery();
       releaseInteractionPause();
-      void changeGallerySlide((activeIndex + 1) % featuredItems.length);
+      void changeGallerySlide((activeIndex + 1) % featuredItems.length, true);
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
       pauseGallery();
       releaseInteractionPause();
-      void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length);
+      void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true);
     } else if (event.key === 'Home') {
       event.preventDefault();
       pauseGallery();
       releaseInteractionPause();
-      void changeGallerySlide(0);
+      void changeGallerySlide(0, true);
     } else if (event.key === 'End') {
       event.preventDefault();
       pauseGallery();
       releaseInteractionPause();
-      void changeGallerySlide(featuredItems.length - 1);
+      void changeGallerySlide(featuredItems.length - 1, true);
     } else if (event.key === ' ') {
       event.preventDefault();
       if (galleryPaused) resumeGallery();
@@ -337,20 +339,20 @@
           {/if}
           <div class="hero-actions">
             <a class="btn btn-primary" href={`/watch/${activeHero.item.type}/${activeHero.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
-            <a class="btn btn-secondary" href={`/${activeHero.item.type}/${activeHero.item.id}`}><Info size={16} /> More info</a>
+            <a class="btn btn-secondary" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`More info about ${activeHero.item.title}`}><Info size={16} /> More info</a>
             <a class="btn btn-secondary icon-only" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`Add ${activeHero.item.title} to My List`}><ListPlus size={16} /></a>
           </div>
         </div>
       </div>
 
       <div class="hero-controls" aria-label="Featured title controls">
-        <button class="hero-arrow" type="button" aria-label="Previous title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length); }}><ArrowLeft size={16} /></button>
+        <button class="hero-arrow" type="button" aria-label="Previous title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true); }}><ArrowLeft size={16} /></button>
         <div class="hero-dots" role="tablist" aria-label="Choose featured title">
           {#each featuredItems as slide, index}
             <button class:active={index === activeIndex} class="hero-dot" type="button" role="tab" aria-selected={index === activeIndex} aria-label={`Show ${slide.item.title}`} aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => selectGallerySlide(index)}></button>
           {/each}
         </div>
-        <button class="hero-arrow" type="button" aria-label="Next title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex + 1) % featuredItems.length); }}><ArrowRight size={16} /></button>
+        <button class="hero-arrow" type="button" aria-label="Next title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex + 1) % featuredItems.length, true); }}><ArrowRight size={16} /></button>
       </div>
     </section>
   {:else if hasCatalog}
@@ -411,14 +413,16 @@
   .hero-genres span { border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 12px; color: var(--ink-soft); font-size: .68rem; font-weight: 600; background: rgba(245,246,250,.05); }
   .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
   .icon-only { width: 46px; padding: 0; flex: 0 0 auto; }
-  .hero-controls { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 28px; z-index: 3; display: flex; align-items: center; gap: 12px; }
-  .hero-arrow { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink); background: rgba(6,6,10,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .hero-controls { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 28px; z-index: 3; display: flex; align-items: center; gap: 8px; }
+  .hero-arrow { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink); background: rgba(6,6,10,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .hero-arrow:hover:not(:disabled), .hero-arrow:focus-visible:not(:disabled) { border-color: rgba(255,90,122,.6); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
   .hero-arrow:disabled, .hero-dot:disabled { cursor: wait; opacity: .55; }
-  .hero-dots { display: flex; align-items: center; gap: 6px; }
-  .hero-dot { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 999px; background: rgba(245,246,250,.28); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .hero-dot:hover:not(:disabled), .hero-dot:focus-visible:not(:disabled) { background: rgba(245,246,250,.65); outline: 0; }
-  .hero-dot.active { width: 22px; background: var(--accent-gradient); }
+  .hero-dots { display: flex; align-items: center; gap: 2px; }
+  .hero-dot { position: relative; display: grid; place-items: center; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 999px; background: transparent; transition: background var(--motion-fast) var(--ease-out); }
+  .hero-dot::after { content: ''; width: 7px; height: 7px; border-radius: 999px; background: rgba(245,246,250,.28); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .hero-dot:hover:not(:disabled)::after, .hero-dot:focus-visible:not(:disabled)::after { background: rgba(245,246,250,.65); }
+  .hero-dot:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+  .hero-dot.active::after { width: 22px; background: var(--accent-gradient); }
   .hero-fallback { background: radial-gradient(circle at 72% 28%, rgba(255,90,122,.18), transparent 38%), var(--base); }
 
   .discover-routes { display: flex; gap: 10px; margin: 22px 0 40px; }
@@ -441,13 +445,15 @@
     .hero-copy p { font-size: .82rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
     .hero-genres { display: none; }
     .hero-actions .btn:not(.icon-only) { flex: 1; }
-    .hero-controls { right: 20px; bottom: 14px; }
-    .hero-arrow { width: 32px; height: 32px; }
+    .hero-controls { right: 10px; bottom: 8px; gap: 2px; }
+    .hero-dots { width: min(64vw, 230px); overflow-x: auto; scrollbar-width: none; }
+    .hero-dots::-webkit-scrollbar { display: none; }
+    .hero-arrow { width: 48px; height: 48px; }
     .discover-routes { margin: 16px 0 30px; overflow-x: auto; scrollbar-width: none; }
     .discover-routes::-webkit-scrollbar { display: none; }
     .discover-routes a { flex: 0 0 auto; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .hero-image, .hero-image-fallback, .hero-arrow, .hero-dot, .discover-routes a { transition: none; }
+    .hero-image, .hero-image-fallback, .hero-arrow, .hero-dot, .hero-dot::after, .discover-routes a { transition: none; }
   }
 </style>

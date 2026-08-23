@@ -29,6 +29,8 @@
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
   $: cardHref = item.resumeHref ? appendReturnTo(item.resumeHref, returnTo) : `/${item.type}/${item.id}`;
   $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
+  $: posterSrcset = item.posterSmall ? `${item.posterSmall} 342w, ${item.poster} 500w` : undefined;
+  $: posterSizes = compact ? '(max-width: 640px) calc((100vw - 38px) / 2), 150px' : '(max-width: 640px) 40vw, 178px';
 </script>
 
 <div class:compact class:editorial class="card-wrap">
@@ -39,7 +41,7 @@
       {:else if imageFailed}
         <div class="poster-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
       {:else}
-        <img src={item.poster} alt={`${item.title} poster`} loading="lazy" width="720" height="1080" onerror={() => { imageFailed = true; }} />
+        <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
       {/if}
       <span class="poster-type">{formatType(item.type)}</span>
       {#if item.tags?.[0] && !compact}<span class="card-tag">{item.tags[0]}</span>{/if}

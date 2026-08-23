@@ -6,4 +6,4 @@ Disallow: /admin
 Disallow: /api/
 Disallow: /watch/
 
-Sitemap: /sitemap.xml
+Sitemap: https://mavero1.netlify.app/sitemap.xml

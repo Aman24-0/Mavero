@@ -145,10 +145,10 @@ img { max-width: 100%; }
 }
 .card-copy { min-width: 0; padding: 10px 2px 0; }
 .card-title { margin: 0; overflow: hidden; color: var(--ink); font-size: .8rem; font-weight: 700; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
-.card-meta { display: flex; gap: 5px; margin-top: 4px; overflow: hidden; color: var(--muted); font-size: .68rem; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+  .card-meta { display: flex; gap: 5px; margin-top: 4px; overflow: hidden; color: var(--muted); font-size: .75rem; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
 .progress-track { height: 3px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: rgba(245, 246, 250, .12); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent-gradient); }
-.card-progress { margin-top: 5px; color: var(--muted-deep); font-size: .62rem; font-weight: 600; }
+  .card-progress { margin-top: 5px; color: var(--muted-deep); font-size: .75rem; font-weight: 600; }
 .card-detail-link {
   position: absolute; right: 8px; bottom: 58px; z-index: 2; display: inline-flex; align-items: center; gap: 4px;
   border: 1px solid rgba(245, 246, 250, .2); border-radius: 999px; padding: 6px 9px; color: var(--ink);
@@ -178,7 +178,7 @@ img { max-width: 100%; }
 .icon-btn:hover { color: var(--ink); border-color: var(--line); background: rgba(245, 246, 250, .08); }
 .icon-btn:active { transform: scale(.94); }
 
-.footer { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 40px 0 0; border-top: 1px solid var(--line); color: var(--muted-deep); font-size: .68rem; }
+  .footer { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 40px 0 0; border-top: 1px solid var(--line); color: var(--muted-deep); font-size: .75rem; }
 .footer strong { color: var(--muted); font-weight: 800; letter-spacing: .1em; }
 
 .search-band { display: flex; align-items: center; gap: 12px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(16, 16, 24, .8); }

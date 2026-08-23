@@ -13,6 +13,7 @@
   import { latestResumeEpisode } from '$lib/client/progress/presenter';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { appendReturnTo } from '$lib/shared/navigation';
+  import { haptic } from '$lib/client/haptics';
 
   export let id = 'afterlight';
   export let type: ContentType = 'movie';
@@ -86,11 +87,13 @@
         } else {
           saveError = '';
         }
+        haptic('success');
       } else if (key === 'watching' || key === 'planned' || key === 'completed') {
         const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
         const record = await setFavoriteStatus(type, item.id, snapshot, key);
         watchlistStatus = record.status ?? key;
         if (page.data.user) void syncAuthenticatedState();
+        haptic('success');
       }
       if (key !== 'remove') saveError = '';
     } catch {
@@ -104,6 +107,7 @@
 
   function goBack(event: MouseEvent) {
     event.preventDefault();
+    haptic('light');
     const returnTo = page.url.searchParams.get('from');
     if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) {
       void goto(returnTo, { replaceState: true, keepFocus: true });
@@ -116,6 +120,7 @@
     try {
       if (navigator.share) await navigator.share({ title: item.title, text: `Watch ${item.title} on MAVERO`, url: canonicalUrl });
       else await navigator.clipboard?.writeText(canonicalUrl);
+      haptic('success');
     } catch { /* cancelled share */ }
   }
 </script>
@@ -139,7 +144,7 @@
 <div class="detail-wrap">
   <div class="detail-backdrop" style={`background-image: url('${item.backdrop || item.poster}')`}></div>
   <div class="container-wide">
-    <a class="back-link" href="/discover" onclick={goBack}><ArrowLeft size={15} /> Back</a>
+        <button class="back-link" type="button" onclick={goBack}><ArrowLeft size={16} /> <span>Back</span></button>
     <section class="detail-layout" aria-labelledby="detail-title">
       <div class="detail-poster"><img src={item.poster} alt={`${item.title} poster`} /></div>
       <div class="detail-copy">
@@ -169,9 +174,11 @@
       linear-gradient(100deg, var(--base) 4%, rgba(6,6,10,.9) 42%, rgba(6,6,10,.35) 75%, rgba(6,6,10,.7) 100%),
       linear-gradient(0deg, var(--base) 2%, transparent 78%);
   }
-  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 28px; color: var(--muted); font-size: .74rem; font-weight: 700; text-decoration: none; transition: color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .back-link:hover { color: var(--ink); transform: translateX(-2px); }
-  .detail-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; align-items: start; padding: 40px 0 54px; }
+  .back-link { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; margin-top: 16px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--ink-soft); background: rgba(245,246,250,.055); font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .back-link:hover { color: var(--ink); border-color: rgba(255,90,122,.52); background: rgba(255,56,96,.1); transform: translateX(-2px); }
+  .back-link:focus-visible { outline: 0; border-color: var(--accent-strong); box-shadow: 0 0 0 3px rgba(255,62,94,.14); }
+  .back-link:active { transform: scale(.97); }
+  .detail-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; align-items: start; padding: 28px 0 54px; }
   .detail-poster { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); aspect-ratio: 2 / 3; background: var(--surface); box-shadow: var(--shadow-lg); }
   .detail-poster img { width: 100%; height: 100%; object-fit: cover; }
   .detail-copy { min-width: 0; padding-top: 6px; }
@@ -187,11 +194,12 @@
   .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .76rem; font-weight: 700; }
   .save-error { margin-top: 10px; color: var(--warning); font-size: .68rem; font-weight: 600; }
   @media (max-width: 900px) { .detail-layout { grid-template-columns: 195px minmax(0, 1fr); gap: 26px; } }
+  @media (prefers-reduced-motion: reduce) { .back-link { transition: none; } }
   @media (max-width: 640px) {
     .detail-backdrop { height: 460px; }
     .detail-wrap::before { height: 540px; }
-    .back-link { padding-top: 78px; }
-    .detail-layout { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 16px; padding: 24px 0 30px; align-items: start; }
+    .back-link { margin-top: calc(12px + env(safe-area-inset-top)); }
+    .detail-layout { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 16px; padding: 18px 0 30px; align-items: start; }
     .detail-poster { border-radius: var(--radius-md); }
     .detail-copy { display: contents; }
     .detail-copy > .detail-lead { grid-column: 2; min-width: 0; }

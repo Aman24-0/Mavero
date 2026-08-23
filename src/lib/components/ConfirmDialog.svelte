@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, type Snippet } from 'svelte';
+  import { haptic } from '$lib/client/haptics';
 
   type DialogTone = 'default' | 'danger';
 
@@ -44,6 +45,11 @@
     lastOpen = open;
   });
 
+  function handlePrimary() {
+    haptic(tone === 'danger' ? 'destructive' : 'light');
+    onPrimary();
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (!open) return;
     if (event.key === 'Escape') {
@@ -78,7 +84,7 @@
       {#if children}<div class="dialog-content">{@render children()}</div>{/if}
       <div class="dialog-actions">
         <button class="dialog-button dialog-cancel" type="button" data-autofocus disabled={cancelDisabled} onclick={onCancel}>Cancel</button>
-        <button class:dialog-danger={tone === 'danger'} class="dialog-button dialog-primary" type="button" disabled={primaryDisabled} onclick={onPrimary}>{primaryLabel}</button>
+        <button class:dialog-danger={tone === 'danger'} class="dialog-button dialog-primary" type="button" disabled={primaryDisabled} onclick={handlePrimary}>{primaryLabel}</button>
       </div>
     </div>
   </div>

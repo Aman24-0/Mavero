@@ -112,6 +112,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     genres: genres.length ? genres.slice(0, 4) : ['Drama'],
     description: asString(raw.overview, 'No synopsis is available yet.'),
     poster: image(raw.poster_path ?? raw.backdrop_path, 'w500'),
+    posterSmall: image(raw.poster_path ?? raw.backdrop_path, 'w342'),
     backdrop: image(raw.backdrop_path ?? raw.poster_path, 'w1280'),
     backdropSmall: image(raw.backdrop_path ?? raw.poster_path, 'w780'),
     accent: '#9b87f5',

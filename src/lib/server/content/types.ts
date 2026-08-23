@@ -41,6 +41,7 @@ export type NormalizedMediaItem = {
   genres: string[];
   description: string;
   poster: string;
+  posterSmall?: string;
   backdrop: string;
   backdropSmall?: string;
   accent: string;

@@ -4,6 +4,7 @@
   import type { PageData } from './$types';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import { clearLocalData } from '$lib/client/progress/database';
+  import { haptic } from '$lib/client/haptics';
 
   let { data, form } = $props<{ data: PageData; form?: { section?: string; success?: boolean; message?: string } }>();
   let settings = $state({ autoplay: true, autoResume: true, reducedMotion: false });
@@ -15,6 +16,11 @@
 
   function persistSettings() {
     localStorage.setItem('mavero.settings', JSON.stringify(settings));
+  }
+
+  function persistSettingsAndHaptic() {
+    persistSettings();
+    haptic('light');
   }
 
   onMount(() => {
@@ -106,15 +112,15 @@
   <section class="settings-section" aria-labelledby="playback-settings-title">
     <div class="section-heading"><div class="section-icon"><Play size={17} /></div><div><div class="eyebrow">Playback</div><h2 id="playback-settings-title">Set the pace.</h2><p>These preferences are saved privately on this device.</p></div></div>
     <div class="toggle-list">
-      <label class="toggle-row"><span><strong>Autoplay next episode</strong><small>Start the next episode automatically when available.</small></span><input type="checkbox" bind:checked={settings.autoplay} onchange={persistSettings} /><i aria-hidden="true"></i></label>
-      <label class="toggle-row"><span><strong>Resume where you left off</strong><small>Use your saved progress when reopening a title.</small></span><input type="checkbox" bind:checked={settings.autoResume} onchange={persistSettings} /><i aria-hidden="true"></i></label>
+      <label class="toggle-row"><span><strong>Autoplay next episode</strong><small>Start the next episode automatically when available.</small></span><input type="checkbox" bind:checked={settings.autoplay} onchange={persistSettingsAndHaptic} /><i aria-hidden="true"></i></label>
+      <label class="toggle-row"><span><strong>Resume where you left off</strong><small>Use your saved progress when reopening a title.</small></span><input type="checkbox" bind:checked={settings.autoResume} onchange={persistSettingsAndHaptic} /><i aria-hidden="true"></i></label>
     </div>
   </section>
 
   <section class="settings-section" aria-labelledby="library-settings-title">
     <div class="section-heading"><div class="section-icon"><RotateCcw size={17} /></div><div><div class="eyebrow">Library and interface</div><h2 id="library-settings-title">Keep your library comfortable.</h2><p>Mavero keeps progress local-first and syncs it when your account is available.</p></div></div>
     <div class="toggle-list">
-      <label class="toggle-row"><span><strong>Reduce motion</strong><small>Use calmer transitions throughout the app.</small></span><input type="checkbox" bind:checked={settings.reducedMotion} onchange={persistSettings} /><i aria-hidden="true"></i></label>
+      <label class="toggle-row"><span><strong>Reduce motion</strong><small>Use calmer transitions throughout the app.</small></span><input type="checkbox" bind:checked={settings.reducedMotion} onchange={persistSettingsAndHaptic} /><i aria-hidden="true"></i></label>
     </div>
   </section>
 

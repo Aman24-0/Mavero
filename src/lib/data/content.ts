@@ -11,6 +11,7 @@ export type MediaItem = {
   genres: string[];
   description: string;
   poster: string;
+  posterSmall?: string;
   backdrop: string;
   backdropSmall?: string;
   accent: string;

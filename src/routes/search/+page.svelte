@@ -210,16 +210,19 @@
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .search-page { min-height: calc(100dvh - 76px); padding-top: 34px; padding-bottom: 76px; }
   .search-panel { width: min(920px, 100%); margin-inline: auto; }
-  .search-large { position: relative; min-height: 64px; margin: 0; padding: 0 14px; border-color: rgba(255, 62, 94,.28); border-radius: 18px; background: linear-gradient(110deg, rgba(20,20,27,.94), rgba(13,14,19,.9)); box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 14px 34px rgba(0,0,0,.12); transition: border-color 180ms ease-out, box-shadow 180ms ease-out, background 180ms ease-out; }
+  .search-large { position: relative; min-height: 64px; margin: 0; padding: 0 14px; border-color: rgba(255, 62, 94,.28); border-radius: 18px; background: linear-gradient(110deg, rgba(20,20,27,.94), rgba(13,14,19,.9)); color-scheme: dark; box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 14px 34px rgba(0,0,0,.12); transition: border-color 180ms ease-out, box-shadow 180ms ease-out, background 180ms ease-out; }
   .search-large:focus-within { border-color: rgba(255, 62, 94,.62); background: linear-gradient(110deg, rgba(35,31,25,.96), rgba(13,14,19,.94)); box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 4px rgba(255, 62, 94,.08), 0 18px 40px rgba(0,0,0,.18); }
   .search-leading { display: grid; flex: 0 0 32px; place-items: center; width: 32px; height: 32px; border: 1px solid rgba(255, 62, 94,.26); border-radius: 10px; color: var(--accent); background: rgba(255, 62, 94,.1); }
-  .search-large input { flex: 1; min-width: 0; height: 62px; padding: 0; color: var(--ink); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .9rem; font-weight: 650; letter-spacing: -.015em; }
-  .search-large input::placeholder { color: var(--muted-deep); font-weight: 550; }
-  .clear-search { display: grid; flex: 0 0 30px; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); background: rgba(255,255,255,.04); cursor: pointer; transition: color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
+  .search-large input { flex: 1; min-width: 0; height: 62px; padding: 0; border: 0; outline: 0; color: var(--ink); background-color: transparent; caret-color: var(--accent-strong); color-scheme: dark; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .9rem; font-weight: 650; letter-spacing: -.015em; }
+  .search-large input:focus, .search-large input:focus-visible { color: var(--ink); background-color: transparent; caret-color: var(--accent-strong); outline: 0; }
+  .search-large input::placeholder { color: var(--muted-deep); opacity: 1; font-weight: 550; }
+  .search-large input:-webkit-autofill, .search-large input:-webkit-autofill:hover, .search-large input:-webkit-autofill:focus { -webkit-text-fill-color: var(--ink); caret-color: var(--accent-strong); -webkit-box-shadow: 0 0 0 1000px var(--surface) inset; box-shadow: 0 0 0 1000px var(--surface) inset; transition: background-color 9999s ease-out 0s; }
+  .search-large input:-moz-autofill { color: var(--ink); caret-color: var(--accent-strong); box-shadow: 0 0 0 1000px var(--surface) inset; }
+  .clear-search { display: grid; flex: 0 0 48px; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); background: rgba(255,255,255,.04); cursor: pointer; transition: color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
   .clear-search:hover { color: var(--ink); background: rgba(255,255,255,.09); }
   .clear-search:active { transform: scale(.94); }
   .filter-chips { display: flex; justify-content: flex-start; gap: 7px; margin-top: 10px; }
-  .filter-chip { min-height: 34px; border: 1px solid var(--line); border-radius: 999px; padding: 0 17px; color: var(--muted); background: transparent; cursor: pointer; font-size: .67rem; font-weight: 800; transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
+  .filter-chip { min-height: 48px; border: 1px solid var(--line); border-radius: 999px; padding: 0 17px; color: var(--muted); background: transparent; cursor: pointer; font-size: .67rem; font-weight: 800; transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
   .filter-chip:hover, .filter-chip.active { color: var(--ink); border-color: rgba(255, 62, 94,.6); background: var(--accent-soft); }
   .filter-chip:active { transform: scale(.97); }
   .filter-selects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
@@ -249,6 +252,6 @@
   .empty-search p { max-width: 280px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 1000px) { .results-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 172px)); } }
-  @media (max-width: 640px) { .search-page { padding-top: calc(68px + env(safe-area-inset-top) + 22px); } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; padding: 0 8px; } .filter-selects { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .filter-trigger { padding: 8px 7px; } .trigger-value { font-size: .58rem; } .select-icon { flex-basis: 18px; width: 18px; height: 18px; font-size: .42rem; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
+  @media (max-width: 640px) { .search-page { padding-top: calc(68px + env(safe-area-inset-top) + 22px); } .filter-chips { justify-content: flex-start; } .filter-chip { flex: 1; padding: 0 8px; } .filter-selects { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .filter-trigger { min-height: 48px; padding: 8px 7px; } .trigger-value { font-size: .58rem; } .select-icon { flex-basis: 18px; width: 18px; height: 18px; font-size: .42rem; } .results-section { margin-top: 26px; } .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 10px; } }
   @media (prefers-reduced-motion: reduce) { .search-large, .filter-chip, .clear-search, .search-loading :global(svg) { transition: none; animation: none; } }
 </style>
