@@ -33,7 +33,7 @@ TMDB integration is implemented but inactive in this sandbox because no `TMDB_RE
 | Server endpoints | `src/routes/api/content/discover/[type]/+server.ts`, `src/routes/api/content/search/+server.ts`, `src/routes/api/content/[type]/[id]/+server.ts` |
 | Server route loaders | Root, Discover, collection, Search, movie detail, series detail, and anime detail `+page.server.ts` files |
 | Existing UI integration | `DiscoverPage.svelte`, `CollectionPage.svelte`, `DetailPage.svelte`, Search route, and their page route wrappers |
-| Documentation and QA | `QA_NOTES.md`, this report |
+| Documentation and QA | `../audits/QA_NOTES.md`, this report |
 
 No provider-specific request code was added to the UI components. No playback-provider resolution, provider scraping, DRM/access-control bypass, Supabase Auth, production watch-progress persistence, or admin CRUD was started in this phase.
 

@@ -160,7 +160,7 @@ The Phase 7C implementation adds:
 - `src/lib/shared/player-guards.ts`
 - `src/lib/shared/player-state.ts`
 - `scripts/phase7c_player_test.ts`
-- `PHASE_7C_BROWSER_QA_NOTES.md`
+- `./PHASE_7C_BROWSER_QA_NOTES.md`
 
 It updates the watch loader/page for resolver-backed playback, progress persistence, source switching, and episode navigation. It also tightens the existing runtime public Supabase typing and removes assignment-shaped secret placeholders from `.env.example` so the Phase 6 safety test remains meaningful.
 

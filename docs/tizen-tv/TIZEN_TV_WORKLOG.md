@@ -91,3 +91,27 @@ Phase 0       NEXT
 ```
 
 **Immediate next task:** Phase 0 — Tizen/TizenBrew feasibility and architecture audit.
+
+## Documentation Archive Cleanup Entry
+
+**Date:** 23 August 2026
+**Phase:** Pre-Phase-0 documentation maintenance
+**Objective:** Organize historical design, phase, audit, and QA documentation without changing application behavior or starting Tizen work.
+
+**Implementation completed:** Moved the specified historical files with `git mv` into `docs/archive/design-history/`, `docs/archive/phase-reports/`, and `docs/archive/audits/`; added `docs/archive/README.md`; and updated only affected historical path references. No historical document was deleted or substantively rewritten.
+
+**Tests and validation:** Confirmed all requested source files existed before moving; verified archived destinations and removal of old root paths; checked README documentation links; ran `git diff --check`; scanned the new documentation for suspicious secret assignments; and confirmed no application/source/configuration files changed.
+
+**Browser QA:** Not run; documentation-only change.
+
+**Samsung TV QA:** NOT RUN — hardware unavailable and Tizen implementation has not started.
+
+**Known limitations:** Historical Markdown hard-break formatting may retain intentional trailing spaces. Phase 0 feasibility and architecture questions remain unevaluated.
+
+**Unresolved issues:** None introduced by this cleanup.
+
+**Next step:** Start a separate Phase 0 feasibility and architecture audit. Phase 0 remains **NOT STARTED**.
+
+**Branch:** `main`
+**Commit SHA:** See the single documentation cleanup commit recorded in the final handoff.
+**Merge/deployment status:** Documentation-only cleanup pushed to `origin/main`; no runtime deployment required.

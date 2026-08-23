@@ -32,7 +32,7 @@ The phase adds shared structural loading skeletons, typed route and content erro
 | Error boundaries | `src/routes/+error.svelte`, `src/routes/movie/[id]/+error.svelte`, `src/routes/series/[id]/+error.svelte`, `src/routes/anime/[id]/+error.svelte` |
 | Series data routes | `src/routes/api/content/series/[id]/season/[season]/+server.ts`, `src/routes/watch/[type]/[id]/[season]/[episode]/+page.server.ts` |
 | Detail loaders | Movie, series, and anime `+page.server.ts` and `+page.svelte` wrappers |
-| QA evidence | `QA_NOTES.md` and this report |
+| QA evidence | `../audits/QA_NOTES.md` and this report |
 
 The unsupported `src/routes/+loading.svelte` experiment was removed after SvelteKit correctly rejected it as a reserved route filename. The supported equivalent is the `RouteLoading.svelte` overlay wired into `AppShell` through SvelteKit navigation state.
 

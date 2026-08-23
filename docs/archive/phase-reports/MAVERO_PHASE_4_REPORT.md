@@ -105,7 +105,7 @@ Record validation is performed at the adapter boundary. Malformed records are sk
 | Shared media typing | `src/lib/data/content.ts` |
 | Verification | `scripts/phase4_progress_test.ts` |
 | Test runner dependency | `package.json`, `pnpm-lock.yaml` |
-| Project QA notes | `QA_NOTES.md` |
+| Project QA notes | `../audits/QA_NOTES.md` |
 
 ## 13. Tests performed
 

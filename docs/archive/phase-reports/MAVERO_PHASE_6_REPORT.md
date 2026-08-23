@@ -87,7 +87,7 @@ Real values remain in the gitignored `.env.local` file and were not committed. `
 | Accessibility and UI resilience | `src/lib/components/AppShell.svelte`, `CollectionPage.svelte`, `DetailPage.svelte`, `DiscoverPage.svelte`, `MediaCard.svelte`, `SeasonEpisodes.svelte`, `src/app.css` |
 | SEO and PWA | `src/app.html`, `src/routes/sitemap.xml/+server.ts`, `static/robots.txt`, `static/manifest.webmanifest`, `static/icons/mavero-192.png`, `static/icons/mavero-512.png` |
 | Private-route metadata | `src/routes/profile/+page.svelte`, `src/routes/search/+page.svelte`, `src/routes/admin/+page.svelte`, authentication pages |
-| Verification | `scripts/phase6_auth_test.ts`, `scripts/phase6_rls_test.ts`, `MAVERO_PHASE_6_BROWSER_QA.md` |
+| Verification | `scripts/phase6_auth_test.ts`, `scripts/phase6_rls_test.ts`, `./MAVERO_PHASE_6_BROWSER_QA.md` |
 
 ### 15. Tests performed and results
 

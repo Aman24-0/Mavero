@@ -216,8 +216,8 @@ The existing two-user Phase 6 RLS fixture remains dependent on a User B credenti
 | `src/lib/server/resolver/types.ts` | Optional adapter ID and adapter-by-ID dependency contract |
 | `supabase/migrations/20260820018000_phase7d_vidsrc_experimental.sql` | Disabled-by-default provider/source seed migration |
 | `scripts/phase7d_vidsrc_test.ts` | Deterministic Vidsrc resolver/security tests |
-| `PHASE_7D_PROVIDER_RESEARCH_NOTES.md` | Current ordinary-interface verification notes |
-| `MAVERO_PHASE_7D_REPORT.md` | This completion report |
+| `./PHASE_7D_PROVIDER_RESEARCH_NOTES.md` | Current ordinary-interface verification notes |
+| `./MAVERO_PHASE_7D_REPORT.md` | This completion report |
 
 No Phase 7A, 7B, or 7C player architecture was redesigned. No extra dependency was added.
 
