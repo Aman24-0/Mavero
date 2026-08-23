@@ -94,7 +94,7 @@ function mapAniList(raw: AniListMedia, tag?: string): NormalizedMediaItem {
     genres: genres.length ? genres.slice(0, 4) : ['Anime'],
     description: stripDescription(raw.description) || 'No synopsis is available yet.',
     poster: raw.coverImage?.extraLarge || raw.coverImage?.large || raw.coverImage?.medium || '',
-    backdrop: raw.bannerImage || '',
+    backdrop: raw.bannerImage || raw.coverImage?.extraLarge || raw.coverImage?.large || '',
     accent: primaryColor,
     status: isAiring ? 'Currently airing' : raw.status ? raw.status.toLowerCase().replaceAll('_', ' ') : undefined,
     episodes: raw.episodes ?? undefined,

@@ -23,21 +23,23 @@
   .admin-shell { display: grid; grid-template-columns: 244px minmax(0, 1fr); min-height: 100vh; background: var(--base); }
   .admin-nav { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; padding: 28px 16px 22px; border-right: 1px solid var(--line); background: rgba(13,15,15,.92); }
   .admin-nav-top { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
-  .admin-brand { display: grid; grid-template-columns: 28px auto; align-items: center; gap: 9px; color: var(--ink); font-family: 'Manrope', sans-serif; font-size: .78rem; font-weight: 800; letter-spacing: .18em; text-decoration: none; }
-  .admin-brand .brand-symbol { display: grid; grid-row: span 2; place-items: center; width: 28px; height: 28px; border: 1px solid rgba(139,92,246,.62); border-radius: 50%; color: var(--accent-strong); font-family: 'Space Grotesk', sans-serif; font-size: 1.1rem; }
-  .admin-brand small { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .48rem; font-weight: 400; letter-spacing: .05em; }
-  .admin-mode { display: inline-flex; align-items: center; gap: 5px; color: var(--secondary); font-family: 'DM Mono', monospace; font-size: .52rem; text-transform: uppercase; }
+  .admin-brand { display: grid; grid-template-columns: 28px auto; align-items: center; gap: 9px; color: var(--ink); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .78rem; font-weight: 800; letter-spacing: .1em; text-decoration: none; }
+  .admin-brand .brand-symbol { display: grid; grid-row: span 2; place-items: center; width: 28px; height: 28px; border-radius: 9px; color: #fff; background: var(--accent-gradient); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .95rem; font-weight: 900; }
+  .admin-brand small { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .48rem; font-weight: 400; letter-spacing: .05em; }
+  .admin-mode { display: inline-flex; align-items: center; gap: 5px; color: var(--secondary); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .52rem; text-transform: uppercase; }
   .admin-mode :global(svg) { color: var(--secondary); }
   nav { display: grid; gap: 5px; margin-top: 58px; }
-  .admin-label { margin: 0 12px 9px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .53rem; letter-spacing: .14em; text-transform: uppercase; }
+  .admin-label { margin: 0 12px 9px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; letter-spacing: .14em; text-transform: uppercase; }
   nav a { display: flex; align-items: center; gap: 10px; min-height: 43px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--muted); font-size: .72rem; font-weight: 700; text-decoration: none; transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  nav a:hover { color: var(--ink); background: rgba(248,250,252,.045); transform: translateX(2px); }
-  nav a.active { color: var(--ink); border-color: rgba(139,92,246,.25); background: linear-gradient(90deg, var(--accent-soft), transparent); }
+  nav a:hover { color: var(--ink); background: rgba(245, 246, 250,.045); transform: translateX(2px); }
+  nav a.active { color: var(--ink); border-color: rgba(255, 62, 94,.25); background: linear-gradient(90deg, var(--accent-soft), transparent); }
   nav a.active :global(svg) { color: var(--accent-strong); }
   .admin-note { margin-top: auto; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
   .admin-note p { margin: 8px 0 0; color: var(--muted-deep); font-size: .64rem; line-height: 1.5; }
   .admin-back { display: inline-flex; align-items: center; gap: 7px; margin-top: 18px; color: var(--muted); font-size: .66rem; text-decoration: none; }
   .admin-back:hover { color: var(--accent-strong); }
   .admin-content { width: min(1240px, 100%); padding: 58px clamp(24px, 5vw, 78px) 80px; }
+  .admin-content :global(h1) { margin: 10px 0 0; color: var(--ink); font-size: clamp(1.8rem, 3.4vw, 2.6rem); font-weight: 900; letter-spacing: -.02em; line-height: 1.08; }
+  .admin-content :global(h2) { margin: 0; color: var(--ink); font-size: 1.15rem; font-weight: 800; letter-spacing: -.01em; }
   @media (max-width: 760px) { .admin-shell { display: block; } .admin-nav { position: static; height: auto; padding: 18px 16px 10px; border-right: 0; border-bottom: 1px solid var(--line); } nav { display: flex; overflow-x: auto; gap: 4px; margin-top: 24px; scrollbar-width: none; } nav::-webkit-scrollbar { display: none; } .admin-label, .admin-note, .admin-back { display: none; } nav a { flex: 0 0 auto; } .admin-content { padding: 34px 20px 66px; } }
 </style>

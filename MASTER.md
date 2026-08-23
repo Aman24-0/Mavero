@@ -1,54 +1,54 @@
-# MAVERO Modern Streaming Design System
+# MAVERO Editorial Streaming Design System
 
-## New visual thesis
-Mavero is a **content-first streaming application**, not an editorial publication. The visual identity comes from cinematic backdrops, poster artwork, layered dark surfaces, and confident product chrome. Typography is a modern sans-serif utility: clear, compact, and subordinate to the content. The interface uses near-black and blue-charcoal surfaces, one electric violet action accent, and a quiet teal secondary signal for progress and system health. Cards and panels are moderately rounded, bordered with restraint, and composed on a precise 8px rhythm.
+## Visual thesis
+Mavero is an editorial streaming space: **ink-black and warm charcoal surfaces, soft ivory type, warm amber for intent, and pale mint for trust and progress**. Typography uses a high-contrast editorial serif for hero and page titles paired with a quiet geometric sans for navigation, metadata, and controls. Layouts are airy but information-rich, built on a 4px base rhythm with generous section separation, medium rounded corners, and hairline borders. Content is always the hero; chrome stays calm.
 
 ## Interaction thesis
-Interactions are fast and purposeful: 140ms controls, 220ms card states, and 420ms page reveals. Hover and press states use a subtle lift, image scale, and accent border. Carousels keep the active title dominant with minimal supporting context and no random rotation or physical card pile. Mobile is a purpose-built single-column experience with a fixed bottom navigation, swipe-friendly rails, compact controls, and touch targets of at least 44px. Motion uses opacity and transforms only, and all nonessential animation respects reduced motion.
+Interactions are **fast and quiet**: 160ms for controls, 260ms for cards, and up to 520ms for page-level reveals. Hover uses a subtle lift, border illumination, and image scale rather than bounce. Scroll reveals are opacity and translate-only, with no layout animation. Mobile uses touch-sized targets and horizontal rails; desktop uses a persistent sidebar and denser grids. Reduced motion disables transforms and nonessential reveals.
 
 ## Palette
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `--ink` | `#F8FAFC` | Primary text |
-| `--ink-soft` | `#C6CBD5` | Body copy |
-| `--muted` | `#8B93A1` | Secondary copy and inactive labels |
-| `--muted-deep` | `#596170` | Metadata and utility text |
-| `--base` | `#0A0C10` | Global background |
-| `--base-lift` | `#0F1218` | Elevated canvas |
-| `--surface` | `#151923` | Cards and panels |
-| `--surface-2` | `#1B202C` | Hovered or nested surface |
-| `--surface-raised` | `#242A38` | Active surface |
-| `--line` | `rgba(248, 250, 252, .09)` | Default border |
-| `--line-strong` | `rgba(248, 250, 252, .18)` | Strong border and focus |
-| `--accent` | `#8B5CF6` | Primary action and active navigation |
-| `--accent-strong` | `#A78BFA` | Highlight and hover |
-| `--accent-soft` | `rgba(139, 92, 246, .16)` | Accent surface |
-| `--secondary` | `#55D6C2` | Progress, success, and health |
-| `--secondary-soft` | `rgba(85, 214, 194, .13)` | Teal tint surface |
-| `--success` | `#55D6C2` | Operational success |
-| `--warning` | `#F5B96B` | Warnings |
-| `--danger` | `#F37F8B` | Errors and destructive states |
+| `--ink` | `#F5F1E8` | Primary text and high-emphasis content |
+| `--ink-soft` | `#C9C6BE` | Body copy and secondary labels |
+| `--muted` | `#8E8D8A` | Supporting copy and inactive navigation |
+| `--muted-deep` | `#5D605F` | Metadata, captions, utility text |
+| `--base` | `#090A0B` | Global page background |
+| `--base-lift` | `#0F1112` | Raised page layers |
+| `--surface` | `#141617` | Cards, panels, and navigation surfaces |
+| `--surface-2` | `#1A1C1D` | Hover and nested surface |
+| `--surface-raised` | `#222525` | Active or elevated surface |
+| `--line` | `rgba(245, 241, 232, .10)` | Default borders |
+| `--line-strong` | `rgba(245, 241, 232, .20)` | Focus and stronger separators |
+| `--accent` | `#D8A34E` | Primary action and editorial highlight |
+| `--accent-strong` | `#F0BE68` | Hover, active, and rating emphasis |
+| `--accent-soft` | `rgba(216, 163, 78, .14)` | Amber tint surfaces |
+| `--secondary` | `#A9D0BF` | Progress, operational success, and trust |
+| `--secondary-soft` | `rgba(169, 208, 191, .13)` | Mint tint surfaces |
+| `--success` | `#A9D0BF` | Healthy / synced state |
+| `--warning` | `#E2B170` | Warnings and degraded states |
+| `--danger` | `#E78C8D` | Errors and destructive actions |
 
 ## Typography
 
-Use `Manrope` for the full product UI with `Space Grotesk` as a restrained display face for page titles and high-impact numeric values. Do not use serif typography. Hero titles cap at 4.8rem on large screens and 2.4–3.2rem on phones so the artwork and title read as one composition. Body text remains between .78rem and .95rem, with 1.55–1.7 line-height. `DM Mono` is reserved for metadata and system labels.
+The display family is `Cormorant Garamond`, used for hero and page titles with strong contrast and generous line-height. The interface family is `Manrope`, used for body, controls, cards, and navigation. `DM Mono` is reserved for metadata, system labels, and technical status. Display scale is fluid from 2.8rem on mobile to 6.8rem on large desktop. Body copy stays between .78rem and .98rem with 1.55–1.75 line-height.
 
-## Layout and responsive behavior
+## Layout
 
-Desktop uses a 232px persistent navigation rail and a content canvas that expands up to 1520px. The top utility bar remains compact and aligned with the canvas. At 900px the shell becomes a single canvas with a compact top bar, and at 640px it becomes a phone-first layout with a fixed bottom navigation. Poster rails use horizontal scrolling and snap points; collection grids use auto-fill with a minimum card width so they remain usable from 375px through 1440px.
+The desktop shell uses a 240px navigation rail and a content canvas capped at 1480px. Mobile collapses to a fixed bottom navigation with four primary destinations and a compact top utility bar. The responsive breakpoints are 375px, 640px, 900px, and 1440px. Content grids use `repeat(auto-fill, minmax())`, while editorial rails use horizontal scroll with snap points and hidden scrollbars.
 
 ## Components
 
-Buttons have 10px radius and a 44px minimum height. Cards are image-first with a 14px radius, short metadata, optional rating badge, and progress bar. Hero content is embedded in the hero composition, never repeated in a separate title block. Panels use moderate rounding, thin borders, and shallow shadows. Empty states are compact and actionable. Filters and pagination remain compact utility controls that preserve URL state.
+Buttons use 10px radius, 44px minimum height, and clear five-state treatment: default, hover, focus, active, and disabled. Cards use 14px radius, image-led hierarchy, and a mint/amber progress marker. Panels use 16px radius and hairline borders rather than heavy shadows. Empty and error states remain useful and action-oriented. Pagination is a quiet utility bar with explicit page state, disabled affordances, and preserved URL filters.
 
-## Motion
+## Motion tokens
 
 | Token | Value |
 | --- | --- |
-| `--motion-fast` | `140ms` |
-| `--motion-normal` | `220ms` |
-| `--motion-slow` | `420ms` |
+| `--motion-fast` | `160ms` |
+| `--motion-normal` | `260ms` |
+| `--motion-slow` | `520ms` |
 | `--ease-out` | `cubic-bezier(.22, 1, .36, 1)` |
 
-Animate opacity and transforms only. Avoid random rotation, excessive physical stacking, layout-property animation, and large decorative transitions.
+Use opacity and transforms only for motion. Never animate width, height, or layout-dependent properties. Respect `prefers-reduced-motion: reduce` globally.

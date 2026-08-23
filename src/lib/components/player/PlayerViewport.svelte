@@ -106,14 +106,14 @@
 </div>
 
 <style>
-  .viewport { position: relative; display: grid; min-height: clamp(220px, 56vw, 690px); overflow: hidden; background: #060607; isolation: isolate; }
-  .viewport video, .viewport iframe { position: relative; z-index: 1; width: 100%; height: 100%; min-height: inherit; border: 0; object-fit: contain; background: #060607; }
+  .viewport { position: relative; display: grid; min-height: clamp(220px, 56vw, 690px); overflow: hidden; background: #07070c; isolation: isolate; }
+  .viewport video, .viewport iframe { position: relative; z-index: 1; width: 100%; height: 100%; min-height: inherit; border: 0; object-fit: contain; background: #07070c; }
   .viewport iframe { display: block; }
   .viewport.embed { min-height: 0; }
   .viewport.embed iframe { aspect-ratio: 16 / 9; }
   .viewport-shade { position: absolute; z-index: 2; inset: auto 0 0; height: 38%; pointer-events: none; background: linear-gradient(0deg, rgba(4,4,6,.72), transparent); }
-  .state-label { position: absolute; z-index: 3; top: 18px; left: 18px; color: rgba(248,247,242,.68); font-family: 'DM Mono', monospace; font-size: .58rem; letter-spacing: .08em; text-transform: uppercase; text-shadow: 0 1px 12px #000; }
-  .empty-viewport { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 43%, rgba(155,135,245,.18), transparent 26%), linear-gradient(145deg, #0d0d13, #060607 70%); }
+  .state-label { position: absolute; z-index: 3; top: 18px; left: 18px; color: rgba(248,247,242,.68); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .08em; text-transform: uppercase; text-shadow: 0 1px 12px #000; }
+  .empty-viewport { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 43%, rgba(155,135,245,.18), transparent 26%), linear-gradient(145deg, #101018, #07070c 70%); }
   .empty-orb { width: 72px; height: 72px; border: 1px solid rgba(194,181,255,.42); border-radius: 50%; box-shadow: 0 0 0 18px rgba(155,135,245,.05), 0 0 80px rgba(155,135,245,.23); }
   @media (max-width: 640px) { .viewport { min-height: 56.25vw; max-height: 76dvh; } .state-label { top: 12px; left: 12px; font-size: .51rem; } }
   @media (prefers-reduced-motion: reduce) { .empty-orb { box-shadow: 0 0 0 18px rgba(155,135,245,.05); } }

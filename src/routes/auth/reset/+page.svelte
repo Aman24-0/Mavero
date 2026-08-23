@@ -37,13 +37,13 @@
   .auth-wrap { min-height: calc(100dvh - 76px); padding-bottom: 80px; }
   .back-link { display: inline-flex; align-items: center; gap: 8px; padding-top: 32px; color: var(--muted); font-size: .72rem; font-weight: 800; text-decoration: none; }
   .auth-card { width: min(480px, 100%); margin: 75px auto 0; padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
-  .auth-card h1 { margin: 9px 0 13px; font-size: clamp(2.6rem, 6vw, 4.3rem); line-height: .95; letter-spacing: -.08em; }
+  .auth-card h1 { margin: 9px 0 13px; color: var(--ink); font-size: clamp(1.7rem, 4vw, 2.3rem); font-weight: 900; line-height: 1.1; letter-spacing: -.02em; }
   .auth-card > p { color: var(--muted); font-size: .82rem; line-height: 1.7; }
   form { display: grid; gap: 15px; margin-top: 28px; }
   label { display: grid; gap: 7px; color: var(--muted); font-size: .68rem; font-weight: 800; }
   .auth-input { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted-deep); background: rgba(255,255,255,.03); }
   .auth-input input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: .8rem; }
-  .auth-message { margin-top: 18px; padding: 11px 12px; border: 1px solid rgba(255, 139, 139, .28); border-radius: 10px; color: #ffb1b1; background: rgba(255, 115, 115, .08); font-size: .72rem; line-height: 1.5; }
-  .auth-note { display: flex; align-items: center; gap: 7px; margin-top: 18px; color: var(--success); font-family: 'DM Mono', monospace; font-size: .58rem; line-height: 1.5; }
+  .auth-message { margin-top: 18px; padding: 11px 12px; border: 1px solid rgba(255, 139, 139, .28); border-radius: 10px; color: #ff8080; background: rgba(255, 115, 115, .08); font-size: .72rem; line-height: 1.5; }
+  .auth-note { display: flex; align-items: center; gap: 7px; margin-top: 18px; color: var(--success); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; line-height: 1.5; }
   @media (max-width: 640px) { .auth-wrap { padding-top: 68px; } .auth-card { margin-top: 45px; padding: 23px; } }
 </style>

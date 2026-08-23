@@ -17,9 +17,9 @@
 </section>
 
 <style>
-  .empty-state { display: grid; place-items: center; min-height: 270px; margin-top: 28px; padding: 34px 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: linear-gradient(135deg, rgba(145,182,173,.05), rgba(212,168,106,.035)); text-align: center; }
-  .empty-orbit { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 15px; border: 1px solid rgba(212,168,106,.35); border-radius: 50%; box-shadow: 0 0 0 9px rgba(212,168,106,.045); }
-  .empty-mark { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent-strong); background: rgba(8,11,13,.68); }
-  .empty-state h2 { margin: 8px 0 7px; font-family: 'Space Grotesk', sans-serif; font-size: 1.65rem; letter-spacing: -.06em; }
-  .empty-state p { max-width: 360px; margin: 0 0 20px; color: var(--muted); font-size: .78rem; line-height: 1.65; }
+  .empty-state { display: grid; place-items: center; min-height: 260px; margin-top: 26px; padding: 36px 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: linear-gradient(135deg, rgba(123,92,250,.06), rgba(255,56,96,.04)); text-align: center; }
+  .empty-orbit { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 15px; border: 1px solid rgba(255,90,122,.35); border-radius: 50%; box-shadow: 0 0 0 9px rgba(255,56,96,.05); }
+  .empty-mark { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent-strong); background: rgba(6,6,10,.7); }
+  .empty-state h2 { margin: 8px 0 7px; font-size: 1.4rem; font-weight: 800; letter-spacing: -.02em; }
+  .empty-state p { max-width: 360px; margin: 0 0 20px; color: var(--muted); font-size: .82rem; line-height: 1.6; }
 </style>

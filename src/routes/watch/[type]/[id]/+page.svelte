@@ -256,11 +256,11 @@
 {/if}
 
 <style>
-  .watch-loading { display: grid; place-items: center; align-content: center; gap: 18px; min-height: 100dvh; color: var(--muted); background: radial-gradient(circle at 50% 43%, rgba(212,168,106,.12), transparent 24rem), #050708; font-family: 'DM Mono', monospace; font-size: .66rem; text-align: center; }
-  .loading-ring { display: grid; place-items: center; width: 72px; height: 72px; border: 1px solid rgba(255,255,255,.1); border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 24%, rgba(237,196,134,.95) 42%, rgba(212,168,106,.2) 72%, transparent 100%); box-shadow: 0 0 0 14px rgba(212,168,106,.045), 0 0 60px rgba(212,168,106,.22); animation: spin 1.2s linear infinite; }
-  .loading-ring span { width: 58px; height: 58px; border-radius: 50%; background: #07070a; box-shadow: inset 0 0 22px rgba(212,168,106,.12); }
+  .watch-loading { display: grid; place-items: center; align-content: center; gap: 18px; min-height: 100dvh; color: var(--muted); background: radial-gradient(circle at 50% 43%, rgba(255, 62, 94,.12), transparent 24rem), #07070c; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .66rem; text-align: center; }
+  .loading-ring { display: grid; place-items: center; width: 72px; height: 72px; border: 1px solid rgba(255,255,255,.1); border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 24%, rgba(255, 88, 120, .95) 42%, rgba(255, 62, 94,.2) 72%, transparent 100%); box-shadow: 0 0 0 14px rgba(255, 62, 94,.045), 0 0 60px rgba(255, 62, 94,.22); animation: spin 1.2s linear infinite; }
+  .loading-ring span { width: 58px; height: 58px; border-radius: 50%; background: #07070c; box-shadow: inset 0 0 22px rgba(255, 62, 94,.12); }
   .loading-copy { display: grid; gap: 6px; }
-  .loading-copy strong { color: var(--ink); font-family: Manrope, sans-serif; font-size: .92rem; letter-spacing: -.02em; }
+  .loading-copy strong { color: var(--ink); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .92rem; letter-spacing: -.02em; }
   .loading-copy span { color: var(--muted); font-size: .6rem; }
   .watch-loading small { color: var(--muted-deep); font-size: .55rem; }
   @keyframes spin { to { transform: rotate(360deg); } }

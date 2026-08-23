@@ -42,19 +42,19 @@
   .sheet-layer { position: fixed; inset: 0; z-index: 80; display: grid; align-items: end; }
   .sheet-backdrop { position: absolute; inset: 0; border: 0; background: rgba(3, 6, 7, .76); backdrop-filter: blur(10px); cursor: default; }
   .selection-sheet { position: relative; width: min(100%, 560px); max-height: min(78dvh, 680px); margin: 0 auto; overflow: hidden auto; border: 1px solid var(--line-strong); border-bottom: 0; border-radius: var(--radius-xl) var(--radius-xl) 0 0; background: var(--surface-2); box-shadow: 0 -18px 80px rgba(0,0,0,.45); animation: sheet-in 220ms var(--ease-out); }
-  .sheet-handle { width: 38px; height: 4px; margin: 10px auto 0; border-radius: 99px; background: rgba(243,240,233,.25); }
+  .sheet-handle { width: 38px; height: 4px; margin: 10px auto 0; border-radius: 99px; background: rgba(245, 246, 250,.25); }
   .sheet-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 18px 20px 15px; border-bottom: 1px solid var(--line); }
-  .sheet-header h2 { margin: 6px 0 0; color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: 1.4rem; letter-spacing: -.05em; }
-  .sheet-close { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--muted); background: rgba(228,235,232,.04); font-size: 1.35rem; line-height: 1; cursor: pointer; }
-  .sheet-close:hover, .sheet-close:focus-visible { color: var(--ink); border-color: rgba(212,168,106,.62); outline: 0; box-shadow: 0 0 0 3px rgba(212,168,106,.12); }
+  .sheet-header h2 { margin: 6px 0 0; color: var(--ink); font-size: 1.2rem; font-weight: 800; letter-spacing: -.015em; }
+  .sheet-close { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--muted); background: rgba(245, 246, 250,.04); font-size: 1.35rem; line-height: 1; cursor: pointer; }
+  .sheet-close:hover, .sheet-close:focus-visible { color: var(--ink); border-color: rgba(255, 62, 94,.62); outline: 0; box-shadow: 0 0 0 3px rgba(255, 62, 94,.12); }
   .sheet-options { padding: 6px 12px 0; }
   .sheet-option { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 62px; gap: 14px; padding: 11px 8px; border: 0; border-bottom: 1px solid var(--line); color: var(--muted); background: transparent; text-align: left; cursor: pointer; transition: color 160ms var(--ease-out), background 160ms var(--ease-out), transform 160ms var(--ease-out); }
   .sheet-option:last-child { border-bottom: 0; }
-  .sheet-option:hover, .sheet-option:focus-visible { color: var(--ink); background: rgba(228,235,232,.035); outline: 0; }
+  .sheet-option:hover, .sheet-option:focus-visible { color: var(--ink); background: rgba(245, 246, 250,.035); outline: 0; }
   .sheet-option:active { transform: scale(.99); }
   .sheet-option.active { color: var(--ink); background: var(--accent-soft); }
   .option-leading { display: flex; align-items: center; min-width: 0; gap: 11px; }
-  .option-icon { display: grid; flex: 0 0 32px; place-items: center; width: 32px; height: 32px; overflow: hidden; border: 1px solid rgba(212,168,106,.28); border-radius: 9px; color: var(--ink); background: rgba(212,168,106,.1); font-family: 'DM Mono', monospace; font-size: .55rem; font-weight: 800; }
+  .option-icon { display: grid; flex: 0 0 32px; place-items: center; width: 32px; height: 32px; overflow: hidden; border: 1px solid rgba(255, 62, 94,.28); border-radius: 9px; color: var(--ink); background: rgba(255, 62, 94,.1); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; font-weight: 800; }
   .option-icon img { width: 19px; height: 19px; object-fit: contain; border-radius: 4px; }
   .option-fallback { display: grid; place-items: center; width: 100%; height: 100%; }
   .option-copy { display: grid; gap: 3px; min-width: 0; }

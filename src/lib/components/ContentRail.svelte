@@ -8,10 +8,10 @@
   export let items: MediaItem[] = [];
   export let href = '/discover';
   export let compact = false;
-  export let variant: 'default' | 'featured' = 'default';
+  export let variant: 'default' | 'editorial' = 'default';
 </script>
 
-<section class:compact class:featured={variant === 'featured'} class="section" aria-labelledby={`rail-${title.toLowerCase().replaceAll(' ', '-')}`}>
+<section class="section" aria-labelledby={`rail-${title.toLowerCase().replaceAll(' ', '-')}`}>
   <div class="section-head">
     <div class="section-heading-copy">
       {#if eyebrow}<div class="eyebrow">{eyebrow}</div>{/if}
@@ -21,15 +21,7 @@
   </div>
   <div class="rail" class:compact role="list" aria-label={title}>
     {#each items as item (item.type + ':' + item.id)}
-      <div role="listitem"><MediaCard {item} {compact} featured={variant === 'featured'} /></div>
+      <div role="listitem"><MediaCard {item} {compact} editorial={variant === 'editorial'} /></div>
     {/each}
   </div>
 </section>
-
-<style>
-  .section.featured .section-heading-copy { position: relative; padding-left: 14px; }
-  .section.featured .section-heading-copy::before { content: ''; position: absolute; top: 4px; bottom: 2px; left: 0; width: 2px; border-radius: 999px; background: linear-gradient(180deg, var(--accent-strong), transparent); opacity: .82; }
-  .section.featured .section-link { letter-spacing: .02em; }
-  .section.featured .rail { gap: 16px; }
-  @media (max-width: 640px) { .section.featured .section-heading-copy { padding-left: 11px; } .section.featured .rail { gap: 10px; } }
-</style>

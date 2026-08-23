@@ -2,12 +2,6 @@ import type { MediaItem } from '$data/content';
 import { progressLabel, progressPercent } from './service';
 import type { FavoriteRecord, WatchProgressRecord } from './types';
 
-function neutralImage(label: string, mode: 'poster' | 'backdrop') {
-  const width = mode === 'poster' ? 720 : 1280;
-  const height = mode === 'poster' ? 1080 : 720;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#171a24"/><circle cx="${width / 2}" cy="${height / 2 - 34}" r="42" fill="#8b5cf6" opacity=".2"/><path d="M${width / 2 - 18} ${height / 2 - 34}l36 0M${width / 2} ${height / 2 - 52}v36" stroke="#a78bfa" stroke-width="4" stroke-linecap="round"/><text x="50%" y="${height / 2 + 58}" text-anchor="middle" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="22">${label.replace(/[<>&"']/g, '')}</text></svg>`)}`;
-}
-
 function base(snapshot: WatchProgressRecord['snapshot'], record: { contentType: WatchProgressRecord['contentType']; contentId: string }): MediaItem {
   return {
     id: record.contentId,
@@ -19,8 +13,8 @@ function base(snapshot: WatchProgressRecord['snapshot'], record: { contentType: 
     rating: snapshot.rating ?? 0,
     genres: snapshot.genres ?? [],
     description: snapshot.description ?? '',
-    poster: snapshot.poster || neutralImage(snapshot.title, 'poster'),
-    backdrop: snapshot.backdrop || neutralImage(snapshot.title, 'backdrop'),
+    poster: snapshot.poster,
+    backdrop: snapshot.backdrop ?? snapshot.poster,
     accent: '#9b87f5'
   };
 }

@@ -1,12 +1,12 @@
 {
-  "name": "MAVERO — Discover. Watch.",
+  "name": "MAVERO — Movies, series & anime",
   "short_name": "MAVERO",
-  "description": "A cinematic home for your next story.",
+  "description": "Movies, series & anime — all in one place.",
   "start_url": "/discover",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#08090b",
-  "theme_color": "#08090b",
+  "background_color": "#06060a",
+  "theme_color": "#06060a",
   "orientation": "any",
   "icons": [
     { "src": "/icons/mavero-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },

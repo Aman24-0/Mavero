@@ -8,7 +8,7 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
-  const title = 'Mavero — Discover. Watch.';
+  const title = 'Mavero — Movies, series & anime';
 
   onMount(() => {
     if (!data.user) return;
@@ -22,7 +22,7 @@
 <svelte:head>
   <title>{title}</title>
   <meta property="og:title" content={title} />
-  <meta property="og:description" content="A cinematic home for your next story." />
+  <meta property="og:description" content="A fast, modern home for your next watch." />
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 

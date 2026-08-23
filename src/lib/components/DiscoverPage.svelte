@@ -4,11 +4,12 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { continueWatchingRecords } from '$lib/shared/progress-merge';
   import { progressToMedia } from '$lib/client/progress/presenter';
-  import { page } from '$app/state';
-  import { ArrowLeft, ArrowRight, Play, Sparkles, BookmarkPlus } from 'lucide-svelte';
+  import { navigating, page } from '$app/state';
+  import { ArrowLeft, ArrowRight, Play, Info, ListPlus } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
+  import RouteLoading from '$components/RouteLoading.svelte';
 
   export let featuredItem: MediaItem | undefined;
   export let movies: MediaItem[] = [];
@@ -22,10 +23,10 @@
 
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
   type GallerySlide = { item: MediaItem; category: GalleryCategory };
-  type CardPosition = { x: number; y: number; scale: number; rotation: number; opacity: number; zIndex: number };
+  type SlideState = { opacity: number; scale: number; zIndex: number };
 
-  const GALLERY_ROTATION_MS = 5000;
-  const GALLERY_TRANSITION_MS = 960;
+  const GALLERY_ROTATION_MS = 6500;
+  const GALLERY_TRANSITION_MS = 900;
   const GALLERY_SEQUENCE: GalleryCategory[] = ['Movie', 'Series', 'Anime', 'Movie', 'Series', 'Anime'];
 
   let localContinueLoaded = false;
@@ -35,7 +36,6 @@
   let galleryCards: HTMLElement[] = [];
   let galleryIndex = 0;
   let galleryAnimating = false;
-  let departingGalleryIndex = -1;
   let galleryPaused = false;
   let reducedMotion = false;
   let galleryRotationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -62,14 +62,13 @@
   }
 
   $: localContinue = localContinueLoaded ? localContinueItems : continueItems;
+  $: navigatingAway = Boolean(navigating.to);
   $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length);
   $: gallerySlides = createGallerySlides([...(featuredItem?.type === 'movie' ? [featuredItem] : []), ...popularMovies, ...movies], [...(featuredItem?.type === 'series' ? [featuredItem] : []), ...popularSeries, ...series], [...(featuredItem?.type === 'anime' ? [featuredItem] : []), ...popularAnime, ...anime]);
   $: activeSlide = gallerySlides[galleryIndex];
 
-  function positionFor(index: number, activeIndex: number): CardPosition {
-    const depth = gallerySlides.length ? (index - activeIndex + gallerySlides.length) % gallerySlides.length : 0;
-    const visibleDepth = Math.min(depth, 5);
-    return { x: visibleDepth * 16, y: visibleDepth * 5, scale: 1 - visibleDepth * 0.04, rotation: 0, opacity: 1 - visibleDepth * 0.16, zIndex: 20 - visibleDepth };
+  function stateFor(index: number, activeIndex: number): SlideState {
+    return index === activeIndex ? { opacity: 1, scale: 1.045, zIndex: 2 } : { opacity: 0, scale: 1, zIndex: 1 };
   }
 
   function clearGalleryTimers() {
@@ -80,17 +79,19 @@
   }
 
   function setInitialStack() {
-    if (!animationEngine || gallerySlides.length !== 6 || !galleryCards.length) return;
-    animationEngine.set(galleryCards[0], { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, zIndex: 1 });
+    if (!animationEngine || gallerySlides.length !== 6) return;
+    galleryCards.forEach((card, index) => animationEngine?.set(card, stateFor(index, galleryIndex)));
   }
 
-  function animateStack(_fromIndex: number, _toIndex: number) {
-    if (!animationEngine || gallerySlides.length !== 6 || !galleryCards.length) return;
+  function animateStack(fromIndex: number, toIndex: number) {
+    if (!animationEngine || gallerySlides.length !== 6) return;
     const duration = reducedMotion ? 0.18 : GALLERY_TRANSITION_MS / 1000;
-    const card = galleryCards[0];
-    const timeline = animationEngine.timeline({ defaults: { ease: reducedMotion ? 'power1.out' : 'expo.inOut', overwrite: true } });
-    timeline.to(card, { opacity: 0, y: -6, duration: duration * 0.42 });
-    timeline.to(card, { opacity: 1, y: 0, x: 0, scale: 1, rotation: 0, duration: duration * 0.58 });
+    const timeline = animationEngine.timeline({ defaults: { duration, ease: reducedMotion ? 'power1.out' : 'power2.inOut', overwrite: true } });
+    const outgoing = galleryCards[fromIndex];
+    const incoming = galleryCards[toIndex];
+    if (outgoing) timeline.set(outgoing, { zIndex: 2 }, 0);
+    if (incoming) timeline.fromTo(incoming, { opacity: 0, scale: 1.1 }, { opacity: 1, scale: 1.045, zIndex: 3 }, 0);
+    if (outgoing) timeline.to(outgoing, { opacity: 0, scale: 1 }, 0);
   }
 
   function queueGalleryRotation() {
@@ -99,10 +100,10 @@
     galleryRotationTimer = setTimeout(() => { galleryRotationTimer = undefined; if (galleryPaused || galleryAnimating) return; changeGallerySlide((galleryIndex + 1) % gallerySlides.length); }, GALLERY_ROTATION_MS);
   }
 
-  function finishGalleryTransition() { departingGalleryIndex = -1; galleryAnimating = false; galleryTransitionTimer = undefined; if (!galleryPaused) queueGalleryRotation(); }
+  function finishGalleryTransition() { galleryAnimating = false; galleryTransitionTimer = undefined; if (!galleryPaused) queueGalleryRotation(); }
   function changeGallerySlide(nextIndex: number) {
     if (gallerySlides.length !== 6 || galleryAnimating || nextIndex === galleryIndex) return;
-    const fromIndex = galleryIndex; departingGalleryIndex = fromIndex; galleryIndex = nextIndex; galleryAnimating = true;
+    const fromIndex = galleryIndex; galleryIndex = nextIndex; galleryAnimating = true;
     void tick().then(() => animateStack(fromIndex, nextIndex));
     if (galleryTransitionTimer) clearTimeout(galleryTransitionTimer);
     galleryTransitionTimer = setTimeout(finishGalleryTransition, reducedMotion ? 180 : GALLERY_TRANSITION_MS);
@@ -129,18 +130,18 @@
       animationEngine = gsap; reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       galleryCards = galleryStack ? Array.from(galleryStack.querySelectorAll<HTMLElement>('[data-gallery-card]')) : [];
       setInitialStack(); queueGalleryRotation();
-      if (!reducedMotion && intro) gsap.fromTo(intro.querySelectorAll('[data-reveal]'), { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: .52, stagger: .045, ease: 'power2.out' });
+      if (!reducedMotion && intro) gsap.fromTo(intro.querySelectorAll('[data-reveal]'), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: .5, stagger: .05, ease: 'power2.out' });
     })();
     return () => { cancelled = true; clearGalleryTimers(); if (animationEngine && galleryCards.length) animationEngine.killTweensOf(galleryCards); animationEngine = undefined; };
   });
 </script>
 
 <svelte:head>
-  <title>Mavero — Discover. Watch.</title>
-  <meta name="description" content="Discover movies, series, and anime on MAVERO." />
+  <title>Mavero — Movies, series &amp; anime, all in one place</title>
+  <meta name="description" content="Stream movies, series, and anime on MAVERO." />
   <link rel="canonical" href={page.url.origin}/>
-  <meta property="og:title" content="Mavero — Discover. Watch." />
-  <meta property="og:description" content="A considered place to find your next story." />
+  <meta property="og:title" content="Mavero — Movies, series & anime, all in one place" />
+  <meta property="og:description" content="A fast, modern home for your next watch." />
   <meta property="og:url" content={page.url.origin}/>
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary" />
@@ -149,34 +150,41 @@
 <div bind:this={intro} class="discover-page">
   {#if gallerySlides.length === 6 && activeSlide}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
-    <section class:reduced-motion={reducedMotion} class="streaming-hero" aria-labelledby="gallery-title" aria-roledescription="carousel" tabindex="0" onpointerenter={pauseGallery} onpointerleave={resumeGallery} onfocusin={pauseGallery} onfocusout={resumeGallery} onkeydown={handleGalleryKeydown}>
-      <div class="hero-backdrop gallery-ambient" aria-hidden="true" style={`background-image: url(${JSON.stringify(activeSlide.item.backdrop)})`}></div>
-      <div class="hero-wash" aria-hidden="true"></div>
-      <div class="container-wide hero-inner gallery-main">
-        <div class="hero-copy gallery-copy" data-reveal>
-          <div class="hero-kicker"><Sparkles size={13} /> Featured tonight <span></span> Now streaming</div>
-          <h1 id="gallery-title">{activeSlide.item.title}</h1>
-          <p>{activeSlide.item.description}</p>
-          <div class="hero-actions gallery-actions"><a class="btn btn-primary" href={`/watch/${activeSlide.item.type}/${activeSlide.item.id}`}><Play size={14} fill="currentColor" /> Play now</a><a class="btn btn-secondary" href={`/${activeSlide.item.type}/${activeSlide.item.id}`}><BookmarkPlus size={14} /> Add to list</a></div>
-          <div class="hero-note gallery-pulse"><span class="live-dot"></span><small>Curated for your next watch</small></div>
-        </div>
-                  <div class="hero-stage" bind:this={galleryStack} aria-label="Featured title carousel">
-            <div class="hero-poster-stack gallery-stack">
-              <article class:outgoing={galleryAnimating} class="hero-poster gallery-card active" data-gallery-card aria-live="polite">
-                <img class="hero-poster-image" src={activeSlide.item.poster} alt={`${activeSlide.item.title} poster`} loading="eager" width="720" height="1080" />
-                <div class="hero-poster-overlay"></div>
-                <div class="hero-poster-meta gallery-card-index"><small>{String(galleryIndex + 1).padStart(2, '0')} / {gallerySlides.length}</small></div>
-              </article>
-            </div>
+    <section class="hero" aria-roledescription="carousel" aria-label="Featured titles" tabindex="0" onpointerenter={pauseGallery} onpointerleave={resumeGallery} onfocusin={pauseGallery} onfocusout={resumeGallery} onkeydown={handleGalleryKeydown}>
+      <div class="hero-stack" bind:this={galleryStack} aria-hidden="true">
+        {#each gallerySlides as slide, index}
+          <div class:active={index === galleryIndex} class="hero-slide" data-gallery-card style={`background-image: url(${JSON.stringify(slide.item.backdrop || slide.item.poster)})`}></div>
+        {/each}
+      </div>
+      <div class="hero-scrim" aria-hidden="true"></div>
+      <div class="hero-scrim-bottom" aria-hidden="true"></div>
 
-          <div class="hero-controls gallery-controls" aria-label="Featured title controls">
-            <button class="hero-arrow gallery-arrow" type="button" aria-label="Previous title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex - 1 + gallerySlides.length) % gallerySlides.length); }}><ArrowLeft size={15} /></button>
-            <div class="hero-dots gallery-dots" role="tablist" aria-label="Choose featured title">
-              {#each gallerySlides as slide, index}<button class:active={index === galleryIndex} class="hero-dot gallery-dot" type="button" role="tab" aria-selected={index === galleryIndex} aria-label={`Show ${slide.item.title}`} onclick={() => selectGallerySlide(index)}></button>{/each}
-            </div>
-            <button class="hero-arrow gallery-arrow" type="button" aria-label="Next title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex + 1) % gallerySlides.length); }}><ArrowRight size={15} /></button>
+      <div class="container-wide hero-body">
+        <div class="hero-copy" data-reveal>
+          <div class="hero-kicker">{activeSlide.category} <span class="dot"></span> Featured</div>
+          <h1>{activeSlide.item.title}</h1>
+          <div class="hero-meta">
+            {#if activeSlide.item.rating > 0}<span class="rating">★ {activeSlide.item.rating.toFixed(1)}</span>{/if}
+            <span>{activeSlide.item.year}</span><span class="dot"></span>
+            <span>{activeSlide.item.maturity}</span><span class="dot"></span>
+            <span>{activeSlide.item.runtime}</span>
+          </div>
+          <p>{activeSlide.item.description}</p>
+          <div class="hero-genres">{#each activeSlide.item.genres.slice(0, 3) as genre}<span>{genre}</span>{/each}</div>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href={`/watch/${activeSlide.item.type}/${activeSlide.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
+            <a class="btn btn-secondary" href={`/${activeSlide.item.type}/${activeSlide.item.id}`}><Info size={16} /> More info</a>
+            <a class="btn btn-secondary icon-only" href={`/${activeSlide.item.type}/${activeSlide.item.id}`} aria-label="Add to My List"><ListPlus size={16} /></a>
           </div>
         </div>
+      </div>
+
+      <div class="hero-controls" aria-label="Featured title controls">
+        <button class="hero-arrow" type="button" aria-label="Previous title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex - 1 + gallerySlides.length) % gallerySlides.length); }}><ArrowLeft size={16} /></button>
+        <div class="hero-dots" role="tablist" aria-label="Choose featured title">
+          {#each gallerySlides as slide, index}<button class:active={index === galleryIndex} class="hero-dot" type="button" role="tab" aria-selected={index === galleryIndex} aria-label={`Show ${slide.item.title}`} onclick={() => selectGallerySlide(index)}></button>{/each}
+        </div>
+        <button class="hero-arrow" type="button" aria-label="Next title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex + 1) % gallerySlides.length); }}><ArrowRight size={16} /></button>
       </div>
     </section>
   {/if}
@@ -185,68 +193,79 @@
     {#if errorMessage}<div class="catalog-warning" role="alert">{errorMessage}</div>{/if}
     {#if hasCatalog}
       <nav class="discover-routes" aria-label="Explore MAVERO">
-        <div class="route-copy"><span class="eyebrow">Start exploring</span><strong>Find a world that feels like yours.</strong></div>
-        <div class="route-links"><a href="/discover/movies"><span>Movies</span><small>Latest releases</small><ArrowRight size={13} /></a><a href="/discover/series"><span>Series</span><small>Longer stories</small><ArrowRight size={13} /></a><a href="/discover/anime"><span>Anime</span><small>Another world</small><ArrowRight size={13} /></a></div>
+        <a href="/discover/movies"><span>Movies</span><ArrowRight size={13} /></a>
+        <a href="/discover/series"><span>Series</span><ArrowRight size={13} /></a>
+        <a href="/discover/anime"><span>Anime</span><ArrowRight size={13} /></a>
       </nav>
-      {#if localContinue.length}<ContentRail title="Continue watching" eyebrow="Your current rotation" items={localContinue} href="/my-list?status=watching" compact variant="featured" />{/if}
-      {#if movies.length}<ContentRail title="Trending tonight" eyebrow="What is finding an audience" items={movies} href="/discover/movies" variant="featured" />{/if}
-      {#if series.length}<ContentRail title="Stories worth staying for" eyebrow="Series with room to unfold" items={series} href="/discover/series" variant="featured" />{/if}
-      {#if anime.length}<ContentRail title="From another world" eyebrow="Animation beyond the expected" items={anime} href="/discover/anime" variant="featured" />{/if}
-      {#if popularMovies.length}<ContentRail title="The essential watchlist" eyebrow="Popular movies, carefully chosen" items={popularMovies} href="/discover/movies" variant="featured" />{/if}
-      {#if popularSeries.length}<ContentRail title="Binge-worthy worlds" eyebrow="Keep the night going" items={popularSeries} href="/discover/series" variant="featured" />{/if}
-      {#if popularAnime.length}<ContentRail title="Fan favourites" eyebrow="Made for the deep dive" items={popularAnime} href="/discover/anime" variant="featured" />{/if}
+      {#if localContinue.length}<ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />{/if}
+      {#if movies.length}<ContentRail title="Trending movies" items={movies} href="/discover/movies" />{/if}
+      {#if series.length}<ContentRail title="Trending series" items={series} href="/discover/series" />{/if}
+      {#if anime.length}<ContentRail title="Trending anime" items={anime} href="/discover/anime" />{/if}
+      {#if popularMovies.length}<ContentRail title="Popular movies" items={popularMovies} href="/discover/movies" />{/if}
+      {#if popularSeries.length}<ContentRail title="Popular series" items={popularSeries} href="/discover/series" />{/if}
+      {#if popularAnime.length}<ContentRail title="Popular anime" items={popularAnime} href="/discover/anime" />{/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}
-    <footer class="footer"><strong>MAVERO</strong><span>Stories worth staying for.</span></footer>
+    <footer class="footer"><strong>MAVERO</strong><span>Movies, series &amp; anime — all in one place.</span></footer>
   </div>
 </div>
 
+{#if navigatingAway}<RouteLoading />{/if}
 
 <style>
-  .streaming-hero { position: relative; min-height: min(720px, calc(100dvh - 78px)); overflow: hidden; border-bottom: 1px solid var(--line); background: var(--base); }
-  .hero-backdrop { position: absolute; inset: -4%; background-position: center; background-size: cover; filter: saturate(.63) blur(1px); opacity: .42; transform: scale(1.04); transition: opacity var(--motion-slow) var(--ease-out), background-image var(--motion-slow) var(--ease-out); }
-  .hero-wash { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(9,10,11,.98) 0%, rgba(9,10,11,.88) 36%, rgba(9,10,11,.4) 68%, rgba(9,10,11,.72) 100%), linear-gradient(0deg, var(--base) 0%, transparent 42%); }
-  .hero-inner { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, .82fr) minmax(420px, 1.18fr); align-items: center; gap: clamp(32px, 7vw, 110px); min-height: min(720px, calc(100dvh - 78px)); padding-top: 48px; padding-bottom: 48px; }
-  .hero-copy { max-width: 555px; }
-  .hero-kicker { display: inline-flex; align-items: center; gap: 9px; color: var(--accent-strong); font-family: 'DM Mono', monospace; font-size: .6rem; letter-spacing: .13em; text-transform: uppercase; }
-  .hero-kicker span { width: 28px; height: 1px; background: var(--accent); }
-  .hero-copy h1 { max-width: 640px; margin: 14px 0 14px; color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: clamp(4.2rem, 7.2vw, 8rem); font-weight: 600; letter-spacing: -.07em; line-height: .76; text-wrap: balance; }
-  .hero-copy p { max-width: 500px; margin: 0; color: var(--ink-soft); font-size: .88rem; line-height: 1.7; text-wrap: pretty; }
-  .hero-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 27px; }
-  .hero-note { display: inline-flex; align-items: center; gap: 8px; margin-top: 31px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .54rem; letter-spacing: .05em; text-transform: uppercase; }
-  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--secondary); box-shadow: 0 0 0 5px var(--secondary-soft); }
-  .hero-stage { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; }
-  .hero-poster-stack { position: relative; width: min(100%, 360px); aspect-ratio: 2 / 3; isolation: isolate; }
-  .hero-poster { position: absolute; z-index: 1; inset: 0; overflow: hidden; border: 1px solid rgba(248,250,252,.15); border-radius: var(--radius-xl); background: var(--surface); box-shadow: 0 24px 64px rgba(0,0,0,.42); pointer-events: none; will-change: transform, opacity; }
-  .hero-poster.active { border-color: rgba(167,139,250,.62); box-shadow: 0 34px 110px rgba(0,0,0,.55), 0 0 0 1px rgba(167,139,250,.08); }
-  .hero-poster-image, .hero-poster-overlay { position: absolute; inset: 0; }
-  .hero-poster-image { width: 100%; height: 100%; object-fit: cover; filter: saturate(.86) contrast(1.02); transition: transform 900ms var(--ease-out); }
-  .hero-poster.active .hero-poster-image { transform: scale(1.018); }
-  .hero-poster-overlay { background: linear-gradient(180deg, rgba(9,10,11,.06) 10%, rgba(9,10,11,.12) 48%, rgba(9,10,11,.82) 100%), linear-gradient(92deg, rgba(9,10,11,.25), transparent 60%); }
-  .hero-poster-meta { position: absolute; top: 22px; right: 24px; left: 24px; display: flex; justify-content: space-between; color: rgba(248,250,252,.78); font-family: 'DM Mono', monospace; font-size: .55rem; letter-spacing: .12em; text-transform: uppercase; }
-  .hero-controls { position: relative; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 19px; }
-  .hero-arrow { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid rgba(248,250,252,.18); border-radius: 50%; color: var(--ink); background: rgba(9,10,11,.58); backdrop-filter: blur(12px); transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .hero-arrow:hover, .hero-arrow:focus-visible { border-color: rgba(167,139,250,.66); color: var(--accent-strong); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
+  .hero { position: relative; min-height: min(88vh, 820px); overflow: hidden; background: var(--base); }
+  .hero-stack { position: absolute; inset: 0; }
+  .hero-slide { position: absolute; inset: 0; background-position: center 22%; background-size: cover; opacity: 0; will-change: opacity, transform; }
+  .hero-slide.active { opacity: 1; }
+  .hero-scrim { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(6,6,10,.97) 8%, rgba(6,6,10,.75) 32%, rgba(6,6,10,.28) 58%, rgba(6,6,10,.55) 100%); }
+  .hero-scrim-bottom { position: absolute; inset: auto 0 0 0; height: 45%; background: linear-gradient(0deg, var(--base) 0%, transparent 100%); }
+  .hero-body { position: relative; z-index: 2; display: flex; align-items: flex-end; min-height: min(88vh, 820px); padding-bottom: 96px; padding-top: 120px; }
+  .hero-copy { max-width: 620px; }
+  .hero-kicker { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-strong); font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  .dot { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .6; }
+  .hero-copy h1 { margin: 12px 0 0; color: var(--ink); font-size: clamp(2.4rem, 5.4vw, 4.6rem); font-weight: 900; letter-spacing: -.03em; line-height: .98; text-wrap: balance; }
+  .hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 16px; color: var(--ink-soft); font-size: .8rem; font-weight: 600; }
+  .hero-meta .rating { color: #ffc94d; }
+  .hero-meta .dot { color: var(--muted-deep); }
+  .hero-copy p { max-width: 540px; margin: 16px 0 0; color: var(--ink-soft); font-size: .92rem; line-height: 1.6; text-wrap: pretty; }
+  .hero-genres { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .hero-genres span { border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 12px; color: var(--ink-soft); font-size: .68rem; font-weight: 600; background: rgba(245,246,250,.05); }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .icon-only { width: 46px; padding: 0; flex: 0 0 auto; }
+  .hero-controls { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 28px; z-index: 3; display: flex; align-items: center; gap: 12px; }
+  .hero-arrow { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink); background: rgba(6,6,10,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .hero-arrow:hover, .hero-arrow:focus-visible { border-color: rgba(255,90,122,.6); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
   .hero-dots { display: flex; align-items: center; gap: 6px; }
-  .hero-dot { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 999px; background: rgba(248,250,252,.26); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .hero-dot:hover, .hero-dot:focus-visible { background: rgba(248,250,252,.7); outline: 0; }
-  .hero-dot.active { width: 24px; background: var(--accent-strong); }
-  .discover-routes { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 0 0 38px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .route-copy { display: grid; gap: 4px; }
-  .route-copy strong { color: var(--ink); font-family: 'Space Grotesk', sans-serif; font-size: 1.4rem; font-weight: 600; letter-spacing: -.025em; }
-  .route-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .route-links a { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 3px 13px; min-width: 132px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); text-decoration: none; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .route-links a:hover { border-color: rgba(167,139,250,.5); background: var(--accent-soft); transform: translateY(-2px); }
-  .route-links a span { font-size: .7rem; font-weight: 800; }
-  .route-links a small { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .5rem; }
-  .route-links a :global(svg) { grid-row: 1 / span 2; grid-column: 2; color: var(--accent-strong); }
-  .catalog-warning { margin: 14px 0 0; padding: 11px 13px; border: 1px solid rgba(226,177,112,.35); color: var(--warning); font-family: 'DM Mono', monospace; font-size: .62rem; line-height: 1.5; }
-  @media (max-width: 1050px) { .hero-inner { grid-template-columns: minmax(0, .78fr) minmax(300px, 1.22fr); gap: 34px; } .hero-copy h1 { font-size: clamp(4rem, 7vw, 6.4rem); } }
-  @media (max-width: 720px) { .streaming-hero { min-height: auto; } .hero-inner { display: flex; flex-direction: column; align-items: stretch; min-height: auto; gap: 24px; padding-top: 94px; padding-bottom: 30px; } .hero-stage { order: 1; padding: 0 7px; } .hero-poster-stack { width: min(70vw, 280px); aspect-ratio: 2 / 3; } .hero-poster { border-radius: 21px; } .hero-copy { order: 2; max-width: none; } .hero-copy h1 { max-width: 340px; margin-top: 10px; font-size: clamp(3.25rem, 17vw, 5rem); line-height: .8; } .hero-copy p { max-width: 360px; font-size: .8rem; line-height: 1.58; } .hero-actions { margin-top: 19px; } .hero-note { margin-top: 21px; } .discover-routes { align-items: stretch; flex-direction: column; gap: 14px; margin-bottom: 30px; } .route-links { gap: 6px; } .route-links a { min-width: 0; padding: 9px 8px; } .route-links a small { display: none; } .route-links a span { font-size: .63rem; } .route-links a :global(svg) { width: 12px; } }
-  @media (prefers-reduced-motion: reduce) { .hero-backdrop, .hero-poster-image, .route-links a, .hero-arrow { transition: none; transform: none; } }
-  /* Compatibility hooks retained for the existing discovery contract: gallery-copy, gallery-card-index, gallery-actions, gallery-controls, gallery-dots, gallery-ambient, gallery-pulse, gallery-main, and gallery-stack. */
-  /* class="gallery-copy" class="gallery-ambient" class="gallery-pulse" */
-  /* Existing contract signatures: .gallery-main { display: grid; grid-template-columns: ... } .gallery-stack { position: relative; width: min(100%, 900px); aspect-ratio: 1.62; } @media (max-width: 1100px) and (min-width: 701px) { } @media (max-width: 700px) { .gallery-stack { width: min(78vw, 310px); aspect-ratio: .88; } } */
-  /* Historical formula retained for contract coverage only: rotation: visibleDepth === 0 ? 0 : (visibleDepth % 2 ? 0.32 : -0.24) */
+  .hero-dot { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 999px; background: rgba(245,246,250,.28); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .hero-dot:hover, .hero-dot:focus-visible { background: rgba(245,246,250,.65); outline: 0; }
+  .hero-dot.active { width: 22px; background: var(--accent-gradient); }
+
+  .discover-routes { display: flex; gap: 10px; margin: 22px 0 40px; }
+  .discover-routes a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); text-decoration: none; font-size: .78rem; font-weight: 700; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .discover-routes a:hover { border-color: rgba(255,90,122,.5); background: var(--accent-soft); transform: translateY(-2px); }
+  .discover-routes a :global(svg) { color: var(--accent-strong); }
+  .catalog-warning { margin: 16px 0 0; padding: 12px 14px; border: 1px solid rgba(255,176,32,.35); border-radius: var(--radius-sm); color: var(--warning); font-size: .72rem; line-height: 1.5; }
+
+  @media (max-width: 900px) {
+    .hero { min-height: min(78vh, 680px); }
+    .hero-body { min-height: min(78vh, 680px); padding-top: 90px; padding-bottom: 84px; }
+  }
+  @media (max-width: 640px) {
+    .hero { min-height: 84vh; }
+    .hero-slide { background-position: center 18%; }
+    .hero-scrim { background: linear-gradient(0deg, rgba(6,6,10,.98) 18%, rgba(6,6,10,.55) 55%, rgba(6,6,10,.35) 100%); }
+    .hero-body { align-items: flex-end; min-height: 84vh; padding-top: 76px; padding-bottom: 74px; }
+    .hero-copy { max-width: none; }
+    .hero-copy h1 { font-size: clamp(2rem, 9vw, 2.9rem); }
+    .hero-copy p { font-size: .82rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+    .hero-genres { display: none; }
+    .hero-actions .btn:not(.icon-only) { flex: 1; }
+    .hero-controls { right: 20px; bottom: 14px; }
+    .hero-arrow { width: 32px; height: 32px; }
+    .discover-routes { margin: 16px 0 30px; overflow-x: auto; scrollbar-width: none; }
+    .discover-routes::-webkit-scrollbar { display: none; }
+    .discover-routes a { flex: 0 0 auto; }
+  }
+  @media (prefers-reduced-motion: reduce) { .hero-slide, .hero-arrow, .discover-routes a { transition: none; } }
 </style>

@@ -22,20 +22,19 @@
   let statusSheetOpen = false;
   let saveError = '';
   let resumeEpisode: { season: number; episode: number } | undefined;
-  let trailerOpen = false;
   const statusOptions = [
     { key: 'watching', label: 'Watching', icon: '▶', description: 'Keep this in your current rotation.' },
     { key: 'planned', label: 'Planned', icon: '＋', description: 'Save it for a future night.' },
     { key: 'completed', label: 'Completed', icon: '✓', description: 'Mark this story as finished.' },
     { key: 'remove', label: 'Remove from My List', icon: '×', description: 'Take it out of your saved library.' },
   ];
-  $: item = dataItem ?? getMedia(id, type);
+  $: item = dataItem ?? getMedia(id);
   $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6);
   $: statusSheetOptions = watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove');
   $: canonicalUrl = `${page.url.origin}/${type}/${item.id}`;
   $: watchPath = type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`;
   $: watchHref = appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`);
-  $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
+  $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
 
   onMount(() => {
     let active = true;
@@ -61,14 +60,6 @@
     }
     return () => { active = false; };
   });
-
-  function openTrailer() {
-    if (item.trailerKey) trailerOpen = true;
-  }
-
-  function closeTrailer() {
-    trailerOpen = false;
-  }
 
   function openStatusSheet() {
     statusSheetOpen = true;
@@ -137,16 +128,16 @@
   <meta property="og:title" content={`${item.title} — Mavero`} />
   <meta property="og:description" content={item.description} />
   <meta property="og:url" content={canonicalUrl} />
-  <meta property="og:image" content={item.backdrop} />
+  <meta property="og:image" content={item.backdrop || item.poster} />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content={`${item.title} — Mavero`} />
   <meta name="twitter:description" content={item.description} />
-  <meta name="twitter:image" content={item.backdrop} />
+  <meta name="twitter:image" content={item.backdrop || item.poster} />
   <script type="application/ld+json">{structuredData}</script>
 </svelte:head>
 
 <div class="detail-wrap">
-  <div class="detail-backdrop" style={`background-image: url('${item.backdrop}')`}></div>
+  <div class="detail-backdrop" style={`background-image: url('${item.backdrop || item.poster}')`}></div>
   <div class="container-wide">
     <a class="back-link" href="/discover" onclick={goBack}><ArrowLeft size={15} /> Back</a>
     <section class="detail-layout" aria-labelledby="detail-title">
@@ -155,12 +146,12 @@
         <div class="detail-lead">
           <div class="eyebrow">{formatType(type)}{#if item.genres[0]} / {item.genres[0]}{/if}</div>
           <h1 id="detail-title">{item.title}</h1>
-          <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
+          <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.runtime}</span><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
         </div>
         <p class="detail-description">{item.description}</p>
-        <div class="detail-actions"><a class="btn btn-primary" href={watchHref}><Play size={15} fill="currentColor" /> Watch now</a>{#if item.trailerKey}<button class="btn btn-secondary" type="button" onclick={openTrailer} aria-expanded={trailerOpen}><Play size={14} /> Trailer</button>{/if}<button class="btn btn-secondary" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}><Heart size={15} fill={watchlistStatus ? 'currentColor' : 'none'} /> {statusLabel(watchlistStatus)}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
+        <div class="detail-actions"><a class="btn btn-primary" href={watchHref}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}><Heart size={15} fill={watchlistStatus ? 'currentColor' : 'none'} /> {statusLabel(watchlistStatus)}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
         {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
-        {#if trailerOpen && item.trailerKey}<section class="trailer-panel" aria-label={`${item.title} trailer`}><div class="trailer-panel-head"><span>Trailer</span><button class="icon-btn" type="button" onclick={closeTrailer} aria-label="Close trailer"><ArrowLeft size={15} /></button></div><div class="trailer-frame"><iframe src={`https://www.youtube-nocookie.com/embed/${item.trailerKey}?autoplay=1&rel=0`} title={`${item.title} trailer`} allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div></section>{/if}
+        <div class="detail-grid"><div class="detail-stat"><span>Genres</span><strong>{item.genres.slice(0, 2).join(' · ') || '—'}</strong></div><div class="detail-stat"><span>Audio</span><strong>Original · Sub</strong></div><div class="detail-stat"><span>Quality</span><strong>Full HD · 4K</strong></div></div>
         {#if type !== 'movie'}<div class="episode-strip"><div><div class="eyebrow">Episode guide</div><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? 12} episodes</strong></div><a class="icon-btn" href={`/${type}/${item.id}#episodes`} aria-label="Open episode list"><ArrowRight size={16} /></a></div>{/if}
       </div>
     </section>
@@ -172,28 +163,47 @@
 
 <style>
   .detail-wrap { position: relative; overflow: hidden; padding-bottom: 64px; }
-  .detail-backdrop { position: absolute; inset: 0 0 auto; z-index: -1; height: 600px; background-position: center 20%; background-size: cover; opacity: .28; filter: saturate(.65) contrast(1.04); }
-  .detail-wrap::before { content: ''; position: absolute; inset: 0 0 auto; z-index: -1; height: 680px; background: linear-gradient(90deg, var(--base) 6%, rgba(8,11,13,.84) 48%, rgba(8,11,13,.18) 100%), linear-gradient(0deg, var(--base) 4%, transparent 74%); }
-  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 24px; color: var(--muted); font-size: .67rem; font-weight: 800; text-decoration: none; }
-  .back-link:hover { color: var(--ink); }
+  .detail-backdrop { position: absolute; inset: 0 0 auto; z-index: -1; height: 680px; background-position: center 18%; background-size: cover; opacity: .55; filter: saturate(1.05); }
+  .detail-wrap::before {
+    content: ''; position: absolute; inset: 0 0 auto; z-index: -1; height: 760px;
+    background:
+      linear-gradient(100deg, var(--base) 4%, rgba(6,6,10,.9) 42%, rgba(6,6,10,.35) 75%, rgba(6,6,10,.7) 100%),
+      linear-gradient(0deg, var(--base) 2%, transparent 78%);
+  }
+  .back-link { display: inline-flex; align-items: center; gap: 7px; padding-top: 28px; color: var(--muted); font-size: .74rem; font-weight: 700; text-decoration: none; transition: color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .back-link:hover { color: var(--ink); transform: translateX(-2px); }
+  .detail-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; align-items: start; padding: 40px 0 54px; }
   .detail-poster { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); aspect-ratio: 2 / 3; background: var(--surface); box-shadow: var(--shadow-lg); }
   .detail-poster img { width: 100%; height: 100%; object-fit: cover; }
-  .detail-copy { min-width: 0; padding-top: 5px; }
+  .detail-copy { min-width: 0; padding-top: 6px; }
   .detail-lead { min-width: 0; }
-  .detail-copy h1 { max-width: 820px; margin: 7px 0 12px; font-family: 'Space Grotesk', sans-serif; font-size: clamp(2.5rem, 5vw, 5.3rem); letter-spacing: -.08em; line-height: .93; }
-  .meta-row { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .63rem; }
+  .detail-copy h1 { max-width: 820px; margin: 10px 0 14px; color: var(--ink); font-size: clamp(2rem, 4.2vw, 3.6rem); font-weight: 900; letter-spacing: -.025em; line-height: 1.02; text-wrap: balance; }
+  .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; color: var(--ink-soft); font-size: .82rem; font-weight: 600; }
   .meta-row .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--muted-deep); }
-  .detail-description { max-width: 680px; margin: 20px 0 0; color: var(--ink-soft); font-size: .9rem; line-height: 1.75; }
-  .rating { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-strong); }
-  .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 23px; }
-  .trailer-panel { max-width: 700px; margin-top: 18px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(12,14,19,.84); overflow: hidden; }
-  .trailer-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 8px 13px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .58rem; text-transform: uppercase; }
-  .trailer-frame { aspect-ratio: 16 / 9; background: #050608; }
-  .trailer-frame iframe { width: 100%; height: 100%; border: 0; }
+  .detail-description { max-width: 700px; margin: 22px 0 0; color: var(--ink-soft); font-size: .92rem; line-height: 1.75; }
+  .rating { display: inline-flex; align-items: center; gap: 4px; color: #ffc94d; }
+  .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 26px; }
   .action-icon { border-color: var(--line-strong); }
-  .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(440px, 100%); margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(228,235,232,.045); }
-  .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .7rem; }
-  .save-error { margin-top: 9px; color: var(--warning); font-family: 'DM Mono', monospace; font-size: .57rem; }
-  @media (max-width: 900px) { .detail-layout { grid-template-columns: 185px minmax(0, 1fr); gap: 24px; } }
-  @media (max-width: 640px) { .detail-backdrop { height: 420px; } .detail-wrap::before { height: 500px; } .back-link { padding-top: 24px; } .detail-layout { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 16px; padding: 24px 0 30px; align-items: start; } .detail-poster { border-radius: var(--radius-md); } .detail-copy { display: contents; } .detail-copy > .detail-lead { grid-column: 2; min-width: 0; } .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .trailer-panel, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; } .detail-copy h1 { margin-top: 6px; font-size: clamp(1.9rem, 8vw, 2.5rem); line-height: .98; } .detail-description { margin-top: 18px; font-size: .84rem; } }
+  .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; max-width: 650px; margin: 26px 0 0; }
+  .detail-stat { padding: 13px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(245,246,250,.035); }
+  .detail-stat span { display: block; color: var(--muted-deep); font-size: .62rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .detail-stat strong { display: block; margin-top: 5px; overflow: hidden; color: var(--ink); font-size: .76rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+  .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(460px, 100%); margin-top: 18px; padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(245,246,250,.045); }
+  .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .76rem; font-weight: 700; }
+  .save-error { margin-top: 10px; color: var(--warning); font-size: .68rem; font-weight: 600; }
+  @media (max-width: 900px) { .detail-layout { grid-template-columns: 195px minmax(0, 1fr); gap: 26px; } }
+  @media (max-width: 640px) {
+    .detail-backdrop { height: 460px; }
+    .detail-wrap::before { height: 540px; }
+    .back-link { padding-top: 78px; }
+    .detail-layout { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 16px; padding: 24px 0 30px; align-items: start; }
+    .detail-poster { border-radius: var(--radius-md); }
+    .detail-copy { display: contents; }
+    .detail-copy > .detail-lead { grid-column: 2; min-width: 0; }
+    .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; }
+    .detail-copy h1 { margin-top: 6px; font-size: clamp(1.7rem, 8vw, 2.3rem); line-height: 1.05; }
+    .detail-description { margin-top: 18px; font-size: .84rem; }
+    .detail-grid { gap: 7px; }
+    .detail-stat { padding: 10px; }
+  }
 </style>

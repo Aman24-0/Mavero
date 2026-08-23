@@ -42,10 +42,10 @@
   .admin-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 30px; }
   .admin-stat { min-height: 125px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
   .admin-stat strong { display: block; margin-top: 10px; color: var(--ink); font-size: 2rem; letter-spacing: -.08em; }
-  .stat-foot { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; }
+  .stat-foot { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
   .admin-section-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-top: 58px; }
   .admin-section-head h2 { margin: 7px 0 0; font-size: 1.25rem; letter-spacing: -.05em; }
-  .version { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; }
+  .version { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
   .admin-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
   .admin-card { display: flex; align-items: center; gap: 12px; min-height: 130px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); background: var(--surface); text-decoration: none; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
   .admin-card:hover { transform: translateY(-2px); border-color: rgba(155,135,245,.45); background: var(--surface-raised); }
@@ -56,7 +56,7 @@
   .admin-lower-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
   .admin-panel { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
   .admin-panel h3 { margin-top: 9px; }
-  .security-line { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; color: var(--success); font-family: 'DM Mono', monospace; font-size: .57rem; }
+  .security-line { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; color: var(--success); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .57rem; }
   @media (max-width: 850px) { .admin-grid { grid-template-columns: repeat(2, 1fr); } .admin-cards { grid-template-columns: 1fr; } }
   @media (max-width: 640px) { .admin-section-head { align-items: start; flex-direction: column; gap: 10px; } .admin-lower-grid { grid-template-columns: 1fr; } }
 </style>

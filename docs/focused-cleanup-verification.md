@@ -1,9 +1,0 @@
-# Focused cleanup verification
-
-The current local preview was inspected after the focused cleanup. Discover now renders a bounded catalog-unavailable state instead of an indefinite skeleton, with the hero overlay absent when data loading has completed. Search is a compact utility surface with only the heading, search field, type chips, and filter controls; the instructional paragraph and large empty prompt are gone. My List places the title, counts, status filters, and library state near the top. Profile presents avatar, account state, activity, saved titles, preferences, and a compact CineLog banner linking to `https://cinelog.app`; the CTA does not link to My List.
-
-The shared shell now owns route-transition loading via explicit `onNavigate`/`afterNavigate` lifecycle hooks, while Discover no longer mounts its own duplicate navigation overlay. The mobile header search action is hidden below the compact-shell breakpoint, leaving Search in the fixed bottom navigation as the single mobile entry point.
-
-The local browser visually confirms the compact Search, My List, and Profile layouts. Search shows only the utility controls; My List shows title/counts/status filters before the empty library state; Profile shows compact account/activity panels and the CineLog CTA linking to `https://cinelog.app`. The browser’s annotated sidebar click did not trigger from My List in this preview session, so route transition behavior is additionally validated through the explicit SvelteKit lifecycle implementation and direct route loads; Search-to-Discover did successfully settle on the Discover error state without a refresh.
-
-The My List-to-Discover path was then triggered through the actual rendered Discover anchor. The browser transitioned to `/discover` and settled on the bounded catalog-unavailable state with a Retry Discover action, confirming the route does not remain behind the loading overlay.

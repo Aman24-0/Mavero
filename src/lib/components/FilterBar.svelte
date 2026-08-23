@@ -20,12 +20,12 @@
 </div>
 
 <style>
-  .filter-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(16,22,25,.78); box-shadow: inset 0 1px 0 rgba(243,240,233,.025); }
-  .filter-label { display: inline-flex; align-items: center; gap: 6px; padding: 0 7px; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .55rem; letter-spacing: .08em; text-transform: uppercase; }
-  label { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: rgba(228,235,232,.035); font-size: .62rem; }
-  label:focus-within { border-color: rgba(167,139,250,.56); }
-  label span { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .5rem; text-transform: uppercase; }
-  select { max-width: 115px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: .62rem; font-weight: 800; }
-  option { color: #11171a; }
-  @media (max-width: 640px) { .filter-bar { width: 100%; flex-wrap: nowrap; overflow-x: auto; padding: 6px; scrollbar-width: none; } .filter-bar::-webkit-scrollbar { display: none; } .filter-label, label { flex: 0 0 auto; } label { justify-content: space-between; min-width: 128px; } select { max-width: 86px; } }
+  .filter-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(16,16,24,.7); }
+  .filter-label { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--muted); font-size: .66rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  label { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: rgba(245,246,250,.03); font-size: .7rem; transition: border-color var(--motion-fast) var(--ease-out); }
+  label:focus-within { border-color: rgba(255,90,122,.5); }
+  label span { color: var(--muted-deep); font-size: .6rem; font-weight: 700; text-transform: uppercase; }
+  select { max-width: 115px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: .72rem; font-weight: 700; }
+  option { color: #f5f6fa; background: #12121a; }
+  @media (max-width: 640px) { .filter-bar { width: 100%; } .filter-label { flex: 0 0 auto; } label { flex: 1; justify-content: space-between; min-width: 0; } select { max-width: 74px; } }
 </style>

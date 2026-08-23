@@ -100,21 +100,21 @@
   .control-button { display: inline-grid; place-items: center; min-width: 38px; min-height: 38px; border: 1px solid transparent; border-radius: 10px; color: rgba(255,255,255,.84); background: rgba(7,7,10,.68); cursor: pointer; transition: border-color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
   .control-button:hover, .control-button:focus-visible { border-color: rgba(194,181,255,.55); background: rgba(33,27,52,.86); }
   .control-button:active { transform: scale(.97); }
-  .control-button.primary { color: #110f18; background: var(--accent); }
+  .control-button.primary { color: #fff; background: var(--accent-gradient); box-shadow: 0 6px 18px rgba(255, 56, 96, .35); }
   .control-button.skip { position: relative; min-width: 36px; }
   .control-button.skip span { position: absolute; font-size: .47rem; font-weight: 800; }
   .control-button.skip:first-of-type span { margin-left: 1px; }
   .control-button.skip:nth-of-type(3) span { margin-left: -1px; }
-  .time-label { padding: 0 7px; color: rgba(255,255,255,.75); font-family: 'DM Mono', monospace; font-size: .62rem; white-space: nowrap; }
+  .time-label { padding: 0 7px; color: rgba(255,255,255,.75); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .62rem; white-space: nowrap; }
   .time-label i { color: rgba(255,255,255,.36); font-style: normal; }
   .volume-control { display: flex; align-items: center; gap: 4px; }
   .volume-input { width: 78px; accent-color: var(--accent); }
-  .source-button { gap: 3px; min-width: 38px; font-family: 'DM Mono', monospace; font-size: .6rem; }
+  .source-button { gap: 3px; min-width: 38px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .6rem; }
   .source-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
   .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; padding: 0 7px; border: 1px solid transparent; border-radius: 10px; color: rgba(255,255,255,.78); background: rgba(7,7,10,.68); font-size: .62rem; }
   .select-control:hover, .select-control:focus-within { border-color: rgba(194,181,255,.55); }
   .select-control select { max-width: 90px; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
-  .select-control option { color: #17151c; background: #f5f1e9; }
+  .select-control option { color: #181822; background: #f5f6fa; }
   .select-control.speed select { width: 37px; }
   .select-control.speed { padding-left: 9px; }
   @media (max-width: 840px) { .volume-input, .quality { display: none; } .control-row { gap: 8px; } .right { gap: 2px; } }

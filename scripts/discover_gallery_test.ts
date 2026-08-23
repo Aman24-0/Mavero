@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/lib/components/DiscoverPage.svelte', import.meta.url), 'utf8');
 
-assert.match(source, /const GALLERY_ROTATION_MS = 5000/);
-assert.match(source, /const GALLERY_TRANSITION_MS = 960/);
+// Rotation / sequencing contract
+assert.match(source, /const GALLERY_ROTATION_MS = 6500/);
+assert.match(source, /const GALLERY_TRANSITION_MS = 900/);
 assert.match(source, /const GALLERY_SEQUENCE: GalleryCategory\[\] = \['Movie', 'Series', 'Anime', 'Movie', 'Series', 'Anime'\]/);
 assert.match(source, /gallerySlides\.length === 6/);
 assert.match(source, /data-gallery-card/);
@@ -15,26 +16,27 @@ assert.match(source, /clearGalleryTimers/);
 assert.match(source, /return \(\) => \{/);
 assert.match(source, /killTweensOf/);
 assert.match(source, /const \{ gsap \} = await import\('gsap'\)/);
+assert.match(source, /timeline\.fromTo/);
 assert.match(source, /timeline\.to/);
-assert.match(source, /class:outgoing/);
-assert.match(source, /gallery-copy/);
-assert.match(source, /gallery-card-index/);
-assert.match(source, /gallery-actions/);
-assert.match(source, /gallery-controls/);
-assert.match(source, /gallery-dots/);
+
+// Full-bleed hero markup contract (replaces the old stacked-poster gallery)
+assert.match(source, /class="hero-slide"/);
+assert.match(source, /class="hero-stack"/);
+assert.match(source, /class="hero-scrim"/);
+assert.match(source, /class="hero-copy"/);
+assert.match(source, /class="hero-dots"/);
+assert.match(source, /class="hero-controls"/);
 assert.match(source, /aria-label="Previous title"/);
 assert.match(source, /aria-label="Next title"/);
+assert.match(source, /aria-roledescription="carousel"/);
 assert.match(source, /prefers-reduced-motion: reduce/);
-assert.match(source, /@media \(max-width: 1100px\) and \(min-width: 701px\)/);
-assert.match(source, /rotation: visibleDepth === 0 \? 0 : \(visibleDepth % 2 \? 0\.32 : -0\.24\)/);
-assert.match(source, /\.gallery-main \{ display: grid; grid-template-columns/);
-assert.match(source, /\.gallery-stack \{ position: relative; width: min\(100%, 900px\); aspect-ratio: 1\.62;/);
-assert.match(source, /@media \(max-width: 700px\)[\s\S]*?\.gallery-stack \{ width: min\(78vw, 310px\); aspect-ratio: \.88;/);
-assert.doesNotMatch(source, /fetch\(/);
-assert.doesNotMatch(source, /gallery-pagination/);
-assert.doesNotMatch(source, /gallery-fallback/);
-assert.match(source, /class="gallery-copy"/);
-assert.match(source, /class="gallery-ambient"/);
-assert.match(source, /class="gallery-pulse"/);
 
-console.log('Discover Trending Gallery contract tests passed');
+// Old stacked-poster deck implementation must be fully retired
+assert.doesNotMatch(source, /fetch\(/);
+assert.doesNotMatch(source, /gallery-stack/);
+assert.doesNotMatch(source, /hero-poster-stack/);
+assert.doesNotMatch(source, /rotation: visibleDepth/);
+assert.doesNotMatch(source, /Cormorant Garamond/);
+assert.doesNotMatch(source, /DM Mono/);
+
+console.log('Discover hero carousel contract tests passed');

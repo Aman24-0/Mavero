@@ -15,8 +15,8 @@
 </section>
 
 <style>
-  .error-state { display: grid; place-items: center; min-height: 260px; margin-top: 28px; padding: 34px 20px; border: 1px solid rgba(224,174,114,.28); border-radius: var(--radius-lg); background: linear-gradient(135deg, rgba(224,174,114,.06), rgba(8,11,13,.12)); text-align: center; }
+  .error-state { display: grid; place-items: center; min-height: 260px; margin-top: 28px; padding: 34px 20px; border: 1px solid rgba(224,174,114,.28); border-radius: var(--radius-lg); background: linear-gradient(135deg, rgba(224,174,114,.06), rgba(6, 6, 10,.12)); text-align: center; }
   .error-mark { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 15px; border: 1px solid rgba(224,174,114,.4); border-radius: 50%; color: var(--warning); background: rgba(224,174,114,.06); }
-  .error-state h2 { margin: 8px 0 7px; font-family: 'Space Grotesk', sans-serif; font-size: 1.65rem; letter-spacing: -.06em; }
+  .error-state h2 { margin: 8px 0 7px; color: var(--ink); font-size: 1.35rem; font-weight: 800; letter-spacing: -.015em; }
   .error-state p { max-width: 390px; margin: 0 0 20px; color: var(--muted); font-size: .78rem; line-height: 1.65; }
 </style>

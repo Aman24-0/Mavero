@@ -20,8 +20,6 @@ export type MediaItem = {
   episodes?: number;
   seasons?: number;
   tags?: string[];
-  trailerKey?: string;
-  externalIds?: { tmdb?: string; imdb?: string; anilist?: string; mal?: string };
 };
 
 const image = (id: string, width = 900) =>
@@ -153,8 +151,8 @@ export const media: MediaItem[] = [
     rating: 8.2,
     genres: ['Drama', 'Indie'],
     description: 'A sculptor begins finding tomorrow’s shapes in the dust of an empty gallery.',
-    poster: image('photo-1518005020951-eccb494ad742', 720),
-    backdrop: image('photo-1518005020951-eccb494ad742', 1600),
+    poster: image('photo-1500534623283-312aade485b7', 720),
+    backdrop: image('photo-1519681393784-d120267933ba', 1600),
     accent: '#c3a36d',
     tags: ['Because you watched Afterlight']
   },
@@ -200,27 +198,8 @@ export const trendingMovies = media.filter((item) => item.type === 'movie');
 export const trendingSeries = media.filter((item) => item.type === 'series');
 export const trendingAnime = media.filter((item) => item.type === 'anime');
 
-function neutralImage(label: string, mode: 'poster' | 'backdrop') {
-  const width = mode === 'poster' ? 720 : 1280;
-  const height = mode === 'poster' ? 1080 : 720;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#171a24"/><circle cx="${width / 2}" cy="${height / 2 - 34}" r="42" fill="#8b5cf6" opacity=".2"/><path d="M${width / 2 - 18} ${height / 2 - 34}l36 0M${width / 2} ${height / 2 - 52}v36" stroke="#a78bfa" stroke-width="4" stroke-linecap="round"/><text x="50%" y="${height / 2 + 58}" text-anchor="middle" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="22">${label.replace(/[<>&"']/g, '')}</text></svg>`)}`;
-}
-
-export function getMedia(id: string, type: ContentType = 'movie') {
-  return media.find((item) => item.id === id && item.type === type) ?? {
-    id,
-    title: 'Title unavailable',
-    year: new Date().getFullYear(),
-    type,
-    maturity: '—',
-    runtime: '—',
-    rating: 0,
-    genres: [],
-    description: 'This title is not available in the current catalog.',
-    poster: neutralImage('Title unavailable', 'poster'),
-    backdrop: neutralImage('Title unavailable', 'backdrop'),
-    accent: '#8b5cf6'
-  } satisfies MediaItem;
+export function getMedia(id: string) {
+  return media.find((item) => item.id === id) ?? featured;
 }
 
 export function formatType(type: ContentType) {

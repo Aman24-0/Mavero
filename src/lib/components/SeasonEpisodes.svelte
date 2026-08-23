@@ -47,23 +47,23 @@
 <style>
   .episode-section { margin-top: 56px; }
   .episode-section > .section-head { align-items: end; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
-  .season-tabs { display: flex; gap: 4px; max-width: 58%; overflow-x: auto; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(228,235,232,.035); scrollbar-width: none; }
+  .season-tabs { display: flex; gap: 4px; max-width: 58%; overflow-x: auto; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(245, 246, 250,.035); scrollbar-width: none; }
   .season-tabs::-webkit-scrollbar { display: none; }
-  .season-tabs button { flex: 0 0 auto; border: 0; border-radius: 7px; padding: 8px 11px; color: var(--muted); background: transparent; font-family: 'DM Mono', monospace; font-size: .58rem; }
+  .season-tabs button { flex: 0 0 auto; border: 0; border-radius: 7px; padding: 8px 11px; color: var(--muted); background: transparent; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; }
   .season-tabs button.active, .season-tabs button:hover { color: var(--base); background: var(--accent-strong); }
   .episode-loading, .episode-error, .episode-empty { display: flex; align-items: center; gap: 9px; padding: 20px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .76rem; }
   .episode-error { color: var(--warning); }
   .episode-error .section-link { margin-left: auto; border: 0; background: none; cursor: pointer; }
   .episode-list { padding-top: 8px; }
   .episode-row { display: grid; grid-template-columns: 34px 150px minmax(0, 1fr) 32px 16px; align-items: center; gap: 16px; padding: 14px 12px; border-bottom: 1px solid var(--line); border-radius: 11px; transition: background 160ms var(--ease-out); }
-  .episode-row:hover { background: rgba(228,235,232,.045); }
-  .episode-number { color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .62rem; }
+  .episode-row:hover { background: rgba(245, 246, 250,.045); }
+  .episode-number { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .62rem; }
   .episode-row img, .episode-still { width: 150px; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
   .episode-copy h3 { margin: 0 0 5px; color: var(--ink); font-size: .8rem; }
-  .episode-meta { display: flex; gap: 7px; color: var(--muted-deep); font-family: 'DM Mono', monospace; font-size: .56rem; }
+  .episode-meta { display: flex; gap: 7px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
   .episode-copy p { max-width: 680px; margin: 7px 0 0; overflow: hidden; color: var(--muted); font-size: .7rem; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
   .episode-play { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--base); background: var(--accent-strong); transition: transform 160ms var(--ease-out), background 160ms var(--ease-out); }
-  .episode-play:hover { background: #f3d29d; transform: translateY(-1px); }
+  .episode-play:hover { background: #cabefd; transform: translateY(-1px); }
   .episode-chevron { color: var(--muted-deep); }
   @media (max-width: 640px) { .episode-section > .section-head { align-items: start; flex-direction: column; gap: 13px; } .season-tabs { max-width: 100%; width: 100%; } .episode-row { grid-template-columns: 25px 92px minmax(0, 1fr) 30px; gap: 10px; padding-inline: 0; } .episode-row img, .episode-still { width: 92px; } .episode-chevron { display: none; } .episode-copy p { display: none; } }
 </style>
