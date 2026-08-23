@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Play, Star } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
@@ -9,7 +10,22 @@
   export let compact = false;
   export let editorial = false;
   let imageFailed = false;
+  let imageReady = false;
+  let posterElement: HTMLElement;
   $: if (item.poster) imageFailed = false;
+  onMount(() => {
+    if (!('IntersectionObserver' in window) || !posterElement) {
+      imageReady = true;
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      imageReady = true;
+      observer.disconnect();
+    }, { rootMargin: '320px 0px' });
+    observer.observe(posterElement);
+    return () => observer.disconnect();
+  });
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
   $: cardHref = item.resumeHref ? appendReturnTo(item.resumeHref, returnTo) : `/${item.type}/${item.id}`;
   $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
@@ -17,8 +33,10 @@
 
 <div class:compact class:editorial class="card-wrap">
   <a class="card" href={cardHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Open ${item.title}`}>
-    <div class="poster" style={`--poster-accent: ${item.accent}`}>
-      {#if imageFailed}
+    <div class="poster" bind:this={posterElement} style={`--poster-accent: ${item.accent}`}>
+      {#if !imageReady}
+        <div class="poster-placeholder" aria-hidden="true"></div>
+      {:else if imageFailed}
         <div class="poster-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
       {:else}
         <img src={item.poster} alt={`${item.title} poster`} loading="lazy" width="720" height="1080" onerror={() => { imageFailed = true; }} />
@@ -44,6 +62,7 @@
   .card-wrap { position: relative; min-width: 0; }
   .card { display: block; }
   .poster { isolation: isolate; }
+  .poster-placeholder { aspect-ratio: 2 / 3; background: linear-gradient(135deg, var(--surface-2), rgba(245,246,250,.04)); }
   .poster-fallback { display: grid; place-items: center; aspect-ratio: 2 / 3; color: rgba(245,246,250,.2); background: radial-gradient(circle at 72% 24%, color-mix(in srgb, var(--poster-accent) 45%, transparent), transparent 42%), var(--surface-2); }
   .poster-fallback span { font-size: clamp(2rem, 8vw, 4rem); font-weight: 900; }
   .poster-play {
