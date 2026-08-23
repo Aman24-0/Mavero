@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" data-mavero-tv-origin="">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Mavero TV</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #080a0f; color: #f7f8fb; }
+      body { display: grid; min-height: 100vh; place-items: center; margin: 0; padding: 32px; box-sizing: border-box; text-align: center; }
+      main { width: min(100%, 720px); }
+      h1 { margin: 0 0 12px; font-size: clamp(2rem, 5vw, 4rem); letter-spacing: -.06em; }
+      p { margin: 0; color: #a4adbf; line-height: 1.6; }
+      code { color: #ff8da1; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Opening Mavero TV…</h1>
+      <p id="status">Waiting for the verified Netlify TV origin.</p>
+    </main>
+    <script>
+      (() => {
+        const origin = document.documentElement.dataset.maveroTvOrigin?.trim();
+        const status = document.getElementById('status');
+        if (!origin) {
+          status.textContent = 'This Phase 1 wrapper requires the dashboard-verified preview or production origin. No URL is hardcoded.';
+          return;
+        }
+        try {
+          const target = new URL('/tv', origin);
+          window.location.replace(target.href);
+        } catch {
+          status.textContent = 'The configured Mavero TV origin is invalid.';
+        }
+      })();
+    </script>
+  </body>
+</html>

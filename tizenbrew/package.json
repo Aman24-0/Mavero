@@ -1,0 +1,12 @@
+{
+  "name": "mavero-tizen-tv",
+  "appName": "Mavero TV",
+  "version": "0.1.0-phase1",
+  "description": "Mavero Samsung Tizen TV compatibility shell for TizenBrew.",
+  "packageType": "app",
+  "appPath": "app/index.html",
+  "keys": [],
+  "repository": {
+    "url": "https://github.com/Aman24-0/Mavero"
+  }
+}

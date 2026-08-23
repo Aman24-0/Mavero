@@ -2,19 +2,19 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE** as a documentation-only phase. No Tizen implementation has started.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 implementation is in progress and remains blocked on dashboard-level preview verification and real Samsung TV QA.
 
 | Field | Status |
 |---|---|
-| Current phase | Phase 0 — Feasibility + Architecture Audit |
+| Current phase | Phase 1 — TizenBrew Skeleton + TV Shell |
 | Phase 0 status | **COMPLETE** |
-| Tizen implementation | **NOT STARTED** |
-| Phase 1 | **NOT STARTED** |
+| Tizen implementation | **IN PROGRESS — Phase 1 proof only** |
+| Phase 1 | **IN PROGRESS — hardware/module gates pending** |
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
-| Samsung TV hardware QA | **NOT RUN** — no Samsung TV test was performed during this audit |
+| Samsung TV hardware QA | **NOT RUN in this implementation session** |
 | Branch | `feature/tizen-tv` |
-| Commit | Single Phase 0 documentation commit; exact final SHA is recorded in the final handoff after commit creation |
-| Merge/deployment status | Pushed to `origin/feature/tizen-tv`; not merged to `main`; no production deployment or Netlify mutation |
+| Commit | Initial commit object `c866122e5dc487e0b2a9d1c23d379a701951b89f`; final amended object is recorded in the handoff because a commit cannot contain its own final hash |
+| Merge/deployment status | Phase 1 changes are local until validation; must push to `origin/feature/tizen-tv`; not merged to `main`; no production deployment or Netlify mutation |
 
 ## Worklog Rules
 
@@ -134,3 +134,55 @@ The worklog must never be left behind the implementation. Every Tizen implementa
 **Branch:** `feature/tizen-tv`
 **Commit SHA:** Initial documentation commit object before final self-reference amend: `0467e8181366adbcb3520c7148a58238fdce15d0`; the final amended object is recorded in the handoff because a commit cannot contain its own final hash.
 **Merge/deployment status:** Must be pushed to `origin/feature/tizen-tv` and must not be merged into `main` or deployed to production by this phase.
+
+## Phase 1 — TizenBrew Skeleton + TV Shell Entry
+
+**Date:** 23 August 2026
+**Phase:** Phase 1 — TizenBrew Skeleton + TV Shell
+**Objective:** Prove an isolated `/tv` presentation route, browser-safe remote/focus architecture, safe Back/exit behavior, an explicit Quit action, and the minimal TizenBrew application-module shape without implementing full TV content or changing Web/PWA business behavior.
+
+**Target hardware supplied:** Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
+
+**Files changed in this phase:**
+
+- `src/routes/+layout.svelte` — bypass the existing AppShell for exactly `/tv`.
+- `src/routes/tv/+page.svelte` — isolated TV route entry point.
+- `src/lib/tv/platform.ts` — guarded Tizen capability and exit adapter.
+- `src/lib/tv/remote.ts` — Arrow/Enter/Back remote normalization; dedicated Exit is not intercepted.
+- `src/lib/tv/focus.ts` — DOM focus coordinator with directional movement and restoration.
+- `src/lib/tv/navigation.ts` — minimal previous-state navigation helper.
+- `src/lib/tv/index.ts` — TV-layer exports.
+- `src/lib/components/tv/TvShell.svelte` — technical 10-foot shell, focus rail, test state, Back, exit dialog, and Quit action.
+- `tizenbrew/package.json` — minimal `packageType: "app"` module metadata with no service and no optional keys.
+- `tizenbrew/app/index.html` — origin-configurable bootstrap wrapper for `/tv`.
+- `tizenbrew/README.md` — module fields, URL strategy, target hardware, and limitations.
+- `docs/tizen-tv/PHASE_1_REPORT.md` — technical implementation report.
+- `docs/tizen-tv/TIZEN_TV_WORKLOG.md` — this same-commit status entry.
+
+**Architecture added:** The TV proof is isolated under `src/lib/tv/` and `src/lib/components/tv/`. Shared server/business logic, player, provider/source registry, resolver, Supabase/auth, PWA/service worker, and production Netlify configuration were not modified. The route is remote-first and does not use the desktop/mobile AppShell or mobile bottom navigation.
+
+**Remote implementation:** Standard ArrowUp/Down/Left/Right, Enter, Escape, and Samsung Back code `10009` are normalized through the TV adapter. No media keys were registered because player controls are not part of Phase 1. Samsung’s dedicated Exit key is not hijacked.
+
+**Focus implementation:** Native DOM focus with one active roving tab stop, stable focus IDs, geometry-based directional movement, visible high-contrast focus styling, default Cancel focus in the exit dialog, and restoration after the controlled test state.
+
+**Exit implementation:** Back closes the test state first, returns previous logical screens when present, and opens `Exit Mavero?` only at the root. Cancel restores focus. `Quit Mavero` opens the same dialog. Native `tizen.application.getCurrentApplication().exit()` is guarded and returns a browser-safe unavailable result when Tizen is absent.
+
+**TizenBrew module:** Added a minimal application module with `packageType: "app"`, `appName`, `appPath: "app/index.html"`, and `keys: []`. No `serviceFile`, permissions, or media keys were added. The bootstrap origin is intentionally empty until the Netlify dashboard confirms the feature preview URL and isolation.
+
+**Browser testing:** PASS on local production preview. `/tv` rendered; AppShell/mobile bottom navigation was absent; ArrowRight/ArrowDown moved focus; Enter activated Search and a controlled test state; Back restored prior states/focus; root Back and Quit opened the exit dialog; Cancel restored focus; browser-safe Exit reported native exit unavailable without throwing; and `globalThis.tizen` was absent.
+
+**TizenBrew testing:** NOT RUN in this implementation session. The module cannot be installed as a working TV module until its verified Mavero origin is set.
+
+**Samsung TV QA:** **NOT RUN in this implementation session.** No claim is made for launch, real remote delivery, Back, native exit, relaunch, lifecycle, memory, or performance on the supplied TV.
+
+**Web/PWA regression:** `pnpm check`, `pnpm build`, and the existing `pnpm test` suite passed. No provider, resolver, player, Supabase/auth, service-worker, manifest, or production Netlify configuration changed. The existing PWA install prompt remains visible in browser preview because PwaExperience remains globally mounted by design.
+
+**Known limitations:** Netlify preview isolation requires dashboard-level verification; no preview origin was invented. The shell uses controlled placeholders rather than real catalog content. TizenBrew installation, real Samsung TV behavior, native exit, lifecycle, codecs, performance, and long-session behavior remain unverified. Search/IME, player, media keys, AVPlay, and full TV navigation are later-phase work.
+
+**Unresolved issues:** Confirm the exact branch preview URL/context and safe environment variables; set the bootstrap origin for the approved test deployment; run the supplied Samsung TV/TizenBrew launch and exit checklist; record failures before declaring Phase 1 complete.
+
+**Next step:** Obtain dashboard-confirmed preview details and perform the real Samsung TV test. If the hardware/module gate passes, begin Phase 2 shell/navigation work. Do not start Phase 2 automatically.
+
+**Branch:** `feature/tizen-tv`
+**Commit SHA:** Initial commit object before final self-reference amend: `c866122e5dc487e0b2a9d1c23d379a701951b89f`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Merge/deployment status:** Must be pushed to `origin/feature/tizen-tv`; must not be merged into `main`; no production deployment or Netlify mutation performed by Phase 1.
