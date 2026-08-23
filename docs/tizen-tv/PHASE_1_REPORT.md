@@ -134,6 +134,29 @@ Phase 1 should remain **BLOCKED for completion** until the configured Branch Dep
 
 If the hardware test exposes a platform mismatch, fix the isolated adapter or module URL strategy first. Do not work around a Tizen limitation by weakening Supabase/auth, caching private data, adding broad permissions, copying TizenTube services, or modifying the stable Web/PWA shell.
 
+## 16. TizenBrew GitHub module-resolution investigation
+
+The owner attempted to add `Aman24-0/Mavero` from TizenBrew 2.0.5 on Samsung `UA43AUE60AKLXL` / Tizen 6.0. The UI normalized that input to `gh/Aman24-0/Mavero` and displayed **Unknown Module**. This is a recorded Phase 1 hardware/module integration failure, not a Samsung TV compatibility result.
+
+The current TizenBrew UI does not provide a branch-selection field. Its Add Module flow takes the entered name and sends `${type}/${name}` to the service [5]. The service’s current module loader fetches `https://cdn.jsdelivr.net/${module}/package.json`, reads the fetched root metadata, and creates a normal module only when `packageType` is `app` or `mods` [6]. The module proxy uses the same opaque module identifier when fetching the declared application path [7].
+
+The direct resolver probes confirmed the root cause:
+
+| Probe | Result |
+|---|---|
+| `https://cdn.jsdelivr.net/gh/Aman24-0/Mavero/package.json` | HTTP 200, but normal Mavero package with no `packageType`; classified as Unknown Module. |
+| `https://cdn.jsdelivr.net/gh/Aman24-0/Mavero@feature/tizen-tv/package.json` | HTTP 200, but the same normal package with no TizenBrew metadata. |
+| `https://cdn.jsdelivr.net/gh/Aman24-0/Mavero@feature/tizen-tv/tizenbrew/package.json` | HTTP 200 and valid nested app metadata, proving the existing files were reachable but not used by root package detection. |
+| `https://cdn.jsdelivr.net/gh/Aman24-0/Mavero/tizenbrew/package.json` | HTTP 404 on the default branch path, and in any case this is not the path TizenBrew’s root package loader requests. |
+
+**Root cause:** TizenBrew GitHub module resolution requires `package.json` at the fetched module root. The repository-root package was the normal SvelteKit package and had no TizenBrew `packageType`, so `moduleLoader.js` returned the exact observed Unknown Module object. It did not descend into `tizenbrew/package.json`.
+
+**Chosen solution:** Add only the required TizenBrew app metadata to the existing repository-root `package.json`: `packageType: "app"`, `appName: "Mavero TV"`, `appPath: "tizenbrew/app/index.html"`, `keys: []`, and a descriptive field. Existing Web/PWA scripts, dependencies, source layout, server behavior, and deployment configuration remain unchanged. The root-relative `appPath` is required because the GitHub module is fetched from repository root; the nested `tizenbrew/package.json` remains as the standalone module metadata reference.
+
+**Branch strategy:** The supported TizenBrew UI input for the current development branch is `Aman24-0/Mavero@feature/tizen-tv`. The current TizenBrew code treats this as an opaque GitHub module string, while jsDelivr resolves the `@feature/tizen-tv` segment as a GitHub ref. This behavior was verified by direct HTTP probes, but it is not a separately documented TizenBrew UI feature. Entering `Aman24-0/Mavero` without `@feature/tizen-tv` resolves the default branch and is not suitable for testing this feature branch. No unsupported branch syntax is being claimed.
+
+**Fix status:** The root metadata fix and this diagnosis are committed only to `feature/tizen-tv`; `main` and production remain unchanged. The module must be retested on the supplied TV before the Phase 1 gate can move beyond **BLOCKED**.
+
 ## References
 
 [1]: https://github.com/reisxd/TizenBrew/blob/main/docs/MODULES.md "TizenBrew module documentation"
@@ -143,3 +166,9 @@ If the hardware test exposes a platform mismatch, fix the isolated adapter or mo
 [3]: https://developer.samsung.com/smarttv/develop/guides/user-interaction/remote-control.html "Samsung remote control guide"
 
 [4]: https://developer.samsung.com/smarttv/develop/api-references/tizen-web-device-api-references/tvinputdevice-api.html "Samsung TVInputDevice API"
+
+[5]: https://github.com/reisxd/TizenBrew/blob/main/tizenbrew-app/TizenBrew/tizenbrew-ui/src/pages/ModuleManager.jsx "TizenBrew Module Manager source"
+
+[6]: https://github.com/reisxd/TizenBrew/blob/main/tizenbrew-app/TizenBrew/service-nextgen/service/utils/moduleLoader.js "TizenBrew module loader source"
+
+[7]: https://github.com/reisxd/TizenBrew/blob/main/tizenbrew-app/TizenBrew/service-nextgen/service/index.js "TizenBrew service and module proxy source"

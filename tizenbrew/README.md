@@ -10,7 +10,7 @@ The package follows the current TizenBrew application-module fields:
 |---|---|---|
 | `packageType` | `app` | Mavero is an independent TV web application, not a site modification. |
 | `appName` | `Mavero TV` | User-facing module name. |
-| `appPath` | `app/index.html` | Local module bootstrap entry point documented by TizenBrew. |
+| `appPath` | `tizenbrew/app/index.html` at repository root | Root-relative path to the bootstrap when the GitHub repository itself is added as a module. |
 | `keys` | `[]` | Arrow/Enter/Back are handled through the normal DOM path for this proof; no media/player keys are required yet. |
 | `serviceFile` | omitted | No Phase 1 service process is justified. |
 
@@ -18,21 +18,23 @@ The package metadata was derived from the current [TizenBrew module documentatio
 
 ## URL strategy
 
-`app/index.html` is a deliberately explicit bootstrap wrapper. It navigates to `/tv` only after a verified Mavero origin is supplied in the document’s `data-mavero-tv-origin` attribute. The attribute is empty in this repository because the exact Netlify preview URL and branch-deployment context require dashboard-level verification.
+`app/index.html` is a deliberately explicit bootstrap wrapper. Its `data-mavero-tv-origin` is configured to the verified Branch Deploy origin `https://feature-tizen-tv--mavero1.netlify.app/`, and it navigates to `/tv`, giving the effective route `https://feature-tizen-tv--mavero1.netlify.app/tv`.
 
-**Do not install this skeleton as a working TV module until the origin is set to the verified non-production preview or the explicitly approved production URL.** Do not guess a preview hostname, and do not hardcode production during Phase 1.
+The current TizenBrew GitHub flow fetches `package.json` from the repository root through jsDelivr. The root Mavero `package.json` therefore carries the required `packageType: "app"`, `appName`, `appPath`, and `keys` fields while preserving the existing Web/PWA package scripts and dependencies. The nested `tizenbrew/package.json` remains the standalone metadata reference for the module directory.
 
-The repository configuration confirms `main` as the Netlify production branch, but it does not prove feature-preview behavior. Therefore:
+The recommended identifier for testing the current development branch is `Aman24-0/Mavero@feature/tizen-tv`. In the current TizenBrew implementation this is passed as the opaque GitHub module path `gh/Aman24-0/Mavero@feature/tizen-tv`; jsDelivr resolves the `@feature/tizen-tv` segment as the GitHub ref. The UI has no separate branch selector. `Aman24-0/Mavero` without the branch ref resolves the default branch and is not the correct identifier for testing this feature branch.
 
-> **Netlify preview isolation requires dashboard-level verification.**
-
-For the current target hardware, record the final chosen origin and the TizenBrew module version in the Tizen worklog before any real installation test.
+Production remains separate at `https://mavero1.netlify.app/`. Do not use the production URL or a deployment permalink for this Phase 1 TV test.
 
 ## Target hardware
 
-- Samsung model: `UA43AUE60AKLXL`
-- Tizen: `6.0`
-- TizenBrew: `2.0.5`
+| Field | Value |
+|---|---|
+| Samsung model | `UA43AUE60AKLXL` |
+| Tizen | `6.0` |
+| TizenBrew | `2.0.5` |
+| Branch testing origin | `https://feature-tizen-tv--mavero1.netlify.app/` |
+| Effective TV route | `https://feature-tizen-tv--mavero1.netlify.app/tv` |
 
 These values were supplied for Phase 1 planning. Real module loading, remote delivery, Back behavior, native exit, and relaunch must still be recorded from the TV.
 

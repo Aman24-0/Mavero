@@ -13,7 +13,7 @@ Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 implementa
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
 | Samsung TV hardware QA | **NOT RUN in this implementation session** |
 | Branch | `feature/tizen-tv` |
-| Commit | `f833418b4a4de1f79add0e210b292e15508f2043` is the initial origin/documentation commit object; final amended object is recorded in the handoff because a commit cannot contain its own final hash |
+| Commit | `beda5149c01b0ec9d6be940a02a3071d73c6a55c` is the initial packaging-fix commit object; final amended object is recorded in the handoff because a commit cannot contain its own final hash |
 | Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; origin/documentation update is pending push; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
@@ -212,5 +212,35 @@ The production site remains separate at `https://mavero1.netlify.app/`. The depl
 
 **Required next action:** Load the application module through TizenBrew on the target TV and complete the launch, shell, remote, focus, navigation, root Back, Cancel, explicit Quit, native Exit, and relaunch checklist from `PHASE_1_REPORT.md`. Record every item as `PASS`, `FAIL`, or `BLOCKED` with exact observed behavior. Do not mark TizenBrew loading, Samsung TV behavior, native exit, or relaunch as passing before real hardware testing.
 
-**Commit:** Initial origin/documentation commit object before final self-reference amend: `f833418b4a4de1f79add0e210b292e15508f2043`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Commit:** Initial packaging-fix commit object before final self-reference amend: `beda5149c01b0ec9d6be940a02a3071d73c6a55c`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
 **Merge/deployment status:** Push only to `origin/feature/tizen-tv`; do not merge to `main`; no production Netlify change was made.
+
+## Phase 1 — TizenBrew GitHub Module Resolution Fix
+
+**Date:** 23 August 2026
+**Phase:** Phase 1 — Real Samsung TV Validation
+**Status:** **BLOCKED pending retest**; the installation failure was reproduced from the owner’s report and the packaging fix is prepared on `feature/tizen-tv`.
+
+**Hardware/environment reported:** Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
+
+**Attempted flow:** TizenBrew → Module Manager → Add GitHub Module. The entered identifier was `Aman24-0/Mavero`. TizenBrew normalized it to `gh/Aman24-0/Mavero` and displayed **Unknown Module** with `Unknown module gh/Aman24-0/Mavero. Please check the module name and try again.` The TV UI did not provide a branch-selection field.
+
+**Verified root cause:** The current TizenBrew UI prepends `gh/` to the supplied GitHub name. The current service then fetches `https://cdn.jsdelivr.net/${module}/package.json` and classifies a normal module only when its fetched root package has `packageType: "app"` or `packageType: "mods"`. The repository-root `package.json` was the normal Mavero SvelteKit package and had no TizenBrew metadata, so the nested `tizenbrew/package.json` was never consulted. This produced the observed Unknown Module result.
+
+**Fix prepared:** Added only the TizenBrew application metadata to the repository-root `package.json`: `packageType: "app"`, `appName: "Mavero TV"`, `appPath: "tizenbrew/app/index.html"`, `keys: []`, and a description. The root-relative `appPath` points the loader at the existing bootstrap without moving or restructuring the Web/PWA application. The nested `tizenbrew/package.json` remains in place.
+
+**Branch strategy:** Because the UI has no branch selector, the recommended identifier for testing the current branch is `Aman24-0/Mavero@feature/tizen-tv`. The current TizenBrew code passes this as `gh/Aman24-0/Mavero@feature/tizen-tv`; jsDelivr resolves the `@feature/tizen-tv` segment as the GitHub ref. Entering `Aman24-0/Mavero` without the ref targets the default branch and is not the intended feature-branch test.
+
+**Testing origin:** `https://feature-tizen-tv--mavero1.netlify.app/`
+**Effective TV URL:** `https://feature-tizen-tv--mavero1.netlify.app/tv`
+**Production remains separate:** `https://mavero1.netlify.app/`
+
+**Scope protection:** No Discover, Search, Details, My List, player, provider, resolver, Supabase, auth, PWA, service-worker, production Netlify, or `main` changes were made. Phase 2 remains not started.
+
+**Validation before retest:** Root metadata and appPath checks, jsDelivr path probes, `pnpm check`, `pnpm build`, `pnpm test`, `git diff --check`, changed-path inspection, and secret scan are required before push. Samsung TV installation and native behavior remain **NOT RETESTED** until this commit is deployed.
+
+**Next action:** Push the packaging fix to `origin/feature/tizen-tv`. On the TV, use `Aman24-0/Mavero@feature/tizen-tv`, load the module, confirm it is no longer Unknown Module, and continue the Phase 1 launch/remote/focus/Back/exit/relaunch checklist. Record every result as `PASS`, `FAIL`, or `BLOCKED`.
+
+**Branch:** `feature/tizen-tv`
+**Commit:** Initial packaging-fix commit object before final self-reference amend: `beda5149c01b0ec9d6be940a02a3071d73c6a55c`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Merge/deployment status:** Push only to `origin/feature/tizen-tv`; do not merge into `main`; no production Netlify change.
