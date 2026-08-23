@@ -2,7 +2,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { ArrowRight, CheckCircle2, Clock3, Eye, ListVideo, LoaderCircle, Sparkles } from 'lucide-svelte';
+  import { ArrowRight, CheckCircle2, Clock3, Eye, ListVideo, LoaderCircle } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
@@ -57,11 +57,9 @@
 <div class="my-list-page">
   <div class="container-wide">
     <header class="list-header">
-      <div class="list-title-block"><div class="eyebrow"><ListVideo size={13} /> Your library</div><h1>My List<span class="title-mark">.</span></h1><p>Keep the stories you want close, then move them through your watch journey.</p></div>
+      <div class="list-title-block"><h1>My List<span class="title-mark">.</span></h1></div>
       <div class="list-status" aria-live="polite"><span class:online={syncStatus === 'synced'}></span>{syncStatusLabel(syncStatus)}</div>
     </header>
-
-    <section class="library-summary" aria-label="Library summary"><div><span>Total titles</span><strong>{totalCount}</strong></div><div><span>Watching now</span><strong>{records.filter((record) => normalizeWatchlistStatus(record.status) === 'watching').length}</strong></div><div><span>Saved for later</span><strong>{records.filter((record) => normalizeWatchlistStatus(record.status) === 'planned').length}</strong></div><div class="summary-note"><Sparkles size={15} /><span>A library that knows where you left off.</span></div></section>
 
     <nav class="status-nav" aria-label="Filter My List by status">
       <a class:active={!selectedStatus} class="status-chip all-chip" href="/my-list" aria-current={!selectedStatus ? 'page' : undefined}><ListVideo size={15} /><span>All titles</span><b>{totalCount}</b></a>
@@ -86,20 +84,13 @@
 
 <style>
   .my-list-page { min-height: calc(100vh - 78px); padding: 50px 0 78px; }
-  .list-header { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding: 15px 0 30px; border-bottom: 1px solid var(--line); }
-  .list-header h1 { margin-top: 10px; color: var(--ink); font-size: clamp(1.9rem, 3.6vw, 2.8rem); font-weight: 900; letter-spacing: -.02em; line-height: 1.1; }
+  .list-header { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding: 15px 0 20px; border-bottom: 1px solid var(--line); }
+  .list-header h1 { margin: 0; color: var(--ink); font-size: clamp(1.9rem, 3.6vw, 2.8rem); font-weight: 900; letter-spacing: -.02em; line-height: 1.1; }
   .title-mark { color: var(--accent-strong); }
-  .list-header p { max-width: 480px; margin: 18px 0 0; color: var(--muted); font-size: .8rem; line-height: 1.65; }
   .list-status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
   .list-status span { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
   .list-status span.online { background: var(--success); box-shadow: 0 0 0 4px var(--secondary-soft); }
-  .library-summary { display: grid; grid-template-columns: repeat(3, minmax(110px, .5fr)) 1.35fr; gap: 12px; margin: 24px 0 10px; }
-  .library-summary > div { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(245, 246, 250,.025); }
-  .library-summary span { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; text-transform: uppercase; }
-  .library-summary strong { color: var(--ink); font-size: 1.9rem; font-weight: 900; letter-spacing: -.01em; line-height: 1; }
-  .library-summary .summary-note { display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 10px; padding: 14px 18px; color: var(--secondary); background: var(--secondary-soft); }
-  .library-summary .summary-note span { color: var(--ink-soft); font-size: .82rem; font-weight: 600; line-height: 1.35; text-transform: none; }
-  .status-nav { display: flex; gap: 7px; overflow-x: auto; padding: 20px 0 22px; scrollbar-width: none; }
+  .status-nav { display: flex; gap: 7px; overflow-x: auto; padding: 18px 0 22px; scrollbar-width: none; }
   .status-nav::-webkit-scrollbar { display: none; }
   .status-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 39px; padding: 0 13px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(245, 246, 250,.025); font-size: .69rem; text-decoration: none; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .status-chip:hover { color: var(--ink); border-color: rgba(123, 92, 250,.45); transform: translateY(-1px); }
@@ -115,7 +106,7 @@
   .loading-state :global(svg) { color: var(--accent-strong); animation: spin 1s linear infinite; }
   .list-footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 760px) { .my-list-page { padding-top: 88px; } .list-header { align-items: start; flex-direction: column; } .library-summary { grid-template-columns: repeat(3, 1fr); } .summary-note { grid-column: 1 / -1; } }
-  @media (max-width: 560px) { .list-header h1 { font-size: 1.9rem; } .library-summary { gap: 7px; } .library-summary > div { padding: 12px 10px; } .library-summary .summary-note { padding: 13px; } .library-summary strong { font-size: 1.7rem; } .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 11px; } .list-footer { align-items: start; flex-direction: column; } }
+  @media (max-width: 760px) { .my-list-page { padding-top: 88px; } .list-header { align-items: start; flex-direction: column; gap: 9px; } }
+  @media (max-width: 560px) { .list-header h1 { font-size: 1.9rem; } .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 11px; } .list-footer { align-items: start; flex-direction: column; } }
   @media (prefers-reduced-motion: reduce) { .status-chip, .loading-state :global(svg) { transition: none; animation: none; } }
 </style>

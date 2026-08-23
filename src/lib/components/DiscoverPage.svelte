@@ -4,12 +4,11 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { continueWatchingRecords } from '$lib/shared/progress-merge';
   import { progressToMedia } from '$lib/client/progress/presenter';
-  import { navigating, page } from '$app/state';
+  import { page } from '$app/state';
   import { ArrowLeft, ArrowRight, Play, Info, ListPlus } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
-  import RouteLoading from '$components/RouteLoading.svelte';
 
   export let featuredItem: MediaItem | undefined;
   export let movies: MediaItem[] = [];
@@ -62,7 +61,6 @@
   }
 
   $: localContinue = localContinueLoaded ? localContinueItems : continueItems;
-  $: navigatingAway = Boolean(navigating.to);
   $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length);
   $: gallerySlides = createGallerySlides([...(featuredItem?.type === 'movie' ? [featuredItem] : []), ...popularMovies, ...movies], [...(featuredItem?.type === 'series' ? [featuredItem] : []), ...popularSeries, ...series], [...(featuredItem?.type === 'anime' ? [featuredItem] : []), ...popularAnime, ...anime]);
   $: activeSlide = gallerySlides[galleryIndex];
@@ -153,30 +151,32 @@
     <section class="hero" aria-roledescription="carousel" aria-label="Featured titles" tabindex="0" onpointerenter={pauseGallery} onpointerleave={resumeGallery} onfocusin={pauseGallery} onfocusout={resumeGallery} onkeydown={handleGalleryKeydown}>
       <div class="hero-stack" bind:this={galleryStack} aria-hidden="true">
         {#each gallerySlides as slide, index}
-          <div class:active={index === galleryIndex} class="hero-slide" data-gallery-card style={`background-image: url(${JSON.stringify(slide.item.backdrop || slide.item.poster)})`}></div>
+          <div class:active={index === galleryIndex} class="hero-slide" data-gallery-card style={`background-image: url(${JSON.stringify(slide.item.poster)})`} aria-hidden={index !== galleryIndex}></div>
         {/each}
       </div>
       <div class="hero-scrim" aria-hidden="true"></div>
       <div class="hero-scrim-bottom" aria-hidden="true"></div>
 
       <div class="container-wide hero-body">
-        <div class="hero-copy" data-reveal>
-          <div class="hero-kicker">{activeSlide.category} <span class="dot"></span> Featured</div>
-          <h1>{activeSlide.item.title}</h1>
-          <div class="hero-meta">
-            {#if activeSlide.item.rating > 0}<span class="rating">★ {activeSlide.item.rating.toFixed(1)}</span>{/if}
-            <span>{activeSlide.item.year}</span><span class="dot"></span>
-            <span>{activeSlide.item.maturity}</span><span class="dot"></span>
-            <span>{activeSlide.item.runtime}</span>
+        {#key `${activeSlide.item.type}:${activeSlide.item.id}`}
+          <div class="hero-copy" data-reveal aria-live="polite">
+            <div class="hero-kicker">{activeSlide.category} <span class="dot"></span> Featured</div>
+            <h1>{activeSlide.item.title}</h1>
+            <div class="hero-meta">
+              {#if activeSlide.item.rating > 0}<span class="rating">★ {activeSlide.item.rating.toFixed(1)}</span>{/if}
+              <span>{activeSlide.item.year}</span><span class="dot"></span>
+              <span>{activeSlide.item.maturity}</span><span class="dot"></span>
+              <span>{activeSlide.item.runtime}</span>
+            </div>
+            <p>{activeSlide.item.description}</p>
+            <div class="hero-genres">{#each activeSlide.item.genres.slice(0, 3) as genre}<span>{genre}</span>{/each}</div>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href={`/watch/${activeSlide.item.type}/${activeSlide.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
+              <a class="btn btn-secondary" href={`/${activeSlide.item.type}/${activeSlide.item.id}`}><Info size={16} /> More info</a>
+              <a class="btn btn-secondary icon-only" href={`/${activeSlide.item.type}/${activeSlide.item.id}`} aria-label="Add to My List"><ListPlus size={16} /></a>
+            </div>
           </div>
-          <p>{activeSlide.item.description}</p>
-          <div class="hero-genres">{#each activeSlide.item.genres.slice(0, 3) as genre}<span>{genre}</span>{/each}</div>
-          <div class="hero-actions">
-            <a class="btn btn-primary" href={`/watch/${activeSlide.item.type}/${activeSlide.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
-            <a class="btn btn-secondary" href={`/${activeSlide.item.type}/${activeSlide.item.id}`}><Info size={16} /> More info</a>
-            <a class="btn btn-secondary icon-only" href={`/${activeSlide.item.type}/${activeSlide.item.id}`} aria-label="Add to My List"><ListPlus size={16} /></a>
-          </div>
-        </div>
+        {/key}
       </div>
 
       <div class="hero-controls" aria-label="Featured title controls">
@@ -211,7 +211,6 @@
   </div>
 </div>
 
-{#if navigatingAway}<RouteLoading />{/if}
 
 <style>
   .hero { position: relative; min-height: min(88vh, 820px); overflow: hidden; background: var(--base); }

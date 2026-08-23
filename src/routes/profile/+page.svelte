@@ -1,12 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, Settings2, ShieldCheck, LogOut, Sparkles } from 'lucide-svelte';
+  import { ArrowUpRight, Clock3, Heart, LogIn, Settings2, ShieldCheck, LogOut, Sparkles } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
-  import MediaCard from '$components/MediaCard.svelte';
-  import EmptyState from '$components/EmptyState.svelte';
   import ErrorState from '$components/ErrorState.svelte';
-  import { getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords } from '$lib/client/progress/service';
+  import { getLocalFavorites, getLocalProgressRecords } from '$lib/client/progress/service';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
@@ -15,27 +13,46 @@
   let { data }: { data: PageData } = $props();
   let favoriteItems = $state<MediaItem[]>([]);
   let watchedSeconds = $state(0);
-  let storageMessage = $state('Preparing local storage…');
   let loaded = $state(false);
   let errorMessage = $state('');
   let syncStatus = $state<SyncStatus>('pending');
-  function accountName() { const metadata = data.user?.user_metadata; return typeof metadata?.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name : data.user?.email?.split('@')[0] ?? 'Alex'; }
-  function syncStatusLabel(status: SyncStatus) { return ({ synced: 'Synced across devices', syncing: 'Syncing your library…', pending: 'Sync pending', offline: 'Offline · Local cache active', error: 'Cloud sync will retry later' } satisfies Record<SyncStatus, string>)[status]; }
+
+  function accountName() {
+    const metadata = data.user?.user_metadata;
+    return typeof metadata?.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name : data.user?.email?.split('@')[0] ?? 'Alex';
+  }
+
+  function syncStatusLabel(status: SyncStatus) {
+    return ({ synced: 'Synced across devices', syncing: 'Syncing your library…', pending: 'Sync pending', offline: 'Offline · Local cache active', error: 'Cloud sync will retry later' } satisfies Record<SyncStatus, string>)[status];
+  }
+
   async function loadLocalState() {
     errorMessage = '';
     try {
-      const state = await getLocalPersistenceState();
-      if (data.user) { const cloud = await syncAuthenticatedState(); syncStatus = cloud.status; favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions).map((record) => favoriteToMedia(record, cloud.progress)); watchedSeconds = cloud.progress.reduce((total, record) => total + record.currentTime, 0); storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry'; }
-      else { const [favoriteRecords, progressRecords, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]); favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords, deletions).map((record) => favoriteToMedia(record, progressRecords)); watchedSeconds = progressRecords.reduce((total, record) => total + record.currentTime, 0); storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only'; }
+      if (data.user) {
+        const cloud = await syncAuthenticatedState();
+        syncStatus = cloud.status;
+        favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions).map((record) => favoriteToMedia(record, cloud.progress));
+        watchedSeconds = cloud.progress.reduce((total, record) => total + record.currentTime, 0);
+      } else {
+        const [favoriteRecords, progressRecords, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]);
+        favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords, deletions).map((record) => favoriteToMedia(record, progressRecords));
+        watchedSeconds = progressRecords.reduce((total, record) => total + record.currentTime, 0);
+      }
       loaded = true;
-    } catch { syncStatus = getSyncStatus(); errorMessage = 'Your library is temporarily unavailable, but browsing and playback remain available.'; loaded = true; }
+    } catch {
+      syncStatus = getSyncStatus();
+      errorMessage = 'Your library is temporarily unavailable, but browsing and playback remain available.';
+      loaded = true;
+    }
   }
+
   onMount(() => { void loadLocalState(); });
   let isAuthenticated = $derived(Boolean(data.user));
   let watchedLabel = $derived(watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`);
 </script>
 
-<svelte:head><title>Profile — Mavero</title><meta name="description" content="Manage your MAVERO My List and synced MAVERO library." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
+<svelte:head><title>Profile — Mavero</title><meta name="description" content="Manage your MAVERO profile and synced library." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <div class="container-wide profile-page">
   <section class="profile-header">
@@ -45,17 +62,30 @@
   </section>
 
   <section class="profile-grid">
-    <section class="profile-card profile-card-main"><div class="eyebrow">{isAuthenticated ? 'Cloud library' : 'Guest mode'}</div><h2>{isAuthenticated ? 'Your story travels with you.' : 'Your watch history lives here.'}</h2><p>{isAuthenticated ? 'MAVERO reconciles this device with your cloud library without losing newer local progress.' : 'MAVERO saves your progress on this device automatically. Sign in when you want it available everywhere.'}</p><div class="sync-row"><span><ShieldCheck size={15} /> {storageMessage}</span><span>{loaded ? 'Ready' : 'Loading'}</span></div></section>
-    <section class="profile-card activity-card"><div class="eyebrow">Your activity</div><div class="activity-list"><div><Clock3 size={15} /><span><strong>{watchedLabel}</strong><small>{isAuthenticated ? 'Watch time' : 'Watched locally'}</small></span></div><div><Heart size={15} /><span><strong>{favoriteItems.length} title{favoriteItems.length === 1 ? '' : 's'}</strong><small>{isAuthenticated ? 'Synced My List' : 'Saved on this device'}</small></span></div></div></section>
+    <section class="profile-card activity-card">
+      <div class="eyebrow">Your activity</div>
+      <div class="activity-list" aria-live="polite">
+        <div><Clock3 size={15} /><span><strong>{watchedLabel}</strong><small>{isAuthenticated ? 'Watch time' : 'Watched locally'}</small></span></div>
+        <div><Heart size={15} /><span><strong>{favoriteItems.length} title{favoriteItems.length === 1 ? '' : 's'}</strong><small>{isAuthenticated ? 'Synced My List' : 'Saved on this device'}</small></span></div>
+      </div>
+    </section>
   </section>
 
   {#if errorMessage}<ErrorState eyebrow="MAVERO / Local state" title="Your local library is resting." message={errorMessage} retry={loadLocalState} />{/if}
 
-  <section class="section profile-section"><div class="section-head"><div><div class="eyebrow">Saved for later</div><h2 class="section-title">My list</h2></div><a class="section-link" href="/my-list"><Bookmark size={14} /> View all <ArrowUpRight size={13} /></a></div>{#if !loaded}<div class="profile-empty">Loading your local library…</div>{:else if favoriteItems.length}<div class="profile-rail">{#each favoriteItems as item}<MediaCard {item} editorial />{/each}</div>{:else}<EmptyState eyebrow="MAVERO / My list" title="Keep a title close." message="Use My list on a detail page to save titles to this device." actionLabel="Browse Discover" actionHref="/discover" />{/if}</section>
+  <section class="identity-panel">
+    <div class="identity-panel-icon"><Sparkles size={18} /></div>
+    <div><div class="eyebrow">Try CineLog</div><h2>Your watch history, beautifully organized.</h2><p>CineLog is a movie tracker for movies, TV shows, and anime. Keep watching, planning, completed titles, and collections in one cinematic vault.</p></div>
+    <a class="btn btn-secondary" href="https://cinelogv2.vercel.app" target="_blank" rel="noreferrer">Explore CineLog <ArrowUpRight size={15} /></a>
+  </section>
 
-  <section class="identity-panel"><div class="identity-panel-icon"><Sparkles size={18} /></div><div><div class="eyebrow">A space that is yours</div><h2>Make room for the stories you return to.</h2><p>Your profile keeps your saved titles, progress, and preferences in one calm place.</p></div><a class="btn btn-secondary" href="/my-list">Open My List <ArrowUpRight size={15} /></a></section>
-  <section class="preferences" id="preferences"><div><div class="eyebrow">Preferences</div><h2>Keep it yours.</h2></div><div class="preference-items"><span><Settings2 size={15} /> Playback settings</span><span><Bookmark size={15} /> {storageMessage}</span></div></section>
+  <section class="settings-entry">
+    <div><div class="eyebrow">MAVERO / Settings</div><h2>Make it yours.</h2><p>Update your profile details, account access, playback behavior, and library preferences.</p></div>
+    <a class="btn btn-secondary" href="/settings"><Settings2 size={15} /> Open Settings <ArrowUpRight size={15} /></a>
+  </section>
+
   {#if isAuthenticated}<form class="signout-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn signout-btn"><LogOut size={15} /> Sign out</button></form>{/if}
+  <footer class="profile-footer"><span>MAVERO @2026</span><span>Data from TMDB</span></footer>
 </div>
 
 <style>
@@ -69,32 +99,31 @@
   .identity-meta > span { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
   .identity-meta > span.online { background: var(--secondary); box-shadow: 0 0 0 4px var(--secondary-soft); }
   .account-status { display: inline-flex; align-items: center; gap: 7px; color: var(--secondary); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; text-transform: uppercase; }
-  .profile-grid { display: grid; grid-template-columns: 1.35fr .75fr; gap: 14px; margin-top: 24px; }
+  .profile-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 24px; }
   .profile-card { min-height: 165px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
-  .profile-card-main { background: radial-gradient(circle at 88% 18%, rgba(123, 92, 250,.12), transparent 20rem), var(--surface); }
-  .profile-card h2 { max-width: 440px; margin: 13px 0 9px; color: var(--ink); font-size: 1.5rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.15; }
-  .profile-card p { max-width: 510px; margin: 0; color: var(--muted); font-size: .77rem; line-height: 1.65; }
-  .sync-row { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 19px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .57rem; }
-  .sync-row span { display: inline-flex; align-items: center; gap: 6px; }
-  .sync-row span:first-child { color: var(--success); }
-  .activity-list { display: grid; gap: 16px; margin-top: 19px; }
+  .activity-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }
   .activity-list > div { display: flex; align-items: center; gap: 11px; color: var(--accent-strong); }
   .activity-list span { display: grid; gap: 3px; }
   .activity-list strong { color: var(--ink); font-size: 1.5rem; font-weight: 900; letter-spacing: -.01em; line-height: 1; }
   .activity-list small { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  .profile-section { margin-top: 50px; }
-  .profile-rail { display: grid; grid-auto-flow: column; grid-auto-columns: 182px; gap: 16px; overflow-x: auto; scrollbar-width: none; }
-  .profile-rail::-webkit-scrollbar { display: none; }
-  .profile-empty { padding: 36px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
-  .identity-panel { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 15px; margin-top: 54px; padding: 22px; border: 1px solid rgba(123, 92, 250,.27); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(123, 92, 250,.11), rgba(255, 62, 94,.05)); }
+  .identity-panel, .settings-entry { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 15px; margin-top: 30px; padding: 22px; border: 1px solid rgba(123, 92, 250,.27); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(123, 92, 250,.11), rgba(255, 62, 94,.05)); }
   .identity-panel-icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px; color: var(--base); background: var(--secondary); }
-  .identity-panel h2 { margin: 8px 0 5px; color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.2; }
-  .identity-panel p { margin: 0; color: var(--muted); font-size: .75rem; }
-  .preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 38px 0 0; }
-  .preferences h2 { margin: 9px 0 0; color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -.015em; }
-  .preference-items { display: grid; gap: 11px; align-content: start; }
-  .preference-items span { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: .77rem; }
+  .identity-panel h2, .settings-entry h2 { margin: 8px 0 5px; color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.2; }
+  .identity-panel p, .settings-entry p { max-width: 680px; margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.6; }
+  .settings-entry { border-color: var(--line); background: var(--surface); }
   .signout-form { display: flex; justify-content: flex-end; margin-top: 26px; }
   .signout-btn { color: #ff8fa3; border-color: rgba(231,140,141,.32); background: rgba(231,140,141,.08); }
-  @media (max-width: 720px) { .profile-header { grid-template-columns: 58px minmax(0, 1fr); padding-top: 92px; } .profile-avatar { width: 58px; height: 58px; font-size: 1.15rem; } .profile-header .btn, .account-status { grid-column: 1 / -1; justify-self: start; } .profile-grid, .preferences { grid-template-columns: 1fr; } .profile-rail { grid-auto-columns: 42vw; } .identity-panel { grid-template-columns: 40px 1fr; } .identity-panel-icon { width: 40px; height: 40px; } .identity-panel .btn { grid-column: 1 / -1; justify-self: start; } .signout-form { justify-content: flex-start; } }
+  .profile-footer { display: flex; justify-content: space-between; gap: 18px; margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .04em; text-transform: uppercase; }
+  @media (max-width: 720px) {
+    .profile-header { grid-template-columns: 58px minmax(0, 1fr); padding-top: 92px; }
+    .profile-avatar { width: 58px; height: 58px; font-size: 1.15rem; }
+    .profile-header .btn, .account-status { grid-column: 1 / -1; justify-self: start; }
+    .activity-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .activity-list strong { font-size: 1.25rem; }
+    .identity-panel, .settings-entry { grid-template-columns: 40px 1fr; }
+    .identity-panel-icon { width: 40px; height: 40px; }
+    .identity-panel .btn, .settings-entry .btn { grid-column: 1 / -1; justify-self: start; }
+    .signout-form { justify-content: flex-start; }
+  }
+  @media (max-width: 420px) { .activity-list { grid-template-columns: 1fr; gap: 15px; } .profile-footer { align-items: start; flex-direction: column; gap: 8px; } }
 </style>

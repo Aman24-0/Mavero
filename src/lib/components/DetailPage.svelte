@@ -151,7 +151,6 @@
         <p class="detail-description">{item.description}</p>
         <div class="detail-actions"><a class="btn btn-primary" href={watchHref}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}><Heart size={15} fill={watchlistStatus ? 'currentColor' : 'none'} /> {statusLabel(watchlistStatus)}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
         {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
-        <div class="detail-grid"><div class="detail-stat"><span>Genres</span><strong>{item.genres.slice(0, 2).join(' · ') || '—'}</strong></div><div class="detail-stat"><span>Audio</span><strong>Original · Sub</strong></div><div class="detail-stat"><span>Quality</span><strong>Full HD · 4K</strong></div></div>
         {#if type !== 'movie'}<div class="episode-strip"><div><div class="eyebrow">Episode guide</div><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? 12} episodes</strong></div><a class="icon-btn" href={`/${type}/${item.id}#episodes`} aria-label="Open episode list"><ArrowRight size={16} /></a></div>{/if}
       </div>
     </section>
@@ -184,10 +183,6 @@
   .rating { display: inline-flex; align-items: center; gap: 4px; color: #ffc94d; }
   .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 26px; }
   .action-icon { border-color: var(--line-strong); }
-  .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; max-width: 650px; margin: 26px 0 0; }
-  .detail-stat { padding: 13px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(245,246,250,.035); }
-  .detail-stat span { display: block; color: var(--muted-deep); font-size: .62rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-  .detail-stat strong { display: block; margin-top: 5px; overflow: hidden; color: var(--ink); font-size: .76rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
   .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(460px, 100%); margin-top: 18px; padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(245,246,250,.045); }
   .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .76rem; font-weight: 700; }
   .save-error { margin-top: 10px; color: var(--warning); font-size: .68rem; font-weight: 600; }
@@ -200,10 +195,8 @@
     .detail-poster { border-radius: var(--radius-md); }
     .detail-copy { display: contents; }
     .detail-copy > .detail-lead { grid-column: 2; min-width: 0; }
-    .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .detail-grid, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; }
+    .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; }
     .detail-copy h1 { margin-top: 6px; font-size: clamp(1.7rem, 8vw, 2.3rem); line-height: 1.05; }
     .detail-description { margin-top: 18px; font-size: .84rem; }
-    .detail-grid { gap: 7px; }
-    .detail-stat { padding: 10px; }
   }
 </style>

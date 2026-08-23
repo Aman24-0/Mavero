@@ -29,7 +29,7 @@
 {#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname)}
   {@render pageChildren()}
 {:else}
-  <AppShell currentPath={page.url.pathname} user={data.user}>
+  <AppShell currentPath={page.url.pathname}>
     {#snippet children()}
       {@render pageChildren()}
     {/snippet}

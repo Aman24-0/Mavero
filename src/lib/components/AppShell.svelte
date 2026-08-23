@@ -1,11 +1,8 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { navigating } from '$app/state';
-  import { Bookmark, Compass, Search, UserRound, Settings2, Bell, Clapperboard } from 'lucide-svelte';
-  import RouteLoading from '$components/RouteLoading.svelte';
-  import type { User } from '@supabase/supabase-js';
+  import { Bookmark, Compass, Search, UserRound, Settings2, Clapperboard } from 'lucide-svelte';
 
-  let { children, currentPath = '/', user = null }: { children: Snippet; currentPath?: string; user?: User | null } = $props();
+  let { children, currentPath = '/' }: { children: Snippet; currentPath?: string } = $props();
   let shell: HTMLElement;
 
   const primaryLinks = [
@@ -16,11 +13,6 @@
   ];
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
-  const avatarLabel = (account: User | null | undefined) => {
-    const name = typeof account?.user_metadata?.display_name === 'string' ? account.user_metadata.display_name : account?.email ?? '';
-    return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'MV';
-  };
-
   onMount(async () => {
     const { gsap } = await import('gsap');
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -49,7 +41,7 @@
       {/each}
     </nav>
     <div class="rail-bottom">
-      <a class="rail-link" href="/profile#preferences"><Settings2 size={18} strokeWidth={1.8} /><span>Preferences</span></a>
+      <a class="rail-link" href="/settings"><Settings2 size={18} strokeWidth={1.8} /><span>Settings</span></a>
       <div class="rail-rule"></div>
       <span class="rail-caption">Your screen. Your story.</span>
     </div>
@@ -61,15 +53,9 @@
         <span class="brand-symbol"><Clapperboard size={15} strokeWidth={2.2} /></span>
         <span class="brand-word">MAVERO</span>
       </a>
-      <a class="topbar-search" href="/search"><Search size={16} /><span>Search movies, series, anime…</span><kbd>/</kbd></a>
-      <div class="topbar-actions">
-        <a class="icon-btn notification-btn" href="/profile" aria-label="Open profile notifications"><Bell size={17} /></a>
-        <a class="avatar" href="/profile" aria-label="Open profile">{avatarLabel(user)}</a>
-      </div>
     </header>
 
     <main>{@render children()}</main>
-    {#if navigating.to}<RouteLoading />{/if}
   </div>
 
   <nav class="mobile-nav" aria-label="Mobile navigation">
@@ -107,38 +93,16 @@
   .rail-rule { height: 1px; background: var(--line); }
   .rail-caption { padding: 0 12px; max-width: 150px; color: var(--muted-deep); font-size: .68rem; font-weight: 500; line-height: 1.4; }
   .app-canvas { min-width: 0; }
-  .topbar {
-    position: sticky; top: 0; z-index: 40; display: grid; grid-template-columns: auto minmax(0, 460px) 1fr;
-    align-items: center; gap: 20px; height: 72px; padding: 0 clamp(20px, 3vw, 48px);
-    border-bottom: 1px solid var(--line); background: rgba(6, 6, 10, .86); backdrop-filter: blur(22px);
-  }
+  .topbar { display: none; }
   .mobile-brand { display: none; }
-  .topbar-search {
-    display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 14px;
-    border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: rgba(245, 246, 250, .04);
-    font-size: .76rem; text-decoration: none;
-    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
-  }
-  .topbar-search:hover, .topbar-search:focus-visible { border-color: rgba(255, 62, 94, .4); background: rgba(255, 56, 96, .06); color: var(--ink); }
-  .topbar-search span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  kbd { border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; color: var(--muted-deep); font-size: .62rem; font-weight: 600; }
-  .topbar-actions { display: flex; align-items: center; justify-self: end; gap: 10px; }
-  .avatar {
-    display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: #fff;
-    background: var(--accent-gradient); font-size: .68rem; font-weight: 800; text-decoration: none;
-    box-shadow: 0 4px 14px rgba(255, 56, 96, .25);
-  }
   @media (max-width: 900px) {
     .page-shell { display: block; }
     .app-rail { display: none; }
-    .topbar { grid-template-columns: auto 1fr auto; }
+    .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; height: 72px; padding: 0 20px; border-bottom: 1px solid var(--line); background: rgba(6, 6, 10, .86); backdrop-filter: blur(22px); }
     .mobile-brand { display: inline-flex; }
-    .topbar-search span, .topbar-search kbd { display: none; }
-    .topbar-search { width: 40px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
   }
   @media (max-width: 640px) {
     .topbar { position: fixed; width: 100%; box-sizing: border-box; height: calc(62px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 16px 0; }
-    .notification-btn { display: none; }
     .page-shell { padding-bottom: 80px; }
     .mobile-nav {
       position: fixed; right: 0; bottom: 0; left: 0; z-index: 50; display: grid; grid-template-columns: repeat(4, 1fr);
