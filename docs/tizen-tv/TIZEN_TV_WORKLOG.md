@@ -212,7 +212,7 @@ The production site remains separate at `https://mavero1.netlify.app/`. The depl
 
 **Required next action:** Load the application module through TizenBrew on the target TV and complete the launch, shell, remote, focus, navigation, root Back, Cancel, explicit Quit, native Exit, and relaunch checklist from `PHASE_1_REPORT.md`. Record every item as `PASS`, `FAIL`, or `BLOCKED` with exact observed behavior. Do not mark TizenBrew loading, Samsung TV behavior, native exit, or relaunch as passing before real hardware testing.
 
-**Commit:** Initial packaging-fix commit object before final self-reference amend: `beda5149c01b0ec9d6be940a02a3071d73c6a55c`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Commit:** Root packaging fix final commit `a5fd928c553872556809b61a58e378a86f23179f`; this resolution-documentation follow-up began as `d55fba129496e43adffb4a1998f8bcec5cb709e6` and is amended once for the final self-reference.
 **Merge/deployment status:** Push only to `origin/feature/tizen-tv`; do not merge to `main`; no production Netlify change was made.
 
 ## Phase 1 — TizenBrew GitHub Module Resolution Fix
@@ -229,7 +229,7 @@ The production site remains separate at `https://mavero1.netlify.app/`. The depl
 
 **Fix prepared:** Added only the TizenBrew application metadata to the repository-root `package.json`: `packageType: "app"`, `appName: "Mavero TV"`, `appPath: "tizenbrew/app/index.html"`, `keys: []`, and a description. The root-relative `appPath` points the loader at the existing bootstrap without moving or restructuring the Web/PWA application. The nested `tizenbrew/package.json` remains in place.
 
-**Branch strategy:** Because the UI has no branch selector, the recommended identifier for testing the current branch is `Aman24-0/Mavero@feature/tizen-tv`. The current TizenBrew code passes this as `gh/Aman24-0/Mavero@feature/tizen-tv`; jsDelivr resolves the `@feature/tizen-tv` segment as the GitHub ref. Entering `Aman24-0/Mavero` without the ref targets the default branch and is not the intended feature-branch test.
+**Branch strategy:** Because the UI has no branch selector, the reliable identifier for testing the pushed packaging-fix revision is `Aman24-0/Mavero@a5fd928c553872556809b61a58e378a86f23179f`. The current TizenBrew code passes this as `gh/Aman24-0/Mavero@a5fd928c553872556809b61a58e378a86f23179f`; jsDelivr resolves the immutable commit ref. The branch alias `Aman24-0/Mavero@feature/tizen-tv` is syntactically accepted, but its package response remained stale in CDN cache after the push. Entering `Aman24-0/Mavero` without a ref targets the default branch and is not the intended feature-branch test.
 
 **Testing origin:** `https://feature-tizen-tv--mavero1.netlify.app/`
 **Effective TV URL:** `https://feature-tizen-tv--mavero1.netlify.app/tv`
@@ -239,8 +239,8 @@ The production site remains separate at `https://mavero1.netlify.app/`. The depl
 
 **Validation before retest:** Root metadata and appPath checks, jsDelivr path probes, `pnpm check`, `pnpm build`, `pnpm test`, `git diff --check`, changed-path inspection, and secret scan are required before push. Samsung TV installation and native behavior remain **NOT RETESTED** until this commit is deployed.
 
-**Next action:** Push the packaging fix to `origin/feature/tizen-tv`. On the TV, use `Aman24-0/Mavero@feature/tizen-tv`, load the module, confirm it is no longer Unknown Module, and continue the Phase 1 launch/remote/focus/Back/exit/relaunch checklist. Record every result as `PASS`, `FAIL`, or `BLOCKED`.
+**Next action:** Retest the pushed packaging fix on the TV using `Aman24-0/Mavero@a5fd928c553872556809b61a58e378a86f23179f`, confirm the module is no longer Unknown Module, and continue the Phase 1 launch/remote/focus/Back/exit/relaunch checklist. Record every result as `PASS`, `FAIL`, or `BLOCKED`.
 
 **Branch:** `feature/tizen-tv`
-**Commit:** Initial packaging-fix commit object before final self-reference amend: `beda5149c01b0ec9d6be940a02a3071d73c6a55c`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Commit:** Root packaging fix final commit `a5fd928c553872556809b61a58e378a86f23179f`; this resolution-documentation follow-up began as `d55fba129496e43adffb4a1998f8bcec5cb709e6` and is amended once for the final self-reference.
 **Merge/deployment status:** Push only to `origin/feature/tizen-tv`; do not merge into `main`; no production Netlify change.
