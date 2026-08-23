@@ -339,7 +339,7 @@
           {/if}
           <div class="hero-actions">
             <a class="btn btn-primary" href={`/watch/${activeHero.item.type}/${activeHero.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
-            <a class="btn btn-secondary" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`More info about ${activeHero.item.title}`}><Info size={16} /> More info</a>
+            <a class="btn btn-secondary hero-details-link" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`View details for ${activeHero.item.title}`}><Info size={16} /> <span class="hero-details-text">View details for {activeHero.item.title}</span></a>
             <a class="btn btn-secondary icon-only" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`Add ${activeHero.item.title} to My List`}><ListPlus size={16} /></a>
           </div>
         </div>
@@ -413,6 +413,8 @@
   .hero-genres span { border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 12px; color: var(--ink-soft); font-size: .68rem; font-weight: 600; background: rgba(245,246,250,.05); }
   .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
   .icon-only { width: 46px; padding: 0; flex: 0 0 auto; }
+  .hero-details-link { max-width: min(300px, 42vw); }
+  .hero-details-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hero-controls { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 28px; z-index: 3; display: flex; align-items: center; gap: 8px; }
   .hero-arrow { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink); background: rgba(6,6,10,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .hero-arrow:hover:not(:disabled), .hero-arrow:focus-visible:not(:disabled) { border-color: rgba(255,90,122,.6); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
