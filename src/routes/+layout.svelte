@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import AppShell from '$components/AppShell.svelte';
+  import PwaExperience from '$components/PwaExperience.svelte';
   import type { Snippet } from 'svelte';
   import type { LayoutData } from './$types';
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -35,3 +36,5 @@
     {/snippet}
   </AppShell>
 {/if}
+
+<PwaExperience />

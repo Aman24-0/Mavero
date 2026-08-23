@@ -66,7 +66,7 @@ function tmdbSource(externalId?: string): ContentSource {
   return { provider: 'tmdb', externalId, fetchedAt: new Date().toISOString() };
 }
 
-function image(path: string | null | undefined, size: 'w342' | 'w500' | 'w780' = 'w500') {
+function image(path: string | null | undefined, size: 'w342' | 'w500' | 'w780' | 'w1280' = 'w500') {
   return path ? `${IMAGE_URL}/${size}${path}` : '';
 }
 
@@ -80,6 +80,14 @@ function runtime(minutes: number | null | undefined, fallback = 'Feature length'
 function dateYear(value?: string) {
   const year = Number(value?.slice(0, 4));
   return Number.isFinite(year) && year > 1800 ? year : new Date().getFullYear();
+}
+
+function hasRequiredListMetadata(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
+  const title = type === 'movie'
+    ? (raw as TmdbMovie).title || (raw as TmdbMovie).original_title
+    : (raw as TmdbTv).name || (raw as TmdbTv).original_name;
+  const date = type === 'movie' ? (raw as TmdbMovie).release_date : (raw as TmdbTv).first_air_date;
+  return Number.isInteger(raw.id) && raw.id > 0 && Boolean(title?.trim()) && Boolean(date?.trim()) && Boolean(raw.poster_path || raw.backdrop_path);
 }
 
 function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: string): NormalizedMediaItem {
@@ -103,8 +111,9 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     voteCount: asNumber(raw.vote_count),
     genres: genres.length ? genres.slice(0, 4) : ['Drama'],
     description: asString(raw.overview, 'No synopsis is available yet.'),
-    poster: image(raw.poster_path, 'w500'),
-    backdrop: image(raw.backdrop_path, 'w780'),
+    poster: image(raw.poster_path ?? raw.backdrop_path, 'w500'),
+    backdrop: image(raw.backdrop_path ?? raw.poster_path, 'w1280'),
+    backdropSmall: image(raw.backdrop_path ?? raw.poster_path, 'w780'),
     accent: '#9b87f5',
     status: isMovie ? undefined : asString(tv.status),
     episodes,
@@ -164,7 +173,7 @@ export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page 
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/trending/movie/week' : '/trending/tv/week';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
-    const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type, 'Trending'));
+    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Trending'));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -186,7 +195,7 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
       ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {})
     };
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
-    const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type));
+    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -197,7 +206,7 @@ export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page =
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/movie/popular' : '/tv/popular';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
-    const items = (result.results ?? []).filter((item) => item.poster_path).map((item) => mapTmdb(item, type, 'Popular'));
+    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Popular'));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -245,7 +254,7 @@ export async function searchTmdb(query: string, type: Exclude<ContentType, 'anim
   const { value, stale } = await getOrSet(key, { ttlMs: 1000 * 60 * 2, staleWhileRevalidateMs: 1000 * 60 * 5 }, async () => {
     const path = type === 'movie' ? '/search/movie' : '/search/tv';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { query: normalized, page, include_adult: false });
-    let rawItems = (result.results ?? []).filter((item) => item.poster_path);
+    let rawItems = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
     if (filters.genre) rawItems = rawItems.filter((item) => item.genre_ids?.includes(Number(filters.genre)));
     if (filters.ott) {
       const matches = await mapWithConcurrency(rawItems, (item) => matchesOtt(type, item.id, filters.ott as string), OTT_LOOKUP_CONCURRENCY);
@@ -268,7 +277,7 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
     const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations' });
     const item = mapTmdb(raw, type);
-    const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => candidate.poster_path).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
+    const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
     return { ...item, recommendations };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -290,4 +299,4 @@ export async function getTmdbSeason(seriesId: string, seasonNumber: number): Pro
   return value;
 }
 
-export const tmdbInternals = { mapTmdb, image, runtime, genreNames };
+export const tmdbInternals = { mapTmdb, image, runtime, genreNames, hasRequiredListMetadata };

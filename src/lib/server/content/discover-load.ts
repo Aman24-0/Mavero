@@ -1,4 +1,4 @@
-import { collection, discover, popular } from './service';
+import { collection, discover, popular, selectFeatured } from './service';
 import { toMediaItem } from './presenter';
 import type { CollectionFilters, CollectionSort, ContentType, ContentList } from './types';
 import type { MediaItem } from '$data/content';
@@ -65,7 +65,7 @@ export async function loadDiscoverData() {
     popularMovies: popularMovies.items,
     popularSeries: popularSeries.items,
     popularAnime: popularAnime.items,
-    featured: trendingMovies.items[0] ?? trendingSeries.items[0] ?? trendingAnime.items[0],
+    featured: selectFeatured([...trendingMovies.items, ...trendingSeries.items, ...trendingAnime.items]),
     errorMessage: errors.length ? `${[...new Set(errors)].join(' ')} Check the server catalog configuration and try again.` : undefined
   };
 }

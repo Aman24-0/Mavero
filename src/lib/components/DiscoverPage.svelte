@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { getContinueWatching } from '$lib/client/progress/service';
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { continueWatchingRecords } from '$lib/shared/progress-merge';
   import { progressToMedia } from '$lib/client/progress/presenter';
   import { page } from '$app/state';
-  import { ArrowLeft, ArrowRight, Play, Info, ListPlus } from 'lucide-svelte';
-  import type { MediaItem } from '$data/content';
+  import { ArrowLeft, ArrowRight, Info, ListPlus, Play } from 'lucide-svelte';
+  import type { MediaItem } from '$lib/data/content';
+  import { formatType } from '$lib/data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
 
@@ -21,25 +22,25 @@
   export let errorMessage = '';
 
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
-  type GallerySlide = { item: MediaItem; category: GalleryCategory };
-  type SlideState = { opacity: number; scale: number; zIndex: number };
+  type FeaturedHeroItem = { item: MediaItem; category: GalleryCategory };
 
   const GALLERY_ROTATION_MS = 6500;
-  const GALLERY_TRANSITION_MS = 900;
-  const GALLERY_SEQUENCE: GalleryCategory[] = ['Movie', 'Series', 'Anime', 'Movie', 'Series', 'Anime'];
+  const MAX_FEATURED_ITEMS = 6;
 
   let localContinueLoaded = false;
   let localContinueItems: MediaItem[] = [];
-  let intro: HTMLElement;
-  let galleryStack: HTMLElement;
-  let galleryCards: HTMLElement[] = [];
-  let galleryIndex = 0;
-  let galleryAnimating = false;
+  let hero: HTMLElement;
+  let activeIndex = 0;
   let galleryPaused = false;
+  let galleryTransitioning = false;
   let reducedMotion = false;
+  let imageLoadFailed = false;
   let galleryRotationTimer: ReturnType<typeof setTimeout> | undefined;
   let galleryTransitionTimer: ReturnType<typeof setTimeout> | undefined;
-  let animationEngine: typeof import('gsap').gsap | undefined;
+  let interactionReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let transitionToken = 0;
+  let destroyed = false;
+  let motionQuery: MediaQueryList | undefined;
 
   function uniqueItems(items: MediaItem[]) {
     const seen = new Set<string>();
@@ -51,138 +52,316 @@
     });
   }
 
-  function createGallerySlides(movieItems: MediaItem[], seriesItems: MediaItem[], animeItems: MediaItem[]): GallerySlide[] {
-    const pools = { Movie: uniqueItems(movieItems), Series: uniqueItems(seriesItems), Anime: uniqueItems(animeItems) } satisfies Record<GalleryCategory, MediaItem[]>;
-    return GALLERY_SEQUENCE.flatMap((category, position) => {
-      const pool = pools[category];
-      const item = pool[position < 3 ? 0 : 1] ?? pool[0];
-      return item ? [{ item, category }] : [];
-    });
+  function hasHeroImage(item: MediaItem) {
+    return Boolean(item.backdrop?.trim() || item.poster?.trim());
+  }
+
+  function categoryFor(item: MediaItem): GalleryCategory {
+    return item.type === 'movie' ? 'Movie' : item.type === 'series' ? 'Series' : 'Anime';
+  }
+
+  function createFeaturedItems(items: MediaItem[]): FeaturedHeroItem[] {
+    return uniqueItems(items)
+      .filter((item) => item.id.trim() && item.title.trim() && hasHeroImage(item))
+      .slice(0, MAX_FEATURED_ITEMS)
+      .map((item) => ({ item, category: categoryFor(item) }));
   }
 
   $: localContinue = localContinueLoaded ? localContinueItems : continueItems;
   $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length);
-  $: gallerySlides = createGallerySlides([...(featuredItem?.type === 'movie' ? [featuredItem] : []), ...popularMovies, ...movies], [...(featuredItem?.type === 'series' ? [featuredItem] : []), ...popularSeries, ...series], [...(featuredItem?.type === 'anime' ? [featuredItem] : []), ...popularAnime, ...anime]);
-  $: activeSlide = gallerySlides[galleryIndex];
-
-  function stateFor(index: number, activeIndex: number): SlideState {
-    return index === activeIndex ? { opacity: 1, scale: 1.045, zIndex: 2 } : { opacity: 0, scale: 1, zIndex: 1 };
-  }
+  $: featuredItems = createFeaturedItems([
+    ...(featuredItem ? [featuredItem] : []),
+    ...movies,
+    ...series,
+    ...anime,
+    ...popularMovies,
+    ...popularSeries,
+    ...popularAnime
+  ]);
+  $: if (activeIndex >= featuredItems.length && featuredItems.length) activeIndex = 0;
+  $: activeHero = featuredItems[activeIndex];
+  $: activeHeroImage = activeHero?.item.backdrop?.trim() || activeHero?.item.poster?.trim() || '';
 
   function clearGalleryTimers() {
     if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
     if (galleryTransitionTimer) clearTimeout(galleryTransitionTimer);
+    if (interactionReleaseTimer) clearTimeout(interactionReleaseTimer);
     galleryRotationTimer = undefined;
     galleryTransitionTimer = undefined;
-  }
-
-  function setInitialStack() {
-    if (!animationEngine || gallerySlides.length !== 6) return;
-    galleryCards.forEach((card, index) => animationEngine?.set(card, stateFor(index, galleryIndex)));
-  }
-
-  function animateStack(fromIndex: number, toIndex: number) {
-    if (!animationEngine || gallerySlides.length !== 6) return;
-    const duration = reducedMotion ? 0.18 : GALLERY_TRANSITION_MS / 1000;
-    const timeline = animationEngine.timeline({ defaults: { duration, ease: reducedMotion ? 'power1.out' : 'power2.inOut', overwrite: true } });
-    const outgoing = galleryCards[fromIndex];
-    const incoming = galleryCards[toIndex];
-    if (outgoing) timeline.set(outgoing, { zIndex: 2 }, 0);
-    if (incoming) timeline.fromTo(incoming, { opacity: 0, scale: 1.1 }, { opacity: 1, scale: 1.045, zIndex: 3 }, 0);
-    if (outgoing) timeline.to(outgoing, { opacity: 0, scale: 1 }, 0);
+    interactionReleaseTimer = undefined;
   }
 
   function queueGalleryRotation() {
-    if (gallerySlides.length !== 6 || galleryPaused || galleryAnimating) return;
+    if (featuredItems.length < 2 || galleryPaused || galleryTransitioning || reducedMotion || destroyed) return;
     if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
-    galleryRotationTimer = setTimeout(() => { galleryRotationTimer = undefined; if (galleryPaused || galleryAnimating) return; changeGallerySlide((galleryIndex + 1) % gallerySlides.length); }, GALLERY_ROTATION_MS);
+    galleryRotationTimer = setTimeout(() => {
+      galleryRotationTimer = undefined;
+      if (!galleryPaused && !galleryTransitioning && !document.hidden) {
+        void changeGallerySlide((activeIndex + 1) % featuredItems.length);
+      }
+    }, GALLERY_ROTATION_MS);
   }
 
-  function finishGalleryTransition() { galleryAnimating = false; galleryTransitionTimer = undefined; if (!galleryPaused) queueGalleryRotation(); }
-  function changeGallerySlide(nextIndex: number) {
-    if (gallerySlides.length !== 6 || galleryAnimating || nextIndex === galleryIndex) return;
-    const fromIndex = galleryIndex; galleryIndex = nextIndex; galleryAnimating = true;
-    void tick().then(() => animateStack(fromIndex, nextIndex));
-    if (galleryTransitionTimer) clearTimeout(galleryTransitionTimer);
-    galleryTransitionTimer = setTimeout(finishGalleryTransition, reducedMotion ? 180 : GALLERY_TRANSITION_MS);
+  function pauseGallery() {
+    galleryPaused = true;
+    if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
+    galleryRotationTimer = undefined;
   }
-  function pauseGallery() { galleryPaused = true; if (galleryRotationTimer) clearTimeout(galleryRotationTimer); galleryRotationTimer = undefined; }
-  function resumeGallery() { galleryPaused = false; if (!galleryAnimating) queueGalleryRotation(); }
-  function selectGallerySlide(index: number) { if (index === galleryIndex || galleryAnimating || gallerySlides.length !== 6) return; pauseGallery(); changeGallerySlide(index); }
+
+  function resumeGallery() {
+    galleryPaused = false;
+    if (!galleryTransitioning) queueGalleryRotation();
+  }
+
+  function releaseInteractionPause() {
+    if (interactionReleaseTimer) clearTimeout(interactionReleaseTimer);
+    interactionReleaseTimer = setTimeout(() => {
+      interactionReleaseTimer = undefined;
+      resumeGallery();
+    }, GALLERY_ROTATION_MS * 2);
+  }
+
+  function preloadImage(url: string) {
+    return new Promise<boolean>((resolve) => {
+      if (!url) {
+        resolve(false);
+        return;
+      }
+      const image = new Image();
+      image.onload = () => {
+        if ('decode' in image) {
+          void image.decode().catch(() => undefined).finally(() => resolve(true));
+        } else {
+          resolve(true);
+        }
+      };
+      image.onerror = () => resolve(false);
+      image.src = url;
+    });
+  }
+
+  async function changeGallerySlide(nextIndex: number) {
+    const nextHero = featuredItems[nextIndex];
+    if (!nextHero || nextIndex === activeIndex || galleryTransitioning || featuredItems.length < 2) return;
+
+    galleryTransitioning = true;
+    pauseGallery();
+    const token = ++transitionToken;
+    const nextImage = nextHero.item.backdrop?.trim() || nextHero.item.poster?.trim() || '';
+    const imageReady = await preloadImage(nextImage);
+    if (destroyed || token !== transitionToken) return;
+
+    imageLoadFailed = !imageReady;
+    activeIndex = nextIndex;
+
+    if (reducedMotion) {
+      galleryTransitioning = false;
+      resumeGallery();
+      return;
+    }
+
+    if (galleryTransitionTimer) clearTimeout(galleryTransitionTimer);
+    galleryTransitionTimer = setTimeout(() => {
+      galleryTransitionTimer = undefined;
+      galleryTransitioning = false;
+      if (!galleryPaused) queueGalleryRotation();
+    }, 220);
+  }
+
+  function selectGallerySlide(index: number) {
+    if (index === activeIndex) {
+      pauseGallery();
+      releaseInteractionPause();
+      return;
+    }
+    pauseGallery();
+    releaseInteractionPause();
+    void changeGallerySlide(index);
+  }
+
   function handleGalleryKeydown(event: KeyboardEvent) {
-    if (event.key === 'ArrowRight') { event.preventDefault(); pauseGallery(); changeGallerySlide((galleryIndex + 1) % gallerySlides.length); }
-    else if (event.key === 'ArrowLeft') { event.preventDefault(); pauseGallery(); changeGallerySlide((galleryIndex - 1 + gallerySlides.length) % gallerySlides.length); }
-    else if (event.key === ' ') { event.preventDefault(); if (galleryPaused) resumeGallery(); else pauseGallery(); }
+    if (!featuredItems.length) return;
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      pauseGallery();
+      releaseInteractionPause();
+      void changeGallerySlide((activeIndex + 1) % featuredItems.length);
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      pauseGallery();
+      releaseInteractionPause();
+      void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      pauseGallery();
+      releaseInteractionPause();
+      void changeGallerySlide(0);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      pauseGallery();
+      releaseInteractionPause();
+      void changeGallerySlide(featuredItems.length - 1);
+    } else if (event.key === ' ') {
+      event.preventDefault();
+      if (galleryPaused) resumeGallery();
+      else pauseGallery();
+    }
+  }
+
+  function handleDocumentVisibility() {
+    if (document.hidden) {
+      if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
+      galleryRotationTimer = undefined;
+    } else if (!galleryPaused && !galleryTransitioning) {
+      queueGalleryRotation();
+    }
+  }
+
+  function handleMotionChange(event: MediaQueryListEvent) {
+    reducedMotion = event.matches;
+    if (reducedMotion) {
+      if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
+      galleryRotationTimer = undefined;
+    } else if (!galleryPaused && !galleryTransitioning) {
+      queueGalleryRotation();
+    }
   }
 
   onMount(() => {
+    destroyed = false;
+    motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    reducedMotion = motionQuery.matches;
+    motionQuery.addEventListener?.('change', handleMotionChange);
+    document.addEventListener('visibilitychange', handleDocumentVisibility);
+
     let cancelled = false;
-    void (async () => {
-      const loadContinue = async () => {
-        if (page.data.user) { const cloud = await syncAuthenticatedState(); return continueWatchingRecords(cloud.progress, cloud.favorites); }
+    const loadContinue = async () => {
+      try {
+        if (page.data.user) {
+          const cloud = await syncAuthenticatedState();
+          return continueWatchingRecords(cloud.progress, cloud.favorites);
+        }
         return getContinueWatching();
-      };
-      void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
-      const { gsap } = await import('gsap');
+      } catch {
+        return [];
+      }
+    };
+
+    void loadContinue().then((records) => {
       if (cancelled) return;
-      animationEngine = gsap; reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      galleryCards = galleryStack ? Array.from(galleryStack.querySelectorAll<HTMLElement>('[data-gallery-card]')) : [];
-      setInitialStack(); queueGalleryRotation();
-      if (!reducedMotion && intro) gsap.fromTo(intro.querySelectorAll('[data-reveal]'), { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: .5, stagger: .05, ease: 'power2.out' });
-    })();
-    return () => { cancelled = true; clearGalleryTimers(); if (animationEngine && galleryCards.length) animationEngine.killTweensOf(galleryCards); animationEngine = undefined; };
+      localContinueItems = records.map(progressToMedia);
+      localContinueLoaded = true;
+    });
+
+    queueGalleryRotation();
+
+    return () => {
+      cancelled = true;
+      destroyed = true;
+      transitionToken += 1;
+      clearGalleryTimers();
+      motionQuery?.removeEventListener?.('change', handleMotionChange);
+      document.removeEventListener('visibilitychange', handleDocumentVisibility);
+    };
   });
 </script>
 
 <svelte:head>
   <title>Mavero — Movies, series &amp; anime, all in one place</title>
   <meta name="description" content="Stream movies, series, and anime on MAVERO." />
-  <link rel="canonical" href={page.url.origin}/>
+  <link rel="canonical" href={page.url.origin} />
   <meta property="og:title" content="Mavero — Movies, series & anime, all in one place" />
   <meta property="og:description" content="A fast, modern home for your next watch." />
-  <meta property="og:url" content={page.url.origin}/>
+  <meta property="og:url" content={page.url.origin} />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary" />
 </svelte:head>
 
-<div bind:this={intro} class="discover-page">
-  {#if gallerySlides.length === 6 && activeSlide}
+<div class="discover-page">
+  {#if activeHero}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
-    <section class="hero" aria-roledescription="carousel" aria-label="Featured titles" tabindex="0" onpointerenter={pauseGallery} onpointerleave={resumeGallery} onfocusin={pauseGallery} onfocusout={resumeGallery} onkeydown={handleGalleryKeydown}>
-      <div class="hero-stack" bind:this={galleryStack} aria-hidden="true">
-        {#each gallerySlides as slide, index}
-          <div class:active={index === galleryIndex} class="hero-slide" data-gallery-card style={`background-image: url(${JSON.stringify(slide.item.poster)})`} aria-hidden={index !== galleryIndex}></div>
-        {/each}
+    <section
+      bind:this={hero}
+      class="hero"
+      class:transitioning={galleryTransitioning}
+      aria-roledescription="carousel"
+      aria-label="Featured titles"
+      tabindex="0"
+      onpointerenter={pauseGallery}
+      onpointerleave={resumeGallery}
+      onfocusin={pauseGallery}
+      onfocusout={(event) => { if (!hero?.contains(event.relatedTarget as Node | null)) resumeGallery(); }}
+      onkeydown={handleGalleryKeydown}
+    >
+      <div class="hero-media" aria-hidden="true">
+        {#if activeHeroImage && !imageLoadFailed}
+          <picture>
+            <source media="(max-width: 640px)" srcset={activeHero.item.backdropSmall || activeHeroImage} />
+            <img
+              class="hero-image"
+              src={activeHeroImage}
+              alt={`${activeHero.item.title} backdrop`}
+              width="1280"
+              height="720"
+              sizes="100vw"
+              loading={activeIndex === 0 ? 'eager' : 'lazy'}
+              fetchpriority={activeIndex === 0 ? 'high' : 'auto'}
+              decoding="async"
+              onerror={() => { imageLoadFailed = true; }}
+            />
+          </picture>
+        {:else}
+          <div class="hero-image-fallback" style={`--hero-accent: ${activeHero.item.accent}`}>
+            <span>{activeHero.item.title}</span>
+          </div>
+        {/if}
       </div>
       <div class="hero-scrim" aria-hidden="true"></div>
       <div class="hero-scrim-bottom" aria-hidden="true"></div>
 
       <div class="container-wide hero-body">
         <div class="hero-copy" aria-live="polite">
-            <div class="hero-kicker">{activeSlide.category} <span class="dot"></span> Featured</div>
-            <h1>{activeSlide.item.title}</h1>
-            <div class="hero-meta">
-              {#if activeSlide.item.rating > 0}<span class="rating">★ {activeSlide.item.rating.toFixed(1)}</span>{/if}
-              <span>{activeSlide.item.year}</span><span class="dot"></span>
-              <span>{activeSlide.item.maturity}</span><span class="dot"></span>
-              <span>{activeSlide.item.runtime}</span>
+          <div class="hero-kicker">{activeHero.category} <span class="dot"></span> Featured</div>
+          <h1>{activeHero.item.title}</h1>
+          <div class="hero-meta">
+            {#if activeHero.item.rating > 0}<span class="rating">★ {activeHero.item.rating.toFixed(1)}</span>{/if}
+            {#if activeHero.item.year > 0}<span>{activeHero.item.year}</span>{/if}
+            {#if activeHero.item.maturity}<span class="dot"></span><span>{activeHero.item.maturity}</span>{/if}
+            {#if activeHero.item.runtime}<span class="dot"></span><span>{activeHero.item.runtime}</span>{/if}
+          </div>
+          <p>{activeHero.item.description?.trim() || 'No description available.'}</p>
+          {#if activeHero.item.genres?.length}
+            <div class="hero-genres" aria-label="Genres">
+              {#each activeHero.item.genres.slice(0, 3) as genre}<span>{genre}</span>{/each}
             </div>
-            <p>{activeSlide.item.description}</p>
-            <div class="hero-genres">{#each activeSlide.item.genres.slice(0, 3) as genre}<span>{genre}</span>{/each}</div>
-            <div class="hero-actions">
-              <a class="btn btn-primary" href={`/watch/${activeSlide.item.type}/${activeSlide.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
-              <a class="btn btn-secondary" href={`/${activeSlide.item.type}/${activeSlide.item.id}`}><Info size={16} /> More info</a>
-              <a class="btn btn-secondary icon-only" href={`/${activeSlide.item.type}/${activeSlide.item.id}`} aria-label="Add to My List"><ListPlus size={16} /></a>
-            </div>
+          {/if}
+          <div class="hero-actions">
+            <a class="btn btn-primary" href={`/watch/${activeHero.item.type}/${activeHero.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
+            <a class="btn btn-secondary" href={`/${activeHero.item.type}/${activeHero.item.id}`}><Info size={16} /> More info</a>
+            <a class="btn btn-secondary icon-only" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`Add ${activeHero.item.title} to My List`}><ListPlus size={16} /></a>
+          </div>
         </div>
       </div>
 
       <div class="hero-controls" aria-label="Featured title controls">
-        <button class="hero-arrow" type="button" aria-label="Previous title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex - 1 + gallerySlides.length) % gallerySlides.length); }}><ArrowLeft size={16} /></button>
+        <button class="hero-arrow" type="button" aria-label="Previous title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length); }}><ArrowLeft size={16} /></button>
         <div class="hero-dots" role="tablist" aria-label="Choose featured title">
-          {#each gallerySlides as slide, index}<button class:active={index === galleryIndex} class="hero-dot" type="button" role="tab" aria-selected={index === galleryIndex} aria-label={`Show ${slide.item.title}`} onclick={() => selectGallerySlide(index)}></button>{/each}
+          {#each featuredItems as slide, index}
+            <button class:active={index === activeIndex} class="hero-dot" type="button" role="tab" aria-selected={index === activeIndex} aria-label={`Show ${slide.item.title}`} aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => selectGallerySlide(index)}></button>
+          {/each}
         </div>
-        <button class="hero-arrow" type="button" aria-label="Next title" onclick={() => { pauseGallery(); changeGallerySlide((galleryIndex + 1) % gallerySlides.length); }}><ArrowRight size={16} /></button>
+        <button class="hero-arrow" type="button" aria-label="Next title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex + 1) % featuredItems.length); }}><ArrowRight size={16} /></button>
+      </div>
+    </section>
+  {:else if hasCatalog}
+    <section class="hero hero-fallback" aria-label="Featured title unavailable">
+      <div class="container-wide hero-body">
+        <div class="hero-copy">
+          <div class="hero-kicker">MAVERO <span class="dot"></span> Featured</div>
+          <h1>Featured title unavailable.</h1>
+          <p>The catalog is available below, but the next featured image is not ready yet.</p>
+          <div class="hero-actions"><a class="btn btn-secondary" href="/discover">Browse the catalog</a></div>
+        </div>
       </div>
     </section>
   {/if}
@@ -209,14 +388,16 @@
   </div>
 </div>
 
-
 <style>
   .hero { position: relative; min-height: min(88vh, 820px); overflow: hidden; background: var(--base); }
-  .hero-stack { position: absolute; inset: 0; }
-  .hero-slide { position: absolute; inset: 0; background-position: center 22%; background-size: cover; opacity: 0; will-change: opacity, transform; }
-  .hero-slide.active { opacity: 1; }
-  .hero-scrim { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(6,6,10,.97) 8%, rgba(6,6,10,.75) 32%, rgba(6,6,10,.28) 58%, rgba(6,6,10,.55) 100%); }
-  .hero-scrim-bottom { position: absolute; inset: auto 0 0 0; height: 45%; background: linear-gradient(0deg, var(--base) 0%, transparent 100%); }
+  .hero-media { position: absolute; inset: 0; overflow: hidden; background: var(--base); }
+  .hero-image, .hero-image-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
+  .hero-image { display: block; }
+  .hero.transitioning .hero-image { opacity: .82; transform: scale(1.01); }
+  .hero-image-fallback { display: grid; place-items: center; background: radial-gradient(circle at 70% 28%, color-mix(in srgb, var(--hero-accent) 38%, transparent), transparent 42%), linear-gradient(135deg, var(--surface-2), var(--base)); }
+  .hero-image-fallback span { max-width: 70%; color: rgba(245,246,250,.18); font-size: clamp(2rem, 8vw, 7rem); font-weight: 900; letter-spacing: -.05em; text-align: center; }
+  .hero-scrim { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(6,6,10,.97) 8%, rgba(6,6,10,.75) 32%, rgba(6,6,10,.28) 58%, rgba(6,6,10,.55) 100%); pointer-events: none; }
+  .hero-scrim-bottom { position: absolute; inset: auto 0 0 0; height: 45%; background: linear-gradient(0deg, var(--base) 0%, transparent 100%); pointer-events: none; }
   .hero-body { position: relative; z-index: 2; display: flex; align-items: flex-end; min-height: min(88vh, 820px); padding-bottom: 96px; padding-top: 120px; }
   .hero-copy { max-width: 620px; }
   .hero-kicker { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-strong); font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
@@ -232,11 +413,13 @@
   .icon-only { width: 46px; padding: 0; flex: 0 0 auto; }
   .hero-controls { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 28px; z-index: 3; display: flex; align-items: center; gap: 12px; }
   .hero-arrow { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink); background: rgba(6,6,10,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .hero-arrow:hover, .hero-arrow:focus-visible { border-color: rgba(255,90,122,.6); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
+  .hero-arrow:hover:not(:disabled), .hero-arrow:focus-visible:not(:disabled) { border-color: rgba(255,90,122,.6); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
+  .hero-arrow:disabled, .hero-dot:disabled { cursor: wait; opacity: .55; }
   .hero-dots { display: flex; align-items: center; gap: 6px; }
   .hero-dot { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 999px; background: rgba(245,246,250,.28); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .hero-dot:hover, .hero-dot:focus-visible { background: rgba(245,246,250,.65); outline: 0; }
+  .hero-dot:hover:not(:disabled), .hero-dot:focus-visible:not(:disabled) { background: rgba(245,246,250,.65); outline: 0; }
   .hero-dot.active { width: 22px; background: var(--accent-gradient); }
+  .hero-fallback { background: radial-gradient(circle at 72% 28%, rgba(255,90,122,.18), transparent 38%), var(--base); }
 
   .discover-routes { display: flex; gap: 10px; margin: 22px 0 40px; }
   .discover-routes a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); text-decoration: none; font-size: .78rem; font-weight: 700; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
@@ -250,7 +433,7 @@
   }
   @media (max-width: 640px) {
     .hero { min-height: 84vh; }
-    .hero-slide { background-position: center 18%; }
+    .hero-image, .hero-image-fallback { object-position: center 18%; }
     .hero-scrim { background: linear-gradient(0deg, rgba(6,6,10,.98) 18%, rgba(6,6,10,.55) 55%, rgba(6,6,10,.35) 100%); }
     .hero-body { align-items: flex-end; min-height: 84vh; padding-top: 76px; padding-bottom: 74px; }
     .hero-copy { max-width: none; }
@@ -264,5 +447,7 @@
     .discover-routes::-webkit-scrollbar { display: none; }
     .discover-routes a { flex: 0 0 auto; }
   }
-  @media (prefers-reduced-motion: reduce) { .hero-slide, .hero-arrow, .discover-routes a { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .hero-image, .hero-image-fallback, .hero-arrow, .hero-dot, .discover-routes a { transition: none; }
+  }
 </style>

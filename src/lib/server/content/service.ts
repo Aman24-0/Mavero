@@ -31,21 +31,62 @@ function boundedLog(value: number | undefined, divisor: number) {
   return Math.min(1, Math.log10(value + 1) / divisor);
 }
 
-function audienceConfidence(item: NormalizedMediaItem) {
+type RankableMedia = Pick<NormalizedMediaItem, 'id' | 'title' | 'year' | 'type' | 'rating' | 'genres' | 'description' | 'poster' | 'backdrop'> & Partial<Pick<NormalizedMediaItem, 'popularity' | 'voteCount'>>;
+
+function audienceConfidence(item: RankableMedia) {
   const rating = Math.max(0, Math.min(1, item.rating / 10));
   const votes = boundedLog(item.voteCount, item.type === 'anime' ? 5 : 4.5);
   const popularity = boundedLog(item.popularity, item.type === 'anime' ? 5.5 : 3.5);
   return rating * 0.35 + votes * 0.35 + popularity * 0.30;
 }
 
+function isUsableItem(item: RankableMedia) {
+  return Boolean(
+    item.id.trim() &&
+    item.title.trim() &&
+    !/^untitled(?: anime)?$/i.test(item.title.trim()) &&
+    ['movie', 'series', 'anime'].includes(item.type) &&
+    (item.poster.trim() || item.backdrop.trim()) &&
+    item.description.trim() &&
+    Number.isFinite(item.rating) &&
+    Number.isFinite(item.year) &&
+    item.year > 1800
+  );
+}
+
+function uniqueUsableItems<T extends RankableMedia>(items: T[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (!isUsableItem(item)) return false;
+    const key = `${item.type}:${item.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function rankForExposure(items: NormalizedMediaItem[], mode: 'for-you' | 'top-rated' | 'newest' = 'for-you') {
-  return [...items].sort((left, right) => {
+  return uniqueUsableItems(items).sort((left, right) => {
     if (mode === 'newest' && right.year !== left.year) return right.year - left.year;
     const score = audienceConfidence(right) - audienceConfidence(left);
     if (Math.abs(score) > 0.0001) return score;
     if (right.rating !== left.rating) return right.rating - left.rating;
     return left.title.localeCompare(right.title);
   });
+}
+
+function featuredConfidence(item: RankableMedia) {
+  const overviewBonus = item.description.length >= 32 && !/no synopsis|no description/i.test(item.description) ? 0.08 : 0;
+  const backdropBonus = item.backdrop ? 0.2 : 0;
+  return audienceConfidence(item) + overviewBonus + backdropBonus;
+}
+
+export function selectFeatured<T extends RankableMedia>(items: T[]) {
+  return uniqueUsableItems(items).sort((left, right) => {
+    const score = featuredConfidence(right) - featuredConfidence(left);
+    if (Math.abs(score) > 0.0001) return score;
+    return left.title.localeCompare(right.title);
+  })[0];
 }
 
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {
@@ -165,4 +206,4 @@ export function getFixtureContent(type: ContentType) {
   return fixturesFor(type);
 }
 
-export const contentServiceInternals = { fixturesFor, fixtureDetail, canFallback, audienceConfidence, rankForExposure };
+export const contentServiceInternals = { fixturesFor, fixtureDetail, canFallback, audienceConfidence, rankForExposure, isUsableItem, uniqueUsableItems, selectFeatured };
