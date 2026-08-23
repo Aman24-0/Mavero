@@ -34,7 +34,7 @@
 </script>
 
 <div class:compact class:editorial class="card-wrap">
-  <a class="card" href={cardHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Open ${item.title}`}>
+  <a class="card" href={cardHref}>
     <div class="poster" bind:this={posterElement} style={`--poster-accent: ${item.accent}`}>
       {#if !imageReady}
         <div class="poster-placeholder" aria-hidden="true"></div>
