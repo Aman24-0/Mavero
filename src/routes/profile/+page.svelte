@@ -4,8 +4,9 @@
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import ErrorState from '$components/ErrorState.svelte';
-  import { getLocalFavorites, getLocalProgressRecords } from '$lib/client/progress/service';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
+  import { getLocalFavorites, getLocalProgressRecords } from '$lib/client/progress/service';
+  import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
@@ -16,6 +17,9 @@
   let loaded = $state(false);
   let errorMessage = $state('');
   let syncStatus = $state<SyncStatus>('pending');
+  let signoutOpen = $state(false);
+  let signoutBusy = $state(false);
+  let signoutError = $state('');
 
   function accountName() {
     const metadata = data.user?.user_metadata;
@@ -24,6 +28,29 @@
 
   function syncStatusLabel(status: SyncStatus) {
     return ({ synced: 'Synced across devices', syncing: 'Syncing your library…', pending: 'Sync pending', offline: 'Offline · Local cache active', error: 'Cloud sync will retry later' } satisfies Record<SyncStatus, string>)[status];
+  }
+
+  function openSignout() {
+    signoutError = '';
+    signoutOpen = true;
+  }
+
+  function closeSignout() {
+    if (!signoutBusy) signoutOpen = false;
+  }
+
+  async function confirmSignout() {
+    if (signoutBusy) return;
+    signoutBusy = true;
+    signoutError = '';
+    try {
+      const response = await fetch('/auth/sign-out', { method: 'POST', headers: { accept: 'application/json' } });
+      if (!response.ok) throw new Error('Sign out failed.');
+      window.location.replace(response.url || '/discover');
+    } catch {
+      signoutBusy = false;
+      signoutError = 'Unable to sign out right now. Please try again.';
+    }
   }
 
   async function loadLocalState() {
@@ -79,7 +106,10 @@
     <a class="btn btn-secondary" href="https://cinelogv2.vercel.app" target="_blank" rel="noreferrer">Explore CineLog <ArrowUpRight size={15} /></a>
   </section>
 
-  {#if isAuthenticated}<div class="profile-actions"><form class="signout-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn signout-btn"><LogOut size={15} /> Sign out</button></form><a class="btn btn-secondary settings-btn" href="/settings"><Settings2 size={15} /> Settings</a></div>{/if}
+  {#if isAuthenticated}<div class="profile-actions"><button type="button" class="btn signout-btn" onclick={openSignout}><LogOut size={15} /> Sign out</button><a class="btn btn-secondary settings-btn" href="/settings"><Settings2 size={15} /> Settings</a></div>{/if}
+  <ConfirmDialog open={signoutOpen} eyebrow="MAVERO / Sign out" title="Sign out?" description="Are you sure you want to sign out of Mavero?" primaryLabel={signoutBusy ? 'Signing out…' : 'Sign out'} primaryDisabled={signoutBusy} cancelDisabled={signoutBusy} onCancel={closeSignout} onPrimary={confirmSignout}>
+    {#if signoutError}<p class="dialog-error" role="alert">{signoutError}</p>{/if}
+  </ConfirmDialog>
   <footer class="profile-footer"><span>Mavero @2026</span><a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">Data From <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database" /></a></footer>
 </div>
 
@@ -107,7 +137,6 @@
   .identity-panel h2 { margin: 8px 0 5px; color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.2; }
   .identity-panel p { max-width: 680px; margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.6; }
   .profile-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 26px; }
-  .signout-form { display: flex; }
   .signout-btn { color: #ff8fa3; border-color: rgba(231,140,141,.32); background: rgba(231,140,141,.08); }
   .profile-footer { display: grid; justify-items: center; gap: 9px; margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .04em; text-align: center; text-transform: none; }
   .tmdb-credit { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-deep); text-decoration: none; }

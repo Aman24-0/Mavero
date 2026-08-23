@@ -1,10 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowLeft, Check, LockKeyhole, Mail, Play, RotateCcw, Settings2, UserRound } from 'lucide-svelte';
+  import { ArrowLeft, Check, LockKeyhole, Mail, Play, RotateCcw, Settings2, Trash2, UserRound } from 'lucide-svelte';
   import type { PageData } from './$types';
+  import ConfirmDialog from '$components/ConfirmDialog.svelte';
+  import { clearLocalData } from '$lib/client/progress/database';
 
   let { data, form } = $props<{ data: PageData; form?: { section?: string; success?: boolean; message?: string } }>();
   let settings = $state({ autoplay: true, autoResume: true, reducedMotion: false });
+  let deleteStep = $state<'initial' | 'final' | null>(null);
+  let deleteConfirmation = $state('');
+  let deleteBusy = $state(false);
+  let deleteError = $state('');
+  let deleteSuccess = $state(false);
 
   function persistSettings() {
     localStorage.setItem('mavero.settings', JSON.stringify(settings));
@@ -20,6 +27,45 @@
   });
 
   const displayName = $derived(typeof data.user?.user_metadata?.display_name === 'string' ? data.user.user_metadata.display_name : '');
+
+  function openDelete() {
+    deleteError = '';
+    deleteConfirmation = '';
+    deleteStep = 'initial';
+  }
+
+  function closeDelete() {
+    if (deleteBusy) return;
+    deleteStep = null;
+    deleteConfirmation = '';
+    deleteError = '';
+  }
+
+  function continueDelete() {
+    if (!deleteBusy && deleteStep === 'initial') deleteStep = 'final';
+  }
+
+  async function deleteAccount() {
+    if (deleteBusy || deleteConfirmation !== 'DELETE') return;
+    deleteBusy = true;
+    deleteError = '';
+    try {
+      const response = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ confirmation: deleteConfirmation })
+      });
+      const payload = await response.json().catch(() => null) as { ok?: boolean; error?: { message?: string }; message?: string } | null;
+      if (!response.ok || !payload?.ok) throw new Error(payload?.error?.message ?? payload?.message ?? 'Account deletion failed.');
+      await clearLocalData();
+      deleteStep = null;
+      deleteSuccess = true;
+      window.setTimeout(() => window.location.replace('/discover'), 500);
+    } catch {
+      deleteBusy = false;
+      deleteError = 'Unable to delete your account right now. Please try again.';
+    }
+  }
 </script>
 
 <svelte:head><title>Settings — Mavero</title><meta name="description" content="Manage your MAVERO profile, account, playback, and library settings." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
@@ -72,6 +118,22 @@
     </div>
   </section>
 
+  {#if data.user}
+    <section class="danger-zone" aria-labelledby="danger-zone-title">
+      <div class="section-heading"><div class="section-icon danger-icon"><Trash2 size={17} /></div><div><div class="eyebrow danger-eyebrow">Danger zone</div><h2 id="danger-zone-title">Delete account</h2><p>Permanently delete your Mavero account and associated personal data.</p></div></div>
+      <button class="btn delete-account-btn" type="button" onclick={openDelete} disabled={deleteBusy}><Trash2 size={15} /> Delete account</button>
+    </section>
+  {/if}
+
+  {#if deleteSuccess}<div class="form-feedback success" role="status">Account deleted successfully. Returning to Discover…</div>{/if}
+  <ConfirmDialog open={deleteStep === 'initial'} eyebrow="MAVERO / Danger zone" title="Delete your account?" description="This will permanently delete your Mavero account and associated personal data. This action cannot be undone." primaryLabel="Continue" tone="danger" onCancel={closeDelete} onPrimary={continueDelete} />
+  <ConfirmDialog open={deleteStep === 'final'} eyebrow="MAVERO / Final confirmation" title="Confirm account deletion" description="To permanently delete your account, type DELETE below. This final action cannot be undone." primaryLabel={deleteBusy ? 'Deleting…' : 'Delete account'} primaryDisabled={deleteBusy || deleteConfirmation !== 'DELETE'} cancelDisabled={deleteBusy} tone="danger" onCancel={closeDelete} onPrimary={deleteAccount}>
+    <label class="delete-confirm-label" for="delete-confirmation">Type <code>DELETE</code> to continue</label>
+    <input id="delete-confirmation" class="delete-confirm-input" type="text" bind:value={deleteConfirmation} autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="delete-confirmation-help" disabled={deleteBusy} />
+    <small id="delete-confirmation-help" class="delete-confirm-help">The text is case-sensitive.</small>
+    {#if deleteError}<p class="dialog-error" role="alert">{deleteError}</p>{/if}
+  </ConfirmDialog>
+
   <footer class="settings-footer"><Settings2 size={14} /><span>MAVERO settings are designed to stay simple, private, and reversible.</span></footer>
 </div>
 
@@ -108,6 +170,17 @@
   .toggle-row i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); transition: transform var(--motion-fast) var(--ease-out); }
   .toggle-row input:checked + i { background: var(--accent-strong); }
   .toggle-row input:checked + i::after { transform: translateX(18px); background: #fff; }
+  .danger-zone { margin-top: 22px; padding: 22px; border: 1px solid rgba(231,140,141,.34); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(185,76,92,.08), rgba(245,246,250,.02)); }
+  .danger-icon { color: #ff8fa3; background: rgba(185,76,92,.14); }
+  .danger-eyebrow { color: #ff8fa3; }
+  .delete-account-btn { margin-top: 20px; color: #ff9aac; border-color: rgba(231,140,141,.46); background: rgba(185,76,92,.1); }
+  .delete-account-btn:hover { color: #fff; border-color: rgba(231,140,141,.74); background: rgba(185,76,92,.22); }
+  .delete-confirm-label { display: block; color: var(--muted-deep); font-size: .68rem; font-weight: 700; }
+  .delete-confirm-label code { color: #ff9aac; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; letter-spacing: .12em; }
+  .delete-confirm-input { width: 100%; box-sizing: border-box; min-height: 44px; margin-top: 8px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: rgba(245,246,250,.04); font-size: .86rem; font-weight: 800; letter-spacing: .12em; outline: 0; }
+  .delete-confirm-input:focus { border-color: #d97883; box-shadow: 0 0 0 3px rgba(217,120,131,.14); }
+  .delete-confirm-help { display: block; margin-top: 7px; color: var(--muted-deep); font-size: .63rem; }
+  .dialog-error { margin: 12px 0 0; color: #ff9aac; font-size: .7rem; line-height: 1.45; }
   .settings-footer { display: flex; align-items: center; gap: 7px; margin-top: 28px; color: var(--muted-deep); font-size: .64rem; }
   @media (max-width: 720px) { .settings-page { padding-top: 88px; } .account-grid { grid-template-columns: 1fr; gap: 7px; } .guest-settings { align-items: flex-start; flex-direction: column; } }
   @media (prefers-reduced-motion: reduce) { .back-link, .toggle-row i, .toggle-row i::after { transition: none; } }
