@@ -79,13 +79,8 @@
     <a class="btn btn-secondary" href="https://cinelogv2.vercel.app" target="_blank" rel="noreferrer">Explore CineLog <ArrowUpRight size={15} /></a>
   </section>
 
-  <section class="settings-entry">
-    <div><div class="eyebrow">MAVERO / Settings</div><h2>Make it yours.</h2><p>Update your profile details, account access, playback behavior, and library preferences.</p></div>
-    <a class="btn btn-secondary" href="/settings"><Settings2 size={15} /> Open Settings <ArrowUpRight size={15} /></a>
-  </section>
-
-  {#if isAuthenticated}<form class="signout-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn signout-btn"><LogOut size={15} /> Sign out</button></form>{/if}
-  <footer class="profile-footer"><span>MAVERO @2026</span><span>Data from TMDB</span></footer>
+  {#if isAuthenticated}<div class="profile-actions"><form class="signout-form" method="POST" action="/auth/sign-out"><button type="submit" class="btn signout-btn"><LogOut size={15} /> Sign out</button></form><a class="btn btn-secondary settings-btn" href="/settings"><Settings2 size={15} /> Settings</a></div>{/if}
+  <footer class="profile-footer"><span>Mavero @2026</span><a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">Data From <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database" /></a></footer>
 </div>
 
 <style>
@@ -103,27 +98,31 @@
   .profile-card { min-height: 165px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
   .activity-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }
   .activity-list > div { display: flex; align-items: center; gap: 11px; color: var(--accent-strong); }
+  .activity-list > div:nth-child(2) { justify-self: end; justify-content: flex-end; text-align: right; }
   .activity-list span { display: grid; gap: 3px; }
   .activity-list strong { color: var(--ink); font-size: 1.5rem; font-weight: 900; letter-spacing: -.01em; line-height: 1; }
   .activity-list small { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  .identity-panel, .settings-entry { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 15px; margin-top: 30px; padding: 22px; border: 1px solid rgba(123, 92, 250,.27); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(123, 92, 250,.11), rgba(255, 62, 94,.05)); }
+  .identity-panel { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 15px; margin-top: 30px; padding: 22px; border: 1px solid rgba(123, 92, 250,.27); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(123, 92, 250,.11), rgba(255, 62, 94,.05)); }
   .identity-panel-icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px; color: var(--base); background: var(--secondary); }
-  .identity-panel h2, .settings-entry h2 { margin: 8px 0 5px; color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.2; }
-  .identity-panel p, .settings-entry p { max-width: 680px; margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.6; }
-  .settings-entry { border-color: var(--line); background: var(--surface); }
-  .signout-form { display: flex; justify-content: flex-end; margin-top: 26px; }
+  .identity-panel h2 { margin: 8px 0 5px; color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.2; }
+  .identity-panel p { max-width: 680px; margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.6; }
+  .profile-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 26px; }
+  .signout-form { display: flex; }
   .signout-btn { color: #ff8fa3; border-color: rgba(231,140,141,.32); background: rgba(231,140,141,.08); }
-  .profile-footer { display: flex; justify-content: space-between; gap: 18px; margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .04em; text-transform: uppercase; }
+  .profile-footer { display: grid; justify-items: center; gap: 9px; margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .04em; text-align: center; text-transform: none; }
+  .tmdb-credit { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-deep); text-decoration: none; }
+  .tmdb-credit:hover { color: var(--ink-soft); }
+  .tmdb-logo { width: 38px; height: 27px; object-fit: contain; }
   @media (max-width: 720px) {
     .profile-header { grid-template-columns: 58px minmax(0, 1fr); padding-top: 92px; }
     .profile-avatar { width: 58px; height: 58px; font-size: 1.15rem; }
     .profile-header .btn, .account-status { grid-column: 1 / -1; justify-self: start; }
     .activity-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .activity-list strong { font-size: 1.25rem; }
-    .identity-panel, .settings-entry { grid-template-columns: 40px 1fr; }
+    .identity-panel { grid-template-columns: 40px 1fr; }
     .identity-panel-icon { width: 40px; height: 40px; }
-    .identity-panel .btn, .settings-entry .btn { grid-column: 1 / -1; justify-self: start; }
-    .signout-form { justify-content: flex-start; }
+    .identity-panel .btn { grid-column: 1 / -1; justify-self: start; }
+    .profile-actions { justify-content: flex-start; }
   }
-  @media (max-width: 420px) { .activity-list { grid-template-columns: 1fr; gap: 15px; } .profile-footer { align-items: start; flex-direction: column; gap: 8px; } }
+  @media (max-width: 420px) { .activity-list { gap: 12px; } }
 </style>

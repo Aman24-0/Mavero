@@ -177,7 +177,6 @@
 </svelte:head>
 
 <div class="container-wide search-page">
-  <header class="search-intro"><div class="search-intro-title">MAVERO / Find your next story</div><p>Search across movies, series, and anime, then narrow the shelf when you know what you want.</p></header>
   <section class="search-panel" aria-label="Search MAVERO">
     <div class="search-band search-large" role="search"><span class="search-leading" aria-hidden="true"><Search size={18} /></span><label class="sr-only" for="catalog-search">Search titles</label><input id="catalog-search" bind:value={query} oninput={scheduleSearch} aria-label="Search titles" placeholder="Search movies, shows, or anime" />{#if query}<button class="clear-search" type="button" aria-label="Clear search" onclick={() => { query = ''; scheduleSearch(); }}><X size={15} /></button>{/if}</div>
     <div class="filter-chips" role="group" aria-label="Filter search by type">
@@ -210,8 +209,6 @@
 <style>
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .search-page { min-height: calc(100dvh - 76px); padding-top: 34px; padding-bottom: 76px; }
-  .search-intro { width: min(920px, 100%); margin: 0 auto 20px; }
-  .search-intro-title { margin: 8px 0 7px; color: var(--ink); font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 900; letter-spacing: -.02em; line-height: 1.15; }
   .search-panel { width: min(920px, 100%); margin-inline: auto; }
   .search-large { position: relative; min-height: 64px; margin: 0; padding: 0 14px; border-color: rgba(255, 62, 94,.28); border-radius: 18px; background: linear-gradient(110deg, rgba(20,20,27,.94), rgba(13,14,19,.9)); box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 14px 34px rgba(0,0,0,.12); transition: border-color 180ms ease-out, box-shadow 180ms ease-out, background 180ms ease-out; }
   .search-large:focus-within { border-color: rgba(255, 62, 94,.62); background: linear-gradient(110deg, rgba(35,31,25,.96), rgba(13,14,19,.94)); box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 4px rgba(255, 62, 94,.08), 0 18px 40px rgba(0,0,0,.18); }

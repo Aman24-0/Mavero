@@ -158,8 +158,7 @@
       <div class="hero-scrim-bottom" aria-hidden="true"></div>
 
       <div class="container-wide hero-body">
-        {#key `${activeSlide.item.type}:${activeSlide.item.id}`}
-          <div class="hero-copy" data-reveal aria-live="polite">
+        <div class="hero-copy" aria-live="polite">
             <div class="hero-kicker">{activeSlide.category} <span class="dot"></span> Featured</div>
             <h1>{activeSlide.item.title}</h1>
             <div class="hero-meta">
@@ -175,8 +174,7 @@
               <a class="btn btn-secondary" href={`/${activeSlide.item.type}/${activeSlide.item.id}`}><Info size={16} /> More info</a>
               <a class="btn btn-secondary icon-only" href={`/${activeSlide.item.type}/${activeSlide.item.id}`} aria-label="Add to My List"><ListPlus size={16} /></a>
             </div>
-          </div>
-        {/key}
+        </div>
       </div>
 
       <div class="hero-controls" aria-label="Featured title controls">

@@ -38,13 +38,29 @@
   async function selectStatus(status: WatchlistStatus) { await goto(chipHref(status), { replaceState: true, keepFocus: true, noScroll: true }); }
   function syncStatusLabel(status: SyncStatus) { return ({ synced: 'Synced across devices', syncing: 'Syncing your library…', pending: 'Local-first library', offline: 'Offline · Local cache active', error: 'Cloud sync will retry later' } satisfies Record<SyncStatus, string>)[status]; }
   async function loadList() {
-    loaded = false; errorMessage = '';
+    errorMessage = '';
     try {
-      const state = await getLocalPersistenceState();
-      if (data.user) { const cloud = await syncAuthenticatedState(); progressRecords = cloud.progress; records = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions); syncStatus = cloud.status; storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry'; }
-      else { const [favorites, progress, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]); progressRecords = progress; records = mergeFavoritesWithProgress(favorites, progress, deletions); syncStatus = 'pending'; storageMessage = state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only'; }
-    } catch { errorMessage = 'Your saved library is temporarily unavailable. Please try again.'; }
-    finally { loaded = true; }
+      const statePromise = getLocalPersistenceState();
+      const [favorites, progress, deletions, state] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions(), statePromise]);
+      progressRecords = progress;
+      records = mergeFavoritesWithProgress(favorites, progress, deletions);
+      loaded = true;
+      syncStatus = data.user ? 'syncing' : 'pending';
+      storageMessage = data.user
+        ? (state.status === 'indexeddb' ? 'IndexedDB cache · Syncing in background' : 'Memory fallback · Cloud sync will retry')
+        : (state.status === 'indexeddb' ? 'IndexedDB · Local & private' : 'Memory fallback · This session only');
+
+      if (!data.user) return;
+      void syncAuthenticatedState().then((cloud) => {
+        progressRecords = cloud.progress;
+        records = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions);
+        syncStatus = cloud.status;
+        storageMessage = state.status === 'indexeddb' ? 'IndexedDB cache · Cloud-authoritative after sync' : 'Memory fallback · Cloud sync will retry';
+      });
+    } catch {
+      errorMessage = 'Your saved library is temporarily unavailable. Please try again.';
+      loaded = true;
+    }
   }
   onMount(() => { void loadList(); });
 </script>
