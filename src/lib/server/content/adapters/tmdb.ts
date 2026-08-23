@@ -156,6 +156,8 @@ async function tmdbRequest<T>(path: string, params: Record<string, string | numb
 
 const listPolicy = { ttlMs: 1000 * 60 * 4, staleWhileRevalidateMs: 1000 * 60 * 10 };
 const detailPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 4 };
+const ottProviderPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 2 };
+const OTT_LOOKUP_CONCURRENCY = 4;
 
 export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
   const key = `tmdb:discover:${type}:${page}`;
@@ -204,14 +206,33 @@ export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page =
 async function matchesOtt(type: Exclude<ContentType, 'anime'>, id: number, ottKey: string) {
   const provider = tmdbOttProviders.find((candidate) => candidate.key === ottKey);
   if (!provider) return true;
-  try {
-    const result = await tmdbRequest<TmdbWatchProviders>(`/${type === 'movie' ? 'movie' : 'tv'}/${id}/watch/providers`);
-    const region = result.results?.IN ?? result.results?.US;
-    const providers = [...(region?.flatrate ?? []), ...(region?.buy ?? []), ...(region?.rent ?? [])];
-    return providers.some((candidate) => candidate.provider_id === provider.providerId);
-  } catch {
-    return false;
-  }
+  const key = `tmdb:watch-providers:${type}:${id}`;
+  const { value } = await getOrSet(key, ottProviderPolicy, async () => {
+    try {
+      const result = await tmdbRequest<TmdbWatchProviders>(`/${type === 'movie' ? 'movie' : 'tv'}/${id}/watch/providers`);
+      const region = result.results?.IN ?? result.results?.US;
+      const providers = [...(region?.flatrate ?? []), ...(region?.buy ?? []), ...(region?.rent ?? [])];
+      return providers.map((candidate) => candidate.provider_id).filter((providerId): providerId is number => typeof providerId === 'number');
+    } catch {
+      return null;
+    }
+  });
+  // A transient provider lookup failure should not silently erase a valid search result.
+  return value === null || value.includes(provider.providerId);
+}
+
+async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise<R>, concurrency: number): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      const item = items[index];
+      if (item !== undefined) results[index] = await worker(item);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function releaseDate(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
@@ -227,7 +248,7 @@ export async function searchTmdb(query: string, type: Exclude<ContentType, 'anim
     let rawItems = (result.results ?? []).filter((item) => item.poster_path);
     if (filters.genre) rawItems = rawItems.filter((item) => item.genre_ids?.includes(Number(filters.genre)));
     if (filters.ott) {
-      const matches = await Promise.all(rawItems.map((item) => matchesOtt(type, item.id, filters.ott as string)));
+      const matches = await mapWithConcurrency(rawItems, (item) => matchesOtt(type, item.id, filters.ott as string), OTT_LOOKUP_CONCURRENCY);
       rawItems = rawItems.filter((_, index) => matches[index]);
     }
     if (filters.sort) rawItems.sort((left, right) => releaseDate(left, type).localeCompare(releaseDate(right, type)) * (filters.sort === 'release-desc' ? -1 : 1));

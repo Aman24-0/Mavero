@@ -1,5 +1,5 @@
 import type { Json, Tables, TablesInsert } from './database.types';
-import { favoriteKey, normalizeWatchlistStatus, progressKey, type ContentSnapshot, type FavoriteDeletionRecord, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/client/progress/types';
+import { favoriteKey, isContentSnapshot, normalizeWatchlistStatus, progressKey, type ContentSnapshot, type FavoriteDeletionRecord, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/client/progress/types';
 
 export type CloudHistoryEvent = {
   eventKey: string;
@@ -15,6 +15,39 @@ export type CloudHistoryEvent = {
   snapshot: ContentSnapshot;
   occurredAt: number;
 };
+
+const MAX_HISTORY_EVENT_KEY_LENGTH = 240;
+const MAX_HISTORY_CONTENT_ID_LENGTH = 120;
+const MAX_HISTORY_EPISODE_TITLE_LENGTH = 240;
+
+export function isCloudHistoryEvent(value: unknown): value is CloudHistoryEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Partial<CloudHistoryEvent>;
+  const validType = event.contentType === 'movie' || event.contentType === 'series' || event.contentType === 'anime';
+  const season = event.season;
+  const episode = event.episode;
+  const validEpisodeContext = typeof season === 'number' && typeof episode === 'number' && Number.isSafeInteger(season) && Number.isSafeInteger(episode) && season > 0 && episode > 0;
+  const validContext = event.contentType === 'movie'
+    ? season === undefined && episode === undefined
+    : (season === undefined && episode === undefined) || validEpisodeContext;
+  const validEventType = event.eventType === 'started' || event.eventType === 'progressed' || event.eventType === 'completed';
+  const validCompletion = event.completionState === 'in_progress' || event.completionState === 'completed';
+  const currentTime = event.currentTime;
+  const duration = event.duration;
+  const validNumber = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  return typeof event.eventKey === 'string' && event.eventKey.trim().length > 0 && event.eventKey.length <= MAX_HISTORY_EVENT_KEY_LENGTH
+    && validEventType
+    && validType
+    && typeof event.contentId === 'string' && event.contentId.trim().length > 0 && event.contentId.length <= MAX_HISTORY_CONTENT_ID_LENGTH
+    && validContext
+    && (event.episodeTitle === undefined || (typeof event.episodeTitle === 'string' && event.episodeTitle.length <= MAX_HISTORY_EPISODE_TITLE_LENGTH))
+    && validNumber(currentTime)
+    && validNumber(duration)
+    && (duration === 0 || (typeof currentTime === 'number' && typeof duration === 'number' && currentTime <= duration))
+    && validCompletion
+    && isContentSnapshot(event.snapshot)
+    && typeof event.occurredAt === 'number' && Number.isFinite(event.occurredAt) && event.occurredAt > 0;
+}
 
 function snapshotFromJson(value: Json): ContentSnapshot {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { title: 'Untitled', poster: '' };
@@ -113,6 +146,23 @@ export function favoriteDeletionToRow(userId: string, record: FavoriteDeletionRe
     content_type: record.contentType,
     content_id: record.contentId,
     deleted_at: new Date(record.deletedAt).toISOString(),
+  };
+}
+
+export function historyFromRow(row: Tables<'watch_history'>): CloudHistoryEvent {
+  return {
+    eventKey: row.event_key,
+    eventType: row.event_type as CloudHistoryEvent['eventType'],
+    contentType: contentType(row.content_type),
+    contentId: row.content_id,
+    season: row.season ?? undefined,
+    episode: row.episode ?? undefined,
+    episodeTitle: row.episode_title ?? undefined,
+    currentTime: row.position_seconds,
+    duration: row.duration,
+    completionState: row.completion_state as CloudHistoryEvent['completionState'],
+    snapshot: snapshotFromJson(row.snapshot),
+    occurredAt: Date.parse(row.occurred_at),
   };
 }
 

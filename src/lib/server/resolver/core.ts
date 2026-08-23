@@ -80,7 +80,7 @@ export async function resolveSourceFromConfig(request: ResolverRequest, config: 
     return resultFromAdapter(adapterResult, context);
   } catch (error) {
     const resolverError = asResolverError(error);
-    if (resolverError.code === 'INTERNAL_RESOLUTION_ERROR') console.error('[Resolver] adapter failure', resolverError.cause);
+    if (resolverError.code === 'INTERNAL_RESOLUTION_ERROR') console.error('[Resolver] adapter failure', { code: resolverError.code, providerId: config.provider.id, sourceId: config.source.id });
     throw resolverError;
   }
 }

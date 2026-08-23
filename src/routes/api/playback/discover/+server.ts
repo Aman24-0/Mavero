@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { readJsonBody } from '$lib/server/http/body';
 import { asDiscoveryError } from '$lib/server/discovery/errors';
 import { discoverPublicPage } from '$lib/server/discovery/service';
 import { toPlayerSources } from '$lib/server/discovery/player-source';
@@ -15,12 +16,9 @@ function statusForDiscoveryError(code: ReturnType<typeof asDiscoveryError>['code
 }
 
 export const POST: RequestHandler = async ({ request }) => {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'The discovery request is invalid.' } }, { status: 400 });
-  }
+  const parsed = await readJsonBody<unknown>(request);
+  if (!parsed.ok) return json({ ok: false, error: { code: parsed.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_REQUEST', message: parsed.status === 413 ? parsed.message : 'The discovery request is invalid.' } }, { status: parsed.status });
+  const body = parsed.value;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'A public page URL is required.' } }, { status: 400 });
   }
@@ -35,7 +33,7 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ ok: true, streams: result.streams, playerSources: toPlayerSources(result.streams, mediaType), diagnostics: result.diagnostics }, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     const discoveryError = asDiscoveryError(error);
-    console.error('[Universal Discovery]', discoveryError.code, discoveryError.cause);
+    console.error('[Universal Discovery]', { code: discoveryError.code });
     return json({ ok: false, error: { code: discoveryError.code, message: discoveryError.message } }, { status: statusForDiscoveryError(discoveryError.code), headers: { 'cache-control': 'no-store' } });
   }
 };

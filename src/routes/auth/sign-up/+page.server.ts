@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { friendlyAuthMessage, safeRedirectPath } from '$lib/server/supabase/server';
+import { isValidEmail, MIN_PASSWORD_LENGTH } from '$lib/shared/auth';
 import { env as publicEnv } from '$env/dynamic/public';
 import type { Actions } from './$types';
 
@@ -20,8 +21,8 @@ export const actions: Actions = {
     const password = String(formData.get('password') ?? '');
     const next = safeRedirectPath(String(formData.get('next') ?? url.searchParams.get('next') ?? '/profile'));
 
-    if (!displayName || !email || password.length < 6) {
-      return fail(400, { message: 'Enter your name, a valid email, and a password with at least six characters.', displayName, email });
+    if (!displayName || !isValidEmail(email) || password.length < MIN_PASSWORD_LENGTH) {
+      return fail(400, { message: `Enter your name, a valid email, and a password with at least ${MIN_PASSWORD_LENGTH} characters.`, displayName, email });
     }
 
     const { data, error } = await locals.supabase.auth.signUp({
