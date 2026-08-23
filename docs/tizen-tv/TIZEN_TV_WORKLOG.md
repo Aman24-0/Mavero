@@ -2,18 +2,19 @@
 
 ## Project Status
 
-Samsung Tizen TV development has **not started**. This entry records the documentation/project setup requested before any feasibility audit or Tizen implementation.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE** as a documentation-only phase. No Tizen implementation has started.
 
 | Field | Status |
 |---|---|
 | Current phase | Phase 0 — Feasibility + Architecture Audit |
-| Phase 0 status | NOT STARTED |
-| Tizen implementation | NOT STARTED |
-| Web/PWA implementation | Existing and maintained; no application code changed by this setup |
-| Samsung TV hardware QA | NOT RUN — hardware unavailable for this documentation-only setup |
-| Branch | `main` |
-| Commit SHA | See the documentation setup commit that introduced this file |
-| Merge/deployment status | Documentation commit intended for `origin/main`; no application deployment required |
+| Phase 0 status | **COMPLETE** |
+| Tizen implementation | **NOT STARTED** |
+| Phase 1 | **NOT STARTED** |
+| Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
+| Samsung TV hardware QA | **NOT RUN** — no Samsung TV test was performed during this audit |
+| Branch | `feature/tizen-tv` |
+| Commit | Single Phase 0 documentation commit; exact final SHA is recorded in the final handoff after commit creation |
+| Merge/deployment status | Pushed to `origin/feature/tizen-tv`; not merged to `main`; no production deployment or Netlify mutation |
 
 ## Worklog Rules
 
@@ -38,8 +39,8 @@ The worklog must never be left behind the implementation. Every Tizen implementa
 
 ## Documentation Setup Entry
 
-**Date:** 23 August 2026  
-**Phase:** Pre-Phase-0 documentation and project setup  
+**Date:** 23 August 2026
+**Phase:** Pre-Phase-0 documentation and project setup
 **Objective:** Establish a truthful root README, preserve the approved Tizen roadmap under `docs/tizen-tv/`, and initialize this worklog without starting the Phase 0 technical audit.
 
 **Files changed:**
@@ -52,45 +53,21 @@ The worklog must never be left behind the implementation. Every Tizen implementa
 
 **Implementation completed:** Documentation only. The README records current Web/PWA capabilities, actual setup and validation commands, environment-variable boundaries, deployment architecture, existing documentation, and the planned Tizen track. The roadmap is explicitly marked as planned, not supported.
 
-**Tests:** Lightweight documentation validation is pending before the setup commit. No application test, build, player test, or Phase 0 technical audit is part of this setup task.
+**Tests:** Lightweight documentation validation was pending before the setup commit. No application test, build, player test, or Phase 0 technical audit was part of this setup task.
 
-**Browser QA:** Not run. This task does not change application runtime behavior.
+**Browser QA:** Not run. This task did not change application runtime behavior.
 
-**Samsung TV QA:** NOT RUN — hardware unavailable and Tizen implementation has not started.
+**Samsung TV QA:** NOT RUN — hardware unavailable and Tizen implementation had not started.
 
-**Known limitations:** Phase 0 feasibility, Samsung/Tizen compatibility, TizenBrew packaging, TV remote behavior, TV player behavior, and real-device performance remain unevaluated by design. The README does not claim those capabilities.
+**Known limitations:** Phase 0 feasibility, Samsung/Tizen compatibility, TizenBrew packaging, TV remote behavior, TV player behavior, and real-device performance were intentionally deferred to the separate Phase 0 audit.
 
-**Unresolved issues:** None introduced by this documentation-only setup. The next technical questions are intentionally deferred to Phase 0.
+**Unresolved issues:** None introduced by this documentation-only setup.
 
 **Next step:** Start a separate Phase 0 feasibility and architecture audit after reviewing this plan and worklog. Do not begin Phase 1 or add Tizen code until Phase 0 documents the constraints and exact implementation scope.
 
-**Branch:** `main`  
-**Commit SHA:** To be recorded in the final setup report after commit/push.  
-**Merge/deployment status:** Pending documentation-only commit and push.
-
-## Phase 0
-
-**Status:** NOT STARTED
-
-**Objective:** Perform a feasibility and architecture audit before implementing Tizen. The audit must cover the existing SvelteKit architecture, navigation, Discover/Search/detail/My List/player/auth flows, Supabase/browser dependencies, PWA behavior, Tizen browser compatibility, media/image compatibility, performance risks, test strategy, TizenBrew module requirements, permissions, and deployment strategy.
-
-**No implementation has been started yet.**
-
-## Current State
-
-```text
-Web/PWA       READY / actively maintained
-Android PWA   READY
-Desktop       READY
-Player        EXISTING + tested architecture
-Backend       EXISTING
-Auth          EXISTING
-Admin         EXISTING
-Tizen         NOT STARTED
-Phase 0       NEXT
-```
-
-**Immediate next task:** Phase 0 — Tizen/TizenBrew feasibility and architecture audit.
+**Branch:** `main`
+**Commit SHA:** Recorded in the setup task’s final handoff.
+**Merge/deployment status:** Documentation-only setup commit pushed to `origin/main`.
 
 ## Documentation Archive Cleanup Entry
 
@@ -104,14 +81,56 @@ Phase 0       NEXT
 
 **Browser QA:** Not run; documentation-only change.
 
-**Samsung TV QA:** NOT RUN — hardware unavailable and Tizen implementation has not started.
+**Samsung TV QA:** NOT RUN — hardware unavailable and Tizen implementation had not started.
 
-**Known limitations:** Historical Markdown hard-break formatting may retain intentional trailing spaces. Phase 0 feasibility and architecture questions remain unevaluated.
+**Known limitations:** Historical Markdown hard-break formatting may retain intentional trailing spaces. Phase 0 feasibility and architecture questions remained unevaluated at the time of this cleanup.
 
 **Unresolved issues:** None introduced by this cleanup.
 
-**Next step:** Start a separate Phase 0 feasibility and architecture audit. Phase 0 remains **NOT STARTED**.
+**Next step:** Start a separate Phase 0 feasibility and architecture audit. Phase 0 remained **NOT STARTED** at the time of this entry.
 
 **Branch:** `main`
-**Commit SHA:** See the single documentation cleanup commit recorded in the final handoff.
+**Commit SHA:** Recorded in the documentation cleanup task’s final handoff.
 **Merge/deployment status:** Documentation-only cleanup pushed to `origin/main`; no runtime deployment required.
+
+## Phase 0 — Feasibility + Architecture Audit Entry
+
+**Date:** 23 August 2026
+**Phase:** Phase 0 — Feasibility + Architecture Audit
+**Status:** **COMPLETE**
+**Objective:** Audit the current Mavero Web/PWA architecture, Samsung Tizen runtime/model dependence, TizenBrew application-module packaging, TizenTube reference patterns, player/remote/focus/UI/search/hero/auth/PWA/deployment/security/performance constraints, no-desktop workflow, three-level test strategy, risks, open questions, and a gated Phase 1 proposal before implementation.
+
+**Audit document:** `docs/tizen-tv/PHASE_0_AUDIT.md`
+
+**Repository audit completed:** Confirmed the Svelte 5.38.7/SvelteKit 2.37.0/Vite 7.1.4/Tailwind/TypeScript/Netlify stack; SvelteKit route and AppShell boundaries; browser-only APIs; Discover, Search, Detail, My List, watch, resolver, player, content-service, Supabase session, progress-sync, PWA/service-worker, and deployment behavior. Shared server/business contracts are suitable candidates for reuse; TV presentation, focus, remote, IME, and lifecycle behavior require isolation.
+
+**Samsung/Tizen research completed:** Reviewed current official Samsung Web Engine, media, Quick-start, remote/TVInputDevice, keyboard/IME, API-reference, and memory guidance. The runtime is model-year dependent; exact TV model/year/Tizen/firmware is a required hardware input. Tizen 6.0+/2021+ is a candidate target only, not a support promise.
+
+**TizenBrew research completed:** Application modules use `packageType: "app"`, `appName`, `appPath`, `keys`, and optional `serviceFile`; `mods` metadata is not the correct Mavero category. TizenBrew’s documented installation workflow creates a phone-only provisioning risk that remains open.
+
+**TizenTube research completed:** TizenTube was inspected as a reference. Its `mods` package, userscript injection, local service/DIAL behavior, standalone wrapper, broad media keys, and broad privileges are specific to its YouTube use case and must not be copied blindly. Only metadata discipline, optional service boundaries, and explicit key declarations are relevant patterns.
+
+**Player findings:** Preserve the current resolver/progress/state contracts. Native HTML5 direct playback is the first later compatibility path; iframe providers are high risk because of Samsung iframe/sandbox limits and cross-origin controls. Fullscreen, orientation, PiP, codecs/containers, subtitles, source switching, and long-session behavior require real-TV validation. AVPlay is deferred unless measured HTML5 gaps justify a separate design.
+
+**Architecture recommendation:** One repository with shared server/business contracts, a dedicated `/tv` presentation/input layer, native DOM focus plus centralized TV focus coordination/roving rails, and a minimal TizenBrew application module. No separate permanent repository or speculative service process is recommended.
+
+**Testing strategy:** Level A browser simulation for route/data/focus logic; Level B Tizen/TizenBrew environment for module loading, Tizen APIs, remote registration, and lifecycle; Level C exact Samsung TV for remote, IME, player/codecs, memory, performance, long sessions, network recovery, and real TizenBrew behavior. No Level B or Level C test was performed in Phase 0.
+
+**Open risks:** Unknown TV model/version; unknown TizenBrew installation path without desktop; uncertain branch-preview isolation until verified; model-dependent API/media/service-worker support; provider codec and iframe behavior; TV cookies/redirects/IndexedDB; cache staleness; memory/GPU limits; and remote/IME Back behavior.
+
+**Recommended Phase 1:** Build only a minimal `/tv` shell/focus/remote compatibility spike and verify the TizenBrew application-module loader. Do not modify the existing player, Discover, Search, auth, PWA, providers, production Netlify config, or Web/PWA shell until the spike and target-device gates pass.
+
+**Exact proposed Phase 1 paths:** `src/routes/tv/+page.svelte`; `src/lib/tv/platform.ts`; `remote.ts`; `focus.ts`; `navigation.ts`; `index.ts`; `src/lib/components/tv/TvShell.svelte`; `TvFocusRing.svelte`; `TvRailProbe.svelte`; `TvDialogProbe.svelte`; and, only after loader verification, `tizenbrew/package.json` and `tizenbrew/README.md`. The audit lists the complete proposed change set and intentional non-goals.
+
+**Validation scope:** Documentation-only validation is required after drafting: Markdown/link checks where practical, `git diff --check`, `pnpm check`, `pnpm build`, changed-path inspection, and secret scan. No Tizen module build is required or performed.
+
+**Browser QA:** Not run against a new TV implementation because no TV implementation was created. Existing Web/PWA behavior was not intentionally changed.
+
+**Samsung TV QA:** **NOT RUN**. No claim of TV compatibility or player support is made.
+
+**Tizen implementation:** **NOT STARTED**.
+**Phase 1:** **NOT STARTED**.
+
+**Branch:** `feature/tizen-tv`
+**Commit SHA:** Initial documentation commit object before final self-reference amend: `0467e8181366adbcb3520c7148a58238fdce15d0`; the final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Merge/deployment status:** Must be pushed to `origin/feature/tizen-tv` and must not be merged into `main` or deployed to production by this phase.
