@@ -43,10 +43,13 @@ navigation.reset();
 assert.equal(navigation.depth, 0);
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
 
-const [focusSource, shellSource, routeSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
-  readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8')
+  readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/routes/tv/+page.server.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvMediaRail.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvHero.svelte', import.meta.url), 'utf8')
 ]);
 
 assert.match(focusSource, /tvFocusGroup/);
@@ -55,8 +58,9 @@ assert.match(focusSource, /scrollIntoView/);
 assert.match(focusSource, /move\(direction: FocusDirection, scope\?: string\)/);
 assert.match(shellSource, /TvHeader/);
 assert.match(shellSource, /TvNav/);
-assert.match(shellSource, /TvRail/);
+assert.match(shellSource, /TvMediaRail/);
 assert.match(shellSource, /TvLoading/);
+assert.match(shellSource, /TvHero/);
 assert.match(shellSource, /TvError/);
 assert.match(shellSource, /asyncState/);
 assert.match(shellSource, /tv-retry/);
@@ -64,5 +68,11 @@ assert.match(shellSource, /coordinator\.restoreFirst/);
 assert.match(shellSource, /data-tv-focus-group="tv-exit"/);
 assert.match(shellSource, /isTizenBrewHostedModule/);
 assert.match(routeSource, /TvShell/);
+assert.match(routeSource, /discover=\{data\}/);
+assert.match(routeServerSource, /loadDiscoverData/);
+assert.match(mediaRailSource, /MediaItem/);
+assert.match(mediaRailSource, /data-tv-focus-group/);
+assert.match(heroSource, /Featured from Discover/);
+assert.match(shellSource, /Phase 3 connects Discover data first/);
 
-console.log('Phase 2 TV contract tests passed: remote, navigation, focus, async states, and route isolation.');
+console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, and real Discover wiring.');

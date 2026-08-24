@@ -3,7 +3,7 @@
 **Project:** Mavero (`Aman24-0/Mavero`)
 **Branch:** `feature/tizen-tv`
 **Date:** 24 August 2026
-**Phase status:** **Implementation complete; Samsung Phase 2 hardware QA pending owner execution.**
+**Phase status:** **COMPLETE — implementation and owner-observed Samsung Phase 2 QA passed.**
 
 > Phase 2 builds the reusable isolated presentation and interaction foundation for Mavero on a 10-foot Samsung TV surface. It does not implement TV catalog content, playback, authentication, provider behavior, or Phase 3 product surfaces.
 
@@ -101,23 +101,32 @@ Final automated validation passed before commit preparation: `pnpm check`; the f
 
 ## 8. Samsung hardware status and handoff checklist
 
-**Phase 2 Samsung QA has not been run. No Phase 2 hardware PASS is claimed.** Phase 1 remains complete based on the owner-confirmed results for Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`; that Phase 1 evidence does not substitute for this phase’s new shell/async hardware validation.
+**Phase 2 Samsung QA: COMPLETE — owner-observed PASS.** The owner tested Samsung `UA43AUE60AKLXL`, Tizen `6.0`, and TizenBrew `2.0.5`. This result is recorded exactly as supplied; no additional measurements or logs are inferred.
 
-The owner’s target-TV checklist for this commit is:
+| Owner-observed test | Result |
+|---|---|
+| TizenBrew module installation/launch | PASS |
+| `/tv` shell rendering | PASS |
+| Startup focus and visible focus ring | PASS |
+| Arrow navigation, bounded rail movement, and vertical movement | PASS |
+| Card 2 activation and Back restoration | PASS |
+| Enter/OK activation | PASS |
+| Back behavior and state restoration | PASS |
+| Search/My List/Settings placeholder navigation and history | PASS |
+| Async loading → error → Retry → focus restoration | PASS |
+| Root Back → Exit Mavero dialog | PASS |
+| Cancel → dialog closes and focus restores | PASS |
+| Explicit Exit flow | PASS |
+| Hosted Exit actually closes Mavero | PASS |
+| Reopen Mavero from TizenBrew | PASS |
+| Repeat Exit flow after reopen | PASS |
+| Dedicated remote/navigation behavior | PASS |
+| No observed blocking focus/navigation issue | PASS |
+| No observed blocking runtime/remote issue | PASS |
 
-1. Install the immutable `feature/tizen-tv` TizenBrew module revision recorded in the final worklog entry, not the default-branch alias.
-2. Launch Mavero from TizenBrew and confirm the hosted `/tv?tizenbrew=1` route renders the new reusable shell.
-3. Confirm one obvious focus ring is visible at startup and remains visible after ArrowUp, ArrowDown, ArrowLeft, ArrowRight, and Enter.
-4. Confirm ArrowRight is bounded within the rail and does not jump to unrelated footer or nav controls; confirm vertical movement between primary navigation, rail, and footer sections.
-5. Enter the card-2 controlled state, press Samsung Back/Return, and confirm the originating card is restored.
-6. Enter the card-4 async probe, confirm loading is stable and readable, confirm the error state focuses Retry, and confirm Retry restores card 4.
-7. Enter Search, My List, and Settings placeholders and confirm Back returns in reverse order with focus origins preserved.
-8. At the TV root, press Back and confirm `Exit Mavero?`; confirm Cancel restores the previous focus.
-9. Confirm the dedicated Samsung Exit key is not intercepted by the web route, and confirm the previously proven hosted Exit/reopen behavior remains intact.
-10. Repeat launch, navigation, Back, async, dialog, and exit checks after reopening from TizenBrew.
-11. Observe for console/runtime errors, focus loss, excessive delay, layout clipping, memory growth, or remote-key repeat anomalies during a sustained session.
+For the async test, the owner observed: loading → error → selected Retry → content recovered → focus returned to the originating Retry card. This is recorded as PASS without claiming timings, logs, or other measurements that were not collected.
 
-Record each item as `PASS`, `FAIL`, or `BLOCKED` with exact observed behavior before declaring Phase 2 hardware complete.
+**Phase 2 Samsung hardware QA is COMPLETE.** Phase 1 remains complete based on the earlier owner-confirmed launch, hosted-exit, reopen, and repeat-flow evidence. Phase 3 implementation may now proceed, but Phase 4 must not start until Phase 3’s defined gate is satisfied.
 
 ## 9. Performance and compatibility constraints
 

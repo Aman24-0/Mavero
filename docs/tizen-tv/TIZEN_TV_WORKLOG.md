@@ -2,18 +2,18 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 is now authorized. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation is now authorized. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
 
 | Field | Status |
 |---|---|
-| Current phase | Phase 2 — TV Shell + Remote Navigation |
+| Current phase | Phase 3 — Discover TV Experience |
 | Phase 0 status | **COMPLETE** |
-| Tizen implementation | **Phase 2 implementation complete; Samsung Phase 2 QA pending** |
+| Tizen implementation | **Phase 2 complete; Phase 3 Discover slice in progress** |
 | Phase 1 | **COMPLETE — owner-confirmed real-TV validation passed** |
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
-| Samsung TV hardware QA | **Phase 1 PASS reported by owner; Phase 2 QA pending; centered content intentional** |
+| Samsung TV hardware QA | **Phase 1 and Phase 2 PASS reported by owner; Phase 3 QA pending** |
 | Branch | `feature/tizen-tv` |
-| Commit | Phase 2 implementation commit pending; prior pushed baseline is `4658ea1fed985ff18ce89808fc2905324c24f324` |
+| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 commit pending |
 | Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; Phase 2 work stays on this branch; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
@@ -340,3 +340,50 @@ The production site remains separate at `https://mavero1.netlify.app/`. The depl
 **Commit:** Pending final Phase 2 commit/push.
 **Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
 **Merge status:** Not merged to `main`; production remains unchanged; Phase 3 not started.
+
+## Phase 2 — Owner-Observed Samsung Hardware Completion
+
+**Date:** 24 August 2026
+**Phase:** Phase 2 — TV Shell + Remote Navigation
+**Status:** **COMPLETE — owner-observed Samsung hardware validation passed.**
+
+**Hardware:** Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
+
+The owner reported PASS for TizenBrew module installation/launch; `/tv` shell rendering; startup focus and visible focus ring; Arrow navigation, bounded rail movement, and vertical movement; card 2 activation and Back restoration; Enter/OK activation; Back behavior and state restoration; Search/My List/Settings placeholder navigation and history; async loading → error → selected Retry → content recovered → focus returned to the originating Retry card; root Back → Exit Mavero dialog; Cancel restoration; explicit Exit; hosted exit closing Mavero; reopen from TizenBrew; repeat exit after reopen; dedicated remote/navigation behavior; no blocking focus/navigation issue; and no blocking runtime/remote issue.
+
+This entry records the owner’s observations only. No timing, memory, console, or other measurements are invented. Phase 2 hardware QA is complete and Phase 3 is authorized. Phase 4 must not begin until Phase 3’s defined gate passes.
+
+**Branch:** `feature/tizen-tv`
+**Commit:** Phase 2 implementation `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`
+**Merge/deployment status:** Phase 2 is pushed to `origin/feature/tizen-tv`; not merged to `main`; production remains unchanged.
+
+## Phase 3 — Discover TV Experience
+
+**Date:** 24 August 2026
+**Phase:** Phase 3 — Discover TV Experience
+**Status:** **IN PROGRESS — first real-data Discover slice.**
+
+**Gate opened:** Phase 2 implementation and owner-observed hardware QA are complete. Phase 3 follows the roadmap’s Discover-first scope and will connect the isolated TV shell to the existing server-fed Discover contract without rewriting the Web/PWA Discover page.
+
+**Initial vertical slice:** Real Home/Discover hero data plus three real content rails (Movies, Series, Anime) using the existing `loadDiscoverData()` server loader and `toMediaItem()` presentation mapper. No Search, Details, My List content, player, auth, providers/resolver, PWA, production Netlify, or `main` work is included.
+
+**Files changed:** `src/routes/tv/+page.server.ts`, `src/routes/tv/+page.svelte`, `src/lib/components/tv/TvShell.svelte`, `src/lib/components/tv/TvHero.svelte`, `src/lib/components/tv/TvMediaRail.svelte`, `scripts/tv_phase2_contract_test.ts`, `docs/tizen-tv/PHASE_2_REPORT.md`, `docs/tizen-tv/PHASE_3_REPORT.md`, and this worklog.
+
+**Implementation:** Added the first real-data Discover slice to the isolated TV route. The route reuses `loadDiscoverData()` and `toMediaItem()`; the TV shell renders a real featured hero and Movies/Series/Anime rails through TV-only components. Search, Details, My List content, player, auth, providers/resolver, PWA, production Netlify, normal Web/PWA routes, and `main` remain outside scope.
+
+**Architecture decisions:** Preserve the Phase 2 native DOM focus coordinator, stable focus IDs/groups, bounded rail navigation, logical Back stack, root exit confirmation, and hosted-exit adapter. Do not create a TV copy of TMDB/AniList logic or modify the normal Web/PWA Discover implementation. Keep provider-unavailable states truthful instead of presenting fixture content as live data.
+
+**Validation:** `pnpm check` passed with zero errors/warnings; the focused TV contract test passed with real Discover route wiring; full `pnpm test` passed; memory-safe `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` passed; and browser-safe scope/secret checks were clean.
+
+**Browser QA:** Local production preview `/tv` rendered HTTP 200 with a real Anime featured title and populated Anime poster rail. Movie/Series unavailable states rendered truthfully under placeholder local public configuration. Remote focus, hero Enter, top-nav movement, Search/My List/Settings placeholders, reverse Back history, root Exit dialog, and Cancel focus restoration passed without observed application runtime exceptions.
+
+**Samsung TV QA:** Phase 2 hardware QA is COMPLETE by owner report for Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. **Phase 3 Samsung QA: NOT RUN — owner test pending.** No Phase 3 device compatibility or performance claim is made.
+
+**Known limitations:** This is only the first Discover slice. Detail actions, Search, My List data, auth/account state, player/media controls, provider selection, resolver integration, IME, long-session memory, real network recovery, and broader Samsung-model validation remain deferred. The browser’s global PWA install prompt remains unchanged and is not evidence of TV behavior.
+
+**Next step:** Hand the exact immutable module identifier and Samsung test checklist to the owner. Do not begin Phase 4 before the Phase 3 hardware gate is passed.
+
+**Branch:** `feature/tizen-tv`
+**Commit:** `a56112d21683a38982dd6941181a51c662f0c0a2` before final worklog self-reference amendment; final amended SHA is recorded in the handoff.
+**Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
+**Merge status:** Not merged to `main`; production remains unchanged; Phase 4 not started.
