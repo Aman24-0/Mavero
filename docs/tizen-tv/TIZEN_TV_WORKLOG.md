@@ -267,12 +267,12 @@ The production site remains separate at `https://mavero1.netlify.app/`. The depl
 
 **Validation performed:** `pnpm check`, `pnpm test`, `pnpm build`, `git diff --check`, normal Web/PWA changed-path inspection, `/tv` browser loading, TV metadata validation, and browser-safe no-Tizen execution all passed. Local hosted-mode browser testing rendered `TizenBrew host-return mode`, opened the exit dialog, and returned to the healthy prior route without a runtime exception. No Phase 1 completion claim is made.
 
-**Test module identifier:** `Aman24-0/Mavero@aa649f8243f9ae6e98d92aa6e61f0119990cd3f4`
+**Test module identifier:** `Aman24-0/Mavero@ad58f8e8bc152eb6fe593d81f67df8c6e6940bc4`
 
 **Next action:** Test the updated hosted-module exit flow on the target Samsung TV. Confirm that root Back opens the dialog, Cancel restores Mavero, and Exit returns through TizenBrew’s host history path and terminates/leaves the host correctly. Record the result as `PASS`, `FAIL`, or `BLOCKED`. Phase 2 must not start until the explicit Exit behavior is verified.
 
 **Branch:** `feature/tizen-tv`
 **Deployment URL:** `https://feature-tizen-tv--mavero1.netlify.app/`
 **Effective TV URL:** `https://feature-tizen-tv--mavero1.netlify.app/tv?tizenbrew=1`
-**Commit:** Host-aware exit-fix final commit `aa649f8243f9ae6e98d92aa6e61f0119990cd3f4`; this retest-identifier update began as `9bc7e38dfe957d9b13d4598a9e56e44861abb9dd` and is amended once for the final self-reference.
+**Commit:** Host-aware exit-fix final commit `aa649f8243f9ae6e98d92aa6e61f0119990cd3f4`; this retest-identifier update began as `b0e40eb898d89d4aa4b0bf03027299fe0cd5cbc5` and is amended once for the final self-reference.
 **Merge/deployment status:** Push only to `origin/feature/tizen-tv`; do not merge to `main`; no production Netlify change.
