@@ -3,9 +3,9 @@
 **Project:** Mavero (`Aman24-0/Mavero`)
 **Branch:** `feature/tizen-tv`
 **Date:** 24 August 2026
-**Phase status:** **Implementation complete; Samsung Phase 5 QA pending owner execution.**
+**Phase status:** **COMPLETE — owner Samsung QA received. Typography/clarity carryover is explicitly assigned to Phase 6.**
 
-> Phase 4 Samsung hardware QA is recorded as owner-confirmed PASS on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. Phase 5 preserves that baseline and does not begin Phase 6.
+> Phase 4 Samsung hardware QA is recorded as owner-confirmed PASS on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. Phase 5 Samsung QA is now complete. The native IME failed inside the TizenBrew-hosted module; the custom TV keyboard remains the final default. The remaining typography/clarity improvement is carried into the started Phase 6 scope.
 
 ## 1. Scope
 
@@ -73,25 +73,33 @@ Browser QA ran against a fresh production preview built from the Phase 5 tree at
 | Search entry and fallback keyboard | PASS; Search opened with large focusable keyboard controls |
 | Fallback query and category | PASS; `ONE` plus Anime produced 18 real AniList-backed results |
 | Vertical focus | PASS; Exit row ArrowUp landed on a Search result and ArrowDown returned to `tv-quit` |
-| Typography/layout | PASS; enlarged category/keyboard controls were visible; measured document horizontal overflow was false |
-| Native input | PASS in browser only; focused text input accepted `ONE`, synchronized query/status, and submitted through the existing Search request |
-| Native Back handling | PASS in browser only; query remained `ONE`, screen remained Search, and `tv-search-native-ime-input` was restored |
+| Typography/layout | Browser PASS with no measured document overflow; **Samsung result: NEEDS FIX** because current white text is not sufficiently clear from a 10-foot distance |
+| Native input | Browser wiring PASS; **Samsung result: FAIL** because the TV’s native inbuilt keyboard did not open inside the TizenBrew-hosted module |
+| Native Back handling | Browser PASS for the probe; Samsung native-IME open/close behavior is not applicable after the IME-open failure |
 | Error/Retry | PASS for the existing controlled Search error path; provider configuration can produce the truthful unavailable state in local preview |
 | Runtime console | No application runtime exception observed during the recorded checks |
 
-Browser QA is not Samsung hardware compatibility proof. The native IME remains specifically pending a real Samsung/TizenBrew test.
+Browser QA is not Samsung hardware compatibility proof. The owner’s real-TV result is recorded below.
 
-## 8. Samsung Phase 5 QA — pending
+## 8. Samsung Phase 5 QA — complete
 
 **Target:** Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
 
-The owner must test the final immutable Phase 5 commit and record PASS, FAIL, or BLOCKED for the following: launch and `/tv?tizenbrew=1`; Search entry; fallback keyboard; native probe input focus; Enter/OK behavior and whether Samsung IME opens; remote typing; input/change synchronization; SmartThings keyboard if available; Back closing the IME; focus restoration; All / Search, Movies, Shows, Anime; loading/results/empty/error/Retry; result Arrow navigation; Exit-row ArrowUp and result-row ArrowDown; typography/readability; no clipping or overflow; Search Back hierarchy; root exit confirmation; hosted exit; and reopen behavior.
+| Area | Owner result |
+|---|---|
+| Native IME investigation | **FAIL.** The TV’s native inbuilt keyboard did not open inside the TizenBrew-hosted module. No undocumented API, privilege, host modification, or native bridge was added. |
+| Custom keyboard | **PASS / final default.** The existing custom UI keyboard remains the Search input method. |
+| Vertical focus fix | **PASS.** Cross-section movement is deterministic. |
+| Typography and clarity | **NEEDS FIX.** Current white text is not clear enough from a normal 10-foot viewing distance. Phase 6 must make TV-only text larger, bolder, and higher-contrast. |
+| General Search flow/navigation | **PASS.** |
 
-Until that owner test is completed, **Samsung Phase 5 QA is PENDING**. Phase 5 is not marked hardware-complete, and Phase 6 must not begin.
+This completes the Phase 5 Samsung QA gate. The typography/clarity issue is an explicitly tracked Phase 6 carryover, not an unreported Phase 5 failure. Phase 6 is now started for Detail + My List and includes the clarity fix.
 
 ## 9. Known limitations
 
-The browser probe cannot access or verify Samsung’s system IME. A real TV may open, reject, or behave differently with the native input inside the TizenBrew-hosted module. The custom keyboard is therefore retained as the default fallback. SmartThings typing was not available in the browser environment and was not claimed.
+The Samsung native IME is incompatible with the tested TizenBrew-hosted module path. The custom UI keyboard is therefore the final default for Mavero TV Search. The implementation does not hack TizenBrew, add undocumented Samsung APIs, add speculative privileges, or modify the TizenBrew host.
+
+TV Search typography still needs a hardware-oriented clarity pass: larger type, heavier weight, stronger contrast, and verification at normal viewing distance. This work is moved into Phase 6 and applies only to the TV shell/detail presentation.
 
 The focus improvement is geometry-based and deliberately small; it does not introduce a new navigation framework. Broader Samsung models, long-session memory, performance, codecs, playback, provider behavior, and production deployment remain outside this phase.
 
@@ -107,4 +115,4 @@ The focus improvement is geometry-based and deliberately small; it does not intr
 | `docs/tizen-tv/PHASE_5_REPORT.md` | This implementation and QA report |
 | `docs/tizen-tv/TIZEN_TV_WORKLOG.md` | Phase 4 gate, Phase 5 implementation, QA, limitations, and handoff status |
 
-**Next permitted step:** Owner Samsung Phase 5 QA only. Do not start Phase 6 until the owner reports the Phase 5 hardware result and explicitly passes the Phase 5 gate.
+**Next permitted step:** Phase 6 — TV Detail + My List is started. Its scope includes movie/series/anime detail, recommendations, My List add/remove, series seasons/episodes navigation, and the TV-only typography/clarity fix. Player/AVPlay and the other explicit boundaries remain excluded.

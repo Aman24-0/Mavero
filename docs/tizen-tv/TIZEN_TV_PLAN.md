@@ -251,7 +251,7 @@ Build:
 
 Avoid making users operate a desktop text field through a TV remote.
 
-### Phase 5 — TV Search Polish + Native IME Investigation
+### Phase 5 — TV Search Polish + Native IME Investigation — COMPLETE
 
 Preserve all Phase 1–4 behavior while improving the isolated `/tv` Search experience:
 
@@ -263,9 +263,9 @@ Preserve all Phase 1–4 behavior while improving the isolated `/tv` Search expe
 - retain the custom TV keyboard as the default fallback unless native IME is verified on the target hardware
 - record native IME compatibility or limitation truthfully; do not add undocumented APIs, privileges, bridges, or host changes
 
-Phase 5 must not start Detail, My List data, Watch Now, player/AVPlay, media controls, provider/source selection, resolver changes, authentication, Supabase, PWA/service-worker changes, or performance work.
+**Final Samsung QA:** Native IME **FAIL** inside the TizenBrew-hosted module; no undocumented workaround was added. The custom UI keyboard is the final default. Vertical focus **PASS**. General Search flow/navigation **PASS**. Typography/clarity **NEEDS FIX** because the current white text is not sufficiently clear from a normal 10-foot viewing distance.
 
-### Phase 6 — Detail + My List
+### Phase 6 — Detail + My List — STARTED
 
 Adapt:
 - movie detail
@@ -276,6 +276,7 @@ Adapt:
 - My List add/remove
 - series seasons/episodes
 - remotely reachable actions
+- **TV-only typography/clarity fix: larger fonts, heavier font weight, stronger contrast, and readable focus treatment for the 10-foot interface**
 
 ### Phase 7 — TV player
 
@@ -520,16 +521,16 @@ Player        EXISTING + tested architecture
 Backend       EXISTING
 Auth          EXISTING
 Admin         EXISTING
-Tizen         Phase 4 complete; Phase 5 implementation complete
+Tizen         Phase 5 complete; Phase 6 started
 Phase 0       COMPLETE
 Phase 1       COMPLETE
 Phase 2       COMPLETE
 Phase 3       COMPLETE
 Phase 4       COMPLETE
-Phase 5       Samsung QA pending owner execution
-Phase 6       NOT STARTED
+Phase 5       COMPLETE — Samsung QA: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS
+Phase 6       STARTED — Detail + My List plus TV typography/clarity fix
 ```
 
-**Immediate next task: Owner Samsung Phase 5 QA on the final immutable `feature/tizen-tv` commit.**
+**Immediate next task: Continue Phase 6 — isolated TV Detail + My List implementation with the typography/clarity fix.**
 
-Do not begin Phase 6 until the owner reports the Phase 5 hardware result and explicitly passes the Phase 5 gate.
+Keep all work under the TV layer and do not modify player/AVPlay, auth/Supabase, PWA, normal Web/PWA routes, providers/resolver, production configuration, or `main`.

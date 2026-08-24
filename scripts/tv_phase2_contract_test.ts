@@ -71,14 +71,17 @@ navigation.reset();
 assert.equal(navigation.depth, 0);
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
 
-const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.server.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvMediaRail.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvHero.svelte', import.meta.url), 'utf8'),
-  readFile(new URL('../src/lib/components/tv/TvSearch.svelte', import.meta.url), 'utf8')
+  readFile(new URL('../src/lib/components/tv/TvSearch.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvDetail.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvMyList.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/tv/navigation.ts', import.meta.url), 'utf8')
 ]);
 
 assert.match(focusSource, /tvFocusGroup/);
@@ -126,5 +129,27 @@ assert.match(searchSource, /nativeImeExperiment/);
 assert.match(searchSource, /tv-search-native-ime-input/);
 assert.match(searchSource, /type="text"/);
 assert.match(searchSource, /onchange=/);
+assert.match(shellSource, /TvDetail/);
+assert.match(shellSource, /TvMyList/);
+assert.match(shellSource, /api\/content\/\$\{item\.type\}/);
+assert.match(shellSource, /api\/content\/series/);
+assert.match(shellSource, /getLocalFavorites/);
+assert.match(shellSource, /setFavoriteStatus/);
+assert.match(shellSource, /removeFavoriteFromMyList/);
+assert.match(shellSource, /syncAuthenticatedState/);
+assert.match(shellSource, /if \(page\.data\.user\)/, 'TV cloud sync must remain authenticated-only');
+assert.match(shellSource, /Array\.from\(item\.genres/ , 'TV favorite snapshots must materialize reactive genre arrays');
+assert.match(shellSource, /if \(screen === 'my-list'\) void loadMyList\(\)/, 'Returning from detail to My List must refresh local items');
+assert.match(shellSource, /details ready/);
+assert.match(shellSource, /Player actions remain outside Phase 6/);
+assert.match(detailSource, /Seasons and episodes/);
+assert.match(detailSource, /tv-detail-my-list/);
+assert.match(detailSource, /tv-detail-recommendations/);
+assert.match(detailSource, /font-weight: 950/);
+assert.match(myListSource, /Local-first/);
+assert.match(myListSource, /tv-my-list/);
+assert.match(navigationSource, /'detail'/);
+assert.doesNotMatch(shellSource, /AVPlay/);
+assert.doesNotMatch(shellSource, /supabase/);
 
-console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, real Discover wiring, and TV Search wiring.');
+console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, real Discover wiring, Search, Detail, My List, and strict player/auth boundaries.');

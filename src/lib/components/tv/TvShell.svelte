@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { page } from '$app/state';
   import {
     TVFocusCoordinator,
     canExitApplication,
@@ -12,16 +13,28 @@
     type TVScreen
   } from '$lib/tv';
   import type { MediaItem } from '$data/content';
+  import type { Episode, NormalizedMediaItem, Season } from '$lib/server/content/types';
+  import type { WatchlistStatus } from '$lib/client/progress/types';
+  import { getFavoriteStatus, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
+  import { listFavoriteDeletions } from '$lib/client/progress/database';
+  import { favoriteToMedia } from '$lib/client/progress/presenter';
+  import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
+  import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
+  import TvDetail from './TvDetail.svelte';
   import TvError from './TvError.svelte';
   import TvHeader from './TvHeader.svelte';
   import TvHero from './TvHero.svelte';
   import TvLoading from './TvLoading.svelte';
   import TvMediaRail from './TvMediaRail.svelte';
+  import TvMyList from './TvMyList.svelte';
   import TvNav from './TvNav.svelte';
   import TvSearch, { type TvSearchCategory } from './TvSearch.svelte';
 
   type ActionTarget = HTMLElement & { dataset: DOMStringMap };
   type AsyncState = 'loading' | 'ready' | 'error';
+  type TvDetailItem = NormalizedMediaItem & { recommendations?: NormalizedMediaItem[] };
+  type DetailPayload = { ok?: boolean; item?: TvDetailItem; error?: { message?: string } };
+  type SeasonPayload = { ok?: boolean; season?: Season; error?: { message?: string } };
   type DiscoverData = {
     featured?: MediaItem;
     movies: MediaItem[];
@@ -68,6 +81,24 @@
   let nativeQuery = $state('');
   let searchController: AbortController | undefined;
   let searchRequestSequence = 0;
+
+  let detailItem = $state<TvDetailItem | null>(null);
+  let detailLoading = $state(false);
+  let detailError = $state('');
+  let detailController: AbortController | undefined;
+  let detailRequestSequence = 0;
+  let detailActiveSeason = $state(1);
+  let detailSeasons = $state<Season[]>([]);
+  let detailEpisodesLoading = $state(false);
+  let detailEpisodesError = $state('');
+  let detailFavoriteStatus = $state<WatchlistStatus | null>(null);
+  let detailFavoriteSaving = $state(false);
+  let detailSaveError = $state('');
+  let myListItems = $state<MediaItem[]>([]);
+  let myListLoading = $state(false);
+  let myListError = $state('');
+  let myListSyncMessage = $state('Local-first library');
+  let myListRequestSequence = 0;
 
   const navItems: Array<{ id: string; label: string; screen: TVScreen }> = [
     { id: 'tv-nav-home', label: 'Home', screen: 'home' },
@@ -127,6 +158,22 @@
   function handleBack() {
     if (exitDialogOpen) {
       cancelExit();
+      return;
+    }
+
+    if (screen === 'detail') {
+      detailRequestSequence += 1;
+      detailController?.abort();
+      detailController = undefined;
+      const previous = navigation.goBack();
+      if (previous) {
+        screen = previous.screen;
+        statusMessage = `Returned to ${screenLabel(screen)}.`;
+        if (screen === 'my-list') void loadMyList();
+        restoreAfterRender([previous.focusId, `tv-nav-${screen}`, 'tv-nav-home']);
+      } else {
+        openExitConfirmation();
+      }
       return;
     }
 
@@ -236,6 +283,7 @@
       if (nextScreen === 'search') {
         searchStatusMessage = searchSubmitted ? 'Search state preserved.' : 'Open Edit query to begin.';
       }
+      if (nextScreen === 'my-list') void loadMyList();
       return;
     }
 
@@ -263,9 +311,8 @@
     if (action === 'confirm-exit') confirmExit();
   }
 
-  function handleMediaSelect(item: MediaItem, _event: MouseEvent, _focusId: string) {
-    selectedTitle = item.title;
-    statusMessage = `Selected ${item.title}. Detail actions are not wired in this Discover slice.`;
+  function handleMediaSelect(item: MediaItem, _event: MouseEvent, focusId: string) {
+    openDetail(item, focusId);
   }
 
   function searchTypeParam(category: TvSearchCategory) {
@@ -397,9 +444,152 @@
   }
 
   function handleSearchSelect(item: MediaItem, event: MouseEvent, focusId: string) {
-    selectedTitle = item.title;
-    searchStatusMessage = `Selected ${item.title}. Detail actions are reserved for a later TV phase.`;
     handleMediaSelect(item, event, focusId);
+  }
+
+  async function openDetail(item: MediaItem, focusId: string) {
+    navigation.rememberFocus(focusId);
+    navigation.open('detail', focusId);
+    screen = 'detail';
+    selectedTitle = null;
+    statusMessage = `Loading ${item.title} details…`;
+    detailItem = item as TvDetailItem;
+    detailLoading = true;
+    detailError = '';
+    detailSaveError = '';
+    detailFavoriteStatus = null;
+    detailSeasons = [];
+    detailActiveSeason = 1;
+    detailEpisodesLoading = false;
+    detailEpisodesError = '';
+    const requestId = ++detailRequestSequence;
+    detailController?.abort();
+    const controller = new AbortController();
+    detailController = controller;
+    restoreAfterRender(['tv-detail-back']);
+
+    try {
+      const response = await fetch(`/api/content/${item.type}/${encodeURIComponent(item.id)}`, { signal: controller.signal });
+      const payload = await response.json() as DetailPayload;
+      if (requestId !== detailRequestSequence || controller.signal.aborted) return;
+      if (!response.ok || !payload.ok || !payload.item) throw new Error(payload.error?.message || 'Title details are temporarily unavailable.');
+      detailItem = payload.item;
+      const status = await getFavoriteStatus(payload.item.type, payload.item.id);
+      if (requestId !== detailRequestSequence || controller.signal.aborted) return;
+      detailFavoriteStatus = status;
+      detailLoading = false;
+      statusMessage = `${payload.item.title} details ready.`;
+      restoreAfterRender(['tv-detail-my-list', 'tv-detail-back']);
+      if (payload.item.type === 'series') void loadDetailSeason(payload.item.id, 1, requestId);
+    } catch (error) {
+      if (controller.signal.aborted || requestId !== detailRequestSequence) return;
+      detailError = error instanceof Error ? error.message : 'Title details are temporarily unavailable.';
+      detailLoading = false;
+      statusMessage = 'Title details are unavailable. Retry or go back.';
+      restoreAfterRender(['tv-detail-back']);
+    } finally {
+      if (requestId === detailRequestSequence) detailController = undefined;
+    }
+  }
+
+  async function loadDetailSeason(seriesId: string, seasonNumber: number, requestId = detailRequestSequence) {
+    detailActiveSeason = seasonNumber;
+    detailEpisodesLoading = true;
+    detailEpisodesError = '';
+    try {
+      const response = await fetch(`/api/content/series/${encodeURIComponent(seriesId)}/season/${seasonNumber}`);
+      const payload = await response.json() as SeasonPayload;
+      if (requestId !== detailRequestSequence) return;
+      if (!response.ok || !payload.ok || !payload.season) throw new Error(payload.error?.message || 'Season data is temporarily unavailable.');
+      detailSeasons = [payload.season];
+      restoreAfterRender([`tv-detail-season-${seasonNumber}`, `tv-detail-episode-${seasonNumber}-1`, 'tv-detail-my-list']);
+    } catch (error) {
+      if (requestId !== detailRequestSequence) return;
+      detailEpisodesError = error instanceof Error ? error.message : 'Season data is temporarily unavailable.';
+    } finally {
+      if (requestId === detailRequestSequence) detailEpisodesLoading = false;
+    }
+  }
+
+  function handleDetailSeasonChange(seasonNumber: number) {
+    if (!detailItem || detailItem.type !== 'series') return;
+    void loadDetailSeason(detailItem.id, seasonNumber);
+  }
+
+  function handleEpisodeSelect(episode: Episode) {
+    statusMessage = `Selected Season ${episode.season}, Episode ${episode.number}. Player actions remain outside Phase 6.`;
+    restoreAfterRender([`tv-detail-episode-${episode.season}-${episode.number}`]);
+  }
+
+  function detailSnapshot(item: TvDetailItem) {
+    return { title: String(item.title), poster: String(item.poster), backdrop: String(item.backdrop), year: Number(item.year), runtime: String(item.runtime), rating: Number(item.rating), genres: Array.from(item.genres ?? [], (genre) => String(genre)), description: String(item.description ?? '') };
+  }
+
+  async function toggleDetailFavorite() {
+    if (!detailItem || detailFavoriteSaving) return;
+    detailFavoriteSaving = true;
+    detailSaveError = '';
+    try {
+      if (detailFavoriteStatus) {
+        await removeFavoriteFromMyList(detailItem.type, detailItem.id);
+        detailFavoriteStatus = null;
+        if (page.data.user) {
+          const removed = await deleteCloudFavorite(detailItem.type, detailItem.id);
+          if (!removed) void syncAuthenticatedState();
+        }
+        statusMessage = `${detailItem.title} removed from My List.`;
+      } else {
+        await setFavoriteStatus(detailItem.type, detailItem.id, detailSnapshot(detailItem), 'planned');
+        detailFavoriteStatus = 'planned';
+        if (page.data.user) void syncAuthenticatedState();
+        statusMessage = `${detailItem.title} added to My List.`;
+      }
+      if (screen === 'my-list') void loadMyList();
+    } catch {
+      detailSaveError = 'This device could not update My List.';
+    } finally {
+      detailFavoriteSaving = false;
+      restoreAfterRender(['tv-detail-my-list', 'tv-detail-back']);
+    }
+  }
+
+  async function loadMyList() {
+    const requestId = ++myListRequestSequence;
+    myListLoading = true;
+    myListError = '';
+    try {
+      const [favorites, progress, deletions, persistence] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions(), getLocalPersistenceState()]);
+      if (requestId !== myListRequestSequence) return;
+      const local = mergeFavoritesWithProgress(favorites, progress, deletions);
+      myListItems = local.map((record) => favoriteToMedia(record, progress));
+      myListLoading = false;
+      myListSyncMessage = persistence.status === 'indexeddb' ? 'Local-first · background sync' : 'Memory fallback · this session';
+      restoreAfterRender(['tv-media-tv-my-list-' + (myListItems[0]?.id ?? ''), 'tv-my-list-browse', 'tv-nav-list']);
+      if (page.data.user) {
+        void syncAuthenticatedState().then((cloud) => {
+          if (requestId !== myListRequestSequence || !cloud.authenticated) return;
+          myListItems = cloud.favorites.map((record) => favoriteToMedia(record, cloud.progress));
+          myListSyncMessage = `Cloud sync: ${cloud.status}`;
+        });
+      }
+    } catch {
+      if (requestId !== myListRequestSequence) return;
+      myListLoading = false;
+      myListError = 'Your TV library is temporarily unavailable.';
+      restoreAfterRender(['tv-retry', 'tv-my-list-browse', 'tv-nav-list']);
+    }
+  }
+
+  function handleDetailRecommendation(item: MediaItem, _event: MouseEvent, focusId: string) {
+    openDetail(item, focusId);
+  }
+
+  function browseFromMyList() {
+    navigation.rememberFocus('tv-my-list-browse');
+    navigation.open('home', 'tv-my-list-browse');
+    screen = 'home';
+    statusMessage = 'Discover is ready for remote navigation.';
+    restoreAfterRender(['tv-nav-home', 'tv-featured-action', 'tv-rail-anime']);
   }
 
   function searchCategoryLabel(value: TvSearchCategory) {
@@ -440,14 +630,14 @@
 
     <section class="tv-hero" aria-labelledby="tv-shell-title">
       <div>
-        <p class="eyebrow">Phase {screen === 'search' ? '4 / Search' : '3 / Discover'} TV experience</p>
+        <p class="eyebrow">Phase {screen === 'search' ? '4 / Search' : screen === 'detail' || screen === 'my-list' ? '6 / ' + screenLabel(screen) : '3 / Discover'} TV experience</p>
         <h1 id="tv-shell-title">Mavero, made for the big screen.</h1>
         <p class="hero-copy">Real Mavero data and remote-first controls, presented with TV-sized targets and predictable focus.</p>
       </div>
       <div class="hero-status" aria-live="polite">
         <span class="status-label">Current section</span>
         <strong>{screenLabel(screen)}</strong>
-        <span>{selectedTitle ? `Selected: ${selectedTitle}` : screen === 'search' ? searchStatusMessage : discover.errorMessage ?? statusMessage}</span>
+        <span>{selectedTitle ? `Selected: ${selectedTitle}` : screen === 'search' ? searchStatusMessage : screen === 'home' ? discover.errorMessage ?? statusMessage : statusMessage}</span>
       </div>
     </section>
 
@@ -490,6 +680,14 @@
           onNativeQuerySubmit={submitNativeQuery}
         />
       </section>
+    {:else if screen === 'my-list'}
+      <section class="tv-section" aria-label="TV My List">
+        <TvMyList items={myListItems} loading={myListLoading} errorMessage={myListError} syncMessage={myListSyncMessage} onRetry={(event) => { event.preventDefault(); void loadMyList(); }} onBrowse={(event) => { event.preventDefault(); browseFromMyList(); }} onSelect={handleMediaSelect} />
+      </section>
+    {:else if screen === 'detail'}
+      <section class="tv-section" aria-label="TV title details">
+        <TvDetail item={detailItem ?? undefined} loading={detailLoading} errorMessage={detailError} favoriteStatus={detailFavoriteStatus} saving={detailFavoriteSaving} seasons={detailSeasons} activeSeason={detailActiveSeason} episodesLoading={detailEpisodesLoading} episodesError={detailEpisodesError} recommendations={(detailItem?.recommendations ?? []) as MediaItem[]} saveError={detailSaveError} onBack={handleBack} onRetry={(event) => { event.preventDefault(); if (detailItem) void openDetail(detailItem, 'tv-detail-back'); }} onToggleFavorite={(event) => { event.preventDefault(); void toggleDetailFavorite(); }} onSeasonChange={handleDetailSeasonChange} onEpisodeSelect={(episode, event) => { event.preventDefault(); handleEpisodeSelect(episode); }} onRecommendationSelect={handleDetailRecommendation} />
+      </section>
     {:else}
       <section class="tv-section" aria-labelledby="tv-placeholder-title">
         <div class="placeholder-panel">
@@ -527,18 +725,18 @@
 </div>
 
 <style>
-  .tv-page { --tv-bg: #080a0f; --tv-surface: rgba(20, 24, 34, .94); --tv-surface-soft: rgba(255, 255, 255, .055); --tv-line: rgba(255, 255, 255, .12); --tv-muted: #9da5b7; --tv-ink: #f7f8fb; --tv-accent: #ff3e5e; min-height: 100dvh; color: var(--tv-ink); background: radial-gradient(circle at 82% 0%, rgba(255, 62, 94, .14), transparent 30%), radial-gradient(circle at 0% 90%, rgba(77, 116, 255, .1), transparent 28%), var(--tv-bg); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  .tv-page { --tv-bg: #080a0f; --tv-surface: rgba(20, 24, 34, .96); --tv-surface-soft: rgba(255, 255, 255, .075); --tv-line: rgba(255, 255, 255, .18); --tv-muted: #d6dbea; --tv-muted-strong: #eef1f8; --tv-ink: #ffffff; --tv-accent: #ff5270; min-height: 100dvh; color: var(--tv-ink); background: radial-gradient(circle at 82% 0%, rgba(255, 62, 94, .14), transparent 30%), radial-gradient(circle at 0% 90%, rgba(77, 116, 255, .1), transparent 28%), var(--tv-bg); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
   .tv-main { width: min(100%, 1440px); margin-inline: auto; padding: 14px 56px 52px; }
   .tv-focusable { outline: none; }
   .tv-focusable:focus-visible, .tv-focusable[data-tv-focus-id]:focus { border-color: #fff; box-shadow: 0 0 0 4px rgba(255, 62, 94, .8), 0 0 0 8px rgba(255, 62, 94, .16); }
   .tv-hero { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr); align-items: end; gap: 36px; padding: clamp(48px, 9vw, 118px) 6px 56px; border-bottom: 1px solid var(--tv-line); }
   .eyebrow { margin: 0 0 10px; color: var(--tv-accent); font-size: .62rem; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; }
   .tv-hero h1 { max-width: 720px; margin: 0; font-size: clamp(2.8rem, 6vw, 6rem); font-weight: 850; letter-spacing: -.075em; line-height: .96; }
-  .hero-copy { max-width: 680px; margin: 22px 0 0; color: var(--tv-muted); font-size: clamp(.9rem, 1.4vw, 1.1rem); line-height: 1.65; }
+  .hero-copy { max-width: 680px; margin: 22px 0 0; color: var(--tv-muted); font-size: clamp(1rem, 1.55vw, 1.22rem); font-weight: 650; line-height: 1.65; }
   .hero-status { display: grid; gap: 8px; padding: 22px; border: 1px solid var(--tv-line); border-radius: 16px; background: var(--tv-surface); }
-  .status-label { color: var(--tv-muted); font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
-  .hero-status strong { font-size: 1.2rem; }
-  .hero-status span:last-child { color: var(--tv-muted); font-size: .8rem; line-height: 1.5; }
+  .status-label { color: var(--tv-muted); font-size: .74rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .hero-status strong { font-size: 1.35rem; font-weight: 900; }
+  .hero-status span:last-child { color: var(--tv-muted-strong); font-size: .96rem; font-weight: 650; line-height: 1.5; }
   .tv-section { padding: 44px 6px 0; }
   .tv-discover { padding-top: 38px; }
   .tv-search-section { padding-top: 0; }
@@ -547,9 +745,9 @@
   .placeholder-panel p:not(.eyebrow) { max-width: 620px; margin: 0; color: var(--tv-muted); line-height: 1.6; }
   .tv-action-button { width: fit-content; padding: 14px 18px; border: 1px solid rgba(255,255,255,.16); border-radius: 11px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: .82rem; font-weight: 800; cursor: pointer; }
   .tv-footer-actions { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 46px 6px 0; padding-top: 24px; border-top: 1px solid var(--tv-line); }
-  .footer-note { display: grid; gap: 5px; max-width: 760px; color: var(--tv-muted); font-size: .76rem; line-height: 1.5; }
+  .footer-note { display: grid; gap: 5px; max-width: 760px; color: var(--tv-muted); font-size: .9rem; font-weight: 650; line-height: 1.55; }
   .footer-note .eyebrow { margin: 0; }
-  .quit-button { min-width: 176px; padding: 15px 20px; border: 1px solid rgba(255, 62, 94, .48); border-radius: 11px; color: #fff; background: rgba(255, 62, 94, .14); font-size: .82rem; font-weight: 850; cursor: pointer; }
+  .quit-button { min-width: 176px; min-height: 56px; padding: 15px 20px; border: 2px solid rgba(255, 82, 112, .72); border-radius: 11px; color: #fff; background: rgba(255, 62, 94, .22); font-size: .96rem; font-weight: 900; cursor: pointer; }
   .exit-layer { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 30px; }
   .exit-backdrop { position: absolute; inset: 0; background: rgba(2, 4, 8, .84); }
   .exit-dialog { position: relative; width: min(100%, 560px); padding: 36px; border: 1px solid rgba(255,255,255,.18); border-radius: 20px; background: #151925; box-shadow: 0 30px 120px rgba(0,0,0,.6); }

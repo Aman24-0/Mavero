@@ -36,12 +36,12 @@
 <style>
   .tv-nav { display: flex; gap: 12px; overflow-x: auto; padding: 6px 4px 16px; scrollbar-width: none; }
   .tv-nav::-webkit-scrollbar { display: none; }
-  .tv-nav-item { display: flex; min-width: 150px; align-items: center; gap: 12px; padding: 15px 18px; border: 1px solid var(--tv-line); border-radius: 13px; color: var(--tv-muted); background: var(--tv-surface-soft); font-size: .86rem; font-weight: 760; text-align: left; cursor: pointer; transition: border-color 140ms ease, background 140ms ease, color 140ms ease; }
+  .tv-nav-item { display: flex; min-width: 150px; min-height: 58px; align-items: center; gap: 12px; padding: 15px 18px; border: 2px solid rgba(255,255,255,.2); border-radius: 13px; color: var(--tv-muted-strong, #eef1f8); background: var(--tv-surface-soft); font-size: 1rem; font-weight: 900; text-align: left; cursor: pointer; transition: border-color 140ms ease, background 140ms ease, color 140ms ease; }
   .tv-nav-item.active { color: var(--tv-ink); border-color: rgba(255, 62, 94, .58); background: rgba(255, 62, 94, .14); }
-  .nav-index { color: var(--tv-accent); font-size: .62rem; font-weight: 900; letter-spacing: .12em; }
+  .nav-index { color: #ffd45d; font-size: .74rem; font-weight: 950; letter-spacing: .12em; }
 
   @media (max-width: 760px) {
-    .tv-nav-item { min-width: 126px; }
+    .tv-nav-item { min-width: 126px; min-height: 56px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

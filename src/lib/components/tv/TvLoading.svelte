@@ -13,7 +13,7 @@
 <style>
   .tv-loading { display: flex; align-items: center; gap: 18px; min-height: 210px; padding: 28px; border: 1px solid var(--tv-line); border-radius: 17px; background: var(--tv-surface); }
   .loading-orb { width: 22px; height: 22px; flex: 0 0 auto; border: 3px solid rgba(255,255,255,.18); border-left-color: var(--tv-accent); border-radius: 50%; }
-  .tv-loading strong { font-size: 1.08rem; }
-  .tv-loading p { margin: 7px 0 0; color: var(--tv-muted); font-size: .78rem; }
+  .tv-loading strong { color: var(--tv-ink); font-size: 1.32rem; font-weight: 900; }
+  .tv-loading p { margin: 7px 0 0; color: var(--tv-muted-strong, #eef1f8); font-size: .94rem; font-weight: 650; }
 
 </style>

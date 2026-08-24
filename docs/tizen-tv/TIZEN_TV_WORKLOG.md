@@ -2,18 +2,18 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has now confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are implementation-complete with Samsung Phase 5 QA pending. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has now confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are **COMPLETE**. The owner’s Samsung QA recorded Native IME **FAIL**, vertical focus **PASS**, typography/clarity **NEEDS FIX**, and general Search flow/navigation **PASS**. The custom UI keyboard is the final default. Phase 6 — Detail + My List is now **STARTED** with the typography/clarity fix included in scope. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
 
 | Field | Status |
 |---|---|
-| Current phase | Phase 5 — TV Search Polish + Native IME Investigation |
+| Current phase | Phase 6 — TV Detail + My List |
 | Phase 0 status | **COMPLETE** |
-| Tizen implementation | **Phase 5 implementation complete; Samsung Phase 5 QA pending** |
+| Tizen implementation | **Phase 5 complete; Phase 6 implementation started** |
 | Phase 1 | **COMPLETE — owner-confirmed real-TV validation passed** |
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
-| Samsung TV hardware QA | **Phase 1, Phase 2, Phase 3, and Phase 4 PASS reported by owner; Phase 5 pending** |
+| Samsung TV hardware QA | **Phase 1–4 PASS; Phase 5 complete: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS; Phase 6 pending** |
 | Branch | `feature/tizen-tv` |
-| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 pre-amend commit is `384428acf383de9fe5420b80478fd1d9acf6aa61` |
+| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 final is `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 pending |
 | Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; Phase 2 work stays on this branch; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
@@ -423,9 +423,9 @@ This entry records the owner’s observations only. No timing, memory, console, 
 
 **Date:** 24 August 2026
 **Phase:** Phase 5 — TV Search Polish + Native IME Investigation
-**Status:** **IMPLEMENTATION COMPLETE — Samsung Phase 5 hardware QA pending owner execution.**
+**Status:** **COMPLETE — owner Samsung QA recorded. Native IME FAIL; vertical focus PASS; typography/clarity NEEDS FIX; general Search flow/navigation PASS.**
 
-**Gate:** Phase 4 Samsung hardware QA is **COMPLETE / PASS by owner** on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. Phase 6 is not started.
+**Gate:** Phase 4 Samsung hardware QA is **COMPLETE / PASS by owner** and the Phase 5 Samsung QA gate is now complete on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. Phase 6 is authorized and started.
 
 **Objective:** Fix deterministic vertical TV focus movement, improve TV Search readability from 10-foot distance, and investigate whether Samsung’s native system IME can operate inside the TizenBrew-hosted Mavero module without replacing the working custom keyboard or adding undocumented APIs.
 
@@ -443,21 +443,44 @@ This entry records the owner’s observations only. No timing, memory, console, 
 
 **Typography:** TV-only `clamp()` tokens enlarge category labels, letter/digit keys, Space, Backspace, Clear, Search, Close, and the native probe action. Buttons preserve remote-selectable dimensions, visible focus rings, and ellipsis/overflow protection. No normal Web/PWA typography was changed.
 
-**Native IME investigation:** Added an opt-in real HTML `<input type="text">` at `/tv?ime=1` with stable TV focus IDs, `inputmode="text"`, input/change synchronization, explicit submit, and Back focus restoration. Browser testing confirmed the input and Search wiring, but browser testing cannot determine whether Samsung’s system IME opens inside TizenBrew. No SmartThings result is available. The custom keyboard remains the default fallback. No Samsung native API, undocumented privilege, bridge, host modification, or speculative permission was added.
+**Native IME investigation:** Added an opt-in real HTML `<input type="text">` at `/tv?ime=1` with stable TV focus IDs, `inputmode="text"`, input/change synchronization, explicit submit, and Back focus restoration. On the target Samsung TV, the native inbuilt keyboard did **not** open inside the TizenBrew-hosted module: Native IME **FAIL**. The custom UI keyboard is therefore the final default. No undocumented API, speculative privilege, native bridge, TizenBrew host modification, or SmartThings success is claimed.
 
 **Automated validation:** `pnpm check`, the full `pnpm test` chain, the focused TV contract test, and `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` passed. Final whitespace, authorized-scope, TizenBrew metadata, and secret checks also passed before staging.
 
 **Browser QA:** Fresh local production-preview QA passed for `/tv?ime=1`, Search entry, enlarged typography, no horizontal overflow, fallback keyboard, `ONE` + Anime producing 18 real results, Exit-row ArrowUp landing on a Search result, reciprocal ArrowDown returning to `tv-quit`, native input `ONE` synchronization, native input Back restoration, and normal `/` plus `/search` route isolation. Browser QA is not proof of Samsung hardware compatibility.
 
-**Samsung TV QA:** **PENDING owner execution for Phase 5.** Required target remains Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. The owner must test final-commit launch, Search/fallback keyboard, native IME open/type/Back behavior, input/change events, SmartThings if available, focus restoration, cross-section vertical movement, typography/no overflow, all Search states, Back hierarchy, hosted exit, and reopen. No Phase 5 Samsung PASS is claimed.
+**Samsung TV QA:** **COMPLETE — owner result recorded.** On Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`: Native IME **FAIL** because the TV’s native inbuilt keyboard did not open inside the TizenBrew-hosted module; the custom UI keyboard remains the final default. Vertical focus fix **PASS**. Typography/clarity **NEEDS FIX** because current white text is not sufficiently clear from a 10-foot distance. General Search flow/navigation **PASS**. No unreported timing, memory, console, or SmartThings result is added.
 
-**Known limitations:** Native IME behavior inside TizenBrew is unknown until real-TV testing. The browser experiment cannot inspect Samsung system-keyboard behavior. SmartThings typing, broader Samsung models, long-session memory, performance, playback, providers, resolver, authentication, PWA, and production configuration remain outside this phase.
+**Known limitations:** Native Samsung IME failed in the tested TizenBrew-hosted module, so the custom UI keyboard is the final default. TV-only typography/clarity still needs larger, bolder, higher-contrast treatment and is carried into Phase 6. SmartThings typing was not reported as a successful result. Broader Samsung models, long-session memory, performance, playback, providers, resolver, authentication, PWA, and production configuration remain outside this phase.
 
 **Unresolved issues:** None identified in browser QA. The native IME compatibility question and any Samsung-specific focus, typography, IME, network, or image-decoding behavior remain hardware validation items.
 
-**Next step:** Stage and commit this Phase 5 implementation and documentation as one commit, push only to `origin/feature/tizen-tv`, and hand the exact immutable module identifier plus the Samsung Phase 5 checklist to the owner. Do not begin Phase 6.
+**Next step:** Continue Phase 6 — isolated TV Detail + My List implementation, including movie/series/anime detail, recommendations, My List add/remove, seasons/episodes navigation, and the TV typography/clarity fix. Do not begin the TV player phase.
 
 **Branch:** `feature/tizen-tv`
-**Commit:** Phase 5 pre-amend implementation commit `384428acf383de9fe5420b80478fd1d9acf6aa61`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Commit:** Phase 5 final implementation `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 pending final commit.
 **Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
-**Merge status:** Phase 5 remains on `feature/tizen-tv`; not merged to `main`; production remains unchanged.
+**Merge status:** Phase 5 remains on `feature/tizen-tv`; not merged to `main`; production remains unchanged. Phase 6 implementation is now active on the same branch.
+
+## Phase 6 — Detail + My List
+
+**Date:** 24 August 2026
+**Phase:** Phase 6 — Detail + My List
+**Status:** **IMPLEMENTATION COMPLETE — Samsung Phase 6 hardware QA pending.**
+
+**Gate:** Phase 5 is COMPLETE with owner-confirmed Samsung results: Native IME FAIL inside the TizenBrew-hosted module, custom UI keyboard retained as final default; vertical focus PASS; typography/clarity NEEDS FIX; and general Search flow/navigation PASS. The Phase 6 typography carryover is implemented in the TV shell and detail surfaces.
+
+**Implementation:** Added isolated TV Detail and TV My List components. Movie, Series, and Anime detail metadata use the existing `/api/content/{type}/{id}` contract. Series detail uses `/api/content/series/{id}/season/{season}` for season and episode navigation. Recommendations reuse the existing TV media rail. Episode selection provides status feedback only and does not enter the player boundary. My List add/remove uses the existing local-first progress service with plain serializable snapshots, authenticated-only cloud reconciliation, and refresh-on-return after removing an item from a detail opened by My List.
+
+**Clarity treatment:** TV-only navigation, hero, loading/error, Search, media rails, detail, seasons, episodes, and My List surfaces now use larger, heavier, higher-contrast text, larger remote targets, stronger borders, and visible focus treatment. Normal Web/PWA typography and routes remain unchanged.
+
+**Validation:** `pnpm check`, focused TV contract tests, full `pnpm test`, memory-safe production build, `git diff --check`, scope/metadata/secret checks all passed. Browser QA verified Anime detail, recommendations, series fixture Search, series detail, three season controls, episode list, season switching, episode focus/feedback, local-first save/remove/refresh, truthful timeout/Retry behavior, normal `/` and `/search` route isolation, and no player/AVPlay entry.
+
+**Samsung Phase 6 QA:** **PENDING owner execution.** Required target remains Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. The owner must verify 10-foot typography/contrast, Movie/Series/Anime detail entry, recommendations, My List add/remove and refresh, series seasons/episodes, deterministic focus, Back restoration, errors/Retry, hosted exit/reopen, and strict no-player boundary.
+
+**Strict boundary:** No player, AVPlay, media controls, resolver/provider changes, auth/Supabase changes, PWA changes, normal Web/PWA route changes, production/main changes, or Phase 7 work was started.
+
+**Branch:** `feature/tizen-tv`
+**Commit:** Phase 6 pending final commit.
+**Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
+**Merge status:** Phase 6 remains on `feature/tizen-tv`; not merged to `main`; production remains unchanged.
