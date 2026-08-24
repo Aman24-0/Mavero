@@ -481,6 +481,6 @@ This entry records the owner’s observations only. No timing, memory, console, 
 **Strict boundary:** No player, AVPlay, media controls, resolver/provider changes, auth/Supabase changes, PWA changes, normal Web/PWA route changes, production/main changes, or Phase 7 work was started.
 
 **Branch:** `feature/tizen-tv`
-**Commit:** Phase 6 pending final commit.
+**Commit:** Phase 6 implementation `c39fb7cabb313657d1f87cc265b7c98d9c707085`.
 **Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
-**Merge status:** Phase 6 remains on `feature/tizen-tv`; not merged to `main`; production remains unchanged.
+**Merge status:** Phase 6 remains on `feature/tizen-tv`; implementation is pushed to `origin/feature/tizen-tv`; not merged to `main`; production remains unchanged.
