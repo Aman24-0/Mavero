@@ -480,7 +480,8 @@
       detailLoading = false;
       statusMessage = `${payload.item.title} details ready.`;
       restoreAfterRender(['tv-detail-my-list', 'tv-detail-back']);
-      if (payload.item.type === 'series') void loadDetailSeason(payload.item.id, 1, requestId);
+      if (payload.item.type !== 'movie') void loadDetailSeason(payload.item.id, 1, requestId);
+      void loadDetailRecommendations(payload.item, requestId, controller);
     } catch (error) {
       if (controller.signal.aborted || requestId !== detailRequestSequence) return;
       detailError = error instanceof Error ? error.message : 'Title details are temporarily unavailable.';
@@ -489,6 +490,25 @@
       restoreAfterRender(['tv-detail-back']);
     } finally {
       if (requestId === detailRequestSequence) detailController = undefined;
+    }
+  }
+
+  async function loadDetailRecommendations(item: TvDetailItem, requestId: number, controller: AbortController) {
+    const seed = item.genres[0] || item.title;
+    try {
+      const params = new URLSearchParams({ q: seed, type: item.type });
+      const response = await fetch(`/api/content/search?${params.toString()}`, { signal: controller.signal });
+      const payload = await response.json() as { ok?: boolean; items?: NormalizedMediaItem[] };
+      if (!response.ok || !payload.ok || requestId !== detailRequestSequence || controller.signal.aborted) return;
+      const seen = new Set<string>([item.id]);
+      const recommendations = [...(item.recommendations ?? []), ...(payload.items ?? [])].filter((candidate) => {
+        if (candidate.id === item.id || seen.has(candidate.id)) return false;
+        seen.add(candidate.id);
+        return candidate.type === item.type;
+      });
+      detailItem = { ...item, recommendations };
+    } catch {
+      // Detail recommendations remain usable when the optional expansion request fails.
     }
   }
 
@@ -512,7 +532,7 @@
   }
 
   function handleDetailSeasonChange(seasonNumber: number) {
-    if (!detailItem || detailItem.type !== 'series') return;
+    if (!detailItem || detailItem.type === 'movie') return;
     void loadDetailSeason(detailItem.id, seasonNumber);
   }
 

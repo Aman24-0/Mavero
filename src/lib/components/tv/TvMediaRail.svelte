@@ -61,8 +61,8 @@
   .eyebrow { margin: 0 0 8px; color: var(--tv-accent); font-size: .76rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
   h2 { margin: 0; color: var(--tv-ink); font-size: clamp(1.75rem, 3vw, 2.55rem); font-weight: 950; letter-spacing: -.05em; }
   .direction-hint { color: var(--tv-muted-strong, #eef1f8); font-size: .88rem; font-weight: 700; }
-  .tv-media-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(190px, 215px); gap: 16px; overflow-x: auto; padding: 8px 5px 18px; scrollbar-color: rgba(255,255,255,.2) transparent; }
-  .tv-media-card { display: grid; min-height: 290px; align-content: start; gap: 9px; padding: 0 0 12px; overflow: hidden; border: 2px solid var(--tv-line); border-radius: 15px; color: var(--tv-ink); background: var(--tv-surface); text-align: left; cursor: pointer; }
+  .tv-media-rail { display: flex; flex-wrap: nowrap; gap: 16px; overflow-x: auto; overscroll-behavior-inline: contain; padding: 8px 5px 18px; scrollbar-color: rgba(255,255,255,.2) transparent; }
+  .tv-media-card { display: grid; flex: 0 0 clamp(190px, 18vw, 215px); min-width: 0; min-height: 290px; align-content: start; gap: 9px; padding: 0 0 12px; overflow: hidden; border: 2px solid var(--tv-line); border-radius: 15px; color: var(--tv-ink); background: var(--tv-surface); text-align: left; cursor: pointer; }
   .poster-wrap { position: relative; aspect-ratio: 2 / 3; overflow: hidden; background: var(--tv-surface-soft); }
   .poster-wrap img { width: 100%; height: 100%; object-fit: cover; }
   .card-index { position: absolute; top: 10px; left: 10px; padding: 5px 7px; border-radius: 5px; color: #fff; background: rgba(8,10,15,.9); font-size: .7rem; font-weight: 950; letter-spacing: .1em; }
@@ -73,6 +73,6 @@
 
   @media (max-width: 760px) {
     .section-heading { align-items: start; flex-direction: column; }
-    .tv-media-rail { grid-auto-columns: minmax(170px, 64vw); }
+    .tv-media-card { flex-basis: min(64vw, 220px); }
   }
 </style>

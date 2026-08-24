@@ -49,6 +49,7 @@
   const formatType = (type: ContentType) => type === 'movie' ? 'Movie' : type === 'series' ? 'Series' : 'Anime';
   const statusLabel = (status: FavoriteStatus) => status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Add to My List';
   const activeSeasonData = () => seasons.find((season) => season.number === activeSeason) ?? seasons[0];
+  const seasonCount = () => item?.seasons ?? (item?.type === 'anime' && item?.episodes ? 1 : 0);
 </script>
 
 <section class="tv-detail" aria-labelledby="tv-detail-title" aria-busy={loading}>
@@ -83,12 +84,12 @@
       </div>
     </article>
 
-    {#if item.type === 'series'}
-      <section class="episode-section" aria-labelledby="tv-episodes-title">
+    {#if item.type !== 'movie'}
+      <section class="episode-section" aria-labelledby="tv-episodes-title" data-tv-series-guide="true">
         <div class="section-heading"><div><p class="eyebrow">Series guide</p><h2 id="tv-episodes-title">Seasons and episodes</h2></div><span class="direction-hint">← → choose · Enter open</span></div>
-        {#if item.seasons && item.seasons > 0}
+        {#if seasonCount() > 0}
           <div class="season-row" role="list" aria-label="Seasons">
-            {#each Array.from({ length: item.seasons }, (_, index) => index + 1) as seasonNumber}
+            {#each Array.from({ length: seasonCount() }, (_, index) => index + 1) as seasonNumber}
               <button class="tv-focusable season-button" class:active={seasonNumber === activeSeason} data-tv-focusable="true" data-tv-focus-id={`tv-detail-season-${seasonNumber}`} data-tv-focus-group="tv-detail-seasons" type="button" aria-pressed={seasonNumber === activeSeason} onclick={() => onSeasonChange(seasonNumber)}>Season {seasonNumber}</button>
             {/each}
           </div>
