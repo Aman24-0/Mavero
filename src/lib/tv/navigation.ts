@@ -5,17 +5,26 @@ export type TVNavigationSnapshot = {
   focusId: string | null;
 };
 
-export function createTVNavigation() {
-  let current: TVNavigationSnapshot = { screen: 'home', focusId: 'tv-nav-home' };
-  let previous: TVNavigationSnapshot | null = null;
+export function createTVNavigation(initial: TVNavigationSnapshot = { screen: 'home', focusId: 'tv-nav-home' }) {
+  let current: TVNavigationSnapshot = { ...initial };
+  const history: TVNavigationSnapshot[] = [];
 
   return {
     get current() {
       return current;
     },
 
+    get depth() {
+      return history.length;
+    },
+
     open(screen: TVScreen, focusId: string | null = null) {
-      previous = current;
+      if (screen === current.screen) {
+        current = { screen, focusId: focusId ?? current.focusId };
+        return current;
+      }
+
+      history.push(current);
       current = { screen, focusId };
       return current;
     },
@@ -25,15 +34,15 @@ export function createTVNavigation() {
     },
 
     goBack(): TVNavigationSnapshot | null {
+      const previous = history.pop();
       if (!previous) return null;
       current = previous;
-      previous = null;
       return current;
     },
 
-    reset() {
-      current = { screen: 'home', focusId: 'tv-nav-home' };
-      previous = null;
+    reset(next: TVNavigationSnapshot = initial) {
+      current = { ...next };
+      history.length = 0;
     }
   };
 }

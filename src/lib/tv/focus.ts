@@ -4,7 +4,7 @@ type FocusableElement = HTMLElement & { dataset: DOMStringMap };
 
 function isVisible(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0 && !element.hidden;
+  return rect.width > 0 && rect.height > 0 && !element.hidden && !element.matches(':disabled');
 }
 
 function center(rect: DOMRect) {
@@ -26,6 +26,7 @@ export class TVFocusCoordinator {
 
   destroy() {
     this.root.removeEventListener('focusin', this.onFocusIn);
+    this.current = null;
   }
 
   initialize(initialId?: string) {
@@ -54,8 +55,19 @@ export class TVFocusCoordinator {
     return true;
   }
 
+  restoreFirst(ids: Array<string | null>): boolean {
+    return ids.some((id) => this.restore(id));
+  }
+
   focusFirst(): boolean {
     const first = this.getFocusables()[0];
+    if (!first) return false;
+    this.setCurrent(first, true);
+    return true;
+  }
+
+  focusFirstInGroup(group: string): boolean {
+    const first = this.getFocusables().find((element) => element.dataset.tvFocusGroup === group);
     if (!first) return false;
     this.setCurrent(first, true);
     return true;
@@ -68,11 +80,11 @@ export class TVFocusCoordinator {
     return true;
   }
 
-  move(direction: FocusDirection): boolean {
+  move(direction: FocusDirection, scope?: string): boolean {
     const current = this.getCurrentElement();
-    if (!current) return this.focusFirst();
+    if (!current) return scope ? this.focusFirstInGroup(scope) : this.focusFirst();
 
-    const target = this.pickCandidate(current, direction);
+    const target = this.pickCandidate(current, direction, scope);
     if (!target) return false;
 
     this.setCurrent(target, true);
@@ -84,7 +96,9 @@ export class TVFocusCoordinator {
     if (active instanceof HTMLElement && this.isFocusable(active)) {
       this.current = active as FocusableElement;
     }
-    return this.current && this.getFocusables().includes(this.current) ? this.current : this.getFocusables()[0] ?? null;
+
+    const focusables = this.getFocusables();
+    return this.current && focusables.includes(this.current) ? this.current : focusables[0] ?? null;
   }
 
   private getFocusables(): FocusableElement[] {
@@ -104,13 +118,26 @@ export class TVFocusCoordinator {
     if (this.current && this.current !== element) this.current.tabIndex = -1;
     element.tabIndex = 0;
     this.current = element;
-    if (shouldFocus) element.focus({ preventScroll: true });
+
+    if (shouldFocus) {
+      try {
+        element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+      } catch {
+        element.scrollIntoView();
+      }
+      element.focus({ preventScroll: true });
+    }
   }
 
-  private pickCandidate(current: FocusableElement, direction: FocusDirection): FocusableElement | null {
+  private pickCandidate(current: FocusableElement, direction: FocusDirection, scope?: string): FocusableElement | null {
     const currentRect = current.getBoundingClientRect();
     const currentCenter = center(currentRect);
-    const candidates = this.getFocusables().filter((element) => element !== current);
+    const group = current.dataset.tvFocusGroup;
+    const isHorizontal = direction === 'left' || direction === 'right';
+    const candidates = this.getFocusables()
+      .filter((element) => element !== current)
+      .filter((element) => !scope || element.dataset.tvFocusGroup === scope)
+      .filter((element) => !isHorizontal || !group || element.dataset.tvFocusGroup === group);
 
     const directional = candidates
       .map((element) => ({ element, rect: element.getBoundingClientRect(), center: center(element.getBoundingClientRect()) }))
@@ -121,14 +148,14 @@ export class TVFocusCoordinator {
         return rect.top >= currentRect.bottom - 2;
       })
       .map(({ element, rect, center: candidateCenter }) => {
-        const primary = direction === 'left' || direction === 'right'
+        const primary = isHorizontal
           ? Math.abs(candidateCenter.x - currentCenter.x)
           : Math.abs(candidateCenter.y - currentCenter.y);
-        const secondary = direction === 'left' || direction === 'right'
+        const secondary = isHorizontal
           ? Math.abs(candidateCenter.y - currentCenter.y)
           : Math.abs(candidateCenter.x - currentCenter.x);
         const distance = Math.hypot(candidateCenter.x - currentCenter.x, candidateCenter.y - currentCenter.y);
-        return { element, rect, score: secondary * 5 + primary + distance * 0.01 };
+        return { element, score: secondary * 5 + primary + distance * 0.01 };
       })
       .sort((a, b) => a.score - b.score);
 

@@ -1,0 +1,36 @@
+<script lang="ts">
+  let {
+    message = 'This TV section could not load.',
+    onRetry
+  }: {
+    message?: string;
+    onRetry: (event: MouseEvent) => void;
+  } = $props();
+</script>
+
+<div class="tv-error" role="alert" aria-live="assertive">
+  <div>
+    <span class="eyebrow">TV section unavailable</span>
+    <strong>{message}</strong>
+    <p>Use Enter on Retry to request the section again.</p>
+  </div>
+  <button
+    class="tv-focusable retry-button"
+    data-tv-focusable="true"
+    data-tv-focus-id="tv-retry"
+    data-tv-focus-group="tv-section-actions"
+    type="button"
+    onclick={onRetry}
+  >
+    Retry
+  </button>
+</div>
+
+<style>
+  .tv-error { display: flex; align-items: end; justify-content: space-between; gap: 24px; min-height: 210px; padding: 28px; border: 1px solid rgba(255, 62, 94, .35); border-radius: 17px; background: rgba(255, 62, 94, .08); }
+  .eyebrow { display: block; margin: 0 0 10px; color: var(--tv-accent); font-size: .62rem; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; }
+  .tv-error strong { display: block; font-size: 1.25rem; }
+  .tv-error p { margin: 8px 0 0; color: var(--tv-muted); font-size: .78rem; }
+  .retry-button { min-width: 132px; padding: 15px 20px; border: 1px solid var(--tv-accent); border-radius: 11px; color: #fff; background: var(--tv-accent); font-size: .82rem; font-weight: 800; cursor: pointer; }
+  @media (max-width: 760px) { .tv-error { align-items: stretch; flex-direction: column; } }
+</style>
