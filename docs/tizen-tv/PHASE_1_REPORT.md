@@ -107,9 +107,28 @@ The existing PWA install prompt was visible in the local browser preview because
 
 ## 12. Samsung TV testing
 
-**Status: NOT RUN in this implementation session.** No claim is made that TizenBrew loaded the module, that the real remote delivered keys, or that native application exit worked on the Samsung `UA43AUE60AKLXL`.
+**Status: PARTIAL PASS / BLOCKED.** The owner completed real-TV testing on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. The module now installs and launches successfully through TizenBrew. The following results are reported by the owner and are not independently re-run by this implementation session:
 
-The required hardware checklist remains: launch from TizenBrew 2.0.5; verify `/tv` loads; verify shell/focus/Arrow/Enter; verify Back through a test state; verify root Back opens the dialog; verify Cancel/focus restoration; verify Exit closes the application; reopen from TizenBrew; and repeat the exit flow. Any failed or unavailable item must be recorded in the worklog before Phase 1 is considered complete.
+| Test | Result |
+|---|---|
+| TizenBrew launches Mavero | PASS |
+| `/tv` loads correctly | PASS |
+| TV shell renders | PASS |
+| Remote arrow navigation | PASS |
+| Visible focus movement | PASS |
+| Enter activates controls | PASS |
+| Navigation states open | PASS |
+| Back returns from states | PASS |
+| Focus restoration | PASS |
+| Root Back opens `Exit Mavero?` | PASS |
+| Cancel closes confirmation and restores focus | PASS |
+| Explicit `Quit Mavero` opens the same confirmation | PASS |
+| Confirmed Exit closes the TizenBrew-hosted application | FAIL |
+| `/tv` fills the complete TV viewport width | FAIL / UI issue |
+
+The exact exit failure is: selecting `Exit` dismisses the dialog, but Mavero remains open and the TizenBrew-hosted application does not close. The owner force-closed the TV with Back and could reopen Mavero, but that does not count as a successful explicit application exit. The shell also leaves visible empty space on the left and right; this is recorded as a Phase 1 UI issue and is intentionally not over-polished before the appropriate later TV layout phase.
+
+The required retest remains: install the updated module identifier, verify `/tv`, repeat the PASS checklist, then confirm that Exit leaves/terminates the TizenBrew-hosted context and that Mavero can be relaunched. Any failed or unavailable item must remain recorded in the worklog before Phase 1 is considered complete.
 
 ## 13. Web/PWA regression
 
@@ -119,14 +138,14 @@ The browser preview confirmed that the new route works without Tizen APIs. Full 
 
 ## 14. Known limitations
 
-1. The verified Branch Deploy origin is configured, but TizenBrew installation/loading was not tested from the real TV in this session.
-2. The Branch Deploy response and final module load still require the real deployment/hardware handoff.
-3. Native Samsung application exit was not tested.
-4. No Samsung remote, lifecycle, relaunch, memory, performance, codec, or network-recovery result is claimed.
-5. The shell uses controlled placeholders rather than real Mavero content.
-6. The existing global PWA install prompt remains visible in browser preview; PWA behavior was intentionally not modified.
-7. The TV navigation stack is a minimal one-previous-state proof and is not a complete route framework.
-8. Search/IME, player overlays, media keys, AVPlay, and provider behavior remain later phases.
+1. Real-TV launch, shell, remote, focus, navigation, and dialog behavior are owner-reported PASS results; the explicit Exit action is owner-reported FAIL and requires retest after this fix.
+2. The `/tv` shell has a reported left/right viewport-width issue; deliberate layout polish is deferred.
+3. The shell uses controlled placeholders rather than real Mavero content.
+4. The existing global PWA install prompt remains visible in browser preview; PWA behavior was intentionally not modified.
+5. The TV navigation stack is a minimal one-previous-state proof and is not a complete route framework.
+6. Search/IME, player overlays, media keys, AVPlay, and provider behavior remain later phases.
+7. TizenBrew’s current application-module bridge exposes no documented ExitModule/CloseHost event. A serviceFile is not a demonstrated exit mechanism.
+8. Samsung’s documented `Application.exit()` applies to the current standalone application, while Mavero is hosted inside TizenBrew. The host-return behavior must pass real-TV validation before being considered complete.
 
 ## 15. Phase 2 recommendation
 
@@ -155,7 +174,17 @@ The direct resolver probes confirmed the root cause:
 
 **Branch strategy:** The current TizenBrew UI accepts an opaque GitHub module string and has no branch selector. The reliable identifier for testing the pushed packaging-fix revision is `Aman24-0/Mavero@a5fd928c553872556809b61a58e378a86f23179f`; TizenBrew passes this as `gh/Aman24-0/Mavero@a5fd928c553872556809b61a58e378a86f23179f`, and jsDelivr resolves the immutable commit ref. The branch alias `Aman24-0/Mavero@feature/tizen-tv` is syntactically accepted, but its package response remained stale in CDN cache after the push. Entering `Aman24-0/Mavero` without a ref resolves the default branch and is not suitable for testing this feature branch. No unsupported TizenBrew branch-selector feature is being claimed.
 
-**Fix status:** The root metadata fix and this diagnosis are committed only to `feature/tizen-tv`; `main` and production remain unchanged. The module must be retested on the supplied TV using the immutable identifier before the Phase 1 gate can move beyond **BLOCKED**.
+**Fix status:** The root metadata fix and this diagnosis are committed only to `feature/tizen-tv`; `main` and production remain unchanged. The module has since been installed and launched on the supplied TV, but explicit host exit failed and requires the host-aware fix below before the Phase 1 gate can move beyond **BLOCKED**.
+
+## 17. Hosted-module exit investigation and fix
+
+Samsung documents `tizen.application.getCurrentApplication().exit()` as the way to terminate the current standalone TV application and requires an HTML confirmation popup before the Yes action [8]. The Application API separately states that `exit()` is not supported by Web Widget [9]. Mavero is a TizenBrew application module hosted inside the TizenBrew WebView, not a separately installed signed `.wgt` application. The owner’s real-TV result confirms that the direct native call did not terminate the TizenBrew-hosted context.
+
+The current TizenBrew source launches an application module by navigating the host page to the module `appPath`. Its host Return handler uses `history.back()` when the current location is not the TizenBrew root and calls the host’s own `tizen.application.getCurrentApplication().exit()` only at the host root [10]. The current WebSocket event enum and service launcher expose no documented module-to-host ExitModule or CloseHost command [11] [12]. Adding a serviceFile or arbitrary privileged/shell hook would therefore be speculative and unsafe.
+
+The isolated fix marks the bootstrap-launched `/tv` URL with `?tizenbrew=1`. When that marker is present, the TV platform adapter does not call standalone `Application.exit()`. Instead, it checks for a usable prior history entry and calls the host’s existing `history.back()` return path. In a normal standalone route without the marker, the official native exit call remains available but is reported as a request rather than an observable termination guarantee. Browser mode remains guarded and non-throwing. Local browser validation confirmed that hosted mode renders, the exit dialog opens, and activating Exit returns to the healthy prior route without a runtime exception.
+
+This is a supported-mechanism attempt, not a completion claim. The target TV must verify that the hosted module returns to TizenBrew and that the host then exits correctly, without trapping the user or closing an unrelated application. If the host-return path fails, Phase 1 remains blocked and the next decision must be made against TizenBrew behavior rather than by adding an undocumented kill mechanism. The partial owner-reported hardware pass does not yet verify this new path.
 
 ## References
 
@@ -166,6 +195,16 @@ The direct resolver probes confirmed the root cause:
 [3]: https://developer.samsung.com/smarttv/develop/guides/user-interaction/remote-control.html "Samsung remote control guide"
 
 [4]: https://developer.samsung.com/smarttv/develop/api-references/tizen-web-device-api-references/tvinputdevice-api.html "Samsung TVInputDevice API"
+
+[8]: https://developer.samsung.com/smarttv/develop/guides/fundamentals/terminating-applications.html "Samsung terminating applications guide"
+
+[9]: https://developer.samsung.com/smarttv/develop/api-references/tizen-web-device-api-references/application-api.html "Samsung Application API"
+
+[10]: https://github.com/reisxd/TizenBrew/blob/main/tizenbrew-app/TizenBrew/tizenbrew-ui/src/main.jsx "TizenBrew host Return handler"
+
+[11]: https://github.com/reisxd/TizenBrew/blob/main/tizenbrew-app/TizenBrew/tizenbrew-ui/src/components/WebSocketClient.js "TizenBrew WebSocket client events"
+
+[12]: https://github.com/reisxd/TizenBrew/blob/main/tizenbrew-app/TizenBrew/service-nextgen/service/utils/wsCommunication.js "TizenBrew service event definitions"
 
 [5]: https://github.com/reisxd/TizenBrew/blob/main/tizenbrew-app/TizenBrew/tizenbrew-ui/src/pages/ModuleManager.jsx "TizenBrew Module Manager source"
 

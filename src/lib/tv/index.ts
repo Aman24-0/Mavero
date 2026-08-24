@@ -3,6 +3,7 @@ export {
   exitApplication,
   hasTizenApplicationAPI,
   isTizen,
+  isTizenBrewHostedModule,
   registerRemoteKeys,
   type ExitApplicationResult,
   type TizenKeyRegistrationResult

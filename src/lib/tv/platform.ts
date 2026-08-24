@@ -22,7 +22,7 @@ type TizenGlobal = {
 };
 
 export type ExitApplicationResult =
-  | { ok: true; reason: 'exited' }
+  | { ok: true; reason: 'host-returned' | 'native-requested' }
   | { ok: false; reason: 'unavailable' | 'failed'; error?: unknown };
 
 function getTizen(): TizenGlobal | null {
@@ -32,6 +32,31 @@ function getTizen(): TizenGlobal | null {
   if (!candidate || typeof candidate !== 'object') return null;
 
   return candidate as TizenGlobal;
+}
+
+/**
+ * TizenBrew application modules are pages hosted inside TizenBrew's WebView,
+ * not standalone signed Tizen applications. The bootstrap adds this marker so
+ * the TV layer can use the host's existing history-return path instead of
+ * claiming that a module can terminate its host application directly.
+ */
+export function isTizenBrewHostedModule(): boolean {
+  if (typeof globalThis === 'undefined' || typeof globalThis.location === 'undefined') return false;
+
+  try {
+    return new URL(globalThis.location.href).searchParams.get('tizenbrew') === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function canReturnToTizenBrewHost(): boolean {
+  return (
+    isTizenBrewHostedModule() &&
+    typeof globalThis.history !== 'undefined' &&
+    typeof globalThis.history.back === 'function' &&
+    globalThis.history.length > 1
+  );
 }
 
 export function isTizen(): boolean {
@@ -53,12 +78,28 @@ export function canExitApplication(): boolean {
   }
 }
 
+/**
+ * Exit from the correct ownership boundary. In TizenBrew, Mavero is a hosted
+ * page and the supported path exposed by the current host is history.back().
+ * Only a standalone Tizen application uses Application.exit().
+ */
 export function exitApplication(): ExitApplicationResult {
+  if (isTizenBrewHostedModule()) {
+    if (!canReturnToTizenBrewHost()) return { ok: false, reason: 'unavailable' };
+
+    try {
+      globalThis.history.back();
+      return { ok: true, reason: 'host-returned' };
+    } catch (error) {
+      return { ok: false, reason: 'failed', error };
+    }
+  }
+
   if (!canExitApplication()) return { ok: false, reason: 'unavailable' };
 
   try {
     getTizen()?.application?.getCurrentApplication?.()?.exit?.();
-    return { ok: true, reason: 'exited' };
+    return { ok: true, reason: 'native-requested' };
   } catch (error) {
     return { ok: false, reason: 'failed', error };
   }

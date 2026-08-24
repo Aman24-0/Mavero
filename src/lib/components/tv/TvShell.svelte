@@ -4,6 +4,7 @@
     TVFocusCoordinator,
     canExitApplication,
     createTVNavigation,
+    isTizenBrewHostedModule,
     exitApplication,
     getTVRemoteAction,
     isTizen,
@@ -43,7 +44,11 @@
   onMount(() => {
     coordinator = new TVFocusCoordinator(root);
     coordinator.initialize('tv-nav-home');
-    exitCapability = isTizen() && canExitApplication() ? 'Tizen exit API available' : 'Browser-safe mode';
+    exitCapability = isTizenBrewHostedModule()
+      ? 'TizenBrew host-return mode'
+      : isTizen() && canExitApplication()
+        ? 'Tizen standalone exit API available'
+        : 'Browser-safe mode';
 
     const handleKeydown = (event: KeyboardEvent) => {
       const action = getTVRemoteAction(event as TVRemoteEvent);
@@ -118,8 +123,17 @@
 
   function confirmExit() {
     const result = exitApplication();
-    if (result.ok) {
-      statusMessage = 'Native Tizen exit requested.';
+    if (result.ok && result.reason === 'host-returned') {
+      exitDialogOpen = false;
+      previousFocusId = null;
+      statusMessage = 'Returning to the TizenBrew host.';
+      return;
+    }
+
+    if (result.ok && result.reason === 'native-requested') {
+      exitDialogOpen = false;
+      previousFocusId = null;
+      statusMessage = 'Native Tizen exit requested for the standalone application.';
       return;
     }
 

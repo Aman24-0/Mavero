@@ -28,6 +28,7 @@
         }
         try {
           const target = new URL('/tv', origin);
+          target.searchParams.set('tizenbrew', '1');
           window.location.replace(target.href);
         } catch {
           status.textContent = 'The configured Mavero TV origin is invalid.';
