@@ -13,7 +13,7 @@ Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 implementa
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
 | Samsung TV hardware QA | **PARTIAL PASS reported; explicit Exit FAIL; viewport issue recorded** |
 | Branch | `feature/tizen-tv` |
-| Commit | Initial host-aware exit-fix commit object `6f9f079a27633a2ed2637a0b754acb10599b9437`; final amended object is recorded in the handoff |
+| Commit | Host-aware exit-fix final commit `aa649f8243f9ae6e98d92aa6e61f0119990cd3f4`; this retest-identifier update began as `9bc7e38dfe957d9b13d4598a9e56e44861abb9dd` and is amended once for the final self-reference |
 | Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; exit-fix update pending push; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
@@ -267,10 +267,12 @@ The production site remains separate at `https://mavero1.netlify.app/`. The depl
 
 **Validation performed:** `pnpm check`, `pnpm test`, `pnpm build`, `git diff --check`, normal Web/PWA changed-path inspection, `/tv` browser loading, TV metadata validation, and browser-safe no-Tizen execution all passed. Local hosted-mode browser testing rendered `TizenBrew host-return mode`, opened the exit dialog, and returned to the healthy prior route without a runtime exception. No Phase 1 completion claim is made.
 
+**Test module identifier:** `Aman24-0/Mavero@aa649f8243f9ae6e98d92aa6e61f0119990cd3f4`
+
 **Next action:** Test the updated hosted-module exit flow on the target Samsung TV. Confirm that root Back opens the dialog, Cancel restores Mavero, and Exit returns through TizenBrew’s host history path and terminates/leaves the host correctly. Record the result as `PASS`, `FAIL`, or `BLOCKED`. Phase 2 must not start until the explicit Exit behavior is verified.
 
 **Branch:** `feature/tizen-tv`
 **Deployment URL:** `https://feature-tizen-tv--mavero1.netlify.app/`
 **Effective TV URL:** `https://feature-tizen-tv--mavero1.netlify.app/tv?tizenbrew=1`
-**Commit:** Initial host-aware exit-fix commit object before final self-reference amend: `6f9f079a27633a2ed2637a0b754acb10599b9437`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Commit:** Host-aware exit-fix final commit `aa649f8243f9ae6e98d92aa6e61f0119990cd3f4`; this retest-identifier update began as `9bc7e38dfe957d9b13d4598a9e56e44861abb9dd` and is amended once for the final self-reference.
 **Merge/deployment status:** Push only to `origin/feature/tizen-tv`; do not merge to `main`; no production Netlify change.
