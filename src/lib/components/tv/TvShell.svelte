@@ -18,6 +18,7 @@
   import TvLoading from './TvLoading.svelte';
   import TvMediaRail from './TvMediaRail.svelte';
   import TvNav from './TvNav.svelte';
+  import TvSearch, { type TvSearchCategory } from './TvSearch.svelte';
 
   type ActionTarget = HTMLElement & { dataset: DOMStringMap };
   type AsyncState = 'loading' | 'ready' | 'error';
@@ -54,6 +55,17 @@
   let exitCapability = $state('Browser-safe mode');
   let lastActivationKey = '';
   let lastActivationAt = 0;
+
+  let searchQuery = $state('');
+  let searchCategory = $state<TvSearchCategory>('all');
+  let searchResults = $state<MediaItem[]>([]);
+  let searchKeyboardOpen = $state(false);
+  let searchSubmitted = $state(false);
+  let searchLoading = $state(false);
+  let searchError = $state('');
+  let searchStatusMessage = $state('Open Edit query to begin.');
+  let searchController: AbortController | undefined;
+  let searchRequestSequence = 0;
 
   const navItems: Array<{ id: string; label: string; screen: TVScreen }> = [
     { id: 'tv-nav-home', label: 'Home', screen: 'home' },
@@ -97,6 +109,7 @@
     window.addEventListener('keydown', handleKeydown);
     return () => {
       window.removeEventListener('keydown', handleKeydown);
+      searchController?.abort();
       coordinator.destroy();
     };
   });
@@ -111,8 +124,30 @@
       return;
     }
 
+    if (screen === 'search' && searchKeyboardOpen) {
+      searchKeyboardOpen = false;
+      searchStatusMessage = 'Keyboard closed. Query preserved.';
+      restoreAfterRender(['tv-search-input', 'tv-search-submit', 'tv-search-category-all']);
+      return;
+    }
+
+    if (screen === 'search' && (searchSubmitted || searchResults.length || searchError)) {
+      searchRequestSequence += 1;
+      searchController?.abort();
+      searchController = undefined;
+      searchSubmitted = false;
+      searchResults = [];
+      searchError = '';
+      searchLoading = false;
+      searchStatusMessage = 'Search cleared. Query preserved for editing.';
+      restoreAfterRender(['tv-search-input', 'tv-search-category-all', 'tv-nav-search']);
+      return;
+    }
+
+    const leavingScreen = screen;
     const previous = navigation.goBack();
     if (previous) {
+      if (leavingScreen === 'search') clearSearchUrl();
       screen = previous.screen;
       asyncState = discover.errorMessage && !hasDiscoverContent(discover) ? 'error' : 'ready';
       statusMessage = `Returned to ${screenLabel(screen)}.`;
@@ -181,6 +216,9 @@
       screen = nextScreen;
       asyncState = 'ready';
       statusMessage = `${screenLabel(nextScreen)} is ready for remote navigation.`;
+      if (nextScreen === 'search') {
+        searchStatusMessage = searchSubmitted ? 'Search state preserved.' : 'Open Edit query to begin.';
+      }
       return;
     }
 
@@ -213,7 +251,132 @@
     statusMessage = `Selected ${item.title}. Detail actions are not wired in this Discover slice.`;
   }
 
+  function searchTypeParam(category: TvSearchCategory) {
+    return category === 'all' ? undefined : category;
+  }
+
+  function clearSearchUrl() {
+    if (typeof globalThis.location === 'undefined') return;
+    const url = new URL(globalThis.location.href);
+    url.searchParams.delete('q');
+    url.searchParams.delete('type');
+    globalThis.history.replaceState(globalThis.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  function updateSearchUrl() {
+    if (typeof globalThis.location === 'undefined') return;
+    const url = new URL(globalThis.location.href);
+    if (searchQuery.trim()) url.searchParams.set('q', searchQuery.trim());
+    else url.searchParams.delete('q');
+    const type = searchTypeParam(searchCategory);
+    if (type) url.searchParams.set('type', type);
+    else url.searchParams.delete('type');
+    globalThis.history.replaceState(globalThis.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  async function runSearch(restoreIds?: string[]) {
+    const normalized = searchQuery.trim();
+    updateSearchUrl();
+    if (!normalized) {
+      searchSubmitted = false;
+      searchResults = [];
+      searchError = '';
+      searchLoading = false;
+      searchStatusMessage = 'Enter a title before searching.';
+      restoreAfterRender(['tv-search-input', 'tv-search-category-all']);
+      return;
+    }
+
+    const requestId = ++searchRequestSequence;
+    searchController?.abort();
+    const controller = new AbortController();
+    searchController = controller;
+    searchSubmitted = true;
+    searchLoading = true;
+    searchError = '';
+    searchStatusMessage = `Searching for “${normalized}”…`;
+    restoreAfterRender(restoreIds?.length ? restoreIds : ['tv-search-input', 'tv-search-category-all']);
+
+    try {
+      const params = new URLSearchParams({ q: normalized });
+      const type = searchTypeParam(searchCategory);
+      if (type) params.set('type', type);
+      const response = await fetch(`/api/content/search?${params.toString()}`, { signal: controller.signal });
+      const payload = await response.json() as { ok?: boolean; items?: MediaItem[]; error?: { message?: string } };
+      if (requestId !== searchRequestSequence || controller.signal.aborted) return;
+      if (!response.ok || !payload.ok) throw new Error(payload.error?.message || 'Search is temporarily unavailable.');
+      searchResults = Array.isArray(payload.items) ? payload.items.slice(0, 24) : [];
+      searchStatusMessage = searchResults.length
+        ? `${searchResults.length} result${searchResults.length === 1 ? '' : 's'} found.`
+        : 'No matching stories. Try another title or category.';
+    } catch (error) {
+      if (controller.signal.aborted || requestId !== searchRequestSequence) return;
+      searchError = error instanceof Error ? error.message : 'Search is temporarily unavailable.';
+      searchResults = [];
+      searchStatusMessage = 'Search failed. Retry or edit the query.';
+    } finally {
+      if (requestId !== searchRequestSequence) return;
+      searchLoading = false;
+      searchController = undefined;
+      if (searchError) {
+        restoreAfterRender(['tv-retry', 'tv-search-input', 'tv-search-category-all']);
+      } else if (restoreIds?.length) {
+        restoreAfterRender(restoreIds);
+      } else if (searchResults[0]) {
+        restoreAfterRender([`tv-media-tv-search-results-${searchResults[0].id}`, 'tv-search-input', 'tv-search-category-all']);
+      } else {
+        restoreAfterRender(['tv-search-input', 'tv-search-category-all']);
+      }
+    }
+  }
+
+  function openSearchKeyboard() {
+    searchKeyboardOpen = true;
+    searchStatusMessage = 'Use Arrow keys and Enter to build the query.';
+    restoreAfterRender(['tv-search-key-a', 'tv-search-input']);
+  }
+
+  function closeSearchKeyboard() {
+    searchKeyboardOpen = false;
+    searchStatusMessage = 'Keyboard closed. Query preserved.';
+    restoreAfterRender(['tv-search-input', 'tv-search-submit', 'tv-search-category-all']);
+  }
+
+  function handleSearchKey(key: string) {
+    if (key === 'backspace') searchQuery = searchQuery.slice(0, -1);
+    else if (key === 'clear') searchQuery = '';
+    else if (searchQuery.length < 120) searchQuery += key;
+    searchStatusMessage = searchQuery ? `Query: ${searchQuery}` : 'Query is empty.';
+  }
+
+  function submitSearch() {
+    searchKeyboardOpen = false;
+    void runSearch(['tv-search-input', 'tv-search-category-all']);
+  }
+
+  function changeSearchCategory(nextCategory: TvSearchCategory, focusId: string) {
+    searchCategory = nextCategory;
+    searchStatusMessage = `Category: ${searchCategoryLabel(nextCategory)}.`;
+    if (searchQuery.trim()) void runSearch([focusId]);
+    else restoreAfterRender([focusId]);
+  }
+
+  function retrySearch() {
+    void runSearch(['tv-search-input', 'tv-search-category-all']);
+  }
+
+  function handleSearchSelect(item: MediaItem, event: MouseEvent, focusId: string) {
+    selectedTitle = item.title;
+    searchStatusMessage = `Selected ${item.title}. Detail actions are reserved for a later TV phase.`;
+    handleMediaSelect(item, event, focusId);
+  }
+
+  function searchCategoryLabel(value: TvSearchCategory) {
+    return value === 'all' ? 'All / Search' : value === 'series' ? 'Shows' : value[0].toUpperCase() + value.slice(1) + (value === 'movie' ? 's' : '');
+  }
+
   function restoreAfterRender(ids: Array<string | null>) {
+    if (!coordinator) return;
     void tick().then(() => {
       const restore = (attempt = 0) => {
         if (coordinator.restoreFirst(ids)) return;
@@ -246,14 +409,14 @@
 
     <section class="tv-hero" aria-labelledby="tv-shell-title">
       <div>
-        <p class="eyebrow">Phase 3 / Discover TV experience</p>
+        <p class="eyebrow">Phase {screen === 'search' ? '4 / Search' : '3 / Discover'} TV experience</p>
         <h1 id="tv-shell-title">Mavero, made for the big screen.</h1>
-        <p class="hero-copy">Real Discover content through the existing server contract, presented with remote-first focus and TV-sized targets.</p>
+        <p class="hero-copy">Real Mavero data and remote-first controls, presented with TV-sized targets and predictable focus.</p>
       </div>
       <div class="hero-status" aria-live="polite">
         <span class="status-label">Current section</span>
         <strong>{screenLabel(screen)}</strong>
-        <span>{selectedTitle ? `Selected: ${selectedTitle}` : discover.errorMessage ?? statusMessage}</span>
+        <span>{selectedTitle ? `Selected: ${selectedTitle}` : screen === 'search' ? searchStatusMessage : discover.errorMessage ?? statusMessage}</span>
       </div>
     </section>
 
@@ -272,12 +435,32 @@
           <TvMediaRail title="Anime" eyebrow="Discover / anime" railId="tv-rail-anime" items={discover.anime} onSelect={handleMediaSelect} />
         {/if}
       </section>
+    {:else if screen === 'search'}
+      <section class="tv-section tv-search-section" aria-label="TV Search">
+        <TvSearch
+          query={searchQuery}
+          category={searchCategory}
+          results={searchResults}
+          keyboardOpen={searchKeyboardOpen}
+          submitted={searchSubmitted}
+          loading={searchLoading}
+          errorMessage={searchError}
+          statusMessage={searchStatusMessage}
+          onOpenKeyboard={openSearchKeyboard}
+          onCloseKeyboard={closeSearchKeyboard}
+          onKeyPress={handleSearchKey}
+          onSubmit={submitSearch}
+          onCategoryChange={changeSearchCategory}
+          onRetry={retrySearch}
+          onSelect={handleSearchSelect}
+        />
+      </section>
     {:else}
       <section class="tv-section" aria-labelledby="tv-placeholder-title">
         <div class="placeholder-panel">
           <p class="eyebrow">TV roadmap placeholder</p>
           <h2 id="tv-placeholder-title">{screenLabel(screen)} is ready for a later TV phase.</h2>
-          <p>Phase 3 connects Discover data first. This route stays remote-safe without duplicating the Web/PWA feature before its planned TV phase.</p>
+          <p>Phase 4 connects Search data first. This route stays remote-safe without duplicating the Web/PWA feature before its planned TV phase.</p>
           <button class="tv-focusable tv-action-button" data-tv-focusable="true" data-tv-focus-id="tv-placeholder-action" data-tv-focus-group="tv-placeholder" data-tv-action="placeholder" type="button" onclick={handleAction}>Keep browsing Home</button>
         </div>
       </section>
@@ -323,6 +506,7 @@
   .hero-status span:last-child { color: var(--tv-muted); font-size: .8rem; line-height: 1.5; }
   .tv-section { padding: 44px 6px 0; }
   .tv-discover { padding-top: 38px; }
+  .tv-search-section { padding-top: 0; }
   .placeholder-panel { display: grid; max-width: 760px; gap: 12px; padding: 34px; border: 1px solid var(--tv-line); border-radius: 17px; background: var(--tv-surface); }
   .placeholder-panel h2 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.5rem); letter-spacing: -.05em; }
   .placeholder-panel p:not(.eyebrow) { max-width: 620px; margin: 0; color: var(--tv-muted); line-height: 1.6; }

@@ -43,13 +43,14 @@ navigation.reset();
 assert.equal(navigation.depth, 0);
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
 
-const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.server.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvMediaRail.svelte', import.meta.url), 'utf8'),
-  readFile(new URL('../src/lib/components/tv/TvHero.svelte', import.meta.url), 'utf8')
+  readFile(new URL('../src/lib/components/tv/TvHero.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvSearch.svelte', import.meta.url), 'utf8')
 ]);
 
 assert.match(focusSource, /tvFocusGroup/);
@@ -73,6 +74,19 @@ assert.match(routeServerSource, /loadDiscoverData/);
 assert.match(mediaRailSource, /MediaItem/);
 assert.match(mediaRailSource, /data-tv-focus-group/);
 assert.match(heroSource, /Featured from Discover/);
-assert.match(shellSource, /Phase 3 connects Discover data first/);
+assert.match(shellSource, /Phase 4 connects Search data first/);
+assert.match(shellSource, /TvSearch/);
+assert.match(shellSource, /searchController/);
+assert.match(shellSource, /searchRequestSequence/);
+assert.match(shellSource, /api\/content\/search/);
+assert.match(shellSource, /searchKeyboardOpen/);
+assert.match(shellSource, /searchCategory/);
+assert.match(searchSource, /TvSearchCategory/);
+assert.match(searchSource, /tv-search-keyboard/);
+assert.match(searchSource, /tv-search-categories/);
+assert.match(searchSource, /tv-search-input/);
+assert.match(searchSource, /tv-search-submit/);
+assert.match(searchSource, /Back closes/);
+assert.match(searchSource, /No matching stories/);
 
-console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, and real Discover wiring.');
+console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, real Discover wiring, and TV Search wiring.');
