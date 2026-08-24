@@ -2,18 +2,18 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search is now authorized. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has now confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are implementation-complete with Samsung Phase 5 QA pending. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
 
 | Field | Status |
 |---|---|
-| Current phase | Phase 4 — Search TV Experience |
+| Current phase | Phase 5 — TV Search Polish + Native IME Investigation |
 | Phase 0 status | **COMPLETE** |
-| Tizen implementation | **Phase 3 complete; Phase 4 Search in progress** |
+| Tizen implementation | **Phase 5 implementation complete; Samsung Phase 5 QA pending** |
 | Phase 1 | **COMPLETE — owner-confirmed real-TV validation passed** |
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
-| Samsung TV hardware QA | **Phase 1, Phase 2, and Phase 3 PASS reported by owner** |
+| Samsung TV hardware QA | **Phase 1, Phase 2, Phase 3, and Phase 4 PASS reported by owner; Phase 5 pending** |
 | Branch | `feature/tizen-tv` |
-| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9` |
+| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 pre-amend commit is `384428acf383de9fe5420b80478fd1d9acf6aa61` |
 | Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; Phase 2 work stays on this branch; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
@@ -392,13 +392,13 @@ This entry records the owner’s observations only. No timing, memory, console, 
 
 **Date:** 24 August 2026
 **Phase:** Phase 4 — Search TV Experience
-**Status:** **IMPLEMENTATION COMPLETE — Samsung Phase 4 hardware QA pending owner execution.**
+**Status:** **COMPLETE — implementation and Samsung hardware QA passed by owner.**
 
 **Gate:** Phase 3 is COMPLETE. The owner confirmed Samsung Phase 3 QA PASS on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`, covering launch, real Discover/Home, hero, Anime posters/metadata, Movies/Series unavailable state, horizontal/vertical navigation, focus/navigation, Back behavior, root exit confirmation, hosted exit, and reopen flow.
 
 **Objective:** Build the first real TV Search experience on the isolated `/tv` route with a Samsung-safe query-entry approach, query submission, loading/results/empty/error states, remote-focusable filters for All/Movies/Shows/Anime, deterministic result focus, and predictable Back behavior.
 
-**Architecture boundary:** Inspect and reuse the existing Search server/content contracts. Keep the normal Web/PWA `/search` route unchanged. Preserve the TV shell, focus coordinator, stable focus IDs/groups, normalized remote adapter, logical Back stack, hosted TizenBrew exit adapter, and TV loading/error primitives. Do not begin Phase 5 or touch details, My List data, Watch Now, player/AVPlay/media controls, providers/resolver, auth/Supabase, PWA/service worker, production Netlify configuration, or `main`.
+**Architecture boundary:** Inspect and reuse the existing Search server/content contracts. Keep the normal Web/PWA `/search` route unchanged. Preserve the TV shell, focus coordinator, stable focus IDs/groups, normalized remote adapter, logical Back stack, hosted TizenBrew exit adapter, and TV loading/error primitives. Phase 4 is complete. Details, My List data, Watch Now, player/AVPlay/media controls, providers/resolver, auth/Supabase, PWA service worker, production Netlify configuration, and `main` remain untouched.
 
 **Implementation completed:** Added `src/lib/components/tv/TvSearch.svelte` with a remote-safe on-screen keyboard, visible query display, Search action, All / Search, Movies, Shows, and Anime filters, result rail, loading, empty, error, and Retry states. Updated `src/lib/components/tv/TvShell.svelte` with shared `/api/content/search` requests, request cancellation/stale-response protection, query/type URL state, local Search Back behavior, URL cleanup on return to Home, and Search composition. Extended `scripts/tv_phase2_contract_test.ts` to protect the Search seam and focus groups. Updated `docs/tizen-tv/PHASE_3_REPORT.md` with the owner-confirmed Phase 3 Samsung PASS and added `docs/tizen-tv/PHASE_4_REPORT.md`.
 
@@ -406,15 +406,58 @@ This entry records the owner’s observations only. No timing, memory, console, 
 
 **Browser QA:** PASS on the local production preview. Verified Home → Search, the remote on-screen keyboard, query entry, Anime filter and 18 real results for `ONE`, result focus and Enter selection, explicit empty results, controlled network error with focusable Retry, successful Retry recovery, local Back state unwinding, Search → Home focus restoration, root Exit dialog and Cancel, no observed browser runtime exception, and query URL cleanup. Final `/` and `/search` smoke checks returned HTTP 200 and rendered the unchanged Web/PWA AppShell and normal Search UI separately from `/tv`. Detailed checkpoints are retained externally at `/home/ubuntu/mavero-audit/PHASE_4_BROWSER_QA.md`.
 
-**Samsung TV QA:** **PENDING owner execution for Phase 4.** The owner-confirmed Phase 3 PASS remains complete for Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`; no Phase 4 hardware result is claimed.
+**Samsung TV QA:** **PASS — owner-confirmed on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.** The owner confirmed the Phase 4 Search experience on the target TV, including the reported Search behavior, navigation, and hardware-specific results. No Phase 5 hardware result is claimed here.
 
 **Known limitations:** Native Samsung IME is not used; the phase provides a TV-only on-screen keyboard without undocumented APIs. Search query state is local to the TV shell session and is not account-synchronized. OTT/genre/sort controls remain deferred because this phase implements only the roadmap-required content categories. Result selection reports feedback only; Detail, My List, player, providers/resolver, auth, PWA, production Netlify, and performance-phase work remain out of scope.
 
 **Unresolved issues:** None blocking in browser QA. Samsung-specific IME usability, image decoding, network timing, long-session memory, and provider behavior remain hardware/deployment validation items.
 
-**Next step:** Stage and commit the Phase 4 implementation and documentation as one commit, push only to `origin/feature/tizen-tv`, record the exact immutable module identifier, and hand the Samsung Phase 4 checklist to the owner. Do not begin Phase 5.
+**Next step:** Begin Phase 5 TV Search polish and native-IME investigation. Do not begin Phase 6.
 
 **Branch:** `feature/tizen-tv`
-**Commit:** Pending Phase 4 implementation commit.
+**Commit:** `cfcb881432987d94d2fac8a3ac6d98267ef382af`
 **Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
 **Merge status:** Phase 4 work remains on `feature/tizen-tv`; not merged to `main`; production remains unchanged.
+
+## Phase 5 — TV Search Polish + Native IME Investigation
+
+**Date:** 24 August 2026
+**Phase:** Phase 5 — TV Search Polish + Native IME Investigation
+**Status:** **IMPLEMENTATION COMPLETE — Samsung Phase 5 hardware QA pending owner execution.**
+
+**Gate:** Phase 4 Samsung hardware QA is **COMPLETE / PASS by owner** on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. Phase 6 is not started.
+
+**Objective:** Fix deterministic vertical TV focus movement, improve TV Search readability from 10-foot distance, and investigate whether Samsung’s native system IME can operate inside the TizenBrew-hosted Mavero module without replacing the working custom keyboard or adding undocumented APIs.
+
+**Files changed:**
+
+- `src/lib/tv/focus.ts` — added reusable nearest-row vertical candidate selection while preserving the existing horizontal rail scorer.
+- `src/lib/components/tv/TvSearch.svelte` — added scoped Search typography tokens, overflow-safe category/utility labels, and the opt-in native input probe.
+- `src/lib/components/tv/TvShell.svelte` — wired `/tv?ime=1`, native query synchronization, existing Search submission, and input-aware Back handling.
+- `scripts/tv_phase2_contract_test.ts` — added exact cross-section ArrowUp/ArrowDown coverage plus typography/native-input contracts.
+- `docs/tizen-tv/TIZEN_TV_PLAN.md` — updated Phase 5 scope and current roadmap position.
+- `docs/tizen-tv/PHASE_5_REPORT.md` — added the Phase 5 implementation and QA report.
+- `docs/tizen-tv/TIZEN_TV_WORKLOG.md` — this same-change status record.
+
+**Focus-navigation solution:** The coordinator now selects the nearest preceding or succeeding vertical row before resolving horizontal overlap/proximity and center alignment. This fixes the reported Exit-row ArrowUp case where an Anime result could be skipped by another geometrically attractive candidate. Horizontal rail movement remains unchanged, and startup focus, logical Back, and focus restoration remain on the existing paths.
+
+**Typography:** TV-only `clamp()` tokens enlarge category labels, letter/digit keys, Space, Backspace, Clear, Search, Close, and the native probe action. Buttons preserve remote-selectable dimensions, visible focus rings, and ellipsis/overflow protection. No normal Web/PWA typography was changed.
+
+**Native IME investigation:** Added an opt-in real HTML `<input type="text">` at `/tv?ime=1` with stable TV focus IDs, `inputmode="text"`, input/change synchronization, explicit submit, and Back focus restoration. Browser testing confirmed the input and Search wiring, but browser testing cannot determine whether Samsung’s system IME opens inside TizenBrew. No SmartThings result is available. The custom keyboard remains the default fallback. No Samsung native API, undocumented privilege, bridge, host modification, or speculative permission was added.
+
+**Automated validation:** `pnpm check`, the full `pnpm test` chain, the focused TV contract test, and `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` passed. Final whitespace, authorized-scope, TizenBrew metadata, and secret checks also passed before staging.
+
+**Browser QA:** Fresh local production-preview QA passed for `/tv?ime=1`, Search entry, enlarged typography, no horizontal overflow, fallback keyboard, `ONE` + Anime producing 18 real results, Exit-row ArrowUp landing on a Search result, reciprocal ArrowDown returning to `tv-quit`, native input `ONE` synchronization, native input Back restoration, and normal `/` plus `/search` route isolation. Browser QA is not proof of Samsung hardware compatibility.
+
+**Samsung TV QA:** **PENDING owner execution for Phase 5.** Required target remains Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. The owner must test final-commit launch, Search/fallback keyboard, native IME open/type/Back behavior, input/change events, SmartThings if available, focus restoration, cross-section vertical movement, typography/no overflow, all Search states, Back hierarchy, hosted exit, and reopen. No Phase 5 Samsung PASS is claimed.
+
+**Known limitations:** Native IME behavior inside TizenBrew is unknown until real-TV testing. The browser experiment cannot inspect Samsung system-keyboard behavior. SmartThings typing, broader Samsung models, long-session memory, performance, playback, providers, resolver, authentication, PWA, and production configuration remain outside this phase.
+
+**Unresolved issues:** None identified in browser QA. The native IME compatibility question and any Samsung-specific focus, typography, IME, network, or image-decoding behavior remain hardware validation items.
+
+**Next step:** Stage and commit this Phase 5 implementation and documentation as one commit, push only to `origin/feature/tizen-tv`, and hand the exact immutable module identifier plus the Samsung Phase 5 checklist to the owner. Do not begin Phase 6.
+
+**Branch:** `feature/tizen-tv`
+**Commit:** Phase 5 pre-amend implementation commit `384428acf383de9fe5420b80478fd1d9acf6aa61`; final amended object is recorded in the handoff because a commit cannot contain its own final hash.
+**Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
+**Merge status:** Phase 5 remains on `feature/tizen-tv`; not merged to `main`; production remains unchanged.

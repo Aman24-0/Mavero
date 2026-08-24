@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createTVNavigation } from '../src/lib/tv/navigation';
 import { getTVRemoteAction, isBackAction, isNavigationAction } from '../src/lib/tv/remote';
+import { pickVerticalCandidate } from '../src/lib/tv/focus';
 
 function keyEvent(key: string, keyCode?: number) {
   return { key, keyCode, preventDefault() {} } as KeyboardEvent & { keyCode?: number };
@@ -27,6 +28,33 @@ assert.equal(getTVRemoteAction(keyEvent('Exit')), null, 'dedicated Exit must not
 assert.equal(getTVRemoteAction(keyEvent('TVExit')), null, 'dedicated TVExit must not be hijacked');
 assert.equal(isNavigationAction('left'), true);
 assert.equal(isBackAction('back'), true);
+
+const rect = (left: number, top: number, width: number, height: number) => ({
+  left,
+  right: left + width,
+  top,
+  bottom: top + height
+});
+const exitRow = rect(120, 920, 900, 64);
+const animeResult = rect(112, 588, 208, 294);
+const nearbyCategory = rect(420, 520, 230, 58);
+const verticalCandidates = [
+  { id: 'anime-result', rect: animeResult },
+  { id: 'nearby-category', rect: nearbyCategory }
+];
+assert.equal(
+  pickVerticalCandidate(exitRow, 'up', verticalCandidates, (candidate) => candidate.rect)?.id,
+  'anime-result',
+  'ArrowUp from the Exit row should choose the nearest preceding result row'
+);
+assert.equal(
+  pickVerticalCandidate(animeResult, 'down', [
+    { id: 'exit-row', rect: exitRow },
+    { id: 'far-right-control', rect: rect(760, 910, 160, 64) }
+  ], (candidate) => candidate.rect)?.id,
+  'exit-row',
+  'ArrowDown from a result should choose the nearest succeeding row'
+);
 
 const navigation = createTVNavigation();
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
@@ -57,6 +85,8 @@ assert.match(focusSource, /tvFocusGroup/);
 assert.match(focusSource, /restoreFirst/);
 assert.match(focusSource, /scrollIntoView/);
 assert.match(focusSource, /move\(direction: FocusDirection, scope\?: string\)/);
+assert.match(focusSource, /pickVerticalCandidate/);
+assert.match(focusSource, /VERTICAL_ROW_TOLERANCE/);
 assert.match(shellSource, /TvHeader/);
 assert.match(shellSource, /TvNav/);
 assert.match(shellSource, /TvMediaRail/);
@@ -88,5 +118,13 @@ assert.match(searchSource, /tv-search-input/);
 assert.match(searchSource, /tv-search-submit/);
 assert.match(searchSource, /Back closes/);
 assert.match(searchSource, /No matching stories/);
+assert.match(searchSource, /--tv-search-category-font/);
+assert.match(searchSource, /--tv-search-key-font/);
+assert.match(searchSource, /--tv-search-utility-font/);
+assert.match(searchSource, /text-overflow: ellipsis/);
+assert.match(searchSource, /nativeImeExperiment/);
+assert.match(searchSource, /tv-search-native-ime-input/);
+assert.match(searchSource, /type="text"/);
+assert.match(searchSource, /onchange=/);
 
 console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, real Discover wiring, and TV Search wiring.');

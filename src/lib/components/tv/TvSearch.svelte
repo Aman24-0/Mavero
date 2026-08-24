@@ -21,7 +21,11 @@
     onSubmit,
     onCategoryChange,
     onRetry,
-    onSelect
+    onSelect,
+    nativeImeExperiment = false,
+    nativeQuery = '',
+    onNativeQueryInput,
+    onNativeQuerySubmit
   }: {
     query: string;
     category: TvSearchCategory;
@@ -38,6 +42,10 @@
     onCategoryChange: (category: TvSearchCategory, focusId: string) => void;
     onRetry: () => void;
     onSelect: (item: MediaItem, event: MouseEvent, focusId: string) => void;
+    nativeImeExperiment?: boolean;
+    nativeQuery?: string;
+    onNativeQueryInput?: (value: string) => void;
+    onNativeQuerySubmit?: () => void;
   } = $props();
 
   const categoryItems: Array<{ id: TvSearchCategory; label: string }> = [
@@ -133,6 +141,41 @@
     {/if}
   </div>
 
+  {#if nativeImeExperiment}
+    <section class="native-ime-panel" aria-labelledby="native-ime-title">
+      <div class="native-ime-copy">
+        <p class="eyebrow">Phase 5 / Native IME experiment</p>
+        <h3 id="native-ime-title">System keyboard probe.</h3>
+        <p>Focused HTML input only. On Samsung, press OK/Enter and record whether the system keyboard opens inside the TizenBrew-hosted module.</p>
+      </div>
+      <label class="native-ime-field">
+        <span>Native text input</span>
+        <input
+          class="tv-focusable native-ime-input"
+          data-tv-focusable="true"
+          data-tv-focus-id="tv-search-native-ime-input"
+          data-tv-focus-group="tv-search-native-ime"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          maxlength="120"
+          value={nativeQuery}
+          oninput={(event) => onNativeQueryInput?.((event.currentTarget as HTMLInputElement).value)}
+          onchange={(event) => onNativeQueryInput?.((event.currentTarget as HTMLInputElement).value)}
+        />
+      </label>
+      <button
+        class="tv-focusable native-ime-submit"
+        data-tv-focusable="true"
+        data-tv-focus-id="tv-search-native-ime-submit"
+        data-tv-focus-group="tv-search-native-ime"
+        type="button"
+        disabled={!nativeQuery.trim() || loading}
+        onclick={() => onNativeQuerySubmit?.()}
+      >Use query / Search</button>
+    </section>
+  {/if}
+
   <div class="category-panel" role="group" aria-label="Search categories">
     <div class="category-heading">
       <span class="eyebrow">Catalog filter</span>
@@ -180,7 +223,12 @@
 </section>
 
 <style>
-  .tv-search { padding-top: 44px; }
+  .tv-search {
+    --tv-search-category-font: clamp(.88rem, 1.3vw, 1.04rem);
+    --tv-search-key-font: clamp(.94rem, 1.35vw, 1.08rem);
+    --tv-search-utility-font: clamp(.78rem, 1.08vw, .94rem);
+    padding-top: 44px;
+  }
   .search-heading { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr); align-items: end; gap: 30px; padding: 0 6px 28px; border-bottom: 1px solid var(--tv-line); }
   .eyebrow { margin: 0 0 9px; color: var(--tv-accent); font-size: .62rem; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; }
   h2 { max-width: 700px; margin: 0; font-size: clamp(2.2rem, 5vw, 4.6rem); letter-spacing: -.07em; line-height: .98; }
@@ -200,20 +248,29 @@
   .keyboard-panel { display: grid; gap: 9px; margin-top: 18px; padding: 16px; border-top: 1px solid var(--tv-line); }
   .keyboard-heading, .category-heading { display: flex; justify-content: space-between; gap: 15px; color: var(--tv-muted); font-size: .66rem; }
   .keyboard-row { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 8px; }
-  .keyboard-key { min-height: 52px; border: 1px solid var(--tv-line); border-radius: 9px; color: var(--tv-ink); background: rgba(255,255,255,.055); font-size: .85rem; font-weight: 850; cursor: pointer; }
-  .keyboard-key.utility { min-width: 0; font-size: .7rem; }
+  .keyboard-key { min-height: 52px; border: 1px solid var(--tv-line); border-radius: 9px; color: var(--tv-ink); background: rgba(255,255,255,.055); font-size: var(--tv-search-key-font); font-weight: 850; line-height: 1.1; cursor: pointer; }
+  .keyboard-key.utility { min-width: 0; overflow: hidden; font-size: var(--tv-search-utility-font); line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
   .utility-row { grid-template-columns: 1fr 1.25fr 1fr 1fr 1fr; }
   .keyboard-key.search-key { border-color: rgba(255, 62, 94, .62); background: rgba(255, 62, 94, .18); }
+  .native-ime-panel { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr) auto; align-items: end; gap: 14px; margin: 28px 6px 0; padding: 18px; border: 1px dashed rgba(255, 62, 94, .5); border-radius: 15px; background: rgba(255, 62, 94, .06); }
+  .native-ime-copy { min-width: 0; }
+  .native-ime-copy h3 { margin: 0; font-size: clamp(1.15rem, 2vw, 1.55rem); letter-spacing: -.04em; }
+  .native-ime-copy p:last-child { max-width: 600px; margin: 8px 0 0; color: var(--tv-muted); font-size: .78rem; line-height: 1.5; }
+  .native-ime-field { display: grid; gap: 7px; min-width: 0; color: var(--tv-muted); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+  .native-ime-input { width: 100%; min-height: 56px; padding: 0 14px; border: 1px solid var(--tv-line); border-radius: 10px; color: var(--tv-ink); background: rgba(8, 10, 15, .65); font: inherit; font-size: 1rem; letter-spacing: normal; text-transform: none; }
+  .native-ime-submit { min-height: 56px; padding: 0 16px; border: 1px solid rgba(255, 62, 94, .62); border-radius: 10px; color: var(--tv-ink); background: rgba(255, 62, 94, .16); font-size: var(--tv-search-utility-font); font-weight: 850; white-space: nowrap; cursor: pointer; }
+  .native-ime-submit:disabled { cursor: not-allowed; opacity: .42; }
   .category-panel { display: grid; gap: 12px; margin: 28px 6px 0; }
   .category-heading { align-items: end; }
   .category-heading .eyebrow { margin: 0; }
   .category-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-  .category-button { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 0 15px; border: 1px solid var(--tv-line); border-radius: 11px; color: var(--tv-muted); background: rgba(255,255,255,.035); text-align: left; font-size: .78rem; font-weight: 850; cursor: pointer; }
+  .category-button { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 58px; padding: 0 15px; overflow: hidden; border: 1px solid var(--tv-line); border-radius: 11px; color: var(--tv-muted); background: rgba(255,255,255,.035); text-align: left; font-size: var(--tv-search-category-font); font-weight: 850; line-height: 1.15; cursor: pointer; }
   .category-button.active { border-color: rgba(255,62,94,.72); color: var(--tv-ink); background: rgba(255,62,94,.14); }
-  .category-index { color: var(--tv-accent); font-size: .58rem; letter-spacing: .08em; }
+  .category-index { flex: 0 0 auto; color: var(--tv-accent); font-size: .62rem; letter-spacing: .08em; }
+  .category-button > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .search-empty { display: grid; place-items: center; gap: 8px; min-height: 190px; margin: 32px 6px 0; padding: 26px; border: 1px dashed var(--tv-line); border-radius: 15px; color: var(--tv-muted); text-align: center; background: var(--tv-surface); }
   .empty-mark { color: var(--tv-accent); font-size: 1.7rem; font-weight: 850; }
   .search-empty h3 { margin: 0; color: var(--tv-ink); font-size: 1.35rem; }
   .search-empty p { max-width: 520px; margin: 0; font-size: .78rem; line-height: 1.55; }
-  @media (max-width: 800px) { .search-heading { grid-template-columns: 1fr; } .query-row { grid-template-columns: 1fr 1fr; } .query-value { grid-column: 1 / -1; } .category-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .keyboard-heading, .category-heading { align-items: start; flex-direction: column; } }
+  @media (max-width: 800px) { .search-heading { grid-template-columns: 1fr; } .query-row { grid-template-columns: 1fr 1fr; } .query-value { grid-column: 1 / -1; } .native-ime-panel { grid-template-columns: 1fr; align-items: stretch; } .category-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .keyboard-heading, .category-heading { align-items: start; flex-direction: column; } }
 </style>

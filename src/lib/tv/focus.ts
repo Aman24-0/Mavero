@@ -7,8 +7,52 @@ function isVisible(element: HTMLElement): boolean {
   return rect.width > 0 && rect.height > 0 && !element.hidden && !element.matches(':disabled');
 }
 
-function center(rect: DOMRect) {
-  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+type FocusRect = Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>;
+
+function center(rect: FocusRect) {
+  return { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+}
+
+function horizontalGap(currentRect: FocusRect, candidateRect: FocusRect) {
+  if (candidateRect.right < currentRect.left) return currentRect.left - candidateRect.right;
+  if (candidateRect.left > currentRect.right) return candidateRect.left - currentRect.right;
+  return 0;
+}
+
+const VERTICAL_ROW_TOLERANCE = 48;
+
+export function pickVerticalCandidate<T>(
+  currentRect: FocusRect,
+  direction: 'up' | 'down',
+  candidates: T[],
+  getRect: (candidate: T) => FocusRect
+): T | null {
+  const directional = candidates
+    .map((candidate) => ({ candidate, rect: getRect(candidate) }))
+    .map(({ candidate, rect }) => ({
+      candidate,
+      rect,
+      gap: direction === 'up' ? currentRect.top - rect.bottom : rect.top - currentRect.bottom
+    }))
+    .filter(({ gap }) => gap >= -2);
+
+  if (!directional.length) return null;
+
+  // First select the nearest vertical row. This prevents a well-aligned control
+  // in an earlier section from winning over the immediately preceding rail.
+  const nearestGap = Math.min(...directional.map(({ gap }) => Math.max(0, gap)));
+  const row = directional.filter(({ gap }) => gap <= nearestGap + VERTICAL_ROW_TOLERANCE);
+  const currentCenterX = center(currentRect).x;
+
+  return row.sort((a, b) => {
+    const horizontal = horizontalGap(currentRect, a.rect) - horizontalGap(currentRect, b.rect);
+    if (horizontal !== 0) return horizontal;
+
+    const centerDistance = Math.abs(center(a.rect).x - currentCenterX) - Math.abs(center(b.rect).x - currentCenterX);
+    if (centerDistance !== 0) return centerDistance;
+
+    return a.gap - b.gap;
+  })[0]?.candidate ?? null;
 }
 
 export class TVFocusCoordinator {
@@ -146,19 +190,19 @@ export class TVFocusCoordinator {
         if (direction === 'right') return rect.left >= currentRect.right - 2;
         if (direction === 'up') return rect.bottom <= currentRect.top + 2;
         return rect.top >= currentRect.bottom - 2;
-      })
+      });
+
+    if (!isHorizontal) {
+      return pickVerticalCandidate(currentRect, direction, directional, (candidate) => candidate.rect)?.element ?? null;
+    }
+
+    return directional
       .map(({ element, rect, center: candidateCenter }) => {
-        const primary = isHorizontal
-          ? Math.abs(candidateCenter.x - currentCenter.x)
-          : Math.abs(candidateCenter.y - currentCenter.y);
-        const secondary = isHorizontal
-          ? Math.abs(candidateCenter.y - currentCenter.y)
-          : Math.abs(candidateCenter.x - currentCenter.x);
+        const primary = Math.abs(candidateCenter.x - currentCenter.x);
+        const secondary = Math.abs(candidateCenter.y - currentCenter.y);
         const distance = Math.hypot(candidateCenter.x - currentCenter.x, candidateCenter.y - currentCenter.y);
         return { element, score: secondary * 5 + primary + distance * 0.01 };
       })
-      .sort((a, b) => a.score - b.score);
-
-    return directional[0]?.element ?? null;
+      .sort((a, b) => a.score - b.score)[0]?.element ?? null;
   }
 }

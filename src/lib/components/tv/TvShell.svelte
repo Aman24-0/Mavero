@@ -64,6 +64,8 @@
   let searchLoading = $state(false);
   let searchError = $state('');
   let searchStatusMessage = $state('Open Edit query to begin.');
+  let nativeImeExperiment = $state(false);
+  let nativeQuery = $state('');
   let searchController: AbortController | undefined;
   let searchRequestSequence = 0;
 
@@ -77,6 +79,10 @@
   onMount(() => {
     coordinator = new TVFocusCoordinator(root);
     coordinator.initialize('tv-nav-home');
+    const url = new URL(globalThis.location.href);
+    nativeImeExperiment = url.searchParams.get('ime') === '1';
+    nativeQuery = url.searchParams.get('q')?.slice(0, 120) ?? '';
+    if (nativeQuery) searchQuery = nativeQuery;
     exitCapability = isTizenBrewHostedModule()
       ? 'TizenBrew host-return mode'
       : isTizen() && canExitApplication()
@@ -128,6 +134,17 @@
       searchKeyboardOpen = false;
       searchStatusMessage = 'Keyboard closed. Query preserved.';
       restoreAfterRender(['tv-search-input', 'tv-search-submit', 'tv-search-category-all']);
+      return;
+    }
+
+    if (
+      screen === 'search' &&
+      nativeImeExperiment &&
+      document.activeElement instanceof HTMLInputElement &&
+      document.activeElement.dataset.tvFocusId === 'tv-search-native-ime-input'
+    ) {
+      searchStatusMessage = 'Back received. Verify that the Samsung IME closed and input focus is still available.';
+      restoreAfterRender(['tv-search-native-ime-input', 'tv-search-input']);
       return;
     }
 
@@ -346,10 +363,24 @@
     if (key === 'backspace') searchQuery = searchQuery.slice(0, -1);
     else if (key === 'clear') searchQuery = '';
     else if (searchQuery.length < 120) searchQuery += key;
+    nativeQuery = searchQuery;
     searchStatusMessage = searchQuery ? `Query: ${searchQuery}` : 'Query is empty.';
   }
 
+  function handleNativeQueryInput(value: string) {
+    nativeQuery = value.slice(0, 120);
+    searchQuery = nativeQuery;
+    searchStatusMessage = nativeQuery ? `Native input query: ${nativeQuery}` : 'Native input query is empty.';
+  }
+
+  function submitNativeQuery() {
+    searchQuery = nativeQuery;
+    searchKeyboardOpen = false;
+    void runSearch(['tv-search-native-ime-input']);
+  }
+
   function submitSearch() {
+    nativeQuery = searchQuery;
     searchKeyboardOpen = false;
     void runSearch(['tv-search-input', 'tv-search-category-all']);
   }
@@ -453,6 +484,10 @@
           onCategoryChange={changeSearchCategory}
           onRetry={retrySearch}
           onSelect={handleSearchSelect}
+          nativeImeExperiment={nativeImeExperiment}
+          nativeQuery={nativeQuery}
+          onNativeQueryInput={handleNativeQueryInput}
+          onNativeQuerySubmit={submitNativeQuery}
         />
       </section>
     {:else}

@@ -251,7 +251,21 @@ Build:
 
 Avoid making users operate a desktop text field through a TV remote.
 
-### Phase 5 — Detail + My List
+### Phase 5 — TV Search Polish + Native IME Investigation
+
+Preserve all Phase 1–4 behavior while improving the isolated `/tv` Search experience:
+
+- fix deterministic vertical focus movement across Search sections without replacing the reusable coordinator
+- keep horizontal rail navigation and startup/Back focus restoration unchanged
+- improve TV-only typography for category, keyboard, and utility controls without changing Web/PWA fonts
+- investigate Samsung native system IME using an opt-in real HTML input inside the TizenBrew-hosted module
+- verify input/change synchronization, Enter/OK, Back, focus restoration, and SmartThings typing where available
+- retain the custom TV keyboard as the default fallback unless native IME is verified on the target hardware
+- record native IME compatibility or limitation truthfully; do not add undocumented APIs, privileges, bridges, or host changes
+
+Phase 5 must not start Detail, My List data, Watch Now, player/AVPlay, media controls, provider/source selection, resolver changes, authentication, Supabase, PWA/service-worker changes, or performance work.
+
+### Phase 6 — Detail + My List
 
 Adapt:
 - movie detail
@@ -263,7 +277,7 @@ Adapt:
 - series seasons/episodes
 - remotely reachable actions
 
-### Phase 6 — TV player
+### Phase 7 — TV player
 
 High-risk phase. Test:
 - Play/Pause
@@ -506,10 +520,16 @@ Player        EXISTING + tested architecture
 Backend       EXISTING
 Auth          EXISTING
 Admin         EXISTING
-Tizen         NOT STARTED
-Phase 0       NEXT
+Tizen         Phase 4 complete; Phase 5 implementation complete
+Phase 0       COMPLETE
+Phase 1       COMPLETE
+Phase 2       COMPLETE
+Phase 3       COMPLETE
+Phase 4       COMPLETE
+Phase 5       Samsung QA pending owner execution
+Phase 6       NOT STARTED
 ```
 
-**Immediate next task: Phase 0 — Tizen/TizenBrew feasibility and architecture audit.**
+**Immediate next task: Owner Samsung Phase 5 QA on the final immutable `feature/tizen-tv` commit.**
 
-No Tizen UI implementation should begin until Phase 0 documents the technical constraints and exact Phase 1 plan.
+Do not begin Phase 6 until the owner reports the Phase 5 hardware result and explicitly passes the Phase 5 gate.
