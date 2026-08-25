@@ -633,3 +633,14 @@ This entry records the owner’s observations only. No timing, memory, console, 
 **Branch:** `feature/tizen-tv`
 **Commit SHA:** Recorded in the final handoff after commit/push.
 **Merge/deployment status:** Intended for `origin/feature/tizen-tv` only; not merged to `main`; no production deployment or production Netlify mutation.
+
+## Phase 9 Runtime Follow-up — TMDB credential mode
+
+**Date:** 25 August 2026
+**Status:** **ROOT CAUSE CONFIRMED — scoped fix implemented; feature deployment rebuild/owner verification pending**
+
+The owner’s Netlify environment metadata confirmed that `TMDB_BEARER_TOKEN` exists with Builds, Functions, and Runtime scope. The configured value is a 32-character alphanumeric TMDB v3 API key, not a TMDB v4 Read Access Token. Direct TMDB testing showed HTTP 401 / status code 7 when the value was sent as a Bearer token, and HTTP 200 for `/configuration`, `/movie/popular`, and `/tv/popular` when sent as the `api_key` query parameter. The public feature API was returning fixture Movie and Series IDs with `partial: true`, which confirmed that the server was safely catching the authentication failure and falling back.
+
+The fix detects a 32-character TMDB v3 key even when it is stored under `TMDB_BEARER_TOKEN` or `TMDB_READ_ACCESS_TOKEN` and sends it as `api_key`; other values continue through the v4 Bearer path, and explicit `TMDB_API_KEY` remains supported. A local production preview using the configured value returned 20 `tmdb:movie:*` items, 20 `tmdb:series:*` items, and a successful `tmdb:movie:550` Fight Club Detail response. The secret was never printed or added to the repository.
+
+**Validation:** `pnpm check`, focused TV contract, and full `pnpm test` passed before this small credential-mode correction; the local live-token preview passed Movie/Series Discover and Movie Detail probes. A final build and `git diff --check` are required before commit. The owner must wait for the feature branch deployment to rebuild, then hard-refresh `/tv` and verify live Movie/Series rails, Search, Movie Detail with no guide, Series Detail with the guide, and the current Anime rail.

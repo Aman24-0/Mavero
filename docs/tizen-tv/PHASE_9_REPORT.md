@@ -85,3 +85,15 @@ Phase 10 — Nuvio-inspired TV UI redesign remains **PLANNED ONLY**. It must not
 [6]: https://developer.themoviedb.org/reference/discover-tv "TMDB TV Discover"
 [7]: https://developer.themoviedb.org/docs/image-basics "TMDB Image Basics"
 [8]: https://developer.themoviedb.org/docs/faq "TMDB FAQ and Attribution Requirements"
+
+## Netlify runtime diagnosis and follow-up fix
+
+On 25 August 2026, the owner reported that the Netlify-configured TMDB variable was present but Movie and Series rails were still empty. The Netlify project environment metadata confirmed that `TMDB_BEARER_TOKEN` exists as a secret with Builds, Functions, and Runtime scopes. The value is a 32-character alphanumeric TMDB v3 API key. Its value was never printed in the report or debugging output.
+
+The public feature deployment was reachable, but `/api/content/discover/movie` and `/api/content/discover/series` returned fixture IDs with `partial: true` and the warning `Live catalog data is unavailable; showing fallback data.` This proved that the deployed server was taking the safe fallback path. Direct TMDB probes showed the configured value returned HTTP 401 / TMDB status code 7 (`Invalid API key`) when sent as `Authorization: Bearer ...`, but returned HTTP 200 for `/configuration`, `/movie/popular`, and `/tv/popular` when sent as the `api_key` query parameter. The credential was valid; the authentication mode was wrong.
+
+The scoped correction is in `src/lib/server/content/adapters/tmdb.ts`: a 32-character alphanumeric value supplied through `TMDB_BEARER_TOKEN` or `TMDB_READ_ACCESS_TOKEN` is treated as a server-only TMDB v3 API key and sent as `api_key`; non-32-character values remain TMDB v4 Bearer tokens. An explicit `TMDB_API_KEY` still takes precedence for API-key mode. This preserves compatibility with the owner’s current Netlify variable name without exposing the secret or changing any authentication, Supabase, provider, resolver, PWA, Web/PWA, production, or `main` behavior.
+
+A local production preview loaded the configured value only into the server process after the fix. `/api/content/discover/movie` returned 20 normalized `tmdb:movie:*` items, `/api/content/discover/series` returned 20 normalized `tmdb:series:*` items, and a Movie Detail request for `tmdb:movie:550` returned a successful TMDB Fight Club record. No credential was emitted by the application or probe.
+
+The final feature deployment must be rebuilt after this commit because changing Netlify environment variables or server credential handling does not retroactively change an already-published function bundle. The owner should then hard-refresh `/tv` and confirm live Movie and Series rails, Search, Detail, and the Series guide on the feature URL. The Netlify dashboard remained stuck loading in the available browser session; therefore no direct function-log stream was claimed. The public API responses and direct TMDB status results are the evidence used for this diagnosis.

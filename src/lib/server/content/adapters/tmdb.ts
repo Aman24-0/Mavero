@@ -158,9 +158,14 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
   };
 }
 
+function isLikelyApiKey(value: string | undefined) {
+  return Boolean(value && /^[a-zA-Z0-9]{32}$/.test(value.trim()));
+}
+
 function requireCredentials() {
-  const token = env.TMDB_BEARER_TOKEN || env.TMDB_READ_ACCESS_TOKEN;
-  const apiKey = env.TMDB_API_KEY;
+  const configuredValues = [env.TMDB_BEARER_TOKEN, env.TMDB_READ_ACCESS_TOKEN].map((value) => value?.trim()).filter((value): value is string => Boolean(value));
+  const token = configuredValues.find((value) => !isLikelyApiKey(value));
+  const apiKey = env.TMDB_API_KEY?.trim() || configuredValues.find((value) => isLikelyApiKey(value));
   if (!token && !apiKey) {
     throw new ContentServiceError('TMDB credentials are not configured.', { code: 'CONFIG_MISSING', status: 503 });
   }
@@ -341,4 +346,4 @@ export async function getTmdbSeason(seriesId: string, seasonNumber: number): Pro
   return value;
 }
 
-export const tmdbInternals = { mapTmdb, image, runtime, genreNames, hasRequiredListMetadata, assertTmdbList, assertTmdbObject };
+export const tmdbInternals = { mapTmdb, image, runtime, genreNames, hasRequiredListMetadata, assertTmdbList, assertTmdbObject, isLikelyApiKey, requireCredentials };

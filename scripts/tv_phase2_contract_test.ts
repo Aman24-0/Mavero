@@ -216,6 +216,8 @@ assert.match(performanceSource, /samples\.length > 64/);
 assert.match(performanceSource, /current\.samples\.shift\(\)/);
 assert.match(tmdbSource, /from '\$env\/dynamic\/private'/, 'TMDB must read credentials through the private server environment');
 assert.match(tmdbSource, /TMDB_BEARER_TOKEN/);
+assert.match(tmdbSource, /function isLikelyApiKey/);
+assert.match(tmdbSource, /configuredValues\.find\(\(value\) => isLikelyApiKey\(value\)\)/);
 assert.match(tmdbSource, /authorization: `Bearer \$\{token\}`/);
 assert.match(tmdbSource, /\/configuration/);
 assert.match(tmdbSource, /imageConfig\.posterSize/);
