@@ -2,7 +2,7 @@
 
 **Phase:** Phase 10 — Nuvio-inspired TV UI redesign
 
-**Status:** **PLANNED — implementation not started.**
+**Status:** **STARTED — first TV-only implementation increment in progress.**
 
 **Target branch:** `feature/tizen-tv` during development; no `main` or production changes until the phase is reviewed and accepted.
 
@@ -19,7 +19,7 @@ This is an **information-architecture and visual-design phase**, not a product-l
 | Large immersive hero | A wide backdrop-led Home hero with a restrained scrim and one primary action |
 | Persistent left navigation | A compact, high-contrast sidebar for Home, Search, My List, and Settings |
 | Continue Watching rail | A first-class rail based on existing local watch-progress records, with progress and remaining-time context |
-| Latest Releases / MyTrakt rail | A distinct release rail with a clear provenance label and horizontal remote browsing |
+| Latest Releases / MyTrakt rail | Reserved until an approved data contract exists; not included in the first increment |
 | Poster-led shelves | Consistent poster ratios, readable title metadata, and stable horizontal rails |
 | Minimal hero text | Title, small metadata, and one concise description/action rather than a dense detail panel |
 | Blue/cyan focus treatment | A high-contrast cyan/blue focus border and glow that remains visible at ten feet |
@@ -49,7 +49,7 @@ This rail must be read-only with respect to progress. It must not change the pro
 
 ### 4. Latest Releases / MyTrakt rail
 
-Add a distinct rail with the visible label `Latest releases — MyTrakt` only when a reviewed data contract exists. The first implementation should define whether this is an existing Mavero source, a fixture, or an explicitly approved API; it must not silently introduce a new external integration. If the data source is not available, the rail should be omitted or show the existing truthful empty/error treatment rather than fabricated titles.
+Add a distinct rail with the visible label `Latest releases — MyTrakt` only when a reviewed data contract exists. The first implementation must not add this rail. A future increment may define whether it is an existing Mavero source, a fixture, or an explicitly approved API; it must not silently introduce a new external integration. If the data source is not available, the rail should be omitted or show the existing truthful empty/error treatment rather than fabricated titles.
 
 The rail must use the same horizontal non-wrapping navigation model as `TvMediaRail.svelte`, preserve stable `tv-media-*` focus IDs, retain lazy loading for later cards, and avoid a hard six-item cap. Any source-specific work belongs to a separately approved data phase, not to the visual redesign itself.
 
@@ -119,7 +119,7 @@ Measure the redesigned Home and Detail surfaces against the Phase 8 browser base
 
 ## Explicit non-goals
 
-This phase does not implement TMDB, MyTrakt, provider/source selection, resolver changes, AVPlay, authentication, Supabase schema/RLS changes, PWA changes, normal Web/PWA redesign, production deployment, or a merge to `main`. It does not change the Player’s playback contract or claim that a visual resemblance to Nuvio provides any licensing or product endorsement.
+This phase does not implement new TMDB integration, MyTrakt/latest releases without an approved data contract, provider/source selection, resolver changes, AVPlay, authentication, Supabase schema/RLS changes, PWA changes, normal Web/PWA redesign, production deployment, or a merge to `main`. It does not change the Player’s playback contract or claim that a visual resemblance to Nuvio provides any licensing or product endorsement.
 
 ## References
 

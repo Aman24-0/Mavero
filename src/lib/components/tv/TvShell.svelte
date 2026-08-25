@@ -15,9 +15,9 @@
   import type { MediaItem } from '$data/content';
   import type { Episode, NormalizedMediaItem, Season } from '$lib/server/content/types';
   import type { WatchlistStatus } from '$lib/client/progress/types';
-  import { getFavoriteStatus, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
+  import { getContinueWatching, getFavoriteStatus, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
-  import { favoriteToMedia } from '$lib/client/progress/presenter';
+  import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
   import TvDetail from './TvDetail.svelte';
@@ -124,6 +124,7 @@
   let detailFavoriteSaving = $state(false);
   let detailSaveError = $state('');
   let myListItems = $state<MediaItem[]>([]);
+  let continueWatchingItems = $state<MediaItem[]>([]);
   let myListLoading = $state(false);
   let myListError = $state('');
   let myListSyncMessage = $state('Local-first library');
@@ -142,6 +143,15 @@
     { id: 'tv-nav-settings', label: 'Settings', screen: 'settings' }
   ];
 
+  async function loadContinueWatching() {
+    try {
+      const records = await getContinueWatching();
+      continueWatchingItems = records.slice(0, 12).map(progressToMedia);
+    } catch {
+      continueWatchingItems = [];
+    }
+  }
+
   onMount(() => {
     coordinator = new TVFocusCoordinator(root);
     coordinator.initialize('tv-nav-home');
@@ -149,6 +159,7 @@
     nativeImeExperiment = url.searchParams.get('ime') === '1';
     nativeQuery = url.searchParams.get('q')?.slice(0, 120) ?? '';
     tvPerformanceEnabled = url.searchParams.get('tvperf') === '1';
+    void loadContinueWatching();
     if (nativeQuery) searchQuery = nativeQuery;
     exitCapability = isTizenBrewHostedModule()
       ? 'TizenBrew host-return mode'
@@ -684,10 +695,11 @@
     myListLoading = true;
     myListError = '';
     try {
-      const [favorites, progress, deletions, persistence] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions(), getLocalPersistenceState()]);
+      const [favorites, progress, deletions, persistence, continueWatching] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions(), getLocalPersistenceState(), getContinueWatching()]);
       if (requestId !== myListRequestSequence) return;
       const local = mergeFavoritesWithProgress(favorites, progress, deletions);
       myListItems = local.map((record) => favoriteToMedia(record, progress));
+      continueWatchingItems = continueWatching.slice(0, 12).map(progressToMedia);
       myListLoading = false;
       myListSyncMessage = persistence.status === 'indexeddb' ? 'Local-first · background sync' : 'Memory fallback · this session';
       restoreAfterRender(['tv-media-tv-my-list-' + (myListItems[0]?.id ?? ''), 'tv-my-list-browse', 'tv-nav-list']);
@@ -753,16 +765,20 @@
   <TvHeader {exitCapability} />
 
   <main class="tv-main" aria-label="Mavero TV shell">
-    <TvNav items={navItems} activeScreen={screen} onActivate={(item, event) => handleAction(event, item.id, `screen:${item.screen}`)} />
+    <div class="tv-layout">
+      <aside class="tv-sidebar" aria-label="TV navigation">
+        <TvNav items={navItems} activeScreen={screen} onActivate={(item, event) => handleAction(event, item.id, `screen:${item.screen}`)} />
+      </aside>
 
-    <section class="tv-hero" aria-labelledby="tv-shell-title">
+      <div class="tv-canvas">
+        <section class="tv-hero" aria-labelledby="tv-shell-title">
       <div>
-        <p class="eyebrow">Phase {screen === 'search' ? '4 / Search' : screen === 'detail' || screen === 'my-list' ? '6 / ' + screenLabel(screen) : screen === 'player' ? '7 / Player' : '3 / Discover'} TV experience</p>
-        <h1 id="tv-shell-title">Mavero, made for the big screen.</h1>
-        <p class="hero-copy">Real Mavero data and remote-first controls, presented with TV-sized targets and predictable focus.</p>
+        <p class="eyebrow">Mavero TV / {screenLabel(screen)}</p>
+        <h1 id="tv-shell-title">Your screen. Your story.</h1>
+        <p class="hero-copy">A focused, remote-first home for the titles you want to watch next.</p>
       </div>
       <div class="hero-status" aria-live="polite">
-        <span class="status-label">Current section</span>
+        <span class="status-label">Now browsing</span>
         <strong>{screenLabel(screen)}</strong>
         <span>{selectedTitle ? `Selected: ${selectedTitle}` : screen === 'search' ? searchStatusMessage : screen === 'home' ? discover.errorMessage ?? statusMessage : statusMessage}</span>
       </div>
@@ -777,6 +793,9 @@
         {:else}
           {#if discover.featured}
             <TvHero item={discover.featured} onSelect={handleMediaSelect} />
+          {/if}
+          {#if continueWatchingItems.length}
+            <TvMediaRail title="Continue Watching" eyebrow="Pick up where you left off" railId="tv-continue-watching" items={continueWatchingItems} onSelect={handleMediaSelect} showProgress />
           {/if}
           <TvMediaRail title="Movies" eyebrow="Discover / films" railId="tv-rail-movies" items={discover.movies} onSelect={handleMediaSelect} />
           <TvMediaRail title="Series" eyebrow="Discover / series" railId="tv-rail-series" items={discover.series} onSelect={handleMediaSelect} />
@@ -839,7 +858,9 @@
         <span class="tmdb-attribution"><a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer"><img src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="TMDB" loading="lazy" decoding="async" /> TMDB</a> · This product uses the <a href="https://www.themoviedb.org" target="_blank" rel="noreferrer">TMDB API</a> but is not endorsed or certified by TMDB.</span>
       </div>
       <button class="tv-focusable quit-button" data-tv-focusable="true" data-tv-focus-id="tv-quit" data-tv-focus-group="tv-footer-actions" data-tv-action="quit" type="button" onclick={handleAction}>Quit Mavero</button>
-    </section>
+        </section>
+      </div>
+    </div>
   </main>
 
   {#if exitDialogOpen}
@@ -859,25 +880,27 @@
 </div>
 
 <style>
-  .tv-page { --tv-bg: #080a0f; --tv-surface: rgba(20, 24, 34, .96); --tv-surface-soft: rgba(255, 255, 255, .075); --tv-line: rgba(255, 255, 255, .18); --tv-muted: #d6dbea; --tv-muted-strong: #eef1f8; --tv-ink: #ffffff; --tv-accent: #ff5270; min-height: 100dvh; color: var(--tv-ink); background: radial-gradient(circle at 82% 0%, rgba(255, 62, 94, .14), transparent 30%), radial-gradient(circle at 0% 90%, rgba(77, 116, 255, .1), transparent 28%), var(--tv-bg); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
-  .tv-main { width: min(100%, 1440px); margin-inline: auto; padding: 14px 56px 52px; }
+  .tv-page { --tv-bg: #060a13; --tv-surface: rgba(17, 25, 42, .96); --tv-surface-soft: rgba(101, 184, 255, .09); --tv-line: rgba(126, 186, 255, .2); --tv-muted: #b9c9df; --tv-muted-strong: #eaf4ff; --tv-ink: #ffffff; --tv-accent: #61e4ff; min-height: 100dvh; color: var(--tv-ink); background: radial-gradient(circle at 85% 0%, rgba(46, 153, 255, .18), transparent 32%), radial-gradient(circle at 0% 75%, rgba(0, 224, 255, .08), transparent 30%), var(--tv-bg); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  .tv-main { width: min(100%, 1600px); margin-inline: auto; padding: 14px 56px 52px; }
+  .tv-layout { display: grid; grid-template-columns: minmax(220px, 250px) minmax(0, 1fr); align-items: start; gap: clamp(28px, 4vw, 58px); }
+  .tv-sidebar, .tv-canvas { min-width: 0; }
   .tv-focusable { outline: none; }
-  .tv-focusable:focus-visible, .tv-focusable[data-tv-focus-id]:focus { border-color: #fff; box-shadow: 0 0 0 4px rgba(255, 62, 94, .8), 0 0 0 8px rgba(255, 62, 94, .16); }
-  .tv-hero { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr); align-items: end; gap: 36px; padding: clamp(48px, 9vw, 118px) 6px 56px; border-bottom: 1px solid var(--tv-line); }
-  .eyebrow { margin: 0 0 10px; color: var(--tv-accent); font-size: .62rem; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; }
-  .tv-hero h1 { max-width: 720px; margin: 0; font-size: clamp(2.8rem, 6vw, 6rem); font-weight: 850; letter-spacing: -.075em; line-height: .96; }
-  .hero-copy { max-width: 680px; margin: 22px 0 0; color: var(--tv-muted); font-size: clamp(1rem, 1.55vw, 1.22rem); font-weight: 650; line-height: 1.65; }
-  .hero-status { display: grid; gap: 8px; padding: 22px; border: 1px solid var(--tv-line); border-radius: 16px; background: var(--tv-surface); }
-  .status-label { color: var(--tv-muted); font-size: .74rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-  .hero-status strong { font-size: 1.35rem; font-weight: 900; }
-  .hero-status span:last-child { color: var(--tv-muted-strong); font-size: .96rem; font-weight: 650; line-height: 1.5; }
-  .tv-section { padding: 44px 6px 0; }
+  .tv-focusable:focus-visible, .tv-focusable[data-tv-focus-id]:focus { border-color: #fff; box-shadow: 0 0 0 4px rgba(71, 221, 255, .88), 0 0 0 8px rgba(49, 122, 255, .24); }
+  .tv-hero { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(230px, .65fr); align-items: end; gap: 28px; padding: 34px 6px 32px; border-bottom: 1px solid var(--tv-line); }
+  .eyebrow { margin: 0 0 10px; color: var(--tv-accent); font-size: .68rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+  .tv-hero h1 { max-width: 720px; margin: 0; font-size: clamp(2.55rem, 5vw, 5.2rem); font-weight: 950; letter-spacing: -.075em; line-height: .96; }
+  .hero-copy { max-width: 620px; margin: 16px 0 0; color: var(--tv-muted); font-size: clamp(1rem, 1.35vw, 1.17rem); font-weight: 700; line-height: 1.55; }
+  .hero-status { display: grid; gap: 8px; padding: 18px; border: 1px solid var(--tv-line); border-radius: 16px; background: linear-gradient(145deg, rgba(23, 42, 70, .94), rgba(14, 20, 34, .96)); }
+  .status-label { color: var(--tv-muted); font-size: .72rem; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
+  .hero-status strong { color: #fff; font-size: 1.28rem; font-weight: 950; }
+  .hero-status span:last-child { color: var(--tv-muted-strong); font-size: .9rem; font-weight: 700; line-height: 1.45; }
+  .tv-section { padding: 34px 6px 0; }
   .tv-discover { padding-top: 38px; }
   .tv-search-section { padding-top: 0; }
   .placeholder-panel { display: grid; max-width: 760px; gap: 12px; padding: 34px; border: 1px solid var(--tv-line); border-radius: 17px; background: var(--tv-surface); }
   .placeholder-panel h2 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.5rem); letter-spacing: -.05em; }
   .placeholder-panel p:not(.eyebrow) { max-width: 620px; margin: 0; color: var(--tv-muted); line-height: 1.6; }
-  .tv-action-button { width: fit-content; padding: 14px 18px; border: 1px solid rgba(255,255,255,.16); border-radius: 11px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: .82rem; font-weight: 800; cursor: pointer; }
+  .tv-action-button { width: fit-content; padding: 14px 18px; border: 1px solid rgba(102, 220, 255, .32); border-radius: 11px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: .9rem; font-weight: 850; cursor: pointer; }
   .tv-footer-actions { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 46px 6px 0; padding-top: 24px; border-top: 1px solid var(--tv-line); }
   .footer-note { display: grid; gap: 5px; max-width: 760px; color: var(--tv-muted); font-size: .9rem; font-weight: 650; line-height: 1.55; }
   .footer-note .eyebrow { margin: 0; }
@@ -894,5 +917,7 @@
   .exit-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 30px; }
   .exit-button { min-width: 138px; padding: 15px 20px; border: 1px solid rgba(255,255,255,.18); border-radius: 11px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: .82rem; font-weight: 800; cursor: pointer; }
   .exit-button.confirm { border-color: var(--tv-accent); color: #fff; background: var(--tv-accent); }
-  @media (max-width: 760px) { .tv-main { padding-inline: 22px; } .tv-hero { grid-template-columns: 1fr; padding-top: 58px; } .tv-footer-actions { align-items: flex-start; flex-direction: column; } .quit-button { width: 100%; } }
+  @media (max-width: 1100px) { .tv-main { padding-inline: 30px; } .tv-layout { grid-template-columns: 210px minmax(0, 1fr); gap: 26px; } }
+  @media (max-width: 900px) { .tv-main { padding-inline: 22px; } .tv-layout { display: block; } .tv-sidebar { margin-bottom: 18px; } }
+  @media (max-width: 760px) { .tv-hero { grid-template-columns: 1fr; padding-top: 30px; } .tv-footer-actions { align-items: flex-start; flex-direction: column; } .quit-button { width: 100%; } }
 </style>

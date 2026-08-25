@@ -160,8 +160,15 @@
           {:else}
             {#key activeSeason}
               <div id="tv-detail-episode-list" class="episode-list" role="list" aria-label={`Season ${activeSeason} episodes`}>
-                {#each activeEpisodes().slice(0, episodesToShow) as episode (episode.id)}
+                {#each activeEpisodes().slice(0, episodesToShow) as episode, episodeIndex (episode.id)}
                   <button class="tv-focusable episode-card" data-tv-focusable="true" data-tv-focus-id={`tv-detail-episode-${episode.season}-${episode.number}`} data-tv-focus-group="tv-detail-episodes" type="button" onclick={(event) => onEpisodeSelect(episode, event)}>
+                    <span class="episode-still" class:missing={!episode.still}>
+                      {#if episode.still}
+                        <img src={episode.still} alt="" loading={episodeIndex < 3 ? 'eager' : 'lazy'} decoding="async" sizes="(max-width: 640px) 28vw, 180px" />
+                      {:else}
+                        <span class="episode-image-fallback" aria-label="Episode image unavailable">No still</span>
+                      {/if}
+                    </span>
                     <span class="episode-number">E{String(episode.number).padStart(2, '0')}</span>
                     <span class="episode-copy"><strong>{episode.title}</strong><span>{episode.runtime ?? 'Runtime unavailable'}{#if episode.airDate} · {episode.airDate}{/if}</span>{#if episode.overview}<small>{episode.overview}</small>{/if}</span>
                     <span class="episode-arrow" aria-hidden="true">→</span>
@@ -219,8 +226,12 @@
   .season-button.active { color: #171019; border-color: #ffd45d; background: #ffd45d; }
   .episode-list { display: grid; gap: 10px; }
   .episode-more { display: block; min-height: 56px; margin-top: 12px; padding: 12px 16px; border: 2px solid var(--tv-line); border-radius: 12px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: 1rem; font-weight: 900; cursor: pointer; }
-  .episode-card { display: grid; grid-template-columns: 72px minmax(0, 1fr) 30px; gap: 18px; align-items: center; width: 100%; min-height: 100px; padding: 16px 20px; border: 1px solid var(--tv-line); border-radius: 13px; color: var(--tv-ink); background: var(--tv-surface); text-align: left; cursor: pointer; }
+  .episode-card { display: grid; grid-template-columns: 150px 72px minmax(0, 1fr) 30px; gap: 18px; align-items: center; width: 100%; min-height: 100px; padding: 12px 20px 12px 12px; border: 1px solid var(--tv-line); border-radius: 13px; color: var(--tv-ink); background: var(--tv-surface); text-align: left; cursor: pointer; }
   .episode-card:hover { background: rgba(255,255,255,.1); }
+  .episode-still { display: grid; width: 150px; aspect-ratio: 16 / 9; overflow: hidden; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 9px; background: linear-gradient(135deg, rgba(93,116,255,.28), rgba(255,82,112,.18)); }
+  .episode-still img { width: 100%; height: 100%; object-fit: cover; }
+  .episode-still.missing { color: var(--tv-detail-muted); }
+  .episode-image-fallback { padding: 6px; font-size: .7rem; font-weight: 850; letter-spacing: .04em; text-align: center; text-transform: uppercase; }
   .episode-number { color: #ffd45d; font-size: 1rem; font-weight: 950; letter-spacing: .08em; }
   .episode-copy { display: grid; gap: 5px; min-width: 0; }
   .episode-copy strong { overflow: hidden; font-size: 1.1rem; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
@@ -229,5 +240,6 @@
   .episode-arrow { color: var(--tv-accent); font-size: 1.4rem; font-weight: 900; }
   .detail-empty { padding: 25px; border: 1px dashed var(--tv-line); border-radius: 14px; color: var(--tv-detail-muted); background: var(--tv-surface); font-size: 1rem; font-weight: 650; }
   @media (max-width: 840px) { .detail-content { grid-template-columns: 150px minmax(0, 1fr); gap: 22px; min-height: 470px; padding: 28px; } .detail-poster { width: 150px; } }
-  @media (max-width: 640px) { .detail-content { grid-template-columns: 105px minmax(0, 1fr); gap: 16px; min-height: 500px; padding: 20px; align-items: end; } .detail-poster { width: 105px; border-radius: 10px; } .detail-copy h1 { font-size: clamp(2rem, 10vw, 3.3rem); } .episode-card { grid-template-columns: 54px minmax(0, 1fr) 24px; gap: 10px; padding-inline: 13px; } .episode-copy small { display: none; } .section-heading { align-items: start; flex-direction: column; } }
+  @media (max-width: 760px) { .episode-card { grid-template-columns: 120px 56px minmax(0, 1fr) 24px; gap: 12px; } .episode-still { width: 120px; } }
+  @media (max-width: 640px) { .detail-content { grid-template-columns: 105px minmax(0, 1fr); gap: 16px; min-height: 500px; padding: 20px; align-items: end; } .detail-poster { width: 105px; border-radius: 10px; } .detail-copy h1 { font-size: clamp(2rem, 10vw, 3.3rem); } .episode-card { grid-template-columns: 88px 42px minmax(0, 1fr) 24px; gap: 8px; padding: 9px 10px 9px 8px; } .episode-still { width: 88px; } .episode-copy small { display: none; } .section-heading { align-items: start; flex-direction: column; } }
 </style>

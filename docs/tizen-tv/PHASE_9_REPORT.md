@@ -1,7 +1,7 @@
 # Mavero Samsung Tizen TV — Phase 9 Report
 
 **Phase:** Phase 9 — TMDB Integration
-**Status:** **IMPLEMENTATION COMPLETE — owner Samsung TMDB-backed QA pending**
+**Status:** **COMPLETE — owner’s seven Samsung QA items PASS; episode-image fix implemented, Samsung re-verification pending**
 **Date:** 25 August 2026
 **Branch:** `feature/tizen-tv`
 **Merge status:** Not merged to `main`; no production deployment or production configuration change
@@ -10,13 +10,13 @@
 
 Phase 9 implemented the server-side TMDB content path for Movies and Series while preserving AniList as the Anime source. The TV route continues to consume the existing normalized content models rather than raw TMDB responses. The implementation includes secure server-only credential loading, explicit Movie/Series/Anime routing, bounded caching, TMDB configuration-backed image sizing, runtime response validation, collision-safe TMDB IDs, truthful mixed-source degradation, TV attribution, and preservation of the existing Series-only season-guide boundary.
 
-The implementation is complete on `feature/tizen-tv`, but the final Samsung gate is still pending. The sandbox has no TMDB credential, so local browser validation used the unavailable-credential path and confirmed that AniList Anime data remains available while TMDB-backed Movie and Series requests fail safely. No live TMDB-backed Movie, Series, Detail, or season result is claimed from the sandbox.
+The implementation is complete on `feature/tizen-tv`, and the owner’s seven Phase 9 Samsung QA items are PASS on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, and TizenBrew `2.0.5`: live TMDB Movie/Series data, populated Discover rails, Search, Movie Detail without a season guide, Series Detail with season/episode navigation, Back/focus restoration, and safe error handling with attribution. One episode-image rendering issue was found during QA and has been fixed in the TV Detail card renderer. Samsung re-verification of the patched episode still rendering is pending because no post-fix hardware result has been supplied yet.
 
 ## Scope delivered
 
 | Area | Delivered behavior |
 |---|---|
-| Authentication | Reads `TMDB_BEARER_TOKEN` first, with existing server-only alternatives retained for deployment compatibility. Bearer credentials are sent in an `Authorization` header from the server adapter. |
+| Authentication | Reads server-only TMDB credentials with compatibility detection for TMDB v4 Bearer tokens and 32-character TMDB v3 API keys. Credentials never enter client code. |
 | Content routing | `movie` uses TMDB movie endpoints, `series` uses TMDB TV endpoints, and `anime` remains on AniList. |
 | Discover | Existing TV Discover loader now receives strengthened TMDB Movie/Series adapter behavior with validation, bounded result caching, and existing unavailable-state handling. Anime remains independently AniList-backed. |
 | Search | Category-specific Movie and Series searches use the corresponding TMDB endpoint. All-source search runs Movie, Series, and Anime calls independently, deduplicates normalized results, preserves successful sources, and exposes `partial` plus safe warnings when a source fails. |
@@ -33,7 +33,7 @@ The implementation is complete on `feature/tizen-tv`, but the final Samsung gate
 
 The adapter imports `$env/dynamic/private`; it does not import TMDB credentials into client code. The production client bundle was scanned for `TMDB_BEARER_TOKEN`, `TMDB_READ_ACCESS_TOKEN`, `TMDB_API_KEY`, and Bearer-header code, with no matches. API errors expose only safe content-service codes and messages; they do not include credentials, upstream URLs, response payloads, or stack traces.
 
-The changed implementation does not modify authentication, Supabase schema/RLS/session behavior, PWA/service-worker behavior, normal Web/PWA UI routes, provider/source selection, resolver logic, playback, AVPlay, production configuration, TizenBrew metadata, or `main`. Phase 10 remains planned only.
+The changed implementation does not modify authentication, Supabase schema/RLS/session behavior, PWA/service-worker behavior, normal Web/PWA UI routes, provider/source selection, resolver logic, playback, AVPlay, production configuration, TizenBrew metadata, or `main`. Phase 10 is a separate TV-only implementation track.
 
 ## Validation results
 
@@ -45,35 +45,32 @@ The changed implementation does not modify authentication, Supabase schema/RLS/s
 | `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` | Passed. |
 | `git diff --check` | Passed. |
 | Client secret scan | Passed; no TMDB credential names or Bearer-header code found in `.svelte-kit/output/client`. |
-| Local TV browser QA | Passed route rendering, live AniList Anime preservation, truthful Movie/Series unavailable state, attribution DOM, namespaced Movie Detail route acceptance, safe missing-credential response, and mixed-search partial warnings. |
+| Local and feature browser QA | Local fallback, live-token, and post-deployment probes passed. The feature deployment returned live TMDB Movie/Series Discover, Search, Movie Detail, Series Detail, and season data, and rendered the TV attribution. |
 | Normal route isolation | Passed local checks for `/` and `/search`; the normal Web/PWA shell remained separate from the TV shell. |
 
 The detailed browser record is maintained externally at `/home/ubuntu/mavero-audit/PHASE_9_BROWSER_QA.md` and is not part of the repository commit.
 
 ## Browser evidence and limitations
 
-The local preview ran with placeholder public Supabase values and without any TMDB secret. `/tv` rendered live AniList Anime rails and displayed the Movie and Series unavailable state. A request for `/api/content/movie/tmdb%3Amovie%3A550` was accepted by the dynamic Detail route and returned HTTP 503 with the safe `CONFIG_MISSING` error. A mixed Search request for `spirited away` returned the AniList result with `partial: true` and safe warnings for the unavailable TMDB sources.
+The local preview first verified the safe unavailable-credential path, then a server-only live-token preview verified 20 TMDB Movie Discover items, 20 TMDB Series Discover items, and Movie Detail. After the feature branch redeployed, live probes verified 20 Movie Discover items, 20 Series Discover items, typed Movie/Series Search, Movie Detail, Series Detail, and a ten-episode Series season response. The owner then completed the Samsung QA listed below. These results are based on actual API and hardware observations, not simulated passes.
 
-The absence of a sandbox TMDB secret prevented live endpoint verification, real TMDB image configuration retrieval, live Movie/Series Detail traversal, and a 24-episode Series season traversal. The required Samsung TV QA also remains pending. These are explicit limitations, not simulated passes.
+## Final owner Samsung QA
 
-## Owner Samsung QA checklist
+The owner tested the Phase 9 build on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, and TizenBrew `2.0.5` and confirmed the following seven items **PASS**:
 
-Before releasing Phase 9, the owner should configure the deployment secret without exposing it to browser code, then test the feature branch on the target Samsung TV. The checklist is:
+1. TMDB Movie/Series data integration — **PASS**.
+2. Discover Movie and Series rail population — **PASS**.
+3. Search functionality — **PASS**.
+4. Movie Detail has no season guide — **PASS**.
+5. Series Detail has season/episode navigation — **PASS**.
+6. Back navigation and focus restoration — **PASS**.
+7. Error handling and TMDB attribution — **PASS**.
 
-1. Confirm the deployment uses `TMDB_BEARER_TOKEN` as a server-only secret and that no `PUBLIC_*` TMDB variable exists.
-2. Launch `/tv` through the existing TizenBrew path and confirm Movie and Series rails populate from TMDB while Anime remains AniList-backed.
-3. Search under **All**, **Movies**, **Shows**, and **Anime**; verify each result’s type, poster, year, rating, source behavior, and focus navigation.
-4. Open a TMDB Movie Detail and verify metadata appears with no `Seasons and episodes`, season selector, or episode controls.
-5. Open a TMDB Series Detail and verify the Series-only season selector and episode guide; test a real season with at least 24 episodes and the existing deferred/windowed rendering behavior.
-6. Confirm Back from Detail, Player, and season states restores the expected focus and does not jump the viewport unexpectedly.
-7. Simulate or observe TMDB timeout, rate-limit, malformed-response, and unavailable-source behavior; verify safe Retry/error states and preservation of successful Anime results.
-8. Verify posters, backdrops, and the TMDB attribution/logo remain readable at the 10-foot distance without oversized image-loading stalls.
-9. Repeat Home → Search → Detail → Back navigation for at least 30 minutes and record any memory growth, focus degradation, stale data, or render lag.
-10. Record the Samsung model, Tizen version, TizenBrew version, firmware, credential configuration result, and PASS/FAIL outcome before authorizing release.
+During this QA, episode cover images were initially missing while episode number, runtime, title, release date, and overview remained visible. Investigation confirmed that TMDB season responses already included `still_path` and the server normalized it into bounded `Episode.still` URLs. The issue was in the TV-only episode card template, which did not render the field. `TvDetail.svelte` now renders the still image with bounded TMDB sizing, asynchronous decoding, eager loading for the first three visible cards, lazy loading for later cards, and a graceful `No still` fallback. The owner’s seven original Phase 9 QA items remain **PASS**. Samsung verification of the patched episode still rendering is pending; Phase 9 is closed for implementation and documentation with that explicit follow-up.
 
 ## Next phase
 
-Phase 10 — Nuvio-inspired TV UI redesign remains **PLANNED ONLY**. It must not start automatically. Any later implementation must preserve the completed TV content contracts, Movie-versus-Series guide boundary, remote/focus behavior, performance guardrails, attribution, and all Web/PWA/auth boundaries.
+Phase 10 — Nuvio-inspired TV UI redesign is **STARTED** on `feature/tizen-tv`. Its implementation is limited to `src/lib/components/tv/` and must preserve the completed TV content contracts, Movie-versus-Series guide boundary, remote/focus behavior, performance guardrails, attribution, and all Web/PWA/auth boundaries.
 
 ## References
 
@@ -96,4 +93,4 @@ The scoped correction is in `src/lib/server/content/adapters/tmdb.ts`: a 32-char
 
 A local production preview loaded the configured value only into the server process after the fix. `/api/content/discover/movie` returned 20 normalized `tmdb:movie:*` items, `/api/content/discover/series` returned 20 normalized `tmdb:series:*` items, and a Movie Detail request for `tmdb:movie:550` returned a successful TMDB Fight Club record. No credential was emitted by the application or probe.
 
-After the fix was pushed, the feature deployment rebuilt successfully. Live feature probes returned 20 TMDB Movie Discover items, 20 TMDB Series Discover items, correctly typed Movie and Series Search results, a successful Movie Detail response for Spider-Man: Brand New Day, a successful Series Detail response for House of the Dragon, and 10 normalized episodes for House of the Dragon Season 1. The public API responses and direct TMDB status results are the evidence used for this diagnosis. The Netlify dashboard remained stuck loading in the available browser session, so no direct function-log stream is claimed. Samsung hardware verification and a final hard-refresh on the target TV remain the owner gate.
+After the fix was pushed, the feature deployment rebuilt successfully. Live feature probes returned 20 TMDB Movie Discover items, 20 TMDB Series Discover items, correctly typed Movie and Series Search results, successful Movie and Series Detail responses, and 10 normalized episodes for House of the Dragon Season 1. The owner confirmed all seven final Samsung QA items PASS before the episode-image patch. The patch is included in this closure, while Samsung re-verification of the corrected episode-image rendering remains pending. The Netlify dashboard remained stuck loading in the available browser session, so no direct function-log stream is claimed.
