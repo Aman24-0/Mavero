@@ -423,13 +423,14 @@
       const type = searchTypeParam(searchCategory);
       if (type) params.set('type', type);
       const response = await fetch(`/api/content/search?${params.toString()}`, { signal: controller.signal });
-      const payload = await response.json() as { ok?: boolean; items?: MediaItem[]; error?: { message?: string } };
+      const payload = await response.json() as { ok?: boolean; items?: MediaItem[]; partial?: boolean; warnings?: string[]; error?: { message?: string } };
       if (requestId !== searchRequestSequence || controller.signal.aborted) return;
       if (!response.ok || !payload.ok) throw new Error(payload.error?.message || 'Search is temporarily unavailable.');
       searchResults = Array.isArray(payload.items) ? payload.items.slice(0, 24) : [];
+      const warning = payload.partial ? ` ${payload.warnings?.[0] ?? 'Some catalog sources are unavailable.'}` : '';
       searchStatusMessage = searchResults.length
-        ? `${searchResults.length} result${searchResults.length === 1 ? '' : 's'} found.`
-        : 'No matching stories. Try another title or category.';
+        ? `${searchResults.length} result${searchResults.length === 1 ? '' : 's'} found.${warning}`
+        : `No matching stories. Try another title or category.${warning}`;
     } catch (error) {
       if (controller.signal.aborted || requestId !== searchRequestSequence) return;
       searchError = error instanceof Error ? error.message : 'Search is temporarily unavailable.';
@@ -835,6 +836,7 @@
       <div class="footer-note">
         <span class="eyebrow">Exit policy</span>
         <span>Back closes local states, restores logical focus, and confirms only at the TV root. Samsung’s dedicated Exit key is not intercepted.</span>
+        <span class="tmdb-attribution"><a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer"><img src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="TMDB" loading="lazy" decoding="async" /> TMDB</a> · This product uses the <a href="https://www.themoviedb.org" target="_blank" rel="noreferrer">TMDB API</a> but is not endorsed or certified by TMDB.</span>
       </div>
       <button class="tv-focusable quit-button" data-tv-focusable="true" data-tv-focus-id="tv-quit" data-tv-focus-group="tv-footer-actions" data-tv-action="quit" type="button" onclick={handleAction}>Quit Mavero</button>
     </section>
@@ -879,6 +881,10 @@
   .tv-footer-actions { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 46px 6px 0; padding-top: 24px; border-top: 1px solid var(--tv-line); }
   .footer-note { display: grid; gap: 5px; max-width: 760px; color: var(--tv-muted); font-size: .9rem; font-weight: 650; line-height: 1.55; }
   .footer-note .eyebrow { margin: 0; }
+  .tmdb-attribution { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; color: var(--tv-muted); font-size: .76rem; font-weight: 650; }
+  .tmdb-attribution a { color: var(--tv-muted-strong); font-weight: 850; text-decoration: underline; text-underline-offset: 3px; }
+  .tmdb-attribution .tmdb-credit { display: inline-flex; align-items: center; gap: 5px; }
+  .tmdb-attribution img { width: 28px; height: 20px; object-fit: contain; }
   .quit-button { min-width: 176px; min-height: 56px; padding: 15px 20px; border: 2px solid rgba(255, 82, 112, .72); border-radius: 11px; color: #fff; background: rgba(255, 62, 94, .22); font-size: .96rem; font-weight: 900; cursor: pointer; }
   .exit-layer { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 30px; }
   .exit-backdrop { position: absolute; inset: 0; background: rgba(2, 4, 8, .84); }

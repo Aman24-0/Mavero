@@ -1,10 +1,12 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
-import { asNumber, asString, asStringArray, fetchJson } from '../http';
+import { asNumber, asString, fetchJson } from '../http';
 import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters } from '../types';
 import { ottProviders } from '$lib/shared/ott';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
+type TmdbConfiguration = { images?: { secure_base_url?: string; poster_sizes?: string[]; backdrop_sizes?: string[] } };
+type TmdbImageConfig = { baseUrl: string; posterSize: 'w342' | 'w500'; backdropSize: 'w780' | 'w1280' };
 type TmdbMovie = {
   id: number;
   title?: string;
@@ -54,10 +56,25 @@ type TmdbMedia = TmdbMovie | TmdbTv;
 type TmdbProviderRegion = { flatrate?: { provider_id?: number }[]; buy?: { provider_id?: number }[]; rent?: { provider_id?: number }[] };
 type TmdbWatchProviders = { results?: Record<string, TmdbProviderRegion> };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function assertTmdbList(value: unknown): TmdbList<TmdbMedia> & { results: TmdbMedia[] } {
+  if (!isRecord(value) || !Array.isArray(value.results)) throw new ContentServiceError('The TMDB catalog returned an invalid list.', { code: 'INVALID_RESPONSE', status: 502 });
+  return value as TmdbList<TmdbMedia> & { results: TmdbMedia[] };
+}
+
+function assertTmdbObject(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new ContentServiceError(`The TMDB ${label} response was invalid.`, { code: 'INVALID_RESPONSE', status: 502 });
+  return value;
+}
+
 export const tmdbOttProviders = ottProviders;
 
 const BASE_URL = 'https://api.themoviedb.org/3';
 const IMAGE_URL = 'https://image.tmdb.org/t/p';
+const defaultImageConfig: TmdbImageConfig = { baseUrl: IMAGE_URL, posterSize: 'w500', backdropSize: 'w1280' };
 const genreNames: Record<number, string> = {
   28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western', 10759: 'Action & Adventure', 10765: 'Sci-Fi & Fantasy'
 };
@@ -66,8 +83,22 @@ function tmdbSource(externalId?: string): ContentSource {
   return { provider: 'tmdb', externalId, fetchedAt: new Date().toISOString() };
 }
 
-function image(path: string | null | undefined, size: 'w342' | 'w500' | 'w780' | 'w1280' = 'w500') {
-  return path ? `${IMAGE_URL}/${size}${path}` : '';
+function image(path: string | null | undefined, size: 'w342' | 'w500' | 'w780' | 'w1280' = 'w500', config: TmdbImageConfig = defaultImageConfig) {
+  return path ? `${config.baseUrl}/${size}${path}` : '';
+}
+
+function pickSize(sizes: string[] | undefined, preferred: 'w342' | 'w500' | 'w780' | 'w1280', fallback: 'w342' | 'w500' | 'w780' | 'w1280') {
+  return sizes?.includes(preferred) ? preferred : fallback;
+}
+
+function normalizeImageConfig(raw: TmdbConfiguration): TmdbImageConfig {
+  const images = raw.images;
+  const baseUrl = typeof images?.secure_base_url === 'string' && images.secure_base_url.startsWith('https://') ? images.secure_base_url.replace(/\/$/, '') : IMAGE_URL;
+  return {
+    baseUrl,
+    posterSize: pickSize(images?.poster_sizes, 'w500', 'w342') as TmdbImageConfig['posterSize'],
+    backdropSize: pickSize(images?.backdrop_sizes, 'w1280', 'w780') as TmdbImageConfig['backdropSize']
+  };
 }
 
 function runtime(minutes: number | null | undefined, fallback = 'Feature length') {
@@ -82,15 +113,16 @@ function dateYear(value?: string) {
   return Number.isFinite(year) && year > 1800 ? year : new Date().getFullYear();
 }
 
-function hasRequiredListMetadata(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
+function hasRequiredListMetadata(raw: unknown, type: Exclude<ContentType, 'anime'>): raw is TmdbMedia {
+  if (!isRecord(raw) || raw.adult === true || !Number.isInteger(raw.id) || Number(raw.id) <= 0) return false;
   const title = type === 'movie'
-    ? (raw as TmdbMovie).title || (raw as TmdbMovie).original_title
-    : (raw as TmdbTv).name || (raw as TmdbTv).original_name;
-  const date = type === 'movie' ? (raw as TmdbMovie).release_date : (raw as TmdbTv).first_air_date;
-  return Number.isInteger(raw.id) && raw.id > 0 && Boolean(title?.trim()) && Boolean(date?.trim()) && Boolean(raw.poster_path || raw.backdrop_path);
+    ? (asString(raw.title) || asString(raw.original_title))
+    : (asString(raw.name) || asString(raw.original_name));
+  const date = type === 'movie' ? asString(raw.release_date) : asString(raw.first_air_date);
+  return Boolean(title.trim()) && Boolean(date.trim()) && Boolean(asString(raw.poster_path) || asString(raw.backdrop_path));
 }
 
-function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: string): NormalizedMediaItem {
+function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: string, imageConfig = defaultImageConfig): NormalizedMediaItem {
   const isMovie = type === 'movie';
   const title = isMovie ? asString((raw as TmdbMovie).title, asString((raw as TmdbMovie).original_title, 'Untitled')) : asString((raw as TmdbTv).name, asString((raw as TmdbTv).original_name, 'Untitled'));
   const genres = raw.genres?.map((genre) => genre.name).filter(Boolean) ?? raw.genre_ids?.map((id) => genreNames[id]).filter(Boolean) ?? [];
@@ -100,7 +132,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
   const episodes = isMovie ? undefined : tv.number_of_episodes ?? tv.seasons?.reduce((sum, season) => sum + (season.episode_count ?? 0), 0);
   const rating = Math.round(asNumber(raw.vote_average) * 10) / 10;
   return {
-    id: `${type}-${raw.id}`,
+    id: `tmdb:${type}:${raw.id}`,
     title,
     year: dateYear(isMovie ? movie.release_date : tv.first_air_date),
     type,
@@ -111,10 +143,10 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     voteCount: asNumber(raw.vote_count),
     genres: genres.length ? genres.slice(0, 4) : ['Drama'],
     description: asString(raw.overview, 'No synopsis is available yet.'),
-    poster: image(raw.poster_path ?? raw.backdrop_path, 'w500'),
-    posterSmall: image(raw.poster_path ?? raw.backdrop_path, 'w342'),
-    backdrop: image(raw.backdrop_path ?? raw.poster_path, 'w1280'),
-    backdropSmall: image(raw.backdrop_path ?? raw.poster_path, 'w780'),
+    poster: image(raw.poster_path ?? raw.backdrop_path, imageConfig.posterSize, imageConfig),
+    posterSmall: image(raw.poster_path ?? raw.backdrop_path, 'w342', imageConfig),
+    backdrop: image(raw.backdrop_path ?? raw.poster_path, imageConfig.backdropSize, imageConfig),
+    backdropSmall: image(raw.backdrop_path ?? raw.poster_path, 'w780', imageConfig),
     accent: '#9b87f5',
     status: isMovie ? undefined : asString(tv.status),
     episodes,
@@ -127,7 +159,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
 }
 
 function requireCredentials() {
-  const token = env.TMDB_READ_ACCESS_TOKEN;
+  const token = env.TMDB_BEARER_TOKEN || env.TMDB_READ_ACCESS_TOKEN;
   const apiKey = env.TMDB_API_KEY;
   if (!token && !apiKey) {
     throw new ContentServiceError('TMDB credentials are not configured.', { code: 'CONFIG_MISSING', status: 503 });
@@ -146,19 +178,8 @@ async function tmdbRequest<T>(path: string, params: Record<string, string | numb
   try {
     return await fetchJson<T>(url.toString(), { headers: token ? { authorization: `Bearer ${token}` } : undefined });
   } catch (error) {
-    // Netlify users sometimes paste a TMDB v3 API key into the v4 token variable.
-    // Retry that value as a query API key once, without weakening the normal Bearer path.
-    if (token && !apiKey && error instanceof ContentServiceError && (error.status === 401 || error.status === 403)) {
-      const legacyUrl = new URL(url);
-      legacyUrl.searchParams.set('api_key', token);
-      try {
-        return await fetchJson<T>(legacyUrl.toString());
-      } catch {
-        throw new ContentServiceError('TMDB authentication failed. Use a valid v4 Read Access Token in TMDB_READ_ACCESS_TOKEN or a v3 API key in TMDB_API_KEY.', { code: 'CONFIG_MISSING', status: 401 });
-      }
-    }
     if (error instanceof ContentServiceError && (error.status === 401 || error.status === 403)) {
-      throw new ContentServiceError('TMDB authentication failed. Check the configured TMDB credential.', { code: 'CONFIG_MISSING', status: 401 });
+      throw new ContentServiceError('TMDB authentication failed. Check the server-side TMDB credential.', { code: 'CONFIG_MISSING', status: 401 });
     }
     throw error;
   }
@@ -167,14 +188,27 @@ async function tmdbRequest<T>(path: string, params: Record<string, string | numb
 const listPolicy = { ttlMs: 1000 * 60 * 4, staleWhileRevalidateMs: 1000 * 60 * 10 };
 const detailPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 4 };
 const ottProviderPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 2 };
+const imageConfigPolicy = { ttlMs: 1000 * 60 * 60 * 24, staleWhileRevalidateMs: 1000 * 60 * 60 * 24 * 7 };
 const OTT_LOOKUP_CONCURRENCY = 4;
+
+async function getTmdbImageConfig(): Promise<TmdbImageConfig> {
+  const { value } = await getOrSet('tmdb:configuration:images', imageConfigPolicy, async () => {
+    try {
+      return normalizeImageConfig(assertTmdbObject(await tmdbRequest<unknown>('/configuration'), 'configuration') as TmdbConfiguration);
+    } catch {
+      return defaultImageConfig;
+    }
+  });
+  return value;
+}
 
 export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
   const key = `tmdb:discover:${type}:${page}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/trending/movie/week' : '/trending/tv/week';
-    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
-    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Trending'));
+    const [rawResult, imageConfig] = await Promise.all([tmdbRequest<unknown>(path, { page }), getTmdbImageConfig()]);
+    const result = assertTmdbList(rawResult);
+    const items = result.results.filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Trending', imageConfig));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -195,8 +229,9 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
       ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year }),
       ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {})
     };
-    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
-    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type));
+    const [rawResult, imageConfig] = await Promise.all([tmdbRequest<unknown>(path, params), getTmdbImageConfig()]);
+    const result = assertTmdbList(rawResult);
+    const items = result.results.filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, undefined, imageConfig));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -206,8 +241,9 @@ export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page =
   const key = `tmdb:popular:${type}:${page}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/movie/popular' : '/tv/popular';
-    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
-    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Popular'));
+    const [rawResult, imageConfig] = await Promise.all([tmdbRequest<unknown>(path, { page }), getTmdbImageConfig()]);
+    const result = assertTmdbList(rawResult);
+    const items = result.results.filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Popular', imageConfig));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -254,15 +290,16 @@ export async function searchTmdb(query: string, type: Exclude<ContentType, 'anim
   const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}:${filters.ott ?? ''}:${filters.genre ?? ''}:${filters.sort ?? ''}`;
   const { value, stale } = await getOrSet(key, { ttlMs: 1000 * 60 * 2, staleWhileRevalidateMs: 1000 * 60 * 5 }, async () => {
     const path = type === 'movie' ? '/search/movie' : '/search/tv';
-    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { query: normalized, page, include_adult: false });
-    let rawItems = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+    const [rawResult, imageConfig] = await Promise.all([tmdbRequest<unknown>(path, { query: normalized, page, include_adult: false }), getTmdbImageConfig()]);
+    const result = assertTmdbList(rawResult);
+    let rawItems = result.results.filter((item) => hasRequiredListMetadata(item, type));
     if (filters.genre) rawItems = rawItems.filter((item) => item.genre_ids?.includes(Number(filters.genre)));
     if (filters.ott) {
       const matches = await mapWithConcurrency(rawItems, (item) => matchesOtt(type, item.id, filters.ott as string), OTT_LOOKUP_CONCURRENCY);
       rawItems = rawItems.filter((_, index) => matches[index]);
     }
     if (filters.sort) rawItems.sort((left, right) => releaseDate(left, type).localeCompare(releaseDate(right, type)) * (filters.sort === 'release-desc' ? -1 : 1));
-    const items = rawItems.map((item) => mapTmdb(item, type));
+    const items = rawItems.map((item) => mapTmdb(item, type, undefined, imageConfig));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -276,9 +313,11 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
   const key = `tmdb:detail:${type}:${numericId}`;
   const { value, stale } = await getOrSet(key, detailPolicy, async () => {
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
-    const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations' });
-    const item = mapTmdb(raw, type);
-    const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
+    const [rawValue, imageConfig] = await Promise.all([tmdbRequest<unknown>(path, { append_to_response: 'videos,external_ids,recommendations' }), getTmdbImageConfig()]);
+    const raw = assertTmdbObject(rawValue, 'detail') as TmdbMedia;
+    if (!Number.isInteger(raw.id) || raw.id <= 0) throw new ContentServiceError('The TMDB detail response had no valid identifier.', { code: 'INVALID_RESPONSE', status: 502 });
+    const item = mapTmdb(raw, type, undefined, imageConfig);
+    const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended', imageConfig));
     return { ...item, recommendations };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -291,13 +330,15 @@ export async function getTmdbSeason(seriesId: string, seasonNumber: number): Pro
   }
   const key = `tmdb:season:${numericId}:${seasonNumber}`;
   const { value } = await getOrSet(key, detailPolicy, async () => {
-    const raw = await tmdbRequest<TmdbSeason>(`/tv/${numericId}/season/${seasonNumber}`);
-    const episodes: Episode[] = (raw.episodes ?? []).map((episode) => ({
-      id: String(episode.id), number: episode.episode_number ?? 0, season: episode.season_number ?? seasonNumber, title: asString(episode.name, `Episode ${episode.episode_number ?? 0}`), overview: asString(episode.overview), airDate: asString(episode.air_date) || undefined, runtime: runtime(episode.runtime, 'Unknown'), still: image(episode.still_path, 'w500')
+    const [rawValue, imageConfig] = await Promise.all([tmdbRequest<unknown>(`/tv/${numericId}/season/${seasonNumber}`), getTmdbImageConfig()]);
+    const raw = assertTmdbObject(rawValue, 'season') as TmdbSeason;
+    if (!Array.isArray(raw.episodes)) throw new ContentServiceError('The TMDB season response had no valid episode list.', { code: 'INVALID_RESPONSE', status: 502 });
+    const episodes: Episode[] = raw.episodes.map((episode) => ({
+      id: String(episode.id), number: episode.episode_number ?? 0, season: episode.season_number ?? seasonNumber, title: asString(episode.name, `Episode ${episode.episode_number ?? 0}`), overview: asString(episode.overview), airDate: asString(episode.air_date) || undefined, runtime: runtime(episode.runtime, 'Unknown'), still: image(episode.still_path, 'w500', imageConfig)
     }));
-    return { number: raw.season_number ?? seasonNumber, title: asString(raw.name, `Season ${seasonNumber}`), episodeCount: raw.episode_count ?? episodes.length, airDate: asString(raw.air_date) || undefined, poster: image(raw.poster_path, 'w500'), episodes } satisfies Season;
+    return { number: raw.season_number ?? seasonNumber, title: asString(raw.name, `Season ${seasonNumber}`), episodeCount: raw.episode_count ?? episodes.length, airDate: asString(raw.air_date) || undefined, poster: image(raw.poster_path, imageConfig.posterSize, imageConfig), episodes } satisfies Season;
   });
   return value;
 }
 
-export const tmdbInternals = { mapTmdb, image, runtime, genreNames, hasRequiredListMetadata };
+export const tmdbInternals = { mapTmdb, image, runtime, genreNames, hasRequiredListMetadata, assertTmdbList, assertTmdbObject };

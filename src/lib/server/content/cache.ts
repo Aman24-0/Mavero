@@ -4,6 +4,7 @@ type CacheEntry<T> = {
   staleUntil: number;
 };
 
+const MAX_CACHE_ENTRIES = 128;
 const entries = new Map<string, CacheEntry<unknown>>();
 const inFlight = new Map<string, Promise<unknown>>();
 
@@ -17,10 +18,12 @@ export async function getOrSet<T>(key: string, policy: CachePolicy, loader: () =
   const cached = entries.get(key) as CacheEntry<T> | undefined;
 
   if (cached && cached.expiresAt > now) {
+    touch(key, cached);
     return { value: cached.value, stale: false };
   }
 
   if (cached && cached.staleUntil > now) {
+    touch(key, cached);
     void refresh(key, policy, loader);
     return { value: cached.value, stale: true };
   }
@@ -35,6 +38,12 @@ async function refresh<T>(key: string, policy: CachePolicy, loader: () => Promis
   const request = loader()
     .then((value) => {
       const now = Date.now();
+      if (entries.has(key)) entries.delete(key);
+      while (entries.size >= MAX_CACHE_ENTRIES) {
+        const oldest = entries.keys().next().value;
+        if (oldest === undefined) break;
+        entries.delete(oldest);
+      }
       entries.set(key, {
         value,
         expiresAt: now + policy.ttlMs,
@@ -46,6 +55,11 @@ async function refresh<T>(key: string, policy: CachePolicy, loader: () => Promis
 
   inFlight.set(key, request);
   return request;
+}
+
+function touch<T>(key: string, entry: CacheEntry<T>) {
+  entries.delete(key);
+  entries.set(key, entry);
 }
 
 export function invalidate(prefix?: string) {
@@ -65,5 +79,5 @@ export function clearCache() {
 }
 
 export function cacheStats() {
-  return { entries: entries.size, requestsInFlight: inFlight.size };
+  return { entries: entries.size, maxEntries: MAX_CACHE_ENTRIES, requestsInFlight: inFlight.size };
 }

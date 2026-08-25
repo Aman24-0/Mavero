@@ -314,9 +314,9 @@ The implementation added opt-in diagnostics at `/tv?tvperf=1`, capped in-memory 
 
 Prefer measured optimization, lazy images, appropriate assets, minimal animation, and efficient focus updates.
 
-### Phase 9 — TMDB Integration — PLANNED ONLY
+### Phase 9 — TMDB Integration — STARTED
 
-Phase 9 adds server-side TMDB integration for Movies and Series while preserving AniList for Anime. The detailed implementation plan is in `PHASE_9_PLAN.md`. This phase is not started. It must keep credentials server-only, normalize TMDB responses into the existing content models, preserve the explicit Movie-versus-Series guide boundary, add truthful partial-failure handling, and measure whether episode-heavy delay is data/network-related or TV render-related. No TMDB implementation is included in the current closure.
+Phase 9 adds server-side TMDB integration for Movies and Series while preserving AniList for Anime. The detailed implementation plan is in `PHASE_9_PLAN.md`. Implementation is now started on `feature/tizen-tv`: a private-environment TMDB adapter, Bearer-token support, bounded caching, configuration-backed image sizing, runtime response validation, namespaced IDs, explicit Movie/Series routing, mixed-source partial warnings, TV Discover/Search/Detail/season support, and TV attribution are being wired and validated. This phase must preserve the explicit Movie-versus-Series guide boundary and measure whether episode-heavy delay is data/network-related or TV render-related. Phase 10 remains planned only.
 
 ### Phase 10 — Nuvio-inspired TV UI redesign — PLANNED ONLY
 
@@ -511,7 +511,7 @@ Player        EXISTING + tested architecture
 Backend       EXISTING
 Auth          EXISTING
 Admin         EXISTING
-Tizen         Phase 8 complete; Phase 9 TMDB and Phase 10 UI redesign planned only
+Tizen         Phase 9 TMDB implementation started; Phase 10 UI redesign planned only
 Phase 0       COMPLETE
 Phase 1       COMPLETE
 Phase 2       COMPLETE
@@ -521,10 +521,10 @@ Phase 5       COMPLETE — Samsung QA: IME FAIL, vertical focus PASS, typography
 Phase 6       COMPLETE — Samsung QA: 100% PASS
 Phase 7       COMPLETE — owner-confirmed Samsung Player QA 100% PASS; Movie guide bug fixed
 Phase 8       COMPLETE — owner QA recorded; four TV-only follow-up issues fixed
-Phase 9       PLANNED ONLY — TMDB Integration
+Phase 9       STARTED — TMDB Integration
 Phase 10      PLANNED ONLY — Nuvio-inspired TV UI Redesign
 ```
 
-**Immediate next task: Review and authorize Phase 9 TMDB Integration. Phase 10 remains planned only. Do not implement either phase until its scope, credentials, data contracts, and Samsung/Web regression gates are approved.**
+**Immediate next task: Complete Phase 9 validation and owner Samsung TMDB-backed QA. Phase 10 remains planned only and must not be started.**
 
-Keep all work under the TV layer and do not modify auth/Supabase, PWA, normal Web/PWA routes, TMDB integration, production configuration, or `main`. AVPlay remains deferred unless HTML5 video fails on supported hardware.
+Keep all TV presentation and API wiring isolated to the approved TV/content-service scope; do not modify auth/Supabase, PWA, normal Web/PWA UI routes, provider/resolver behavior, production configuration, or `main`. Phase 9 is the explicitly authorized TMDB integration exception in the shared server content layer. AVPlay remains deferred unless HTML5 video fails on supported hardware.

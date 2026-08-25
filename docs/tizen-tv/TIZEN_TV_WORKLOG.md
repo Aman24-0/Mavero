@@ -2,18 +2,18 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are **COMPLETE**. The owner’s Samsung QA recorded Native IME **FAIL**, vertical focus **PASS**, typography/clarity **NEEDS FIX**, and general Search flow/navigation **PASS**; the custom UI keyboard is the final default. Phase 6 — Detail + My List is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**. Phase 7 — TV Player is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**, including the corrected Movie Detail season-guide boundary. Phase 8 — TV performance instrumentation and measured optimization is **COMPLETE** for the owner-reported QA cycle; its four reported TV-only issues are fixed in the current follow-up. Phase 9 TMDB Integration and Phase 10 Nuvio-inspired TV UI Redesign are **PLANNED ONLY**. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are **COMPLETE**. The owner’s Samsung QA recorded Native IME **FAIL**, vertical focus **PASS**, typography/clarity **NEEDS FIX**, and general Search flow/navigation **PASS**; the custom UI keyboard is the final default. Phase 6 — Detail + My List is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**. Phase 7 — TV Player is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**, including the corrected Movie Detail season-guide boundary. Phase 8 — TV performance instrumentation and measured optimization is **COMPLETE** for the owner-reported QA cycle; its four reported TV-only issues are fixed in the current follow-up. Phase 9 TMDB Integration is **IMPLEMENTATION COMPLETE** on `feature/tizen-tv`; owner Samsung TMDB-backed QA is pending. Phase 10 Nuvio-inspired TV UI Redesign remains **PLANNED ONLY**. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
 
 | Field | Status |
 |---|---|
-| Current phase | Phase 9 — TMDB Integration (planned) |
+| Current phase | Phase 9 — TMDB Integration (implementation complete; Samsung QA pending) |
 | Phase 0 status | **COMPLETE** |
-| Tizen implementation | **Phase 8 complete; Phase 9 TMDB and Phase 10 UI redesign planned only** |
+| Tizen implementation | **Phase 9 TMDB implementation complete; Phase 10 UI redesign planned only** |
 | Phase 1 | **COMPLETE — owner-confirmed real-TV validation passed** |
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
-| Samsung TV hardware QA | **Phase 1–4 PASS; Phase 5: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS; Phase 6 100% PASS; Phase 7 100% PASS; Phase 8 owner QA recorded, TV marker limitation and follow-up fixes documented** |
+| Samsung TV hardware QA | **Phase 1–4 PASS; Phase 5: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS; Phase 6 100% PASS; Phase 7 100% PASS; Phase 8 owner QA recorded and follow-up fixes documented; Phase 9 TMDB-backed QA PENDING** |
 | Branch | `feature/tizen-tv` |
-| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 final is `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 implementation is `c39fb7cabb313657d1f87cc265b7c98d9c707085`; Phase 7 initial player is `5dcc33acc932d607fcfaaeb3d386b03a8afce901`; Phase 8 initial instrumentation is `7252a5100b998ccff92e1747fba39df8f7483594`; Phase 8 follow-up closure commit pending |
+| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 final is `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 implementation is `c39fb7cabb313657d1f87cc265b7c98d9c707085`; Phase 7 initial player is `5dcc33acc932d607fcfaaeb3d386b03a8afce901`; Phase 8 initial instrumentation is `7252a5100b998ccff92e1747fba39df8f7483594`; Phase 8 follow-up is `11a1d1de6bafd13566e5de0cb31e53915dd01dd3`; Phase 9 SHA is recorded in the final handoff |
 | Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; Phase 8 follow-up stays on this branch; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
@@ -604,3 +604,32 @@ This entry records the owner’s observations only. No timing, memory, console, 
 **Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
 
 **Merge status:** Phase 8 remains on `feature/tizen-tv`; it is not merged to `main`; production remains unchanged.
+
+## Phase 9 — TMDB Integration Entry
+
+**Date:** 25 August 2026
+**Phase:** Phase 9 — TMDB Integration
+**Status:** **IMPLEMENTATION COMPLETE — owner Samsung TMDB-backed QA PENDING**
+**Objective:** Add reliable server-side TMDB Movie and Series data while preserving AniList Anime behavior, the normalized content model, the explicit Movie-versus-Series guide boundary, TV-only performance protections, and all existing Web/PWA/auth boundaries.
+
+**Files/components changed:** `.env.example`; `src/lib/server/content/adapters/tmdb.ts`; `src/lib/server/content/cache.ts`; `src/lib/server/content/service.ts`; `src/lib/server/content/types.ts`; `src/lib/components/tv/TvShell.svelte`; `scripts/tv_phase2_contract_test.ts`; `scripts/discover_ranking_test.ts`; `docs/tizen-tv/PHASE_9_PLAN.md`; `docs/tizen-tv/PHASE_9_REPORT.md`; `docs/tizen-tv/TIZEN_TV_PLAN.md`; and this worklog.
+
+**Architecture decisions:** TMDB credentials are read through SvelteKit’s private runtime environment, with `TMDB_BEARER_TOKEN` preferred and existing server-only alternatives retained for deployment compatibility. TMDB calls use server-side authorization, bounded timeout behavior, cached configuration/list/search/detail/season results, a 128-entry shared cache cap, and runtime response validation. TMDB Movie and TV identifiers are namespaced as `tmdb:movie:<id>` and `tmdb:series:<id>` while numeric external IDs remain available for existing resolver contracts. AniList remains the Anime source. The Phase 8 Series-only season guide boundary remains explicit and is not inferred from episode metadata.
+
+**Implementation completed:** TMDB Movie/Series discovery, category search, all-source search merging, Movie/Series Detail normalization, selected TV season and episode normalization, configuration-backed secure image URLs, adult/malformed-record filtering, source metadata, safe partial warnings, truthful fallback warnings, and TV footer attribution were completed. The TV shell now surfaces partial-source warnings in Search. No provider selection, resolver, playback, AVPlay, auth, Supabase, PWA, normal Web/PWA UI, production, `main`, or TizenBrew metadata behavior was changed.
+
+**Tests and validation:** `pnpm check` passed with zero errors and warnings; the focused TV contract passed with Phase 9 credential, namespace, response-validation, partial-result, route, and cache assertions; `pnpm test` passed all repository contracts; the memory-safe production build passed; `git diff --check` passed; and the production client bundle scan found no TMDB credential names or Bearer-header code.
+
+**Browser QA:** The local production preview rendered live AniList Anime data, truthful Movie/Series unavailable states, the TMDB attribution notice and logo link, and the existing custom TV Search flow. A namespaced Movie Detail request was accepted and returned a safe HTTP 503 configuration response when no TMDB credential was present. Mixed Search preserved the AniList Spirited Away result with `partial: true` and safe warnings for unavailable TMDB sources. The normal `/` and `/search` Web/PWA routes remained isolated. Detailed notes are external at `/home/ubuntu/mavero-audit/PHASE_9_BROWSER_QA.md`.
+
+**Samsung TV QA:** **PENDING.** No live TMDB credential was available in the sandbox, and no Samsung TMDB-backed Movie/Series traversal was claimed. The owner must configure the deployment secret and validate Movie Detail with no guide, Series Detail with a real 24-episode season, TMDB images/attribution, partial/error states, remote focus, and a repeated 30-minute navigation observation on the target Samsung hardware.
+
+**Known limitations:** Live TMDB endpoint behavior, real image configuration responses, TMDB-backed Movie/Series content, 24-episode Series rendering, and Samsung performance were not measurable in this environment. The Phase 9 report explicitly separates local fallback/browser evidence from the pending Samsung gate. Legal/product confirmation of the final TMDB logo/licensing treatment remains part of release review.
+
+**Unresolved issues:** None in automated or local browser validation. Owner Samsung TMDB-backed QA and deployment-secret verification remain open.
+
+**Next step:** Configure `TMDB_BEARER_TOKEN` only in the feature deployment secret manager, run the Phase 9 Samsung checklist, and record the owner result. Do not start Phase 10 until Phase 9 is accepted.
+
+**Branch:** `feature/tizen-tv`
+**Commit SHA:** Recorded in the final handoff after commit/push.
+**Merge/deployment status:** Intended for `origin/feature/tizen-tv` only; not merged to `main`; no production deployment or production Netlify mutation.

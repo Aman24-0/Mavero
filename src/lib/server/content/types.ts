@@ -3,6 +3,7 @@ export type ContentProvider = 'tmdb' | 'anilist' | 'fixtures';
 
 export type ContentSource = {
   provider: ContentProvider;
+  providers?: ContentProvider[];
   externalId?: string;
   fetchedAt: string;
   stale?: boolean;
@@ -72,6 +73,8 @@ export type ContentList = {
   page: number;
   hasNextPage: boolean;
   source: ContentSource;
+  partial?: boolean;
+  warnings?: string[];
 };
 
 export type SearchSort = 'release-asc' | 'release-desc';
@@ -115,5 +118,5 @@ export function isContentType(value: string | null | undefined): value is Conten
 }
 
 export function isValidContentId(value: string | null | undefined) {
-  return Boolean(value && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(value));
+  return Boolean(value && /^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,95}$/.test(value));
 }

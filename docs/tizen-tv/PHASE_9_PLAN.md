@@ -2,7 +2,7 @@
 
 **Phase:** Phase 9 — TMDB Integration
 
-**Status:** **PLANNED — implementation not started.**
+**Status:** **IMPLEMENTATION IN PROGRESS — owner Samsung QA pending.**
 
 **Target branch:** `feature/tizen-tv` during development; no `main` or production changes until the phase is reviewed and accepted.
 
@@ -46,7 +46,7 @@ The guide boundary is mandatory: `movie` never renders or fetches seasons; `seri
 
 Implement one server-side or shared image URL builder based on the TMDB configuration contract, with explicit poster/backdrop size choices for TV cards, Detail, and Hero. Do not use `original` assets for ordinary TV cards. Preserve existing `posterSmall || poster` behavior where available and keep lazy/eager loading decisions in TV components.
 
-The product must include the required TMDB attribution and an approved TMDB logo in the existing About/Credits-type location before the phase is released. TMDB states that non-commercial API use requires attribution and that the application should display the notice: “This product uses the TMDB API but is not endorsed or certified by TMDB.”[7] Legal/product review must confirm the applicable license before enabling the integration.
+The TV shell now includes the required TMDB attribution statement and a link to TMDB. Before release, legal/product review must confirm the applicable license and the final approved TMDB logo treatment. TMDB states that non-commercial API use requires attribution and that the application should display the notice: “This product uses the TMDB API but is not endorsed or certified by TMDB.”[7]
 
 ## Proposed architecture
 

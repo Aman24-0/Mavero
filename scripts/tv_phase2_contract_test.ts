@@ -71,11 +71,12 @@ navigation.reset();
 assert.equal(navigation.depth, 0);
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
 
-const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, performanceSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, detailRouteSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, performanceSource, tmdbSource, contentServiceSource, contentTypesSource, cacheSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.server.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/routes/api/content/[type]/[id]/+server.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvMediaRail.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvHero.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvSearch.svelte', import.meta.url), 'utf8'),
@@ -83,7 +84,11 @@ const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource
   readFile(new URL('../src/lib/components/tv/TvMyList.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/tv/navigation.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvPlayer.svelte', import.meta.url), 'utf8'),
-  readFile(new URL('../src/lib/components/tv/TvPerformance.svelte', import.meta.url), 'utf8')
+  readFile(new URL('../src/lib/components/tv/TvPerformance.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/server/content/adapters/tmdb.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/server/content/service.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/server/content/types.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/server/content/cache.ts', import.meta.url), 'utf8')
 ]);
 
 assert.match(focusSource, /tvFocusGroup/);
@@ -118,6 +123,8 @@ assert.match(shellSource, /TvSearch/);
 assert.match(shellSource, /searchController/);
 assert.match(shellSource, /searchRequestSequence/);
 assert.match(shellSource, /api\/content\/search/);
+assert.match(shellSource, /payload\.partial/);
+assert.match(shellSource, /Some catalog sources are unavailable/);
 assert.match(shellSource, /searchKeyboardOpen/);
 assert.match(shellSource, /searchCategory/);
 assert.match(searchSource, /TvSearchCategory/);
@@ -207,5 +214,24 @@ assert.match(performanceSource, /setInterval/);
 assert.match(performanceSource, /clearInterval/);
 assert.match(performanceSource, /samples\.length > 64/);
 assert.match(performanceSource, /current\.samples\.shift\(\)/);
+assert.match(tmdbSource, /from '\$env\/dynamic\/private'/, 'TMDB must read credentials through the private server environment');
+assert.match(tmdbSource, /TMDB_BEARER_TOKEN/);
+assert.match(tmdbSource, /authorization: `Bearer \$\{token\}`/);
+assert.match(tmdbSource, /\/configuration/);
+assert.match(tmdbSource, /imageConfig\.posterSize/);
+assert.match(tmdbSource, /id: `tmdb:\$\{type\}:\$\{raw\.id\}`/);
+assert.match(tmdbSource, /fetchJson/);
+assert.doesNotMatch(tmdbSource, /console\.(log|warn|error)/, 'TMDB adapter must not log credentials or upstream payloads');
+assert.doesNotMatch(tmdbSource, /original\)/, 'Ordinary TMDB images must not use original-sized assets');
+assert.match(contentServiceSource, /Promise\.allSettled/);
+assert.match(contentServiceSource, /partial: failures\.length > 0/);
+assert.match(contentServiceSource, /failureWarning/);
+assert.match(contentServiceSource, /parseExternalId/);
+assert.match(contentTypesSource, /'tmdb' \| 'anilist' \| 'fixtures'/);
+assert.match(contentTypesSource, /a-zA-Z0-9_:-/);
+assert.match(detailRouteSource, /isValidContentId/);
+assert.match(cacheSource, /MAX_CACHE_ENTRIES/);
+assert.match(cacheSource, /while \(entries\.size >= MAX_CACHE_ENTRIES\)/);
+assert.match(cacheSource, /maxEntries: MAX_CACHE_ENTRIES/);
 
 console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, real Discover wiring, Search, Detail, My List, and strict player/auth boundaries.');
