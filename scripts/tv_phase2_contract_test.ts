@@ -71,7 +71,7 @@ navigation.reset();
 assert.equal(navigation.depth, 0);
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
 
-const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
@@ -81,7 +81,8 @@ const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource
   readFile(new URL('../src/lib/components/tv/TvSearch.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvDetail.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvMyList.svelte', import.meta.url), 'utf8'),
-  readFile(new URL('../src/lib/tv/navigation.ts', import.meta.url), 'utf8')
+  readFile(new URL('../src/lib/tv/navigation.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvPlayer.svelte', import.meta.url), 'utf8')
 ]);
 
 assert.match(focusSource, /tvFocusGroup/);
@@ -147,15 +148,35 @@ assert.match(shellSource, /if \(page\.data\.user\)/, 'TV cloud sync must remain 
 assert.match(shellSource, /Array\.from\(item\.genres/ , 'TV favorite snapshots must materialize reactive genre arrays');
 assert.match(shellSource, /if \(screen === 'my-list'\) void loadMyList\(\)/, 'Returning from detail to My List must refresh local items');
 assert.match(shellSource, /details ready/);
-assert.match(shellSource, /Player actions remain outside Phase 6/);
+assert.match(shellSource, /Player actions remain outside Phase 7/);
+assert.match(shellSource, /TvPlayer/);
+assert.match(shellSource, /tv-player-remote/);
+assert.match(shellSource, /screen === 'player'/);
+assert.match(shellSource, /phase7MockPlaybackUrl/);
+assert.match(shellSource, /openPlayer/);
+assert.match(shellSource, /navigation\.open\('player'/);
 assert.match(detailSource, /Seasons and episodes/);
 assert.match(detailSource, /item\.type !== 'movie'/, 'Anime and Series detail must render the season guide');
 assert.match(detailSource, /tv-detail-my-list/);
 assert.match(detailSource, /tv-detail-recommendations/);
+assert.match(detailSource, /tv-detail-watch-now/);
+assert.match(detailSource, /onWatchNow/);
 assert.match(detailSource, /font-weight: 950/);
 assert.match(myListSource, /Local-first/);
 assert.match(myListSource, /tv-my-list/);
 assert.match(navigationSource, /'detail'/);
+assert.match(navigationSource, /'player'/);
+assert.match(playerSource, /<video/);
+assert.match(playerSource, /preload="metadata"/);
+assert.match(playerSource, /onloadedmetadata/);
+assert.match(playerSource, /tv-player-toggle/);
+assert.match(playerSource, /tv-player-back/);
+assert.match(playerSource, /seekBy\(-10\)/);
+assert.match(playerSource, /seekBy\(10\)/);
+assert.match(playerSource, /tv-player-remote/);
+assert.match(playerSource, /No playback source is available/);
+assert.match(playerSource, /track kind="captions"/);
+assert.doesNotMatch(playerSource, /autoplay/);
 assert.doesNotMatch(shellSource, /AVPlay/);
 assert.doesNotMatch(shellSource, /supabase/);
 

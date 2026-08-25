@@ -28,6 +28,7 @@
   import TvMediaRail from './TvMediaRail.svelte';
   import TvMyList from './TvMyList.svelte';
   import TvNav from './TvNav.svelte';
+  import TvPlayer from './TvPlayer.svelte';
   import TvSearch, { type TvSearchCategory } from './TvSearch.svelte';
 
   type ActionTarget = HTMLElement & { dataset: DOMStringMap };
@@ -99,6 +100,11 @@
   let myListError = $state('');
   let myListSyncMessage = $state('Local-first library');
   let myListRequestSequence = 0;
+  let playerTitle = $state('');
+  let playerSource = $state('');
+  let playerRetryNonce = $state(0);
+
+  const phase7MockPlaybackUrl = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 
   const navItems: Array<{ id: string; label: string; screen: TVScreen }> = [
     { id: 'tv-nav-home', label: 'Home', screen: 'home' },
@@ -130,6 +136,12 @@
         return;
       }
 
+      if (screen === 'player') {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('tv-player-remote', { detail: action }));
+        return;
+      }
+
       if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
         event.preventDefault();
         coordinator.move(action, exitDialogOpen ? 'tv-exit' : undefined);
@@ -158,6 +170,18 @@
   function handleBack() {
     if (exitDialogOpen) {
       cancelExit();
+      return;
+    }
+
+    if (screen === 'player') {
+      const previous = navigation.goBack();
+      if (previous) {
+        screen = previous.screen;
+        statusMessage = `Returned to ${screenLabel(screen)}.`;
+        restoreAfterRender([previous.focusId, 'tv-detail-watch-now', 'tv-nav-home']);
+      } else {
+        openExitConfirmation();
+      }
       return;
     }
 
@@ -537,8 +561,26 @@
   }
 
   function handleEpisodeSelect(episode: Episode) {
-    statusMessage = `Selected Season ${episode.season}, Episode ${episode.number}. Player actions remain outside Phase 6.`;
+    statusMessage = `Selected Season ${episode.season}, Episode ${episode.number}. Player actions remain outside Phase 7 initial playback scope.`;
     restoreAfterRender([`tv-detail-episode-${episode.season}-${episode.number}`]);
+  }
+
+  function openPlayer() {
+    if (!detailItem) return;
+    navigation.rememberFocus('tv-detail-watch-now');
+    navigation.open('player', 'tv-detail-watch-now');
+    screen = 'player';
+    playerTitle = detailItem.title;
+    playerSource = phase7MockPlaybackUrl;
+    playerRetryNonce += 1;
+    statusMessage = `${detailItem.title} player ready.`;
+    restoreAfterRender(['tv-player-toggle', 'tv-player-back']);
+  }
+
+  function retryPlayer() {
+    playerRetryNonce += 1;
+    statusMessage = `${playerTitle} player retry requested.`;
+    restoreAfterRender(['tv-player-toggle', 'tv-player-back']);
   }
 
   function detailSnapshot(item: TvDetailItem) {
@@ -650,7 +692,7 @@
 
     <section class="tv-hero" aria-labelledby="tv-shell-title">
       <div>
-        <p class="eyebrow">Phase {screen === 'search' ? '4 / Search' : screen === 'detail' || screen === 'my-list' ? '6 / ' + screenLabel(screen) : '3 / Discover'} TV experience</p>
+        <p class="eyebrow">Phase {screen === 'search' ? '4 / Search' : screen === 'detail' || screen === 'my-list' ? '6 / ' + screenLabel(screen) : screen === 'player' ? '7 / Player' : '3 / Discover'} TV experience</p>
         <h1 id="tv-shell-title">Mavero, made for the big screen.</h1>
         <p class="hero-copy">Real Mavero data and remote-first controls, presented with TV-sized targets and predictable focus.</p>
       </div>
@@ -706,7 +748,13 @@
       </section>
     {:else if screen === 'detail'}
       <section class="tv-section" aria-label="TV title details">
-        <TvDetail item={detailItem ?? undefined} loading={detailLoading} errorMessage={detailError} favoriteStatus={detailFavoriteStatus} saving={detailFavoriteSaving} seasons={detailSeasons} activeSeason={detailActiveSeason} episodesLoading={detailEpisodesLoading} episodesError={detailEpisodesError} recommendations={(detailItem?.recommendations ?? []) as MediaItem[]} saveError={detailSaveError} onBack={handleBack} onRetry={(event) => { event.preventDefault(); if (detailItem) void openDetail(detailItem, 'tv-detail-back'); }} onToggleFavorite={(event) => { event.preventDefault(); void toggleDetailFavorite(); }} onSeasonChange={handleDetailSeasonChange} onEpisodeSelect={(episode, event) => { event.preventDefault(); handleEpisodeSelect(episode); }} onRecommendationSelect={handleDetailRecommendation} />
+        <TvDetail item={detailItem ?? undefined} loading={detailLoading} errorMessage={detailError} favoriteStatus={detailFavoriteStatus} saving={detailFavoriteSaving} seasons={detailSeasons} activeSeason={detailActiveSeason} episodesLoading={detailEpisodesLoading} episodesError={detailEpisodesError} recommendations={(detailItem?.recommendations ?? []) as MediaItem[]} saveError={detailSaveError} onBack={handleBack} onRetry={(event) => { event.preventDefault(); if (detailItem) void openDetail(detailItem, 'tv-detail-back'); }} onWatchNow={(event) => { event.preventDefault(); openPlayer(); }} onToggleFavorite={(event) => { event.preventDefault(); void toggleDetailFavorite(); }} onSeasonChange={handleDetailSeasonChange} onEpisodeSelect={(episode, event) => { event.preventDefault(); handleEpisodeSelect(episode); }} onRecommendationSelect={handleDetailRecommendation} />
+      </section>
+    {:else if screen === 'player'}
+      <section class="tv-section tv-player-section" aria-label="TV player">
+        {#key playerRetryNonce}
+          <TvPlayer src={playerSource} title={playerTitle} onBack={() => handleBack()} onRetry={retryPlayer} />
+        {/key}
       </section>
     {:else}
       <section class="tv-section" aria-labelledby="tv-placeholder-title">

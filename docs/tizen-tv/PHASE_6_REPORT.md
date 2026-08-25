@@ -1,6 +1,6 @@
 # Mavero Samsung Tizen TV — Phase 6 Report
 
-**Status:** Implementation complete; Samsung Phase 6 hardware QA pending.
+**Status:** COMPLETE — owner-confirmed Samsung Phase 6 hardware QA 100% PASS.
 
 **Branch:** `feature/tizen-tv`
 
@@ -20,11 +20,11 @@ The TV shell and TV components received larger, heavier, higher-contrast typogra
 
 The final owner-provided Phase 5 hardware results are recorded verbatim in the Phase 5 report and worklog: native IME investigation **FAIL** because the Samsung inbuilt keyboard did not open inside the TizenBrew-hosted module; the custom TV keyboard remains the final default. Vertical focus fix **PASS**. Typography and clarity **NEEDS FIX**, carried into Phase 6. General Search flow and navigation **PASS**.
 
-## Owner Samsung Phase 6 in-progress results
+## Final owner Samsung Phase 6 results
 
-The owner tested the current Phase 6 build on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. Typography/clarity is now **PASS** at the reported 10-foot distance. Anime detail entry, My List add/remove, Back navigation, and the exit lifecycle are **PASS**. Season/episode navigation was **FAIL** on that TV build because the detail screen showed season/episode counts but no interactive controls. Recommendations were limited to six visible items and did not reveal more items with right navigation; some details appeared as a 1×2 grid. Movies and Series remain an expected **LIMITATION** while TMDB is not configured; no TMDB integration is added in this phase.
+The owner tested the final Phase 6 build on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. All Phase 6 hardware checks are **PASS**: typography/clarity is readable at the 10-foot distance; Movie, Series, and Anime detail entry works; My List add/remove/refresh works; season/episode controls render and operate; and recommendations use a horizontal rail with unlimited scroll. Movies and Series remain an expected **LIMITATION** when TMDB is not configured; no TMDB integration was added in this phase.
 
-The Season/Anime guide fix now renders the guide for every non-movie title, derives a one-season fallback for AniList Anime with episode counts, and loads the existing season endpoint for both Series and Anime. The recommendation rail now uses an explicit non-wrapping horizontal flex layout, no TV-side six-item cap, and an optional TV-only search expansion to supplement provider recommendations while preserving the existing provider contracts.
+This final PASS includes the corrective Season/Anime guide behavior for every non-movie title, the one-season AniList Anime fallback when only an episode count is available, the existing season endpoint for Series and Anime, and the explicit non-wrapping horizontal recommendation rail with no TV-side six-item cap.
 
 ## Browser and automated verification
 
@@ -50,4 +50,4 @@ No player, AVPlay, media-control, resolver, streaming-provider, auth/Supabase, P
 | Exit lifecycle | Confirm hosted exit, cancel, reopen, and existing Phase 3 exit behavior remain intact |
 | Boundary regression | Confirm no player/AVPlay is entered and normal Web/PWA routes remain unchanged |
 
-Samsung Phase 6 hardware QA is **NOT COMPLETE**. The owner’s in-progress findings and the corrective implementation are recorded above, but the corrected final build still requires owner re-test on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. No Samsung Phase 6 PASS is claimed until the season/episode and recommendation fixes are confirmed on hardware.
+Samsung Phase 6 hardware QA is **COMPLETE — 100% PASS**, confirmed by the owner on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. Phase 7 TV Player work is tracked separately and is not part of this report.

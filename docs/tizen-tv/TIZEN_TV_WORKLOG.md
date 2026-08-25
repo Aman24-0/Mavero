@@ -484,3 +484,39 @@ This entry records the owner’s observations only. No timing, memory, console, 
 **Commit:** Phase 6 implementation `c39fb7cabb313657d1f87cc265b7c98d9c707085`.
 **Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
 **Merge status:** Phase 6 remains on `feature/tizen-tv`; implementation is pushed to `origin/feature/tizen-tv`; not merged to `main`; production remains unchanged.
+
+## Phase 6 — Samsung QA closure
+
+**Date:** 25 August 2026
+**Phase:** Phase 6 — Detail + My List
+**Status:** **COMPLETE — owner-confirmed Samsung hardware QA 100% PASS.**
+
+**Hardware:** Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
+
+**Owner QA:** Typography/clarity PASS at 10-foot distance; Movie/Series/Anime detail entry PASS; My List add/remove/refresh PASS; Season/Episode guide PASS with interactive controls; and Recommendations PASS with horizontal unlimited scrolling.
+
+**Known limitation:** Movies and Series remain unavailable when TMDB is not configured. No TMDB integration or provider change was introduced for this closure.
+
+**Gate:** Phase 6 is officially complete. The Anime guide fallback and explicit horizontal recommendation rail corrections are included in the completed build. Phase 7 TV Player is now authorized and started.
+
+## Phase 7 — TV Player initial implementation
+
+**Date:** 25 August 2026
+**Phase:** Phase 7 — TV Player
+**Status:** **STARTED — isolated HTML5 video player implementation.**
+
+**Objective:** Build a TV-safe playback surface inside `/tv` with a native HTML5 `<video>` element first, remote-safe Play/Pause and seek controls, loading/error states, a basic controls overlay, and Back restoration to the originating Detail screen.
+
+**Strict boundaries:** All Phase 7 changes remain under `/tv` and `src/lib/components/tv/` plus the TV-only focus/remote/navigation layer and focused TV tests/docs. No auth/Supabase, PWA/service-worker, normal Web/PWA route, TMDB/provider integration, production/main, or complex source-selection changes are allowed. AVPlay remains deferred unless HTML5 video fails on supported hardware.
+
+**Implementation completed:** Added `TvPlayer.svelte`, wired the TV-only mock playback URL, mapped the existing remote adapter to HTML5 video behavior, isolated player focus, and preserved Detail focus on Back. The first player iteration does not implement autoplay, provider selection, resolver changes, fullscreen, or progress persistence.
+
+**Validation:** `pnpm check`, focused TV contract tests, full `pnpm test`, memory-safe production build, and `git diff --check` passed. TizenBrew root metadata remains unchanged: app module, `Mavero TV`, `app/index.html`, and `keys: []`.
+
+**Browser QA:** The mock video mounted, reached `readyState: 4`, reported duration, played through a trusted Play gesture, updated Pause/status/progress, received isolated normalized remote events, and returned to Detail with `tv-detail-watch-now` focus after Back. Synthetic console Play was rejected by Chromium autoplay policy as expected for an untrusted gesture; a browser Back key simulation was driver-limited, while normalized Escape successfully exercised the Back path.
+
+**Next implementation:** Validate the initial player on the target Samsung hardware. AVPlay, provider selection, resolver changes, autoplay, fullscreen, and progress persistence remain outside this initial increment.
+
+**Branch:** `feature/tizen-tv`
+**Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
+**Merge status:** Phase 6 is complete on the feature branch; Phase 7 is started on the same branch; neither phase is merged to `main`; production remains unchanged.

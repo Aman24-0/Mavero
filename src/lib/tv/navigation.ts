@@ -1,4 +1,4 @@
-export type TVScreen = 'home' | 'search' | 'my-list' | 'settings' | 'detail';
+export type TVScreen = 'home' | 'search' | 'my-list' | 'settings' | 'detail' | 'player';
 
 export type TVNavigationSnapshot = {
   screen: TVScreen;

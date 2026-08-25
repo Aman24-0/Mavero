@@ -22,6 +22,7 @@
     saveError = '',
     onBack,
     onRetry,
+    onWatchNow,
     onToggleFavorite,
     onSeasonChange,
     onEpisodeSelect,
@@ -40,6 +41,7 @@
     saveError?: string;
     onBack: (event: MouseEvent) => void;
     onRetry: (event: MouseEvent) => void;
+    onWatchNow: (event: MouseEvent) => void;
     onToggleFavorite: (event: MouseEvent) => void;
     onSeasonChange: (season: number) => void;
     onEpisodeSelect: (episode: Episode, event: MouseEvent) => void;
@@ -75,6 +77,7 @@
           <p class="detail-description">{item.description}</p>
           {#if item.genres.length}<div class="genre-row" aria-label="Genres">{#each item.genres.slice(0, 4) as genre}<span>{genre}</span>{/each}</div>{/if}
           <div class="detail-actions">
+            <button class="tv-focusable detail-watch" data-tv-focusable="true" data-tv-focus-id="tv-detail-watch-now" data-tv-focus-group="tv-detail-actions" type="button" onclick={onWatchNow}>Watch Now</button>
             <button class="tv-focusable detail-save" class:saved={favoriteStatus} disabled={saving} data-tv-focusable="true" data-tv-focus-id="tv-detail-my-list" data-tv-focus-group="tv-detail-actions" type="button" onclick={onToggleFavorite}>{saving ? 'Saving…' : statusLabel(favoriteStatus)}</button>
           </div>
           {#if item.type !== 'movie'}
@@ -138,7 +141,8 @@
   .genre-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
   .genre-row span { padding: 8px 11px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; color: var(--tv-ink); background: rgba(255,255,255,.1); font-size: .92rem; font-weight: 800; }
   .detail-actions { display: flex; gap: 12px; margin-top: 24px; }
-  .detail-save { min-width: 190px; min-height: 58px; padding: 13px 19px; border: 2px solid var(--tv-accent); border-radius: 12px; color: #fff; background: var(--tv-accent); font-size: 1rem; font-weight: 900; cursor: pointer; }
+  .detail-watch, .detail-save { min-width: 190px; min-height: 58px; padding: 13px 19px; border: 2px solid var(--tv-accent); border-radius: 12px; color: #fff; background: var(--tv-accent); font-size: 1rem; font-weight: 900; cursor: pointer; }
+  .detail-watch { border-color: #ffd45d; color: #171019; background: #ffd45d; }
   .detail-save.saved { color: #171019; background: #ffd45d; border-color: #ffd45d; }
   .detail-save:disabled { cursor: wait; opacity: .72; }
   .series-summary { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 17px; color: var(--tv-detail-muted); font-size: 1rem; font-weight: 700; }

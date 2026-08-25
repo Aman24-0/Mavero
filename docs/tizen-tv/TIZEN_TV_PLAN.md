@@ -278,7 +278,7 @@ Adapt:
 - remotely reachable actions
 - **TV-only typography/clarity fix: larger fonts, heavier font weight, stronger contrast, and readable focus treatment for the 10-foot interface**
 
-### Phase 7 — TV player
+### Phase 7 — TV player — STARTED
 
 High-risk phase. Test:
 - Play/Pause
@@ -521,16 +521,17 @@ Player        EXISTING + tested architecture
 Backend       EXISTING
 Auth          EXISTING
 Admin         EXISTING
-Tizen         Phase 5 complete; Phase 6 started
+Tizen         Phase 7 started; Phase 6 complete
 Phase 0       COMPLETE
 Phase 1       COMPLETE
 Phase 2       COMPLETE
 Phase 3       COMPLETE
 Phase 4       COMPLETE
 Phase 5       COMPLETE — Samsung QA: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS
-Phase 6       STARTED — Detail + My List plus TV typography/clarity fix
+Phase 6       COMPLETE — Samsung QA: 100% PASS
+Phase 7       STARTED — isolated HTML5 TV Player initial implementation
 ```
 
-**Immediate next task: Continue Phase 6 — isolated TV Detail + My List implementation with the typography/clarity fix.**
+**Immediate next task: Continue Phase 7 — isolated HTML5 TV Player implementation with remote-safe playback controls.**
 
-Keep all work under the TV layer and do not modify player/AVPlay, auth/Supabase, PWA, normal Web/PWA routes, providers/resolver, production configuration, or `main`.
+Keep all work under the TV layer and do not modify auth/Supabase, PWA, normal Web/PWA routes, TMDB integration, production configuration, or `main`. AVPlay remains deferred unless HTML5 video fails on supported hardware.
