@@ -2,19 +2,19 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are **COMPLETE**. The owner’s Samsung QA recorded Native IME **FAIL**, vertical focus **PASS**, typography/clarity **NEEDS FIX**, and general Search flow/navigation **PASS**; the custom UI keyboard is the final default. Phase 6 — Detail + My List is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**. Phase 7 — TV Player is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**, including the corrected Movie Detail season-guide boundary. Phase 8 — TV performance instrumentation and measured optimization is now **STARTED**. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are **COMPLETE**. The owner’s Samsung QA recorded Native IME **FAIL**, vertical focus **PASS**, typography/clarity **NEEDS FIX**, and general Search flow/navigation **PASS**; the custom UI keyboard is the final default. Phase 6 — Detail + My List is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**. Phase 7 — TV Player is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**, including the corrected Movie Detail season-guide boundary. Phase 8 — TV performance instrumentation and measured optimization is **COMPLETE** for the owner-reported QA cycle; its four reported TV-only issues are fixed in the current follow-up. Phase 9 TMDB Integration and Phase 10 Nuvio-inspired TV UI Redesign are **PLANNED ONLY**. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
 
 | Field | Status |
 |---|---|
-| Current phase | Phase 8 — TV performance instrumentation + measured optimization |
+| Current phase | Phase 9 — TMDB Integration (planned) |
 | Phase 0 status | **COMPLETE** |
-| Tizen implementation | **Phase 7 complete; Phase 8 performance implementation started** |
+| Tizen implementation | **Phase 8 complete; Phase 9 TMDB and Phase 10 UI redesign planned only** |
 | Phase 1 | **COMPLETE — owner-confirmed real-TV validation passed** |
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
-| Samsung TV hardware QA | **Phase 1–4 PASS; Phase 5: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS; Phase 6 100% PASS; Phase 7 100% PASS; Phase 8 performance observation pending** |
+| Samsung TV hardware QA | **Phase 1–4 PASS; Phase 5: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS; Phase 6 100% PASS; Phase 7 100% PASS; Phase 8 owner QA recorded, TV marker limitation and follow-up fixes documented** |
 | Branch | `feature/tizen-tv` |
-| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 final is `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 implementation is `c39fb7cabb313657d1f87cc265b7c98d9c707085`; Phase 7 initial player is `5dcc33acc932d607fcfaaeb3d386b03a8afce901`; Phase 8 closure commit pending |
-| Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; Phase 7/8 work stays on this branch; not merged to `main`; no production deployment or production Netlify mutation |
+| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 final is `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 implementation is `c39fb7cabb313657d1f87cc265b7c98d9c707085`; Phase 7 initial player is `5dcc33acc932d607fcfaaeb3d386b03a8afce901`; Phase 8 initial instrumentation is `7252a5100b998ccff92e1747fba39df8f7483594`; Phase 8 follow-up closure commit pending |
+| Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; Phase 8 follow-up stays on this branch; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
 
@@ -570,6 +570,36 @@ This entry records the owner’s observations only. No timing, memory, console, 
 **Branch:** `feature/tizen-tv`
 
 **Commit:** Pending.
+
+**Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
+
+**Merge status:** Phase 8 remains on `feature/tizen-tv`; it is not merged to `main`; production remains unchanged.
+
+## Phase 8 — Samsung QA closure and follow-up fixes
+
+**Date:** 25 August 2026
+
+**Phase:** Phase 8 — TV performance instrumentation + measured optimization
+
+**Status:** **COMPLETE for the owner-reported QA cycle; all four reported TV-only issues fixed in the follow-up implementation.**
+
+**Hardware:** Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
+
+**Owner QA results:** Performance markers were not accessible on the TV, recorded as the expected limitation of browser-only instrumentation. General navigation smoothness was PASS with no major stutter. The four-entry Detail LRU cache was PASS and bounded. General navigation focus/stutter behavior was PASS.
+
+**Issues found and fixed:** (1) Movie Detail and anime content represented as `type === 'movie'` could show an episode guide; TV Detail and TvShell now use an explicit `type === 'series'` boundary, so Movies never render or fetch seasons. (2) Episode Show More was not appearing; Series now starts at twelve episodes, shows a focusable `tv-detail-episodes-more` action only when more remain, and adds twelve on Enter/OK. (3) Episode-heavy Detail had a 2–3 second initial lag; episode preparation is deferred to idle/timeout, a loading skeleton is shown, only twelve cards mount initially, the list is keyed by season, and pending preparation is cancelled. (4) Player → Detail focus restoration jumped through the page; the shell now saves scroll position before Player, restores it immediately on Back, and focuses Watch Now with `preventScroll: true` after Detail is ready.
+
+**Validation:** `pnpm check`, focused TV contract tests, full `pnpm test`, memory-safe production build, `git diff --check`, and local browser QA passed for the combined follow-up. Local browser QA loaded live AniList Anime data and verified Anime Detail rendered no `data-tv-series-guide` marker. Local placeholder configuration had no Movie or Series catalog data, so live TMDB-backed Movie and 24-episode Series browser assertions remain part of Phase 9/owner data QA; the source contract is explicit and covered.
+
+**Known limitation:** Samsung did not expose the browser performance object/markers. No Samsung heap, CPU, transfer-size, or universal sub-second latency claim is made. The Phase 7 HTML5-first mock playback boundary remains unchanged.
+
+**Next phases:** Phase 9 TMDB Integration and Phase 10 Nuvio-inspired TV UI Redesign are planned only. No TMDB implementation or UI redesign implementation was included in this closure.
+
+**Strict boundary:** No auth/Supabase, PWA/service-worker, normal Web/PWA route, provider/resolver, production/main, or TizenBrew metadata changes were made.
+
+**Branch:** `feature/tizen-tv`
+
+**Commit:** Follow-up closure commit pending; exact SHA will be recorded in the final handoff.
 
 **Deployment:** `https://feature-tizen-tv--mavero1.netlify.app/`
 

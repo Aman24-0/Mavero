@@ -131,6 +131,7 @@
   let playerTitle = $state('');
   let playerSource = $state('');
   let playerRetryNonce = $state(0);
+  let playerReturnScrollY = $state<number | null>(null);
 
   const phase7MockPlaybackUrl = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 
@@ -209,7 +210,8 @@
       if (previous) {
         screen = previous.screen;
         statusMessage = `Returned to ${screenLabel(screen)}.`;
-        restoreAfterRender([previous.focusId, 'tv-detail-watch-now', 'tv-nav-home']);
+        if (previous.screen === 'detail' && previous.focusId === 'tv-detail-watch-now') restoreDetailFocusAfterPlayer();
+        else restoreAfterRender([previous.focusId, 'tv-detail-watch-now', 'tv-nav-home']);
       } else {
         openExitConfirmation();
       }
@@ -532,7 +534,7 @@
       if (requestId !== detailRequestSequence || controller.signal.aborted) return;
       detailFavoriteStatus = status;
       restoreAfterRender(['tv-detail-my-list', 'tv-detail-back']);
-      if (cachedDetail.type === 'series' || cachedDetail.type === 'anime') void loadDetailSeason(cachedDetail.id, 1, requestId);
+      if (cachedDetail.type === 'series') void loadDetailSeason(cachedDetail.id, 1, requestId);
       if (!cachedDetail.recommendations?.length) void loadDetailRecommendations(cachedDetail, requestId, controller);
       return;
     }
@@ -550,7 +552,7 @@
       detailLoading = false;
       statusMessage = `${payload.item.title} details ready.`;
       restoreAfterRender(['tv-detail-my-list', 'tv-detail-back']);
-      if (payload.item.type === 'series' || payload.item.type === 'anime') void loadDetailSeason(payload.item.id, 1, requestId);
+      if (payload.item.type === 'series') void loadDetailSeason(payload.item.id, 1, requestId);
       void loadDetailRecommendations(payload.item, requestId, controller);
     } catch (error) {
       if (controller.signal.aborted || requestId !== detailRequestSequence) return;
@@ -601,7 +603,7 @@
   }
 
   function handleDetailSeasonChange(seasonNumber: number) {
-    if (!detailItem || detailItem.type === 'movie') return;
+    if (!detailItem || detailItem.type !== 'series') return;
     void loadDetailSeason(detailItem.id, seasonNumber);
   }
 
@@ -610,8 +612,24 @@
     restoreAfterRender([`tv-detail-episode-${episode.season}-${episode.number}`]);
   }
 
+  function restoreDetailFocusAfterPlayer() {
+    const savedScrollY = playerReturnScrollY;
+    playerReturnScrollY = null;
+    void tick().then(() => {
+      if (typeof window !== 'undefined' && savedScrollY !== null) window.scrollTo(window.scrollX, savedScrollY);
+      const target = root?.querySelector<HTMLElement>('[data-tv-focus-id="tv-detail-watch-now"]');
+      if (!target) {
+        restoreAfterRender(['tv-detail-watch-now', 'tv-detail-back', 'tv-nav-home']);
+        return;
+      }
+      target.tabIndex = 0;
+      target.focus({ preventScroll: true });
+    });
+  }
+
   function openPlayer() {
     if (!detailItem) return;
+    playerReturnScrollY = typeof window !== 'undefined' ? window.scrollY : null;
     navigation.rememberFocus('tv-detail-watch-now');
     navigation.open('player', 'tv-detail-watch-now');
     screen = 'player';

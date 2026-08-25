@@ -298,7 +298,7 @@ High-risk phase. Test:
 
 Do not assume desktop Chromium player behavior equals Samsung Tizen behavior.
 
-### Phase 8 — TV performance instrumentation + measured optimization — STARTED
+### Phase 8 — TV performance instrumentation + measured optimization — COMPLETE
 
 Measure and improve only the isolated TV runtime:
 - initial TV JS-to-DOM and first-paint markers
@@ -310,31 +310,19 @@ Measure and improve only the isolated TV runtime:
 - cleanup/cancellation of pending TV work
 - bounded TV Detail cache and long-session stability
 
-The first implementation adds opt-in diagnostics at `/tv?tvperf=1`, capped in-memory samples, a four-entry Detail LRU cache, bounded episode rendering with a focusable Show more action, asynchronous image decoding hints, and below-the-fold media-section rendering hints. No JS transfer-size or Samsung heap measurement is claimed from browser-only instrumentation. Samsung 30+ minute observation remains pending owner hardware QA.
+The implementation added opt-in diagnostics at `/tv?tvperf=1`, capped in-memory samples, a four-entry Detail LRU cache, bounded Series episode rendering with a focusable Show more action, asynchronous image decoding hints, below-the-fold media-section rendering hints, deferred episode preparation, and direct Player-to-Detail scroll/focus restoration. Owner Samsung QA recorded smooth navigation, a working bounded cache, and no general focus/stutter issue. TV performance markers were not accessible on the TV, which is recorded as the expected browser-only instrumentation limitation. The four reported TV-only issues were fixed in the follow-up implementation. See `PHASE_8_REPORT.md` for the complete record.
 
 Prefer measured optimization, lazy images, appropriate assets, minimal animation, and efficient focus updates.
 
-### Phase 9 — Real Samsung TV QA — NOT STARTED
+### Phase 9 — TMDB Integration — PLANNED ONLY
 
-Actual hardware testing is mandatory.
+Phase 9 adds server-side TMDB integration for Movies and Series while preserving AniList for Anime. The detailed implementation plan is in `PHASE_9_PLAN.md`. This phase is not started. It must keep credentials server-only, normalize TMDB responses into the existing content models, preserve the explicit Movie-versus-Series guide boundary, add truthful partial-failure handling, and measure whether episode-heavy delay is data/network-related or TV render-related. No TMDB implementation is included in the current closure.
 
-Test:
-- cold launch/reload
-- Discover/Search/Movies/Series/Anime
-- Details/My List/Profile where exposed
-- Back and focus restoration
-- poster/backdrop loading
-- broken images
-- empty/error/slow-network states
-- movie/series/anime playback
-- multiple episodes
-- resume/seek/back/source fallback
-- 30+ minute session
-- repeated navigation/search/playback
-- memory/CPU behavior where observable
+### Phase 10 — Nuvio-inspired TV UI redesign — PLANNED ONLY
 
-If hardware is unavailable, explicitly record:
-`Samsung TV QA: NOT RUN — hardware unavailable`
+Phase 10 is a TV-only visual redesign based on the owner’s Nuvio reference screenshots. The detailed plan is in `PHASE_10_PLAN.md`. The intended direction includes a persistent left sidebar, immersive hero, Continue Watching, Latest Releases — MyTrakt, poster rails, minimal hero metadata, cyan/blue focus treatment, progress indicators, and restrained transitions. No UI redesign implementation is included in the current closure.
+
+Phase 9 and Phase 10 must preserve all completed TV behavior, keep Web/PWA and auth/Supabase untouched, and pass the TV performance and Samsung hardware gates before release.
 
 ## 6. Web/PWA regression rule
 
@@ -523,7 +511,7 @@ Player        EXISTING + tested architecture
 Backend       EXISTING
 Auth          EXISTING
 Admin         EXISTING
-Tizen         Phase 8 performance instrumentation started; Phase 7 complete
+Tizen         Phase 8 complete; Phase 9 TMDB and Phase 10 UI redesign planned only
 Phase 0       COMPLETE
 Phase 1       COMPLETE
 Phase 2       COMPLETE
@@ -532,10 +520,11 @@ Phase 4       COMPLETE
 Phase 5       COMPLETE — Samsung QA: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS
 Phase 6       COMPLETE — Samsung QA: 100% PASS
 Phase 7       COMPLETE — owner-confirmed Samsung Player QA 100% PASS; Movie guide bug fixed
-Phase 8       STARTED — TV-only performance instrumentation and measured optimization
-Phase 9       NOT STARTED — real Samsung TV performance QA
+Phase 8       COMPLETE — owner QA recorded; four TV-only follow-up issues fixed
+Phase 9       PLANNED ONLY — TMDB Integration
+Phase 10      PLANNED ONLY — Nuvio-inspired TV UI Redesign
 ```
 
-**Immediate next task: Continue Phase 8 — measure the isolated TV runtime and complete bounded performance optimizations without touching Web/PWA, auth/Supabase, provider/TMDB, production, or `main`.**
+**Immediate next task: Review and authorize Phase 9 TMDB Integration. Phase 10 remains planned only. Do not implement either phase until its scope, credentials, data contracts, and Samsung/Web regression gates are approved.**
 
 Keep all work under the TV layer and do not modify auth/Supabase, PWA, normal Web/PWA routes, TMDB integration, production configuration, or `main`. AVPlay remains deferred unless HTML5 video fails on supported hardware.

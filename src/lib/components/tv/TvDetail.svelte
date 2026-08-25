@@ -8,7 +8,15 @@
   type TvDetailItem = MediaItem & { recommendations?: MediaItem[] };
   type FavoriteStatus = 'watching' | 'planned' | 'completed' | null;
 
-  let episodeVisibleCount = $state(12);
+  let episodesToShow = $state(12);
+  let episodeRenderReady = $state(false);
+  let episodeIdleId: number | undefined;
+  let episodeTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  type TVIdleWindow = Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
 
   let {
     item,
@@ -53,17 +61,49 @@
   const formatType = (type: ContentType) => type === 'movie' ? 'Movie' : type === 'series' ? 'Series' : 'Anime';
   const statusLabel = (status: FavoriteStatus) => status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Add to My List';
   const activeSeasonData = () => seasons.find((season) => season.number === activeSeason) ?? seasons[0];
-  const seasonCount = () => item?.seasons ?? (item?.type === 'anime' && item?.episodes ? 1 : 0);
+  const seasonCount = () => item?.type === 'series' ? item.seasons ?? 0 : 0;
   const activeEpisodes = () => activeSeasonData()?.episodes ?? [];
 
+  function cancelEpisodePreparation() {
+    if (episodeIdleId !== undefined && typeof window !== 'undefined') {
+      (window as TVIdleWindow).cancelIdleCallback?.(episodeIdleId);
+    }
+    if (episodeTimeoutId !== undefined) clearTimeout(episodeTimeoutId);
+    episodeIdleId = undefined;
+    episodeTimeoutId = undefined;
+  }
+
+  function prepareEpisodeList() {
+    cancelEpisodePreparation();
+    episodeRenderReady = false;
+    const reveal = () => {
+      episodeRenderReady = true;
+      episodeIdleId = undefined;
+      episodeTimeoutId = undefined;
+    };
+    if (typeof window === 'undefined') {
+      reveal();
+      return;
+    }
+    const idleWindow = window as TVIdleWindow;
+    if (idleWindow.requestIdleCallback) episodeIdleId = idleWindow.requestIdleCallback(reveal, { timeout: 400 });
+    else episodeTimeoutId = setTimeout(reveal, 0);
+  }
+
   function showMoreEpisodes() {
-    episodeVisibleCount += 12;
+    episodesToShow += 12;
   }
 
   $effect(() => {
-    activeSeason;
-    episodesLoading;
-    episodeVisibleCount = 12;
+    const shouldPrepare = item?.type === 'series' && !episodesLoading && activeEpisodes().length > 0;
+    episodesToShow = 12;
+    cancelEpisodePreparation();
+    if (!shouldPrepare) {
+      episodeRenderReady = false;
+      return;
+    }
+    prepareEpisodeList();
+    return cancelEpisodePreparation;
   });
 </script>
 
@@ -93,14 +133,14 @@
             <button class="tv-focusable detail-watch" data-tv-focusable="true" data-tv-focus-id="tv-detail-watch-now" data-tv-focus-group="tv-detail-actions" type="button" onclick={onWatchNow}>Watch Now</button>
             <button class="tv-focusable detail-save" class:saved={favoriteStatus} disabled={saving} data-tv-focusable="true" data-tv-focus-id="tv-detail-my-list" data-tv-focus-group="tv-detail-actions" type="button" onclick={onToggleFavorite}>{saving ? 'Saving…' : statusLabel(favoriteStatus)}</button>
           </div>
-          {#if item.type === 'series' || item.type === 'anime'}
+          {#if item.type === 'series'}
             <div class="series-summary"><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? '—'} episodes</strong>{#if item.status}<span>{item.status}</span>{/if}</div>
           {/if}
         </div>
       </div>
     </article>
 
-    {#if item.type === 'series' || item.type === 'anime'}
+    {#if item.type === 'series'}
       <section class="episode-section" aria-labelledby="tv-episodes-title" data-tv-series-guide="true">
         <div class="section-heading"><div><p class="eyebrow">Series guide</p><h2 id="tv-episodes-title">Seasons and episodes</h2></div><span class="direction-hint">← → choose · Enter open</span></div>
         {#if seasonCount() > 0}
@@ -115,17 +155,23 @@
         {:else if episodesError}
           <TvError message={episodesError} onRetry={onRetry} />
         {:else if activeEpisodes().length}
-          <div class="episode-list" role="list" aria-label={`Season ${activeSeason} episodes`}>
-            {#each activeEpisodes().slice(0, episodeVisibleCount) as episode (episode.id)}
-              <button class="tv-focusable episode-card" data-tv-focusable="true" data-tv-focus-id={`tv-detail-episode-${episode.season}-${episode.number}`} data-tv-focus-group="tv-detail-episodes" type="button" onclick={(event) => onEpisodeSelect(episode, event)}>
-                <span class="episode-number">E{String(episode.number).padStart(2, '0')}</span>
-                <span class="episode-copy"><strong>{episode.title}</strong><span>{episode.runtime ?? 'Runtime unavailable'}{#if episode.airDate} · {episode.airDate}{/if}</span>{#if episode.overview}<small>{episode.overview}</small>{/if}</span>
-                <span class="episode-arrow" aria-hidden="true">→</span>
-              </button>
-            {/each}
-          </div>
-          {#if activeEpisodes().length > episodeVisibleCount}
-            <button class="tv-focusable episode-more" data-tv-focusable="true" data-tv-focus-id="tv-detail-episodes-more" data-tv-focus-group="tv-detail-episodes" type="button" onclick={showMoreEpisodes}>Show 12 more episodes</button>
+          {#if !episodeRenderReady}
+            <TvLoading label="Preparing episode guide…" />
+          {:else}
+            {#key activeSeason}
+              <div id="tv-detail-episode-list" class="episode-list" role="list" aria-label={`Season ${activeSeason} episodes`}>
+                {#each activeEpisodes().slice(0, episodesToShow) as episode (episode.id)}
+                  <button class="tv-focusable episode-card" data-tv-focusable="true" data-tv-focus-id={`tv-detail-episode-${episode.season}-${episode.number}`} data-tv-focus-group="tv-detail-episodes" type="button" onclick={(event) => onEpisodeSelect(episode, event)}>
+                    <span class="episode-number">E{String(episode.number).padStart(2, '0')}</span>
+                    <span class="episode-copy"><strong>{episode.title}</strong><span>{episode.runtime ?? 'Runtime unavailable'}{#if episode.airDate} · {episode.airDate}{/if}</span>{#if episode.overview}<small>{episode.overview}</small>{/if}</span>
+                    <span class="episode-arrow" aria-hidden="true">→</span>
+                  </button>
+                {/each}
+              </div>
+              {#if activeEpisodes().length > episodesToShow}
+                <button class="tv-focusable episode-more" aria-controls="tv-detail-episode-list" aria-expanded={episodesToShow >= activeEpisodes().length} data-tv-focusable="true" data-tv-focus-id="tv-detail-episodes-more" data-tv-focus-group="tv-detail-episodes" type="button" onclick={showMoreEpisodes}>Show 12 more episodes</button>
+              {/if}
+            {/key}
           {/if}
         {:else}
           <div class="detail-empty" role="status">No episode data is available for this season.</div>
@@ -172,7 +218,7 @@
   .season-button { min-height: 55px; padding: 12px 18px; border: 1px solid rgba(255,255,255,.25); border-radius: 11px; color: var(--tv-detail-muted); background: rgba(255,255,255,.08); font-size: 1rem; font-weight: 850; white-space: nowrap; cursor: pointer; }
   .season-button.active { color: #171019; border-color: #ffd45d; background: #ffd45d; }
   .episode-list { display: grid; gap: 10px; }
-  .episode-more { min-height: 56px; padding: 12px 16px; border: 2px solid var(--tv-line-strong); border-radius: 12px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: 1rem; font-weight: 900; cursor: pointer; }
+  .episode-more { display: block; min-height: 56px; margin-top: 12px; padding: 12px 16px; border: 2px solid var(--tv-line); border-radius: 12px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: 1rem; font-weight: 900; cursor: pointer; }
   .episode-card { display: grid; grid-template-columns: 72px minmax(0, 1fr) 30px; gap: 18px; align-items: center; width: 100%; min-height: 100px; padding: 16px 20px; border: 1px solid var(--tv-line); border-radius: 13px; color: var(--tv-ink); background: var(--tv-surface); text-align: left; cursor: pointer; }
   .episode-card:hover { background: rgba(255,255,255,.1); }
   .episode-number { color: #ffd45d; font-size: 1rem; font-weight: 950; letter-spacing: .08em; }
