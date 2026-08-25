@@ -71,7 +71,7 @@ navigation.reset();
 assert.equal(navigation.depth, 0);
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
 
-const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, performanceSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
@@ -82,7 +82,8 @@ const [focusSource, shellSource, routeSource, routeServerSource, mediaRailSource
   readFile(new URL('../src/lib/components/tv/TvDetail.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvMyList.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/tv/navigation.ts', import.meta.url), 'utf8'),
-  readFile(new URL('../src/lib/components/tv/TvPlayer.svelte', import.meta.url), 'utf8')
+  readFile(new URL('../src/lib/components/tv/TvPlayer.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvPerformance.svelte', import.meta.url), 'utf8')
 ]);
 
 assert.match(focusSource, /tvFocusGroup/);
@@ -138,7 +139,10 @@ assert.match(shellSource, /TvDetail/);
 assert.match(shellSource, /TvMyList/);
 assert.match(shellSource, /api\/content\/\$\{item\.type\}/);
 assert.match(shellSource, /api\/content\/series/);
-assert.match(shellSource, /payload\.item\.type !== 'movie'/, 'TV detail must load seasons for Series and Anime');
+assert.match(shellSource, /payload\.item\.type === 'series' \|\| payload\.item\.type === 'anime'/, 'TV shell must fetch seasons only for Series and Anime');
+assert.match(shellSource, /detailCacheLimit = 4/);
+assert.match(shellSource, /while \(detailCache\.size > detailCacheLimit\)/);
+assert.match(shellSource, /detailController\?\.abort\(\)/);
 assert.match(shellSource, /loadDetailRecommendations/);
 assert.match(shellSource, /getLocalFavorites/);
 assert.match(shellSource, /setFavoriteStatus/);
@@ -156,11 +160,15 @@ assert.match(shellSource, /phase7MockPlaybackUrl/);
 assert.match(shellSource, /openPlayer/);
 assert.match(shellSource, /navigation\.open\('player'/);
 assert.match(detailSource, /Seasons and episodes/);
-assert.match(detailSource, /item\.type !== 'movie'/, 'Anime and Series detail must render the season guide');
+assert.match(detailSource, /item\.type === 'series' \|\| item\.type === 'anime'/, 'Only Series and Anime detail may render the season guide');
+assert.doesNotMatch(detailSource, /item\.type !== 'movie'/, 'Movie detail must not use the broad non-movie season-guide gate');
 assert.match(detailSource, /tv-detail-my-list/);
 assert.match(detailSource, /tv-detail-recommendations/);
 assert.match(detailSource, /tv-detail-watch-now/);
 assert.match(detailSource, /onWatchNow/);
+assert.match(detailSource, /episodeVisibleCount/);
+assert.match(detailSource, /slice\(0, episodeVisibleCount\)/);
+assert.match(detailSource, /tv-detail-episodes-more/);
 assert.match(detailSource, /font-weight: 950/);
 assert.match(myListSource, /Local-first/);
 assert.match(myListSource, /tv-my-list/);
@@ -179,5 +187,17 @@ assert.match(playerSource, /track kind="captions"/);
 assert.doesNotMatch(playerSource, /autoplay/);
 assert.doesNotMatch(shellSource, /AVPlay/);
 assert.doesNotMatch(shellSource, /supabase/);
+assert.match(shellSource, /TvPerformance/);
+assert.match(shellSource, /tvPerformanceEnabled/);
+assert.match(shellSource, /tvperf/);
+assert.match(performanceSource, /mavero-tv-js-loaded/);
+assert.match(performanceSource, /mavero-tv-dom-content-loaded/);
+assert.match(performanceSource, /mavero-tv-first-paint/);
+assert.match(performanceSource, /mavero-tv-first-interactive-paint/);
+assert.match(performanceSource, /__MAVERO_TV_PERFORMANCE__/);
+assert.match(performanceSource, /setInterval/);
+assert.match(performanceSource, /clearInterval/);
+assert.match(performanceSource, /samples\.length > 64/);
+assert.match(performanceSource, /current\.samples\.shift\(\)/);
 
 console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, real Discover wiring, Search, Detail, My List, and strict player/auth boundaries.');

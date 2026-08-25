@@ -265,7 +265,7 @@ Preserve all Phase 1–4 behavior while improving the isolated `/tv` Search expe
 
 **Final Samsung QA:** Native IME **FAIL** inside the TizenBrew-hosted module; no undocumented workaround was added. The custom UI keyboard is the final default. Vertical focus **PASS**. General Search flow/navigation **PASS**. Typography/clarity **NEEDS FIX** because the current white text is not sufficiently clear from a normal 10-foot viewing distance.
 
-### Phase 6 — Detail + My List — STARTED
+### Phase 6 — Detail + My List — COMPLETE
 
 Adapt:
 - movie detail
@@ -278,7 +278,7 @@ Adapt:
 - remotely reachable actions
 - **TV-only typography/clarity fix: larger fonts, heavier font weight, stronger contrast, and readable focus treatment for the 10-foot interface**
 
-### Phase 7 — TV player — STARTED
+### Phase 7 — TV player — COMPLETE
 
 High-risk phase. Test:
 - Play/Pause
@@ -294,25 +294,27 @@ High-risk phase. Test:
 - progress persistence
 - network recovery
 
+**Phase 7 outcome:** The initial HTML5-first player increment is complete. Owner-confirmed Samsung QA passed for Player entry, HTML5 loading/playing, remote Play/Pause and ten-second seek, readable overlay, loading/error/Retry, Back focus restoration, and background-action isolation/hosted exit. The Movie Detail season-guide bug found during Phase 7 QA is fixed: only Series and Anime render or fetch the season/episode guide. No provider playback claim is made; the player still uses the Phase 7 mock source.
+
 Do not assume desktop Chromium player behavior equals Samsung Tizen behavior.
 
-### Phase 7 — TV performance
+### Phase 8 — TV performance instrumentation + measured optimization — STARTED
 
-Measure and improve:
-- initial JS
-- DOM size
-- image sizes/count
-- animation cost
-- blur/backdrop-filter
-- shadows/gradients
-- rerenders
-- memory growth
-- long-session stability
-- player overhead
+Measure and improve only the isolated TV runtime:
+- initial TV JS-to-DOM and first-paint markers
+- TV DOM node count at screen transitions
+- Chromium memory snapshots when exposed by the runtime
+- Home → Detail → Player → Back long-session samples
+- image decoding/loading hints and image count behavior
+- animation, shadow, gradient, and rerender cost
+- cleanup/cancellation of pending TV work
+- bounded TV Detail cache and long-session stability
+
+The first implementation adds opt-in diagnostics at `/tv?tvperf=1`, capped in-memory samples, a four-entry Detail LRU cache, bounded episode rendering with a focusable Show more action, asynchronous image decoding hints, and below-the-fold media-section rendering hints. No JS transfer-size or Samsung heap measurement is claimed from browser-only instrumentation. Samsung 30+ minute observation remains pending owner hardware QA.
 
 Prefer measured optimization, lazy images, appropriate assets, minimal animation, and efficient focus updates.
 
-### Phase 8 — Real Samsung TV QA
+### Phase 9 — Real Samsung TV QA — NOT STARTED
 
 Actual hardware testing is mandatory.
 
@@ -521,7 +523,7 @@ Player        EXISTING + tested architecture
 Backend       EXISTING
 Auth          EXISTING
 Admin         EXISTING
-Tizen         Phase 7 started; Phase 6 complete
+Tizen         Phase 8 performance instrumentation started; Phase 7 complete
 Phase 0       COMPLETE
 Phase 1       COMPLETE
 Phase 2       COMPLETE
@@ -529,9 +531,11 @@ Phase 3       COMPLETE
 Phase 4       COMPLETE
 Phase 5       COMPLETE — Samsung QA: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS
 Phase 6       COMPLETE — Samsung QA: 100% PASS
-Phase 7       STARTED — isolated HTML5 TV Player initial implementation
+Phase 7       COMPLETE — owner-confirmed Samsung Player QA 100% PASS; Movie guide bug fixed
+Phase 8       STARTED — TV-only performance instrumentation and measured optimization
+Phase 9       NOT STARTED — real Samsung TV performance QA
 ```
 
-**Immediate next task: Continue Phase 7 — isolated HTML5 TV Player implementation with remote-safe playback controls.**
+**Immediate next task: Continue Phase 8 — measure the isolated TV runtime and complete bounded performance optimizations without touching Web/PWA, auth/Supabase, provider/TMDB, production, or `main`.**
 
 Keep all work under the TV layer and do not modify auth/Supabase, PWA, normal Web/PWA routes, TMDB integration, production configuration, or `main`. AVPlay remains deferred unless HTML5 video fails on supported hardware.

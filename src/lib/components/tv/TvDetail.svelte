@@ -8,6 +8,8 @@
   type TvDetailItem = MediaItem & { recommendations?: MediaItem[] };
   type FavoriteStatus = 'watching' | 'planned' | 'completed' | null;
 
+  let episodeVisibleCount = $state(12);
+
   let {
     item,
     loading = false,
@@ -52,6 +54,17 @@
   const statusLabel = (status: FavoriteStatus) => status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Add to My List';
   const activeSeasonData = () => seasons.find((season) => season.number === activeSeason) ?? seasons[0];
   const seasonCount = () => item?.seasons ?? (item?.type === 'anime' && item?.episodes ? 1 : 0);
+  const activeEpisodes = () => activeSeasonData()?.episodes ?? [];
+
+  function showMoreEpisodes() {
+    episodeVisibleCount += 12;
+  }
+
+  $effect(() => {
+    activeSeason;
+    episodesLoading;
+    episodeVisibleCount = 12;
+  });
 </script>
 
 <section class="tv-detail" aria-labelledby="tv-detail-title" aria-busy={loading}>
@@ -67,7 +80,7 @@
     <article class="detail-hero" aria-labelledby="tv-detail-title">
       <div class="detail-backdrop" style={`background-image: linear-gradient(90deg, rgba(6,8,13,.98) 0%, rgba(6,8,13,.88) 42%, rgba(6,8,13,.3) 100%), linear-gradient(0deg, rgba(6,8,13,.98) 0%, transparent 56%), url('${item.backdrop || item.poster}')`}></div>
       <div class="detail-content">
-        <div class="detail-poster"><img src={item.poster} alt={`${item.title} poster`} /></div>
+        <div class="detail-poster"><img src={item.poster} alt={`${item.title} poster`} loading="eager" decoding="async" sizes="(max-width: 760px) 38vw, 220px" /></div>
         <div class="detail-copy">
           <p class="eyebrow">{formatType(item.type)}{#if item.genres[0]} / {item.genres[0]}{/if}</p>
           <h1 id="tv-detail-title">{item.title}</h1>
@@ -80,14 +93,14 @@
             <button class="tv-focusable detail-watch" data-tv-focusable="true" data-tv-focus-id="tv-detail-watch-now" data-tv-focus-group="tv-detail-actions" type="button" onclick={onWatchNow}>Watch Now</button>
             <button class="tv-focusable detail-save" class:saved={favoriteStatus} disabled={saving} data-tv-focusable="true" data-tv-focus-id="tv-detail-my-list" data-tv-focus-group="tv-detail-actions" type="button" onclick={onToggleFavorite}>{saving ? 'Saving…' : statusLabel(favoriteStatus)}</button>
           </div>
-          {#if item.type !== 'movie'}
+          {#if item.type === 'series' || item.type === 'anime'}
             <div class="series-summary"><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? '—'} episodes</strong>{#if item.status}<span>{item.status}</span>{/if}</div>
           {/if}
         </div>
       </div>
     </article>
 
-    {#if item.type !== 'movie'}
+    {#if item.type === 'series' || item.type === 'anime'}
       <section class="episode-section" aria-labelledby="tv-episodes-title" data-tv-series-guide="true">
         <div class="section-heading"><div><p class="eyebrow">Series guide</p><h2 id="tv-episodes-title">Seasons and episodes</h2></div><span class="direction-hint">← → choose · Enter open</span></div>
         {#if seasonCount() > 0}
@@ -101,9 +114,9 @@
           <TvLoading label={`Loading Season ${activeSeason} episodes…`} />
         {:else if episodesError}
           <TvError message={episodesError} onRetry={onRetry} />
-        {:else if activeSeasonData()?.episodes?.length}
+        {:else if activeEpisodes().length}
           <div class="episode-list" role="list" aria-label={`Season ${activeSeason} episodes`}>
-            {#each activeSeasonData()?.episodes ?? [] as episode (episode.id)}
+            {#each activeEpisodes().slice(0, episodeVisibleCount) as episode (episode.id)}
               <button class="tv-focusable episode-card" data-tv-focusable="true" data-tv-focus-id={`tv-detail-episode-${episode.season}-${episode.number}`} data-tv-focus-group="tv-detail-episodes" type="button" onclick={(event) => onEpisodeSelect(episode, event)}>
                 <span class="episode-number">E{String(episode.number).padStart(2, '0')}</span>
                 <span class="episode-copy"><strong>{episode.title}</strong><span>{episode.runtime ?? 'Runtime unavailable'}{#if episode.airDate} · {episode.airDate}{/if}</span>{#if episode.overview}<small>{episode.overview}</small>{/if}</span>
@@ -111,6 +124,9 @@
               </button>
             {/each}
           </div>
+          {#if activeEpisodes().length > episodeVisibleCount}
+            <button class="tv-focusable episode-more" data-tv-focusable="true" data-tv-focus-id="tv-detail-episodes-more" data-tv-focus-group="tv-detail-episodes" type="button" onclick={showMoreEpisodes}>Show 12 more episodes</button>
+          {/if}
         {:else}
           <div class="detail-empty" role="status">No episode data is available for this season.</div>
         {/if}
@@ -156,6 +172,7 @@
   .season-button { min-height: 55px; padding: 12px 18px; border: 1px solid rgba(255,255,255,.25); border-radius: 11px; color: var(--tv-detail-muted); background: rgba(255,255,255,.08); font-size: 1rem; font-weight: 850; white-space: nowrap; cursor: pointer; }
   .season-button.active { color: #171019; border-color: #ffd45d; background: #ffd45d; }
   .episode-list { display: grid; gap: 10px; }
+  .episode-more { min-height: 56px; padding: 12px 16px; border: 2px solid var(--tv-line-strong); border-radius: 12px; color: var(--tv-ink); background: var(--tv-surface-soft); font-size: 1rem; font-weight: 900; cursor: pointer; }
   .episode-card { display: grid; grid-template-columns: 72px minmax(0, 1fr) 30px; gap: 18px; align-items: center; width: 100%; min-height: 100px; padding: 16px 20px; border: 1px solid var(--tv-line); border-radius: 13px; color: var(--tv-ink); background: var(--tv-surface); text-align: left; cursor: pointer; }
   .episode-card:hover { background: rgba(255,255,255,.1); }
   .episode-number { color: #ffd45d; font-size: 1rem; font-weight: 950; letter-spacing: .08em; }

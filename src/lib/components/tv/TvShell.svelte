@@ -29,6 +29,7 @@
   import TvMyList from './TvMyList.svelte';
   import TvNav from './TvNav.svelte';
   import TvPlayer from './TvPlayer.svelte';
+  import TvPerformance from './TvPerformance.svelte';
   import TvSearch, { type TvSearchCategory } from './TvSearch.svelte';
 
   type ActionTarget = HTMLElement & { dataset: DOMStringMap };
@@ -48,6 +49,32 @@
   };
 
   const emptyDiscover: DiscoverData = { movies: [], series: [], anime: [] };
+  const detailCache = new Map<string, TvDetailItem>();
+  const detailCacheLimit = 4;
+
+  function detailCacheKey(item: Pick<MediaItem, 'type' | 'id'>) {
+    return `${item.type}:${item.id}`;
+  }
+
+  function readDetailCache(item: Pick<MediaItem, 'type' | 'id'>) {
+    const key = detailCacheKey(item);
+    const cached = detailCache.get(key);
+    if (!cached) return undefined;
+    detailCache.delete(key);
+    detailCache.set(key, cached);
+    return cached;
+  }
+
+  function writeDetailCache(item: TvDetailItem) {
+    const key = detailCacheKey(item);
+    detailCache.delete(key);
+    detailCache.set(key, item);
+    while (detailCache.size > detailCacheLimit) {
+      const oldest = detailCache.keys().next().value;
+      if (oldest === undefined) break;
+      detailCache.delete(oldest);
+    }
+  }
 
   let {
     discover = emptyDiscover
@@ -80,6 +107,7 @@
   let searchStatusMessage = $state('Open Edit query to begin.');
   let nativeImeExperiment = $state(false);
   let nativeQuery = $state('');
+  let tvPerformanceEnabled = $state(false);
   let searchController: AbortController | undefined;
   let searchRequestSequence = 0;
 
@@ -119,6 +147,7 @@
     const url = new URL(globalThis.location.href);
     nativeImeExperiment = url.searchParams.get('ime') === '1';
     nativeQuery = url.searchParams.get('q')?.slice(0, 120) ?? '';
+    tvPerformanceEnabled = url.searchParams.get('tvperf') === '1';
     if (nativeQuery) searchQuery = nativeQuery;
     exitCapability = isTizenBrewHostedModule()
       ? 'TizenBrew host-return mode'
@@ -159,6 +188,8 @@
     return () => {
       window.removeEventListener('keydown', handleKeydown);
       searchController?.abort();
+      detailController?.abort();
+      detailRequestSequence += 1;
       coordinator.destroy();
     };
   });
@@ -492,19 +523,34 @@
     detailController = controller;
     restoreAfterRender(['tv-detail-back']);
 
+    const cachedDetail = readDetailCache(item);
+    if (cachedDetail) {
+      detailItem = cachedDetail;
+      detailLoading = false;
+      statusMessage = `${cachedDetail.title} details restored from TV cache.`;
+      const status = await getFavoriteStatus(cachedDetail.type, cachedDetail.id);
+      if (requestId !== detailRequestSequence || controller.signal.aborted) return;
+      detailFavoriteStatus = status;
+      restoreAfterRender(['tv-detail-my-list', 'tv-detail-back']);
+      if (cachedDetail.type === 'series' || cachedDetail.type === 'anime') void loadDetailSeason(cachedDetail.id, 1, requestId);
+      if (!cachedDetail.recommendations?.length) void loadDetailRecommendations(cachedDetail, requestId, controller);
+      return;
+    }
+
     try {
       const response = await fetch(`/api/content/${item.type}/${encodeURIComponent(item.id)}`, { signal: controller.signal });
       const payload = await response.json() as DetailPayload;
       if (requestId !== detailRequestSequence || controller.signal.aborted) return;
       if (!response.ok || !payload.ok || !payload.item) throw new Error(payload.error?.message || 'Title details are temporarily unavailable.');
       detailItem = payload.item;
+      writeDetailCache(payload.item);
       const status = await getFavoriteStatus(payload.item.type, payload.item.id);
       if (requestId !== detailRequestSequence || controller.signal.aborted) return;
       detailFavoriteStatus = status;
       detailLoading = false;
       statusMessage = `${payload.item.title} details ready.`;
       restoreAfterRender(['tv-detail-my-list', 'tv-detail-back']);
-      if (payload.item.type !== 'movie') void loadDetailSeason(payload.item.id, 1, requestId);
+      if (payload.item.type === 'series' || payload.item.type === 'anime') void loadDetailSeason(payload.item.id, 1, requestId);
       void loadDetailRecommendations(payload.item, requestId, controller);
     } catch (error) {
       if (controller.signal.aborted || requestId !== detailRequestSequence) return;
@@ -512,8 +558,6 @@
       detailLoading = false;
       statusMessage = 'Title details are unavailable. Retry or go back.';
       restoreAfterRender(['tv-detail-back']);
-    } finally {
-      if (requestId === detailRequestSequence) detailController = undefined;
     }
   }
 
@@ -531,6 +575,7 @@
         return candidate.type === item.type;
       });
       detailItem = { ...item, recommendations };
+      writeDetailCache(detailItem);
     } catch {
       // Detail recommendations remain usable when the optional expansion request fails.
     }
@@ -684,6 +729,7 @@
   }
 </script>
 
+<TvPerformance screen={screen} enabled={tvPerformanceEnabled} />
 <div class="tv-page" bind:this={root} data-tv-screen={screen}>
   <TvHeader {exitCapability} />
 

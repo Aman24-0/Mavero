@@ -13,7 +13,7 @@
 </script>
 
 <section class="tv-hero-card" aria-labelledby="tv-featured-title">
-  <img class="hero-image" src={item.backdrop || item.poster} alt="" loading="eager" />
+  <img class="hero-image" src={item.backdrop || item.poster} alt="" loading="eager" decoding="async" fetchpriority="high" sizes="(max-width: 760px) 100vw, 100vw" />
   <div class="hero-scrim" aria-hidden="true"></div>
   <div class="hero-content">
     <p class="eyebrow">Featured from Discover</p>

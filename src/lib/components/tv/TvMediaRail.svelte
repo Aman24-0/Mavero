@@ -42,7 +42,7 @@
           onclick={(event) => onSelect(item, event, focusId)}
         >
           <div class="poster-wrap">
-            <img src={item.posterSmall || item.poster} alt="" loading={index < 3 ? 'eager' : 'lazy'} />
+            <img src={item.posterSmall || item.poster} alt="" loading={index < 3 ? 'eager' : 'lazy'} decoding="async" sizes="(max-width: 760px) 64vw, 215px" />
             <span class="card-index">{String(index + 1).padStart(2, '0')}</span>
           </div>
           <span class="card-title">{item.title}</span>
@@ -56,7 +56,7 @@
 </section>
 
 <style>
-  .tv-media-section { padding-top: 34px; }
+  .tv-media-section { padding-top: 34px; content-visibility: auto; contain-intrinsic-size: auto 380px; }
   .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
   .eyebrow { margin: 0 0 8px; color: var(--tv-accent); font-size: .76rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
   h2 { margin: 0; color: var(--tv-ink); font-size: clamp(1.75rem, 3vw, 2.55rem); font-weight: 950; letter-spacing: -.05em; }
