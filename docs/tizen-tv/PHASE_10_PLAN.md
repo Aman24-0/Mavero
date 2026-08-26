@@ -18,7 +18,7 @@ This is an **information-architecture and visual-design phase**, not a product-l
 |---|---|
 | Large immersive hero | A wide backdrop-led Home hero with a restrained scrim and one primary action |
 | Persistent left navigation | A compact, high-contrast sidebar for Home, Search, My List, and Settings |
-| Continue Watching rail | A first-class rail based on existing local watch-progress records, with progress and remaining-time context |
+| Continue Watching rail | Deferred to Phase 10.2; the initial visual increment does not claim a watch-progress detection feature |
 | Latest Releases / MyTrakt rail | Reserved until an approved data contract exists; not included in the first increment |
 | Poster-led shelves | Consistent poster ratios, readable title metadata, and stable horizontal rails |
 | Minimal hero text | Title, small metadata, and one concise description/action rather than a dense detail panel |
@@ -41,11 +41,11 @@ Redesign `TvHero.svelte` with a larger immersive backdrop, stronger image-to-tex
 
 Use a stable aspect/min-height strategy that avoids layout shifts. Keep the featured backdrop eager and decoded asynchronously; use an asset-size decision appropriate to the actual rendered TV viewport. Avoid full-screen blur and excessive layered shadows because Phase 8 identified TV rendering cost as a release concern.
 
-### 3. Continue Watching rail
+### 3. Continue Watching rail — DEFERRED TO PHASE 10.2
 
-Add a TV-only Continue Watching rail using existing local watch-progress records and the existing normalized media presentation. Each card should show the title, poster, watched progress, and either remaining duration or a concise resume label when the data is available. If there are no resumable records, omit the rail cleanly rather than showing a large empty panel.
+The Continue Watching rail is deferred from the initial Phase 10.1 visual redesign. The owner’s initial Samsung QA correctly records this feature as not implemented, which is acceptable for the first increment. A later Phase 10.2 implementation may add a TV-only, read-only presentation based on an approved watch-progress detection contract; it remains outside the current navigation-fix scope because reliable progress detection and display semantics are not part of this initial visual work.
 
-This rail must be read-only with respect to progress. It must not change the progress service, authentication, Supabase synchronization, player persistence, or provider resolution. Activating a card should reuse the existing TV Detail/Player entry path and existing focus IDs. Any progress calculation must be defensive for missing duration, zero duration, stale records, and values outside the 0–100% range.
+When Phase 10.2 is authorized, it must not change the progress service, authentication, Supabase synchronization, player persistence, or provider resolution. It must handle missing duration, zero duration, stale records, and values outside 0–100% defensively, and activation must reuse the existing TV Detail/Player entry path and focus contracts. Until then, the rail must be omitted rather than presented as a claimed feature.
 
 ### 4. Latest Releases / MyTrakt rail
 
@@ -78,11 +78,12 @@ The redesign must not replace the native focus coordinator, logical navigation s
 3. Redesign the shell/sidebar without changing navigation state or focus IDs.
 4. Redesign the Home hero and verify no layout shift or focus loss.
 5. Redesign media cards and rails while preserving horizontal/vertical focus behavior.
-6. Add Continue Watching as a read-only presentation derived from existing progress records.
-7. Define the Latest Releases — MyTrakt data contract; implement the rail only if an approved source is available.
-8. Add restrained transitions and reduced-motion handling.
-9. Run visual comparison, remote interaction, DOM/performance, and Samsung ten-foot QA.
-10. Refine only issues supported by measured or owner-observed evidence, then update the TV plan and worklog in the same commit.
+6. Validate sidebar/main cross-group remote navigation and document the Phase 10.1 Samsung QA result.
+7. Defer Continue Watching to Phase 10.2 pending an approved watch-progress detection contract.
+8. Define the Latest Releases — MyTrakt data contract; implement the rail only if an approved source is available.
+9. Add restrained transitions and reduced-motion handling.
+10. Run visual comparison, remote interaction, DOM/performance, and Samsung ten-foot QA.
+11. Refine only issues supported by measured or owner-observed evidence, then update the TV plan and worklog in the same commit.
 
 ## Performance guardrails
 
@@ -110,7 +111,7 @@ Measure the redesigned Home and Detail surfaces against the Phase 8 browser base
 |---|---|
 | Visual | Hero, sidebar, rails, cards, and focus states match the approved Nuvio-inspired direction at ten feet |
 | Remote | Home → rail → Detail → Player → Back works without pointer input or focus loss |
-| Continue Watching | Uses existing progress safely, handles empty/missing data, and does not mutate progress by rendering |
+| Continue Watching | Deferred in Phase 10.1; no implementation or hardware PASS is claimed until Phase 10.2 has an approved watch-progress contract |
 | Latest Releases | Has an approved source contract or is omitted truthfully; no fabricated MyTrakt data |
 | Accessibility | Focus is visible, labels remain meaningful, progress is not color-only, and reduced motion works |
 | Performance | No observed Samsung stutter or focus delay; DOM/image/motion behavior remains bounded |

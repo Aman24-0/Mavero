@@ -96,6 +96,7 @@
   let exitCapability = $state('Browser-safe mode');
   let lastActivationKey = '';
   let lastActivationAt = 0;
+  let returnSidebarFocusId = 'tv-nav-home';
 
   let searchQuery = $state('');
   let searchCategory = $state<TvSearchCategory>('all');
@@ -185,7 +186,7 @@
 
       if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
         event.preventDefault();
-        coordinator.move(action, exitDialogOpen ? 'tv-exit' : undefined);
+        handleDirectionalFocus(action);
         return;
       }
 
@@ -328,6 +329,32 @@
     restoreAfterRender([restoreId, `tv-nav-${screen}`, 'tv-nav-home']);
   }
 
+  function handleDirectionalFocus(action: 'up' | 'down' | 'left' | 'right') {
+    if (coordinator.isCurrentInGroup('tv-primary-nav')) {
+      if (action === 'right') {
+        returnSidebarFocusId = coordinator.currentId ?? returnSidebarFocusId;
+        if (coordinator.moveFocusToGroup('tv-primary-nav', 'tv-main-content')) return;
+      }
+
+      if (action === 'up' || action === 'down') {
+        if (coordinator.move(action, 'tv-primary-nav')) return;
+        const wrapped = action === 'down'
+          ? coordinator.focusFirstInGroup('tv-primary-nav')
+          : coordinator.focusLastInGroup('tv-primary-nav');
+        if (wrapped) return;
+      }
+    }
+
+    if (action === 'left' && coordinator.isCurrentInGroup('tv-main-content')) {
+      if (coordinator.move('left')) return;
+      if (coordinator.focusById(returnSidebarFocusId)) return;
+      coordinator.moveFocusToGroup('tv-main-content', 'tv-primary-nav');
+      return;
+    }
+
+    coordinator.move(action, exitDialogOpen ? 'tv-exit' : undefined);
+  }
+
   function handleAction(event: MouseEvent, explicitFocusId?: string, explicitAction?: string) {
     const target = event.currentTarget as ActionTarget;
     const focusId = explicitFocusId ?? target.dataset.tvFocusId ?? '';
@@ -344,6 +371,7 @@
         return;
       }
       navigation.rememberFocus(focusId || null);
+      if (focusId?.startsWith('tv-nav-')) returnSidebarFocusId = focusId;
       navigation.open(nextScreen, focusId || null);
       screen = nextScreen;
       asyncState = 'ready';
@@ -770,7 +798,7 @@
         <TvNav items={navItems} activeScreen={screen} onActivate={(item, event) => handleAction(event, item.id, `screen:${item.screen}`)} />
       </aside>
 
-      <div class="tv-canvas">
+      <div class="tv-canvas" data-tv-focus-group="tv-main-content">
         <section class="tv-hero" aria-labelledby="tv-shell-title">
       <div>
         <p class="eyebrow">Mavero TV / {screenLabel(screen)}</p>

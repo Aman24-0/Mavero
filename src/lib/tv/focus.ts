@@ -87,6 +87,11 @@ export class TVFocusCoordinator {
     return this.current?.dataset.tvFocusId ?? null;
   }
 
+  isCurrentInGroup(group: string): boolean {
+    const current = this.getCurrentElement();
+    return Boolean(current && this.belongsToGroup(current, group));
+  }
+
   rememberFocus(): string | null {
     return this.currentId;
   }
@@ -111,10 +116,24 @@ export class TVFocusCoordinator {
   }
 
   focusFirstInGroup(group: string): boolean {
-    const first = this.getFocusables().find((element) => element.dataset.tvFocusGroup === group);
+    const first = this.getFocusablesInGroup(group)[0];
     if (!first) return false;
     this.setCurrent(first, true);
     return true;
+  }
+
+  focusLastInGroup(group: string): boolean {
+    const focusables = this.getFocusablesInGroup(group);
+    const last = focusables[focusables.length - 1];
+    if (!last) return false;
+    this.setCurrent(last, true);
+    return true;
+  }
+
+  moveFocusToGroup(currentGroup: string, targetGroup: string): boolean {
+    const current = this.getCurrentElement();
+    if (current && !this.belongsToGroup(current, currentGroup)) return false;
+    return this.focusFirstInGroup(targetGroup);
   }
 
   focusById(id: string): boolean {
@@ -150,6 +169,26 @@ export class TVFocusCoordinator {
       .filter((element) => !element.hasAttribute('aria-disabled') && isVisible(element));
   }
 
+  private getFocusablesInGroup(group: string): FocusableElement[] {
+    const roots = [...this.root.querySelectorAll<HTMLElement>('[data-tv-focus-group]')]
+      .filter((element) => element.dataset.tvFocusGroup === group);
+    const focusables = roots.flatMap((root) => {
+      const descendants = [...root.querySelectorAll<FocusableElement>('[data-tv-focusable="true"]')];
+      return this.isFocusable(root) ? [root as FocusableElement, ...descendants] : descendants;
+    });
+    return [...new Set(focusables)].filter((element) => !element.hasAttribute('aria-disabled') && isVisible(element));
+  }
+
+  private belongsToGroup(element: FocusableElement, group: string): boolean {
+    if (element.dataset.tvFocusGroup === group) return true;
+    let ancestor = element.parentElement;
+    while (ancestor && ancestor !== this.root) {
+      if (ancestor.dataset.tvFocusGroup === group) return true;
+      ancestor = ancestor.parentElement;
+    }
+    return false;
+  }
+
   private getById(id: string): FocusableElement | null {
     return this.getFocusables().find((element) => element.dataset.tvFocusId === id) ?? null;
   }
@@ -180,7 +219,7 @@ export class TVFocusCoordinator {
     const isHorizontal = direction === 'left' || direction === 'right';
     const candidates = this.getFocusables()
       .filter((element) => element !== current)
-      .filter((element) => !scope || element.dataset.tvFocusGroup === scope)
+      .filter((element) => !scope || this.belongsToGroup(element, scope))
       .filter((element) => !isHorizontal || !group || element.dataset.tvFocusGroup === group);
 
     const directional = candidates

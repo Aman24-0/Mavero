@@ -21,7 +21,7 @@
   };
 </script>
 
-<nav class="tv-nav" aria-label="TV primary navigation">
+<nav class="tv-nav" aria-label="TV primary navigation" data-tv-focus-group="tv-primary-nav">
   <div class="nav-heading">
     <span class="nav-mark" aria-hidden="true">M</span>
     <div>
