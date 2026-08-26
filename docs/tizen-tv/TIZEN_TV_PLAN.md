@@ -318,11 +318,13 @@ Prefer measured optimization, lazy images, appropriate assets, minimal animation
 
 Phase 9 adds server-side TMDB integration for Movies and Series while preserving AniList for Anime. The detailed implementation plan is in `PHASE_9_PLAN.md`. It is complete on `feature/tizen-tv`: the private-environment TMDB adapter, Bearer/API-key compatibility, bounded caching, configuration-backed image sizing, runtime response validation, namespaced IDs, explicit Movie/Series routing, mixed-source partial warnings, TV Discover/Search/Detail/season support, TV attribution, and the episode-still card rendering fix are implemented. The owner’s seven Samsung QA items are PASS; post-fix Samsung verification of the episode still rendering remains pending. This phase preserved the explicit Movie-versus-Series guide boundary. Phase 10 is now started as a TV-only presentation increment.
 
-### Phase 10 — Nuvio-inspired TV UI redesign — STARTED
+### Phase 10 — Nuvio-inspired TV UI redesign — COMPLETE (initial increment)
 
-Phase 10 is a TV-only visual redesign based on the owner’s Nuvio reference screenshots. The detailed plan is in `PHASE_10_PLAN.md`. The first implementation increment includes a persistent left sidebar, immersive concise hero, read-only Continue Watching when existing local progress is available, poster-led rails, minimal hero metadata, cyan/blue focus treatment, progress indicators, and restrained transitions. Latest Releases/MyTrakt remains unimplemented pending an approved data contract.
+Phase 10.1 is complete on `feature/tizen-tv` and hardware-validated by the owner on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`. The completed TV-only visual increment includes the persistent left sidebar, immersive concise hero, poster-led rails/cards, TV-readable typography, cyan/blue focus treatment, restrained transitions, and deterministic sidebar/main-content cross-group navigation. The owner’s final Samsung QA is **100% PASS**: sidebar circular navigation, Right to main content, Left to sidebar, consistency across Search/My List/Detail, Back and Exit stability, a 30-minute session without focus loss/scroll jumps/memory/stutter, and correct omission of Continue Watching.
 
-Phase 9 and Phase 10 must preserve all completed TV behavior, keep Web/PWA and auth/Supabase untouched, and pass the TV performance and Samsung hardware gates before release.
+Continue Watching is officially deferred to Phase 10.2 pending an approved watch-progress detection contract. Latest Releases/MyTrakt remains out of scope pending an approved data contract. These features were not implemented in this closure.
+
+Phase 10.1 preserved all completed TV behavior, kept Web/PWA and auth/Supabase untouched, and was validated against the Phase 1–9 contracts and normal route isolation. Phase 10.2 or another next phase requires explicit owner authorization.
 
 ## 6. Web/PWA regression rule
 
@@ -522,9 +524,10 @@ Phase 6       COMPLETE — Samsung QA: 100% PASS
 Phase 7       COMPLETE — owner-confirmed Samsung Player QA 100% PASS; Movie guide bug fixed
 Phase 8       COMPLETE — owner QA recorded; four TV-only follow-up issues fixed
 Phase 9       COMPLETE — TMDB Integration; seven owner Samsung QA items PASS; episode-image fix implemented, post-fix hardware verification pending
-Phase 10      STARTED — initial Nuvio-inspired TV UI redesign; Samsung visual QA pending
+Phase 10      COMPLETE — initial Nuvio-inspired TV UI redesign; owner Samsung QA 100% PASS
+Next          Phase 10.2 preparation — Continue Watching contract pending owner authorization
 ```
 
-**Immediate next task: Validate the Phase 10 TV-only sidebar, hero, rails, and optional read-only Continue Watching increment. Do not add Latest Releases/MyTrakt without an approved data contract.**
+**Immediate next task: Await the owner’s direction. Options are Phase 10.2 (define and implement a read-only Continue Watching rail only after an approved watch-progress detection contract), a separately specified Phase 11 feature, or maintenance/refinement from the completed 30-minute hardware session. Do not implement Phase 10.2, Latest Releases, or MyTrakt without explicit authorization and approved contracts.**
 
 Keep all TV presentation and API wiring isolated to the approved TV/content-service scope; do not modify auth/Supabase, PWA, normal Web/PWA UI routes, provider/resolver behavior, production configuration, or `main`. Phase 9 is the explicitly authorized TMDB integration exception in the shared server content layer. AVPlay remains deferred unless HTML5 video fails on supported hardware.

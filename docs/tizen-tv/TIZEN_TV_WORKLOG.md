@@ -2,18 +2,18 @@
 
 ## Project Status
 
-Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are **COMPLETE**. The owner’s Samsung QA recorded Native IME **FAIL**, vertical focus **PASS**, typography/clarity **NEEDS FIX**, and general Search flow/navigation **PASS**; the custom UI keyboard is the final default. Phase 6 — Detail + My List is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**. Phase 7 — TV Player is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**, including the corrected Movie Detail season-guide boundary. Phase 8 — TV performance instrumentation and measured optimization is **COMPLETE** for the owner-reported QA cycle; its four reported TV-only issues are fixed in the current follow-up. Phase 9 TMDB Integration is **COMPLETE** on `feature/tizen-tv`; the owner’s seven Samsung TMDB-backed QA items are **PASS**, the episode-image fix is implemented, and post-fix episode-image hardware verification is pending. Phase 10 Nuvio-inspired TV UI Redesign is **STARTED** on `feature/tizen-tv`. Initial Samsung QA recorded typography/readability, hero, media rails/cards, focus treatment, Back navigation, and exit behavior as PASS; the sidebar cross-group navigation defect is fixed in the current follow-up and awaits owner re-test. Continue Watching is deferred to Phase 10.2 pending an approved watch-progress detection contract. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
+Phase 0 — Feasibility + Architecture Audit is **COMPLETE**. Phase 1 is **COMPLETE** based on the owner-confirmed real-TV launch, navigation, hosted-exit, reopen, and repeated-flow validation on the target hardware. Phase 2 implementation and owner-observed Samsung hardware QA are **COMPLETE**. Phase 3 Discover implementation and owner-confirmed Samsung hardware QA are **COMPLETE**. Phase 4 Search implementation and browser QA are **COMPLETE**, and the owner has confirmed Phase 4 Samsung hardware QA **PASS** on the target hardware. Phase 5 TV Search polish and native-IME investigation are **COMPLETE**. The owner’s Samsung QA recorded Native IME **FAIL**, vertical focus **PASS**, typography/clarity **NEEDS FIX**, and general Search flow/navigation **PASS**; the custom UI keyboard is the final default. Phase 6 — Detail + My List is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**. Phase 7 — TV Player is **COMPLETE** with owner-confirmed Samsung QA **100% PASS**, including the corrected Movie Detail season-guide boundary. Phase 8 — TV performance instrumentation and measured optimization is **COMPLETE** for the owner-reported QA cycle; its four reported TV-only issues are fixed in the current follow-up. Phase 9 TMDB Integration is **COMPLETE** on `feature/tizen-tv`; the owner’s seven Samsung TMDB-backed QA items are **PASS**, the episode-image fix is implemented, and post-fix episode-image hardware verification is pending. Phase 10 Nuvio-inspired TV UI Redesign initial increment is **COMPLETE** on `feature/tizen-tv` with owner-confirmed Samsung QA **100% PASS** for the sidebar navigation fix and initial visual redesign. Continue Watching was correctly omitted and is officially deferred to Phase 10.2 pending an approved watch-progress detection contract. Latest Releases/MyTrakt remains out of scope pending an approved data contract. The owner has verified the Netlify Branch Deploy origin for `feature/tizen-tv`.
 
 | Field | Status |
 |---|---|
-| Current phase | Phase 10 — Nuvio-inspired TV UI Redesign (initial implementation) |
+| Current phase | Phase 10.2 preparation — read-only Continue Watching contract pending owner authorization |
 | Phase 0 status | **COMPLETE** |
-| Tizen implementation | **Phase 9 complete; Phase 10 initial UI redesign started; sidebar navigation follow-up in progress** |
+| Tizen implementation | **Phase 10 initial Nuvio-inspired UI redesign COMPLETE; Phase 10.2 deferred pending approved watch-progress contract** |
 | Phase 1 | **COMPLETE — owner-confirmed real-TV validation passed** |
 | Web/PWA implementation | Existing and maintained; no application code changed by Phase 0 |
-| Samsung TV hardware QA | **Phase 1–4 PASS; Phase 5: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS; Phase 6 100% PASS; Phase 7 100% PASS; Phase 8 owner QA recorded and follow-up fixes documented; Phase 9 seven owner QA items PASS with episode-image fix re-test pending; Phase 10 initial QA: typography, hero, rails/cards, focus, Back, and exit PASS; sidebar navigation FAIL under fix/re-test; Continue Watching deferred** |
+| Samsung TV hardware QA | **Phase 1–4 PASS; Phase 5: IME FAIL, vertical focus PASS, typography NEEDS FIX, Search flow/navigation PASS; Phase 6 100% PASS; Phase 7 100% PASS; Phase 8 owner QA recorded and follow-up fixes documented; Phase 9 seven owner QA items PASS with episode-image fix re-test pending; Phase 10 initial QA 100% PASS: sidebar circular navigation, Right to main content, Left to sidebar, Search/My List/Detail consistency, Back/Exit stability, 30-minute session, and Continue Watching omission** |
 | Branch | `feature/tizen-tv` |
-| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 final is `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 implementation is `c39fb7cabb313657d1f87cc265b7c98d9c707085`; Phase 7 initial player is `5dcc33acc932d607fcfaaeb3d386b03a8afce901`; Phase 8 initial instrumentation is `7252a5100b998ccff92e1747fba39df8f7483594`; Phase 8 follow-up is `11a1d1de6bafd13566e5de0cb31e53915dd01dd3`; Phase 9 SHA is recorded in the final handoff |
+| Commit | Phase 2 is `4dd990935b841b8c8f616fce08d21a3f4c7d7fd5`; Phase 3 is `c0fb8602bf0ff1ac2f39561036cdf74bc8f643d9`; Phase 4 is `cfcb881432987d94d2fac8a3ac6d98267ef382af`; Phase 5 final is `fac587af843ae9eb973231bb5f3ebfca0152970d`; Phase 6 implementation is `c39fb7cabb313657d1f87cc265b7c98d9c707085`; Phase 7 initial player is `5dcc33acc932d607fcfaaeb3d386b03a8afce901`; Phase 8 initial instrumentation is `7252a5100b998ccff92e1747fba39df8f7483594`; Phase 8 follow-up is `11a1d1de6bafd13566e5de0cb31e53915dd01dd3`; Phase 9 SHA is recorded in the final handoff; Phase 10 initial implementation and sidebar navigation fix is `ef2888721f06ec9b48d8e6f77b9fbf10b82ebc4e`; this documentation-closure SHA is recorded in the final handoff because a commit cannot contain its own final hash |
 | Merge/deployment status | Branch Deploy configured for `feature/tizen-tv`; Phase 8 follow-up stays on this branch; not merged to `main`; no production deployment or production Netlify mutation |
 
 ## Worklog Rules
@@ -686,3 +686,41 @@ The fix detects a 32-character TMDB v3 key even when it is stored under `TMDB_BE
 **Branch:** `feature/tizen-tv`
 **Commit SHA:** To be recorded in the final handoff.
 **Merge/deployment status:** Not merged to `main`; no production deployment or production configuration change.
+
+## Phase 10 — Initial Nuvio-Inspired TV UI Redesign Closure
+
+**Date:** 26 August 2026
+**Phase:** Phase 10.1 — Nuvio-inspired TV UI redesign, initial increment
+**Status:** **COMPLETE — owner-confirmed Samsung hardware validation 100% PASS.**
+
+**Objective completed:** Deliver the first TV-only Nuvio-inspired presentation increment while preserving the completed Phase 1–9 TV behavior. The increment includes the persistent left sidebar, immersive concise hero, poster-led rails/cards, TV-readable typography, cyan/blue focus treatment, restrained transitions, and deterministic cross-group remote navigation between the sidebar and main content.
+
+**Hardware:** Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
+
+**Owner-confirmed final Samsung QA — all PASS:**
+
+1. **Sidebar Circular Nav — PASS:** Up/Down stays within Home, Search, My List, and Settings.
+2. **Right to Main Content — PASS:** Right arrow successfully enters main content from the sidebar.
+3. **Left to Sidebar — PASS:** Left arrow returns to the last focused sidebar item.
+4. **Screen Consistency — PASS:** Behavior is consistent across Search, My List, and Detail.
+5. **Back & Exit Stability — PASS:** Focus restoration and the root exit dialog work correctly.
+6. **30-Minute Session — PASS:** No focus loss, scroll jumps, or memory/stutter issues were observed.
+7. **Continue Watching Omission — PASS:** Continue Watching is correctly omitted as deferred to Phase 10.2.
+
+**Implementation and files:** The navigation correction used `src/lib/tv/focus.ts`, `src/lib/components/tv/TvShell.svelte`, and `src/lib/components/tv/TvNav.svelte`; the focused TV contract in `scripts/tv_phase2_contract_test.ts` now protects the sidebar circular and cross-group boundaries. The Phase 10 plan and this worklog were updated for closure. The implementation/navigation commit is `ef2888721f06ec9b48d8e6f77b9fbf10b82ebc4e`. The documentation-closure commit SHA is recorded in the final handoff because a commit cannot contain its own final hash.
+
+**Architecture and boundaries:** No auth/Supabase, PWA/service-worker, normal Web/PWA route, production, `main`, provider/resolver, player/AVPlay, or TMDB integration change was made by this closure. Continue Watching remains officially deferred to Phase 10.2 pending an approved watch-progress detection contract. Latest Releases/MyTrakt remains out of scope pending an approved data contract. No Phase 10.2 or Phase 11 implementation was started.
+
+**Validation:** `pnpm check` passed with zero errors and zero warnings before this documentation-only closure. The preceding implementation commit also passed the focused TV contract, full `pnpm test`, memory-safe build, `git diff --check`, local browser QA, and feature-deployment verification. This closure requires documentation-only `git diff --check`, changed-path inspection, and a clean working tree after commit.
+
+**Browser QA:** The preceding implementation QA confirmed sidebar Down through My List/Settings, circular Settings → Home, Home Right → hero action, hero Left → last sidebar item, Search Right → `tv-search-input`, Search Left → `tv-nav-search`, existing Back restoration, and normal `/` and `/search` route isolation. The owner’s final hardware result above is the authoritative Phase 10.1 acceptance result.
+
+**Known limitations:** Phase 10.2 watch-progress detection and Continue Watching presentation semantics require a separately approved contract. Latest Releases/MyTrakt requires an approved source contract. Phase 10.1 does not claim either feature.
+
+**Unresolved issues:** None for the accepted Phase 10.1 scope.
+
+**Next step:** Await owner direction. Options are Phase 10.2 with an approved read-only watch-progress contract, a separately specified Phase 11 feature, or maintenance/refinement from the completed 30-minute session. Do not implement a next phase without explicit authorization.
+
+**Branch:** `feature/tizen-tv`
+**Commit:** Documentation closure commit SHA is recorded in the final handoff; implementation/navigation baseline is `ef2888721f06ec9b48d8e6f77b9fbf10b82ebc4e`.
+**Merge/deployment status:** Documentation closure is pushed only to `origin/feature/tizen-tv`; it is not merged to `main`; production remains unchanged.
