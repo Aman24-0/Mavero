@@ -2,9 +2,9 @@
 
 **Phase:** Phase 10 — Nuvio-inspired TV UI redesign
 
-**Status:** **COMPLETE — initial TV-only implementation increment accepted by owner Samsung QA.**
+**Status:** **Phase 10.1 COMPLETE; Phase 10.2 IMPLEMENTATION COMPLETE — OWNER SAMSUNG QA PENDING.**
 
-**Current position:** Phase 10.1, covering the initial Nuvio-inspired shell/sidebar, hero, rails/cards, and cross-group remote navigation, is complete and hardware-validated. The next possible target is Phase 10.2, which requires explicit owner authorization and an approved watch-progress detection contract for a read-only Continue Watching rail.
+**Current position:** Phase 10.1, covering the initial Nuvio-inspired shell/sidebar, hero, rails/cards, and cross-group remote navigation, remains complete and hardware-validated. Phase 10.2 is explicitly authorized and implemented as a TV-only, read-only Continue Watching rail using existing persisted playback progress. Samsung hardware verification for Phase 10.2 is pending.
 
 **Target branch:** `feature/tizen-tv` during development; no `main` or production changes until a future phase is reviewed and accepted.
 
@@ -45,9 +45,9 @@ Use a stable aspect/min-height strategy that avoids layout shifts. Keep the feat
 
 ### 3. Continue Watching rail — DEFERRED TO PHASE 10.2
 
-The Continue Watching rail is deferred from the completed initial Phase 10.1 visual redesign. The owner’s final Samsung QA records its omission as **PASS**, which is correct for this increment. A later Phase 10.2 implementation may add a TV-only, read-only presentation based on an approved watch-progress detection contract; it remains outside the completed scope because reliable progress detection and display semantics are not part of this initial visual work.
+The Continue Watching rail was deferred from Phase 10.1 and is now implemented under the authorized Phase 10.2 scope. The TV read model consumes existing persisted playback records only: `currentTime > 0`, completion state not `completed`, newest activity first, one card per movie/series/anime title, and the newest active episode retained for episodic titles. Manual My List status `watching` alone does not qualify. Invalid or incomplete records are omitted safely; zero-duration records may appear without a fabricated percentage; completed and zero-progress records are hidden; persisted records are never mutated by this presentation filter. Samsung hardware QA remains pending.
 
-When Phase 10.2 is authorized, it must not change the progress service, authentication, Supabase synchronization, player persistence, or provider resolution. It must handle missing duration, zero duration, stale records, and values outside 0–100% defensively, and activation must reuse the existing TV Detail/Player entry path and focus contracts. Until then, the rail must be omitted rather than presented as a claimed feature.
+Phase 10.2 does not change the progress service, authentication, Supabase synchronization, player persistence, or provider resolution. It handles missing/zero duration, malformed values, stale records, and values outside 0–100% defensively, and activation reuses the existing TV Detail/Player entry path and focus contracts. The rail is hidden when no valid playback records qualify.
 
 ### 4. Latest Releases / MyTrakt rail
 
@@ -81,7 +81,7 @@ The redesign must not replace the native focus coordinator, logical navigation s
 4. Redesign the Home hero and verify no layout shift or focus loss.
 5. Redesign media cards and rails while preserving horizontal/vertical focus behavior.
 6. Validate sidebar/main cross-group remote navigation and document the Phase 10.1 Samsung QA result — **COMPLETE, owner-confirmed 100% PASS**.
-7. Defer Continue Watching to Phase 10.2 pending an approved watch-progress detection contract — **COMPLETE for the initial increment; implementation intentionally omitted**.
+7. Implement the authorized read-only Continue Watching rail using the approved playback-progress contract — **IMPLEMENTATION COMPLETE; owner Samsung QA pending**.
 8. Define the Latest Releases — MyTrakt data contract; implement the rail only if an approved source is available.
 9. Add restrained transitions and reduced-motion handling.
 10. Run visual comparison, remote interaction, DOM/performance, and Samsung ten-foot QA.

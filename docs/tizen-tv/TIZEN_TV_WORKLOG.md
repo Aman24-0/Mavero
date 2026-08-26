@@ -724,3 +724,43 @@ The fix detects a 32-character TMDB v3 key even when it is stored under `TMDB_BE
 **Branch:** `feature/tizen-tv`
 **Commit:** Documentation closure commit SHA is recorded in the final handoff; implementation/navigation baseline is `ef2888721f06ec9b48d8e6f77b9fbf10b82ebc4e`.
 **Merge/deployment status:** Documentation closure is pushed only to `origin/feature/tizen-tv`; it is not merged to `main`; production remains unchanged.
+
+## Phase 10.2 — TV Continue Watching Implementation
+
+**Date:** 26 August 2026
+**Phase:** Phase 10.2 — TV Continue Watching
+**Status:** **IMPLEMENTATION COMPLETE — OWNER SAMSUNG QA PENDING.**
+
+**Authorization:** The owner explicitly authorized Phase 10.2 after Phase 10.1’s 100% Samsung hardware PASS. Latest Releases/MyTrakt remains unauthorized and was not implemented.
+
+**Objective completed:** Add a TV-only, read-only Continue Watching rail below the Home hero using Mavero’s existing persisted playback-progress records. The existing `TvMediaRail`, TV focus coordinator, sidebar/main-content groups, Detail activation, Player entry, and Player → Detail Back restoration were preserved.
+
+**Approved contract implemented:** A record qualifies only when `currentTime > 0` and `completionState !== 'completed'`. Manual My List status `watching` alone does not qualify. Records are ordered by `max(updatedAt, lastWatchedAt)` descending. One card is emitted per `contentType:contentId`; for Series/Anime, the newest active episode retains its season/episode resume context. Completed, zero-progress, malformed, and invalid records are omitted safely. A valid record with zero duration may remain visible with the existing truthful `Resume`/zero-percent treatment; no fake percentage is fabricated. The selector is read-only and does not mutate or delete persisted progress. The rail is hidden when no valid records qualify and remains bounded to the existing 12-item TV window.
+
+**Files changed:**
+
+- `src/lib/tv/continue-watching.ts` — TV-only defensive read-model selector for qualification, newest-first ordering, one-title deduplication, latest episodic context, and safe snapshot normalization.
+- `src/lib/components/tv/TvShell.svelte` — consume local persisted progress through the TV-only selector; retain the existing Continue Watching rail, `showProgress` treatment, stable focus IDs, and card → Detail → Player architecture.
+- `scripts/tv_phase2_contract_test.ts` — focused assertions for completed/zero/malformed exclusion, newest-first ordering, one-title episodic deduplication, episode context preservation, and manual-watching boundary.
+- `docs/tizen-tv/PHASE_10_PLAN.md` — Phase 10.2 implementation status and contract.
+- `docs/tizen-tv/TIZEN_TV_PLAN.md` — roadmap/current-position status and QA gate.
+- `docs/tizen-tv/TIZEN_TV_WORKLOG.md` — this implementation record.
+
+**Existing-code discrepancy resolved:** The shared `continueWatchingRecords()` helper also synthesized zero-progress entries from favorites marked `watching`. Because normal Web/PWA behavior must remain unchanged, the Phase 10.2 fix does not alter that shared helper. TV instead reads persisted progress records directly and applies the approved TV-only selector. This avoids both manual-status leakage and a new progress architecture.
+
+**Activation/resume:** Continue Watching cards use the pre-existing `handleMediaSelect` → `openDetail` path. No direct player or provider path was added. Existing `progressToMedia` resume href metadata preserves season/episode context for episodic records, while the current TV Detail/Player and Back contracts remain unchanged.
+
+**Validation completed:** `pnpm check` passed with zero errors and zero warnings. The focused `pnpm exec tsx scripts/tv_phase2_contract_test.ts` passed after adding the Phase 10.2 assertions. The full `pnpm test` suite passed. Memory-safe build, browser QA, final `git diff --check`, and final scope audit remain required before commit/push.
+
+**Browser QA:** Pending after the documentation update and final build. Required cases are no-progress rail omission, partial movie, partial episode context, multiple unfinished episodes deduplicated to one title, completed omission, sidebar → Home → Continue Watching navigation, horizontal rail movement, vertical movement to the next rail, Detail/Player/Back restoration, and empty/error resilience.
+
+**Samsung TV QA:** **PENDING.** Do not treat Phase 10.1’s hardware PASS as Phase 10.2 validation. The owner must verify the Continue Watching rail on Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5`.
+
+**Known limitations:** The current TV Player remains the existing Phase 7 title-level mock player; no new direct-resume playback path was introduced. Cloud/auth sync architecture was not changed. Continue Watching displays locally persisted playback records available to the existing TV read path; no polling or duplicate progress query was added.
+
+**Next step:** Complete browser/build/scope validation, commit and push only to `origin/feature/tizen-tv`, then hand the Samsung Phase 10.2 checklist to the owner. Do not mark Phase 10.2 complete until owner hardware QA is supplied.
+
+**Branch:** `feature/tizen-tv`
+**Starting SHA:** `159628424920403bf0ac7fce6df31f6920813f55`
+**Commit SHA:** Pending implementation commit.
+**Merge/deployment status:** Not merged to `main`; production remains unchanged.

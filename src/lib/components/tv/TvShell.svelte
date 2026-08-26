@@ -15,9 +15,10 @@
   import type { MediaItem } from '$data/content';
   import type { Episode, NormalizedMediaItem, Season } from '$lib/server/content/types';
   import type { WatchlistStatus } from '$lib/client/progress/types';
-  import { getContinueWatching, getFavoriteStatus, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
+  import { getFavoriteStatus, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
+  import { selectTVContinueWatchingRecords } from '$lib/tv/continue-watching';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
   import TvDetail from './TvDetail.svelte';
@@ -146,8 +147,8 @@
 
   async function loadContinueWatching() {
     try {
-      const records = await getContinueWatching();
-      continueWatchingItems = records.slice(0, 12).map(progressToMedia);
+      const records = await getLocalProgressRecords();
+      continueWatchingItems = selectTVContinueWatchingRecords(records).slice(0, 12).map(progressToMedia);
     } catch {
       continueWatchingItems = [];
     }
@@ -723,11 +724,11 @@
     myListLoading = true;
     myListError = '';
     try {
-      const [favorites, progress, deletions, persistence, continueWatching] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions(), getLocalPersistenceState(), getContinueWatching()]);
+      const [favorites, progress, deletions, persistence] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions(), getLocalPersistenceState()]);
       if (requestId !== myListRequestSequence) return;
       const local = mergeFavoritesWithProgress(favorites, progress, deletions);
       myListItems = local.map((record) => favoriteToMedia(record, progress));
-      continueWatchingItems = continueWatching.slice(0, 12).map(progressToMedia);
+      continueWatchingItems = selectTVContinueWatchingRecords(progress).slice(0, 12).map(progressToMedia);
       myListLoading = false;
       myListSyncMessage = persistence.status === 'indexeddb' ? 'Local-first · background sync' : 'Memory fallback · this session';
       restoreAfterRender(['tv-media-tv-my-list-' + (myListItems[0]?.id ?? ''), 'tv-my-list-browse', 'tv-nav-list']);

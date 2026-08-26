@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { createTVNavigation } from '../src/lib/tv/navigation';
 import { getTVRemoteAction, isBackAction, isNavigationAction } from '../src/lib/tv/remote';
 import { pickVerticalCandidate } from '../src/lib/tv/focus';
+import { selectTVContinueWatchingRecords } from '../src/lib/tv/continue-watching';
+import type { WatchProgressRecord } from '../src/lib/client/progress/types';
 
 function keyEvent(key: string, keyCode?: number) {
   return { key, keyCode, preventDefault() {} } as KeyboardEvent & { keyCode?: number };
@@ -71,7 +73,35 @@ navigation.reset();
 assert.equal(navigation.depth, 0);
 assert.deepEqual(navigation.current, { screen: 'home', focusId: 'tv-nav-home' });
 
-const [focusSource, shellSource, routeSource, routeServerSource, detailRouteSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, performanceSource, tmdbSource, contentServiceSource, contentTypesSource, cacheSource] = await Promise.all([
+const progressRecord = (overrides: Partial<WatchProgressRecord> = {}): WatchProgressRecord => ({
+  key: 'series:demo:1:1',
+  contentType: 'series',
+  contentId: 'demo',
+  season: 1,
+  episode: 1,
+  currentTime: 120,
+  duration: 600,
+  completionState: 'in_progress',
+  snapshot: { title: 'Demo', poster: '/demo.jpg', backdrop: '/demo-backdrop.jpg' },
+  lastWatchedAt: 100,
+  updatedAt: 100,
+  ...overrides
+});
+const continueRecords = selectTVContinueWatchingRecords([
+  progressRecord({ key: 'movie:finished:-:-', contentType: 'movie', contentId: 'finished', season: undefined, episode: undefined, currentTime: 100, duration: 100, completionState: 'completed', lastWatchedAt: 500, updatedAt: 500 }),
+  progressRecord({ key: 'series:demo:1:1', episode: 1, currentTime: 120, lastWatchedAt: 200, updatedAt: 210 }),
+  progressRecord({ key: 'series:demo:2:5', season: 2, episode: 5, currentTime: 300, lastWatchedAt: 400, updatedAt: 390 }),
+  progressRecord({ key: 'movie:partial:-:-', contentType: 'movie', contentId: 'partial', season: undefined, episode: undefined, currentTime: 30, duration: 0, lastWatchedAt: 300, updatedAt: 300 }),
+  progressRecord({ key: 'movie:zero:-:-', contentType: 'movie', contentId: 'zero', season: undefined, episode: undefined, currentTime: 0, lastWatchedAt: 600, updatedAt: 600 }),
+  progressRecord({ key: 'movie:invalid:-:-', contentType: 'movie', contentId: 'invalid', season: undefined, episode: undefined, currentTime: Number.NaN, lastWatchedAt: 700, updatedAt: 700 })
+]);
+assert.deepEqual(continueRecords.map((record) => `${record.contentType}:${record.contentId}`), ['series:demo', 'movie:partial']);
+assert.equal(continueRecords[0]?.season, 2, 'latest active episode should represent one series card');
+assert.equal(continueRecords[0]?.episode, 5, 'latest active episode context should be preserved');
+assert.equal(continueRecords.some((record) => record.contentId === 'finished'), false, 'completed content must be omitted');
+assert.equal(continueRecords.some((record) => record.contentId === 'zero'), false, 'zero-progress content must be omitted');
+assert.equal(continueRecords.some((record) => record.contentId === 'invalid'), false, 'malformed progress must be omitted safely');
+const [focusSource, shellSource, routeSource, routeServerSource, detailRouteSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, performanceSource, tmdbSource, contentServiceSource, contentTypesSource, cacheSource, progressServiceSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
@@ -88,7 +118,8 @@ const [focusSource, shellSource, routeSource, routeServerSource, detailRouteSour
   readFile(new URL('../src/lib/server/content/adapters/tmdb.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/server/content/service.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/server/content/types.ts', import.meta.url), 'utf8'),
-  readFile(new URL('../src/lib/server/content/cache.ts', import.meta.url), 'utf8')
+  readFile(new URL('../src/lib/server/content/cache.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/client/progress/service.ts', import.meta.url), 'utf8')
 ]);
 
 assert.match(focusSource, /tvFocusGroup/);
@@ -236,11 +267,15 @@ assert.doesNotMatch(shellSource, /supabase/);
 assert.match(shellSource, /TvPerformance/);
 assert.match(shellSource, /tvPerformanceEnabled/);
 assert.match(shellSource, /tvperf/);
-assert.match(shellSource, /getContinueWatching/);
+assert.match(shellSource, /getLocalProgressRecords/);
+assert.match(shellSource, /selectTVContinueWatchingRecords/);
+assert.doesNotMatch(shellSource, /getContinueWatching/, 'TV Continue Watching must not inherit manual My List watching records');
 assert.match(shellSource, /progressToMedia/);
 assert.match(shellSource, /tv-continue-watching/);
+assert.match(shellSource, /showProgress/);
 assert.match(shellSource, /Continue Watching/);
 assert.doesNotMatch(shellSource, /Latest releases.*MyTrakt/);
+assert.match(focusSource, /moveFocusToGroup/);
 assert.match(performanceSource, /mavero-tv-js-loaded/);
 assert.match(performanceSource, /mavero-tv-dom-content-loaded/);
 assert.match(performanceSource, /mavero-tv-first-paint/);
@@ -271,5 +306,7 @@ assert.match(detailRouteSource, /isValidContentId/);
 assert.match(cacheSource, /MAX_CACHE_ENTRIES/);
 assert.match(cacheSource, /while \(entries\.size >= MAX_CACHE_ENTRIES\)/);
 assert.match(cacheSource, /maxEntries: MAX_CACHE_ENTRIES/);
+assert.match(progressServiceSource, /duration > 0/);
+assert.match(progressServiceSource, /'Resume'/, 'zero-duration progress must use a truthful Resume label');
 
 console.log('TV contract tests passed: remote, navigation, focus, async states, route isolation, real Discover wiring, Search, Detail, My List, and strict player/auth boundaries.');
