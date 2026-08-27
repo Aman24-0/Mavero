@@ -782,9 +782,9 @@ The fix detects a 32-character TMDB v3 key even when it is stored under `TMDB_BE
 
 **Implementation completed:** Public source options are filtered by Movie/Series/Anime capability and presented only when multiple options exist. The initial source uses the existing bounded fallback behavior; a manual source selection disables fallback. TV direct playback applies stored resume time, emits progress/pause/ended/visibility/close events, promotes a title to Watching, completes through the existing 90%-based progress service, and records authenticated history using the existing context. Continue Watching remains actual-progress-only and carries episode season/episode context from the existing presenter. Series guide episode selection now opens real playback with that episode context. Settings contains remote-focusable email/password sign-in and TV logout actions that call the existing Supabase server session methods. QR pairing is not represented as implemented functionality.
 
-**Automated validation:** `pnpm check` passed with zero errors and warnings. `pnpm exec tsx scripts/tv_phase2_contract_test.ts` passed after retaining remote, focus, navigation, Continue Watching, no-AVPlay, and no-private-credential assertions while adding resolver/source-picker/progress/manual-auth coverage. Full `pnpm test`, memory-safe build, diff/scope/security inspection, and browser/feature-deployment checks remain part of the final validation gate.
+**Automated validation:** `pnpm check` passed with zero errors and warnings. `pnpm exec tsx scripts/tv_phase2_contract_test.ts` passed after retaining remote, focus, navigation, Continue Watching, no-AVPlay, and no-private-credential assertions while adding resolver/source-picker/progress/manual-auth coverage. Full `pnpm test` passed. `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` passed. `git diff --check`, changed-path/scope inspection, and secret-pattern inspection passed; no migration or server-private directory changed.
 
-**Browser QA:** Pending final local preview and feature deployment checks. Placeholder public Supabase configuration is suitable for rendering the signed-out TV account state, but real authentication and provider playback require the deployed environment and owner account/provider conditions.
+**Browser QA:** Local production preview passed for TV Home rendering and Settings account-panel rendering with placeholder public Supabase configuration. The first feature-deployment check was correctly identified as stale; after pushing `ecac5c3` and propagation, the feature URL served the new manual account panel and QR pairing-gate copy. Real authentication, resolver success, provider media, direct playback progress, and embed internals were not exercised in browser QA.
 
 **Samsung TV QA:** **NOT RUN for Phase 10.3.** Do not claim direct playback, embed playback, source picker behavior, actual progress/resume, Continue Watching after viewing, manual auth/logout, provider compatibility, or long-session stability until the owner tests the supplied Samsung `UA43AUE60AKLXL`, Tizen `6.0`, TizenBrew `2.0.5` checklist.
 
@@ -792,10 +792,10 @@ The fix detects a 32-character TMDB v3 key even when it is stored under `TMDB_BE
 
 **Unresolved issues:** Owner hardware verification of real source playback, provider controls, direct media where available, source switching, episode flow, actual progress/resume, Continue Watching reload, auth/logout, focus/Back/Exit, and 30-minute stability remains outstanding. No Samsung PASS is claimed.
 
-**Next step:** Complete full repository validation, local preview/browser QA, feature deployment checks, secret/scope audit, commit, and push only to `origin/feature/tizen-tv`; then hand the owner the detailed Samsung checklist. Do not merge to `main`, change production, mutate provider/source data, or add Phase 11 work.
+**Next step:** Hand the owner the detailed Samsung checklist for real provider playback, source choice, progress/resume, Continue Watching, manual auth/logout, focus/Back/Exit, and 30-minute stability. Do not merge to `main`, change production, mutate provider/source data, or add Phase 11 work.
 
 **Branch:** `feature/tizen-tv`
 
-**Commit SHA:** Pending final Phase 10.3 commit; record the final object in the handoff because a commit cannot contain its own final hash.
+**Commit SHA:** Implementation commit `ecac5c3`; this follow-up documentation entry is committed separately because a commit cannot contain its own final hash.
 
-**Merge/deployment status:** Implementation remains on `feature/tizen-tv`; not merged to `main`; no production mutation; no Supabase schema/RLS mutation; Branch Deploy remains the intended validation target.
+**Merge/deployment status:** Implementation commit `ecac5c3` and the follow-up QA documentation commit remain on `feature/tizen-tv`; not merged to `main`; no production mutation; no Supabase schema/RLS mutation; Branch Deploy reflects the implementation commit and remains the owner validation target.

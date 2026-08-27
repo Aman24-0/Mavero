@@ -19,3 +19,10 @@ The existing install prompt appeared in the local browser preview. It is outside
 ## Feature deployment observation
 
 The feature URL `https://feature-tizen-tv--mavero1.netlify.app/tv` served the real Movies, Series, and Anime catalog data and the existing Phase 10.1 shell. However, opening Settings still showed the old `TV roadmap placeholder` rather than the new account panel. This means the currently deployed feature branch is stale relative to the uncommitted Phase 10.3 changes; no deployed Phase 10.3 claim was made. The branch must be committed and pushed, then the deployment rechecked before owner handoff.
+## Post-push feature deployment observation
+After pushing ecac5c3, the feature URL still renders the old Settings roadmap placeholder rather than the new account panel. The deployment has not yet reflected the pushed commit, so deployed Phase 10.3 verification remains pending.
+
+
+## Post-push deployment verification
+
+After pushing commit `ecac5c3` and allowing propagation, the feature URL served the new Settings account panel. It displayed remote-focusable Email, Password, and Sign in controls and the QR pairing architecture-gate copy. The feature deployment therefore reflects the Phase 10.3 commit. Real credentials, resolver success, provider media, direct playback progress, and Samsung behavior were not exercised in this browser session.
