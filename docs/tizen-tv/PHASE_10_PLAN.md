@@ -2,9 +2,9 @@
 
 **Phase:** Phase 10 — Nuvio-inspired TV UI redesign
 
-**Status:** **Phase 10.1 COMPLETE; Phase 10.2 IMPLEMENTATION COMPLETE — OWNER SAMSUNG QA PENDING.**
+**Status:** **Phase 10.1 COMPLETE; Phase 10.2 IMPLEMENTATION COMPLETE; PHASE 10.3 IMPLEMENTATION COMPLETE — OWNER SAMSUNG QA PENDING.**
 
-**Current position:** Phase 10.1, covering the initial Nuvio-inspired shell/sidebar, hero, rails/cards, and cross-group remote navigation, remains complete and hardware-validated. Phase 10.2 is explicitly authorized and implemented as a TV-only, read-only Continue Watching rail using existing persisted playback progress. Samsung hardware verification for Phase 10.2 is pending.
+**Current position:** Phase 10.1 remains complete and hardware-validated. Phase 10.2’s actual-progress-only Continue Watching read model remains preserved. Phase 10.3 now adapts existing resolver/source, direct/embed player, progress/resume, history, manual TV auth, and logout primitives into the isolated TV shell. Owner Samsung verification of real provider playback, progress, auth, and 10-foot states is pending.
 
 **Target branch:** `feature/tizen-tv` during development; no `main` or production changes until a future phase is reviewed and accepted.
 
@@ -12,7 +12,7 @@
 
 Transform the isolated Mavero TV interface from its current functional shell into a cinematic, Nuvio-inspired living-room experience while preserving every Phase 1–9 behavior: remote navigation, stable focus IDs, Search, My List, Detail, the Series guide, Player entry, Player Back restoration, error/retry handling, and the TV-only performance safeguards.
 
-This is an **information-architecture and visual-design phase**, not a product-logic rewrite. The redesign must improve hierarchy, content discovery, 10-foot readability, and remote confidence without changing authentication, Supabase, provider/resolver behavior, playback mechanics, normal Web/PWA routes, PWA behavior, or production.
+The initial increment was an **information-architecture and visual-design phase**. The separately authorized Phase 10.3 increment adapts existing provider/resolver, player, progress, and Supabase session primitives into the isolated TV shell without creating parallel systems or changing normal Web/PWA routes, PWA behavior, provider data, production, or `main`.
 
 ## Design direction from the owner’s Nuvio reference
 
@@ -103,7 +103,7 @@ Measure the redesigned Home and Detail surfaces against the Phase 8 browser base
 | My List | Same local-first add/remove and authenticated-only reconciliation |
 | Detail | Same Movie/Series/Anime type boundaries and Series-only episode guide |
 | Episode list | Same deferred/windowed rendering and Show 12 more episodes action |
-| Player | Same HTML5-first player, controls, isolation, and mock-source boundary |
+| Player | Same TV remote controls and isolation, now using the existing resolver contract with direct HTML5 or sandboxed embed output; provider playback remains hardware-dependent |
 | Exit | Same Samsung dedicated Exit policy and hosted/root exit behavior |
 | Web/PWA | No source, route, PWA, or shared-style changes |
 
@@ -113,7 +113,7 @@ Measure the redesigned Home and Detail surfaces against the Phase 8 browser base
 |---|---|
 | Visual | Hero, sidebar, rails, cards, and focus states match the approved Nuvio-inspired direction at ten feet |
 | Remote | Home → rail → Detail → Player → Back works without pointer input or focus loss |
-| Continue Watching | Deferred in Phase 10.1; no implementation or hardware PASS is claimed until Phase 10.2 has an approved watch-progress contract |
+| Continue Watching | Phase 10.2 read model and Phase 10.3 real progress/resume integration are implemented; owner Samsung verification remains pending |
 | Latest Releases | Has an approved source contract or is omitted truthfully; no fabricated MyTrakt data |
 | Accessibility | Focus is visible, labels remain meaningful, progress is not color-only, and reduced motion works |
 | Performance | No observed Samsung stutter or focus delay; DOM/image/motion behavior remains bounded |
@@ -122,7 +122,17 @@ Measure the redesigned Home and Detail surfaces against the Phase 8 browser base
 
 ## Explicit non-goals
 
-This phase does not implement new TMDB integration, MyTrakt/latest releases without an approved data contract, provider/source selection, resolver changes, AVPlay, authentication, Supabase schema/RLS changes, PWA changes, normal Web/PWA redesign, production deployment, or a merge to `main`. It does not change the Player’s playback contract or claim that a visual resemblance to Nuvio provides any licensing or product endorsement.
+The initial Phase 10 redesign did not implement new TMDB integration, provider/source selection, resolver changes, AVPlay, authentication, or Supabase schema/RLS changes. The separately authorized Phase 10.3 increment adapts existing provider/resolver, playback-progress, and Supabase auth primitives only; QR pairing is architecture-gated because device-separated cookies are not proven. No provider data, PWA behavior, normal Web/PWA route, production, or `main` change is included, and no provider video playback or Samsung compatibility is claimed before owner verification.
+
+## Current position
+
+```text
+Phase 10      COMPLETE — initial Nuvio-inspired TV UI redesign; owner Samsung QA 100% PASS
+Phase 10.2    IMPLEMENTATION COMPLETE — Continue Watching and real TV progress/resume; owner Samsung playback QA pending
+Phase 10.3    IMPLEMENTATION COMPLETE — resolver-backed TV playback, manual TV auth/logout, QR pairing architecture-gated; owner Samsung QA pending
+```
+
+**Immediate next task:** Owner Samsung QA for real Movie/Series/Anime source resolution, direct/embed behavior, source picker, playback progress/resume, Continue Watching, manual TV auth/logout, focus/Back/Exit, and 30-minute stability. Latest Releases/MyTrakt and Phase 11 remain out of scope.
 
 ## References
 

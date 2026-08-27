@@ -101,11 +101,12 @@ assert.equal(continueRecords[0]?.episode, 5, 'latest active episode context shou
 assert.equal(continueRecords.some((record) => record.contentId === 'finished'), false, 'completed content must be omitted');
 assert.equal(continueRecords.some((record) => record.contentId === 'zero'), false, 'zero-progress content must be omitted');
 assert.equal(continueRecords.some((record) => record.contentId === 'invalid'), false, 'malformed progress must be omitted safely');
-const [focusSource, shellSource, routeSource, routeServerSource, detailRouteSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, performanceSource, tmdbSource, contentServiceSource, contentTypesSource, cacheSource, progressServiceSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, authPanelSource, detailRouteSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, playbackSource, performanceSource, tmdbSource, contentServiceSource, contentTypesSource, cacheSource, progressServiceSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.server.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/components/tv/TvAuthPanel.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/api/content/[type]/[id]/+server.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvMediaRail.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvHero.svelte', import.meta.url), 'utf8'),
@@ -114,6 +115,7 @@ const [focusSource, shellSource, routeSource, routeServerSource, detailRouteSour
   readFile(new URL('../src/lib/components/tv/TvMyList.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/tv/navigation.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvPlayer.svelte', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/tv/playback.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvPerformance.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/server/content/adapters/tmdb.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/server/content/service.ts', import.meta.url), 'utf8'),
@@ -159,6 +161,15 @@ assert.match(shellSource, /isTizenBrewHostedModule/);
 assert.match(routeSource, /TvShell/);
 assert.match(routeSource, /discover=\{data\}/);
 assert.match(routeServerSource, /loadDiscoverData/);
+assert.match(routeServerSource, /signInWithPassword/);
+assert.match(routeServerSource, /friendlyAuthMessage/);
+assert.match(routeServerSource, /safeRedirectPath/);
+assert.match(routeServerSource, /signOut/);
+assert.match(authPanelSource, /action="\?\/signIn"/);
+assert.match(authPanelSource, /action="\?\/signOut"/);
+assert.match(authPanelSource, /type="password"/);
+assert.match(authPanelSource, /QR phone pairing is not enabled/);
+assert.doesNotMatch(authPanelSource, /access_token|refresh_token|service_role/);
 assert.match(mediaRailSource, /MediaItem/);
 assert.match(mediaRailSource, /data-tv-focus-group/);
 assert.match(mediaRailSource, /display: flex/);
@@ -214,11 +225,19 @@ assert.match(shellSource, /if \(page\.data\.user\)/, 'TV cloud sync must remain 
 assert.match(shellSource, /Array\.from\(item\.genres/ , 'TV favorite snapshots must materialize reactive genre arrays');
 assert.match(shellSource, /if \(screen === 'my-list'\) void loadMyList\(\)/, 'Returning from detail to My List must refresh local items');
 assert.match(shellSource, /details ready/);
-assert.match(shellSource, /Player actions remain outside Phase 7/);
+assert.doesNotMatch(shellSource, /Player actions remain outside Phase 7/);
 assert.match(shellSource, /TvPlayer/);
-assert.match(shellSource, /tv-player-remote/);
+assert.match(shellSource, /loadTVSourceOptions/);
+assert.match(shellSource, /resolveTVSource/);
+assert.match(shellSource, /preparePlayerSource/);
+assert.match(shellSource, /createProgressWriter/);
+assert.match(shellSource, /getResumeProgress/);
+assert.match(shellSource, /playerRequestedEpisode/);
+assert.match(shellSource, /season: playerRequestedEpisode\?\.season/);
+assert.match(shellSource, /episode: playerRequestedEpisode\?\.episode/);
+assert.match(shellSource, /onProgress/);
 assert.match(shellSource, /screen === 'player'/);
-assert.match(shellSource, /phase7MockPlaybackUrl/);
+assert.doesNotMatch(shellSource, /phase7MockPlaybackUrl/);
 assert.match(shellSource, /openPlayer/);
 assert.match(shellSource, /navigation\.open\('player'/);
 assert.match(shellSource, /playerReturnScrollY/);
@@ -259,9 +278,22 @@ assert.match(playerSource, /tv-player-back/);
 assert.match(playerSource, /seekBy\(-10\)/);
 assert.match(playerSource, /seekBy\(10\)/);
 assert.match(playerSource, /tv-player-remote/);
-assert.match(playerSource, /No playback source is available/);
+assert.match(playerSource, /This provider is currently unavailable/);
 assert.match(playerSource, /track kind="captions"/);
-assert.doesNotMatch(playerSource, /autoplay/);
+assert.match(playerSource, /provider-embed/);
+assert.match(playerSource, /iframeSandboxAttribute/);
+assert.match(playerSource, /onSourceChange/);
+assert.match(playerSource, /onProgress/);
+assert.match(playerSource, /allow="autoplay; fullscreen; picture-in-picture"/);
+assert.doesNotMatch(playerSource, /autoplay\s*\/>|autoplay=\{true\}/);
+assert.match(playbackSource, /fetch\('\/api\/streaming\/config'/);
+assert.match(playbackSource, /fetch\('\/api\/playback\/resolve'/);
+assert.match(playbackSource, /sourceId/);
+assert.match(playbackSource, /contentId/);
+assert.match(playbackSource, /mediaType/);
+assert.match(playbackSource, /enableFallback/);
+assert.match(playbackSource, /normalizePlayerSource/);
+assert.doesNotMatch(playbackSource, /service_role|TMDB_BEARER_TOKEN|template/);
 assert.doesNotMatch(shellSource, /AVPlay/);
 assert.doesNotMatch(shellSource, /supabase/);
 assert.match(shellSource, /TvPerformance/);

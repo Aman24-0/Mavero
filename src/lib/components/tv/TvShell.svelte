@@ -14,15 +14,18 @@
   } from '$lib/tv';
   import type { MediaItem } from '$data/content';
   import type { Episode, NormalizedMediaItem, Season } from '$lib/server/content/types';
-  import type { WatchlistStatus } from '$lib/client/progress/types';
-  import { getFavoriteStatus, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
+  import type { PlaybackContext, WatchlistStatus } from '$lib/client/progress/types';
+  import { createProgressWriter, getFavoriteStatus, getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords, getResumeProgress, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { favoriteToMedia, progressToMedia } from '$lib/client/progress/presenter';
   import { selectTVContinueWatchingRecords } from '$lib/tv/continue-watching';
-  import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
+  import { deleteCloudFavorite, recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
+  import type { PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
+  import { loadTVSourceOptions, resolveTVSource, TVPlaybackError, type TVPlaybackMediaType } from '$lib/tv/playback';
   import TvDetail from './TvDetail.svelte';
   import TvError from './TvError.svelte';
+  import TvAuthPanel from './TvAuthPanel.svelte';
   import TvHeader from './TvHeader.svelte';
   import TvHero from './TvHero.svelte';
   import TvLoading from './TvLoading.svelte';
@@ -78,9 +81,11 @@
   }
 
   let {
-    discover = emptyDiscover
+    discover = emptyDiscover,
+    form = null
   }: {
     discover?: DiscoverData;
+    form?: { success?: boolean; message?: string; email?: string } | null;
   } = $props();
 
   let root: HTMLElement;
@@ -132,11 +137,22 @@
   let myListSyncMessage = $state('Local-first library');
   let myListRequestSequence = 0;
   let playerTitle = $state('');
-  let playerSource = $state('');
+  let playerSource = $state<PlayerSource | null>(null);
+  let playerSourceOptions = $state<PlayerSourceOption[]>([]);
+  let playerSourceLoading = $state(false);
+  let playerResolutionState = $state<'idle' | 'resolving' | 'ready' | 'provider-error' | 'unsupported' | 'unavailable' | 'network-error'>('idle');
+  let playerResolutionMessage = $state('');
+  let playerResolutionSequence = 0;
+  let playerResolutionController: AbortController | undefined;
+  let playerProgressWriter: ReturnType<typeof createProgressWriter> | undefined;
+  let playerPlaybackContext: PlaybackContext | undefined;
+  let playerRequestedEpisode = $state<PlayerEpisodeTarget | undefined>(undefined);
+  let playerResumeTime = $state(0);
   let playerRetryNonce = $state(0);
   let playerReturnScrollY = $state<number | null>(null);
-
-  const phase7MockPlaybackUrl = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
+  let playerWatchingSaved = false;
+  let playerStartedHistory = false;
+  let playerLastHistoryAt = 0;
 
   const navItems: Array<{ id: string; label: string; screen: TVScreen }> = [
     { id: 'tv-nav-home', label: 'Home', screen: 'home' },
@@ -152,6 +168,147 @@
     } catch {
       continueWatchingItems = [];
     }
+  }
+
+  function playbackType(item: Pick<MediaItem, 'type'>): TVPlaybackMediaType {
+    return item.type === 'series' || item.type === 'anime' ? item.type : 'movie';
+  }
+
+  function resumeEpisodeFromItem(item: MediaItem): PlayerEpisodeTarget | undefined {
+    if (item.type === 'movie' || !item.resumeHref) return undefined;
+    try {
+      const url = new URL(item.resumeHref, 'https://mavero.invalid');
+      const season = Number(url.searchParams.get('season'));
+      const episode = Number(url.searchParams.get('episode'));
+      if (Number.isInteger(season) && season > 0 && Number.isInteger(episode) && episode > 0) return { season, episode };
+    } catch {
+      // Invalid resume links are ignored; the normal title-level flow remains available.
+    }
+    return undefined;
+  }
+
+  function currentPlaybackEpisode(item: TvDetailItem) {
+    if (item.type === 'movie') return undefined;
+    if (playerRequestedEpisode) return detailSeasons.flatMap((season) => season.episodes ?? []).find((episode) => episode.season === playerRequestedEpisode?.season && episode.number === playerRequestedEpisode?.episode);
+    const season = detailSeasons.find((candidate) => candidate.number === detailActiveSeason) ?? detailSeasons[0];
+    return season?.episodes?.[0];
+  }
+
+  function createTVPlaybackContext(item: TvDetailItem): PlaybackContext {
+    const episode = currentPlaybackEpisode(item);
+    return {
+      contentType: playbackType(item),
+      contentId: item.id,
+      season: playerRequestedEpisode?.season ?? episode?.season,
+      episode: playerRequestedEpisode?.episode ?? episode?.number,
+      episodeTitle: episode?.title ?? playerRequestedEpisode?.title
+    };
+  }
+
+  function playerSnapshot(item: TvDetailItem) {
+    return detailSnapshot(item);
+  }
+
+  async function loadPlayerSources(item: TvDetailItem, requestId: number) {
+    playerSourceLoading = true;
+    try {
+      playerSourceOptions = await loadTVSourceOptions(playbackType(item));
+      if (requestId !== playerResolutionSequence) return;
+      if (!playerSourceOptions.length) throw new TVPlaybackError('No authorized playback source is available for this title type.', 'RESOLUTION_UNAVAILABLE');
+    } catch (error) {
+      if (requestId !== playerResolutionSequence) return;
+      playerSourceOptions = [];
+      playerResolutionState = error instanceof TVPlaybackError && error.code ? 'unavailable' : 'network-error';
+      playerResolutionMessage = error instanceof Error ? error.message : 'Streaming configuration is temporarily unavailable.';
+    } finally {
+      if (requestId === playerResolutionSequence) playerSourceLoading = false;
+    }
+  }
+
+  async function preparePlayerSource(sourceId = playerSourceOptions[0]?.id, allowFallback = true) {
+    const context = playerPlaybackContext;
+    const item = detailItem;
+    if (!context || !item || !sourceId) {
+      playerSource = null;
+      playerResolutionState = 'unavailable';
+      playerResolutionMessage = 'No authorized playback source is available for this title.';
+      return;
+    }
+    const requestId = ++playerResolutionSequence;
+    playerResolutionController?.abort();
+    const controller = new AbortController();
+    playerResolutionController = controller;
+    playerResolutionState = 'resolving';
+    playerResolutionMessage = 'Resolving a safe playback source…';
+    playerSource = null;
+    try {
+      const resolved = await resolveTVSource(context, sourceId, allowFallback, controller.signal);
+      if (requestId !== playerResolutionSequence || controller.signal.aborted) return;
+      playerSource = resolved;
+      playerResolutionState = 'ready';
+      playerResolutionMessage = resolved.type === 'direct' ? 'Direct HTML5 playback is ready.' : 'Provider embed is ready inside the MAVERO shell.';
+      if (!playerWatchingSaved) {
+        playerWatchingSaved = true;
+        try {
+          await setFavoriteStatus(context.contentType, context.contentId, playerSnapshot(item), 'watching');
+          if (page.data.user) void syncAuthenticatedState();
+        } catch {
+          // Playback remains available if local list promotion is unavailable.
+        }
+      }
+      await playerProgressWriter?.flush();
+      playerProgressWriter?.dispose();
+      playerProgressWriter = createProgressWriter({ ...context, selectedSourceId: resolved.sourceId, snapshot: playerSnapshot(item) });
+      const resume = await getResumeProgress(context);
+      if (requestId === playerResolutionSequence && !controller.signal.aborted) playerResumeTime = resume.resumeTime;
+    } catch (error) {
+      if (requestId !== playerResolutionSequence || controller.signal.aborted) return;
+      playerSource = null;
+      const code = error instanceof TVPlaybackError ? error.code : undefined;
+      playerResolutionState = code === 'UNSUPPORTED_MEDIA_TYPE' ? 'unsupported' : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE' ? 'unavailable' : code ? 'provider-error' : 'network-error';
+      playerResolutionMessage = error instanceof Error ? error.message : 'The provider could not be reached. Try again or choose another server.';
+    } finally {
+      if (requestId === playerResolutionSequence) playerResolutionController = undefined;
+    }
+  }
+
+  async function handlePlayerSourceChange(sourceId: string) {
+    if (!playerPlaybackContext || sourceId === playerSource?.sourceId) return;
+    await playerProgressWriter?.pause();
+    playerProgressWriter?.dispose();
+    playerProgressWriter = undefined;
+    await preparePlayerSource(sourceId, false);
+  }
+
+  function handlePlayerProgress(event: PlayerProgressEvent) {
+    const context = playerPlaybackContext;
+    const item = detailItem;
+    if (!context || !item) return;
+    playerProgressWriter?.update(event.currentTime, event.duration, event.completed);
+    if (event.reason === 'pause' || event.reason === 'source-change' || event.reason === 'close' || event.reason === 'visibility') void playerProgressWriter?.pause();
+    if (event.reason === 'ended') void playerProgressWriter?.complete(event.currentTime, event.duration);
+    if (!page.data.user || event.currentTime <= 0) return;
+    if (!playerStartedHistory) {
+      playerStartedHistory = true;
+      void recordCloudHistory({ eventKey: `${context.contentType}:${context.contentId}:${context.season ?? '-'}:${context.episode ?? '-'}:started:${Math.floor(event.currentTime)}`, eventType: 'started', contentType: context.contentType, contentId: context.contentId, season: context.season, episode: context.episode, currentTime: event.currentTime, duration: event.duration, completionState: 'in_progress', snapshot: playerSnapshot(item), occurredAt: Date.now() });
+    }
+    if (event.currentTime - playerLastHistoryAt >= 60) {
+      playerLastHistoryAt = event.currentTime;
+      void recordCloudHistory({ eventKey: `${context.contentType}:${context.contentId}:${context.season ?? '-'}:${context.episode ?? '-'}:progressed:${Math.floor(event.currentTime)}`, eventType: 'progressed', contentType: context.contentType, contentId: context.contentId, season: context.season, episode: context.episode, currentTime: event.currentTime, duration: event.duration, completionState: 'in_progress', snapshot: playerSnapshot(item), occurredAt: Date.now() });
+    }
+    if (event.completed) {
+      void setFavoriteStatus(context.contentType, context.contentId, playerSnapshot(item), 'completed').then(() => { void syncAuthenticatedState(); });
+      void recordCloudHistory({ eventKey: `${context.contentType}:${context.contentId}:${context.season ?? '-'}:${context.episode ?? '-'}:completed:${Math.floor(event.currentTime)}`, eventType: 'completed', contentType: context.contentType, contentId: context.contentId, season: context.season, episode: context.episode, currentTime: event.currentTime, duration: event.duration, completionState: 'completed', snapshot: playerSnapshot(item), occurredAt: Date.now() });
+    }
+  }
+
+  async function closePlayerProgress() {
+    await playerProgressWriter?.flush();
+    playerProgressWriter?.dispose();
+    playerProgressWriter = undefined;
+    playerResolutionController?.abort();
+    playerResolutionController = undefined;
+    playerResolutionSequence += 1;
   }
 
   onMount(() => {
@@ -219,6 +376,7 @@
     }
 
     if (screen === 'player') {
+      void closePlayerProgress();
       const previous = navigation.goBack();
       if (previous) {
         screen = previous.screen;
@@ -381,6 +539,7 @@
         searchStatusMessage = searchSubmitted ? 'Search state preserved.' : 'Open Edit query to begin.';
       }
       if (nextScreen === 'my-list') void loadMyList();
+      if (nextScreen === 'settings') restoreAfterRender([page.data.user ? 'tv-account-sign-out' : 'tv-account-email', 'tv-nav-settings', 'tv-nav-home']);
       return;
     }
 
@@ -409,6 +568,7 @@
   }
 
   function handleMediaSelect(item: MediaItem, _event: MouseEvent, focusId: string) {
+    playerRequestedEpisode = resumeEpisodeFromItem(item);
     openDetail(item, focusId);
   }
 
@@ -552,6 +712,7 @@
     selectedTitle = null;
     statusMessage = `Loading ${item.title} details…`;
     detailItem = item as TvDetailItem;
+    playerRequestedEpisode = resumeEpisodeFromItem(item);
     detailLoading = true;
     detailError = '';
     detailSaveError = '';
@@ -649,8 +810,9 @@
   }
 
   function handleEpisodeSelect(episode: Episode) {
-    statusMessage = `Selected Season ${episode.season}, Episode ${episode.number}. Player actions remain outside Phase 7 initial playback scope.`;
-    restoreAfterRender([`tv-detail-episode-${episode.season}-${episode.number}`]);
+    playerRequestedEpisode = { season: episode.season, episode: episode.number };
+    statusMessage = `Season ${episode.season}, Episode ${episode.number} selected.`;
+    openPlayer();
   }
 
   function restoreDetailFocusAfterPlayer() {
@@ -675,15 +837,41 @@
     navigation.open('player', 'tv-detail-watch-now');
     screen = 'player';
     playerTitle = detailItem.title;
-    playerSource = phase7MockPlaybackUrl;
+    playerPlaybackContext = createTVPlaybackContext(detailItem);
+    playerSource = null;
+    playerSourceOptions = [];
+    playerSourceLoading = true;
+    playerResolutionState = 'resolving';
+    playerResolutionMessage = 'Loading authorized playback sources…';
+    playerResumeTime = 0;
+    playerWatchingSaved = false;
+    playerStartedHistory = false;
+    playerLastHistoryAt = 0;
     playerRetryNonce += 1;
-    statusMessage = `${detailItem.title} player ready.`;
+    const requestId = ++playerResolutionSequence;
+    void loadPlayerSources(detailItem, requestId).then(() => {
+      if (requestId !== playerResolutionSequence || !playerSourceOptions.length) return;
+      playerSourceLoading = false;
+      void preparePlayerSource(playerSourceOptions[0].id);
+    });
+    statusMessage = `${detailItem.title} playback loading.`;
     restoreAfterRender(['tv-player-toggle', 'tv-player-back']);
   }
 
   function retryPlayer() {
     playerRetryNonce += 1;
-    statusMessage = `${playerTitle} player retry requested.`;
+    playerResolutionMessage = 'Retrying authorized playback source…';
+    if (playerSourceOptions.length) void preparePlayerSource(playerSource?.sourceId ?? playerSourceOptions[0].id);
+    else if (detailItem) {
+      const requestId = ++playerResolutionSequence;
+      void loadPlayerSources(detailItem, requestId).then(() => {
+        if (requestId === playerResolutionSequence && playerSourceOptions.length) {
+          playerSourceLoading = false;
+          void preparePlayerSource(playerSourceOptions[0].id);
+        }
+      });
+    }
+    statusMessage = `${playerTitle} playback retry requested.`;
     restoreAfterRender(['tv-player-toggle', 'tv-player-back']);
   }
 
@@ -866,8 +1054,24 @@
     {:else if screen === 'player'}
       <section class="tv-section tv-player-section" aria-label="TV player">
         {#key playerRetryNonce}
-          <TvPlayer src={playerSource} title={playerTitle} onBack={() => handleBack()} onRetry={retryPlayer} />
+          <TvPlayer
+            source={playerSource}
+            sourceOptions={playerSourceOptions}
+            sourceLoading={playerSourceLoading}
+            resolutionState={playerResolutionState}
+            resolutionMessage={playerResolutionMessage}
+            initialProgress={playerResumeTime}
+            title={playerTitle}
+            onBack={() => handleBack()}
+            onRetry={retryPlayer}
+            onSourceChange={(sourceId) => void handlePlayerSourceChange(sourceId)}
+            onProgress={handlePlayerProgress}
+          />
         {/key}
+      </section>
+    {:else if screen === 'settings'}
+      <section class="tv-section" aria-label="TV account settings">
+        <TvAuthPanel authenticated={Boolean(page.data.user)} email={page.data.user?.email} message={form?.success ? form.message : undefined} errorMessage={form?.success ? undefined : form?.message} />
       </section>
     {:else}
       <section class="tv-section" aria-labelledby="tv-placeholder-title">

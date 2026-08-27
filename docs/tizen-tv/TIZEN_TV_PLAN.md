@@ -513,7 +513,7 @@ Player        EXISTING + tested architecture
 Backend       EXISTING
 Auth          EXISTING
 Admin         EXISTING
-Tizen         Phase 9 TMDB integration COMPLETE; Phase 10 Nuvio-inspired TV UI redesign STARTED
+Tizen         Phase 10.3 implementation COMPLETE; owner Samsung playback/auth QA pending
 Phase 0       COMPLETE
 Phase 1       COMPLETE
 Phase 2       COMPLETE
@@ -525,9 +525,10 @@ Phase 7       COMPLETE — owner-confirmed Samsung Player QA 100% PASS; Movie gu
 Phase 8       COMPLETE — owner QA recorded; four TV-only follow-up issues fixed
 Phase 9       COMPLETE — TMDB Integration; seven owner Samsung QA items PASS; episode-image fix implemented, post-fix hardware verification pending
 Phase 10      COMPLETE — initial Nuvio-inspired TV UI redesign; owner Samsung QA 100% PASS
-Phase 10.2    IMPLEMENTATION COMPLETE — Continue Watching rail; owner Samsung QA pending
+Phase 10.2    IMPLEMENTATION COMPLETE — Continue Watching rail and real TV progress/resume integration; owner Samsung QA pending
+Phase 10.3    IMPLEMENTATION COMPLETE — resolver-backed playback, remote source choice, manual TV auth/logout; QR pairing architecture-gated; owner Samsung QA pending
 ```
 
-**Immediate next task: Owner Samsung QA for Phase 10.2 Continue Watching. After hardware validation, await the owner’s direction for Phase 11 or maintenance/refinement. Latest Releases/MyTrakt remains prohibited without an approved data contract.**
+**Immediate next task: Owner Samsung QA for Phase 10.2/10.3 real playback, source selection, progress/resume, manual TV auth/logout, focus/Back/Exit, and 30-minute stability. Latest Releases/MyTrakt and Phase 11 remain out of scope.**
 
-Keep all TV presentation and API wiring isolated to the approved TV/content-service scope; do not modify auth/Supabase, PWA, normal Web/PWA UI routes, provider/resolver behavior, production configuration, or `main`. Phase 9 is the explicitly authorized TMDB integration exception in the shared server content layer. AVPlay remains deferred unless HTML5 video fails on supported hardware.
+Keep the TV presentation isolated and preserve the existing resolver/auth/progress contracts. Phase 10.3 adds no pairing schema/RLS change because device-separated TV cookies are not proven, does not mutate provider/source data, and does not change PWA, normal Web/PWA routes, production configuration, or `main`. AVPlay remains deferred unless owner evidence shows HTML5 gaps on supported hardware.

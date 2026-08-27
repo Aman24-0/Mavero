@@ -1,8 +1,8 @@
 <script lang="ts">
   import TvShell from '$components/tv/TvShell.svelte';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData | null } = $props();
 </script>
 
 <svelte:head>
@@ -10,4 +10,4 @@
   <meta name="description" content="Mavero Discover for Samsung Tizen TV." />
 </svelte:head>
 
-<TvShell discover={data} />
+<TvShell discover={data} form={form} />
