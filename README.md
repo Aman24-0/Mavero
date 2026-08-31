@@ -1,4 +1,4 @@
-# Mavero
+# Mavero.
 
 Mavero is a SvelteKit application for discovering and watching movies, series, and anime in one place. It combines public catalog data with authenticated library and playback state, while keeping the web application, PWA shell, server-side content services, and streaming-resolution boundaries in one repository.[1] [2]
 
