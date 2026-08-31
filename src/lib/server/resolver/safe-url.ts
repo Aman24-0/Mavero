@@ -34,11 +34,11 @@ export function validateProviderEndpoint(raw: string): string {
   return url.toString();
 }
 
-export function validatePlaybackUrl(raw: string, type: Exclude<ResolverResultType, 'unavailable' | 'error'>, allowedEmbedOrigins: string[] = []): string {
+export function validatePlaybackUrl(raw: string, type: Exclude<ResolverResultType, 'unavailable' | 'error'>, allowedEmbedOrigins: string[] = [], allowDynamicEmbedOrigins = false): string {
   const url = parseUrl(raw);
   const protocols = type === 'embed' ? embedProtocols : directProtocols;
   if (!protocols.has(url.protocol) || url.username || url.password || isPrivateHostname(url.hostname)) throw new ResolverError('INVALID_SOURCE_URL');
-  if (type === 'embed') {
+  if (type === 'embed' && !allowDynamicEmbedOrigins) {
     const origin = url.origin.toLowerCase();
     const allowed = allowedEmbedOrigins.map((value) => parseUrl(value).origin.toLowerCase());
     if (!allowed.includes(origin)) throw new ResolverError('INVALID_SOURCE_URL');
@@ -51,6 +51,19 @@ export function allowedEmbedOriginsFromCapabilities(capabilities: Json): string[
   const value = (capabilities as { [key: string]: Json | undefined }).allowed_embed_origins;
   if (!Array.isArray(value)) return [];
   return value.filter((origin): origin is string => typeof origin === 'string').slice(0, 20);
+}
+
+/**
+ * Returns true when a source explicitly opts in to dynamic embed origins.
+ * This is reserved for sources whose embed URL is returned by a remote API
+ * (e.g. SuperEmbed) and therefore cannot be matched against a static
+ * `allowed_embed_origins` list. HTTPS and non-private-host validation still
+ * apply; only the origin allowlist is relaxed.
+ */
+export function allowDynamicEmbedOriginsFromCapabilities(capabilities: Json): boolean {
+  if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return false;
+  const value = (capabilities as { [key: string]: Json | undefined }).allow_dynamic_embed_origins;
+  return value === true;
 }
 
 export function protocolForUrl(raw: string): PlaybackProtocol {

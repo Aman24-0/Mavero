@@ -5,6 +5,7 @@ import type { AdapterResult, ProviderAdapter, ResolverContext } from './types';
 import type { IntegrationType } from '$lib/server/streaming/types';
 import { vidsrcProviderAdapter } from './vidsrc';
 import { vidlinkProviderAdapter } from './vidlink';
+import { superembedProviderAdapter } from './superembed';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
   const sourceCapabilities = context.config.source.capabilities;
@@ -67,7 +68,8 @@ export function createDefaultAdapters(): Record<IntegrationType, ProviderAdapter
 export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
   return {
     [vidsrcProviderAdapter.adapterId ?? 'vidsrc-embed']: vidsrcProviderAdapter,
-    [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter
+    [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter,
+    [superembedProviderAdapter.adapterId ?? 'superembed-api']: superembedProviderAdapter
   };
 }
 
