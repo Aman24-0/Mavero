@@ -3,6 +3,19 @@
 -- No API key, no direct media URLs, no scraping, no proxying, no circumvention.
 -- The API returns playable page URLs (embeds) on dynamic player domains, so the
 -- source opts in to the existing allow_dynamic_embed_origins capability.
+--
+-- MIGRATION DEPENDENCY: This migration requires the Phase 7A streaming registry
+-- schema to already exist in the target database. Specifically, it INSERTs into:
+--   public.streaming_providers
+--   public.streaming_sources
+-- Both tables are created by:
+--   20260820010000_phase7a_streaming_registry.sql
+-- which itself depends on:
+--   20260820000000_phase5_auth_sync.sql  (defines public.set_updated_at() and public.profiles)
+-- If you see "relation public.streaming_providers does not exist", the Phase 7A
+-- chain has not been applied to your database. Apply the missing migrations in
+-- timestamp order — they are all idempotent (create table if not exists /
+-- drop trigger if exists / create or replace).
 
 do $$
 declare
