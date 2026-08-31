@@ -1,7 +1,7 @@
 import { createDefaultAdapterIds, createDefaultAdapters } from './adapters';
 import { ResolverError, asResolverError } from './errors';
 import { normalizeContentIdentifiers } from './identifiers';
-import { allowedEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
+import { allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
 import type { ProviderAdapter, ResolverDependencies, ResolverRequest, SourceResult, TrustedResolutionConfig } from './types';
 import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
@@ -42,7 +42,9 @@ function adapterFor(config: TrustedResolutionConfig, dependencies: ResolverDepen
 function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']>>, context: Parameters<ProviderAdapter['resolve']>[0]): SourceResult {
   if (!result || (result.type !== 'direct' && result.type !== 'embed') || typeof result.url !== 'string') throw new ResolverError('PROVIDER_RESPONSE_INVALID');
   if (result.expiresAt && !isValidExpiry(result.expiresAt)) throw new ResolverError('SOURCE_EXPIRED');
-  const url = validatePlaybackUrl(result.url, result.type, allowedEmbedOriginsFromCapabilities(context.config.source.capabilities));
+  const sourceCapabilities = context.config.source.capabilities;
+  const allowDynamic = allowDynamicEmbedOriginsFromCapabilities(sourceCapabilities);
+  const url = validatePlaybackUrl(result.url, result.type, allowedEmbedOriginsFromCapabilities(sourceCapabilities), allowDynamic);
   return {
     type: result.type,
     url,
