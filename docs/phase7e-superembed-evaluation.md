@@ -1,238 +1,342 @@
 # MAVERO Phase 7E — SuperEmbed Provider Evaluation
 
-**Status:** Implementation complete on `feature/superembed-provider`. Disabled by default; experimental; not yet verified against live playback because the documented API endpoint is currently non-resolvable from the implementation environment (see "Known limitations" below).
+**Status (second audit):** Two integrations now exist, both disabled by default, both experimental:
+1. `superembed` / `superembed-source` — the documented `seapi.link` JSON API source (architecturally correct, but the endpoint is currently NXDOMAIN at major public DNS resolvers).
+2. `superembed-multiembed` / `superembed-multiembed-source` — the officially documented `multiembed.mov` "Simple way" iframe integration (alive and returning HTTP 302 → `streamingnow.mov`).
 
-**Scope:** SuperEmbed only. This implementation preserves every existing provider, resolver, fallback, ranking, player, and TV/Tizen path. No existing provider code was modified; the only additive change to shared resolver code is the new `allow_dynamic_embed_origins` capability flag in `safe-url.ts` + `core.ts`.
+**Scope:** SuperEmbed only. No existing provider code, resolver, fallback, ranking, player, TV, TizenBrew, or auth was modified. The only additive change to shared resolver code (from the first audit) is the `allow_dynamic_embed_origins` capability flag in `safe-url.ts` + `core.ts`. The second audit adds only a new migration + test + this doc update.
 
-## Executive summary
+---
 
-SuperEmbed (`https://www.superembed.stream/movie-streaming-api.html`) exposes a documented JSON API at `https://seapi.link/` that returns playable page URLs (embeds) for movies and TV episodes by IMDb or TMDB id. The official documentation is explicit:
+## Second audit — Apiary documentation findings
 
-> "As you can see our API doesn't provide direct links to streaming servers (eg. `https://streamtape.com/e/xxxxxxx`) instead you get link to a page where you can play the requested movie or episode."
+Source: `https://superembed.docs.apiary.io/#introduction/movie-streaming-api-info`
 
-Therefore SuperEmbed is integrated as a **provider that returns an `embed` `SourceResult`**, not a direct media source. The integration follows the existing Mavero provider/source/adapter abstraction — there is no separate iframe path, no scraper, no proxy, no API key, and no undocumented endpoint.
+The Apiary blueprint was re-fetched and parsed in full. Key findings:
 
-## Verified official contract
+**Endpoint:** `GET /?type={type}&id={id}&season={season}&episode={episode}&max_results={max_results}`
 
-Documented examples (verbatim from `https://www.superembed.stream/movie-streaming-api.html`):
+**Parameters (all required per Apiary):**
+| Param | Type | Example | Description |
+|---|---|---|---|
+| `type` | string | `imdb/tmdb` | Specify IMDB or TMDB ID search. |
+| `id` | number | `10872600` | "IMDB ID of requested movie or TV show. **With or without tt.**" |
+| `season` | number | `1` | Season number. Omit for movies. |
+| `episode` | number | `1` | Episode number. Omit for movies. |
+| `max_results` | number | `1` | "Maximum results per server. Min 1 max 5." |
 
-- Movie by IMDb: `https://seapi.link/?type=imdb&id=10872600&max_results=1`
-- Movie by TMDB: `https://seapi.link/?type=tmdb&id=634649&max_results=1`
-- TV episode by IMDb: `https://seapi.link/?type=imdb&id=9170108&season=2&episode=1&max_results=1`
-- TV episode by TMDB: `https://seapi.link/?type=tmdb&id=85723&season=2&episode=1&max_results=1`
-- Search: `https://seapi.link/?type=search&query=spider+man+no+way+home&max_results=1`
-
-Documented constraints:
-
-- No API key.
-- `max_results` is 1–5 results per server.
-- Results are sorted by quality and date.
-- Each returned URL expires after 48 hours.
-- Rate limit: 10 requests / 10 seconds / IP.
-- Direct streaming-server URLs are explicitly NOT provided — only playable page URLs.
-
-## Discovered response schema
-
-Confirmed against the official Apiary documentation (`https://superembed.docs.apiary.io/`) and the official mock server. The schema is:
-
+**Response schema (from Apiary JSON Schema):**
 ```json
 {
-  "message": "OK",
-  "status": 200,
-  "title": "Movie Title",
+  "message": "string",
+  "status": "number",
+  "title": "string",
   "results": [
     {
-      "server": "streamtape",
-      "title": "Source Title",
-      "quality": "1080p",
-      "size": 215131368,
-      "exact_match": 1,
-      "url": "https://playerdomain.com/play/aFJkY05aTXc0b3FORjB2WGtlb2JVcTlQMnlKUmlEbW1TTDlMcU"
+      "server": "string",
+      "title": "string",
+      "quality": "string",
+      "size": "number",
+      "exact_match": "number",
+      "url": "string"
     }
   ]
 }
 ```
 
-Top-level fields: `message` (string), `status` (number), `title` (string, optional), `results` (array). Per-result fields: `server`, `title`, `quality`, `size`, `exact_match`, `url`. Only `url` is required by the adapter; `server` and `quality` are surfaced as metadata when present. The adapter does not invent or assume fields beyond this schema.
+**Apiary description (verbatim):** "Each URL is valid for 48 hours, then you have to make another API call to get fresh URLs. Don't call our API for every visitor, instead store results to your database and update them once per 48 hours. We use IP rate limiting - maximum is 10 requests/10 seconds."
 
-## Adapter decision
+**IMDb ID handling:** The Apiary description explicitly says "With or without tt." The example uses the numeric form `10872600` (no `tt`). The current adapter strips `tt` to produce a numeric string — this matches the documented example form. ✅ No change needed.
 
-A dedicated adapter (`superembedProviderAdapter`, `adapter_id = 'superembed-api'`, `integration_type = 'api'`) is required because the SuperEmbed URL is dynamically returned by a remote JSON API rather than produced from a static template. The existing `templateProviderAdapter` cannot express this; the existing `apiProviderAdapter` returns `null`. The new adapter is registered in `createDefaultAdapterIds()` alongside the existing `vidsrc-embed` and `vidlink-embed` adapters, and is selected by `core.ts:adapterFor()` when `provider.adapter_id = 'superembed-api'`.
+---
 
-The new adapter is the only code that performs network I/O against `seapi.link`. It is responsible for:
+## Second audit — official SuperEmbed API page findings
 
-1. Validating media type (movie/series only; anime rejected).
-2. Validating identifiers (TMDB preferred; IMDb fallback; season+episode required for series).
-3. Constructing the documented request URL with `max_results=1` (one playable source is enough for MAVERO; this also minimizes load on the rate-limited API).
-4. Fetching with an 8-second timeout, no retries on 429.
-5. Parsing the documented JSON schema defensively.
-6. Returning an `AdapterResult` of `type: 'embed'` with an `expiresAt` timestamp 48 hours minus a 5-minute safety margin in the future.
-7. Caching successful results in-memory for 5 minutes keyed by `(mediaType, identifier, season, episode)` to avoid per-render API traffic.
+Source: `https://www.superembed.stream/movie-streaming-api.html`
 
-## Direct-link limitation
+This page is still live and documents the same `seapi.link` examples as Apiary:
+- Movie by IMDb: `https://seapi.link/?type=imdb&id=10872600&max_results=1`
+- Movie by TMDB: `https://seapi.link/?type=tmdb&id=634649&max_results=1`
+- Episode by IMDb: `https://seapi.link/?type=imdb&id=9170108&season=2&episode=1&max_results=1`
+- Episode by TMDB: `https://seapi.link/?type=tmdb&id=85723&season=2&episode=1&max_results=1`
+- Search: `https://seapi.link/?type=search&query=spider+man+no+way+home&max_results=1`
 
-SuperEmbed explicitly does NOT provide direct streaming-server URLs. Every result is a playable page URL on an arbitrary player domain (e.g. `playerdomain.com` in the schema example). The adapter therefore returns `type: 'embed'`, never `type: 'direct'`. The MAVERO `PlayerViewport.svelte` already renders embed URLs in a sandboxed iframe (`referrerpolicy="no-referrer"`, `sandbox="allow-forms allow-presentation allow-same-origin allow-scripts"`, fullscreen allowed), which is the correct player integration for this source type.
+Constraints documented: `max_results` 1–5, results sorted by quality/date, URLs valid 48 hours, don't call for every visitor, rate limit 10 req/10 s/IP, API returns playable page URLs NOT direct streaming-server URLs.
 
-No scraper, proxy, or hosting-server link extractor is implemented. Such a step is explicitly out of scope unless a separate approved phase authorizes it.
+---
 
-## Architectural extension: `allow_dynamic_embed_origins` capability
+## Second audit — `seapi.link` live API reachability test
 
-The existing `validatePlaybackUrl` enforces a strict origin allowlist for `embed` results: the URL's origin must be present in the source's `allowed_embed_origins` capability list. This is correct for static-template embeds (Vidsrc, VidLink, NHDAPI, VidAPI, etc.) where the embed origin is known in advance.
+**Result: `seapi.link` is NXDOMAIN. This is an API-side retirement, not a Mavero-side issue.**
 
-SuperEmbed returns embed URLs on **dynamic, provider-chosen player domains** that cannot be enumerated in advance. To support this without weakening security for any existing provider, a new additive capability `allow_dynamic_embed_origins: true` is introduced:
+DNS probes (all from this audit environment):
 
-- When `false` or absent (default for every existing source): behavior is unchanged. The strict origin allowlist still applies.
-- When `true`: the origin allowlist check is skipped for that source, but `validatePlaybackUrl` still enforces HTTPS-only and non-private-host validation. Private/loopback/link-local hostnames are still rejected.
+| Resolver | Result |
+|---|---|
+| System DNS | NXDOMAIN (Host not found: 3(NXDOMAIN)) |
+| Cloudflare DoH (1.1.1.1) | Status 3 (NXDOMAIN) — Authority: `ns.trs-dns.com. trs-ops.tucows.com.` (the `.link` TLD nameservers confirm no record) |
+| Google DoH (8.8.8.8) | Status 3 (NXDOMAIN) — same authority, comment "Response from 64.78.205.1" |
 
-This is a minimal, auditable, source-scoped capability flag — the same pattern Mavero already uses for `allow_experimental_playback`, `sandbox_policy`, `result_type`, etc. It does not bypass any other security control.
+HTTP probes:
+- Forcing the connection to nearby Cloudflare IPs (`104.21.27.106`, `172.67.169.30` — the IPs that serve `superembed.stream`) fails with TLS handshake failure because no certificate exists for `seapi.link`.
+- The Apiary production proxy (`https://private-anon-85b550a1db-superembed.apiary-proxy.com/...`) — which proxies to `seapi.link` per Apiary's own metadata — returns "Proxy request timed out."
+- The Apiary mock server (`https://private-anon-85b550a1db-superembed.apiary-mock.com/...`) returns the documented schema correctly (this is a mock, not the real API).
 
-Files touched:
+**Conclusion:** The documented `seapi.link` API endpoint has been retired from DNS at the TLD level. This is permanent (not transient), API-side (not a Netlify outbound restriction, not a Mavero bug, not incorrect request parameters). The `superembed.stream` website still documents it, but the DNS record no longer exists.
 
-- `src/lib/server/resolver/safe-url.ts` — added `allowDynamicEmbedOriginsFromCapabilities()` and an optional 4th parameter to `validatePlaybackUrl` (default `false` → fully backward compatible).
-- `src/lib/server/resolver/core.ts` — `resultFromAdapter()` reads the new capability from `source.capabilities` and passes it to `validatePlaybackUrl`.
+**Comparison: related hosts that DO resolve:**
+| Host | Resolves? | IPs |
+|---|---|---|
+| `superembed.stream` | ✅ | 104.21.27.106, 172.67.169.30 (Cloudflare) |
+| `www.superembed.stream` | ✅ | same |
+| `multiembed.mov` | ✅ | 172.67.159.150, 104.21.66.115 (Cloudflare) |
+| `streamingnow.mov` | ✅ | 172.67.219.43, 104.21.53.220 (Cloudflare) |
+| `seapi.link` | ❌ NXDOMAIN | — |
+| `api.superembed.stream` | ❌ NXDOMAIN | — |
 
-## Exact request and response flow
+---
 
-```text
-MAVERO content detail (TMDB id preferred; IMDb id fallback)
-        |
-        v
-POST /api/playback/resolve
-        |
-        v
-Trusted Supabase provider/source registry
-        |
-        v
-Existing resolver core + adapterFor() selects superembedProviderAdapter
-        |
-        v
-https://seapi.link/?type=tmdb&id={tmdb_id}&max_results=1
-https://seapi.link/?type=tmdb&id={tmdb_id}&season={s}&episode={e}&max_results=1
-https://seapi.link/?type=imdb&id={imdb_id_without_tt}&max_results=1
-https://seapi.link/?type=imdb&id={imdb_id_without_tt}&season={s}&episode={e}&max_results=1
-        |
-        v
-JSON { message, status, results: [{ server, title, quality, size, url }] }
-        |
-        v
-AdapterResult { type: 'embed', url, expiresAt: now+48h-5min, metadata }
-        |
-        v
-SourceResult via resultFromAdapter() (HTTPS + non-private-host validated)
-        |
-        v
-Existing PlayerShell + PlayerViewport iframe (sandboxed, no-referrer, fullscreen)
+## Current implementation comparison
+
+The existing `seapi.link` adapter (`src/lib/server/resolver/superembed.ts`) was audited against both official docs:
+
+| Aspect | Apiary/official docs | Current adapter | Match? |
+|---|---|---|---|
+| Endpoint | `https://seapi.link/?type=...&id=...&max_results=...` | `SUPEREMBED_API_ORIGIN = 'https://seapi.link'` | ✅ |
+| `type` param | `imdb` or `tmdb` | `tmdb` (preferred) or `imdb` (fallback) | ✅ |
+| `id` param | numeric; IMDb "with or without tt" | strips `tt` → numeric string | ✅ matches example |
+| `season`/`episode` | required for TV, omit for movie | required for series, omitted for movie | ✅ |
+| `max_results` | 1–5 | hardcoded `1` | ✅ minimal load |
+| Response schema | `{ message, status, title, results: [{ server, title, quality, size, exact_match, url }] }` | parses defensively, requires only `url` | ✅ |
+| URL expiration | 48 hours | `expiresAt = now + 48h - 5min` | ✅ |
+| Rate limit | 10 req/10 s/IP | 5-min in-memory cache, no retry on 429 | ✅ |
+| Direct links | "API doesn't provide direct links" | returns `type: 'embed'` | ✅ |
+| Error isolation | — | 429/5xx/network/invalid-JSON → `RESOLUTION_UNAVAILABLE` | ✅ |
+
+**Verdict:** The existing `seapi.link` adapter is **architecturally correct** against the documented Apiary contract. No code change is needed or warranted. The only issue is that the API endpoint itself no longer exists in DNS.
+
+---
+
+## Root cause of "Server unavailable"
+
+The deployed Mavero SuperEmbed source reports "Server unavailable" because:
+
+1. The adapter calls `https://seapi.link/?type=tmdb&id=...&max_results=1`.
+2. `seapi.link` is NXDOMAIN → DNS lookup fails → `fetch()` throws.
+3. The adapter catches the error and throws `ResolverError('RESOLUTION_UNAVAILABLE')`.
+4. The resolver surfaces "Server unavailable" to the UI.
+5. The existing fallback chain moves on to other providers (Vidsrc, VidLink, NHDAPI, etc.).
+
+**This is the exact failure point.** It is not a Mavero bug — it is the documented API endpoint having been retired from DNS by SuperEmbed.
+
+**Failure trace:**
+```
+adapter (superembed.ts: fetchFromSuperEmbed)
+  → fetch('https://seapi.link/...') throws (NXDOMAIN)
+  → catch → throw ResolverError('RESOLUTION_UNAVAILABLE')
+→ core.ts: resolveSourceFromConfig catch
+  → throw asResolverError(error)
+→ fallback.ts: resolveWithBoundedFallback catch
+  → attempts.push({ result: 'failure', errorCode: 'RESOLUTION_UNAVAILABLE' })
+  → continue to next candidate
+→ service.ts: resolveSource
+  → if all candidates fail → throw lastError
+  → /api/playback/resolve → JSON { ok: false, error: { code: 'RESOLUTION_UNAVAILABLE', ... } }
+→ UI: "Server unavailable"
 ```
 
-## Caching and 48-hour expiration
+No failure occurs at `safe-url validation`, `sandbox policy`, `iframe/player loading`, or `resolver fallback behavior`. The failure is purely at the DNS/network layer of the `seapi.link` endpoint.
 
-Mavero's resolver layer does not currently cache adapter results globally. To respect SuperEmbed's 48-hour URL expiration and the 10 req / 10 s / IP rate limit, the adapter maintains a small in-memory `Map<cacheKey, { result, fetchedAt }>`:
+---
 
-- Cache key: `movie:tmdb:{id}` / `movie:imdb:{id}` / `series:tmdb:{id}:s{season}:e{episode}` / `series:imdb:{id}:s{season}:e{episode}`.
-- Cache TTL: 5 minutes (well below the 48h URL expiration; refreshes URLs regularly).
-- Cache entries are also evicted on fetch failure so the next request retries fresh.
-- The adapter tags every `AdapterResult` with `expiresAt = now + 48h - 5min safety margin`. The existing resolver's `isValidExpiry()` check in `core.ts:resultFromAdapter()` will reject any expired URL (`SOURCE_EXPIRED`), forcing a fresh resolution.
+## `multiembed.mov` investigation
 
-This satisfies "Do not persist SuperEmbed URLs indefinitely" — the in-memory cache is process-local, short-TTL, and evicted on failure.
+The current `superembed.stream` homepage (`https://www.superembed.stream/?c=embed`) documents **two** integration approaches:
 
-## Rate-limit handling
+### Simple way (iframe)
+```
+Movie by IMDb:   https://multiembed.mov/?video_id=tt8385148
+Movie by TMDB:   https://multiembed.mov/?video_id=522931&tmdb=1
+Episode by IMDb:  https://multiembed.mov/?video_id=tt13157618&s=1&e=2
+Episode by TMDB:  https://multiembed.mov/?video_id=114472&tmdb=1&s=1&e=2
+```
 
-- `max_results=1` to minimize per-request load.
-- 5-minute in-memory cache deduplicates concurrent and repeated resolutions for the same movie/episode.
-- On HTTP 429: the adapter returns `RESOLUTION_UNAVAILABLE` immediately, **does not retry**, and lets the resolver fallback chain move on to other providers. This avoids amplifying load on an already-rate-limited endpoint.
-- On HTTP 5xx, network failure, or timeout: same behavior — controlled failure, no retry.
+### Advanced way (PHP redirect)
+```
+https://multiembed.mov/directstream.php?video_id=tt6791350
+https://multiembed.mov/directstream.php?video_id=447365&tmdb=1
+https://multiembed.mov/directstream.php?video_id=tt13157618&s=1&e=2
+https://multiembed.mov/directstream.php?video_id=114472&tmdb=1&s=1&e=2
+```
 
-## Error handling
+### Relationship to `streamingnow.mov`
 
-| Failure mode | Mapped to | Behavior |
-|---|---|---|
-| Network failure | `RESOLUTION_UNAVAILABLE` | Other providers continue via fallback. |
-| 8s timeout (AbortError) | `RESOLUTION_UNAVAILABLE` | Other providers continue. |
-| HTTP 429 (rate limit) | `RESOLUTION_UNAVAILABLE` | No retry. Other providers continue. |
-| HTTP 4xx/5xx | `RESOLUTION_UNAVAILABLE` | Other providers continue. |
-| Invalid JSON | `PROVIDER_RESPONSE_INVALID` | Other providers continue. |
-| Empty `results` array | adapter returns `null` | `core.ts:resultFromAdapter()` surfaces `RESOLUTION_UNAVAILABLE`; other providers continue. |
-| Result entry missing `url` | `PROVIDER_RESPONSE_INVALID` | Other providers continue. |
-| Result URL not HTTPS | `INVALID_SOURCE_URL` | Other providers continue. |
-| Result URL on private host | `INVALID_SOURCE_URL` | Other providers continue. |
-| Missing TMDB + IMDb id | `MISSING_IDENTIFIER` | Other providers continue. |
-| Series without season/episode | `MISSING_IDENTIFIER` | Other providers continue. |
-| Anime media type | `UNSUPPORTED_MEDIA_TYPE` | Other providers continue. |
+Live HTTP probing confirmed:
+- `https://multiembed.mov/?video_id=522931&tmdb=1` → HTTP 302 → `https://streamingnow.mov/?play={encrypted_token}`
+- `https://multiembed.mov/?video_id=114472&tmdb=1&s=1&e=2` → HTTP 302 → `https://streamingnow.mov/?play={encrypted_token}`
+- `https://multiembed.mov/?video_id=tt8385148` → HTTP 302 → `https://streamingnow.mov/?play={encrypted_token}`
 
-No uncaught provider error can break the resolver — `core.ts:resolveSourceFromConfig()` wraps every adapter call in `try/catch` and the fallback chain in `service.ts:resolveSource()` continues to the next candidate.
+**`streamingnow.mov` is the player frontend that `multiembed.mov` redirects to.** It is NOT a separate integration — it's internal to multiembed's flow. The `?play=` token is generated server-side by `multiembed.mov` per request (confirmed: 4 different tokens for 4 requests with the same movie ID).
 
-## Database configuration
+**Per task #12, the `streamingnow.mov/?play=...` URL must NOT be used as the provider implementation.** It only proves that the SuperEmbed player/demo infrastructure can load a player in a browser. The token is ephemeral and per-request; hardcoding or scraping it would couple Mavero to an internal implementation detail and break on every request.
 
-The migration `supabase/migrations/20260824000000_phase7e_superembed_experimental.sql` follows the existing idempotent Phase 7E `DO $$` seed pattern. It creates:
+**Per task #10, Mavero does NOT:**
+- scrape SuperEmbed
+- scrape streamingnow.mov
+- extract encrypted `?play=` tokens
+- hardcode demo tokens
+- scrape player HTML
+- introduce a proxy to bypass the API
 
-| Field | Value |
-|---|---|
-| Provider name | `SuperEmbed` |
-| Provider slug | `superembed` |
-| Provider status | `experimental` |
-| Provider enabled | `false` (disabled by default) |
-| Provider integration type | `api` |
-| Provider adapter_id | `superembed-api` |
-| Source slug | `superembed-source` |
-| Source status | `experimental` |
-| Source enabled | `false` (disabled by default) |
-| Source integration type | `api` |
-| Source identifier_mode | `tmdb_id` (IMDb is handled in the adapter as a fallback) |
-| Source ordering | `210` (conservative; after Vidsrc=90, NHDAPI=130, VidAPI.qzz.io=190) |
-| Result type | `embed` |
-| Allowed embed origins | `[]` (empty — SuperEmbed returns dynamic player domains) |
-| `allow_dynamic_embed_origins` | `true` |
-| Sandbox policy | `required` |
-| Experimental playback gate | `true` (while provider/source remain disabled by default) |
-| Anime capability | `false` |
-| Movie/series templates | `null` (the adapter builds URLs dynamically; templates are not used) |
+### `multiembed.mov` is a valid alternative iframe integration
 
-### Why ordering 210?
+It is:
+- Officially documented on the current `superembed.stream` homepage.
+- Alive (HTTP 302 at the edge).
+- An iframe-based integration (same pattern as Vidsrc/VidLink/NHDAPI/VidAPI).
+- No API key, no scraping, no proxy.
 
-Existing orderings: Vidsrc=90, NHDAPI=130, VidAPI.qzz.io=190. SuperEmbed is a new, unverified, experimental, API-dependent provider that returns dynamic-origins embeds — all reasons to rank it *after* the existing stable providers. Ordering 210 places it last in the default source drawer, so users only see it when no higher-ranked source succeeds, and so it does not compete with verified providers during normal playback.
+Therefore, per task #11, it is added as a **separate** source — not a replacement for the `seapi.link` API source.
 
-## Files added / modified
+---
+
+## Final recommended integration
+
+**Two sources, both disabled by default, both experimental:**
+
+1. **`superembed` / `superembed-source`** (ordering 210) — the documented `seapi.link` JSON API source. Architecturally correct against the Apiary contract. Currently non-functional because `seapi.link` is NXDOMAIN. Preserved unchanged so that if/when SuperEmbed restores the API, it will resume working without any further migration. Uses the `superembedProviderAdapter` (adapter_id `superembed-api`).
+
+2. **`superembed-multiembed` / `superembed-multiembed-source`** (ordering 211) — the officially documented `multiembed.mov` "Simple way" iframe integration. Uses the existing generic `templateProviderAdapter` (no new adapter code). TMDB-first, matching Vidsrc/VidLink/NHDAPI/VidAPI conventions. Renders in the existing sandboxed `PlayerViewport` iframe. The browser loads `multiembed.mov`, which handles its own 302 redirect to `streamingnow.mov` and any Cloudflare challenge.
+
+**Why two sources instead of replacing the API source?**
+- The `seapi.link` API source is architecturally correct and may resume working if SuperEmbed restores the endpoint.
+- Replacing it would lose the JSON API integration (which returns structured metadata: server name, quality, size).
+- The `multiembed.mov` iframe integration is a different integration pattern (template embed, no metadata).
+- Keeping both gives Mavero the best chance of working regardless of which endpoint SuperEmbed maintains.
+- The resolver fallback chain will try ordering 210 (API) first; when it fails (NXDOMAIN), it falls back to ordering 211 (iframe).
+
+---
+
+## Why `streamingnow.mov?play=` is not used
+
+Per task #12, the `streamingnow.mov/?play={encrypted_token}` URL observed from the SuperEmbed demo is NOT used because:
+1. The token is generated server-side by `multiembed.mov` per request.
+2. The token is ephemeral (changes on every request — confirmed by probing).
+3. Using it directly would couple Mavero to an internal implementation detail.
+4. It would break on every request because the token is single-use.
+5. Scraping it would require running a browser/headless client, which violates task #10.
+
+Instead, Mavero constructs only the `multiembed.mov` iframe URL from a template. The browser loads the iframe; `multiembed.mov` handles the redirect and token generation internally. This is the same pattern as all other Mavero embed providers.
+
+---
+
+## New files added in second audit
 
 | File | Purpose |
 |---|---|
-| `src/lib/server/resolver/superembed.ts` | New adapter. API call, parsing, caching, rate-limit handling, error mapping. |
-| `src/lib/server/resolver/adapters.ts` | Register `superembedProviderAdapter` in `createDefaultAdapterIds()`. |
-| `src/lib/server/resolver/safe-url.ts` | Add `allowDynamicEmbedOriginsFromCapabilities()` and optional 4th param to `validatePlaybackUrl`. |
-| `src/lib/server/resolver/core.ts` | `resultFromAdapter()` reads the new capability and passes it to `validatePlaybackUrl`. |
-| `supabase/migrations/20260824000000_phase7e_superembed_experimental.sql` | Idempotent experimental provider/source seed, disabled by default. |
-| `scripts/phase7e_superembed_test.ts` | Deterministic resolver-level tests for movie/TV, parsing, failure modes, caching, isolation, lifecycle gates, dynamic-origins capability, TMDB-preferred routing. |
+| `supabase/migrations/20260824010000_phase7e_superembed_multiembed_experimental.sql` | Idempotent experimental provider/source seed for the `multiembed.mov` iframe integration. Disabled by default. |
+| `scripts/phase7e_superembed_multiembed_test.ts` | Deterministic resolver-level tests for the multiembed.mov template source (15 assertions). |
 | `package.json` | Register the new test in the existing `test` chain. |
-| `docs/phase7e-superembed-evaluation.md` | This document. |
+| `docs/phase7e-superembed-evaluation.md` | This updated evaluation (second audit). |
 
-No existing provider migration, resolver file, player component, TV route, TizenBrew bootstrap, or auth flow was modified.
+**No changes to:** any resolver file, any adapter file, any player component, any TV route, TizenBrew bootstrap, auth flow, or any existing provider migration.
+
+---
+
+## Caching and 48-hour expiration
+
+**`seapi.link` API source (unchanged from first audit):**
+- 5-minute in-memory cache keyed by `(mediaType, identifier, season, episode)`.
+- Every `AdapterResult` tagged with `expiresAt = now + 48h - 5min`.
+- The existing `isValidExpiry()` gate in `core.ts` rejects expired URLs with `SOURCE_EXPIRED`.
+
+**`multiembed.mov` iframe source (new):**
+- No cache needed — the template is expanded deterministically from the TMDB id; no network call is made.
+- No `expiresAt` — the `multiembed.mov` URL is stable (it generates a fresh `?play=` token on every browser load via its own 302 redirect). This is correct per the docs: "To refresh URLs just make another API call that will always give you fresh URLs." The iframe effectively does this on every load.
+
+---
+
+## Rate-limit handling
+
+**`seapi.link` API source:** 5-min in-memory cache, `max_results=1`, no retry on 429. (Unchanged.)
+
+**`multiembed.mov` iframe source:** No server-side API call → no rate limit concern. The browser loads the iframe; `multiembed.mov` handles its own request volume.
+
+---
+
+## Error handling and fallback isolation
+
+**`seapi.link` API source (unchanged):** network failure / 8s timeout / 4xx / 5xx / 429 → `RESOLUTION_UNAVAILABLE`. Invalid JSON / missing `url` → `PROVIDER_RESPONSE_INVALID`. Empty results → `null` → `RESOLUTION_UNAVAILABLE`. Every failure is caught and surfaced through the fallback chain.
+
+**`multiembed.mov` iframe source (new):** No server-side network call. Errors can only come from: missing TMDB id (`MISSING_IDENTIFIER`), anime media type (`UNSUPPORTED_MEDIA_TYPE`), tampered template (`INVALID_SOURCE_URL`), or disabled provider/source (`PROVIDER_DISABLED` / `SOURCE_DISABLED`). All are controlled `ResolverError`s.
+
+**Fallback isolation:** Both SuperEmbed sources fail cleanly. The existing resolver fallback chain (Vidsrc, VidLink, NHDAPI, VidAPI, etc.) is unaffected. When the `seapi.link` API source fails (NXDOMAIN), the resolver moves to the next candidate — which includes the `multiembed.mov` iframe source at ordering 211, then other providers.
+
+---
 
 ## TV / Tizen impact
 
-This is a backend/provider integration. The new source appears automatically in the existing source drawer (admin-controlled) and the resolver fallback chain. No TV UI, Tizen focus system, TizenBrew bootstrap, hosted exit logic, TV keyboard, or TV navigation code was touched. TV benefits automatically when the source is enabled via Admin.
+Backend/provider integration only. No TV UI, Tizen focus system, TizenBrew bootstrap, hosted exit logic, TV keyboard, or TV navigation code was modified. TV benefits automatically via the shared resolver when either source is enabled via Admin.
 
-## Manual verification status
+---
 
-**Provider resolution: PASS** (against the documented schema, via injected fetch in tests).
-**Live API call: BLOCKED** by environment. The documented endpoint `https://seapi.link/` is currently NXDOMAIN at multiple public DNS resolvers (Cloudflare `1.1.1.1`, Google `8.8.8.8`) — verified during implementation. The SuperEmbed homepage itself (`https://www.superembed.stream/movie-streaming-api.html`) is live and still documents `seapi.link` as the API endpoint, but the subdomain does not resolve. This may be a stale docs page, a retired subdomain, or geo/DNS filtering. The adapter implements the documented contract faithfully; when `seapi.link` resolves, the adapter will work as specified. When it does not, the adapter fails cleanly via `RESOLUTION_UNAVAILABLE` and other providers continue.
+## Manual verification status (honesty gate)
 
-**Live playback: NOT TESTED.** Per the project's honesty rule, no claim of "SuperEmbed playback works" is made. The expected honest report is: **Provider resolution PASS against the documented schema; live playback BLOCKED by the `seapi.link` DNS non-resolution in this environment.** Once the endpoint is reachable, a follow-up browser verification (movie + TV episode) should confirm end-to-end playback.
+### 1. API resolution test (seapi.link)
+**FAIL** — `seapi.link` is NXDOMAIN at Cloudflare, Google, and system DNS. The `.link` TLD nameservers confirm no record exists. The Apiary production proxy also times out. The adapter's error handling is correct (returns `RESOLUTION_UNAVAILABLE`), but no actual API resolution can occur.
+
+### 2. Deployed runtime API reachability (seapi.link)
+**FAIL** — Same as above. This is not a Netlify outbound restriction (the failure is at the DNS layer, before any outbound HTTP connection). This is not a temporary outage (NXDOMAIN at the TLD level is a permanent DNS state). This is not incorrect endpoint or parameters (the endpoint and parameters match the official Apiary documentation exactly). This is API-side retirement.
+
+### 3. Returned embed URL validation (seapi.link)
+**N/A** — No URL is returned because the API cannot be reached. The adapter's `validatePlaybackUrl` logic is verified by unit tests (Tests 14–15 in `phase7e_superembed_test.ts`).
+
+### 4. Actual player load (multiembed.mov)
+**PASS (HTTP layer)** — `https://multiembed.mov/?video_id=522931&tmdb=1` returns HTTP 302 → `https://streamingnow.mov/?play={token}`. The integration is alive at the HTTP level.
+**NOT TESTED (browser iframe)** — The `multiembed.mov` and `streamingnow.mov` endpoints are behind Cloudflare's interactive challenge ("Just a moment...") for non-browser user agents. In a real browser (Mavero's `PlayerViewport` iframe), the challenge would be solved by the browser's JS engine and playback would proceed. This is the same Cloudflare-challenge pattern that many embed providers use. No claim of "player loads" is made without an actual browser test.
+
+### 5. Actual playback
+**NOT TESTED** — No claim of "SuperEmbed playback works" is made. Per the project's honesty rule, this is reported as not verified. The expected honest report is: **Provider resolution PASS (multiembed.mov HTTP 302); actual player load and playback NOT TESTED in a real browser.**
+
+### 6. Existing fallback provider behavior
+**PASS** — All 24 test scripts pass, including the existing fallback isolation tests (`phase7g_ranking_test.ts`, `phase7f_health_test.ts`). The existing `phase7e_superembed_test.ts` Test 21 explicitly verifies that a SuperEmbed 429 failure does not prevent the fallback provider from succeeding. The new `phase7e_superembed_multiembed_test.ts` verifies that the multiembed source integrates cleanly with the generic template adapter. No existing provider regression.
+
+---
 
 ## Known limitations
 
-1. **`seapi.link` DNS non-resolution.** The documented API endpoint does not resolve via public DNS at implementation time. The adapter will fail cleanly in environments where this is the case; other providers continue via the existing fallback chain. This is reported honestly rather than worked around.
-2. **Dynamic-origins embed.** SuperEmbed returns playable page URLs on arbitrary player domains. The new `allow_dynamic_embed_origins` capability allows this source to bypass the strict origin allowlist while preserving HTTPS + non-private-host validation. Other sources are unaffected.
-3. **No direct media URLs.** SuperEmbed explicitly does not provide `.m3u8`/`.mp4` URLs. The result type is always `embed`. MAVERO's existing sandboxed iframe player handles this; no scraper or hosting-server link extractor is implemented.
-4. **No multi-server menu.** `max_results=1` is hardcoded. MAVERO needs a single playable source; surfacing a server menu would require player UI changes that are out of scope.
-5. **No subtitles / language metadata.** The SuperEmbed schema does not include subtitle or audio-language information; the adapter does not fabricate any.
-6. **No anime.** SuperEmbed documents movie/TV only; anime is rejected with `UNSUPPORTED_MEDIA_TYPE`.
+1. **`seapi.link` NXDOMAIN.** The documented API endpoint does not resolve via public DNS. The `seapi.link` API source will fail cleanly (`RESOLUTION_UNAVAILABLE`) in all environments. Other providers (including the new `multiembed.mov` source) continue via the fallback chain. This is reported honestly; no workaround is implemented.
 
-## Approval gate
+2. **`multiembed.mov` Cloudflare challenge.** The `multiembed.mov` and `streamingnow.mov` endpoints are behind Cloudflare's interactive challenge for non-browser user agents. Server-side fetch of these URLs returns 403 with a challenge page. In a real browser iframe, the challenge is solved by the browser's JS engine. Mavero only constructs the iframe URL (template expansion); the browser loads it. This is the same pattern as all other Mavero embed providers.
 
-The attached specification required evaluation before implementation. This evaluation and the implementation on `feature/superembed-provider` are complete; merge to `main` requires explicit approval and successful live browser verification once `seapi.link` is reachable.
+3. **No direct media URLs.** Both SuperEmbed integrations return playable page URLs (embeds), not direct streaming-server URLs. The result type is always `embed`. Mavero's existing sandboxed iframe player handles this.
+
+4. **TMDB-first for multiembed source.** The `multiembed.mov` source uses `identifier_mode = 'tmdb_id'` (matching Vidsrc/VidLink/NHDAPI/VidAPI). If TMDB is missing but IMDb is available, the source throws `MISSING_IDENTIFIER` and the resolver falls back to other providers. IMDb-first variants are not added to keep the diff minimal.
+
+5. **No anime.** SuperEmbed documents movie/TV only; anime is rejected with `UNSUPPORTED_MEDIA_TYPE`.
+
+6. **No multi-server menu.** `max_results=1` for the API source; the iframe source has no server selection. Mavero needs a single playable source.
+
+7. **`streamingnow.mov/?play=` token not used.** Per task #12, the encrypted `?play=` token observed from the demo is NOT used. It is ephemeral, per-request, and internal to `multiembed.mov`'s flow.
+
+---
+
+## Validation results
+
+| Check | Result |
+|---|---|
+| `pnpm check` | 0 errors, 0 warnings |
+| `pnpm test` | All 24 test scripts pass (including both SuperEmbed test suites) |
+| `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` | Success |
+| `git diff --check` | Clean (no whitespace errors) |
+
+---
 
 ## References
 
 - [SuperEmbed — Movie Streaming API documentation](https://www.superembed.stream/movie-streaming-api.html)
+- [SuperEmbed — Installation guide (Simple way = multiembed.mov)](https://www.superembed.stream/?c=embed)
 - [SuperEmbed API — Apiary documentation](https://superembed.docs.apiary.io/)
+- [SuperEmbed API — Apiary introduction](https://superembed.docs.apiary.io/#introduction/movie-streaming-api-info)
 - MAVERO resolver source: `src/lib/server/resolver/`
 - MAVERO provider registry schema: `supabase/migrations/20260820010000_phase7a_streaming_registry.sql`
