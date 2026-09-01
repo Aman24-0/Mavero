@@ -56,6 +56,77 @@ assert.equal(isPlayablePlayerSource({ ...direct, url: 'javascript:alert(1)' }), 
 assert.equal(isPlayablePlayerSource({ ...direct, type: 'unavailable', url: null }), false);
 assert.equal(normalizePlayerSource({ sourceId: 'arbitrary-client-url', url: 'https://attacker.example.test/video.mp4' }), null);
 
+// Same-origin relative embed URLs (e.g. /api/playback/superembed?...) are valid
+// for sources that use a server-side redirect bootstrap route. The browser
+// resolves them against the page origin, so they are inherently same-origin
+// and HTTPS when Mavero is served over HTTPS. This mirrors the server-side
+// validatePlaybackUrl relative-URL allowance in safe-url.ts.
+const relativeEmbed: PlayerSource = {
+  type: 'embed',
+  url: '/api/playback/superembed?video_id=522931&tmdb=1',
+  providerId: 'provider-superembed-advanced',
+  sourceId: 'source-superembed-advanced',
+  mediaType: 'movie',
+  sandboxPolicy: 'required',
+};
+assert.equal(isPlayablePlayerSource(relativeEmbed), true, 'relative same-origin embed URL must be playable');
+assert.deepEqual(normalizePlayerSource(relativeEmbed), relativeEmbed);
+assert.equal(isEmbedOriginAllowed(relativeEmbed), true, 'relative same-origin embed URL must be allowed');
+
+const relativeEpisode: PlayerSource = {
+  type: 'embed',
+  url: '/api/playback/superembed?video_id=60625&tmdb=1&s=5&e=5',
+  providerId: 'provider-superembed-advanced',
+  sourceId: 'source-superembed-advanced',
+  mediaType: 'series',
+  sandboxPolicy: 'required',
+};
+assert.equal(isPlayablePlayerSource(relativeEpisode), true);
+assert.equal(isEmbedOriginAllowed(relativeEpisode), true);
+
+// Protocol-relative URLs (//evil.com/...) must NOT be treated as same-origin.
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '//evil.example.test/path' }), false, 'protocol-relative URL must be rejected');
+assert.equal(isEmbedOriginAllowed({ ...relativeEmbed, url: '//evil.example.test/path' }), false);
+// Whitespace / backslash / overly-long relative URLs must be rejected.
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '/api/playback/\tsuperembed' }), false, 'relative URL with whitespace must be rejected');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '/api/' + 'a'.repeat(2100) }), false, 'overly-long relative URL must be rejected');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '/api/playback/\\superembed' }), false, 'relative URL with backslash must be rejected');
+
+// Exhaustive FAIL cases for the embed context (mirrors the user's requirement list).
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '//evil.example.com/path' }), false, 'protocol-relative must fail');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: 'http://evil.example.com/path' }), false, 'http must fail');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: 'javascript:alert(1)' }), false, 'javascript must fail');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: 'file:///etc/passwd' }), false, 'file must fail');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '/api/play back' }), false, 'whitespace must fail');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '/api/play\\back' }), false, 'backslash must fail');
+assert.equal(isPlayablePlayerSource({ ...relativeEmbed, url: '/' + 'a'.repeat(2100) }), false, 'excessive length must fail');
+
+// Explicit reproduction of the production bug: normalizePlayerSource must return
+// a valid PlayerSource (not null) for the SuperEmbed Advanced relative URL.
+const productionMovie = normalizePlayerSource({
+  type: 'embed',
+  url: '/api/playback/superembed?video_id=522931&tmdb=1',
+  providerId: 'provider-superembed-advanced',
+  sourceId: 'source-superembed-advanced',
+  mediaType: 'movie',
+  sandboxPolicy: 'required',
+});
+assert.ok(productionMovie !== null, 'normalizePlayerSource must not return null for the Advanced movie URL');
+assert.equal(productionMovie?.url, '/api/playback/superembed?video_id=522931&tmdb=1');
+assert.equal(isEmbedOriginAllowed(productionMovie!), true, 'isEmbedOriginAllowed must return true for the Advanced movie URL');
+
+const productionEpisode = normalizePlayerSource({
+  type: 'embed',
+  url: '/api/playback/superembed?video_id=60625&tmdb=1&s=5&e=5',
+  providerId: 'provider-superembed-advanced',
+  sourceId: 'source-superembed-advanced',
+  mediaType: 'series',
+  sandboxPolicy: 'required',
+});
+assert.ok(productionEpisode !== null, 'normalizePlayerSource must not return null for the Advanced episode URL');
+assert.equal(productionEpisode?.url, '/api/playback/superembed?video_id=60625&tmdb=1&s=5&e=5');
+assert.equal(isEmbedOriginAllowed(productionEpisode!), true, 'isEmbedOriginAllowed must return true for the Advanced episode URL');
+
 assert.deepEqual(playbackSpeeds, [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
 assert.equal(formatPlayerTime(0), '0:00');
 assert.equal(formatPlayerTime(65), '1:05');
