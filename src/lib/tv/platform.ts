@@ -54,8 +54,7 @@ export function canReturnToTizenBrewHost(): boolean {
   return (
     isTizenBrewHostedModule() &&
     typeof globalThis.history !== 'undefined' &&
-    typeof globalThis.history.back === 'function' &&
-    globalThis.history.length > 1
+    typeof globalThis.history.back === 'function'
   );
 }
 

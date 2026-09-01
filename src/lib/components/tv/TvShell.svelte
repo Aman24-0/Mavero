@@ -337,6 +337,17 @@
       }
 
       if (screen === 'player') {
+        if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
+          event.preventDefault();
+          handleDirectionalFocus(action);
+          return;
+        }
+        if (action === 'enter') {
+          event.preventDefault();
+          const active = document.activeElement;
+          if (active instanceof HTMLElement && root.contains(active)) active.click();
+          return;
+        }
         event.preventDefault();
         window.dispatchEvent(new CustomEvent('tv-player-remote', { detail: action }));
         return;
@@ -852,10 +863,11 @@
     void loadPlayerSources(detailItem, requestId).then(() => {
       if (requestId !== playerResolutionSequence || !playerSourceOptions.length) return;
       playerSourceLoading = false;
+      restoreAfterRender(['tv-player-source-' + playerSourceOptions[0].id, 'tv-player-back', 'tv-player-toggle']);
       void preparePlayerSource(playerSourceOptions[0].id);
     });
     statusMessage = `${detailItem.title} playback loading.`;
-    restoreAfterRender(['tv-player-toggle', 'tv-player-back']);
+    restoreAfterRender(['tv-player-source-' + playerSourceOptions[0]?.id, 'tv-player-back', 'tv-player-toggle']);
   }
 
   function retryPlayer() {
@@ -867,12 +879,13 @@
       void loadPlayerSources(detailItem, requestId).then(() => {
         if (requestId === playerResolutionSequence && playerSourceOptions.length) {
           playerSourceLoading = false;
+          restoreAfterRender(['tv-player-source-' + playerSourceOptions[0].id, 'tv-player-back', 'tv-player-toggle']);
           void preparePlayerSource(playerSourceOptions[0].id);
         }
       });
     }
     statusMessage = `${playerTitle} playback retry requested.`;
-    restoreAfterRender(['tv-player-toggle', 'tv-player-back']);
+    restoreAfterRender(['tv-player-source-' + (playerSource?.sourceId ?? playerSourceOptions[0]?.id), 'tv-player-back', 'tv-player-toggle']);
   }
 
   function detailSnapshot(item: TvDetailItem) {

@@ -799,3 +799,24 @@ The fix detects a 32-character TMDB v3 key even when it is stored under `TMDB_BE
 **Commit SHA:** Implementation commit `ecac5c3`; this follow-up documentation entry is committed separately because a commit cannot contain its own final hash.
 
 **Merge/deployment status:** Implementation commit `ecac5c3` and the follow-up QA documentation commit remain on `feature/tizen-tv`; not merged to `main`; no production mutation; no Supabase schema/RLS mutation; Branch Deploy reflects the implementation commit and remains the owner validation target.
+
+
+## Phase 10.3.1 — Samsung QA Regression Hotfix
+
+**Date:** 1 September 2026
+
+**Phase:** Phase 10.3.1
+
+**Status:** **HOTFIX IMPLEMENTATION COMPLETE — OWNER SAMSUNG RETEST PENDING**
+
+**Trigger:** The owner’s live Samsung QA confirmed that Phase 10.3 fails on the actual `UA43AUE60AKLXL` running Tizen `6.0` with TizenBrew `2.0.5`. Email/password login and provider-list visibility passed. Provider navigation, first-provider auto-selection, real playback, embed loading, player controls, TV layout, and Quit/Exit failed; Continue Watching was blocked by the playback failure.
+
+**Owner-observed regressions:** The provider grid rendered, but remote focus did not move between provider buttons. No provider was active on entry and the UI showed “This source is not available yet.” The player exposed dummy HTML5 controls even when the selected source was an embed. The resolved embed did not mount as usable provider playback. Provider chips, error content, and controls overlapped in the 10-foot viewport. Quit confirmation opened and closed, but the hosted application did not exit.
+
+**Hotfix implementation:** Player-screen directional remote actions now go through the existing TV focus coordinator, with the first compatible provider receiving initial focus after source discovery. The existing resolver-first path remains authoritative. Direct sources render the HTML5 controls/progress surface only; embed sources render only the sandboxed provider iframe and an embed-specific status surface. Duplicate embed overlays were removed and the source picker was bounded into a remote-friendly grid to prevent viewport overlap. Hosted Exit no longer rejects a marked TizenBrew session solely because WebView history reports one entry; it still uses the existing supported `history.back()` host-return path and does not intercept Samsung’s dedicated Exit key.
+
+**Scope protections:** This hotfix changed only isolated TV player/shell/platform behavior, focused TV regression contracts, and TV documentation. It did not modify `main`, production, Supabase schema/RLS, provider/source registry data, resolver backend contracts, QR pairing, normal Web/PWA routes, AVPlay, stream extraction, or provider URLs.
+
+**Validation before owner retest:** `pnpm check` passed with zero errors and warnings. The focused TV contract passed after adding assertions for directional player focus, first-source focus, embed-only controls, embed mounting, and hosted Exit. The full `pnpm test` suite passed. The memory-safe production build passed. Local production preview rendered the TV shell and existing Anime catalog without runtime errors; the placeholder environment did not exercise real provider resolution. Samsung hardware retest remains required for playback, focus, layout, Back/Exit, Continue Watching, and stability.
+
+**Required owner retest order:** First verify provider focus movement, first-provider auto-selection, real video/iframe opening, disappearance of dummy controls for embeds, Back → Detail → Home restoration, and actual Quit/Exit closure. Only after those six checks pass should Continue Watching after real playback and 30-minute stability be retested.

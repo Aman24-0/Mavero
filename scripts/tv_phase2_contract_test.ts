@@ -101,7 +101,7 @@ assert.equal(continueRecords[0]?.episode, 5, 'latest active episode context shou
 assert.equal(continueRecords.some((record) => record.contentId === 'finished'), false, 'completed content must be omitted');
 assert.equal(continueRecords.some((record) => record.contentId === 'zero'), false, 'zero-progress content must be omitted');
 assert.equal(continueRecords.some((record) => record.contentId === 'invalid'), false, 'malformed progress must be omitted safely');
-const [focusSource, shellSource, routeSource, routeServerSource, authPanelSource, detailRouteSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, playbackSource, performanceSource, tmdbSource, contentServiceSource, contentTypesSource, cacheSource, progressServiceSource] = await Promise.all([
+const [focusSource, shellSource, routeSource, routeServerSource, authPanelSource, detailRouteSource, mediaRailSource, heroSource, searchSource, detailSource, myListSource, navigationSource, playerSource, playbackSource, platformSource, performanceSource, tmdbSource, contentServiceSource, contentTypesSource, cacheSource, progressServiceSource] = await Promise.all([
   readFile(new URL('../src/lib/tv/focus.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvShell.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/routes/tv/+page.svelte', import.meta.url), 'utf8'),
@@ -116,6 +116,7 @@ const [focusSource, shellSource, routeSource, routeServerSource, authPanelSource
   readFile(new URL('../src/lib/tv/navigation.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvPlayer.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/tv/playback.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/lib/tv/platform.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/components/tv/TvPerformance.svelte', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/server/content/adapters/tmdb.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/lib/server/content/service.ts', import.meta.url), 'utf8'),
@@ -237,6 +238,8 @@ assert.match(shellSource, /season: playerRequestedEpisode\?\.season/);
 assert.match(shellSource, /episode: playerRequestedEpisode\?\.episode/);
 assert.match(shellSource, /onProgress/);
 assert.match(shellSource, /screen === 'player'/);
+assert.match(shellSource, /handleDirectionalFocus\(action\)/, 'Player directional keys must use the TV focus coordinator');
+assert.match(shellSource, /tv-player-source-' \+ playerSourceOptions\[0\]\.id/, 'The first compatible provider must receive initial focus');
 assert.doesNotMatch(shellSource, /phase7MockPlaybackUrl/);
 assert.match(shellSource, /openPlayer/);
 assert.match(shellSource, /navigation\.open\('player'/);
@@ -282,10 +285,15 @@ assert.match(playerSource, /This provider is currently unavailable/);
 assert.match(playerSource, /track kind="captions"/);
 assert.match(playerSource, /provider-embed/);
 assert.match(playerSource, /iframeSandboxAttribute/);
+assert.match(playerSource, /onload=\{handleEmbedLoad\}/, 'Embed mount must clear the false unavailable presentation');
+assert.match(playerSource, /\{#if source\?\.type === 'direct'\}/, 'HTML5 controls must be direct-source-only');
+assert.match(playerSource, /\{:else if isEmbed && source\?\.url\}/, 'Embed sources must not render dummy HTML5 controls');
 assert.match(playerSource, /onSourceChange/);
 assert.match(playerSource, /onProgress/);
 assert.match(playerSource, /allow="autoplay; fullscreen; picture-in-picture"/);
 assert.doesNotMatch(playerSource, /autoplay\s*\/>|autoplay=\{true\}/);
+assert.match(platformSource, /isTizenBrewHostedModule\(\)/);
+assert.doesNotMatch(platformSource, /history\.length > 1/, 'Hosted Exit must not reject a valid host return because WebView history reports one entry');
 assert.match(playbackSource, /fetch\('\/api\/streaming\/config'/);
 assert.match(playbackSource, /fetch\('\/api\/playback\/resolve'/);
 assert.match(playbackSource, /sourceId/);

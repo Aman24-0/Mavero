@@ -121,6 +121,11 @@
     showControls();
   }
 
+  function handleEmbedLoad() {
+    statusMessage = 'Provider embed loaded. Use the provider controls inside the secure frame.';
+    showControls();
+  }
+
   function togglePlay() {
     if (!video || !source || source.type !== 'direct' || isLoading) return;
     showControls();
@@ -206,6 +211,7 @@
         allowfullscreen
         referrerpolicy="no-referrer"
         sandbox={iframeSandbox}
+        onload={handleEmbedLoad}
       ></iframe>
     {/if}
 
@@ -215,8 +221,6 @@
       <div class="player-state">
         <TvError message={resolutionMessage || 'This provider is currently unavailable.'} onRetry={handleRetry} />
       </div>
-    {:else if isEmbed}
-      <div class="embed-note" role="status">Provider controls are inside the secure embed. TV provider playback compatibility requires hardware verification.</div>
     {/if}
   </div>
 
@@ -246,14 +250,20 @@
       </div>
     {/if}
 
-    <div class="player-controls" aria-label="Video controls">
-      <button class="tv-focusable player-control" data-tv-focusable="true" data-tv-focus-id="tv-player-toggle" data-tv-focus-group="tv-player-controls" type="button" onclick={togglePlay} disabled={!source || source.type !== 'direct'}>{isPlaying ? 'Pause' : 'Play'}</button>
-      <button class="tv-focusable player-control secondary" data-tv-focusable="true" data-tv-focus-id="tv-player-rewind" data-tv-focus-group="tv-player-controls" type="button" onclick={() => seekBy(-10)} disabled={!source || source.type !== 'direct'}>−10 sec</button>
-      <button class="tv-focusable player-control secondary" data-tv-focusable="true" data-tv-focus-id="tv-player-fast-forward" data-tv-focus-group="tv-player-controls" type="button" onclick={() => seekBy(10)} disabled={!source || source.type !== 'direct'}>+10 sec</button>
-      <div class="player-time" aria-label="Playback time">{formatTime(currentTime)} / {formatTime(duration)}</div>
-    </div>
-    <progress class="player-progress" max={duration || 1} value={Math.min(currentTime, duration || 1)} aria-label="Playback progress"></progress>
-    <p class="player-status" role="status">{resolutionMessage || statusMessage}</p>
+    {#if source?.type === 'direct'}
+      <div class="player-controls" aria-label="Video controls">
+        <button class="tv-focusable player-control" data-tv-focusable="true" data-tv-focus-id="tv-player-toggle" data-tv-focus-group="tv-player-controls" type="button" onclick={togglePlay}>{isPlaying ? 'Pause' : 'Play'}</button>
+        <button class="tv-focusable player-control secondary" data-tv-focusable="true" data-tv-focus-id="tv-player-rewind" data-tv-focus-group="tv-player-controls" type="button" onclick={() => seekBy(-10)}>−10 sec</button>
+        <button class="tv-focusable player-control secondary" data-tv-focusable="true" data-tv-focus-id="tv-player-fast-forward" data-tv-focus-group="tv-player-controls" type="button" onclick={() => seekBy(10)}>+10 sec</button>
+        <div class="player-time" aria-label="Playback time">{formatTime(currentTime)} / {formatTime(duration)}</div>
+      </div>
+      <progress class="player-progress" max={duration || 1} value={Math.min(currentTime, duration || 1)} aria-label="Playback progress"></progress>
+    {:else if isEmbed && source?.url}
+      <div class="embed-status" role="status">Provider controls are inside the secure embed. Use Back to return or choose another server.</div>
+    {/if}
+    {#if !isEmbed}
+      <p class="player-status" role="status">{resolutionMessage || statusMessage}</p>
+    {/if}
   </div>
 </section>
 
@@ -262,7 +272,6 @@
   .player-stage { position: absolute; inset: 0; display: grid; place-items: center; background: #030406; }
   video, .provider-embed { width: 100%; height: 100%; border: 0; object-fit: contain; background: #030406; }
   .player-state { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; background: rgba(3,4,6,.72); }
-  .embed-note { position: absolute; right: 32px; bottom: 24px; max-width: 48rem; padding: 12px 16px; border: 1px solid rgba(255,255,255,.28); border-radius: 10px; color: #fff; background: rgba(8,10,15,.84); font-size: .9rem; font-weight: 750; }
   .player-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 32px 42px 28px; background: linear-gradient(180deg, rgba(3,4,6,.86), transparent 29%, transparent 58%, rgba(3,4,6,.94)); opacity: 0; pointer-events: none; transition: opacity 160ms ease-out; }
   .player-overlay.visible { opacity: 1; pointer-events: auto; }
   .player-topline { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
@@ -271,10 +280,11 @@
   .player-control.secondary { border-color: rgba(255,255,255,.3); background: rgba(8,10,15,.82); }
   button:disabled { cursor: not-allowed; opacity: .48; }
   .player-title { max-width: 58%; overflow: hidden; color: #fff; font-size: clamp(1.3rem, 2.5vw, 2.2rem); font-weight: 950; text-overflow: ellipsis; white-space: nowrap; }
-  .source-picker { display: grid; gap: 10px; max-width: 80%; }
+  .source-picker { display: grid; gap: 10px; width: min(100%, 920px); max-height: min(34vh, 300px); overflow: auto; padding: 14px; border: 1px solid rgba(255,255,255,.18); border-radius: 14px; background: rgba(8,10,15,.84); }
   .source-label { color: #fff; font-size: 1rem; font-weight: 900; }
-  .source-options { display: flex; flex-wrap: wrap; gap: 12px; }
-  .source-option { min-height: 48px; padding: 10px 16px; font-size: .96rem; }
+  .source-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .source-option { min-height: 48px; padding: 10px 16px; overflow: hidden; font-size: .96rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .embed-status { max-width: 920px; padding: 14px 16px; border: 1px solid rgba(97,228,255,.38); border-radius: 12px; color: #fff; background: rgba(8,10,15,.84); font-size: 1rem; font-weight: 850; line-height: 1.4; }
   .source-option.selected, .source-option:focus-visible, .player-back:focus-visible, .player-control:focus-visible { outline: 4px solid #fff; outline-offset: 3px; }
   .source-option.selected { border-color: var(--tv-accent, #ff5270); background: rgba(255,82,112,.82); }
   .player-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -282,5 +292,6 @@
   .player-progress { width: 100%; height: 12px; accent-color: var(--tv-accent, #ff5270); }
   .player-status { margin: 0; color: #fff; font-size: 1rem; font-weight: 750; }
   @media (prefers-reduced-motion: reduce) { .player-overlay { transition: none; } }
-  @media (max-width: 760px) { .player-overlay { padding: 22px; } .player-topline { align-items: flex-start; flex-direction: column; } .player-title { max-width: 100%; } .player-time { margin-left: 0; } .source-picker { max-width: 100%; } }
+  @media (max-width: 900px) { .source-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 760px) { .player-overlay { padding: 22px; } .player-topline { align-items: flex-start; flex-direction: column; } .player-title { max-width: 100%; } .player-time { margin-left: 0; } .source-picker { width: 100%; max-height: 32vh; } .source-options { grid-template-columns: 1fr; } }
 </style>

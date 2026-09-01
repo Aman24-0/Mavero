@@ -1,6 +1,6 @@
 # Phase 10.3 — Real Playback, TV Authentication, and 10-Foot Information Architecture
 
-**Status:** **IMPLEMENTATION COMPLETE — OWNER SAMSUNG QA PENDING**
+**Status:** **PHASE 10.3 QA FAILED — PHASE 10.3.1 HOTFIX IMPLEMENTED — OWNER SAMSUNG RETEST PENDING**
 
 **Branch:** `feature/tizen-tv`
 
@@ -16,11 +16,11 @@ The resolver contract is `POST /api/playback/resolve` with `{ sourceId, contentI
 
 | Increment | Result | Owner hardware status |
 |---|---|---|
-| 10.3A | TV loads public source options, filters them by Movie/Series/Anime capability, resolves the selected source through the existing endpoint, uses bounded fallback for the initial choice, and supports manual remote source switching with fallback disabled. | Pending |
-| 10.3B | TV direct HTML5 playback uses `createProgressWriter`, `getResumeProgress`, completion-at-90%-through-existing-service behavior, authenticated Watching promotion/history, and episode context. Continue Watching remains the Phase 10.2 actual-progress-only read model. Embed playback is intentionally not described as observable media progress. | Pending |
+| 10.3A | TV loads public source options, filters them by Movie/Series/Anime capability, resolves the selected source through the existing endpoint, uses bounded fallback for the initial choice, and supports manual remote source switching with fallback disabled. Phase 10.3.1 additionally restores first-source focus and directional provider navigation. | Phase 10.3 failed; hotfix retest pending |
+| 10.3B | TV direct HTML5 playback uses `createProgressWriter`, `getResumeProgress`, completion-at-90%-through-existing-service behavior, authenticated Watching promotion/history, and episode context. Continue Watching remains the Phase 10.2 actual-progress-only read model. Embed playback is intentionally not described as observable media progress. Phase 10.3.1 removes dummy HTML5 controls from embed rendering. | Phase 10.3 failed; hotfix retest pending |
 | 10.3C | TV Settings now provides remote-focusable email/password sign-in and TV logout through server-side Supabase actions. The normal session bootstrap and auth primitives are reused; no password or session token is stored in TV UI code. | Pending |
 | 10.3D | **Architecture gated, not implemented.** QR phone pairing is not safely supported by the current same-origin cookie architecture because a phone and TV would share the normal Supabase cookie scope. No pairing table, token exchange, raw credential transfer, or speculative migration was added. Manual TV sign-in is the secure available path. | N/A |
-| 10.3E | TV-only player loading, source-choice, provider-error, retry, embed-boundary, Settings/account, and 10-foot focus states were refined without redesigning normal Web/PWA routes. | Pending |
+| 10.3E | TV-only player loading, source-choice, provider-error, retry, embed-boundary, Settings/account, and 10-foot focus states were refined without redesigning normal Web/PWA routes. Phase 10.3.1 removes duplicate embed overlays, bounds the source picker, and restores player focus routing. | Phase 10.3 failed; hotfix retest pending |
 
 ## Secure pairing gate
 
@@ -30,7 +30,7 @@ The current hooks bootstrap a single normal cookie namespace at `/`, and the exi
 
 ## Safety and non-goals
 
-This phase does not change `main`, production, provider/source registry rows, provider adapters, resolver adapters, TMDB/AniList adapters, PWA behavior, or normal Web/PWA information architecture. It does not scrape providers, extract direct streams, bypass iframe security, call undocumented Samsung APIs, add AVPlay, copy third-party assets, or claim provider video playback before owner hardware verification. It does not claim Samsung QA; all real provider behavior, embed compatibility, remote source selection, direct playback, progress, auth, and long-session stability remain owner checks.
+This phase does not change `main`, production, provider/source registry rows, provider adapters, resolver adapters, TMDB/AniList adapters, PWA behavior, or normal Web/PWA information architecture. It does not scrape providers, extract direct streams, bypass iframe security, call undocumented Samsung APIs, add AVPlay, copy third-party assets, or claim provider video playback before owner hardware verification. The owner reported Phase 10.3 Samsung QA failures in provider navigation, first-source activation, playback/embed mounting, dummy controls, layout overlap, and hosted Exit. Phase 10.3.1 addresses those regressions only; the revised owner retest remains the authority for real provider behavior, embed compatibility, remote source selection, direct playback, progress, auth, hosted Exit, and long-session stability.
 
 ## Required owner Samsung checklist
 
