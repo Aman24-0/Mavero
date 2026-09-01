@@ -1,10 +1,11 @@
 # MAVERO Phase 7E — SuperEmbed Provider Evaluation
 
-**Status (second audit):** Two integrations now exist, both disabled by default, both experimental:
-1. `superembed` / `superembed-source` — the documented `seapi.link` JSON API source (architecturally correct, but the endpoint is currently NXDOMAIN at major public DNS resolvers).
-2. `superembed-multiembed` / `superembed-multiembed-source` — the officially documented `multiembed.mov` "Simple way" iframe integration (alive and returning HTTP 302 → `streamingnow.mov`).
+**Status (third audit):** Three integrations now exist, all disabled by default, all experimental:
+1. `superembed` / `superembed-source` (ordering 210) — the documented `seapi.link` JSON API source. Architecturally correct; endpoint currently NXDOMAIN. Preserved unchanged.
+2. `superembed-multiembed` / `superembed-multiembed-source` (ordering 211) — direct `multiembed.mov` iframe. **Confirmed broken**: `streamingnow.mov` (the 302 redirect target) returns `X-Frame-Options: SAMEORIGIN` + Cloudflare interactive challenge, which blocks cross-origin iframe embedding. Preserved unchanged.
+3. `superembed-advanced` / `superembed-advanced-source` (ordering 212, NEW) — official `se_player.php` "Advanced way" flow reproduced as a Mavero server route at `/api/playback/superembed`. Same-origin iframe bootstrap with server-side 302 redirect. This is the documented official integration.
 
-**Scope:** SuperEmbed only. No existing provider code, resolver, fallback, ranking, player, TV, TizenBrew, or auth was modified. The only additive change to shared resolver code (from the first audit) is the `allow_dynamic_embed_origins` capability flag in `safe-url.ts` + `core.ts`. The second audit adds only a new migration + test + this doc update.
+**Scope:** SuperEmbed only. The third audit adds: one new server route, one new migration, one new test, a narrowly-scoped enhancement to `safe-url.ts` (accept same-origin relative embed URLs), and this doc update. No existing provider, adapter, player component, TV route, TizenBrew, or auth was modified.
 
 ---
 
@@ -332,10 +333,204 @@ Backend/provider integration only. No TV UI, Tizen focus system, TizenBrew boots
 
 ---
 
+## Third audit — Official `se_player.php` "Advanced way" investigation
+
+### Background
+
+The user supplied the official SuperEmbed `se_player.php` file (downloaded from `https://www.superembed.stream/se_player.zip`). The file was verified byte-identical to the official download. The user reported:
+- The `multiembed.mov` iframe source (ordering 211) appears in Mavero's source drawer but the actual iframe displays "multiembed.mov refused to connect".
+- Directly opening the SuperEmbed demo/player URL in a normal browser works.
+
+### Official integration flow (from `se_player.php`)
+
+The PHP file implements a **server-side redirect bootstrap**:
+
+1. Accepts `video_id`, `tmdb`, `season`/`s`, `episode`/`e` query params.
+2. Builds: `https://getsuperembed.link/?video_id=...&tmdb=...&season=...&episode=...&player_font=...&player_bg_color=...&player_font_color=...&player_primary_color=...&player_secondary_color=...&player_loader=...&preferred_server=...&player_sources_toggle_type=...`
+3. Performs the request SERVER-SIDE using PHP cURL (`CURLOPT_FOLLOWLOCATION = true`, 7s timeout) or `file_get_contents` fallback.
+4. Receives a plain-text player URL from `getsuperembed.link` (e.g. `https://streamingnow.mov/?play={encrypted_token}`).
+5. Sends an HTTP `Location: {player_url}` redirect (302) to the browser.
+
+The official `superembed.stream` homepage documents this as the **"Advanced way (recommended)"**:
+> "In order to make our player work on your website the advanced way you need a server with PHP and cURL or file_get_contents enabled. You download our player php file and upload it to your website. This file calls our server for a player url and then redirects to it."
+> "Paste these urls to iframe and the player will appear there." — referring to `yourwebsite.com/se_player.php?video_id=...&tmdb=1`
+
+### Current `getsuperembed.link` response/redirect behavior (verified live)
+
+DNS: `getsuperembed.link` resolves (Cloudflare: `104.21.73.108`, `172.67.189.169`).
+
+HTTP probe (movie TMDB 522931, no player config params):
+```
+GET https://getsuperembed.link/?video_id=522931&tmdb=1
+HTTP/2 200
+content-type: text/html; charset=UTF-8
+content-length: 235
+body: https://streamingnow.mov/?play=SW1HVVRqcUcxTWdkNGJ6TlRGb0tTaXFRVStiSnNRbkFNcXFsOWtJamljYU5nQ1JNeVdwZ2dVeTN6VHU0QTJJNGFiSUs0ZU9LUEo1TE9XcEhUTHJLOUt0cGc0aXZvTGhDUDhRV1IyMGR3Qnl4d0YyNERsQWRhOXBvK2tQanNvODBzc3FOQnVDRjl2UUJDVjJURjFqNjNER20=
+```
+
+With full player config params (as `se_player.php` sends):
+```
+GET https://getsuperembed.link/?video_id=522931&tmdb=1&season=0&episode=0&player_font=Poppins&...&player_sources_toggle_type=2
+HTTP/2 200
+body: https://streamingnow.mov/?play=SW1pUlRqYUcxTWdVNUx6QlRGb0tTaXFRVStiSnNRbkFNcXFsOWtJaWljYUlnQ1JLdzJWZ2hVeTN6VHU0QTJJNGFiSUs0ZU9LUEo1TE9XcEhUTHJLOUt0cGc0aXZvTGhDUDhRV1IyMGR3Qnl4d0YyNERsQWRhOXBvK2tQanNvODBzc3FOQnVDRjl2UUJDVjJURjFqNjNER20=
+```
+
+**Key observations:**
+- `getsuperembed.link` returns HTTP 200 with a plain-text body (NOT a redirect). The body IS the player URL.
+- The `?play=` token changes on every request (verified: 5 different tokens for 5 requests with the same movie ID). This confirms the token is per-request, server-side generated by SuperEmbed.
+- `getsuperembed.link` has NO `X-Frame-Options` or `frame-ancestors` headers.
+
+### Why direct `multiembed.mov` iframe embedding fails
+
+Live header probe:
+```
+GET https://multiembed.mov/?video_id=522931&tmdb=1
+HTTP/2 302
+location: https://streamingnow.mov/?play=...
+
+GET https://streamingnow.mov/?play=...
+HTTP/2 403
+cf-mitigated: challenge
+x-frame-options: SAMEORIGIN
+content-security-policy: ... frame-src 'self' ...
+```
+
+**Root cause of "multiembed.mov refused to connect":**
+1. Browser iframes `https://multiembed.mov/?video_id=522931&tmdb=1`.
+2. `multiembed.mov` returns 302 → `https://streamingnow.mov/?play=...`.
+3. Browser follows the redirect within the iframe.
+4. `streamingnow.mov` responds with `X-Frame-Options: SAMEORIGIN` + Cloudflare interactive challenge (403 for non-browser UAs).
+5. Browser refuses to render `streamingnow.mov` in a cross-origin iframe (Mavero's origin ≠ `streamingnow.mov`'s origin).
+6. Browser attributes the refusal to the iframe's original src (`multiembed.mov`), displaying "multiembed.mov refused to connect".
+
+**This is confirmed by a real headless browser test** (agent-browser / Chromium):
+- Iframe A (direct `multiembed.mov`): final request → `streamingnow.mov` → 403.
+- Iframe B (`se_player.php`-style redirect via local server): final request → `streamingnow.mov` → 403.
+- Iframe C (direct `streamingnow.mov`): 403.
+
+All three approaches end at `streamingnow.mov` which returns 403 (Cloudflare challenge) in headless mode. The `X-Frame-Options: SAMEORIGIN` is present on every `streamingnow.mov` response regardless of token freshness, Referer, or User-Agent.
+
+### Why the official PHP integration MAY work when direct `multiembed.mov` fails
+
+The official `se_player.php` flow is architecturally different from direct `multiembed.mov` embedding in one key way:
+
+| Aspect | Direct `multiembed.mov` iframe | Official `se_player.php` iframe |
+|---|---|---|
+| Iframe src origin | `https://multiembed.mov` (cross-origin with Mavero) | `https://yourwebsite.com/se_player.php` (same-origin with Mavero) |
+| Iframe initial response | 302 from `multiembed.mov` | 302 from `se_player.php` (Mavero's own server) |
+| Final navigation target | `https://streamingnow.mov/?play=...` | `https://streamingnow.mov/?play=...` |
+| `X-Frame-Options` on final | `SAMEORIGIN` (blocks cross-origin iframe) | `SAMEORIGIN` (blocks cross-origin iframe) |
+
+**The critical difference:** With the PHP flow, the iframe's *initial* origin is same-origin with the integrator's site. The browser commits to loading the iframe from `yourwebsite.com`, then the server issues a 302 redirect. Some browsers' `X-Frame-Options` enforcement checks the *initial* iframe origin rather than the redirect target's origin — but this behavior is not guaranteed by the spec and varies by browser.
+
+**This is unverified in a real browser.** Headless browsers cannot solve Cloudflare's interactive challenge, so the 403 blocks the test before XFO enforcement can be observed. The user's report that "directly opening the SuperEmbed demo/player URL in a normal browser works" confirms that **top-level navigation** (not iframe) to `streamingnow.mov` works in a real browser — but top-level navigation is not blocked by `X-Frame-Options` (XFO only restricts framing).
+
+**Honest assessment:** The official PHP flow is **theoretically compatible** with iframe embedding because:
+1. It is the officially documented integration ("Paste these urls to iframe").
+2. The iframe's initial origin is same-origin with the integrator.
+3. SuperEmbed's own demo page (`superembed.stream/demo.php`) uses this flow.
+
+But whether it **actually works** in a real browser iframe depends on:
+1. Whether the real browser solves the Cloudflare challenge (likely yes — the user confirmed top-level navigation works).
+2. Whether `streamingnow.mov`'s 200 response (after challenge) still includes `X-Frame-Options: SAMEORIGIN` (unknown — cannot verify without a real browser that solves the challenge).
+3. Whether the browser's XFO enforcement checks the initial iframe origin or the final document origin (browser-dependent).
+
+### Whether Mavero can safely reproduce the same architecture
+
+**Yes.** Mavero can reproduce the `se_player.php` flow exactly using its existing SvelteKit server architecture:
+
+- A new SvelteKit route at `/api/playback/superembed/+server.ts` acts as the `se_player.php` equivalent.
+- It calls `getsuperembed.link` server-side (using the existing `fetch` API, same as the `superembed.ts` adapter already does for `seapi.link`).
+- It returns a 302 redirect to the player URL.
+- The iframe src is `/api/playback/superembed?video_id=...&tmdb=1` — a **same-origin relative URL**.
+
+This is:
+- **Not a generic proxy** — the route only calls one documented endpoint (`getsuperembed.link`) and only returns a 302 redirect, never the upstream content.
+- **Not a scraper** — it does not parse `streamingnow.mov`'s HTML or extract the `?play=` token. The token is generated by `getsuperembed.link` and passed through verbatim as a redirect target.
+- **Not a token extractor** — the `?play=` token is never read, stored, or modified by Mavero. It exists only in the `Location` header.
+- **Not an X-Frame-Options bypass** — `streamingnow.mov`'s headers apply to the browser's final navigation, not to Mavero's route response.
+- **Not a CSP bypass** — same as above.
+
+### Security implications
+
+The new `/api/playback/superembed` route is safe:
+
+1. **Input validation**: `video_id` is validated as TMDB numeric (`[1-9][0-9]{0,18}`) or IMDb (`tt[0-9]{1,15}`). No arbitrary URL injection.
+2. **No open redirect**: the redirect target is validated as `https://` + non-private-host. A compromised upstream cannot redirect to `http://` or `https://127.0.0.1/...`.
+3. **No content passthrough**: the route never returns upstream content inline. The response is always a 302 redirect or a controlled error (400/503).
+4. **No secret exposure**: no API keys, no credentials, no tokens stored. The `?play=` token is generated by SuperEmbed and consumed by the browser.
+5. **Timeout**: 8-second upstream timeout prevents hanging.
+6. **Rate limit respect**: the route is only called when the user actively selects the SuperEmbed source, not on every page render.
+
+### Whether this remains within Mavero's existing provider/resolver architecture
+
+**Yes.** The new source uses the existing generic `templateProviderAdapter` — no new adapter code. The template is a relative path (`/api/playback/superembed?...`), which the existing adapter expands via `resolveTemplate()`. The only architectural change is a narrowly-scoped enhancement to `validatePlaybackUrl()` in `safe-url.ts` to accept same-origin relative embed URLs (paths starting with `/` and not `//`). This does not weaken security for any existing provider because:
+- Existing sources all use absolute `https://` URLs, which still go through the full validation.
+- Relative URLs are inherently same-origin (the browser resolves them against the page origin).
+- Protocol-relative URLs (`//evil.com/...`) are explicitly rejected.
+
+### What was implemented (third audit)
+
+| File | Change |
+|---|---|
+| `src/routes/api/playback/superembed/+server.ts` | **NEW** — SvelteKit route reproducing `se_player.php`. Calls `getsuperembed.link` server-side, returns 302 redirect to the player URL. Validates `video_id`, enforces HTTPS + non-private-host on redirect target, 8s timeout, 503 on failure. |
+| `supabase/migrations/20260824020000_phase7e_superembed_advanced_experimental.sql` | **NEW** — seeds `superembed-advanced` provider + `superembed-advanced-source` source (ordering 212, template-based, TMDB-first, disabled by default). Templates point to the same-origin `/api/playback/superembed` route. |
+| `scripts/phase7e_superembed_advanced_test.ts` | **NEW** — 15 deterministic tests for the new source (template expansion, same-origin URL validation, tampered-template rejection, lifecycle gates, no `?play=` token leakage). |
+| `package.json` | Register the new test in the `test` chain. |
+| `src/lib/server/resolver/safe-url.ts` | Accept same-origin relative embed URLs (paths starting with `/`, not `//`). 13-line additive change. No change to absolute-URL validation. |
+| `docs/phase7e-superembed-evaluation.md` | This third-audit section. |
+
+### What was NOT changed
+
+- `src/lib/components/player/PlayerViewport.svelte` — unchanged. The existing iframe sandbox policy applies.
+- `src/lib/shared/sandbox-policy.ts` — unchanged.
+- `src/lib/server/resolver/superembed.ts` (seapi.link adapter) — unchanged. Preserved.
+- `src/lib/server/resolver/adapters.ts` — unchanged. The new source uses the existing generic template adapter.
+- `src/lib/server/resolver/core.ts` — unchanged.
+- All other providers, resolver files, TV routes, TizenBrew, auth — unchanged.
+- The existing `superembed` (seapi.link) and `superembed-multiembed` (multiembed.mov) sources — preserved unchanged.
+
+### Manual verification status (third audit, honesty gate)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `getsuperembed.link` live API reachability | **PASS** — resolves, returns HTTP 200 with plain-text `streamingnow.mov/?play=...` URL. Token is per-request. |
+| 2 | `getsuperembed.link` response schema | **PASS** — plain-text body, single URL. No JSON. Matches `se_player.php`'s consumption pattern. |
+| 3 | Server route `/api/playback/superembed` logic | **PASS** (unit-level) — input validation, upstream call, 302 redirect, error handling all implemented. Not live-tested against a browser. |
+| 4 | Same-origin relative URL validation | **PASS** — 15 deterministic tests pass. Tampered external/protocol-relative templates rejected. |
+| 5 | Headless browser iframe test (all 3 approaches) | **FAIL** — all three iframes end at `streamingnow.mov` which returns 403 (Cloudflare challenge) in headless mode. Cannot verify XFO behavior. |
+| 6 | Real browser iframe test | **NOT TESTED** — no real browser available in this environment. The user's report ("directly opening the demo URL in a normal browser works") confirms top-level navigation works, but does NOT confirm iframe embedding works. |
+| 7 | Actual player load in iframe | **NOT TESTED** — requires a real browser that can solve the Cloudflare challenge. |
+| 8 | Actual playback | **NOT TESTED** — no claim of playback success is made. |
+| 9 | Existing fallback provider behavior | **PASS** — all 25 test scripts pass. No existing provider regression. |
+
+**Honest conclusion:** The official `se_player.php` flow is **theoretically compatible** with Mavero's architecture and has been implemented faithfully. Whether it **actually works** in a real browser iframe depends on browser-specific XFO enforcement and Cloudflare challenge behavior that cannot be verified in this environment. The implementation is correct against the documented official flow; live browser verification is required before claiming playback success.
+
+### Known limitations (third audit)
+
+1. **`streamingnow.mov` X-Frame-Options.** `streamingnow.mov` always returns `X-Frame-Options: SAMEORIGIN`. If the browser enforces XFO against the final redirect target (not the initial iframe origin), the Advanced source will also be blocked. This is browser-dependent and unverified.
+2. **Cloudflare interactive challenge.** `streamingnow.mov` is behind Cloudflare's interactive challenge. Real browsers can solve it; headless browsers cannot. This blocks all automated verification.
+3. **No IMDb support for the Advanced source.** The Advanced source uses `identifier_mode = 'tmdb_id'` (matching Vidsrc/VidLink/NHDAPI/VidAPI conventions). IMDb-first variants are not added to keep the diff minimal.
+4. **No anime.** SuperEmbed documents movie/TV only.
+5. **Per-request token.** The `?play=` token is generated per-request by `getsuperembed.link`. Mavero does not cache it. Each iframe load triggers a new `getsuperembed.link` call. This is consistent with the official `se_player.php` flow.
+6. **Three SuperEmbed sources.** The resolver will try ordering 210 (seapi.link API, NXDOMAIN → fail), then 211 (multiembed.mov iframe, XFO-blocked), then 212 (Advanced route). Only 212 has a theoretical chance of working in a real browser.
+
+### Validation results (third audit)
+
+| Check | Result |
+|---|---|
+| `pnpm check` | 0 errors, 0 warnings |
+| `pnpm test` | All 25 test scripts pass (including all three SuperEmbed test suites) |
+| `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` | Success |
+| `git diff --check` | Clean (no whitespace errors) |
+
+---
+
 ## References
 
 - [SuperEmbed — Movie Streaming API documentation](https://www.superembed.stream/movie-streaming-api.html)
-- [SuperEmbed — Installation guide (Simple way = multiembed.mov)](https://www.superembed.stream/?c=embed)
+- [SuperEmbed — Installation guide (Simple way = multiembed.mov, Advanced way = se_player.php)](https://www.superembed.stream/?c=embed)
+- [SuperEmbed — se_player.zip (official Advanced way PHP file)](https://www.superembed.stream/se_player.zip)
 - [SuperEmbed API — Apiary documentation](https://superembed.docs.apiary.io/)
 - [SuperEmbed API — Apiary introduction](https://superembed.docs.apiary.io/#introduction/movie-streaming-api-info)
 - MAVERO resolver source: `src/lib/server/resolver/`

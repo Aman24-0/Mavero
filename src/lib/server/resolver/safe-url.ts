@@ -35,6 +35,19 @@ export function validateProviderEndpoint(raw: string): string {
 }
 
 export function validatePlaybackUrl(raw: string, type: Exclude<ResolverResultType, 'unavailable' | 'error'>, allowedEmbedOrigins: string[] = [], allowDynamicEmbedOrigins = false): string {
+  // Same-origin relative embed URLs (paths starting with "/" and no scheme/host)
+  // are inherently same-origin with the Mavero deployment. They are used by
+  // server-side redirect bootstrap routes (e.g. the SuperEmbed Advanced way
+  // /api/playback/superembed route that reproduces the official se_player.php
+  // flow). Such URLs cannot be parsed by `new URL()` without a base, so we
+  // validate them structurally here and skip the origin allowlist (the browser
+  // will treat them as same-origin automatically).
+  if (type === 'embed' && raw.startsWith('/') && !raw.startsWith('//')) {
+    if (/[\s\r\n]/.test(raw) || raw.includes('\\')) throw new ResolverError('INVALID_SOURCE_URL');
+    if (raw.length > 2048) throw new ResolverError('INVALID_SOURCE_URL');
+    return raw;
+  }
+
   const url = parseUrl(raw);
   const protocols = type === 'embed' ? embedProtocols : directProtocols;
   if (!protocols.has(url.protocol) || url.username || url.password || isPrivateHostname(url.hostname)) throw new ResolverError('INVALID_SOURCE_URL');
