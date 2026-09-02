@@ -1,13 +1,67 @@
-# MAVERO Phase 7E — SuperEmbed Provider Evaluation
+# MAVERO Phase 7E — SuperEmbed Provider Evaluation (RETIRED)
 
-**Status (third audit):** Three integrations now exist, all disabled by default, all experimental:
-1. `superembed` / `superembed-source` (ordering 210) — the documented `seapi.link` JSON API source. Architecturally correct; endpoint currently NXDOMAIN. Preserved unchanged.
-2. `superembed-multiembed` / `superembed-multiembed-source` (ordering 211) — direct `multiembed.mov` iframe. **Confirmed broken**: `streamingnow.mov` (the 302 redirect target) returns `X-Frame-Options: SAMEORIGIN` + Cloudflare interactive challenge, which blocks cross-origin iframe embedding. Preserved unchanged.
-3. `superembed-advanced` / `superembed-advanced-source` (ordering 212, NEW) — official `se_player.php` "Advanced way" flow reproduced as a Mavero server route at `/api/playback/superembed`. Same-origin iframe bootstrap with server-side 302 redirect. This is the documented official integration.
+**Status (fifth audit — CURRENT):** SuperEmbed has been **completely removed from active Mavero code**. The admin panel was used to delete all SuperEmbed provider/source rows from the production database. The SuperEmbed-specific adapter (`src/lib/server/resolver/superembed.ts`), server route (`src/routes/api/playback/superembed/`), and all three SuperEmbed test scripts have been deleted from the codebase. No active runtime code references SuperEmbed. The historical Supabase migration files are retained as immutable migration history but their `on conflict (slug) do nothing` clauses mean re-running them is a no-op.
 
-**Scope:** SuperEmbed only. The third audit adds: one new server route, one new migration, one new test, a narrowly-scoped enhancement to `safe-url.ts` (accept same-origin relative embed URLs), and this doc update. No existing provider, adapter, player component, TV route, TizenBrew, or auth was modified.
+**SuperEmbed is no longer an active Mavero provider.** This document is retained for historical reference only. The replacement provider is **Cineverse** (see `docs/phase7e-cineverse-evaluation.md`).
+
+**Why SuperEmbed was removed:** All three SuperEmbed integration approaches failed:
+1. `seapi.link` JSON API — endpoint is NXDOMAIN (DNS retired at the TLD level).
+2. `multiembed.mov` direct iframe — 302-redirects to `streamingnow.mov` which returns `X-Frame-Options: SAMEORIGIN` + Cloudflare challenge, blocking cross-origin iframe embedding.
+3. `se_player.php` Advanced way (server-side redirect bootstrap) — also ends at `streamingnow.mov` with the same X-Frame-Options block.
+
+No X-Frame-Options/CSP bypass or proxy workaround was implemented. The block is provider-side and cannot be legitimately circumvented within Mavero's security model.
 
 ---
+
+## Historical summary (audits 1–4)
+
+The sections below document the investigation history for reference. **They describe providers that no longer exist in active code.**
+
+### What was removed (fifth audit)
+
+| File | Action |
+|---|---|
+| `src/lib/server/resolver/superembed.ts` | **DELETED** — seapi.link adapter |
+| `src/routes/api/playback/superembed/+server.ts` | **DELETED** — se_player.php redirect route |
+| `scripts/phase7e_superembed_test.ts` | **DELETED** — seapi.link adapter tests |
+| `scripts/phase7e_superembed_multiembed_test.ts` | **DELETED** — multiembed.mov iframe tests |
+| `scripts/phase7e_superembed_advanced_test.ts` | **DELETED** — Advanced route tests |
+| `src/lib/server/resolver/adapters.ts` | **MODIFIED** — removed SuperEmbed adapter import + registration |
+| `package.json` | **MODIFIED** — removed 3 SuperEmbed tests from test chain |
+| `scripts/phase7c_player_test.ts` | **MODIFIED** — renamed SuperEmbed-named test fixtures to generic names (relative-URL coverage preserved) |
+| `src/lib/server/resolver/safe-url.ts` | **MODIFIED** — removed SuperEmbed-specific comment (relative-URL logic preserved as generic infrastructure) |
+| `src/lib/shared/player-guards.ts` | **MODIFIED** — removed SuperEmbed-specific comment (relative-URL logic preserved as generic infrastructure) |
+
+### What was intentionally retained
+
+| File | Why retained |
+|---|---|
+| `supabase/migrations/20260824000000_phase7e_superembed_experimental.sql` | Immutable migration history. `on conflict (slug) do nothing` — no-op if rows deleted. |
+| `supabase/migrations/20260824010000_phase7e_superembed_multiembed_experimental.sql` | Same as above. |
+| `supabase/migrations/20260824020000_phase7e_superembed_advanced_experimental.sql` | Same as above. |
+
+### Previous audit findings (historical reference)
+
+#### Root cause of SuperEmbed iframe failure (audits 2–4)
+
+`multiembed.mov` 302-redirects to `streamingnow.mov`. `streamingnow.mov` returns:
+- `X-Frame-Options: SAMEORIGIN` — blocks cross-origin iframe embedding
+- `cf-mitigated: challenge` — Cloudflare interactive challenge (403 for non-browser UAs)
+- `content-security-policy: ... frame-src 'self' ...`
+
+A real headless browser test confirmed the iframe receives a 403 from `streamingnow.mov` and cannot render the player. The `X-Frame-Options: SAMEORIGIN` is present on every `streamingnow.mov` response regardless of token, Referer, or User-Agent.
+
+#### Why the official PHP flow didn't help (audit 3)
+
+The official `se_player.php` "Advanced way" flow was reproduced as a Mavero server route. It calls `getsuperembed.link` server-side and returns a 302 redirect to the `streamingnow.mov` player URL. However, the browser still ends at `streamingnow.mov` which returns `X-Frame-Options: SAMEORIGIN`. The PHP flow's only advantage (same-origin initial iframe origin) did not overcome the final `streamingnow.mov` XFO block.
+
+#### Final verdict (audits 1–4)
+
+**PROVIDER-SIDE IFRAME BLOCKED.** SuperEmbed cannot be legitimately embedded in a cross-origin iframe because `streamingnow.mov` sends `X-Frame-Options: SAMEORIGIN`. No bypass was implemented. SuperEmbed was removed from active code.
+
+---
+
+## References (historical)
 
 ## Second audit — Apiary documentation findings
 
@@ -523,6 +577,156 @@ The new `/api/playback/superembed` route is safe:
 | `pnpm test` | All 25 test scripts pass (including all three SuperEmbed test suites) |
 | `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` | Success |
 | `git diff --check` | Clean (no whitespace errors) |
+
+---
+
+## Fourth audit — Final debug + real browser verification of SuperEmbed MultiEmbed
+
+### Background
+
+The user removed the `superembed` (seapi.link API) and `superembed-advanced` (se_player.php route) providers from the production database via the admin panel. Only `superembed-multiembed` / `superembed-multiembed-source` remains. This audit focuses solely on verifying the MultiEmbed source.
+
+### Current provider state (admin panel is source of truth)
+
+| Provider | Slug | Status (DB) |
+|---|---|---|
+| SuperEmbed MultiEmbed | `superembed-multiembed` | Present (sole SuperEmbed source) |
+| SuperEmbed (seapi.link API) | `superembed` | **Deleted by admin** — not recreated |
+| SuperEmbed Advanced (se_player.php) | `superembed-advanced` | **Deleted by admin** — not recreated |
+
+The migration files for the deleted providers still exist in the repo (`20260824000000_phase7e_superembed_experimental.sql`, `20260824020000_phase7e_superembed_advanced_experimental.sql`) because migrations are immutable history. Their `on conflict (slug) do nothing` clauses mean re-running them is a no-op if the rows were deleted via admin. **No new migrations were added in this audit.** The deleted providers were NOT recreated.
+
+### Exact URL generation (verified)
+
+Movie (TMDB 1083381 — user's test ID):
+```
+https://multiembed.mov/?video_id=1083381&tmdb=1
+```
+
+TV episode (TMDB 114472 S1E2):
+```
+https://multiembed.mov/?video_id=114472&tmdb=1&s=1&e=2
+```
+
+Both verified via the resolver's `resolveSourceFromConfig` with the production migration's templates. The URL contains no `?play=` token and does not reference `streamingnow.mov` directly. Mavero constructs only the `multiembed.mov` URL; the browser loads it and follows the provider's own 302 redirect.
+
+### Mavero flow trace (verified correct)
+
+```
+Mavero UI (watch page)
+  → POST /api/playback/resolve { sourceId, contentId, mediaType, ... }
+  → resolver/service.ts: loadTrustedConfig (service-role, base tables)
+  → resolver/core.ts: gates pass (enabled, public, experimental+allow_experimental_playback, movie/series capability)
+  → resolver/adapters.ts: templateProviderAdapter.resolve()
+  → resolver/template.ts: resolveTemplate() expands {tmdb_id} → 1083381
+  → resolver/safe-url.ts: validatePlaybackUrl('https://multiembed.mov/?video_id=1083381&tmdb=1', 'embed', ['https://multiembed.mov']) → PASS (exact origin match)
+  → SourceResult { type: 'embed', url: 'https://multiembed.mov/?video_id=1083381&tmdb=1', ... }
+  → client player-guards.ts: isPlayablePlayerSource → true (absolute HTTPS, multiembed.mov)
+  → PlayerViewport.svelte: <iframe src="https://multiembed.mov/?video_id=1083381&tmdb=1" sandbox="allow-forms allow-presentation allow-same-origin allow-scripts" referrerpolicy="no-referrer" allowfullscreen>
+  → browser loads multiembed.mov in iframe
+  → multiembed.mov returns HTTP 302 → streamingnow.mov/?play={token}
+  → browser follows redirect within iframe
+  → streamingnow.mov returns 403 + X-Frame-Options: SAMEORIGIN + cf-mitigated: challenge
+  → browser REFUSES to display streamingnow.mov in the cross-origin iframe
+  → iframe remains blank / shows "refused to connect"
+```
+
+Mavero's URL generation, resolver gates, template adapter, safe-URL validation, client-side guards, iframe attributes, and sandbox policy are all correct. The failure is entirely at the `streamingnow.mov` response layer.
+
+### Real browser test (headless Chromium via agent-browser)
+
+**Test 1 — iframe embedding (simulating Mavero):**
+- Page: `http://localhost:3123/test.html` with `<iframe src="https://multiembed.mov/?video_id=1083381&tmdb=1">`
+- Network log:
+  - `GET http://localhost:3123/test.html` → 200
+  - `GET https://multiembed.mov/?video_id=1083381&tmdb=1` → (Document, 302 followed)
+  - `GET https://streamingnow.mov/?play=...` → **403** (Document)
+- iframe `contentDocument`: `null` (cross-origin blocked)
+- iframe visible (642×362) but blank — no player rendered
+- **Result: iframe BLOCKED by streamingnow.mov's X-Frame-Options: SAMEORIGIN + Cloudflare 403 challenge**
+
+**Test 2 — top-level navigation (not iframe):**
+- Page: `https://multiembed.mov/?video_id=1083381&tmdb=1` (loaded directly, not in iframe)
+- Browser followed 302 → `streamingnow.mov/?play=...`
+- `streamingnow.mov` returned 403 + Cloudflare "Just a moment..." challenge page
+- Browser began solving the Turnstile challenge (`challenges.cloudflare.com/turnstile/v0/g/.../api.js` loaded)
+- Page title: "Just a moment..." — challenge partially solved but player did not render within the 15s wait
+- **Result: top-level navigation reaches the Cloudflare challenge but headless browser cannot fully solve it. A real human-driven browser may solve it and reach the player, but this is NOT iframe embedding — it's top-level navigation.**
+
+### X-Frame-Options / CSP / Cloudflare result
+
+`streamingnow.mov` response headers (verified via curl + browser network log):
+```
+HTTP/2 403
+cf-mitigated: challenge
+x-frame-options: SAMEORIGIN
+content-security-policy: default-src 'none'; ... frame-src 'self' ...
+cross-origin-embedder-policy: require-corp
+cross-origin-opener-policy: same-origin
+cross-origin-resource-policy: same-origin
+```
+
+- `X-Frame-Options: SAMEORIGIN` — **blocks cross-origin iframe embedding**. Mavero's origin (`mavero1.netlify.app` or any deployment domain) ≠ `streamingnow.mov`'s origin.
+- `cf-mitigated: challenge` — Cloudflare interactive challenge. Real browsers can solve it; headless browsers cannot fully.
+- The challenge + XFO are present on EVERY `streamingnow.mov` response regardless of token, Referer, or User-Agent.
+
+`multiembed.mov` itself sends NO `X-Frame-Options` — the block only happens after the 302 redirect to `streamingnow.mov`.
+
+### Whether a legitimate Mavero bug exists
+
+**No Mavero bug found.** The implementation is correct:
+- URL generation: correct (`https://multiembed.mov/?video_id={tmdb_id}&tmdb=1`).
+- Template expansion: correct.
+- Safe-URL validation: correct (exact origin allowlist `['https://multiembed.mov']`).
+- Client-side guards: correct (absolute HTTPS accepted).
+- iframe attributes: correct (`src`, `sandbox`, `referrerpolicy="no-referrer"`, `allowfullscreen`, `allow="autoplay; fullscreen; picture-in-picture"`).
+- Sandbox policy: correct (`required` → `allow-forms allow-presentation allow-same-origin allow-scripts`).
+- Error/retry handling: correct (the player shows the standard embed-unavailable state and offers Retry / Change source).
+
+No code changes were made. No workaround was implemented. No X-Frame-Options/CSP bypass, no proxy, no scraper, no token extractor.
+
+### Whether `directstream.php` is an alternative
+
+The official `superembed.stream` homepage documents `multiembed.mov/directstream.php?video_id=...` as a "VIP player" alternative. Probed it: returns **HTTP 404** — no longer available. The only documented iframe integration is `multiembed.mov/?video_id=...` which 302-redirects to `streamingnow.mov` (X-Frame-Options: SAMEORIGIN).
+
+### Existing provider regression
+
+All 25 test scripts pass, including:
+- `phase7e_superembed_multiembed_test.ts` (15 assertions — MultiEmbed source correct)
+- `phase7e_superembed_test.ts` (23 assertions — seapi.link adapter, preserved)
+- `phase7e_superembed_advanced_test.ts` (15 assertions — Advanced route, preserved)
+- All other provider tests (Vidsrc, VidLink, NHDAPI, VidAPI.tw, VidAPI.qzz.io, Peachify, RiveStream, Nxsha, Mapple, CineSrc, VidPhantom, YapGrid)
+- All resolver/ranking/fallback/health tests
+- Player contract tests (including the relative-URL fix from the previous commit)
+
+No existing provider behavior changed. No existing provider was removed from code or migrations.
+
+### Validation results (fourth audit)
+
+| Check | Result |
+|---|---|
+| `pnpm check` | 0 errors, 0 warnings |
+| `pnpm test` | All 25 test scripts pass |
+| `NODE_OPTIONS=--max-old-space-size=1024 pnpm build` | Success |
+| `git diff --check` | Clean |
+
+### Final verdict
+
+**B. PROVIDER-SIDE IFRAME BLOCKED**
+
+SuperEmbed MultiEmbed is currently provider-side iframe blocked. Mavero cannot legitimately embed the final `streamingnow.mov` player under the current response headers. `streamingnow.mov` returns `X-Frame-Options: SAMEORIGIN` + Cloudflare interactive challenge on every response, which blocks cross-origin iframe rendering. No X-Frame-Options/CSP bypass or proxy workaround was implemented.
+
+Mavero's implementation is correct: the URL generation, resolver, iframe configuration, and sandbox policy all match the documented `multiembed.mov` "Simple way" integration. The block is entirely at the SuperEmbed provider's `streamingnow.mov` endpoint.
+
+### What was NOT done
+
+- Did NOT recreate the deleted `superembed` or `superembed-advanced` providers.
+- Did NOT add any new migration.
+- Did NOT modify the MultiEmbed migration, adapter, resolver, PlayerViewport, sandbox policy, or any existing provider.
+- Did NOT bypass X-Frame-Options or CSP.
+- Did NOT proxy `streamingnow.mov` through Mavero.
+- Did NOT scrape the `streamingnow.mov` player or extract the `?play=` token.
+- Did NOT claim playback works (it does not — the iframe is blocked).
 
 ---
 
