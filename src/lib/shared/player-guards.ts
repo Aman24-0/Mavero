@@ -4,11 +4,9 @@ import { isSandboxPolicy } from './sandbox-policy';
 function isHttpsUrl(value: unknown) {
   if (typeof value !== 'string' || !value) return false;
   // Same-origin relative embed URLs (paths starting with "/" and not "//")
-  // are valid for sources that use a server-side redirect bootstrap route
-  // (e.g. the SuperEmbed Advanced /api/playback/superembed route). The browser
-  // resolves these against the page origin, so they are inherently same-origin
-  // and HTTPS when Mavero is served over HTTPS. This mirrors the server-side
-  // validatePlaybackUrl relative-URL allowance in safe-url.ts.
+  // are valid for sources that use a server-side redirect bootstrap route.
+  // The browser resolves these against the page origin, so they are
+  // inherently same-origin and HTTPS when Mavero is served over HTTPS.
   if (value.startsWith('/') && !value.startsWith('//')) {
     return !/[\s\r\n]/.test(value) && !value.includes('\\') && value.length <= 2048;
   }
