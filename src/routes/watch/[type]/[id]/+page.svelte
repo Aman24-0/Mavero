@@ -70,10 +70,40 @@
     const flushBeforeUnload = () => { void writer?.flush(); };
     document.addEventListener('visibilitychange', flushWhenHidden);
     window.addEventListener('beforeunload', flushBeforeUnload);
+
+    // Viduki V1 → V2 automatic fallback.
+    // Viduki (https://www.viduki.net) posts a 'viduki:all-servers-failed' message
+    // when all backend servers in the current API fail. When the currently-selected
+    // source is a Viduki V1 source, automatically switch to the sibling Viduki V2
+    // source (same provider, different source). Only accepts events from the
+    // documented origin. Does not trust arbitrary window messages. Does not allow
+    // the iframe to inject arbitrary URLs — the switch only selects known
+    // hard-coded Viduki provider endpoints already registered in Mavero.
+    const vidukiFallback = (event: MessageEvent) => {
+      if (event.origin !== 'https://www.viduki.net') return;
+      if (!event.data || typeof event.data !== 'object') return;
+      const data = event.data as { type?: unknown };
+      if (data.type !== 'viduki:all-servers-failed') return;
+      // Find the currently-selected source option.
+      const current = sourceOptions.find((source) => source.id === selectedSourceId);
+      if (!current) return;
+      // Find the sibling V2 source (same provider_id, different id).
+      // The V1 source slug is 'viduki-v1-source'; V2 is 'viduki-v2-source'.
+      // We match by provider_id to find the sibling, then pick the V2 by slug.
+      const v2 = sourceOptions.find((source) => source.id !== current.id && source.name?.includes('V2'));
+      if (!v2) return;
+      // Only auto-switch if the current source is a Viduki V1 source.
+      if (!current.name?.includes('V1')) return;
+      // Switch to V2. allowFallback=false to prevent recursive fallback loops.
+      void prepareSource(v2.id, false);
+    };
+    window.addEventListener('message', vidukiFallback);
+
     return () => {
       active = false;
       document.removeEventListener('visibilitychange', flushWhenHidden);
       window.removeEventListener('beforeunload', flushBeforeUnload);
+      window.removeEventListener('message', vidukiFallback);
       void writer?.flush();
       writer?.dispose();
     };
