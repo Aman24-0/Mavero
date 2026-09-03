@@ -72,7 +72,7 @@ export async function loadCollectionData(type: ContentType, url: URL) {
   }
 }
 
-type GenreCollection = { title: string; items: MediaItem[] };
+type GenreCollection = { title: string; items: MediaItem[]; href: string };
 
 export async function loadDiscoverData() {
   const [
@@ -104,11 +104,11 @@ export async function loadDiscoverData() {
 
   // Build genre collections with non-empty items only
   const genreCollections: GenreCollection[] = [
-    { title: 'Blockbuster Action', items: actionMovies.items },
-    { title: 'Comedy Night', items: comedyMovies.items },
-    { title: 'Spine-Chilling Horror', items: horrorMovies.items },
-    { title: 'Mind-Bending Sci-Fi', items: sciFiMovies.items },
-    { title: 'Heartwarming Romance', items: romanceMovies.items },
+    { title: 'Blockbuster Action', items: actionMovies.items, href: '/discover/movies?genre=Action' },
+    { title: 'Comedy Night', items: comedyMovies.items, href: '/discover/movies?genre=Comedy' },
+    { title: 'Spine-Chilling Horror', items: horrorMovies.items, href: '/discover/movies?genre=Horror' },
+    { title: 'Mind-Bending Sci-Fi', items: sciFiMovies.items, href: '/discover/movies?genre=Sci-Fi' },
+    { title: 'Heartwarming Romance', items: romanceMovies.items, href: '/discover/movies?genre=Romance' },
   ].filter((col) => col.items.length > 0);
 
   return {

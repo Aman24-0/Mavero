@@ -10,6 +10,7 @@
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import { haptic } from '$lib/client/haptics';
+  import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
 
   export let featuredItem: MediaItem | undefined;
   export let movies: MediaItem[] = [];
@@ -22,7 +23,7 @@
   export let topRatedSeries: MediaItem[] = [];
   export let topRatedAnime: MediaItem[] = [];
   export let newMovies: MediaItem[] = [];
-  export let genreCollections: { title: string; items: MediaItem[] }[] = [];
+  export let genreCollections: { title: string; items: MediaItem[]; href: string }[] = [];
   export let errorMessage = '';
 
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
@@ -35,7 +36,6 @@
     { label: 'Movies', href: '/discover/movies' },
     { label: 'TV Shows', href: '/discover/series' },
     { label: 'Anime', href: '/discover/anime' },
-    { label: 'Trending', href: '/discover' },
   ];
 
   const genreTileDefs = [
@@ -68,6 +68,41 @@
   let motionQuery: MediaQueryList | undefined;
   let isScrolling = false;
   let scrollTimeout: ReturnType<typeof setTimeout> | undefined;
+  let heroFavoriteSet = new Set<string>();
+
+  async function toggleHeroFavorite(event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!activeHero) return;
+    const item = activeHero.item;
+    const key = `${item.type}:${item.id}`;
+    const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+    try {
+      const result = await toggleFavorite(item.type, item.id, snapshot);
+      if (result.saved) {
+        heroFavoriteSet.add(key);
+      } else {
+        heroFavoriteSet.delete(key);
+      }
+      heroFavoriteSet = heroFavoriteSet;
+      haptic('light');
+    } catch {
+      // Silent fail — don't break hero interaction
+    }
+  }
+
+  async function refreshHeroFavoriteState() {
+    if (!activeHero) return;
+    const item = activeHero.item;
+    const key = `${item.type}:${item.id}`;
+    try {
+      const fav = await isFavorite(item.type, item.id);
+      if (fav) heroFavoriteSet.add(key); else heroFavoriteSet.delete(key);
+      heroFavoriteSet = heroFavoriteSet;
+    } catch {
+      // ignore
+    }
+  }
 
   function uniqueItems(items: MediaItem[]) {
     const seen = new Set<string>();
@@ -104,6 +139,10 @@
   $: if (activeIndex >= featuredItems.length && featuredItems.length) activeIndex = 0;
   $: activeHero = featuredItems[activeIndex];
   $: activeHeroImage = activeHero?.item.backdrop?.trim() || activeHero?.item.poster?.trim() || '';
+  $: heroFavoriteKey = activeHero ? `${activeHero.item.type}:${activeHero.item.id}` : '';
+  $: isHeroFavorite = heroFavoriteSet.has(heroFavoriteKey);
+  // Refresh favorite state when hero changes
+  $: if (heroFavoriteKey && !destroyed) void refreshHeroFavoriteState();
 
   function clearTimers() {
     if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
@@ -277,7 +316,9 @@
                 <div class="hero-actions">
                   <a class="hero-play" href={`/watch/${slide.item.type}/${slide.item.id}`}><Play size={15} fill="currentColor" strokeWidth={0} /> Play</a>
                   <a class="hero-btn" href={`/${slide.item.type}/${slide.item.id}`} aria-label={`Details for ${slide.item.title}`}><Info size={14} /> See More</a>
-                  <a class="hero-btn icon-only" href={`/${slide.item.type}/${slide.item.id}`} aria-label={`Add ${slide.item.title} to My List`}><ListPlus size={14} /></a>
+                  <button class="hero-btn icon-only" type="button" aria-label={isHeroFavorite ? `Remove ${slide.item.title} from My List` : `Add ${slide.item.title} to My List`} onclick={toggleHeroFavorite}>
+                    <ListPlus size={14} />
+                  </button>
                 </div>
               </div>
             </div>
@@ -320,7 +361,7 @@
       {#if popularSeries.length}<ContentRail title="Popular TV shows" items={popularSeries} href="/discover/series" />{/if}
       {#if anime.length}<ContentRail title="Popular anime" items={anime} href="/discover/anime" />{/if}
       {#if popularAnime.length}<ContentRail title="Trending anime" items={popularAnime} href="/discover/anime" />{/if}
-      {#each genreCollections as col}<ContentRail title={col.title} items={col.items} href="/discover/movies" />{/each}
+      {#each genreCollections as col}<ContentRail title={col.title} items={col.items} href={col.href} />{/each}
 
       {#if genreTiles.length}
         <section class="genre-section" aria-labelledby="genre-discover">

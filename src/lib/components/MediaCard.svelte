@@ -27,15 +27,16 @@
     return () => observer.disconnect();
   });
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
-  $: cardHref = item.resumeHref ? appendReturnTo(item.resumeHref, returnTo) : `/${item.type}/${item.id}`;
+  $: cardHref = item.resumeHref ? appendReturnTo(item.resumeHref, returnTo) : appendReturnTo(`/${item.type}/${item.id}`, returnTo);
   $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
+  $: watchHref = appendReturnTo(`/watch/${item.type}/${item.id}`, returnTo);
   $: posterSrcset = item.posterSmall ? `${item.posterSmall} 342w, ${item.poster} 500w` : undefined;
   $: posterSizes = compact ? '(max-width: 640px) calc((100vw - 38px) / 2), 150px' : '(max-width: 640px) 40vw, 178px';
 </script>
 
 <div class:compact class:editorial class="mc-wrap">
-  <a class="mc-card" href={cardHref}>
-    <div class="mc-poster" bind:this={posterElement} style={`--poster-accent: ${item.accent}`}>
+  <div class="mc-poster" bind:this={posterElement} style={`--poster-accent: ${item.accent}`}>
+    <a class="mc-card-link" href={cardHref} aria-label={`${item.title}`}>
       {#if !imageReady}
         <div class="mc-placeholder" aria-hidden="true"></div>
       {:else if imageFailed}
@@ -43,25 +44,28 @@
       {:else}
         <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
       {/if}
-      <span class="mc-type">{formatType(item.type)}</span>
-      {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
-      <span class="mc-play" aria-hidden="true"><Play size={12} fill="currentColor" strokeWidth={0} /></span>
-      {#if item.progress}
-        <div class="mc-progress" role="progressbar" aria-label={`${item.progress}% watched`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item.progress}><span style={`width: ${item.progress}%`}></span></div>
-      {/if}
-    </div>
-    <div class="mc-info">
+    </a>
+    <span class="mc-type">{formatType(item.type)}</span>
+    {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
+    <a class="mc-play" href={watchHref} aria-label={`Play ${item.title}`} onclick={(e) => e.stopPropagation()}>
+      <Play size={12} fill="currentColor" strokeWidth={0} />
+    </a>
+    {#if item.progress}
+      <div class="mc-progress" role="progressbar" aria-label={`${item.progress}% watched`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item.progress}><span style={`width: ${item.progress}%`}></span></div>
+    {/if}
+  </div>
+  <div class="mc-info">
+    <a class="mc-title-link" href={cardHref}>
       <h3 class="mc-title">{item.title}</h3>
       <div class="mc-meta"><span>{item.year}</span>{#if item.runtime}<span class="mc-sep">·</span><span>{item.runtime}</span>{/if}</div>
-      {#if item.progressLabel}<div class="mc-progress-label">{item.progressLabel}</div>{/if}
-    </div>
-  </a>
+    </a>
+    {#if item.progressLabel}<div class="mc-progress-label">{item.progressLabel}</div>{/if}
+  </div>
   {#if item.resumeHref}<a class="mc-detail" href={detailHref} aria-label={`Open details for ${item.title}`}>Details</a>{/if}
 </div>
 
 <style>
   .mc-wrap { position: relative; min-width: 0; }
-  .mc-card { display: block; text-decoration: none; }
 
   .mc-poster {
     isolation: isolate; position: relative; border-radius: 10px; overflow: hidden;
@@ -69,6 +73,7 @@
     border: 1px solid rgba(255,255,255,.06);
     transition: transform 220ms cubic-bezier(.22, 1, .36, 1), box-shadow 220ms cubic-bezier(.22, 1, .36, 1);
   }
+  .mc-card-link { display: block; height: 100%; }
   .mc-placeholder { position: absolute; inset: 0; background: linear-gradient(135deg, var(--surface-2), rgba(255,255,255,.02)); }
   .mc-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.1); background: radial-gradient(circle at 72% 24%, color-mix(in srgb, var(--poster-accent) 25%, transparent), transparent 42%), var(--surface-2); }
   .mc-fallback span { font-size: clamp(1.5rem, 6vw, 3rem); font-weight: 800; }
@@ -90,22 +95,24 @@
   }
 
   .mc-play {
-    position: absolute; right: 6px; bottom: 6px; z-index: 2;
+    position: absolute; right: 6px; bottom: 6px; z-index: 3;
     display: grid; place-items: center;
     width: 32px; height: 32px; border-radius: 50%;
     color: #000; background: rgba(255,255,255,.9);
     box-shadow: 0 2px 10px rgba(0,0,0,.4);
     opacity: 0; transform: scale(.85);
     transition: opacity 220ms cubic-bezier(.22, 1, .36, 1), transform 220ms cubic-bezier(.34, 1.56, .64, 1);
+    text-decoration: none;
   }
-  .mc-card:hover .mc-poster { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
-  .mc-card:hover .mc-play, .mc-card:focus-visible .mc-play { opacity: 1; transform: scale(1.06); }
-  .mc-card:focus-visible .mc-poster { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
+  .mc-wrap:has(.mc-card-link:hover) .mc-poster, .mc-wrap:has(.mc-card-link:focus-visible) .mc-poster { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
+  .mc-wrap:has(.mc-card-link:hover) .mc-play, .mc-wrap:has(.mc-card-link:focus-visible) .mc-play { opacity: 1; transform: scale(1.06); }
+  .mc-play:hover { background: #fff; transform: scale(1.1); }
 
   .mc-progress { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; height: 3px; background: rgba(0,0,0,.3); }
   .mc-progress > span { display: block; height: 100%; background: #f5f5f5; }
 
   .mc-info { padding: 6px 2px 0; }
+  .mc-title-link { text-decoration: none; }
   .mc-title { margin: 0; color: var(--ink); font-size: .76rem; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mc-meta { display: flex; align-items: center; gap: 4px; margin-top: 2px; color: var(--ink-soft); font-size: .64rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .mc-sep { color: var(--muted); opacity: .5; }
@@ -119,7 +126,7 @@
     .mc-detail { display: none; }
     .mc-type { font-size: .46rem; padding: 1px 5px; }
     .mc-rating { font-size: .48rem; padding: 1px 5px; }
-    .mc-card:hover .mc-poster { transform: none; box-shadow: none; }
+    .mc-wrap:has(.mc-card-link:hover) .mc-poster { transform: none; box-shadow: none; }
   }
   @media (prefers-reduced-motion: reduce) {
     .mc-play, .mc-poster { transition: none; }
