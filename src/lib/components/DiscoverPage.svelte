@@ -356,7 +356,7 @@
       </nav>
 
       {#if localContinue.length}<ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />{/if}
-      {#if movies.length || series.length}<ContentRail title="Trending right now" items={[...movies.slice(0, 10), ...series.slice(0, 10)]} href="/discover" />{/if}
+      {#if movies.length || series.length}<ContentRail title="Trending right now" items={[...movies.slice(0, 10), ...series.slice(0, 10)]} />{/if}
       {#if newMovies.length}<ContentRail title="New movies" items={newMovies} href="/discover/movies?sort=Newest" />{/if}
       {#if popularSeries.length}<ContentRail title="Popular TV shows" items={popularSeries} href="/discover/series" />{/if}
       {#if anime.length}<ContentRail title="Popular anime" items={anime} href="/discover/anime" />{/if}

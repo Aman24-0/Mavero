@@ -36,34 +36,90 @@
   onMount(() => { void loadSeason(1); });
 </script>
 
-<section class="episode-section" aria-labelledby="episode-heading">
-  <div class="section-head"><div><div class="eyebrow">MAVERO / Series guide</div><h2 class="section-title" id="episode-heading">Episodes</h2></div><div class="season-tabs" role="group" aria-label="Select season">{#each Array(Math.max(seasonCount, 1)) as _, index}<button class:active={selectedSeason === index + 1} aria-pressed={selectedSeason === index + 1} onclick={() => loadSeason(index + 1)}>Season {index + 1}</button>{/each}</div>
-</div>
-  {#if loading}<div class="episode-loading"><LoaderCircle size={15} /> Loading episodes…</div>{:else if errorMessage}<div class="episode-error" role="alert"><AlertTriangle size={15} /> {errorMessage}<button class="section-link" onclick={() => loadSeason(selectedSeason)}>Try again</button></div>{:else if season?.episodes?.length}<div class="episode-list">{#each season.episodes as episode}<article class="episode-row"><div class="episode-number">{String(episode.number).padStart(2, '0')}</div>{#if episode.still}<img src={episode.still} alt={`${episode.title} still`} loading="lazy" width="320" height="180" />
-{:else}<div class="episode-still" aria-hidden="true"></div>{/if}<div class="episode-copy"><h3>{episode.title}</h3><div class="episode-meta">{episode.runtime ?? 'Episode'}{#if episode.airDate}<span>·</span>{episode.airDate}{/if}</div><p>{episode.overview || 'Episode details are not available yet.'}</p></div><a class="episode-play" href={appendReturnTo(`/watch/series/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo)} aria-label={`Watch ${episode.title}`}><Play size={14} fill="currentColor" /></a>
-<span class="episode-chevron"><ChevronRight size={16} /></span></article>{/each}</div>{:else}<div class="episode-empty">No episode metadata is available for this season yet.</div>{/if}
+<section class="ep-section" aria-labelledby="ep-heading">
+  <div class="ep-head">
+    <div><div class="ep-eyebrow">MAVERO / Series guide</div><h2 class="ep-title" id="ep-heading">Episodes</h2></div>
+    <div class="season-tabs" role="group" aria-label="Select season">
+      {#each Array(Math.max(seasonCount, 1)) as _, index}
+        <button class:active={selectedSeason === index + 1} aria-pressed={selectedSeason === index + 1} onclick={() => loadSeason(index + 1)}>S{index + 1}</button>
+      {/each}
+    </div>
+  </div>
+
+  {#if loading}
+    <div class="ep-loading"><LoaderCircle size={15} /> Loading episodes…</div>
+  {:else if errorMessage}
+    <div class="ep-error" role="alert"><AlertTriangle size={15} /> {errorMessage}<button class="retry-btn" onclick={() => loadSeason(selectedSeason)}>Try again</button></div>
+  {:else if season?.episodes?.length}
+    <div class="ep-list">
+      {#each season.episodes as episode}
+        <article class="ep-row">
+          <div class="ep-num">{String(episode.number).padStart(2, '0')}</div>
+          {#if episode.still}
+            <img src={episode.still} alt={`${episode.title} still`} loading="lazy" width="320" height="180" />
+          {:else}
+            <div class="ep-still" aria-hidden="true"></div>
+          {/if}
+          <div class="ep-copy">
+            <h3>{episode.title}</h3>
+            <div class="ep-meta">{episode.runtime ?? 'Episode'}{#if episode.airDate}<span>·</span>{episode.airDate}{/if}</div>
+            <p>{episode.overview || 'Episode details are not available yet.'}</p>
+          </div>
+          <a class="ep-play" href={appendReturnTo(`/watch/series/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo)} aria-label={`Watch ${episode.title}`}>
+            <Play size={13} fill="currentColor" strokeWidth={0} />
+          </a>
+        </article>
+      {/each}
+    </div>
+  {:else}
+    <div class="ep-empty">No episode metadata is available for this season yet.</div>
+  {/if}
 </section>
 
 <style>
-  .episode-section { margin-top: 56px; }
-  .episode-section > .section-head { align-items: end; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
-  .season-tabs { display: flex; gap: 4px; max-width: 58%; overflow-x: auto; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(245, 246, 250,.035); scrollbar-width: none; }
+  .ep-section { margin-top: 36px; }
+  .ep-head { display: flex; align-items: end; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .ep-eyebrow { color: #77777f; font-size: .58rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .ep-title { color: #f5f5f5; font-size: 1.1rem; font-weight: 700; letter-spacing: -.02em; margin: 2px 0 0; }
+
+  .season-tabs { display: flex; gap: 4px; max-width: 58%; overflow-x: auto; padding: 4px; border: 1px solid rgba(255,255,255,.06); border-radius: 6px; background: rgba(255,255,255,.02); scrollbar-width: none; }
   .season-tabs::-webkit-scrollbar { display: none; }
-  .season-tabs button { flex: 0 0 auto; border: 0; border-radius: 7px; padding: 8px 11px; color: var(--muted); background: transparent; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; }
-  .season-tabs button.active, .season-tabs button:hover { color: var(--base); background: var(--accent-strong); }
-  .episode-loading, .episode-error, .episode-empty { display: flex; align-items: center; gap: 9px; padding: 20px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .76rem; }
-  .episode-error { color: var(--warning); }
-  .episode-error .section-link { margin-left: auto; border: 0; background: none; cursor: pointer; }
-  .episode-list { padding-top: 8px; }
-  .episode-row { display: grid; grid-template-columns: 34px 150px minmax(0, 1fr) 32px 16px; align-items: center; gap: 16px; padding: 14px 12px; border-bottom: 1px solid var(--line); border-radius: 11px; transition: background 160ms var(--ease-out); }
-  .episode-row:hover { background: rgba(245, 246, 250,.045); }
-  .episode-number { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .62rem; }
-  .episode-row img, .episode-still { width: 150px; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-  .episode-copy h3 { margin: 0 0 5px; color: var(--ink); font-size: .8rem; }
-  .episode-meta { display: flex; gap: 7px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  .episode-copy p { max-width: 680px; margin: 7px 0 0; overflow: hidden; color: var(--muted); font-size: .7rem; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
-  .episode-play { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--base); background: var(--accent-strong); transition: transform 160ms var(--ease-out), background 160ms var(--ease-out); }
-  .episode-play:hover { background: #cabefd; transform: translateY(-1px); }
-  .episode-chevron { color: var(--muted-deep); }
-  @media (max-width: 640px) { .episode-section > .section-head { align-items: start; flex-direction: column; gap: 13px; } .season-tabs { max-width: 100%; width: 100%; } .episode-row { grid-template-columns: 25px 92px minmax(0, 1fr) 30px; gap: 10px; padding-inline: 0; } .episode-row img, .episode-still { width: 92px; } .episode-chevron { display: none; } .episode-copy p { display: none; } }
+  .season-tabs button { flex: 0 0 auto; border: 0; border-radius: 4px; padding: 6px 10px; color: #77777f; background: transparent; font: inherit; font-size: .58rem; font-weight: 700; cursor: pointer; transition: all 200ms cubic-bezier(.22,1,.36,1); }
+  .season-tabs button.active { color: #000; background: #f5f5f5; }
+  .season-tabs button:hover:not(.active) { color: #f5f5f5; background: rgba(255,255,255,.06); }
+
+  .ep-loading, .ep-error, .ep-empty { display: flex; align-items: center; gap: 9px; padding: 20px 0; border-bottom: 1px solid rgba(255,255,255,.06); color: #77777f; font-size: .76rem; }
+  .ep-error { color: #ffb020; }
+  .retry-btn { margin-left: auto; border: 0; background: none; cursor: pointer; color: #f5f5f5; font-size: .72rem; font-weight: 600; }
+
+  .ep-list { padding-top: 6px; }
+  .ep-row {
+    display: grid; grid-template-columns: 30px 140px minmax(0, 1fr) 32px; align-items: center; gap: 14px;
+    padding: 12px 8px; border-bottom: 1px solid rgba(255,255,255,.04); border-radius: 8px;
+    transition: background 200ms cubic-bezier(.22,1,.36,1);
+  }
+  .ep-row:hover { background: rgba(255,255,255,.03); }
+  .ep-num { color: #555; font-size: .6rem; font-weight: 700; }
+  .ep-row img, .ep-still { width: 140px; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid rgba(255,255,255,.04); border-radius: 6px; background: #111; }
+  .ep-copy h3 { margin: 0 0 4px; color: #f5f5f5; font-size: .78rem; font-weight: 600; }
+  .ep-meta { display: flex; gap: 6px; color: #555; font-size: .56rem; }
+  .ep-copy p { max-width: 580px; margin: 6px 0 0; overflow: hidden; color: #77777f; font-size: .68rem; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+  .ep-play {
+    display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+    color: #000; background: rgba(255,255,255,.9); box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    text-decoration: none; transition: transform 200ms cubic-bezier(.22,1,.36,1);
+  }
+  .ep-play:hover { background: #fff; transform: scale(1.08); }
+
+  @media (max-width: 640px) {
+    .ep-head { flex-direction: column; align-items: start; gap: 12px; }
+    .season-tabs { max-width: 100%; width: 100%; }
+    .ep-row { grid-template-columns: 22px 84px minmax(0, 1fr) 28px; gap: 10px; padding-inline: 0; }
+    .ep-row img, .ep-still { width: 84px; }
+    .ep-copy p { display: none; }
+    .ep-play { width: 26px; height: 26px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ep-row, .ep-play, .season-tabs button { transition: none; }
+  }
 </style>

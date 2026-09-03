@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, ArrowRight, Heart, Play, Share2, Star } from 'lucide-svelte';
+  import { ArrowLeft, ArrowRight, Heart, Play, Share2, Star, Info, ListPlus } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import type { ContentType } from '$data/content';
   import { getMedia, media, formatType, type MediaItem } from '$data/content';
@@ -36,6 +36,8 @@
   $: watchPath = type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`;
   $: watchHref = appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`);
   $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
+  $: trailerUrl = item.tags?.find((t) => t?.startsWith('http')) ? '' : '';
+  $: trailerKey = (dataItem as unknown as { trailerKey?: string })?.trailerKey ?? '';
 
   onMount(() => {
     let active = true;
@@ -62,13 +64,8 @@
     return () => { active = false; };
   });
 
-  function openStatusSheet() {
-    statusSheetOpen = true;
-  }
-
-  function closeStatusSheet() {
-    statusSheetOpen = false;
-  }
+  function openStatusSheet() { statusSheetOpen = true; }
+  function closeStatusSheet() { statusSheetOpen = false; }
 
   async function chooseStatus(key: string) {
     closeStatusSheet();
@@ -78,15 +75,9 @@
         watchlistStatus = null;
         if (page.data.user) {
           const deleted = await deleteCloudFavorite(type, item.id);
-          if (!deleted) {
-            saveError = 'Removed from this device; cloud removal will retry automatically.';
-            void syncAuthenticatedState();
-          } else {
-            saveError = '';
-          }
-        } else {
-          saveError = '';
-        }
+          if (!deleted) { saveError = 'Removed from this device; cloud removal will retry automatically.'; void syncAuthenticatedState(); }
+          else { saveError = ''; }
+        } else { saveError = ''; }
         haptic('success');
       } else if (key === 'watching' || key === 'planned' || key === 'completed') {
         const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
@@ -96,9 +87,7 @@
         haptic('success');
       }
       if (key !== 'remove') saveError = '';
-    } catch {
-      saveError = 'This device could not update your local list.';
-    }
+    } catch { saveError = 'This device could not update your local list.'; }
   }
 
   function statusLabel(status: WatchlistStatus | null) {
@@ -109,10 +98,7 @@
     event.preventDefault();
     haptic('light');
     const returnTo = page.url.searchParams.get('from');
-    if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) {
-      void goto(returnTo, { replaceState: true, keepFocus: true });
-      return;
-    }
+    if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) { void goto(returnTo, { replaceState: true, keepFocus: true }); return; }
     void goto('/discover', { replaceState: true, keepFocus: true });
   }
 
@@ -141,70 +127,219 @@
   <script type="application/ld+json">{structuredData}</script>
 </svelte:head>
 
-<div class="detail-wrap">
-  <div class="detail-backdrop" style={`background-image: url('${item.backdrop || item.poster}')`}></div>
-  <div class="container-wide">
-        <button class="back-link" type="button" onclick={goBack}><ArrowLeft size={16} /> <span>Back</span></button>
-    <section class="detail-layout" aria-labelledby="detail-title">
-      <div class="detail-poster"><img src={item.poster} alt={`${item.title} poster`} /></div>
-      <div class="detail-copy">
-        <div class="detail-lead">
-          <div class="eyebrow">{formatType(type)}{#if item.genres[0]} / {item.genres[0]}{/if}</div>
-          <h1 id="detail-title">{item.title}</h1>
-          <div class="meta-row"><strong>{item.year}</strong><span class="dot"></span><span>{item.runtime}</span><span class="dot"></span><span>{item.maturity}</span>{#if item.rating > 0}<span class="dot"></span><span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}</div>
+<div class="detail-page">
+  <!-- Cinematic backdrop hero -->
+  <div class="hero-backdrop">
+    {#if item.backdrop}
+      <img src={item.backdropSmall || item.backdrop} alt="" class="hero-img" />
+    {/if}
+    <div class="hero-scrim"></div>
+  </div>
+
+  <div class="detail-container">
+    <!-- Back button -->
+    <button class="back-btn" type="button" onclick={goBack}>
+      <ArrowLeft size={16} /> <span>Back</span>
+    </button>
+
+    <!-- Title section -->
+    <section class="title-section">
+      <div class="poster-col">
+        {#if item.poster}
+          <img src={item.posterSmall || item.poster} alt={`${item.title} poster`} class="poster-img" />
+        {/if}
+      </div>
+      <div class="info-col">
+        <div class="detail-eyebrow">{formatType(type)}{#if item.genres[0]} · {item.genres[0]}{/if}</div>
+        <h1 class="detail-title">{item.title}</h1>
+        <div class="meta-row">
+          {#if item.rating > 0}<span class="rating"><Star size={13} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
+          {#if item.year > 0}<span class="dot"></span><span>{item.year}</span>{/if}
+          {#if item.maturity}<span class="dot"></span><span>{item.maturity}</span>{/if}
+          {#if item.runtime}<span class="dot"></span><span>{item.runtime}</span>{/if}
+          {#if type === 'series' && item.seasons}<span class="dot"></span><span>{item.seasons} season{item.seasons === 1 ? '' : 's'}</span>{/if}
         </div>
-        <p class="detail-description">{item.description}</p>
-        <div class="detail-actions"><a class="btn btn-primary" href={watchHref}><Play size={15} fill="currentColor" /> Watch now</a><button class="btn btn-secondary" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}><Heart size={15} fill={watchlistStatus ? 'currentColor' : 'none'} /> {statusLabel(watchlistStatus)}</button><button class="icon-btn action-icon" onclick={shareItem} aria-label={`Share ${item.title}`}><Share2 size={16} /></button></div>
+        <p class="detail-desc">{item.description}</p>
+        {#if item.genres.length > 1}
+          <div class="genre-tags">
+            {#each item.genres as genre}<span class="genre-tag">{genre}</span>{/each}
+          </div>
+        {/if}
+
+        <!-- Actions -->
+        <div class="action-row">
+          <a class="play-btn" href={watchHref}>
+            <Play size={16} fill="currentColor" strokeWidth={0} />
+            {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else}Play{/if}
+          </a>
+          <button class="secondary-btn" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}>
+            {#if watchlistStatus}<Heart size={15} fill="currentColor" />{:else}<ListPlus size={15} />{/if}
+            {statusLabel(watchlistStatus)}
+          </button>
+          <button class="icon-only-btn" onclick={shareItem} aria-label={`Share ${item.title}`}>
+            <Share2 size={16} />
+          </button>
+        </div>
         {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
-        {#if type !== 'movie'}<div class="episode-strip"><div><div class="eyebrow">Episode guide</div><strong>{item.seasons ?? 1} season{item.seasons === 1 ? '' : 's'} · {item.episodes ?? 12} episodes</strong></div><a class="icon-btn" href={`/${type}/${item.id}#episodes`} aria-label="Open episode list"><ArrowRight size={16} /></a></div>{/if}
       </div>
     </section>
-    {#if type === 'series'}<SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} />{/if}
-    {#if recommendations.length}<ContentRail title="You may also like" eyebrow="Keep exploring" items={recommendations} href="/discover" compact />{/if}
+
+    <!-- Series: seasons + episodes -->
+    {#if type === 'series'}
+      <SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} />
+    {/if}
+
+    <!-- Details section -->
+    <section class="info-section">
+      <h2 class="section-h">{type === 'movie' ? 'Movie' : 'Show'} Details</h2>
+      <div class="details-grid">
+        {#if item.status}<div class="detail-item"><span class="detail-label">Status</span><span class="detail-value">{item.status}</span></div>{/if}
+        {#if item.year > 0}<div class="detail-item"><span class="detail-label">{type === 'movie' ? 'Release date' : 'First air date'}</span><span class="detail-value">{item.year}</span></div>{/if}
+        {#if item.runtime}<div class="detail-item"><span class="detail-label">{type === 'movie' ? 'Runtime' : 'Seasons'}</span><span class="detail-value">{item.runtime}</span></div>{/if}
+        {#if item.maturity}<div class="detail-item"><span class="detail-label">Certification</span><span class="detail-value">{item.maturity}</span></div>{/if}
+        {#if item.rating > 0}<div class="detail-item"><span class="detail-label">Rating</span><span class="detail-value">{item.rating.toFixed(1)}/10</span></div>{/if}
+        {#if type === 'series' && item.episodes}<div class="detail-item"><span class="detail-label">Episodes</span><span class="detail-value">{item.episodes}</span></div>{/if}
+      </div>
+    </section>
+
+    <!-- Trailer -->
+    {#if trailerKey}
+      <section class="info-section">
+        <h2 class="section-h">Trailer</h2>
+        <div class="trailer-embed">
+          <iframe
+            src={`https://www.youtube.com/embed/${trailerKey}`}
+            title={`${item.title} trailer`}
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen
+          ></iframe>
+        </div>
+      </section>
+    {/if}
+
+    <!-- Recommendations -->
+    {#if recommendations.length}
+      <div class="recs-rail">
+        <ContentRail title="You may also like" eyebrow="Keep exploring" items={recommendations} compact />
+      </div>
+    {/if}
   </div>
+
   <SelectionSheet open={statusSheetOpen} eyebrow="MAVERO / My List" title="Add to My List" options={statusSheetOptions} selected={watchlistStatus ?? ''} onClose={closeStatusSheet} onSelect={chooseStatus} />
 </div>
 
 <style>
-  .detail-wrap { position: relative; overflow: hidden; padding-bottom: 64px; }
-  .detail-backdrop { position: absolute; inset: 0 0 auto; z-index: -1; height: 680px; background-position: center 18%; background-size: cover; opacity: .55; filter: saturate(1.05); }
-  .detail-wrap::before {
-    content: ''; position: absolute; inset: 0 0 auto; z-index: -1; height: 760px;
-    background:
-      linear-gradient(100deg, var(--base) 4%, rgba(6,6,10,.9) 42%, rgba(6,6,10,.35) 75%, rgba(6,6,10,.7) 100%),
-      linear-gradient(0deg, var(--base) 2%, transparent 78%);
+  .detail-page { position: relative; overflow: hidden; padding-bottom: 64px; }
+
+  /* Cinematic backdrop */
+  .hero-backdrop { position: absolute; inset: 0 0 auto; z-index: 0; height: 520px; overflow: hidden; }
+  .hero-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 18%; }
+  .hero-scrim {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(to bottom, transparent 20%, rgba(0,0,0,.4) 50%, #000 100%);
   }
-  .back-link { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; margin-top: 16px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--ink-soft); background: rgba(245,246,250,.055); font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .back-link:hover { color: var(--ink); border-color: rgba(255,90,122,.52); background: rgba(255,56,96,.1); transform: translateX(-2px); }
-  .back-link:focus-visible { outline: 0; border-color: var(--accent-strong); box-shadow: 0 0 0 3px rgba(255,62,94,.14); }
-  .back-link:active { transform: scale(.97); }
-  .detail-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; align-items: start; padding: 28px 0 54px; }
-  .detail-poster { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); aspect-ratio: 2 / 3; background: var(--surface); box-shadow: var(--shadow-lg); }
-  .detail-poster img { width: 100%; height: 100%; object-fit: cover; }
-  .detail-copy { min-width: 0; padding-top: 6px; }
-  .detail-lead { min-width: 0; }
-  .detail-copy h1 { max-width: 820px; margin: 10px 0 14px; color: var(--ink); font-size: clamp(2rem, 4.2vw, 3.6rem); font-weight: 900; letter-spacing: -.025em; line-height: 1.02; text-wrap: balance; }
-  .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; color: var(--ink-soft); font-size: .82rem; font-weight: 600; }
-  .meta-row .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--muted-deep); }
-  .detail-description { max-width: 700px; margin: 22px 0 0; color: var(--ink-soft); font-size: .92rem; line-height: 1.75; }
-  .rating { display: inline-flex; align-items: center; gap: 4px; color: #ffc94d; }
-  .detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 26px; }
-  .action-icon { border-color: var(--line-strong); }
-  .episode-strip { display: flex; align-items: center; justify-content: space-between; width: min(460px, 100%); margin-top: 18px; padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(245,246,250,.045); }
-  .episode-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: .76rem; font-weight: 700; }
-  .save-error { margin-top: 10px; color: var(--warning); font-size: .68rem; font-weight: 600; }
-  @media (max-width: 900px) { .detail-layout { grid-template-columns: 195px minmax(0, 1fr); gap: 26px; } }
-  @media (prefers-reduced-motion: reduce) { .back-link { transition: none; } }
+
+  .detail-container {
+    position: relative; z-index: 1;
+    width: min(1400px, calc(100% - clamp(16px, 5vw, 80px))); margin-inline: auto;
+  }
+
+  /* Back button */
+  .back-btn {
+    display: inline-flex; align-items: center; gap: 6px; min-height: 36px; margin-top: 16px;
+    padding: 0 14px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px;
+    color: #b7b7bd; background: rgba(0,0,0,.4); font: inherit; font-size: .72rem; font-weight: 600;
+    cursor: pointer; transition: all 200ms cubic-bezier(.22,1,.36,1);
+  }
+  .back-btn:hover { color: #f5f5f5; border-color: rgba(255,255,255,.14); background: rgba(0,0,0,.6); }
+  .back-btn:active { transform: scale(.97); }
+
+  /* Title section */
+  .title-section {
+    display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 32px;
+    align-items: start; padding: 28px 0 40px;
+  }
+  .poster-img {
+    width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,.06);
+    box-shadow: 0 10px 30px rgba(0,0,0,.4);
+  }
+  .detail-eyebrow { color: #77777f; font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
+  .detail-title {
+    margin: 0; color: #f5f5f5; font-size: clamp(1.8rem, 4vw, 3rem); font-weight: 800;
+    letter-spacing: -.025em; line-height: 1; text-wrap: balance;
+    text-shadow: 0 2px 16px rgba(0,0,0,.4);
+  }
+  .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; color: #b7b7bd; font-size: .78rem; font-weight: 500; }
+  .meta-row .rating { display: inline-flex; align-items: center; gap: 3px; color: #ffc94d; font-weight: 600; }
+  .dot { width: 3px; height: 3px; border-radius: 50%; background: #555; }
+  .detail-desc {
+    max-width: 640px; margin: 14px 0 0; color: #b7b7bd; font-size: .86rem; line-height: 1.6;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden;
+  }
+  .genre-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .genre-tag {
+    padding: 3px 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 4px;
+    color: #b7b7bd; font-size: .66rem; font-weight: 600;
+  }
+
+  /* Actions */
+  .action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
+  .play-btn {
+    display: inline-flex; align-items: center; gap: 7px; padding: 10px 24px; border-radius: 999px;
+    color: #000; font-size: .82rem; font-weight: 700; text-decoration: none;
+    background: #fff; box-shadow: 0 4px 20px rgba(255,255,255,.15);
+    transition: transform 220ms cubic-bezier(.22,1,.36,1), box-shadow 220ms cubic-bezier(.22,1,.36,1);
+  }
+  .play-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(255,255,255,.2); }
+  .secondary-btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border-radius: 999px;
+    color: #f5f5f5; font-size: .76rem; font-weight: 600; border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.06); cursor: pointer;
+    transition: background 220ms cubic-bezier(.22,1,.36,1), border-color 220ms cubic-bezier(.22,1,.36,1);
+  }
+  .secondary-btn:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.2); }
+  .icon-only-btn {
+    display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid rgba(255,255,255,.08);
+    border-radius: 50%; color: #b7b7bd; background: rgba(255,255,255,.04); cursor: pointer;
+    transition: all 200ms cubic-bezier(.22,1,.36,1);
+  }
+  .icon-only-btn:hover { color: #f5f5f5; border-color: rgba(255,255,255,.14); }
+  .save-error { margin-top: 8px; color: #ffb020; font-size: .66rem; }
+
+  /* Info sections */
+  .info-section { margin-top: 36px; padding: 0; }
+  .section-h {
+    color: #f5f5f5; font-size: 1.1rem; font-weight: 700; letter-spacing: -.02em;
+    margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .details-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .detail-item { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.04); border-radius: 8px; background: rgba(255,255,255,.02); }
+  .detail-label { color: #77777f; font-size: .58rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .detail-value { color: #f5f5f5; font-size: .76rem; font-weight: 600; }
+
+  /* Trailer */
+  .trailer-embed { position: relative; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,.06); }
+  .trailer-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+  /* Recommendations */
+  .recs-rail { margin-top: 36px; }
+
+  @media (max-width: 900px) {
+    .title-section { grid-template-columns: 160px minmax(0, 1fr); gap: 24px; }
+  }
   @media (max-width: 640px) {
-    .detail-backdrop { height: 460px; }
-    .detail-wrap::before { height: 540px; }
-    .back-link { margin-top: calc(12px + env(safe-area-inset-top)); }
-    .detail-layout { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 16px; padding: 18px 0 30px; align-items: start; }
-    .detail-poster { border-radius: var(--radius-md); }
-    .detail-copy { display: contents; }
-    .detail-copy > .detail-lead { grid-column: 2; min-width: 0; }
-    .detail-copy > .detail-description, .detail-copy > .detail-actions, .detail-copy > .episode-strip, .detail-copy > .save-error { grid-column: 1 / -1; }
-    .detail-copy h1 { margin-top: 6px; font-size: clamp(1.7rem, 8vw, 2.3rem); line-height: 1.05; }
-    .detail-description { margin-top: 18px; font-size: .84rem; }
+    .hero-backdrop { height: 380px; }
+    .back-btn { margin-top: calc(10px + env(safe-area-inset-top)); }
+    .title-section { grid-template-columns: 100px minmax(0, 1fr); gap: 14px; padding: 16px 0 28px; }
+    .detail-title { font-size: clamp(1.5rem, 7vw, 2.2rem); }
+    .detail-desc { font-size: .8rem; -webkit-line-clamp: 3; line-clamp: 3; }
+    .meta-row { font-size: .72rem; gap: 6px; }
+    .play-btn { flex: 1; justify-content: center; }
+    .details-grid { grid-template-columns: 1fr 1fr; }
+    .info-section { margin-top: 28px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .back-btn, .play-btn, .secondary-btn, .icon-only-btn { transition: none; }
   }
 </style>

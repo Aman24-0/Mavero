@@ -6,7 +6,7 @@
   export let title: string;
   export let eyebrow = '';
   export let items: MediaItem[] = [];
-  export let href = '/discover';
+  export let href = '';
   export let compact = false;
   export let variant: 'default' | 'editorial' = 'default';
 </script>
