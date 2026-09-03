@@ -18,6 +18,30 @@ async function loadRail(type: ContentType, kind: RailKind): Promise<RailResult> 
   }
 }
 
+async function loadCollectionRail(type: ContentType, filters: CollectionFilters): Promise<RailResult> {
+  try {
+    const result = await collection(type, 1, filters);
+    if (result.source.provider === 'fixtures') {
+      return { items: [] };
+    }
+    return { items: result.items.map(toMediaItem) };
+  } catch {
+    return { items: [] };
+  }
+}
+
+async function loadTopRated(type: ContentType): Promise<RailResult> {
+  return loadCollectionRail(type, { sort: 'Top rated' });
+}
+
+async function loadNewest(type: ContentType): Promise<RailResult> {
+  return loadCollectionRail(type, { sort: 'Newest' });
+}
+
+async function loadGenreCollection(type: ContentType, genre: string): Promise<RailResult> {
+  return loadCollectionRail(type, { genre });
+}
+
 const validCollectionSorts: CollectionSort[] = ['For you', 'Top rated', 'Newest'];
 
 function parseCollectionPage(value: string | null) {
@@ -48,16 +72,45 @@ export async function loadCollectionData(type: ContentType, url: URL) {
   }
 }
 
+type GenreCollection = { title: string; items: MediaItem[] };
+
 export async function loadDiscoverData() {
-  const [trendingMovies, trendingSeries, trendingAnime, popularMovies, popularSeries, popularAnime] = await Promise.all([
+  const [
+    trendingMovies, trendingSeries, trendingAnime,
+    popularMovies, popularSeries, popularAnime,
+    topRatedMovies, topRatedSeries, topRatedAnime,
+    newMovies,
+    actionMovies, comedyMovies, horrorMovies, sciFiMovies, romanceMovies
+  ] = await Promise.all([
     loadRail('movie', 'trending'),
     loadRail('series', 'trending'),
     loadRail('anime', 'trending'),
     loadRail('movie', 'popular'),
     loadRail('series', 'popular'),
-    loadRail('anime', 'popular')
+    loadRail('anime', 'popular'),
+    loadTopRated('movie'),
+    loadTopRated('series'),
+    loadTopRated('anime'),
+    loadNewest('movie'),
+    loadGenreCollection('movie', 'Action'),
+    loadGenreCollection('movie', 'Comedy'),
+    loadGenreCollection('movie', 'Horror'),
+    loadGenreCollection('movie', 'Sci-Fi'),
+    loadGenreCollection('movie', 'Romance'),
   ]);
-  const errors = [trendingMovies, trendingSeries, trendingAnime, popularMovies, popularSeries, popularAnime].flatMap((rail) => rail.error ? [rail.error] : []);
+
+  const errors = [trendingMovies, trendingSeries, trendingAnime, popularMovies, popularSeries, popularAnime]
+    .flatMap((rail) => rail.error ? [rail.error] : []);
+
+  // Build genre collections with non-empty items only
+  const genreCollections: GenreCollection[] = [
+    { title: 'Blockbuster Action', items: actionMovies.items },
+    { title: 'Comedy Night', items: comedyMovies.items },
+    { title: 'Spine-Chilling Horror', items: horrorMovies.items },
+    { title: 'Mind-Bending Sci-Fi', items: sciFiMovies.items },
+    { title: 'Heartwarming Romance', items: romanceMovies.items },
+  ].filter((col) => col.items.length > 0);
+
   return {
     movies: trendingMovies.items,
     series: trendingSeries.items,
@@ -65,6 +118,11 @@ export async function loadDiscoverData() {
     popularMovies: popularMovies.items,
     popularSeries: popularSeries.items,
     popularAnime: popularAnime.items,
+    topRatedMovies: topRatedMovies.items,
+    topRatedSeries: topRatedSeries.items,
+    topRatedAnime: topRatedAnime.items,
+    newMovies: newMovies.items,
+    genreCollections,
     featured: selectFeatured([...trendingMovies.items, ...trendingSeries.items, ...trendingAnime.items]),
     errorMessage: errors.length ? `${[...new Set(errors)].join(' ')} Check the server catalog configuration and try again.` : undefined
   };

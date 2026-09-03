@@ -7,7 +7,6 @@
   import { page } from '$app/state';
   import { ArrowLeft, ArrowRight, Info, ListPlus, Play } from 'lucide-svelte';
   import type { MediaItem } from '$lib/data/content';
-  import { formatType } from '$lib/data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import { haptic } from '$lib/client/haptics';
@@ -19,7 +18,11 @@
   export let popularMovies: MediaItem[] = [];
   export let popularSeries: MediaItem[] = [];
   export let popularAnime: MediaItem[] = [];
-  export let continueItems: MediaItem[] = [];
+  export let topRatedMovies: MediaItem[] = [];
+  export let topRatedSeries: MediaItem[] = [];
+  export let topRatedAnime: MediaItem[] = [];
+  export let newMovies: MediaItem[] = [];
+  export let genreCollections: { title: string; items: MediaItem[] }[] = [];
   export let errorMessage = '';
 
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
@@ -27,6 +30,24 @@
 
   const GALLERY_ROTATION_MS = 6500;
   const MAX_FEATURED_ITEMS = 6;
+
+  const quickChips = [
+    { label: 'Movies', href: '/discover/movies' },
+    { label: 'TV Shows', href: '/discover/series' },
+    { label: 'Anime', href: '/discover/anime' },
+    { label: 'Trending', href: '/discover' },
+  ];
+
+  const genreTiles = [
+    { label: 'Action', href: '/discover/movies?genre=Action' },
+    { label: 'Comedy', href: '/discover/movies?genre=Comedy' },
+    { label: 'Horror', href: '/discover/movies?genre=Horror' },
+    { label: 'Sci-Fi', href: '/discover/movies?genre=Sci-Fi' },
+    { label: 'Romance', href: '/discover/movies?genre=Romance' },
+    { label: 'Drama', href: '/discover/movies?genre=Drama' },
+    { label: 'Thriller', href: '/discover/movies?genre=Thriller' },
+    { label: 'Fantasy', href: '/discover/movies?genre=Fantasy' },
+  ];
 
   let localContinueLoaded = false;
   let localContinueItems: MediaItem[] = [];
@@ -68,8 +89,8 @@
       .map((item) => ({ item, category: categoryFor(item) }));
   }
 
-  $: localContinue = localContinueLoaded ? localContinueItems : continueItems;
-  $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length);
+  $: localContinue = localContinueLoaded ? localContinueItems : [];
+  $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length || topRatedMovies.length || topRatedSeries.length || topRatedAnime.length || newMovies.length || genreCollections.length);
   $: featuredItems = createFeaturedItems([
     ...(featuredItem ? [featuredItem] : []),
     ...movies,
@@ -339,7 +360,7 @@
           {/if}
           <div class="hero-actions">
             <a class="btn btn-primary" href={`/watch/${activeHero.item.type}/${activeHero.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
-            <a class="btn btn-secondary hero-details-link" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`View details for ${activeHero.item.title}`}><Info size={16} /> <span class="hero-details-text">View details for {activeHero.item.title}</span></a>
+            <a class="btn btn-secondary hero-details-link" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`View details for ${activeHero.item.title}`}><Info size={16} /> <span class="hero-details-text">Details</span></a>
             <a class="btn btn-secondary icon-only" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`Add ${activeHero.item.title} to My List`}><ListPlus size={16} /></a>
           </div>
         </div>
@@ -371,18 +392,75 @@
   <div class="container-wide main-content">
     {#if errorMessage}<div class="catalog-warning" role="alert">{errorMessage}</div>{/if}
     {#if hasCatalog}
-      <nav class="discover-routes" aria-label="Explore MAVERO">
-        <a href="/discover/movies"><span>Movies</span><ArrowRight size={13} /></a>
-        <a href="/discover/series"><span>Series</span><ArrowRight size={13} /></a>
-        <a href="/discover/anime"><span>Anime</span><ArrowRight size={13} /></a>
+      <!-- Quick Discovery Chips -->
+      <nav class="quick-chips" aria-label="Quick discovery">
+        {#each quickChips as chip}
+          <a href={chip.href}>{chip.label}</a>
+        {/each}
       </nav>
-      {#if localContinue.length}<ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />{/if}
-      {#if movies.length}<ContentRail title="Trending movies" items={movies} href="/discover/movies" />{/if}
-      {#if series.length}<ContentRail title="Trending series" items={series} href="/discover/series" />{/if}
-      {#if anime.length}<ContentRail title="Trending anime" items={anime} href="/discover/anime" />{/if}
-      {#if popularMovies.length}<ContentRail title="Popular movies" items={popularMovies} href="/discover/movies" />{/if}
-      {#if popularSeries.length}<ContentRail title="Popular series" items={popularSeries} href="/discover/series" />{/if}
-      {#if popularAnime.length}<ContentRail title="Popular anime" items={popularAnime} href="/discover/anime" />{/if}
+
+      <!-- Continue Watching -->
+      {#if localContinue.length}
+        <ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />
+      {/if}
+
+      <!-- Trending Right Now (mixed: movies + series) -->
+      {#if movies.length || series.length}
+        <ContentRail title="Trending right now" items={[...movies.slice(0, 10), ...series.slice(0, 10)]} href="/discover" />
+      {/if}
+
+      <!-- New Movies -->
+      {#if newMovies.length}
+        <ContentRail title="New movies" items={newMovies} href="/discover/movies?sort=Newest" />
+      {/if}
+
+      <!-- Popular TV Shows -->
+      {#if popularSeries.length}
+        <ContentRail title="Popular TV shows" items={popularSeries} href="/discover/series" />
+      {/if}
+
+      <!-- Anime Discovery -->
+      {#if anime.length}
+        <ContentRail title="Popular anime" items={anime} href="/discover/anime" />
+      {/if}
+      {#if popularAnime.length}
+        <ContentRail title="Trending anime" items={popularAnime} href="/discover/anime" />
+      {/if}
+
+      <!-- Intent-based Genre Collections -->
+      {#each genreCollections as col}
+        <ContentRail title={col.title} items={col.items} href="/discover/movies" />
+      {/each}
+
+      <!-- Popular Genres -->
+      <section class="genre-section" aria-labelledby="genre-discover">
+        <div class="section-head">
+          <h2 class="section-title" id="genre-discover">Browse by genre</h2>
+        </div>
+        <div class="genre-grid">
+          {#each genreTiles as tile}
+            <a class="genre-tile" href={tile.href}>
+              <span class="genre-tile-label">{tile.label}</span>
+            </a>
+          {/each}
+        </div>
+      </section>
+
+      <!-- Top Rated -->
+      {#if topRatedMovies.length}
+        <ContentRail title="Top rated movies" items={topRatedMovies} href="/discover/movies?sort=Top+rated" />
+      {/if}
+      {#if topRatedSeries.length}
+        <ContentRail title="Top rated TV shows" items={topRatedSeries} href="/discover/series?sort=Top+rated" />
+      {/if}
+      {#if topRatedAnime.length}
+        <ContentRail title="Top rated anime" items={topRatedAnime} href="/discover/anime?sort=Top+rated" />
+      {/if}
+
+      <!-- Popular Movies (fallback discovery) -->
+      {#if popularMovies.length}
+        <ContentRail title="Popular movies" items={popularMovies} href="/discover/movies" />
+      {/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}
@@ -391,71 +469,83 @@
 </div>
 
 <style>
-  .hero { position: relative; min-height: min(88vh, 820px); overflow: hidden; background: var(--base); }
+  .hero { position: relative; min-height: min(82vh, 760px); overflow: hidden; background: var(--base); }
   .hero-media { position: absolute; inset: 0; overflow: hidden; background: var(--base); }
   .hero-image, .hero-image-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
   .hero-image { display: block; }
   .hero.transitioning .hero-image { opacity: .82; transform: scale(1.01); }
   .hero-image-fallback { display: grid; place-items: center; background: radial-gradient(circle at 70% 28%, color-mix(in srgb, var(--hero-accent) 38%, transparent), transparent 42%), linear-gradient(135deg, var(--surface-2), var(--base)); }
-  .hero-image-fallback span { max-width: 70%; color: rgba(245,246,250,.18); font-size: clamp(2rem, 8vw, 7rem); font-weight: 900; letter-spacing: -.05em; text-align: center; }
-  .hero-scrim { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(6,6,10,.97) 8%, rgba(6,6,10,.75) 32%, rgba(6,6,10,.28) 58%, rgba(6,6,10,.55) 100%); pointer-events: none; }
-  .hero-scrim-bottom { position: absolute; inset: auto 0 0 0; height: 45%; background: linear-gradient(0deg, var(--base) 0%, transparent 100%); pointer-events: none; }
-  .hero-body { position: relative; z-index: 2; display: flex; align-items: flex-end; min-height: min(88vh, 820px); padding-bottom: 96px; padding-top: 120px; }
+  .hero-image-fallback span { max-width: 70%; color: rgba(255,255,255,.1); font-size: clamp(2rem, 8vw, 6rem); font-weight: 900; letter-spacing: -.05em; text-align: center; }
+  .hero-scrim { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(0,0,0,.95) 6%, rgba(0,0,0,.7) 30%, rgba(0,0,0,.2) 56%, rgba(0,0,0,.5) 100%); pointer-events: none; }
+  .hero-scrim-bottom { position: absolute; inset: auto 0 0 0; height: 50%; background: linear-gradient(0deg, var(--base) 0%, transparent 100%); pointer-events: none; }
+  .hero-body { position: relative; z-index: 2; display: flex; align-items: flex-end; min-height: min(82vh, 760px); padding-bottom: 88px; padding-top: 120px; }
   .hero-copy { max-width: 620px; }
   .hero-kicker { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-strong); font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   .dot { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .6; }
-  .hero-copy h1 { margin: 12px 0 0; color: var(--ink); font-size: clamp(2.4rem, 5.4vw, 4.6rem); font-weight: 900; letter-spacing: -.03em; line-height: .98; text-wrap: balance; }
+  .hero-copy h1 { margin: 12px 0 0; color: var(--ink); font-size: clamp(2.2rem, 5vw, 4.2rem); font-weight: 900; letter-spacing: -.03em; line-height: .98; text-wrap: balance; }
   .hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 16px; color: var(--ink-soft); font-size: .8rem; font-weight: 600; }
   .hero-meta .rating { color: #ffc94d; }
-  .hero-meta .dot { color: var(--muted-deep); }
-  .hero-copy p { max-width: 540px; margin: 16px 0 0; color: var(--ink-soft); font-size: .92rem; line-height: 1.6; text-wrap: pretty; }
+  .hero-meta .dot { color: var(--muted); }
+  .hero-copy p { max-width: 540px; margin: 16px 0 0; color: var(--ink-soft); font-size: .9rem; line-height: 1.6; text-wrap: pretty; }
   .hero-genres { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-  .hero-genres span { border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 12px; color: var(--ink-soft); font-size: .68rem; font-weight: 600; background: rgba(245,246,250,.05); }
+  .hero-genres span { border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 12px; color: var(--ink-soft); font-size: .68rem; font-weight: 600; background: rgba(255,255,255,.04); }
   .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
   .icon-only { width: 46px; padding: 0; flex: 0 0 auto; }
-  .hero-details-link { max-width: min(300px, 42vw); }
+  .hero-details-link { max-width: min(200px, 42vw); }
   .hero-details-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hero-controls { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 28px; z-index: 3; display: flex; align-items: center; gap: 8px; }
-  .hero-arrow { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink); background: rgba(6,6,10,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .hero-arrow { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink); background: rgba(0,0,0,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .hero-arrow:hover:not(:disabled), .hero-arrow:focus-visible:not(:disabled) { border-color: rgba(255,90,122,.6); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
   .hero-arrow:disabled, .hero-dot:disabled { cursor: wait; opacity: .55; }
   .hero-dots { display: flex; align-items: center; gap: 2px; }
-  .hero-dot { position: relative; display: grid; place-items: center; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 999px; background: transparent; transition: background var(--motion-fast) var(--ease-out); }
-  .hero-dot::after { content: ''; width: 7px; height: 7px; border-radius: 999px; background: rgba(245,246,250,.28); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .hero-dot:hover:not(:disabled)::after, .hero-dot:focus-visible:not(:disabled)::after { background: rgba(245,246,250,.65); }
+  .hero-dot { position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 999px; background: transparent; transition: background var(--motion-fast) var(--ease-out); }
+  .hero-dot::after { content: ''; width: 7px; height: 7px; border-radius: 999px; background: rgba(255,255,255,.25); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .hero-dot:hover:not(:disabled)::after, .hero-dot:focus-visible:not(:disabled)::after { background: rgba(255,255,255,.6); }
   .hero-dot:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
   .hero-dot.active::after { width: 22px; background: var(--accent-gradient); }
-  .hero-fallback { background: radial-gradient(circle at 72% 28%, rgba(255,90,122,.18), transparent 38%), var(--base); }
+  .hero-fallback { background: radial-gradient(circle at 72% 28%, rgba(255,90,122,.15), transparent 38%), var(--base); }
 
-  .discover-routes { display: flex; gap: 10px; margin: 22px 0 40px; }
-  .discover-routes a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); text-decoration: none; font-size: .78rem; font-weight: 700; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .discover-routes a:hover { border-color: rgba(255,90,122,.5); background: var(--accent-soft); transform: translateY(-2px); }
-  .discover-routes a :global(svg) { color: var(--accent-strong); }
+  .quick-chips { display: flex; gap: 8px; margin: 0 0 32px; padding: 0 clamp(16px, 4vw, 48px); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .quick-chips::-webkit-scrollbar { display: none; }
+  .quick-chips a { flex: 0 0 auto; padding: 7px 16px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-soft); text-decoration: none; font-size: .75rem; font-weight: 600; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .quick-chips a:hover { border-color: var(--line-strong); color: var(--ink); background: rgba(255,255,255,.03); }
+  .quick-chips a:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+
+  .genre-section { padding: 0 0 36px; }
+  .genre-section .section-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; padding: 0 clamp(16px, 4vw, 48px); }
+  .genre-section .section-title { color: var(--ink); font-size: clamp(1.15rem, 2.5vw, 1.5rem); font-weight: 800; letter-spacing: -.02em; }
+  .genre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 0 clamp(16px, 4vw, 48px); }
+  .genre-tile { display: flex; align-items: center; justify-content: center; height: 72px; border-radius: 10px; border: 1px solid var(--line); background: linear-gradient(135deg, var(--surface-2), var(--surface)); text-decoration: none; transition: border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .genre-tile:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+  .genre-tile:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+  .genre-tile-label { color: var(--ink); font-size: .82rem; font-weight: 700; }
+
   .catalog-warning { margin: 16px 0 0; padding: 12px 14px; border: 1px solid rgba(255,176,32,.35); border-radius: var(--radius-sm); color: var(--warning); font-size: .72rem; line-height: 1.5; }
+  .footer { padding: 48px 0 32px; text-align: center; }
+  .footer strong { color: var(--ink); font-size: .85rem; letter-spacing: .04em; }
+  .footer span { display: block; margin-top: 4px; color: var(--muted); font-size: .7rem; }
 
   @media (max-width: 900px) {
-    .hero { min-height: min(78vh, 680px); }
-    .hero-body { min-height: min(78vh, 680px); padding-top: 90px; padding-bottom: 84px; }
+    .hero { min-height: min(72vh, 620px); }
+    .hero-body { min-height: min(72vh, 620px); padding-top: 90px; padding-bottom: 80px; }
   }
   @media (max-width: 640px) {
-    .hero { min-height: 84vh; }
+    .hero { min-height: 76vh; }
     .hero-image, .hero-image-fallback { object-position: center 18%; }
-    .hero-scrim { background: linear-gradient(0deg, rgba(6,6,10,.98) 18%, rgba(6,6,10,.55) 55%, rgba(6,6,10,.35) 100%); }
-    .hero-body { align-items: flex-end; min-height: 84vh; padding-top: 76px; padding-bottom: 74px; }
+    .hero-scrim { background: linear-gradient(0deg, rgba(0,0,0,.98) 18%, rgba(0,0,0,.55) 55%, rgba(0,0,0,.35) 100%); }
+    .hero-body { align-items: flex-end; min-height: 76vh; padding-top: 76px; padding-bottom: 72px; }
     .hero-copy { max-width: none; }
-    .hero-copy h1 { font-size: clamp(2rem, 9vw, 2.9rem); }
-    .hero-copy p { font-size: .82rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+    .hero-copy h1 { font-size: clamp(1.8rem, 8vw, 2.6rem); }
+    .hero-copy p { font-size: .8rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
     .hero-genres { display: none; }
     .hero-actions .btn:not(.icon-only) { flex: 1; }
     .hero-controls { right: 10px; bottom: 8px; gap: 2px; }
     .hero-dots { width: min(64vw, 230px); overflow-x: auto; scrollbar-width: none; }
     .hero-dots::-webkit-scrollbar { display: none; }
-    .hero-arrow { width: 48px; height: 48px; }
-    .discover-routes { margin: 16px 0 30px; overflow-x: auto; scrollbar-width: none; }
-    .discover-routes::-webkit-scrollbar { display: none; }
-    .discover-routes a { flex: 0 0 auto; }
+    .hero-arrow { width: 44px; height: 44px; }
+    .genre-grid { grid-template-columns: repeat(2, 1fr); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .hero-image, .hero-image-fallback, .hero-arrow, .hero-dot, .hero-dot::after, .discover-routes a { transition: none; }
+    .hero-image, .hero-image-fallback, .hero-arrow, .hero-dot, .hero-dot::after, .quick-chips a, .genre-tile { transition: none; }
   }
 </style>

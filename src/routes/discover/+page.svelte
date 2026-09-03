@@ -5,4 +5,18 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-  <DiscoverPage featuredItem={data.featured} movies={data.movies} series={data.series} anime={data.anime} popularMovies={data.popularMovies} popularSeries={data.popularSeries} popularAnime={data.popularAnime} errorMessage={data.errorMessage ?? ''} />
+  <DiscoverPage
+    featuredItem={data.featured}
+    movies={data.movies}
+    series={data.series}
+    anime={data.anime}
+    popularMovies={data.popularMovies}
+    popularSeries={data.popularSeries}
+    popularAnime={data.popularAnime}
+    topRatedMovies={data.topRatedMovies}
+    topRatedSeries={data.topRatedSeries}
+    topRatedAnime={data.topRatedAnime}
+    newMovies={data.newMovies}
+    genreCollections={data.genreCollections}
+    errorMessage={data.errorMessage ?? ''}
+  />
