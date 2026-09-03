@@ -8,6 +8,7 @@
   import type { FilterState } from '$components/filter-types';
   import MediaCard from '$components/MediaCard.svelte';
   import EmptyState from '$components/EmptyState.svelte';
+  import ScrollToTop from '$components/ScrollToTop.svelte';
   type CollectionFilters = { genre?: string; year?: string; sort?: 'For you' | 'Top rated' | 'Newest' };
   export let type: ContentType = 'movie';
   export let contentItems: MediaItem[] = fixtureMedia.filter((item) => item.type === type);
@@ -52,6 +53,8 @@
     <div>{#if hasNextPage}<a class="pagination-link" href={collectionHref(currentPage + 1)}>Next <ArrowRight size={14} /></a>{:else}<span class="pagination-link disabled">Next <ArrowRight size={14} /></span>{/if}</div>
   </nav>
 </div>
+
+<ScrollToTop />
 
 <style>
   .collection-page {

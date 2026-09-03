@@ -9,6 +9,7 @@
   import type { MediaItem } from '$lib/data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import EmptyState from '$components/EmptyState.svelte';
+  import ScrollToTop from '$components/ScrollToTop.svelte';
   import { haptic } from '$lib/client/haptics';
   import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
 
@@ -390,6 +391,8 @@
     <footer class="discover-footer"><strong>MAVERO</strong><span>Movies, series &amp; anime — all in one place.</span></footer>
   </div>
 </div>
+
+<ScrollToTop />
 
 <style>
   .discover-page {

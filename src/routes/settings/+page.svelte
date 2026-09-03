@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowLeft, Check, LockKeyhole, Mail, Play, RotateCcw, Settings2, Trash2, UserRound, Tv, Sparkles, Info } from 'lucide-svelte';
+  import { ArrowLeft, Check, LockKeyhole, Mail, Play, RotateCcw, Settings2, Trash2, UserRound, Sparkles, Info } from 'lucide-svelte';
   import type { PageData } from './$types';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
+  import ScrollToTop from '$components/ScrollToTop.svelte';
   import { clearLocalData } from '$lib/client/progress/database';
   import { haptic } from '$lib/client/haptics';
 
@@ -270,15 +271,19 @@
   </div>
 </div>
 
+<ScrollToTop />
+
 <style>
   .settings-page {
     --s-gutter: clamp(16px, 5vw, 48px);
     min-height: calc(100dvh - 76px);
-    padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   }
 
   .settings-header {
-    padding: calc(36px + env(safe-area-inset-top, 0px)) var(--s-gutter) 22px;
+    /* The shell already adds the topbar offset via --shell-content-top.
+       We only add a deliberate per-page breathing room here. */
+    padding: 26px var(--s-gutter) 22px;
     border-bottom: 1px solid rgba(255,255,255,.05);
     background:
       radial-gradient(circle at 85% -20%, rgba(255,255,255,.04), transparent 50%),
@@ -542,7 +547,7 @@
   .dialog-error { margin: 12px 0 0; color: #ffb020; font-size: .72rem; line-height: 1.45; }
 
   @media (max-width: 720px) {
-    .settings-header { padding-top: calc(28px + env(safe-area-inset-top, 0px)); }
+    .settings-header { padding-top: 22px; }
     .account-grid { grid-template-columns: 1fr; gap: 18px; }
     .settings-section, .danger-zone { padding: 18px; }
   }
@@ -552,7 +557,7 @@
     .toggle-copy small { font-size: .68rem; }
   }
   @media (min-width: 900px) {
-    .settings-header { padding-top: calc(54px + env(safe-area-inset-top, 0px)); }
+    .settings-header { padding-top: 44px; }
     .settings-header h1 { font-size: clamp(2rem, 3.4vw, 2.6rem); }
   }
   @media (prefers-reduced-motion: reduce) {

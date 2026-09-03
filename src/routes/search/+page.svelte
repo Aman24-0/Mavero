@@ -2,11 +2,11 @@
   import { onDestroy } from 'svelte';
   import { replaceState } from '$app/navigation';
   import { page } from '$app/state';
-  import { Search, LoaderCircle, X, Clapperboard, Film, Sparkles, TrendingUp } from 'lucide-svelte';
+  import { Search, LoaderCircle, X, Clapperboard, Compass } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import Dropdown from '$components/Dropdown.svelte';
   import MediaCard from '$components/MediaCard.svelte';
-  import ContentRail from '$components/ContentRail.svelte';
+  import ScrollToTop from '$components/ScrollToTop.svelte';
   import type { PageData } from './$types';
   import type { ContentType, SearchFilters, SearchSort } from '$lib/server/content/types';
   import type { MediaItem } from '$data/content';
@@ -187,7 +187,6 @@
   const sheetTitle = 'Streaming service';
   const sheetOptions: SearchSelectionOption[] = [{ key: '', label: 'All OTT' }, ...ottOptions];
   let sheetSelected = $derived(ott);
-  let hasDiscovery = $derived(Boolean(data.discovery && (data.discovery.trendingMovies.length || data.discovery.trendingSeries.length || data.discovery.trendingAnime.length || data.discovery.popularMovies.length || data.discovery.popularSeries.length)));
 </script>
 
 <svelte:head>
@@ -303,39 +302,24 @@
       <section class="empty-search" aria-live="polite">
         <div class="empty-mark" aria-hidden="true"><Search size={22} /></div>
         <h2>No matching stories.</h2>
-        <p>Try another title, switch the type filter, or clear your filters to browse what's trending.</p>
+        <p>Try another title, switch the type filter, or clear your filters.</p>
         <button class="empty-action" type="button" onclick={clearAll}>Clear search</button>
       </section>
-    {:else if !loading && hasDiscovery}
-      <!-- Discovery shown when no query — reuses real TMDB rails -->
-      <div class="discovery-intro">
-        <span class="discovery-eyebrow"><Sparkles size={13} /> Trending tonight</span>
-        <p>Browse what's moving on MAVERO while you decide what to search for.</p>
-      </div>
-      {#if data.discovery?.trendingMovies.length}
-        <ContentRail title="Trending movies" items={data.discovery.trendingMovies} href="/discover/movies" />
-      {/if}
-      {#if data.discovery?.trendingSeries.length}
-        <ContentRail title="Trending TV shows" items={data.discovery.trendingSeries} href="/discover/series" />
-      {/if}
-      {#if data.discovery?.trendingAnime.length}
-        <ContentRail title="Trending anime" items={data.discovery.trendingAnime} href="/discover/anime" />
-      {/if}
-      {#if data.discovery?.popularMovies.length}
-        <ContentRail title="Popular movies" items={data.discovery.popularMovies} href="/discover/movies" />
-      {/if}
-      {#if data.discovery?.popularSeries.length}
-        <ContentRail title="Popular TV shows" items={data.discovery.popularSeries} href="/discover/series" />
-      {/if}
     {:else if !loading}
-      <section class="empty-search" aria-live="polite">
-        <div class="empty-mark" aria-hidden="true"><TrendingUp size={22} /></div>
-        <h2>Start your search.</h2>
-        <p>Type a title above to search the MAVERO catalog.</p>
+      <!-- No query: Search has one purpose — find something. Discovery
+           lives on /discover. Show a focused empty-search state instead
+           of duplicating discovery rails here. -->
+      <section class="empty-search primary-empty" aria-live="polite">
+        <div class="empty-mark" aria-hidden="true"><Compass size={24} /></div>
+        <h2>Find your next story.</h2>
+        <p>Search by title above. Filter by service, genre, or release date to narrow the results.</p>
+        <a class="empty-action" href="/discover">Browse Discover</a>
       </section>
     {/if}
   </div>
 </div>
+
+<ScrollToTop />
 
 <SelectionSheet open={activeSheet !== null} title={sheetTitle} options={sheetOptions} selected={sheetSelected} onClose={() => activeSheet = null} onSelect={sheetSelection} />
 
@@ -343,12 +327,14 @@
   .search-page {
     --s-gutter: clamp(16px, 5vw, 48px);
     min-height: calc(100dvh - 76px);
-    padding-bottom: 90px;
+    padding-bottom: 110px;
   }
 
   .search-hero {
     position: relative;
-    padding: calc(36px + env(safe-area-inset-top, 0px)) var(--s-gutter) 26px;
+    /* The shell already adds the topbar offset via --shell-content-top.
+       We only add a deliberate per-page breathing room here. */
+    padding: 26px var(--s-gutter) 26px;
     border-bottom: 1px solid rgba(255,255,255,.05);
     background:
       radial-gradient(circle at 80% -30%, rgba(255,255,255,.04), transparent 50%),
@@ -503,23 +489,6 @@
   /* Body */
   .search-body { padding: 0 var(--s-gutter); }
 
-  .discovery-intro {
-    margin: 26px 0 6px;
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .discovery-eyebrow {
-    display: inline-flex; align-items: center; gap: 6px;
-    color: #c7c7cc;
-    font-size: .62rem; font-weight: 700;
-    letter-spacing: .12em; text-transform: uppercase;
-  }
-  .discovery-intro p {
-    margin: 0;
-    color: #77777f;
-    font-size: .78rem;
-    line-height: 1.5;
-  }
-
   /* Results */
   .results-section { margin-top: 26px; }
   .result-summary {
@@ -595,7 +564,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   @media (max-width: 640px) {
-    .search-hero { padding-top: calc(28px + env(safe-area-inset-top, 0px)); padding-bottom: 18px; }
+    .search-hero { padding-top: 22px; padding-bottom: 18px; }
     .hero-title { font-size: clamp(1.4rem, 6vw, 2rem); }
     .hero-sub { font-size: .78rem; }
     .search-field { height: 52px; }
@@ -611,7 +580,7 @@
   }
 
   @media (min-width: 900px) {
-    .search-hero { padding-top: calc(56px + env(safe-area-inset-top, 0px)); padding-bottom: 36px; }
+    .search-hero { padding-top: 44px; padding-bottom: 36px; }
     .hero-title { font-size: clamp(2rem, 3.4vw, 2.8rem); }
     .search-field { height: 62px; }
     .search-field input { font-size: 1rem; }

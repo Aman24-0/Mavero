@@ -6,6 +6,7 @@
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
+  import ScrollToTop from '$components/ScrollToTop.svelte';
   import { getLocalFavorites, getLocalPersistenceState, getLocalProgressRecords } from '$lib/client/progress/service';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
@@ -156,22 +157,21 @@
       </section>
     {/if}
   </div>
-
-  <footer class="list-footer">
-    <span>{storageMessage}</span>
-    <a href="/discover">Find something new <ArrowRight size={13} /></a>
-  </footer>
 </div>
+
+<ScrollToTop />
 
 <style>
   .my-list-page {
     --l-gutter: clamp(16px, 5vw, 48px);
     min-height: calc(100dvh - 76px);
-    padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   }
 
   .list-header {
-    padding: calc(36px + env(safe-area-inset-top, 0px)) var(--l-gutter) 18px;
+    /* The shell already adds the topbar offset via --shell-content-top.
+       We only add a deliberate per-page breathing room here. */
+    padding: 28px var(--l-gutter) 18px;
     border-bottom: 1px solid rgba(255,255,255,.05);
     background:
       radial-gradient(circle at 80% -20%, rgba(255,255,255,.04), transparent 50%),
@@ -275,14 +275,14 @@
     font-size: clamp(1.1rem, 2vw, 1.3rem); font-weight: 800;
     letter-spacing: -.015em;
   }
-  .quiet-link, .list-footer a {
+  .quiet-link {
     display: inline-flex; align-items: center; gap: 6px;
     color: #77777f;
     font-size: .7rem; font-weight: 700;
     text-decoration: none;
     transition: color 180ms ease;
   }
-  .quiet-link:hover, .list-footer a:hover { color: #f5f5f5; }
+  .quiet-link:hover { color: #f5f5f5; }
   .media-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 182px));
@@ -387,28 +387,18 @@
   .empty-action:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(255,255,255,.18); }
   .empty-action:active { transform: scale(.98); }
 
-  .list-footer {
-    display: flex; justify-content: space-between; gap: 16px;
-    margin-top: 40px;
-    padding-top: 18px;
-    border-top: 1px solid rgba(255,255,255,.05);
-    color: #77777f;
-    font-size: .62rem;
-  }
-
   @media (max-width: 760px) {
-    .list-header { padding-top: calc(28px + env(safe-area-inset-top, 0px)); }
+    .list-header { padding-top: 22px; }
     .header-title-row { flex-direction: column; align-items: start; gap: 10px; }
     .header-sub { font-size: .78rem; }
   }
   @media (max-width: 640px) {
     .status-chip { min-height: 36px; padding: 0 11px; font-size: .68rem; gap: 6px; }
     .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 11px; }
-    .list-footer { flex-direction: column; align-items: start; }
     .empty-state { padding: 36px 18px; }
   }
   @media (min-width: 900px) {
-    .list-header { padding-top: calc(56px + env(safe-area-inset-top, 0px)); padding-bottom: 26px; }
+    .list-header { padding-top: 44px; padding-bottom: 26px; }
     .list-header h1 { font-size: clamp(2rem, 3.4vw, 2.8rem); }
   }
   @media (prefers-reduced-motion: reduce) {

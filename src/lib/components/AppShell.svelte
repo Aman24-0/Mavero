@@ -59,11 +59,24 @@
     <main>{@render children()}</main>
   </div>
 
+  <!-- Mobile floating pill bottom navigation (centered, with side margins,
+       sits above page content with safe-area aware offset). -->
   <nav class="mobile-nav" aria-label="Mobile navigation">
-    {#each primaryLinks as link}
-      {@const Icon = link.icon}
-      <a class:active={isActive(link.key)} href={link.href} aria-current={isActive(link.key) ? 'page' : undefined} aria-label={link.label} onclick={() => { if (!isActive(link.key)) haptic('light'); }}><Icon size={20} strokeWidth={isActive(link.key) ? 2.3 : 1.8} /><span>{link.label}</span></a>
-    {/each}
+    <div class="mobile-nav-inner">
+      {#each primaryLinks as link}
+        {@const Icon = link.icon}
+        <a
+          class:active={isActive(link.key)}
+          href={link.href}
+          aria-current={isActive(link.key) ? 'page' : undefined}
+          aria-label={link.label}
+          onclick={() => { if (!isActive(link.key)) haptic('light'); }}
+        >
+          <span class="nav-icon"><Icon size={20} strokeWidth={isActive(link.key) ? 2.3 : 1.8} /></span>
+          <span class="nav-label">{link.label}</span>
+        </a>
+      {/each}
+    </div>
   </nav>
 </div>
 
@@ -72,12 +85,12 @@
   .app-rail {
     position: sticky; top: 0; z-index: 45; display: flex; flex-direction: column;
     height: 100dvh; padding: 22px 14px 20px; border-right: 1px solid var(--line);
-    background: rgba(10, 10, 16, .9); backdrop-filter: blur(16px);
+    background: rgba(8, 8, 8, .92); backdrop-filter: blur(16px);
   }
   .brand-lockup, .mobile-brand { display: inline-flex; align-items: center; gap: 9px; padding: 0 6px; color: var(--ink); text-decoration: none; }
   .brand-symbol {
     display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px;
-    color: #fff; background: rgba(255,255,255,.08); box-shadow: 0 4px 12px rgba(255,255,255,.06);
+    color: #fff; background: rgba(255,255,255,.08); box-shadow: 0 4px 12px rgba(255,255,255,.05);
   }
   .brand-word { font-size: .92rem; font-weight: 900; letter-spacing: .04em; }
   .rail-nav { display: grid; gap: 2px; margin-top: 34px; }
@@ -87,7 +100,7 @@
     text-decoration: none;
     transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
   }
-  .rail-link:hover { color: var(--ink); background: rgba(245, 246, 250, .06); transform: translateX(2px); }
+  .rail-link:hover { color: var(--ink); background: rgba(255, 255, 255, .05); transform: translateX(2px); }
   .rail-link.active { color: var(--ink); font-weight: 700; border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.06); }
   .rail-link.active :global(svg) { color: var(--ink); }
   .rail-bottom { display: grid; gap: 14px; margin-top: auto; }
@@ -96,23 +109,75 @@
   .app-canvas { min-width: 0; }
   .topbar { display: none; }
   .mobile-brand { display: none; }
+
+  /* Tablet+: sticky topbar inside the canvas (not fixed, so it doesn't
+     overlap content — content flows naturally below it). */
   @media (max-width: 900px) {
     .page-shell { display: block; }
     .app-rail { display: none; }
-    .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; height: 72px; padding: 0 20px; border-bottom: 1px solid var(--line); background: rgba(6, 6, 10, .86); backdrop-filter: blur(22px); }
+    .topbar {
+      position: sticky; top: 0; z-index: 40;
+      display: flex; align-items: center;
+      height: 72px; padding: 0 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(0, 0, 0, .86); backdrop-filter: blur(22px);
+    }
     .mobile-brand { display: inline-flex; }
   }
+
+  /* Mobile: fixed topbar (height includes safe-area) + floating pill
+     bottom nav. Main content gets shell-level top spacing via the
+     --shell-content-top CSS variable (defined in app.css), so every
+     shell page inherits the correct offset without per-page hacks. */
   @media (max-width: 640px) {
-    .topbar { position: fixed; width: 100%; box-sizing: border-box; height: calc(62px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 16px 0; }
-    .page-shell { padding-bottom: 80px; }
-    .mobile-nav {
-      position: fixed; right: 0; bottom: 0; left: 0; z-index: 50; display: grid; grid-template-columns: repeat(4, 1fr);
-      padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
-      background: rgba(8, 8, 13, .96); backdrop-filter: blur(20px);
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      width: 100%; box-sizing: border-box;
+      height: var(--topbar-h-safe);
+      padding: env(safe-area-inset-top, 0px) 16px 0;
+      border-bottom: 1px solid var(--line);
     }
-    .mobile-nav a { display: grid; place-items: center; gap: 4px; min-height: 48px; color: #6f7078; font-size: .58rem; font-weight: 700; text-decoration: none; transition: color 180ms ease, transform 180ms ease; }
-    .mobile-nav a.active { color: #f5f5f5; }
-    .mobile-nav a.active :global(svg) { color: #f5f5f5; transform: translateY(-1px); }
+    .app-canvas { padding-top: var(--shell-content-top); }
+    .page-shell { padding-bottom: 0; }
+
+    /* Floating pill bottom nav */
+    .mobile-nav {
+      position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+      transform: translateX(-50%);
+      z-index: 50;
+      width: min(calc(100% - 24px), 420px);
+    }
+    .mobile-nav-inner {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      align-items: center; gap: 2px;
+      padding: 6px;
+      border: 1px solid rgba(255, 255, 255, .1);
+      border-radius: 999px;
+      background: rgba(10, 10, 10, .82);
+      backdrop-filter: blur(20px);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .02);
+    }
+    .mobile-nav a {
+      display: grid; place-items: center; gap: 2px;
+      min-height: 44px;
+      padding: 6px 4px;
+      border-radius: 999px;
+      color: #6f7078;
+      font-size: .54rem; font-weight: 700; letter-spacing: .02em;
+      text-decoration: none;
+      transition: color 180ms ease, background 180ms ease;
+    }
+    .mobile-nav .nav-icon { display: grid; place-items: center; }
+    .mobile-nav .nav-label { opacity: .9; }
+    .mobile-nav a:hover { color: #c7c7cc; }
+    .mobile-nav a.active {
+      color: #f5f5f5;
+      background: rgba(255, 255, 255, .1);
+    }
+    .mobile-nav a.active :global(svg) { color: #f5f5f5; }
   }
   @media (min-width: 641px) { .mobile-nav { display: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .rail-link, .mobile-nav a { transition: none; }
+  }
 </style>

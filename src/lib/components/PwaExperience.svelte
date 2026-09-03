@@ -93,10 +93,10 @@
 {/if}
 
 <style>
-  .status-banner, .update-banner { position: fixed; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 60; max-width: min(420px, calc(100vw - 32px)); padding: 11px 14px; border: 1px solid rgba(245,246,250,.14); border-radius: 12px; color: var(--ink); background: rgba(16,16,24,.94); box-shadow: 0 12px 36px rgba(0,0,0,.3); font-size: .72rem; line-height: 1.45; }
+  .status-banner, .update-banner { position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 60; max-width: min(420px, calc(100vw - 32px)); padding: 11px 14px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; color: var(--ink); background: rgba(15,15,15,.94); box-shadow: 0 12px 36px rgba(0,0,0,.45); font-size: .72rem; line-height: 1.45; }
   .update-banner { display: flex; align-items: center; gap: 12px; }
-  .update-banner button, .install { border: 0; border-radius: 999px; padding: 7px 11px; color: #fff; background: var(--accent-gradient); font-size: .7rem; font-weight: 800; }
-  .install-prompt { position: fixed; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 60; display: flex; align-items: center; justify-content: space-between; gap: 18px; width: min(100% - 32px, 440px); padding: 14px 16px; border: 1px solid rgba(255,90,122,.32); border-radius: 14px; color: var(--ink); background: rgba(20,16,26,.96); box-shadow: 0 16px 46px rgba(0,0,0,.36); }
+  .update-banner button, .install { border: 0; border-radius: 999px; padding: 7px 14px; color: #000; background: #f5f5f5; font-size: .7rem; font-weight: 800; }
+  .install-prompt { position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 60; display: flex; align-items: center; justify-content: space-between; gap: 18px; width: min(100% - 32px, 440px); padding: 14px 16px; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; color: var(--ink); background: rgba(15,15,15,.96); box-shadow: 0 16px 46px rgba(0,0,0,.5); }
   .install-prompt strong, .install-prompt span { display: block; }
   .install-prompt strong { font-size: .78rem; }
   .install-prompt span { margin-top: 3px; color: var(--muted); font-size: .68rem; }

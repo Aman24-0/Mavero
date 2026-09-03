@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, LogOut, Settings2, ShieldCheck, Sparkles, UserRound, Compass, Play } from 'lucide-svelte';
+  import { ArrowUpRight, Clock3, Heart, LogIn, LogOut, Settings2, ShieldCheck, Sparkles, UserRound } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { getLocalFavorites, getLocalProgressRecords } from '$lib/client/progress/service';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
+  import ScrollToTop from '$components/ScrollToTop.svelte';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
@@ -160,27 +161,13 @@
       </div>
     </section>
 
-    <!-- Action cards -->
+    <!-- Single Settings shortcut — My List and Discover are already in the
+         global bottom nav / sidebar, so they are intentionally not
+         duplicated here as quick-action cards. -->
     <section class="actions-section" aria-labelledby="actions-heading">
-      <div class="section-eyebrow"><Compass size={12} /> Quick actions</div>
-      <h2 id="actions-heading">Where to next.</h2>
+      <div class="section-eyebrow"><Settings2 size={12} /> Quick action</div>
+      <h2 id="actions-heading">Tune your experience.</h2>
       <div class="action-grid">
-        <a class="action-card" href="/my-list">
-          <div class="action-icon"><Bookmark size={18} /></div>
-          <div class="action-copy">
-            <strong>My List</strong>
-            <small>Open your saved library</small>
-          </div>
-          <ArrowUpRight size={16} class="action-arrow" />
-        </a>
-        <a class="action-card" href="/discover">
-          <div class="action-icon"><Play size={18} /></div>
-          <div class="action-copy">
-            <strong>Discover</strong>
-            <small>Browse what's trending</small>
-          </div>
-          <ArrowUpRight size={16} class="action-arrow" />
-        </a>
         <a class="action-card" href="/settings">
           <div class="action-icon"><Settings2 size={18} /></div>
           <div class="action-copy">
@@ -214,7 +201,7 @@
     {/if}
 
     <footer class="profile-footer">
-      <span>Mavero @2026</span>
+      <span class="footer-line">Mavero @2026</span>
       <a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">
         Data from <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database" />
       </a>
@@ -226,16 +213,20 @@
   {#if signoutError}<p class="dialog-error" role="alert">{signoutError}</p>{/if}
 </ConfirmDialog>
 
+<ScrollToTop />
+
 <style>
   .profile-page {
     --p-gutter: clamp(16px, 5vw, 48px);
     min-height: calc(100dvh - 76px);
-    padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   }
 
   /* Hero */
   .profile-hero {
-    padding: calc(40px + env(safe-area-inset-top, 0px)) var(--p-gutter) 30px;
+    /* The shell already adds the topbar offset via --shell-content-top.
+       We only add a deliberate per-page breathing room here. */
+    padding: 28px var(--p-gutter) 30px;
     border-bottom: 1px solid rgba(255,255,255,.05);
     background:
       radial-gradient(circle at 88% -30%, rgba(255,255,255,.05), transparent 50%),
@@ -530,20 +521,24 @@
   .signout-btn:disabled { opacity: .5; cursor: not-allowed; }
 
   .profile-footer {
-    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    /* Centered single block: Mavero copyright on one line, TMDB
+       attribution beneath it. Subtle, small, neutral gray. */
+    display: grid; justify-items: center; gap: 6px;
     margin-top: 32px;
-    padding-top: 18px;
+    padding-top: 22px;
     border-top: 1px solid rgba(255,255,255,.05);
     color: #77777f;
     font-size: .62rem;
+    text-align: center;
   }
+  .footer-line { color: #77777f; letter-spacing: .04em; }
   .tmdb-credit { display: inline-flex; align-items: center; gap: 7px; color: #77777f; text-decoration: none; }
   .tmdb-credit:hover { color: #c7c7cc; }
   .tmdb-logo { width: 38px; height: 27px; object-fit: contain; }
   .dialog-error { margin: 12px 0 0; color: #ffb020; font-size: .72rem; line-height: 1.45; }
 
   @media (max-width: 720px) {
-    .profile-hero { padding-top: calc(30px + env(safe-area-inset-top, 0px)); }
+    .profile-hero { padding-top: 22px; }
     .hero-grid { grid-template-columns: 64px 1fr; gap: 16px; }
     .avatar { width: 64px; height: 64px; font-size: 1.3rem; }
     .identity-copy h1 { font-size: clamp(1.4rem, 5.5vw, 2rem); }
@@ -551,14 +546,13 @@
     .cinelog-panel { grid-template-columns: 40px 1fr; }
     .cinelog-icon { width: 40px; height: 40px; }
     .cinelog-cta { grid-column: 1 / -1; justify-self: start; }
-    .profile-footer { flex-direction: column; align-items: start; }
   }
   @media (max-width: 480px) {
     .stats-grid { grid-template-columns: 1fr; }
     .stat-copy strong { font-size: 1.3rem; }
   }
   @media (min-width: 900px) {
-    .profile-hero { padding-top: calc(60px + env(safe-area-inset-top, 0px)); }
+    .profile-hero { padding-top: 48px; }
     .identity-copy h1 { font-size: clamp(2rem, 3.4vw, 2.8rem); }
   }
   @media (prefers-reduced-motion: reduce) {
