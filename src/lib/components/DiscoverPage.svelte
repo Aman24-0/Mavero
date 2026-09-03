@@ -38,7 +38,7 @@
     { label: 'Trending', href: '/discover' },
   ];
 
-  const genreTiles = [
+  const genreTileDefs = [
     { label: 'Action', href: '/discover/movies?genre=Action' },
     { label: 'Comedy', href: '/discover/movies?genre=Comedy' },
     { label: 'Horror', href: '/discover/movies?genre=Horror' },
@@ -48,6 +48,14 @@
     { label: 'Thriller', href: '/discover/movies?genre=Thriller' },
     { label: 'Fantasy', href: '/discover/movies?genre=Fantasy' },
   ];
+
+  // Build genre tiles with real artwork from available data
+  $: genreTiles = genreTileDefs.map((g) => {
+    const collection = genreCollections.find((c) => c.title.toLowerCase().includes(g.label.toLowerCase()));
+    const fallbackItems = [...movies, ...series, ...popularMovies, ...popularSeries];
+    const artItem = collection?.items?.[0] ?? fallbackItems.find((i) => i.genres?.some((gn) => gn.toLowerCase() === g.label.toLowerCase()));
+    return { ...g, artwork: artItem?.backdrop || artItem?.poster || '' };
+  });
 
   let localContinueLoaded = false;
   let localContinueItems: MediaItem[] = [];
@@ -145,17 +153,11 @@
 
   function preloadImage(url: string) {
     return new Promise<boolean>((resolve) => {
-      if (!url) {
-        resolve(false);
-        return;
-      }
+      if (!url) { resolve(false); return; }
       const image = new Image();
       image.onload = () => {
-        if ('decode' in image) {
-          void image.decode().catch(() => undefined).finally(() => resolve(true));
-        } else {
-          resolve(true);
-        }
+        if ('decode' in image) { void image.decode().catch(() => undefined).finally(() => resolve(true)); }
+        else { resolve(true); }
       };
       image.onerror = () => resolve(false);
       image.src = url;
@@ -165,24 +167,16 @@
   async function changeGallerySlide(nextIndex: number, userInitiated = false) {
     const nextHero = featuredItems[nextIndex];
     if (!nextHero || nextIndex === activeIndex || galleryTransitioning || featuredItems.length < 2) return;
-
     galleryTransitioning = true;
     pauseGallery();
     const token = ++transitionToken;
     const nextImage = nextHero.item.backdrop?.trim() || nextHero.item.poster?.trim() || '';
     const imageReady = await preloadImage(nextImage);
     if (destroyed || token !== transitionToken) return;
-
     imageLoadFailed = !imageReady;
     activeIndex = nextIndex;
     if (userInitiated) haptic('light');
-
-    if (reducedMotion) {
-      galleryTransitioning = false;
-      resumeGallery();
-      return;
-    }
-
+    if (reducedMotion) { galleryTransitioning = false; resumeGallery(); return; }
     if (galleryTransitionTimer) clearTimeout(galleryTransitionTimer);
     galleryTransitionTimer = setTimeout(() => {
       galleryTransitionTimer = undefined;
@@ -192,11 +186,7 @@
   }
 
   function selectGallerySlide(index: number) {
-    if (index === activeIndex) {
-      pauseGallery();
-      releaseInteractionPause();
-      return;
-    }
+    if (index === activeIndex) { pauseGallery(); releaseInteractionPause(); return; }
     pauseGallery();
     releaseInteractionPause();
     void changeGallerySlide(index, true);
@@ -204,50 +194,22 @@
 
   function handleGalleryKeydown(event: KeyboardEvent) {
     if (!featuredItems.length) return;
-    if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      pauseGallery();
-      releaseInteractionPause();
-      void changeGallerySlide((activeIndex + 1) % featuredItems.length, true);
-    } else if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      pauseGallery();
-      releaseInteractionPause();
-      void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true);
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      pauseGallery();
-      releaseInteractionPause();
-      void changeGallerySlide(0, true);
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      pauseGallery();
-      releaseInteractionPause();
-      void changeGallerySlide(featuredItems.length - 1, true);
-    } else if (event.key === ' ') {
-      event.preventDefault();
-      if (galleryPaused) resumeGallery();
-      else pauseGallery();
-    }
+    if (event.key === 'ArrowRight') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex + 1) % featuredItems.length, true); }
+    else if (event.key === 'ArrowLeft') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true); }
+    else if (event.key === 'Home') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); void changeGallerySlide(0, true); }
+    else if (event.key === 'End') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); void changeGallerySlide(featuredItems.length - 1, true); }
+    else if (event.key === ' ') { event.preventDefault(); if (galleryPaused) resumeGallery(); else pauseGallery(); }
   }
 
   function handleDocumentVisibility() {
-    if (document.hidden) {
-      if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
-      galleryRotationTimer = undefined;
-    } else if (!galleryPaused && !galleryTransitioning) {
-      queueGalleryRotation();
-    }
+    if (document.hidden) { if (galleryRotationTimer) clearTimeout(galleryRotationTimer); galleryRotationTimer = undefined; }
+    else if (!galleryPaused && !galleryTransitioning) { queueGalleryRotation(); }
   }
 
   function handleMotionChange(event: MediaQueryListEvent) {
     reducedMotion = event.matches;
-    if (reducedMotion) {
-      if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
-      galleryRotationTimer = undefined;
-    } else if (!galleryPaused && !galleryTransitioning) {
-      queueGalleryRotation();
-    }
+    if (reducedMotion) { if (galleryRotationTimer) clearTimeout(galleryRotationTimer); galleryRotationTimer = undefined; }
+    else if (!galleryPaused && !galleryTransitioning) { queueGalleryRotation(); }
   }
 
   onMount(() => {
@@ -256,33 +218,17 @@
     reducedMotion = motionQuery.matches;
     motionQuery.addEventListener?.('change', handleMotionChange);
     document.addEventListener('visibilitychange', handleDocumentVisibility);
-
     let cancelled = false;
     const loadContinue = async () => {
       try {
-        if (page.data.user) {
-          const cloud = await syncAuthenticatedState();
-          return continueWatchingRecords(cloud.progress, cloud.favorites);
-        }
+        if (page.data.user) { const cloud = await syncAuthenticatedState(); return continueWatchingRecords(cloud.progress, cloud.favorites); }
         return getContinueWatching();
-      } catch {
-        return [];
-      }
+      } catch { return []; }
     };
-
-    void loadContinue().then((records) => {
-      if (cancelled) return;
-      localContinueItems = records.map(progressToMedia);
-      localContinueLoaded = true;
-    });
-
+    void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
     queueGalleryRotation();
-
     return () => {
-      cancelled = true;
-      destroyed = true;
-      transitionToken += 1;
-      clearGalleryTimers();
+      cancelled = true; destroyed = true; transitionToken += 1; clearGalleryTimers();
       motionQuery?.removeEventListener?.('change', handleMotionChange);
       document.removeEventListener('visibilitychange', handleDocumentVisibility);
     };
@@ -320,106 +266,86 @@
         {#if activeHeroImage && !imageLoadFailed}
           <picture>
             <source media="(max-width: 640px)" srcset={activeHero.item.backdropSmall || activeHeroImage} />
-            <img
-              class="hero-image"
-              src={activeHeroImage}
-              alt={`${activeHero.item.title} backdrop`}
-              width="1280"
-              height="720"
-              sizes="100vw"
-              loading={activeIndex === 0 ? 'eager' : 'lazy'}
-              fetchpriority={activeIndex === 0 ? 'high' : 'auto'}
-              decoding="async"
-              onerror={() => { imageLoadFailed = true; }}
-            />
+            <img class="hero-image" src={activeHeroImage} alt={`${activeHero.item.title} backdrop`} width="1280" height="720" sizes="100vw" loading={activeIndex === 0 ? 'eager' : 'lazy'} fetchpriority={activeIndex === 0 ? 'high' : 'auto'} decoding="async" onerror={() => { imageLoadFailed = true; }} />
           </picture>
         {:else}
-          <div class="hero-image-fallback" style={`--hero-accent: ${activeHero.item.accent}`}>
-            <span>{activeHero.item.title}</span>
-          </div>
+          <div class="hero-image-fallback" style={`--hero-accent: ${activeHero.item.accent}`}><span>{activeHero.item.title}</span></div>
         {/if}
       </div>
       <div class="hero-scrim" aria-hidden="true"></div>
-      <div class="hero-scrim-bottom" aria-hidden="true"></div>
 
-      <div class="container-wide hero-body">
+      <div class="hero-content">
         <div class="hero-copy" aria-live="polite">
-          <div class="hero-kicker">{activeHero.category} <span class="dot"></span> Featured</div>
+          <div class="hero-kicker">{activeHero.category}</div>
           <h1>{activeHero.item.title}</h1>
           <div class="hero-meta">
             {#if activeHero.item.rating > 0}<span class="rating">★ {activeHero.item.rating.toFixed(1)}</span>{/if}
             {#if activeHero.item.year > 0}<span>{activeHero.item.year}</span>{/if}
             {#if activeHero.item.maturity}<span class="dot"></span><span>{activeHero.item.maturity}</span>{/if}
-            {#if activeHero.item.runtime}<span class="dot"></span><span>{activeHero.item.runtime}</span>{/if}
+            {#if activeHero.item.genres?.length}<span class="dot"></span><span>{activeHero.item.genres.slice(0,2).join(' · ')}</span>{/if}
           </div>
-          <p>{activeHero.item.description?.trim() || 'No description available.'}</p>
-          {#if activeHero.item.genres?.length}
-            <div class="hero-genres" aria-label="Genres">
-              {#each activeHero.item.genres.slice(0, 3) as genre}<span>{genre}</span>{/each}
-            </div>
+          {#if activeHero.item.description?.trim()}
+            <p>{activeHero.item.description.trim()}</p>
+          {:else}
+            <p>No description available.</p>
           {/if}
           <div class="hero-actions">
-            <a class="btn btn-primary" href={`/watch/${activeHero.item.type}/${activeHero.item.id}`}><Play size={16} fill="currentColor" /> Play</a>
-            <a class="btn btn-secondary hero-details-link" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`View details for ${activeHero.item.title}`}><Info size={16} /> <span class="hero-details-text">Details</span></a>
-            <a class="btn btn-secondary icon-only" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`Add ${activeHero.item.title} to My List`}><ListPlus size={16} /></a>
+            <a class="hero-play" href={`/watch/${activeHero.item.type}/${activeHero.item.id}`}><Play size={15} fill="currentColor" strokeWidth={0} /> Play</a>
+            <a class="hero-btn" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`Details for ${activeHero.item.title}`}><Info size={14} /> Details</a>
+            <a class="hero-btn icon-only" href={`/${activeHero.item.type}/${activeHero.item.id}`} aria-label={`Add ${activeHero.item.title} to My List`}><ListPlus size={14} /></a>
           </div>
         </div>
       </div>
 
-      <div class="hero-controls" aria-label="Featured title controls">
-        <button class="hero-arrow" type="button" aria-label="Previous title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true); }}><ArrowLeft size={16} /></button>
-        <div class="hero-dots" role="tablist" aria-label="Choose featured title">
-          {#each featuredItems as slide, index}
-            <button class:active={index === activeIndex} class="hero-dot" type="button" role="tab" aria-selected={index === activeIndex} aria-label={`Show ${slide.item.title}`} aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => selectGallerySlide(index)}></button>
-          {/each}
+      {#if featuredItems.length > 1}
+        <div class="hero-nav">
+          <button class="hero-nav-btn" type="button" aria-label="Previous title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true); }}><ArrowLeft size={14} /></button>
+          <div class="hero-dots" role="tablist" aria-label="Choose featured title">
+            {#each featuredItems as slide, index}
+              <button class:active={index === activeIndex} class="hero-dot" type="button" role="tab" aria-selected={index === activeIndex} aria-label={`Show ${slide.item.title}`} aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => selectGallerySlide(index)}></button>
+            {/each}
+          </div>
+          <button class="hero-nav-btn" type="button" aria-label="Next title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex + 1) % featuredItems.length, true); }}><ArrowRight size={14} /></button>
         </div>
-        <button class="hero-arrow" type="button" aria-label="Next title" aria-disabled={galleryTransitioning} disabled={galleryTransitioning} onclick={() => { pauseGallery(); releaseInteractionPause(); void changeGallerySlide((activeIndex + 1) % featuredItems.length, true); }}><ArrowRight size={16} /></button>
-      </div>
+      {/if}
     </section>
   {:else if hasCatalog}
     <section class="hero hero-fallback" aria-label="Featured title unavailable">
-      <div class="container-wide hero-body">
+      <div class="hero-content">
         <div class="hero-copy">
-          <div class="hero-kicker">MAVERO <span class="dot"></span> Featured</div>
+          <div class="hero-kicker">MAVERO</div>
           <h1>Featured title unavailable.</h1>
-          <p>The catalog is available below, but the next featured image is not ready yet.</p>
-          <div class="hero-actions"><a class="btn btn-secondary" href="/discover">Browse the catalog</a></div>
+          <p>The catalog is available below.</p>
         </div>
       </div>
     </section>
   {/if}
 
-  <div class="container-wide main-content">
+  <div class="discover-body">
     {#if errorMessage}<div class="catalog-warning" role="alert">{errorMessage}</div>{/if}
     {#if hasCatalog}
-      <!-- Quick Discovery Chips -->
       <nav class="quick-chips" aria-label="Quick discovery">
         {#each quickChips as chip}
           <a href={chip.href}>{chip.label}</a>
         {/each}
       </nav>
 
-      <!-- Continue Watching -->
       {#if localContinue.length}
         <ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />
       {/if}
 
-      <!-- Trending Right Now (mixed: movies + series) -->
       {#if movies.length || series.length}
         <ContentRail title="Trending right now" items={[...movies.slice(0, 10), ...series.slice(0, 10)]} href="/discover" />
       {/if}
 
-      <!-- New Movies -->
       {#if newMovies.length}
         <ContentRail title="New movies" items={newMovies} href="/discover/movies?sort=Newest" />
       {/if}
 
-      <!-- Popular TV Shows -->
       {#if popularSeries.length}
         <ContentRail title="Popular TV shows" items={popularSeries} href="/discover/series" />
       {/if}
 
-      <!-- Anime Discovery -->
       {#if anime.length}
         <ContentRail title="Popular anime" items={anime} href="/discover/anime" />
       {/if}
@@ -427,26 +353,27 @@
         <ContentRail title="Trending anime" items={popularAnime} href="/discover/anime" />
       {/if}
 
-      <!-- Intent-based Genre Collections -->
       {#each genreCollections as col}
         <ContentRail title={col.title} items={col.items} href="/discover/movies" />
       {/each}
 
-      <!-- Popular Genres -->
-      <section class="genre-section" aria-labelledby="genre-discover">
-        <div class="section-head">
-          <h2 class="section-title" id="genre-discover">Browse by genre</h2>
-        </div>
-        <div class="genre-grid">
-          {#each genreTiles as tile}
-            <a class="genre-tile" href={tile.href}>
-              <span class="genre-tile-label">{tile.label}</span>
-            </a>
-          {/each}
-        </div>
-      </section>
+      {#if genreTiles.length}
+        <section class="genre-section" aria-labelledby="genre-discover">
+          <div class="genre-head"><h2 class="genre-title" id="genre-discover">Browse by genre</h2></div>
+          <div class="genre-grid">
+            {#each genreTiles as tile}
+              <a class="genre-tile" href={tile.href}>
+                {#if tile.artwork}
+                  <img src={tile.artwork} alt="" loading="lazy" decoding="async" class="genre-art" />
+                {/if}
+                <div class="genre-overlay"></div>
+                <span class="genre-label">{tile.label}</span>
+              </a>
+            {/each}
+          </div>
+        </section>
+      {/if}
 
-      <!-- Top Rated -->
       {#if topRatedMovies.length}
         <ContentRail title="Top rated movies" items={topRatedMovies} href="/discover/movies?sort=Top+rated" />
       {/if}
@@ -457,108 +384,113 @@
         <ContentRail title="Top rated anime" items={topRatedAnime} href="/discover/anime?sort=Top+rated" />
       {/if}
 
-      <!-- Popular Movies (fallback discovery) -->
       {#if popularMovies.length}
         <ContentRail title="Popular movies" items={popularMovies} href="/discover/movies" />
       {/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}
-    <footer class="footer"><strong>MAVERO</strong><span>Movies, series &amp; anime — all in one place.</span></footer>
+    <footer class="discover-footer"><strong>MAVERO</strong><span>Movies, series &amp; anime — all in one place.</span></footer>
   </div>
 </div>
 
 <style>
   .discover-page {
-    /* Discover-scoped cinematic palette — does NOT affect global :root */
-    --discover-base: #000000;
-    --discover-surface: #0a0a0a;
-    --discover-surface-2: #111111;
-    --discover-surface-raised: #151515;
-    --discover-ink: #f5f5f5;
-    --discover-ink-soft: #9a9a9a;
-    --discover-muted: #666666;
-    --discover-line: rgba(255,255,255,.08);
-    --discover-line-strong: rgba(255,255,255,.14);
+    --d-base: #000000;
+    --d-surface: #0a0a0a;
+    --d-surface-2: #111111;
+    --d-ink: #f5f5f5;
+    --d-ink-soft: #9a9a9a;
+    --d-muted: #666666;
+    --d-line: rgba(255,255,255,.08);
+    --d-line-strong: rgba(255,255,255,.14);
   }
 
-  .hero { position: relative; min-height: min(82vh, 760px); overflow: hidden; background: var(--discover-base); }
-  .hero-media { position: absolute; inset: 0; overflow: hidden; background: var(--discover-base); }
-  .hero-image, .hero-image-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
-  .hero-image { display: block; }
-  .hero.transitioning .hero-image { opacity: .82; transform: scale(1.01); }
-  .hero-image-fallback { display: grid; place-items: center; background: radial-gradient(circle at 70% 28%, color-mix(in srgb, var(--hero-accent) 38%, transparent), transparent 42%), linear-gradient(135deg, var(--discover-surface-2), var(--discover-base)); }
-  .hero-image-fallback span { max-width: 70%; color: rgba(255,255,255,.1); font-size: clamp(2rem, 8vw, 6rem); font-weight: 900; letter-spacing: -.05em; text-align: center; }
-  .hero-scrim { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(0,0,0,.95) 6%, rgba(0,0,0,.7) 30%, rgba(0,0,0,.2) 56%, rgba(0,0,0,.5) 100%); pointer-events: none; }
-  .hero-scrim-bottom { position: absolute; inset: auto 0 0 0; height: 50%; background: linear-gradient(0deg, var(--discover-base) 0%, transparent 100%); pointer-events: none; }
-  .hero-body { position: relative; z-index: 2; display: flex; align-items: flex-end; min-height: min(82vh, 760px); padding-bottom: 88px; padding-top: 120px; }
-  .hero-copy { max-width: 620px; }
-  .hero-kicker { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-strong); font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  .dot { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .6; }
-  .hero-copy h1 { margin: 12px 0 0; color: var(--discover-ink); font-size: clamp(2.2rem, 5vw, 4.2rem); font-weight: 900; letter-spacing: -.03em; line-height: .98; text-wrap: balance; }
-  .hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 16px; color: var(--discover-ink-soft); font-size: .8rem; font-weight: 600; }
+  /* === HERO === */
+  .hero { position: relative; min-height: min(80vh, 720px); overflow: hidden; background: var(--d-base); }
+  .hero-media { position: absolute; inset: 0; overflow: hidden; }
+  .hero-image, .hero-image-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; transition: opacity 200ms var(--ease-out); }
+  .hero.transitioning .hero-image { opacity: .85; }
+  .hero-image-fallback { display: grid; place-items: center; background: radial-gradient(circle at 70% 28%, color-mix(in srgb, var(--hero-accent) 35%, transparent), transparent 42%), var(--d-surface-2); }
+  .hero-image-fallback span { color: rgba(255,255,255,.08); font-size: clamp(2rem, 8vw, 5rem); font-weight: 900; }
+
+  .hero-scrim { position: absolute; inset: 0; background: linear-gradient(0deg, var(--d-base) 2%, rgba(0,0,0,.3) 30%, rgba(0,0,0,.1) 55%, rgba(0,0,0,.4) 100%); pointer-events: none; }
+
+  .hero-content { position: relative; z-index: 2; display: flex; align-items: flex-end; min-height: min(80vh, 720px); padding: 100px clamp(16px, 5vw, 56px) 90px; }
+  .hero-copy { max-width: 580px; }
+  .hero-kicker { color: var(--accent-strong); font-size: .65rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .hero-copy h1 { margin: 8px 0 0; color: var(--d-ink); font-size: clamp(2rem, 5.5vw, 4rem); font-weight: 900; letter-spacing: -.025em; line-height: .96; text-wrap: balance; text-shadow: 0 2px 20px rgba(0,0,0,.6); }
+  .hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 12px; color: var(--d-ink-soft); font-size: .75rem; font-weight: 600; }
   .hero-meta .rating { color: #ffc94d; }
-  .hero-meta .dot { color: var(--discover-muted); }
-  .hero-copy p { max-width: 540px; margin: 16px 0 0; color: var(--discover-ink-soft); font-size: .9rem; line-height: 1.6; text-wrap: pretty; }
-  .hero-genres { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-  .hero-genres span { border: 1px solid var(--discover-line-strong); border-radius: 999px; padding: 5px 12px; color: var(--discover-ink-soft); font-size: .68rem; font-weight: 600; background: rgba(255,255,255,.04); }
-  .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
-  .icon-only { width: 46px; padding: 0; flex: 0 0 auto; }
-  .hero-details-link { max-width: min(200px, 42vw); }
-  .hero-details-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hero-controls { position: absolute; right: clamp(20px, 4vw, 48px); bottom: 28px; z-index: 3; display: flex; align-items: center; gap: 8px; }
-  .hero-arrow { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--discover-line-strong); border-radius: 50%; color: var(--discover-ink); background: rgba(0,0,0,.5); backdrop-filter: blur(10px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .hero-arrow:hover:not(:disabled), .hero-arrow:focus-visible:not(:disabled) { border-color: rgba(255,90,122,.6); background: var(--accent-soft); transform: translateY(-1px); outline: 0; }
-  .hero-arrow:disabled, .hero-dot:disabled { cursor: wait; opacity: .55; }
-  .hero-dots { display: flex; align-items: center; gap: 2px; }
-  .hero-dot { position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 999px; background: transparent; transition: background var(--motion-fast) var(--ease-out); }
-  .hero-dot::after { content: ''; width: 7px; height: 7px; border-radius: 999px; background: rgba(255,255,255,.25); transition: width var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .hero-dot:hover:not(:disabled)::after, .hero-dot:focus-visible:not(:disabled)::after { background: rgba(255,255,255,.6); }
-  .hero-dot:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
-  .hero-dot.active::after { width: 22px; background: var(--accent-gradient); }
-  .hero-fallback { background: radial-gradient(circle at 72% 28%, rgba(255,90,122,.15), transparent 38%), var(--discover-base); }
+  .dot { width: 2px; height: 2px; border-radius: 50%; background: currentColor; opacity: .5; }
+  .hero-copy p { max-width: 480px; margin: 10px 0 0; color: var(--d-ink-soft); font-size: .82rem; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; text-wrap: pretty; }
 
-  .quick-chips { display: flex; gap: 8px; margin: 0 0 32px; padding: 0 clamp(16px, 4vw, 48px); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .hero-play { display: inline-flex; align-items: center; gap: 6px; padding: 10px 22px; border-radius: 6px; color: #fff; font-size: .82rem; font-weight: 700; text-decoration: none; background: var(--accent); transition: background var(--motion-fast); }
+  .hero-play:hover { background: var(--accent-strong); }
+  .hero-btn { display: inline-flex; align-items: center; gap: 5px; padding: 10px 16px; border-radius: 6px; color: var(--d-ink); font-size: .78rem; font-weight: 600; text-decoration: none; background: rgba(255,255,255,.1); backdrop-filter: blur(4px); transition: background var(--motion-fast); }
+  .hero-btn:hover { background: rgba(255,255,255,.16); }
+  .hero-btn.icon-only { padding: 10px 12px; }
+
+  .hero-nav { position: absolute; right: clamp(16px, 4vw, 48px); bottom: 16px; z-index: 3; display: flex; align-items: center; gap: 6px; }
+  .hero-nav-btn { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--d-line); border-radius: 6px; color: var(--d-ink-soft); background: rgba(0,0,0,.4); transition: all var(--motion-fast); }
+  .hero-nav-btn:hover:not(:disabled) { border-color: var(--d-line-strong); color: var(--d-ink); background: rgba(0,0,0,.6); }
+  .hero-nav-btn:disabled { opacity: .4; cursor: wait; }
+  .hero-dots { display: flex; align-items: center; gap: 3px; }
+  .hero-dot { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+  .hero-dot::after { content: ''; display: block; width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.3); transition: all var(--motion-fast); }
+  .hero-dot:hover:not(:disabled)::after { background: rgba(255,255,255,.6); }
+  .hero-dot:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 1px; }
+  .hero-dot.active::after { width: 16px; border-radius: 3px; background: var(--accent); }
+  .hero-dot:disabled { opacity: .4; }
+  .hero-fallback { background: radial-gradient(circle at 72% 28%, rgba(255,90,122,.12), transparent 38%), var(--d-base); }
+
+  /* === BODY === */
+  .discover-body { padding: 0 0 40px; }
+
+  .quick-chips { display: flex; gap: 6px; padding: 16px clamp(16px, 4vw, 48px) 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .quick-chips::-webkit-scrollbar { display: none; }
-  .quick-chips a { flex: 0 0 auto; padding: 7px 16px; border: 1px solid var(--discover-line); border-radius: 999px; color: var(--discover-ink-soft); text-decoration: none; font-size: .75rem; font-weight: 600; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .quick-chips a:hover { border-color: var(--discover-line-strong); color: var(--discover-ink); background: rgba(255,255,255,.03); }
-  .quick-chips a:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+  .quick-chips a { flex: 0 0 auto; padding: 5px 14px; border-radius: 20px; color: var(--ink-soft); text-decoration: none; font-size: .72rem; font-weight: 600; background: rgba(255,255,255,.05); transition: all var(--motion-fast); }
+  .quick-chips a:hover { color: var(--ink); background: rgba(255,255,255,.1); }
+  .quick-chips a:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 1px; }
 
-  .genre-section { padding: 0 0 36px; }
-  .genre-section .section-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; padding: 0 clamp(16px, 4vw, 48px); }
-  .genre-section .section-title { color: var(--discover-ink); font-size: clamp(1.15rem, 2.5vw, 1.5rem); font-weight: 800; letter-spacing: -.02em; }
-  .genre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 0 clamp(16px, 4vw, 48px); }
-  .genre-tile { display: flex; align-items: center; justify-content: center; height: 72px; border-radius: 10px; border: 1px solid var(--discover-line); background: linear-gradient(135deg, var(--discover-surface-2), var(--discover-surface)); text-decoration: none; transition: border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .genre-tile:hover { border-color: var(--discover-line-strong); transform: translateY(-2px); }
-  .genre-tile:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
-  .genre-tile-label { color: var(--discover-ink); font-size: .82rem; font-weight: 700; }
+  /* === GENRE === */
+  .genre-section { margin-top: 24px; padding: 0 clamp(16px, 4vw, 48px); }
+  .genre-head { margin-bottom: 10px; }
+  .genre-title { color: var(--ink); font-size: clamp(1rem, 2vw, 1.3rem); font-weight: 700; letter-spacing: -.015em; }
+  .genre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+  .genre-tile { position: relative; display: flex; align-items: flex-end; height: 64px; border-radius: 8px; overflow: hidden; text-decoration: none; background: var(--surface-2); transition: transform var(--motion-fast); }
+  .genre-tile:hover { transform: translateY(-2px); }
+  .genre-tile:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 1px; }
+  .genre-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .35; }
+  .genre-overlay { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(0,0,0,.6), rgba(0,0,0,.3)); }
+  .genre-label { position: relative; z-index: 1; padding: 8px 10px; color: var(--ink); font-size: .76rem; font-weight: 700; }
 
-  .catalog-warning { margin: 16px 0 0; padding: 12px 14px; border: 1px solid rgba(255,176,32,.35); border-radius: var(--radius-sm); color: var(--warning); font-size: .72rem; line-height: 1.5; }
-  .footer { padding: 48px 0 32px; text-align: center; }
-  .footer strong { color: var(--discover-ink); font-size: .85rem; letter-spacing: .04em; }
-  .footer span { display: block; margin-top: 4px; color: var(--discover-muted); font-size: .7rem; }
+  .catalog-warning { margin: 16px clamp(16px, 4vw, 48px) 0; padding: 10px 12px; border: 1px solid rgba(255,176,32,.3); border-radius: 6px; color: var(--warning); font-size: .7rem; }
+  .discover-footer { padding: 40px 0 20px; text-align: center; }
+  .discover-footer strong { color: var(--ink); font-size: .8rem; letter-spacing: .03em; }
+  .discover-footer span { display: block; margin-top: 3px; color: var(--muted); font-size: .65rem; }
 
   @media (max-width: 900px) {
-    .hero { min-height: min(72vh, 620px); }
-    .hero-body { min-height: min(72vh, 620px); padding-top: 90px; padding-bottom: 80px; }
+    .hero { min-height: min(70vh, 580px); }
+    .hero-content { min-height: min(70vh, 580px); padding-top: 80px; padding-bottom: 70px; }
   }
   @media (max-width: 640px) {
-    .hero { min-height: 76vh; }
-    .hero-image, .hero-image-fallback { object-position: center 18%; }
-    .hero-scrim { background: linear-gradient(0deg, rgba(0,0,0,.98) 18%, rgba(0,0,0,.55) 55%, rgba(0,0,0,.35) 100%); }
-    .hero-body { align-items: flex-end; min-height: 76vh; padding-top: 76px; padding-bottom: 72px; }
+    .hero { min-height: 70vh; }
+    .hero-image, .hero-image-fallback { object-position: center 15%; }
+    .hero-scrim { background: linear-gradient(0deg, var(--d-base) 5%, rgba(0,0,0,.2) 35%, rgba(0,0,0,.05) 60%, rgba(0,0,0,.3) 100%); }
+    .hero-content { align-items: flex-end; min-height: 70vh; padding: 70px 16px 60px; }
     .hero-copy { max-width: none; }
-    .hero-copy h1 { font-size: clamp(1.8rem, 8vw, 2.6rem); }
-    .hero-copy p { font-size: .8rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
-    .hero-genres { display: none; }
-    .hero-actions .btn:not(.icon-only) { flex: 1; }
-    .hero-controls { right: 10px; bottom: 8px; gap: 2px; }
-    .hero-dots { width: min(64vw, 230px); overflow-x: auto; scrollbar-width: none; }
-    .hero-dots::-webkit-scrollbar { display: none; }
-    .hero-arrow { width: 44px; height: 44px; }
+    .hero-copy h1 { font-size: clamp(1.6rem, 7vw, 2.4rem); }
+    .hero-copy p { font-size: .76rem; -webkit-line-clamp: 2; line-clamp: 2; }
+    .hero-actions { gap: 6px; }
+    .hero-play { flex: 1; justify-content: center; }
+    .hero-nav { right: 12px; bottom: 8px; }
+    .hero-nav-btn { width: 28px; height: 28px; }
     .genre-grid { grid-template-columns: repeat(2, 1fr); }
+    .genre-tile { height: 56px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .hero-image, .hero-image-fallback, .hero-arrow, .hero-dot, .hero-dot::after, .quick-chips a, .genre-tile { transition: none; }
+    .hero-image, .hero-nav-btn, .hero-dot::after, .quick-chips a, .genre-tile { transition: none; }
   }
 </style>
