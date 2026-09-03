@@ -45,7 +45,7 @@
       {/if}
       <span class="mc-type">{formatType(item.type)}</span>
       {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
-      <span class="mc-play" aria-hidden="true"><Play size={11} fill="currentColor" strokeWidth={0} /></span>
+      <span class="mc-play" aria-hidden="true"><Play size={12} fill="currentColor" strokeWidth={0} /></span>
       {#if item.progress}
         <div class="mc-progress" role="progressbar" aria-label={`${item.progress}% watched`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item.progress}><span style={`width: ${item.progress}%`}></span></div>
       {/if}
@@ -60,52 +60,68 @@
 </div>
 
 <style>
-  /* Use unique class names (mc-*) to avoid collision with global app.css .poster/.card rules */
   .mc-wrap { position: relative; min-width: 0; }
   .mc-card { display: block; text-decoration: none; }
 
-  .mc-poster { isolation: isolate; position: relative; border-radius: 6px; overflow: hidden; aspect-ratio: 2 / 3; background: var(--surface-2); }
+  .mc-poster {
+    isolation: isolate; position: relative; border-radius: 10px; overflow: hidden;
+    aspect-ratio: 2 / 3; background: var(--surface-2);
+    border: 1px solid rgba(255,255,255,.06);
+    transition: transform 220ms cubic-bezier(.22, 1, .36, 1), box-shadow 220ms cubic-bezier(.22, 1, .36, 1);
+  }
   .mc-placeholder { position: absolute; inset: 0; background: linear-gradient(135deg, var(--surface-2), rgba(255,255,255,.02)); }
   .mc-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.1); background: radial-gradient(circle at 72% 24%, color-mix(in srgb, var(--poster-accent) 25%, transparent), transparent 42%), var(--surface-2); }
-  .mc-fallback span { font-size: clamp(1.5rem, 6vw, 3rem); font-weight: 900; }
+  .mc-fallback span { font-size: clamp(1.5rem, 6vw, 3rem); font-weight: 800; }
 
-  /* SHARP poster image — no blur, no filter, no overlay */
-  .mc-poster img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform 300ms var(--ease-out); }
+  .mc-poster img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
-  /* Compact badges — no backdrop-filter, no blur */
-  .mc-type { position: absolute; top: 5px; left: 5px; z-index: 2; padding: 2px 6px; border-radius: 3px; color: rgba(255,255,255,.8); font-size: .5rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; background: rgba(0,0,0,.5); }
-  .mc-rating { position: absolute; top: 5px; right: 5px; z-index: 2; display: inline-flex; align-items: center; gap: 2px; padding: 2px 6px; border-radius: 3px; color: #ffc94d; font-size: .52rem; font-weight: 700; background: rgba(0,0,0,.5); }
-
-  /* Small play affordance */
-  .mc-play {
-    position: absolute; right: 6px; bottom: 6px; z-index: 2; display: grid; place-items: center;
-    width: 24px; height: 24px; border-radius: 50%; color: #fff; background: rgba(255,56,96,.8);
-    opacity: 0; transform: scale(.8);
-    transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-spring);
+  .mc-type {
+    position: absolute; top: 5px; left: 5px; z-index: 2;
+    padding: 2px 6px; border-radius: 4px;
+    color: rgba(255,255,255,.8); font-size: .5rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    background: rgba(0,0,0,.55);
   }
-  .mc-card:hover .mc-play, .mc-card:focus-visible .mc-play { opacity: 1; transform: scale(1); }
-  .mc-card:hover .mc-poster img, .mc-card:focus-visible .mc-poster img { transform: scale(1.04); }
+  .mc-rating {
+    position: absolute; top: 5px; right: 5px; z-index: 2;
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 2px 6px; border-radius: 4px;
+    color: #ffc94d; font-size: .52rem; font-weight: 700;
+    background: rgba(0,0,0,.55);
+  }
 
-  /* Progress bar on poster */
+  .mc-play {
+    position: absolute; right: 6px; bottom: 6px; z-index: 2;
+    display: grid; place-items: center;
+    width: 32px; height: 32px; border-radius: 50%;
+    color: #000; background: rgba(255,255,255,.9);
+    box-shadow: 0 2px 10px rgba(0,0,0,.4);
+    opacity: 0; transform: scale(.85);
+    transition: opacity 220ms cubic-bezier(.22, 1, .36, 1), transform 220ms cubic-bezier(.34, 1.56, .64, 1);
+  }
+  .mc-card:hover .mc-poster { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
+  .mc-card:hover .mc-play, .mc-card:focus-visible .mc-play { opacity: 1; transform: scale(1.06); }
+  .mc-card:focus-visible .mc-poster { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
+
   .mc-progress { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; height: 3px; background: rgba(0,0,0,.3); }
-  .mc-progress > span { display: block; height: 100%; background: var(--accent); }
+  .mc-progress > span { display: block; height: 100%; background: #f5f5f5; }
 
   .mc-info { padding: 6px 2px 0; }
   .mc-title { margin: 0; color: var(--ink); font-size: .76rem; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mc-meta { display: flex; align-items: center; gap: 4px; margin-top: 2px; color: var(--ink-soft); font-size: .64rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .mc-sep { color: var(--muted); opacity: .5; }
-  .mc-progress-label { margin-top: 2px; color: var(--accent-strong); font-size: .55rem; font-weight: 600; }
-  .mc-detail { position: absolute; bottom: -22px; left: 0; font-size: .58rem; color: var(--ink-soft); text-decoration: none; opacity: 0; transition: opacity var(--motion-fast); }
+  .mc-progress-label { margin-top: 2px; color: var(--ink-soft); font-size: .55rem; font-weight: 600; }
+  .mc-detail { position: absolute; bottom: -22px; left: 0; font-size: .58rem; color: var(--ink-soft); text-decoration: none; opacity: 0; transition: opacity 150ms ease; }
   .mc-wrap:hover .mc-detail { opacity: .7; }
 
   @media (max-width: 640px) {
-    .mc-play { opacity: .8; transform: scale(1); width: 22px; height: 22px; }
-    .mc-play :global(svg) { width: 10px; height: 10px; }
+    .mc-play { opacity: .85; transform: scale(1); width: 28px; height: 28px; }
+    .mc-play :global(svg) { width: 11px; height: 11px; }
     .mc-detail { display: none; }
     .mc-type { font-size: .46rem; padding: 1px 5px; }
     .mc-rating { font-size: .48rem; padding: 1px 5px; }
+    .mc-card:hover .mc-poster { transform: none; box-shadow: none; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .mc-play, .mc-poster img { transition: none; }
+    .mc-play, .mc-poster { transition: none; }
   }
 </style>

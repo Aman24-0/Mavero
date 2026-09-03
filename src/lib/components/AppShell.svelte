@@ -77,7 +77,7 @@
   .brand-lockup, .mobile-brand { display: inline-flex; align-items: center; gap: 9px; padding: 0 6px; color: var(--ink); text-decoration: none; }
   .brand-symbol {
     display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px;
-    color: #fff; background: var(--accent-gradient); box-shadow: 0 6px 16px rgba(255, 56, 96, .3);
+    color: #fff; background: rgba(255,255,255,.08); box-shadow: 0 4px 12px rgba(255,255,255,.06);
   }
   .brand-word { font-size: .92rem; font-weight: 900; letter-spacing: .04em; }
   .rail-nav { display: grid; gap: 2px; margin-top: 34px; }
@@ -88,8 +88,8 @@
     transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
   }
   .rail-link:hover { color: var(--ink); background: rgba(245, 246, 250, .06); transform: translateX(2px); }
-  .rail-link.active { color: var(--ink); font-weight: 700; border-color: rgba(255, 62, 94, .28); background: linear-gradient(90deg, var(--accent-soft), transparent 85%); }
-  .rail-link.active :global(svg) { color: var(--accent-strong); }
+  .rail-link.active { color: var(--ink); font-weight: 700; border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.06); }
+  .rail-link.active :global(svg) { color: var(--ink); }
   .rail-bottom { display: grid; gap: 14px; margin-top: auto; }
   .rail-rule { height: 1px; background: var(--line); }
   .rail-caption { padding: 0 12px; max-width: 150px; color: var(--muted-deep); font-size: .68rem; font-weight: 500; line-height: 1.4; }
@@ -110,9 +110,9 @@
       padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
       background: rgba(8, 8, 13, .96); backdrop-filter: blur(20px);
     }
-    .mobile-nav a { display: grid; place-items: center; gap: 4px; min-height: 48px; color: var(--muted-deep); font-size: .58rem; font-weight: 700; text-decoration: none; }
-    .mobile-nav a.active { color: var(--ink); }
-    .mobile-nav a.active :global(svg) { color: var(--accent-strong); }
+    .mobile-nav a { display: grid; place-items: center; gap: 4px; min-height: 48px; color: #6f7078; font-size: .58rem; font-weight: 700; text-decoration: none; transition: color 180ms ease, transform 180ms ease; }
+    .mobile-nav a.active { color: #f5f5f5; }
+    .mobile-nav a.active :global(svg) { color: #f5f5f5; transform: translateY(-1px); }
   }
   @media (min-width: 641px) { .mobile-nav { display: none; } }
 </style>
