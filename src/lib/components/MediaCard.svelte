@@ -27,7 +27,7 @@
     return () => observer.disconnect();
   });
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
-  $: cardHref = item.resumeHref ? appendReturnTo(item.resumeHref, returnTo) : appendReturnTo(`/${item.type}/${item.id}`, returnTo);
+  $: cardHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
   $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
   $: watchHref = appendReturnTo(`/watch/${item.type}/${item.id}`, returnTo);
   $: posterSrcset = item.posterSmall ? `${item.posterSmall} 342w, ${item.poster} 500w` : undefined;
