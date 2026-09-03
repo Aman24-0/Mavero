@@ -1,9 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowUpRight, Clock3, Heart, LogIn, Settings2, ShieldCheck, LogOut, Sparkles } from 'lucide-svelte';
+  import { ArrowUpRight, Bookmark, Clock3, Heart, LogIn, LogOut, Settings2, ShieldCheck, Sparkles, UserRound, Compass, Play } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
-  import ErrorState from '$components/ErrorState.svelte';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
   import { getLocalFavorites, getLocalProgressRecords } from '$lib/client/progress/service';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
@@ -23,7 +22,19 @@
 
   function accountName() {
     const metadata = data.user?.user_metadata;
-    return typeof metadata?.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name : data.user?.email?.split('@')[0] ?? 'Alex';
+    return typeof metadata?.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name : data.user?.email?.split('@')[0] ?? 'Guest';
+  }
+
+  function accountEmail() {
+    return data.user?.email ?? '';
+  }
+
+  function initials() {
+    const name = accountName();
+    if (!name) return '·';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return name.slice(0, 2).toUpperCase();
   }
 
   function syncStatusLabel(status: SyncStatus) {
@@ -77,81 +88,480 @@
   onMount(() => { void loadLocalState(); });
   let isAuthenticated = $derived(Boolean(data.user));
   let watchedLabel = $derived(watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`);
+  let favoriteCount = $derived(favoriteItems.length);
 </script>
 
 <svelte:head><title>Profile — Mavero</title><meta name="description" content="Manage your MAVERO profile and synced library." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
-<div class="container-wide profile-page">
-  <section class="profile-header">
-    <div class="profile-avatar">{accountName().slice(0, 2).toUpperCase()}</div>
-    <div class="identity-copy"><div class="eyebrow">MAVERO / Your space</div><h1>{accountName()}<span>.</span></h1><p>{isAuthenticated ? 'Your library follows you across devices.' : 'Pick up where you left off, or make room for something new.'}</p><div class="identity-meta"><span class:online={syncStatus === 'synced'}></span>{isAuthenticated ? syncStatusLabel(syncStatus) : 'Guest profile · Local library'}</div></div>
-    {#if !isAuthenticated}<a href="/auth/sign-in" class="btn btn-secondary"><LogIn size={15} /> Sign in to sync</a>{:else}<span class="account-status"><ShieldCheck size={14} /> Cloud account</span>{/if}
-  </section>
+<div class="profile-page">
+  <!-- Cinematic profile identity -->
+  <header class="profile-hero">
+    <div class="hero-inner">
+      <div class="hero-eyebrow"><UserRound size={13} /> MAVERO / Your space</div>
+      <div class="hero-grid">
+        <div class="avatar" aria-hidden="true">{initials()}</div>
+        <div class="identity-copy">
+          <h1>{accountName()}</h1>
+          {#if accountEmail()}
+            <p class="identity-email">{accountEmail()}</p>
+          {/if}
+          <p class="identity-tagline">{isAuthenticated ? 'Your library follows you across devices.' : 'Pick up where you left off, or make room for something new.'}</p>
+          <div class="identity-meta" aria-live="polite">
+            <span class:online={syncStatus === 'synced'} class:syncing={syncStatus === 'syncing'}></span>
+            {isAuthenticated ? syncStatusLabel(syncStatus) : 'Guest profile · Local library'}
+          </div>
+        </div>
+        {#if !isAuthenticated}
+          <a href="/auth/sign-in" class="sign-in-cta">
+            <LogIn size={15} /> <span>Sign in to sync</span>
+          </a>
+        {:else}
+          <span class="account-badge"><ShieldCheck size={13} /> Cloud account</span>
+        {/if}
+      </div>
+    </div>
+  </header>
 
-  <section class="profile-grid">
-    <section class="profile-card activity-card">
-      <div class="eyebrow">Your activity</div>
-      <div class="activity-list" aria-live="polite">
-        <div><Clock3 size={15} /><span><strong>{watchedLabel}</strong><small>{isAuthenticated ? 'Watch time' : 'Watched locally'}</small></span></div>
-        <div><Heart size={15} /><span><strong>{favoriteItems.length} title{favoriteItems.length === 1 ? '' : 's'}</strong><small>{isAuthenticated ? 'Synced My List' : 'Saved on this device'}</small></span></div>
+  <div class="profile-body">
+    {#if errorMessage}
+      <section class="error-banner" role="alert">
+        <strong>Your local library is resting.</strong>
+        <span>{errorMessage}</span>
+        <button type="button" onclick={loadLocalState}>Retry</button>
+      </section>
+    {/if}
+
+    <!-- Personal / library summary -->
+    <section class="stats-section" aria-labelledby="stats-heading">
+      <div class="section-eyebrow"><Sparkles size={12} /> Library summary</div>
+      <h2 id="stats-heading">Your Mavero, at a glance.</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon"><Heart size={16} /></div>
+          <div class="stat-copy">
+            <strong>{favoriteCount}</strong>
+            <small>{isAuthenticated ? 'Synced My List' : 'Saved on this device'}</small>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><Clock3 size={16} /></div>
+          <div class="stat-copy">
+            <strong>{watchedLabel}</strong>
+            <small>{isAuthenticated ? 'Watch time' : 'Watched locally'}</small>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><ShieldCheck size={16} /></div>
+          <div class="stat-copy">
+            <strong>{isAuthenticated ? 'Cloud' : 'Guest'}</strong>
+            <small>{isAuthenticated ? 'Account synced' : 'Local-only profile'}</small>
+          </div>
+        </div>
       </div>
     </section>
-  </section>
 
-  {#if errorMessage}<ErrorState eyebrow="MAVERO / Local state" title="Your local library is resting." message={errorMessage} retry={loadLocalState} />{/if}
+    <!-- Action cards -->
+    <section class="actions-section" aria-labelledby="actions-heading">
+      <div class="section-eyebrow"><Compass size={12} /> Quick actions</div>
+      <h2 id="actions-heading">Where to next.</h2>
+      <div class="action-grid">
+        <a class="action-card" href="/my-list">
+          <div class="action-icon"><Bookmark size={18} /></div>
+          <div class="action-copy">
+            <strong>My List</strong>
+            <small>Open your saved library</small>
+          </div>
+          <ArrowUpRight size={16} class="action-arrow" />
+        </a>
+        <a class="action-card" href="/discover">
+          <div class="action-icon"><Play size={18} /></div>
+          <div class="action-copy">
+            <strong>Discover</strong>
+            <small>Browse what's trending</small>
+          </div>
+          <ArrowUpRight size={16} class="action-arrow" />
+        </a>
+        <a class="action-card" href="/settings">
+          <div class="action-icon"><Settings2 size={18} /></div>
+          <div class="action-copy">
+            <strong>Settings</strong>
+            <small>Account, playback & data</small>
+          </div>
+          <ArrowUpRight size={16} class="action-arrow" />
+        </a>
+      </div>
+    </section>
 
-  <section class="identity-panel">
-    <div class="identity-panel-icon"><Sparkles size={18} /></div>
-    <div><div class="eyebrow">Try CineLog</div><h2>Your watch history, beautifully organized.</h2><p>CineLog is a movie tracker for movies, TV shows, and anime. Keep watching, planning, completed titles, and collections in one cinematic vault.</p></div>
-    <a class="btn btn-secondary" href="https://cinelogv2.vercel.app" target="_blank" rel="noreferrer">Explore CineLog <ArrowUpRight size={15} /></a>
-  </section>
+    <!-- CineLog discovery panel -->
+    <section class="cinelog-panel" aria-labelledby="cinelog-heading">
+      <div class="cinelog-icon"><Sparkles size={18} /></div>
+      <div class="cinelog-copy">
+        <div class="section-eyebrow">Try CineLog</div>
+        <h2 id="cinelog-heading">Your watch history, beautifully organized.</h2>
+        <p>CineLog is a movie tracker for movies, TV shows, and anime. Keep watching, planning, completed titles, and collections in one cinematic vault.</p>
+      </div>
+      <a class="cinelog-cta" href="https://cinelogv2.vercel.app" target="_blank" rel="noreferrer">Explore CineLog <ArrowUpRight size={15} /></a>
+    </section>
 
-  {#if isAuthenticated}<div class="profile-actions"><button type="button" class="btn signout-btn" onclick={openSignout}><LogOut size={15} /> Sign out</button><a class="btn btn-secondary settings-btn" href="/settings"><Settings2 size={15} /> Settings</a></div>{/if}
-  <ConfirmDialog open={signoutOpen} eyebrow="MAVERO / Sign out" title="Sign out?" description="Are you sure you want to sign out of Mavero?" primaryLabel={signoutBusy ? 'Signing out…' : 'Sign out'} primaryDisabled={signoutBusy} cancelDisabled={signoutBusy} onCancel={closeSignout} onPrimary={confirmSignout}>
-    {#if signoutError}<p class="dialog-error" role="alert">{signoutError}</p>{/if}
-  </ConfirmDialog>
-  <footer class="profile-footer"><span>Mavero @2026</span><a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">Data From <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database" /></a></footer>
+    {#if isAuthenticated}
+      <section class="danger-actions" aria-labelledby="account-actions-heading">
+        <div class="section-eyebrow"><LogOut size={12} /> Account</div>
+        <h2 id="account-actions-heading">Manage your session.</h2>
+        <button type="button" class="signout-btn" onclick={openSignout}>
+          <LogOut size={15} /> <span>Sign out</span>
+        </button>
+      </section>
+    {/if}
+
+    <footer class="profile-footer">
+      <span>Mavero @2026</span>
+      <a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">
+        Data from <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database" />
+      </a>
+    </footer>
+  </div>
 </div>
 
+<ConfirmDialog open={signoutOpen} eyebrow="MAVERO / Sign out" title="Sign out?" description="Are you sure you want to sign out of Mavero?" primaryLabel={signoutBusy ? 'Signing out…' : 'Sign out'} primaryDisabled={signoutBusy} cancelDisabled={signoutBusy} onCancel={closeSignout} onPrimary={confirmSignout}>
+  {#if signoutError}<p class="dialog-error" role="alert">{signoutError}</p>{/if}
+</ConfirmDialog>
+
 <style>
-  .profile-page { padding-bottom: 82px; }
-  .profile-header { display: grid; grid-template-columns: 78px minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 56px 0 34px; border-bottom: 1px solid var(--line); }
-  .profile-avatar { display: grid; place-items: center; width: 78px; height: 78px; border: 1px solid rgba(255, 62, 94,.55); border-radius: 50%; color: var(--base); background: linear-gradient(145deg, var(--accent-strong), var(--secondary)); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 1.5rem; font-weight: 700; }
-  .identity-copy h1 { margin: 10px 0 8px; color: var(--ink); font-size: clamp(1.9rem, 3.6vw, 2.8rem); font-weight: 900; letter-spacing: -.02em; line-height: 1.1; }
-  .identity-copy h1 span { color: var(--accent-strong); }
-  .identity-copy p { margin: 0; color: var(--muted); font-size: .82rem; }
-  .identity-meta { display: inline-flex; align-items: center; gap: 7px; margin-top: 15px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; text-transform: uppercase; }
-  .identity-meta > span { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
-  .identity-meta > span.online { background: var(--secondary); box-shadow: 0 0 0 4px var(--secondary-soft); }
-  .account-status { display: inline-flex; align-items: center; gap: 7px; color: var(--secondary); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; text-transform: uppercase; }
-  .profile-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 24px; }
-  .profile-card { min-height: 165px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
-  .activity-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }
-  .activity-list > div { display: flex; align-items: center; gap: 11px; color: var(--accent-strong); }
-  .activity-list > div:nth-child(2) { justify-self: end; justify-content: flex-end; text-align: right; }
-  .activity-list span { display: grid; gap: 3px; }
-  .activity-list strong { color: var(--ink); font-size: 1.5rem; font-weight: 900; letter-spacing: -.01em; line-height: 1; }
-  .activity-list small { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  .identity-panel { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 15px; margin-top: 30px; padding: 22px; border: 1px solid rgba(123, 92, 250,.27); border-radius: var(--radius-lg); background: linear-gradient(110deg, rgba(123, 92, 250,.11), rgba(255, 62, 94,.05)); }
-  .identity-panel-icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px; color: var(--base); background: var(--secondary); }
-  .identity-panel h2 { margin: 8px 0 5px; color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -.015em; line-height: 1.2; }
-  .identity-panel p { max-width: 680px; margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.6; }
-  .profile-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 26px; }
-  .signout-btn { color: #ff8fa3; border-color: rgba(231,140,141,.32); background: rgba(231,140,141,.08); }
-  .profile-footer { display: grid; justify-items: center; gap: 9px; margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .04em; text-align: center; text-transform: none; }
-  .tmdb-credit { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-deep); text-decoration: none; }
-  .tmdb-credit:hover { color: var(--ink-soft); }
-  .tmdb-logo { width: 38px; height: 27px; object-fit: contain; }
-  @media (max-width: 720px) {
-    .profile-header { grid-template-columns: 58px minmax(0, 1fr); padding-top: 92px; }
-    .profile-avatar { width: 58px; height: 58px; font-size: 1.15rem; }
-    .profile-header .btn, .account-status { grid-column: 1 / -1; justify-self: start; }
-    .activity-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .activity-list strong { font-size: 1.25rem; }
-    .identity-panel { grid-template-columns: 40px 1fr; }
-    .identity-panel-icon { width: 40px; height: 40px; }
-    .identity-panel .btn { grid-column: 1 / -1; justify-self: start; }
-    .profile-actions { justify-content: flex-start; }
+  .profile-page {
+    --p-gutter: clamp(16px, 5vw, 48px);
+    min-height: calc(100dvh - 76px);
+    padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
   }
-  @media (max-width: 420px) { .activity-list { gap: 12px; } }
+
+  /* Hero */
+  .profile-hero {
+    padding: calc(40px + env(safe-area-inset-top, 0px)) var(--p-gutter) 30px;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+    background:
+      radial-gradient(circle at 88% -30%, rgba(255,255,255,.05), transparent 50%),
+      radial-gradient(circle at 10% 20%, rgba(255,255,255,.03), transparent 40%),
+      #000;
+  }
+  .hero-inner { width: min(1200px, 100%); margin-inline: auto; }
+  .hero-eyebrow {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: #77777f;
+    font-size: .6rem; font-weight: 700;
+    letter-spacing: .14em; text-transform: uppercase;
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 88px 1fr auto;
+    align-items: center;
+    gap: 22px;
+    margin-top: 14px;
+  }
+  .avatar {
+    display: grid; place-items: center;
+    width: 88px; height: 88px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.12);
+    color: #f5f5f5;
+    background:
+      radial-gradient(circle at 30% 25%, rgba(255,255,255,.1), transparent 50%),
+      rgba(255,255,255,.04);
+    font-size: 1.7rem; font-weight: 800;
+    letter-spacing: .02em;
+    box-shadow: 0 8px 30px rgba(0,0,0,.4);
+  }
+  .identity-copy h1 {
+    margin: 0;
+    color: #f5f5f5;
+    font-size: clamp(1.7rem, 4vw, 2.6rem);
+    font-weight: 800;
+    letter-spacing: -.025em;
+    line-height: 1.05;
+    text-wrap: balance;
+  }
+  .identity-email {
+    margin: 6px 0 0;
+    color: #c7c7cc;
+    font-size: .82rem;
+    font-weight: 500;
+  }
+  .identity-tagline {
+    margin: 6px 0 0;
+    color: #b7b7bd;
+    font-size: .82rem;
+    line-height: 1.5;
+    max-width: 480px;
+  }
+  .identity-meta {
+    display: inline-flex; align-items: center; gap: 7px;
+    margin-top: 14px;
+    color: #77777f;
+    font-size: .58rem; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .identity-meta > span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #ffb020;
+  }
+  .identity-meta > span.online { background: #35d68f; box-shadow: 0 0 0 3px rgba(53,214,143,.18); }
+  .identity-meta > span.syncing { background: #c7c7cc; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+  .sign-in-cta {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 11px 20px;
+    border-radius: 999px;
+    color: #000;
+    background: #f5f5f5;
+    font-size: .8rem; font-weight: 700;
+    text-decoration: none;
+    box-shadow: 0 4px 20px rgba(255,255,255,.12);
+    transition: transform 200ms cubic-bezier(.22,1,.36,1);
+  }
+  .sign-in-cta:hover { transform: translateY(-1px); }
+  .account-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 12px;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 999px;
+    color: #c7c7cc;
+    font-size: .62rem; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+    background: rgba(255,255,255,.03);
+  }
+
+  /* Body */
+  .profile-body {
+    width: min(1200px, calc(100% - 2 * var(--p-gutter)));
+    margin-inline: auto;
+    padding-top: 32px;
+  }
+
+  .error-banner {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px 14px;
+    align-items: center;
+    padding: 14px 16px;
+    margin-bottom: 22px;
+    border: 1px solid rgba(255,176,32,.22);
+    border-radius: 12px;
+    background: rgba(255,176,32,.04);
+    color: #f5f5f5;
+    font-size: .78rem;
+  }
+  .error-banner strong { color: #ffb020; font-weight: 800; }
+  .error-banner span { color: #b7b7bd; }
+  .error-banner button {
+    padding: 6px 14px;
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 999px;
+    color: #f5f5f5;
+    background: rgba(255,255,255,.06);
+    font: inherit;
+    font-size: .7rem; font-weight: 700;
+    cursor: pointer;
+  }
+  .error-banner button:hover { background: rgba(255,255,255,.12); }
+
+  /* Section primitives */
+  .section-eyebrow {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: #c7c7cc;
+    font-size: .58rem; font-weight: 700;
+    letter-spacing: .12em; text-transform: uppercase;
+  }
+  .profile-body h2 {
+    margin: 6px 0 16px;
+    color: #f5f5f5;
+    font-size: clamp(1.1rem, 2vw, 1.4rem);
+    font-weight: 800;
+    letter-spacing: -.015em;
+  }
+
+  /* Stats */
+  .stats-section { margin-bottom: 36px; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .stat-card {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px;
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 14px;
+    background: rgba(255,255,255,.015);
+    transition: border-color 200ms cubic-bezier(.22,1,.36,1);
+  }
+  .stat-card:hover { border-color: rgba(255,255,255,.14); }
+  .stat-icon {
+    display: grid; place-items: center;
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    color: #f5f5f5;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.06);
+  }
+  .stat-copy strong {
+    display: block;
+    color: #f5f5f5;
+    font-size: 1.5rem; font-weight: 800;
+    letter-spacing: -.01em;
+    line-height: 1;
+  }
+  .stat-copy small {
+    display: block; margin-top: 4px;
+    color: #77777f;
+    font-size: .62rem; font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+
+  /* Action grid */
+  .actions-section { margin-bottom: 36px; }
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .action-card {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px;
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 14px;
+    background: rgba(255,255,255,.015);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 200ms cubic-bezier(.22,1,.36,1),
+                background 200ms cubic-bezier(.22,1,.36,1),
+                transform 200ms cubic-bezier(.22,1,.36,1);
+  }
+  .action-card:hover {
+    border-color: rgba(255,255,255,.18);
+    background: rgba(255,255,255,.03);
+    transform: translateY(-1px);
+  }
+  .action-card:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
+  .action-icon {
+    display: grid; place-items: center;
+    width: 42px; height: 42px;
+    border-radius: 11px;
+    color: #f5f5f5;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.06);
+    flex: 0 0 auto;
+  }
+  .action-copy { flex: 1; min-width: 0; }
+  .action-copy strong {
+    display: block;
+    color: #f5f5f5;
+    font-size: .92rem; font-weight: 700;
+    letter-spacing: -.005em;
+  }
+  .action-copy small {
+    display: block; margin-top: 2px;
+    color: #77777f;
+    font-size: .7rem;
+  }
+  .action-arrow { color: #77777f; flex: 0 0 auto; transition: transform 200ms ease, color 200ms ease; }
+  .action-card:hover .action-arrow { color: #f5f5f5; transform: translate(2px, -2px); }
+
+  /* CineLog panel */
+  .cinelog-panel {
+    display: grid;
+    grid-template-columns: 46px 1fr auto;
+    align-items: center; gap: 18px;
+    margin-bottom: 36px;
+    padding: 22px;
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 14px;
+    background:
+      radial-gradient(circle at 0% 0%, rgba(255,255,255,.04), transparent 50%),
+      rgba(255,255,255,.015);
+  }
+  .cinelog-icon {
+    display: grid; place-items: center;
+    width: 46px; height: 46px;
+    border-radius: 12px;
+    color: #f5f5f5;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.08);
+  }
+  .cinelog-copy h2 {
+    margin: 4px 0 6px;
+    font-size: 1.05rem;
+  }
+  .cinelog-copy p {
+    margin: 0;
+    color: #b7b7bd;
+    font-size: .78rem;
+    line-height: 1.55;
+    max-width: 640px;
+  }
+  .cinelog-cta {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 18px;
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 999px;
+    color: #f5f5f5;
+    background: rgba(255,255,255,.05);
+    font-size: .76rem; font-weight: 700;
+    text-decoration: none;
+    transition: background 180ms ease, border-color 180ms ease;
+    white-space: nowrap;
+  }
+  .cinelog-cta:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.24); }
+
+  /* Sign-out */
+  .danger-actions { margin-bottom: 28px; }
+  .signout-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px;
+    border: 1px solid rgba(255,176,32,.28);
+    border-radius: 999px;
+    color: #ffb020;
+    background: rgba(255,176,32,.05);
+    font: inherit;
+    font-size: .78rem; font-weight: 700;
+    cursor: pointer;
+    transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+  }
+  .signout-btn:hover { background: rgba(255,176,32,.12); border-color: rgba(255,176,32,.5); color: #ffd17a; }
+  .signout-btn:active { transform: scale(.98); }
+  .signout-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .profile-footer {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    margin-top: 32px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(255,255,255,.05);
+    color: #77777f;
+    font-size: .62rem;
+  }
+  .tmdb-credit { display: inline-flex; align-items: center; gap: 7px; color: #77777f; text-decoration: none; }
+  .tmdb-credit:hover { color: #c7c7cc; }
+  .tmdb-logo { width: 38px; height: 27px; object-fit: contain; }
+  .dialog-error { margin: 12px 0 0; color: #ffb020; font-size: .72rem; line-height: 1.45; }
+
+  @media (max-width: 720px) {
+    .profile-hero { padding-top: calc(30px + env(safe-area-inset-top, 0px)); }
+    .hero-grid { grid-template-columns: 64px 1fr; gap: 16px; }
+    .avatar { width: 64px; height: 64px; font-size: 1.3rem; }
+    .identity-copy h1 { font-size: clamp(1.4rem, 5.5vw, 2rem); }
+    .sign-in-cta, .account-badge { grid-column: 1 / -1; justify-self: start; }
+    .cinelog-panel { grid-template-columns: 40px 1fr; }
+    .cinelog-icon { width: 40px; height: 40px; }
+    .cinelog-cta { grid-column: 1 / -1; justify-self: start; }
+    .profile-footer { flex-direction: column; align-items: start; }
+  }
+  @media (max-width: 480px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .stat-copy strong { font-size: 1.3rem; }
+  }
+  @media (min-width: 900px) {
+    .profile-hero { padding-top: calc(60px + env(safe-area-inset-top, 0px)); }
+    .identity-copy h1 { font-size: clamp(2rem, 3.4vw, 2.8rem); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stat-card, .action-card, .sign-in-cta, .cinelog-cta, .signout-btn, .identity-meta > span.syncing { transition: none; animation: none; }
+  }
 </style>

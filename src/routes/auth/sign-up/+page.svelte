@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { ArrowLeft, Mail, LockKeyhole, UserRound, ShieldCheck } from 'lucide-svelte';
+  import { ArrowRight, Mail, LockKeyhole, UserRound, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-svelte';
+  import AuthShell from '$components/AuthShell.svelte';
 
   type AuthForm = { message?: string; success?: boolean; displayName?: string; email?: string };
   let { form }: { form?: AuthForm } = $props();
@@ -11,54 +12,199 @@
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
-<div class="auth-wrap container-wide">
-  <a class="back-link" href="/profile"><ArrowLeft size={15} /> Back to Profile</a>
-  <div class="auth-card">
-    <div class="eyebrow">MAVERO / Create account</div>
-    <h1>Your next story<br /><em>travels with you.</em></h1>
-    <p>Create an account to keep your progress, watchlist, and history synced across devices.</p>
-    {#if form?.message}<div class:success={form.success} class="auth-message" role="status">{form.message}</div>{/if}
-    {#if !form?.success}
-      <form method="POST" action="?/signUp">
-        <input type="hidden" name="next" value="/profile" />
-        <label>Name<div class="auth-input"><UserRound size={15} /><input name="name" value={form?.displayName ?? ''} type="text" placeholder="Your name" autocomplete="name" required /></div></label>
-        <label>Email<div class="auth-input"><Mail size={15} /><input name="email" value={form?.email ?? ''} type="email" placeholder="you@example.com" autocomplete="email" required /></div></label>
-        <label>Password<div class="auth-input"><LockKeyhole size={15} /><input name="password" type="password" placeholder="At least 6 characters" autocomplete="new-password" minlength="6" required /></div></label>
-        <button class="btn btn-primary" type="submit">Create account</button>
+<AuthShell
+  eyebrow="MAVERO / Create account"
+  title="Your next story"
+  titleAccent="travels with you."
+  subtitle="Create an account to keep your progress, watchlist, and history synced across devices."
+  backHref="/profile"
+  backLabel="Back to Profile"
+>
+  {#if form?.message}
+    <div class:success={form.success} class="auth-message" role="status">
+      {#if form.success}<CheckCircle2 size={14} />{:else}<AlertCircle size={14} />{/if}
+      <span>{form.message}</span>
+    </div>
+  {/if}
+
+  {#if !form?.success}
+    <form method="POST" action="?/signUp" class="auth-form">
+      <input type="hidden" name="next" value="/profile" />
+      <label class="field">
+        <span class="field-label">Name</span>
+        <div class="input-wrap">
+          <UserRound size={15} class="input-icon" />
+          <input name="name" value={form?.displayName ?? ''} type="text" placeholder="Your name" autocomplete="name" required />
+        </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Email</span>
+        <div class="input-wrap">
+          <Mail size={15} class="input-icon" />
+          <input name="email" value={form?.email ?? ''} type="email" placeholder="you@example.com" autocomplete="email" required />
+        </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Password</span>
+        <div class="input-wrap">
+          <LockKeyhole size={15} class="input-icon" />
+          <input name="password" type="password" placeholder="At least 6 characters" autocomplete="new-password" minlength="6" required />
+        </div>
+      </label>
+      <button class="primary-cta" type="submit">
+        Create account <ArrowRight size={14} />
+      </button>
+    </form>
+
+    <details class="resend-details">
+      <summary>Already created an account?</summary>
+      <form class="auth-form inline-form" method="POST" action="?/resend">
+        <label class="field">
+          <span class="field-label">Account email</span>
+          <div class="input-wrap">
+            <Mail size={15} class="input-icon" />
+            <input name="email" type="email" placeholder="you@example.com" autocomplete="email" required />
+          </div>
+        </label>
+        <button class="secondary-cta" type="submit">Resend confirmation email</button>
       </form>
-    {:else}
-      <form class="resend-form" method="POST" action="?/resend">
-        <input name="email" value={form?.email ?? ''} type="email" placeholder="you@example.com" autocomplete="email" required />
-        <button class="btn btn-secondary" type="submit">Resend confirmation email</button>
-      </form>
-    {/if}
-    {#if !form?.success}<details class="resend-details"><summary>Already created an account?</summary><form class="resend-form" method="POST" action="?/resend"><input name="email" type="email" placeholder="Account email" autocomplete="email" required /><button class="btn btn-secondary" type="submit">Resend confirmation email</button></form></details>{/if}
-    <p class="auth-switch">Already have an account? <a href="/auth/sign-in">Sign in</a></p>
-    <div class="auth-note"><ShieldCheck size={15} /> Your current guest progress will be offered for sync after sign-up.</div>
-  </div>
-</div>
+    </details>
+  {:else}
+    <form class="auth-form" method="POST" action="?/resend">
+      <label class="field">
+        <span class="field-label">Account email</span>
+        <div class="input-wrap">
+          <Mail size={15} class="input-icon" />
+          <input name="email" value={form?.email ?? ''} type="email" placeholder="you@example.com" autocomplete="email" required />
+        </div>
+      </label>
+      <button class="secondary-cta" type="submit">Resend confirmation email</button>
+    </form>
+  {/if}
+
+  <p class="auth-switch">Already have an account? <a href="/auth/sign-in">Sign in</a></p>
+  <div class="auth-note"><ShieldCheck size={14} /> <span>Your current guest progress will be offered for sync after sign-up.</span></div>
+</AuthShell>
 
 <style>
-  em { color: var(--accent-strong); font-style: normal; }
-  .auth-wrap { min-height: calc(100dvh - 76px); padding-bottom: 80px; }
-  .back-link { display: inline-flex; align-items: center; gap: 8px; padding-top: 32px; color: var(--muted); font-size: .7rem; font-weight: 800; text-decoration: none; }
-  .back-link:hover { color: var(--ink); }
-  .auth-card { width: min(480px, 100%); margin: 54px auto 0; padding: 30px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: linear-gradient(135deg, rgba(123,92,250,.07), rgba(16,16,24,.97)); box-shadow: var(--shadow-lg); }
-  .auth-card h1 { margin: 9px 0 13px; color: var(--ink); font-size: clamp(1.7rem, 4vw, 2.3rem); font-weight: 900; line-height: 1.1; letter-spacing: -.02em; }
-  .auth-card > p { color: var(--muted); font-size: .8rem; line-height: 1.7; }
-  form { display: grid; gap: 15px; margin-top: 28px; }
-  label { display: grid; gap: 7px; color: var(--muted); font-size: .66rem; font-weight: 800; }
-  .auth-input { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted-deep); background: rgba(245, 246, 250,.035); transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out); }
-  .auth-input:focus-within { border-color: rgba(255, 62, 94,.58); background: rgba(255, 62, 94,.05); }
-  .auth-input input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: .8rem; }
-  .auth-message { margin-top: 18px; padding: 11px 12px; border: 1px solid rgba(229,143,151,.3); border-radius: var(--radius-sm); color: #ff8fa3; background: rgba(229,143,151,.08); font-size: .72rem; line-height: 1.5; }
-  .auth-message.success { border-color: rgba(143,190,164,.3); color: var(--success); background: rgba(143,190,164,.08); }
-  .resend-details { margin-top: 18px; color: var(--muted); font-size: .7rem; }
-  .resend-details summary { cursor: pointer; color: var(--accent-strong); font-weight: 800; }
-  .resend-form { display: grid; gap: 10px; margin-top: 10px; }
-  .resend-form input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); outline: 0; color: var(--ink); background: rgba(245, 246, 250,.035); font-size: .8rem; }
-  .auth-switch { margin: 18px 0 0; text-align: center; }
-  .auth-switch a { color: var(--accent-strong); font-weight: 800; }
-  .auth-note { display: flex; align-items: center; gap: 7px; margin-top: 18px; color: var(--success); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; line-height: 1.5; }
-  @media (max-width: 640px) { .auth-wrap { padding-top: 68px; } .auth-card { margin-top: 45px; padding: 23px; border-radius: var(--radius-lg); } }
+  .auth-message {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 11px 12px;
+    border: 1px solid rgba(255,176,32,.28);
+    border-radius: 10px;
+    color: #ffb020;
+    background: rgba(255,176,32,.05);
+    font-size: .76rem; line-height: 1.5;
+  }
+  .auth-message :global(svg) { flex: 0 0 auto; margin-top: 1px; }
+  .auth-message.success {
+    border-color: rgba(53,214,143,.3);
+    color: #35d68f;
+    background: rgba(53,214,143,.05);
+  }
+
+  .auth-form { display: grid; gap: 14px; }
+  .inline-form { margin-top: 12px; }
+
+  .field { display: grid; gap: 7px; }
+  .field-label {
+    color: #77777f;
+    font-size: .58rem; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .input-wrap {
+    display: flex; align-items: center; gap: 10px;
+    height: 46px;
+    padding: 0 14px;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 10px;
+    background: rgba(255,255,255,.03);
+    transition: border-color 180ms cubic-bezier(.22,1,.36,1), background 180ms cubic-bezier(.22,1,.36,1);
+  }
+  .input-wrap:focus-within {
+    border-color: rgba(255,255,255,.28);
+    background: rgba(255,255,255,.06);
+  }
+  .input-icon { color: #77777f; flex: 0 0 auto; }
+  .input-wrap input {
+    width: 100%; min-width: 0;
+    border: 0; outline: 0;
+    color: #f5f5f5;
+    background: transparent;
+    font: inherit;
+    font-size: .86rem;
+  }
+  .input-wrap input::placeholder { color: #55555d; }
+
+  .primary-cta, .secondary-cta {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    min-height: 46px;
+    padding: 0 22px;
+    border-radius: 999px;
+    font-size: .82rem; font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    border: 1px solid transparent;
+    transition: transform 180ms cubic-bezier(.22,1,.36,1), background 180ms cubic-bezier(.22,1,.36,1), border-color 180ms cubic-bezier(.22,1,.36,1);
+  }
+  .primary-cta {
+    color: #000;
+    background: #f5f5f5;
+    border-color: #f5f5f5;
+    box-shadow: 0 4px 18px rgba(255,255,255,.12);
+  }
+  .primary-cta:hover { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(255,255,255,.18); }
+  .primary-cta:active { transform: scale(.98); }
+  .secondary-cta {
+    color: #f5f5f5;
+    background: rgba(255,255,255,.05);
+    border-color: rgba(255,255,255,.14);
+  }
+  .secondary-cta:hover { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.24); }
+  .secondary-cta:active { transform: scale(.98); }
+
+  .resend-details { margin-top: 6px; }
+  .resend-details summary {
+    cursor: pointer;
+    color: #c7c7cc;
+    font-size: .74rem; font-weight: 700;
+    padding: 6px 0;
+    list-style: none;
+  }
+  .resend-details summary::-webkit-details-marker { display: none; }
+  .resend-details summary::before {
+    content: '›'; display: inline-block; margin-right: 6px;
+    color: #77777f; transition: transform 180ms ease;
+  }
+  .resend-details[open] summary::before { transform: rotate(90deg); }
+  .resend-details summary:hover { color: #f5f5f5; }
+
+  .auth-switch {
+    margin: 16px 0 0;
+    text-align: center;
+    color: #77777f;
+    font-size: .76rem;
+  }
+  .auth-switch a {
+    color: #f5f5f5;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: rgba(255,255,255,.4);
+  }
+  .auth-switch a:hover { text-decoration-color: #f5f5f5; }
+
+  .auth-note {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255,255,255,.05);
+    color: #77777f;
+    font-size: .62rem; line-height: 1.5;
+  }
+  .auth-note :global(svg) { flex: 0 0 auto; color: #35d68f; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .primary-cta, .secondary-cta, .input-wrap, .resend-details summary::before { transition: none; }
+  }
 </style>
