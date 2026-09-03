@@ -193,7 +193,8 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
       sort_by: sortBy,
       with_genres: genreId,
       ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year }),
-      ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {})
+      ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {}),
+      ...(filters.sort === 'Newest' ? type === 'movie' ? { 'release_date.lte': new Date().toISOString().slice(0, 10) } : { 'first_air_date.lte': new Date().toISOString().slice(0, 10) } : {})
     };
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
     const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type));

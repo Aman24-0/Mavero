@@ -39,9 +39,12 @@
 
   .rail { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; padding: 0 clamp(16px, 4vw, 48px) 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .rail::-webkit-scrollbar { display: none; }
-  .rail > * { scroll-snap-align: start; flex: 0 0 auto; }
+  .rail > * { scroll-snap-align: start; flex: 0 0 178px; min-width: 0; }
 
   @media (min-width: 641px) {
     .rail { gap: 14px; }
+  }
+  @media (max-width: 640px) {
+    .rail > * { flex-basis: 40vw; }
   }
 </style>

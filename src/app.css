@@ -9,19 +9,19 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
-  /* ---- surfaces — dark cinematic ---- */
-  --ink: #f5f5f5;
-  --ink-soft: #9a9a9a;
-  --muted: #666666;
-  --muted-deep: #444444;
-  --base: #000000;
-  --base-lift: #0a0a0a;
+  /* ---- surfaces ---- */
+  --ink: #f5f6fa;
+  --ink-soft: #c6c8d6;
+  --muted: #9193a6;
+  --muted-deep: #5b5d70;
+  --base: #06060a;
+  --base-lift: #0a0a10;
   --bg: var(--base);
-  --surface: #0a0a0a;
-  --surface-2: #111111;
-  --surface-raised: #151515;
-  --line: rgba(255, 255, 255, .08);
-  --line-strong: rgba(255, 255, 255, .14);
+  --surface: #101018;
+  --surface-2: #16161f;
+  --surface-raised: #1e1e29;
+  --line: rgba(245, 246, 250, .09);
+  --line-strong: rgba(245, 246, 250, .18);
 
   /* ---- brand: cinematic crimson -> violet ---- */
   --accent: #ff3860;
