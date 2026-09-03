@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters } from '../types';
+import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember } from '../types';
 import { ottProviders } from '$lib/shared/ott';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
@@ -23,6 +23,7 @@ type TmdbMovie = {
   imdb_id?: string | null;
   videos?: { results?: { key?: string; site?: string; type?: string }[] };
   recommendations?: TmdbList<TmdbMovie>;
+  credits?: TmdbCredits;
 };
 type TmdbTv = {
   id: number;
@@ -46,7 +47,10 @@ type TmdbTv = {
   videos?: { results?: { key?: string; site?: string; type?: string }[] };
   recommendations?: TmdbList<TmdbTv>;
   seasons?: { season_number?: number; name?: string; episode_count?: number; air_date?: string; poster_path?: string | null }[];
+  credits?: TmdbCredits;
 };
+type TmdbCredit = { id: number; name?: string; character?: string; profile_path?: string | null };
+type TmdbCredits = { cast?: TmdbCredit[] };
 type TmdbEpisode = { id: number; episode_number?: number; season_number?: number; name?: string; overview?: string; air_date?: string; runtime?: number | null; still_path?: string | null };
 type TmdbSeason = { season_number?: number; name?: string; episode_count?: number; air_date?: string; poster_path?: string | null; episodes?: TmdbEpisode[] };
 
@@ -68,6 +72,25 @@ function tmdbSource(externalId?: string): ContentSource {
 
 function image(path: string | null | undefined, size: 'w342' | 'w500' | 'w780' | 'w1280' = 'w500') {
   return path ? `${IMAGE_URL}/${size}${path}` : '';
+}
+
+function profileImage(path: string | null | undefined, size: 'w185' | 'w342' = 'w185') {
+  return path ? `${IMAGE_URL}/${size}${path}` : '';
+}
+
+function extractCast(raw: TmdbMedia, limit = 12): CastMember[] | undefined {
+  const credits = (raw as TmdbMovie).credits ?? (raw as TmdbTv).credits;
+  const cast = credits?.cast;
+  if (!Array.isArray(cast) || cast.length === 0) return undefined;
+  return cast
+    .filter((entry) => entry && typeof entry.id === 'number' && typeof entry.name === 'string' && entry.name.trim())
+    .slice(0, limit)
+    .map((entry) => ({
+      id: String(entry.id),
+      name: entry.name as string,
+      character: typeof entry.character === 'string' && entry.character.trim() ? entry.character : undefined,
+      photo: profileImage(entry.profile_path) || undefined
+    }));
 }
 
 function runtime(minutes: number | null | undefined, fallback = 'Feature length') {
@@ -122,7 +145,8 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     tags: tag ? [tag] : undefined,
     source: tmdbSource(String(raw.id)),
     externalIds: { tmdb: String(raw.id), imdb: isMovie ? movie.imdb_id ?? undefined : tv.external_ids?.imdb_id ?? undefined },
-    trailerKey: raw.videos?.results?.find((video) => video.site === 'YouTube' && video.type === 'Trailer')?.key
+    trailerKey: raw.videos?.results?.find((video) => video.site === 'YouTube' && video.type === 'Trailer')?.key,
+    cast: extractCast(raw)
   };
 }
 
@@ -277,7 +301,7 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
   const key = `tmdb:detail:${type}:${numericId}`;
   const { value, stale } = await getOrSet(key, detailPolicy, async () => {
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
-    const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations' });
+    const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations,credits' });
     const item = mapTmdb(raw, type);
     const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
     return { ...item, recommendations };

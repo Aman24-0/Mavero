@@ -19,6 +19,13 @@ export type Episode = {
   still?: string;
 };
 
+export type CastMember = {
+  id: string;
+  name: string;
+  character?: string;
+  photo?: string;
+};
+
 export type Season = {
   number: number;
   title: string;
@@ -61,6 +68,7 @@ export type NormalizedMediaItem = {
   seasonsData?: Season[];
   nativeTitle?: string;
   trailerKey?: string;
+  cast?: CastMember[];
 };
 
 export type ContentDetail = NormalizedMediaItem & {

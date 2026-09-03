@@ -29,7 +29,11 @@
 <style>
   .section { margin-top: 28px; }
   .section.editorial { margin-top: 36px; }
-  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; padding: 0 clamp(16px, 4vw, 48px); }
+  .section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 10px;
+    padding: 0 var(--d-gutter, clamp(16px, 5vw, 48px));
+  }
   .section-heading-copy { display: flex; flex-direction: column; gap: 2px; }
   .eyebrow { color: var(--ink-soft); font-size: .58rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
   .section-title { color: var(--ink); font-size: clamp(1rem, 2vw, 1.25rem); font-weight: 700; letter-spacing: -.02em; }
@@ -42,7 +46,11 @@
   .section-link :global(svg) { transition: transform 200ms cubic-bezier(.22, 1, .36, 1); }
   .section-link:hover :global(svg) { transform: translateX(3px); }
 
-  .rail { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; padding: 0 clamp(16px, 4vw, 48px) 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .rail {
+    display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x proximity;
+    padding: 0 var(--d-gutter, clamp(16px, 5vw, 48px)) 2px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
   .rail::-webkit-scrollbar { display: none; }
   .rail > * { scroll-snap-align: start; flex: 0 0 178px; min-width: 0; }
 

@@ -1,5 +1,12 @@
 export type ContentType = 'movie' | 'series' | 'anime';
 
+export type CastMember = {
+  id: string;
+  name: string;
+  character?: string;
+  photo?: string;
+};
+
 export type MediaItem = {
   id: string;
   title: string;
@@ -22,6 +29,8 @@ export type MediaItem = {
   episodes?: number;
   seasons?: number;
   tags?: string[];
+  trailerKey?: string;
+  cast?: CastMember[];
 };
 
 const image = (id: string, width = 900) =>

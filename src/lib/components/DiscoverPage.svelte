@@ -405,6 +405,9 @@
     --d-accent: #f5f5f5;
     --d-accent-soft: #c7c7cc;
     --d-ease: cubic-bezier(.22, 1, .36, 1);
+    /* Single consistent mobile→desktop content gutter.
+       Mobile (≤430px): ~16-20px. Scales up to 48px on wide screens. */
+    --d-gutter: clamp(16px, 5vw, 48px);
   }
 
   /* === HERO === */
@@ -479,18 +482,28 @@
 
   /* === BODY === */
   .discover-body { padding: 0 0 40px; }
-  .quick-chips { display: flex; gap: 6px; padding: 14px clamp(16px, 4vw, 48px) 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-  .quick-chips::-webkit-scrollbar { display: none; }
+
+  /* Quick chips fill the full row width — three independent equal-flex buttons. */
+  .quick-chips {
+    display: flex; gap: 8px; width: 100%;
+    padding: 14px var(--d-gutter) 0;
+    box-sizing: border-box;
+  }
   .quick-chips a {
-    flex: 0 0 auto; height: 38px; display: inline-flex; align-items: center; padding: 0 16px;
-    border-radius: 19px; color: var(--d-ink-soft); text-decoration: none; font-size: .74rem; font-weight: 600;
+    flex: 1 1 0; min-width: 0; height: 40px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 8px;
+    border-radius: 10px; color: var(--d-ink-soft); text-decoration: none;
+    font-size: .74rem; font-weight: 700; letter-spacing: .01em;
     background: var(--d-surface-2); border: 1px solid var(--d-line);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     transition: all 200ms var(--d-ease);
   }
   .quick-chips a:hover { color: var(--d-ink); background: var(--d-surface-raised); border-color: var(--d-line-strong); }
   .quick-chips a:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+  .quick-chips a:active { transform: scale(.98); }
 
-  .genre-section { margin-top: 28px; padding: 0 clamp(16px, 4vw, 48px); }
+  .genre-section { margin-top: 28px; padding: 0 var(--d-gutter); }
   .genre-head { margin-bottom: 10px; }
   .genre-title { color: var(--d-ink); font-size: clamp(1rem, 2vw, 1.25rem); font-weight: 700; letter-spacing: -.02em; }
   .genre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
@@ -506,7 +519,7 @@
   .genre-overlay { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(0,0,0,.45), rgba(0,0,0,.15)); }
   .genre-label { position: relative; z-index: 1; color: var(--d-ink); font-size: .76rem; font-weight: 700; letter-spacing: .02em; }
 
-  .catalog-warning { margin: 16px clamp(16px, 4vw, 48px) 0; padding: 10px 12px; border: 1px solid rgba(255,176,32,.3); border-radius: 6px; color: var(--warning); font-size: .7rem; }
+  .catalog-warning { margin: 16px var(--d-gutter) 0; padding: 10px 12px; border: 1px solid rgba(255,176,32,.3); border-radius: 6px; color: var(--warning); font-size: .7rem; }
   .discover-footer { padding: 40px 0 20px; text-align: center; }
   .discover-footer strong { color: var(--d-ink); font-size: .8rem; }
   .discover-footer span { display: block; margin-top: 3px; color: var(--d-muted); font-size: .65rem; }
@@ -519,7 +532,7 @@
     .hero-slide { min-height: 66vh; }
     .hero-image { object-position: center 12%; }
     .hero-scrim { background: linear-gradient(to bottom, transparent 25%, rgba(0,0,0,.4) 55%, var(--d-base) 100%); }
-    .hero-content { align-items: flex-end; min-height: 66vh; padding: 56px 16px 50px; }
+    .hero-content { align-items: flex-end; min-height: 66vh; padding: 56px var(--d-gutter) 50px; }
     .hero-copy { max-width: none; }
     .hero-copy h1 { font-size: clamp(1.6rem, 7vw, 2.4rem); font-weight: 780; }
     .hero-copy p { font-size: .76rem; -webkit-line-clamp: 2; line-clamp: 2; }
@@ -529,6 +542,9 @@
     .hero-nav { right: 50%; transform: translateX(50%); bottom: 10px; }
     .genre-grid { grid-template-columns: repeat(2, 1fr); }
     .genre-tile { height: 56px; }
+    /* Quick chips keep equal-width split on every mobile viewport. */
+    .quick-chips { gap: 6px; }
+    .quick-chips a { height: 38px; font-size: .72rem; padding: 0 6px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .hero-track { scroll-behavior: auto; }

@@ -22,6 +22,8 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     status: item.status,
     episodes: item.episodes,
     seasons: item.seasons,
-    tags: item.tags
+    tags: item.tags,
+    trailerKey: item.trailerKey,
+    cast: item.cast
   };
 }

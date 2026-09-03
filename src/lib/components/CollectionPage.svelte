@@ -55,7 +55,9 @@
 
 <style>
   .collection-page {
-    width: min(1600px, calc(100% - clamp(20px, 6vw, 96px))); margin-inline: auto;
+    /* Single consistent mobile→desktop content gutter — matches Discover/ContentRail. */
+    --c-gutter: clamp(16px, 5vw, 48px);
+    width: min(1600px, calc(100% - 2 * var(--c-gutter))); margin-inline: auto;
     padding-bottom: 40px;
   }
   em { color: #77777f; font-style: normal; }
@@ -88,14 +90,21 @@
   .pagination-link.disabled { color: #444444; opacity: .5; pointer-events: none; }
   .pagination-page { color: #77777f; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
   @media (max-width: 640px) {
+    .collection-page {
+      /* On mobile, take the full width and use padding for the gutter so the
+         filter bar can stretch edge-to-edge within that gutter, matching the
+         Discover chips behaviour. */
+      width: 100%; margin-inline: 0;
+      padding-left: var(--c-gutter); padding-right: var(--c-gutter);
+    }
     .back-link { padding-top: calc(12px + env(safe-area-inset-top)); }
     .collection-heading { padding: 24px 0 18px; }
     .heading-row { align-items: start; }
     .collection-heading h1 { font-size: 2.1rem; }
     .collection-count { padding-top: 5px; }
-    .collection-tools { margin-bottom: 20px; }
-    .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 11px; }
-    .pagination { padding-bottom: 26px; }
+    .collection-tools { margin-bottom: 20px; padding: 12px 0; }
+    .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 11px; padding-bottom: 34px; }
+    .pagination { padding-bottom: calc(26px + env(safe-area-inset-bottom, 0px)); }
     .pagination-link { padding-inline: 12px; }
   }
 </style>
