@@ -51,6 +51,7 @@ export type NormalizedMediaItem = {
   posterSmall?: string;
   backdrop: string;
   backdropSmall?: string;
+  backdropHero?: string;
   accent: string;
   progress?: number;
   progressLabel?: string;

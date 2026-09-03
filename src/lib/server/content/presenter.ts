@@ -16,6 +16,7 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     posterSmall: item.posterSmall,
     backdrop: item.backdrop,
     backdropSmall: item.backdropSmall,
+    backdropHero: item.backdropHero,
     accent: item.accent,
     progress: item.progress,
     progressLabel: item.progressLabel,

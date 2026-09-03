@@ -16,7 +16,7 @@
 </script>
 
 <div class="auth-page">
-  <a class="back-link" href={backHref}>
+  <a class="back-pill" href={backHref}>
     <ArrowLeft size={15} /> <span>{backLabel}</span>
   </a>
 
@@ -47,10 +47,11 @@
   .auth-page {
     --a-gutter: clamp(16px, 5vw, 48px);
     position: relative;
-    min-height: calc(100dvh - 76px);
-    /* The shell already adds the topbar offset via --shell-content-top.
-       We add a small per-page breathing room here. */
-    padding: 28px var(--a-gutter) calc(110px + env(safe-area-inset-bottom, 0px));
+    min-height: 100dvh;
+    /* Auth bypasses AppShell, so it owns its own safe-area top padding.
+       No fixed topbar here — the back pill is absolutely positioned
+       below the status bar. */
+    padding: calc(env(safe-area-inset-top, 0px) + 28px) var(--a-gutter) calc(110px + env(safe-area-inset-bottom, 0px));
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -80,18 +81,31 @@
     background: radial-gradient(circle, rgba(255, 255, 255, .06), transparent 70%);
   }
 
-  .back-link {
+  .back-pill {
     position: absolute;
-    top: calc(18px + env(safe-area-inset-top, 0px));
+    top: calc(env(safe-area-inset-top, 0px) + 18px);
     left: var(--a-gutter);
     z-index: 2;
     display: inline-flex; align-items: center; gap: 7px;
-    color: #969696;
-    font-size: .72rem; font-weight: 700;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 999px;
+    color: #f5f5f5;
+    background: rgba(10, 10, 10, .72);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .4);
+    font-size: .74rem; font-weight: 700;
     text-decoration: none;
-    transition: color 180ms ease, transform 180ms ease;
+    transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
   }
-  .back-link:hover { color: #f5f5f5; transform: translateX(-2px); }
+  .back-pill:hover {
+    background: rgba(20, 20, 20, .85);
+    border-color: rgba(255, 255, 255, .24);
+    transform: translateX(-2px);
+  }
+  .back-pill:active { transform: translateX(-2px) scale(.97); }
+  .back-pill:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
 
   .auth-card {
     position: relative; z-index: 1;
@@ -148,12 +162,13 @@
   .auth-content { display: grid; gap: 14px; }
 
   @media (max-width: 480px) {
-    .auth-page { padding-top: 24px; padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+    .auth-page { padding-top: calc(env(safe-area-inset-top, 0px) + 24px); padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
     .auth-card { padding: 22px; border-radius: 14px; }
     .auth-title { font-size: clamp(1.4rem, 6vw, 1.9rem); }
     .auth-sub { font-size: .78rem; }
+    .back-pill { padding: 0 14px; min-height: 42px; font-size: .7rem; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .back-link { transition: none; }
+    .back-pill { transition: none; }
   }
 </style>

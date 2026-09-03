@@ -56,12 +56,42 @@
     signoutBusy = true;
     signoutError = '';
     try {
-      const response = await fetch('/auth/sign-out', { method: 'POST', headers: { accept: 'application/json' } });
-      if (!response.ok) throw new Error('Sign out failed.');
-      window.location.replace(response.url || '/discover');
-    } catch {
+      const response = await fetch('/auth/sign-out', {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+        redirect: 'follow'
+      });
+      // A successful sign-out ends with a 303 redirect to /discover.
+      // fetch follows the redirect automatically, so response.ok and
+      // response.url reflect the final /discover HTML page. We navigate
+      // to /discover via a full page replacement so the auth cookies
+      // are re-read in a clean browsing context.
+      if (response.ok || response.redirected || (response.status >= 300 && response.status < 400)) {
+        // Always navigate to /discover — never try to parse the HTML
+        // response as JSON, and never trust response.url blindly (it
+        // could be an error page from an intermediate redirect).
+        const target = response.redirected && response.url ? response.url : '/discover';
+        window.location.replace(target);
+        return;
+      }
+      // Non-2xx non-redirect — try to read a JSON error payload, but
+      // never let a JSON parse failure crash the logout flow.
+      let message = 'Unable to sign out right now. Please try again.';
+      try {
+        const contentType = response.headers.get('content-type') ?? '';
+        if (contentType.includes('application/json')) {
+          const payload = await response.json();
+          if (payload && typeof payload.message === 'string') message = payload.message;
+        }
+      } catch {
+        // ignore — use the default message
+      }
       signoutBusy = false;
-      signoutError = 'Unable to sign out right now. Please try again.';
+      signoutError = message;
+    } catch {
+      // Network failure or fetch threw — the user stays on the page.
+      signoutBusy = false;
+      signoutError = 'Unable to sign out right now. Please check your connection and try again.';
     }
   }
 

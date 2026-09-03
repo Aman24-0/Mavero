@@ -3,7 +3,7 @@
   import { Bookmark, Compass, Search, UserRound, Settings2, Clapperboard } from 'lucide-svelte';
   import { haptic } from '$lib/client/haptics';
 
-  let { children, currentPath = '/' }: { children: Snippet; currentPath?: string } = $props();
+  let { children, currentPath = '/', showMobileNav = true }: { children: Snippet; currentPath?: string; showMobileNav?: boolean } = $props();
   let shell: HTMLElement;
 
   const primaryLinks = [
@@ -27,7 +27,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" />
 </svelte:head>
 
-<div class="page-shell" bind:this={shell}>
+<div class="page-shell" class:no-mobile-nav={!showMobileNav} bind:this={shell}>
   <aside class="app-rail" aria-label="Primary navigation">
     <a class="brand-lockup" href="/discover" aria-label="MAVERO home">
       <span class="brand-symbol"><Clapperboard size={17} strokeWidth={2.1} /></span>
@@ -60,24 +60,27 @@
   </div>
 
   <!-- Mobile floating pill bottom navigation (centered, with side margins,
-       sits above page content with safe-area aware offset). -->
-  <nav class="mobile-nav" aria-label="Mobile navigation">
-    <div class="mobile-nav-inner">
-      {#each primaryLinks as link}
-        {@const Icon = link.icon}
-        <a
-          class:active={isActive(link.key)}
-          href={link.href}
-          aria-current={isActive(link.key) ? 'page' : undefined}
-          aria-label={link.label}
-          onclick={() => { if (!isActive(link.key)) haptic('light'); }}
-        >
-          <span class="nav-icon"><Icon size={20} strokeWidth={isActive(link.key) ? 2.3 : 1.8} /></span>
-          <span class="nav-label">{link.label}</span>
-        </a>
-      {/each}
-    </div>
-  </nav>
+       sits above page content with safe-area aware offset).
+       Hidden on pages that opt out via showMobileNav={false} (e.g. Settings). -->
+  {#if showMobileNav}
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <div class="mobile-nav-inner">
+        {#each primaryLinks as link}
+          {@const Icon = link.icon}
+          <a
+            class:active={isActive(link.key)}
+            href={link.href}
+            aria-current={isActive(link.key) ? 'page' : undefined}
+            aria-label={link.label}
+            onclick={() => { if (!isActive(link.key)) haptic('light'); }}
+          >
+            <span class="nav-icon"><Icon size={20} strokeWidth={isActive(link.key) ? 2.3 : 1.8} /></span>
+            <span class="nav-label">{link.label}</span>
+          </a>
+        {/each}
+      </div>
+    </nav>
+  {/if}
 </div>
 
 <style>
@@ -177,6 +180,11 @@
     .mobile-nav a.active :global(svg) { color: #f5f5f5; }
   }
   @media (min-width: 641px) { .mobile-nav { display: none; } }
+  /* Pages that opt out of the mobile nav (e.g. Settings) don't need
+     the shell's bottom padding reserved for the floating pill. */
+  @media (max-width: 640px) {
+    .page-shell.no-mobile-nav { padding-bottom: 0; }
+  }
   @media (prefers-reduced-motion: reduce) {
     .rail-link, .mobile-nav a { transition: none; }
   }

@@ -81,7 +81,7 @@
 <div class="settings-page">
   <header class="settings-header">
     <div class="header-inner">
-      <a class="back-link" href="/profile"><ArrowLeft size={15} /> <span>Profile</span></a>
+      <a class="back-pill" href="/profile"><ArrowLeft size={15} /> <span>Profile</span></a>
       <div class="header-eyebrow"><Settings2 size={13} /> MAVERO / Settings</div>
       <h1>Make it yours.</h1>
       <p>Manage the details and defaults that shape your Mavero experience.</p>
@@ -277,7 +277,10 @@
   .settings-page {
     --s-gutter: clamp(16px, 5vw, 48px);
     min-height: calc(100dvh - 76px);
-    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+    /* Settings opts out of the mobile floating bottom nav, so it only
+       needs a small bottom safe-area padding rather than the full
+       110px reserved on other shell pages. */
+    padding-bottom: calc(40px + env(safe-area-inset-bottom, 0px));
   }
 
   .settings-header {
@@ -290,14 +293,22 @@
       #000;
   }
   .header-inner { width: min(900px, 100%); margin-inline: auto; }
-  .back-link {
+  .back-pill {
     display: inline-flex; align-items: center; gap: 7px;
-    color: #77777f;
-    font-size: .72rem; font-weight: 700;
+    min-height: 42px;
+    padding: 0 16px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 999px;
+    color: #f5f5f5;
+    background: rgba(10, 10, 10, .6);
+    backdrop-filter: blur(8px);
+    font-size: .74rem; font-weight: 700;
     text-decoration: none;
-    transition: color 180ms ease, transform 180ms ease;
+    transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
   }
-  .back-link:hover { color: #f5f5f5; transform: translateX(-2px); }
+  .back-pill:hover { background: rgba(20, 20, 20, .8); border-color: rgba(255, 255, 255, .24); transform: translateX(-2px); }
+  .back-pill:active { transform: translateX(-2px) scale(.97); }
+  .back-pill:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
   .header-eyebrow {
     display: inline-flex; align-items: center; gap: 6px;
     margin-top: 22px;
@@ -561,6 +572,6 @@
     .settings-header h1 { font-size: clamp(2rem, 3.4vw, 2.6rem); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .back-link, .toggle-switch i, .toggle-switch i::after, .primary-cta, .secondary-cta, .delete-account-btn { transition: none; }
+    .back-pill, .toggle-switch i, .toggle-switch i::after, .primary-cta, .secondary-cta, .delete-account-btn { transition: none; }
   }
 </style>

@@ -291,7 +291,15 @@
             <div class="hero-media" aria-hidden="true">
               {#if (slide.item.backdrop?.trim() || slide.item.poster?.trim())}
                 <picture>
+                  <!-- Responsive hero artwork:
+                       - mobile (≤640px), standard DPI: w780 (bandwidth-friendly)
+                       - mobile (≤640px), high DPI (≥2x): w1280 (sharp on retina)
+                       - tablet/desktop (>640px): original (sharpest, larger bandwidth
+                         is acceptable on a bigger pipe and a bigger display)
+                       Fallback <img src> uses w1280 for non-<picture> browsers. -->
+                  <source media="(max-width: 640px) and (-webkit-min-device-pixel-ratio: 2), (max-width: 640px) and (min-resolution: 192dpi)" srcset={slide.item.backdrop || slide.item.backdropSmall || slide.item.poster} />
                   <source media="(max-width: 640px)" srcset={slide.item.backdropSmall || slide.item.backdrop || slide.item.poster} />
+                  <source media="(min-width: 641px)" srcset={slide.item.backdropHero || slide.item.backdrop || slide.item.backdropSmall || slide.item.poster} />
                   <img class="hero-image" src={slide.item.backdrop || slide.item.poster} alt={`${slide.item.title} backdrop`} width="1280" height="720" sizes="100vw" loading={index === 0 ? 'eager' : 'lazy'} fetchpriority={index === 0 ? 'high' : 'auto'} decoding="async" />
                 </picture>
               {:else}

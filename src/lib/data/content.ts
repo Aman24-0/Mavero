@@ -21,6 +21,7 @@ export type MediaItem = {
   posterSmall?: string;
   backdrop: string;
   backdropSmall?: string;
+  backdropHero?: string;
   accent: string;
   progress?: number;
   progressLabel?: string;

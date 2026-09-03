@@ -70,7 +70,7 @@ function tmdbSource(externalId?: string): ContentSource {
   return { provider: 'tmdb', externalId, fetchedAt: new Date().toISOString() };
 }
 
-function image(path: string | null | undefined, size: 'w342' | 'w500' | 'w780' | 'w1280' = 'w500') {
+function image(path: string | null | undefined, size: 'w342' | 'w500' | 'w780' | 'w1280' | 'original' = 'w500') {
   return path ? `${IMAGE_URL}/${size}${path}` : '';
 }
 
@@ -138,6 +138,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     posterSmall: image(raw.poster_path ?? raw.backdrop_path, 'w342'),
     backdrop: image(raw.backdrop_path ?? raw.poster_path, 'w1280'),
     backdropSmall: image(raw.backdrop_path ?? raw.poster_path, 'w780'),
+    backdropHero: image(raw.backdrop_path ?? raw.poster_path, 'original'),
     accent: '#9b87f5',
     status: isMovie ? undefined : asString(tv.status),
     episodes,
