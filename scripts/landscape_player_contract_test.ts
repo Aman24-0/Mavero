@@ -36,7 +36,8 @@ assert.match(shell, /aria-label="Open episode list"/);
 assert.doesNotMatch(shell, /class="episode-stepper"/);
 assert.doesNotMatch(shell, /aria-label="Previous episode"/);
 assert.doesNotMatch(shell, /aria-label="Next episode"/);
-assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture"/);
+assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/);
+assert.match(viewport, /allowfullscreen/);
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/);
 
 console.log('Landscape PlayerShell contract tests passed: compact active layout, flex-fill viewport, safe-area sizing, separate fullscreen action, and cross-origin iframe boundary.');

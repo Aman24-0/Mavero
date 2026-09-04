@@ -88,7 +88,7 @@
         src={source.url}
         title={`${title} provider embed`}
         loading="eager"
-        allow="autoplay; fullscreen; picture-in-picture"
+        allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
         sandbox={sandboxAttribute}
         referrerpolicy="no-referrer"
         allowfullscreen
