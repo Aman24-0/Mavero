@@ -10,9 +10,10 @@
     movies={data.movies}
     series={data.series}
     anime={data.anime}
-    popularMovies={data.popularMovies}
     popularSeries={data.popularSeries}
     popularAnime={data.popularAnime}
+    trendingHindiMovies={data.trendingHindiMovies}
+    trendingRegionalMovies={data.trendingRegionalMovies}
     topRatedMovies={data.topRatedMovies}
     topRatedSeries={data.topRatedSeries}
     topRatedAnime={data.topRatedAnime}

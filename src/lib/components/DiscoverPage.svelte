@@ -17,9 +17,10 @@
   export let movies: MediaItem[] = [];
   export let series: MediaItem[] = [];
   export let anime: MediaItem[] = [];
-  export let popularMovies: MediaItem[] = [];
   export let popularSeries: MediaItem[] = [];
   export let popularAnime: MediaItem[] = [];
+  export let trendingHindiMovies: MediaItem[] = [];
+  export let trendingRegionalMovies: MediaItem[] = [];
   export let topRatedMovies: MediaItem[] = [];
   export let topRatedSeries: MediaItem[] = [];
   export let topRatedAnime: MediaItem[] = [];
@@ -52,7 +53,7 @@
 
   $: genreTiles = genreTileDefs.map((g) => {
     const collection = genreCollections.find((c) => c.title.toLowerCase().includes(g.label.toLowerCase()));
-    const fallbackItems = [...movies, ...series, ...popularMovies, ...popularSeries];
+    const fallbackItems = [...movies, ...series, ...popularSeries];
     const artItem = collection?.items?.[0] ?? fallbackItems.find((i) => i.genres?.some((gn) => gn.toLowerCase() === g.label.toLowerCase()));
     return { ...g, artwork: artItem?.backdrop || artItem?.poster || '', accent: artItem?.accent || '#333' };
   });
@@ -131,11 +132,11 @@
   }
 
   $: localContinue = localContinueLoaded ? localContinueItems : [];
-  $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularMovies.length || popularSeries.length || popularAnime.length || topRatedMovies.length || topRatedSeries.length || topRatedAnime.length || newMovies.length || genreCollections.length);
+  $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularSeries.length || popularAnime.length || trendingHindiMovies.length || trendingRegionalMovies.length || topRatedMovies.length || topRatedSeries.length || topRatedAnime.length || newMovies.length || genreCollections.length);
   $: featuredItems = createFeaturedItems([
     ...(featuredItem ? [featuredItem] : []),
     ...movies, ...series, ...anime,
-    ...popularMovies, ...popularSeries, ...popularAnime
+    ...popularSeries, ...popularAnime
   ]);
   $: if (activeIndex >= featuredItems.length && featuredItems.length) activeIndex = 0;
   $: activeHero = featuredItems[activeIndex];
@@ -370,6 +371,8 @@
       {#if popularSeries.length}<ContentRail title="Popular TV shows" items={popularSeries} href="/discover/series" />{/if}
       {#if anime.length}<ContentRail title="Popular anime" items={anime} href="/discover/anime" />{/if}
       {#if popularAnime.length}<ContentRail title="Trending anime" items={popularAnime} href="/discover/anime" />{/if}
+      {#if trendingHindiMovies.length}<ContentRail title="Trending Movies — Hindi" items={trendingHindiMovies} />{/if}
+      {#if trendingRegionalMovies.length}<ContentRail title="Trending Movies — Regional" items={trendingRegionalMovies} />{/if}
       {#each genreCollections as col}<ContentRail title={col.title} items={col.items} href={col.href} />{/each}
 
       {#if genreTiles.length}
@@ -392,7 +395,6 @@
       {#if topRatedMovies.length}<ContentRail title="Top rated movies" items={topRatedMovies} href="/discover/movies?sort=Top+rated" />{/if}
       {#if topRatedSeries.length}<ContentRail title="Top rated TV shows" items={topRatedSeries} href="/discover/series?sort=Top+rated" />{/if}
       {#if topRatedAnime.length}<ContentRail title="Top rated anime" items={topRatedAnime} href="/discover/anime?sort=Top+rated" />{/if}
-      {#if popularMovies.length}<ContentRail title="Popular movies" items={popularMovies} href="/discover/movies" />{/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}

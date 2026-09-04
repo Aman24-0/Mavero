@@ -12,8 +12,18 @@
 //   - Each source is loaded independently. A failure in one source
 //     does NOT crash the whole Upcoming page — partial results are
 //     returned with a non-fatal error message in `errors`.
-//   - All upstream calls go through the existing `fetchJson` helper
-//     which wraps fetch in try/catch + timeout + ContentServiceError.
+//   - ALL TMDB calls go through the shared adapter request path
+//     (`tmdbRequest` in ./adapters/tmdb) so Upcoming gets the same
+//     credential handling as the rest of the content layer — including
+//     the 401/403 -> api_key fallback for deployments whose
+//     TMDB_READ_ACCESS_TOKEN actually holds a v3 API key. Previously this
+//     module had its own Bearer-only request helper, so those deployments
+//     failed every Movies/Series lookup with an opaque upstream error
+//     while Anime (AniList) and Discover (shared adapter) kept working.
+//   - A genuine upstream failure is NEVER reported as an empty month:
+//     per-series lookup failures are counted, and if every candidate
+//     series lookup fails the series source reports an error instead of
+//     silently returning zero episodes.
 //   - Results are cached with keys that include month/year/type/region
 //     so a popular filter combo doesn't re-hit upstreams on every load.
 //
@@ -23,10 +33,10 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from './cache';
 import { fetchJson } from './http';
+import { tmdbRequest } from './adapters/tmdb';
 import { ContentServiceError } from './types';
 import type { UpcomingFilters, UpcomingItem, UpcomingProvider, UpcomingResult, UpcomingType } from './upcoming-types';
 
-const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE = 'https://image.tmdb.org/t/p';
 const ANILIST_API = env.ANILIST_API_URL || 'https://graphql.anilist.co';
 const DEFAULT_REGION = 'IN';
@@ -94,26 +104,8 @@ export function monthBounds(year: number, month: number): { gte: string; lte: st
 
 // ---------- TMDB helpers (self-contained, does not modify adapter) ----------
 
-function requireTmdbCredentials() {
-  const token = env.TMDB_READ_ACCESS_TOKEN;
-  const apiKey = env.TMDB_API_KEY;
-  if (!token && !apiKey) {
-    throw new ContentServiceError('TMDB credentials are not configured.', { code: 'CONFIG_MISSING', status: 503 });
-  }
-  return { token, apiKey };
-}
-
-async function tmdbRequest<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
-  const { token, apiKey } = requireTmdbCredentials();
-  const url = new URL(`${TMDB_BASE}${path}`);
-  Object.entries({ language: 'en-US', ...params }).forEach(([key, value]) => {
-    if (value !== undefined) url.searchParams.set(key, String(value));
-  });
-  if (!token && apiKey) url.searchParams.set('api_key', apiKey);
-  return fetchJson<T>(url.toString(), {
-    headers: token ? { authorization: `Bearer ${token}` } : undefined
-  });
-}
+// All TMDB requests use the shared adapter `tmdbRequest` (credential
+// fallback + consistent error mapping). Only image URL building stays local.
 
 function tmdbImage(path: string | null | undefined, size: 'w92' | 'w342' | 'w500' | 'w780' | 'original' = 'w500') {
   return path ? `${TMDB_IMAGE}/${size}${path}` : '';
@@ -197,14 +189,14 @@ async function getTvWatchProviders(seriesId: number, region: string): Promise<Up
   return value ?? [];
 }
 
-async function getTvSeasonEpisodes(seriesId: number, seasonNumber: number): Promise<TmdbSeason | null> {
+async function getTvSeasonEpisodes(seriesId: number, seasonNumber: number): Promise<TmdbSeason> {
   const key = `upcoming:season:tv:${seriesId}:${seasonNumber}`;
   const { value } = await getOrSet(key, seasonPolicy, async () => {
-    try {
-      return await tmdbRequest<TmdbSeason>(`/tv/${seriesId}/season/${seasonNumber}`);
-    } catch {
-      return null;
-    }
+    // Deliberately NOT caught here: a failed season lookup must propagate so
+    // the caller can distinguish "no episodes this month" (real empty) from
+    // "the episode data could not be loaded" (upstream failure). Failures are
+    // not cached, so a transient error self-heals on the next request.
+    return tmdbRequest<TmdbSeason>(`/tv/${seriesId}/season/${seasonNumber}`);
   });
   return value;
 }
@@ -229,12 +221,9 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 // fabricated — if TMDB doesn't provide a field, it is omitted.
 async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[] }, year: number, month: number, region: string): Promise<UpcomingItem[]> {
   // Fetch series detail to find the most recent / current season.
-  let detail: TmdbTvDetail;
-  try {
-    detail = await tmdbRequest<TmdbTvDetail>(`/tv/${raw.id}`);
-  } catch {
-    return [];
-  }
+  // NOT caught: a failed detail lookup propagates so loadUpcomingSeries can
+  // distinguish "no episodes this month" from "upstream failure".
+  const detail = await tmdbRequest<TmdbTvDetail>(`/tv/${raw.id}`);
   // Determine the season to inspect: prefer last_episode_to_air's season,
   // otherwise the latest season with a future air_date, otherwise the
   // highest season_number > 0.
@@ -321,7 +310,22 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
     // Step 2: for each candidate, fetch detail + season + episodes to
     // find ALL episodes airing in the month (one UpcomingItem per
     // episode). Concurrency-limited to avoid N+1 request explosions.
-    const built = await mapWithConcurrency(candidates, (c) => buildSeriesItems(c, year, month, region), LOOKUP_CONCURRENCY);
+    // Per-candidate failures are counted — if EVERY candidate lookup
+    // fails, the source failed upstream and must surface as an error,
+    // never as a silently empty month. Partial success still returns
+    // the real episodes that did load.
+    let failures = 0;
+    const built = await mapWithConcurrency(candidates, async (c) => {
+      try {
+        return await buildSeriesItems(c, year, month, region);
+      } catch {
+        failures += 1;
+        return [];
+      }
+    }, LOOKUP_CONCURRENCY);
+    if (candidates.length > 0 && failures === candidates.length) {
+      throw new ContentServiceError('The content provider returned an upstream error.', { code: 'UPSTREAM_ERROR', status: 502 });
+    }
     // buildSeriesItems returns UpcomingItem[] per candidate — flatten.
     return built.flat();
   });

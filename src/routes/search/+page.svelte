@@ -465,6 +465,21 @@
 
   .dropdown-wrap { min-width: 130px; }
 
+  /* The standalone GENRE / SORT micro-labels above the two dropdowns pushed
+     their triggers below the neighboring "All services" pill. They are
+     visually hidden (sr-only) so the three controls align on one baseline
+     row; the label elements remain rendered for aria-labelledby, so the
+     controls keep accessible names and genre/sort logic is untouched. */
+  .secondary-filters :global(.dropdown-label) {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .clear-all {
     margin-left: auto;
     background: transparent; border: 0;
@@ -571,9 +586,12 @@
     .search-field input { font-size: .88rem; }
     .type-segmented { display: flex; width: 100%; }
     .type-seg { flex: 1 1 0; min-width: 0; padding: 0 8px; justify-content: center; }
-    .secondary-filters { gap: 6px; }
-    .filter-pill { min-height: 38px; padding: 0 11px; font-size: .68rem; }
-    .dropdown-wrap { min-width: 0; flex: 1 1 110px; }
+    .secondary-filters { gap: 5px; }
+    .filter-pill { min-height: 38px; padding: 0 9px; font-size: .68rem; min-width: 0; }
+    .pill-text { max-width: 96px; }
+    /* All services / genre / sort stay on one row: dropdowns share the
+       remaining width equally and ellipsize instead of overflowing. */
+    .dropdown-wrap { min-width: 0; flex: 1 1 0; }
     .clear-all { margin-left: 0; flex-basis: 100%; text-align: left; padding-left: 0; }
     .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 11px; }
     .empty-search { padding: 32px 16px; }

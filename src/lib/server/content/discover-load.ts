@@ -1,4 +1,4 @@
-import { collection, discover, popular, selectFeatured } from './service';
+import { collection, discover, popular, selectFeatured, trendingMoviesByLanguages } from './service';
 import { toMediaItem } from './presenter';
 import type { CollectionFilters, CollectionSort, ContentType, ContentList } from './types';
 import type { MediaItem } from '$data/content';
@@ -42,6 +42,27 @@ async function loadGenreCollection(type: ContentType, genre: string): Promise<Ra
   return loadCollectionRail(type, { genre });
 }
 
+// Indian-language trending movies (movie only, TMDB original-language filter).
+// - Hindi rail: one popularity-ordered TMDB query for original_language = 'hi'.
+// - Regional rail: Indian regional languages OTHER than Hindi — 'hi' is
+//   deliberately absent from this list, so the two rails never duplicate.
+//   Each language is a separate bounded, cached TMDB query run in parallel
+//   (TMDB cannot OR original languages in one query); results are merged,
+//   deduplicated and popularity-ranked in the service layer.
+const HINDI_MOVIE_LANGUAGES = ['hi'];
+const REGIONAL_INDIAN_MOVIE_LANGUAGES = ['ta', 'te', 'ml', 'kn', 'bn', 'mr', 'gu', 'pa'];
+
+async function loadTrendingMoviesByLanguages(languages: string[]): Promise<RailResult> {
+  try {
+    const result = await trendingMoviesByLanguages(languages, 1);
+    if (result.source.provider === 'fixtures') return { items: [] };
+    return { items: result.items.map(toMediaItem) };
+  } catch {
+    // A failed/empty language rail is simply hidden — no fixture or fake data.
+    return { items: [] };
+  }
+}
+
 const validCollectionSorts: CollectionSort[] = ['For you', 'Top rated', 'Newest'];
 
 function parseCollectionPage(value: string | null) {
@@ -77,7 +98,8 @@ type GenreCollection = { title: string; items: MediaItem[]; href: string };
 export async function loadDiscoverData() {
   const [
     trendingMovies, trendingSeries, trendingAnime,
-    popularMovies, popularSeries, popularAnime,
+    popularSeries, popularAnime,
+    trendingHindiMovies, trendingRegionalMovies,
     topRatedMovies, topRatedSeries, topRatedAnime,
     newMovies,
     actionMovies, comedyMovies, horrorMovies, sciFiMovies, romanceMovies
@@ -85,9 +107,10 @@ export async function loadDiscoverData() {
     loadRail('movie', 'trending'),
     loadRail('series', 'trending'),
     loadRail('anime', 'trending'),
-    loadRail('movie', 'popular'),
     loadRail('series', 'popular'),
     loadRail('anime', 'popular'),
+    loadTrendingMoviesByLanguages(HINDI_MOVIE_LANGUAGES),
+    loadTrendingMoviesByLanguages(REGIONAL_INDIAN_MOVIE_LANGUAGES),
     loadTopRated('movie'),
     loadTopRated('series'),
     loadTopRated('anime'),
@@ -99,7 +122,7 @@ export async function loadDiscoverData() {
     loadGenreCollection('movie', 'Romance'),
   ]);
 
-  const errors = [trendingMovies, trendingSeries, trendingAnime, popularMovies, popularSeries, popularAnime]
+  const errors = [trendingMovies, trendingSeries, trendingAnime, popularSeries, popularAnime]
     .flatMap((rail) => rail.error ? [rail.error] : []);
 
   // Build genre collections with non-empty items only
@@ -115,9 +138,10 @@ export async function loadDiscoverData() {
     movies: trendingMovies.items,
     series: trendingSeries.items,
     anime: trendingAnime.items,
-    popularMovies: popularMovies.items,
     popularSeries: popularSeries.items,
     popularAnime: popularAnime.items,
+    trendingHindiMovies: trendingHindiMovies.items,
+    trendingRegionalMovies: trendingRegionalMovies.items,
     topRatedMovies: topRatedMovies.items,
     topRatedSeries: topRatedSeries.items,
     topRatedAnime: topRatedAnime.items,

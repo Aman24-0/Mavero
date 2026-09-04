@@ -160,7 +160,11 @@ function requireCredentials() {
   return { token, apiKey };
 }
 
-async function tmdbRequest<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}) {
+// Shared TMDB GET path for the whole content layer (discover/collection/search/detail
+// AND the Upcoming releases module). Centralising every TMDB call here keeps ONE
+// client with: the 401/403 -> api_key credential-format fallback, consistent
+// timeout/rate-limit error mapping, and no second, weaker request implementation.
+export async function tmdbRequest<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}) {
   const { token, apiKey } = requireCredentials();
   const url = new URL(`${BASE_URL}${path}`);
   Object.entries({ language: 'en-US', ...params }).forEach(([key, value]) => {
@@ -223,6 +227,31 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
     };
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
     const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type));
+    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+// Reusable language-filtered trending movies query (used by the Discover
+// "Trending Movies — Hindi" and "Trending Movies — Regional" rails).
+// Server-side filtering: TMDB `with_original_language` + popularity ordering,
+// so no oversized fetch-then-filter pages and no hardcoded titles.
+export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1): Promise<ContentList> {
+  const normalized = language.trim().toLowerCase();
+  if (!/^[a-z]{2}$/.test(normalized)) {
+    throw new ContentServiceError('The requested movie language filter is invalid.', { code: 'NOT_FOUND', status: 404 });
+  }
+  const key = `tmdb:lang-movies:movie:${normalized}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const result = await tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
+      page,
+      include_adult: false,
+      with_original_language: normalized,
+      sort_by: 'popularity.desc',
+      // India focus — TMDB applies region-aware release-date context.
+      region: 'IN'
+    });
+    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'Trending'));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };

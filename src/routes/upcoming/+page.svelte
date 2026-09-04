@@ -265,11 +265,25 @@
     border-bottom: 1px solid rgba(255, 255, 255, .05);
   }
   .filters-inner {
-    display: flex; flex-wrap: wrap; gap: 10px; align-items: end;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
     width: min(1100px, 100%);
     margin-inline: auto;
   }
   .filter-wrap { min-width: 130px; flex: 1 1 130px; }
+
+  /* Month / Year / Type share ONE horizontal row on every viewport.
+     The micro labels stay in the DOM for aria-labelledby but are visually
+     hidden — the selected values (month name, year, type) are
+     self-descriptive, so labels would only burn a vertical row. */
+  .filters-inner :global(.dropdown-label) {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
   .upcoming-body {
     padding: 0 var(--u-gutter);
@@ -456,8 +470,11 @@
   @media (max-width: 640px) {
     .upcoming-header { padding-top: 22px; padding-bottom: 18px; }
     .upcoming-header h1 { font-size: clamp(1.5rem, 6vw, 2rem); }
-    .filters-inner { gap: 8px; }
-    .filter-wrap { min-width: 0; flex: 1 1 100%; }
+    /* One row: three equal-width dropdowns. min-width: 0 lets each
+       control shrink and ellipsize instead of pushing the row wider
+       than the viewport (verified at 360/390/430px). */
+    .filters-inner { flex-wrap: nowrap; gap: 8px; }
+    .filter-wrap { min-width: 0; flex: 1 1 0; }
     .day-cards { grid-template-columns: 1fr; }
     .release-card { grid-template-columns: 64px 1fr auto; gap: 10px; padding: 10px; }
     .card-poster { width: 64px; }

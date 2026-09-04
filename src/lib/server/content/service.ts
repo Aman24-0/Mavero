@@ -1,4 +1,4 @@
-import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, searchTmdb, getTmdbSeason } from './adapters/tmdb';
+import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason } from './adapters/tmdb';
 import { getAniListCollection, getAniListDetail, getAniListDiscover, getAniListTrending, searchAniList } from './adapters/anilist';
 import { media } from '$data/content';
 import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem, SearchFilters } from './types';
@@ -129,6 +129,48 @@ export async function popular(type: ContentType, page = 1): Promise<ContentList>
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
   }
+}
+
+// Trending movies for one or more original languages (Discover "Trending
+// Movies — Hindi" / "Trending Movies — Regional").
+//
+// - Movie only, popularity-ordered via the shared TMDB discover query
+//   (getTmdbTrendingMoviesByLanguage), so TMDB filters server-side.
+// - Multi-language rails (Indian regional languages) run one bounded,
+//   cached query per language in parallel — TMDB has no multi-value
+//   with_original_language filter — then merge, deduplicate by content id
+//   and rank with the same recognition-aware ranking as every other rail.
+// - Hindi exclusion for the Regional rail is by construction: the caller
+//   never passes 'hi' in the language list, and each query is strictly
+//   single-language, so the two rails cannot duplicate each other.
+// - No fixture fallback here: a failure or empty result must never be
+//   presented as catalog content — the caller hides the rail instead.
+export async function trendingMoviesByLanguages(languages: string[], page = 1): Promise<ContentList> {
+  const normalized = [...new Set(languages.map((language) => language.trim().toLowerCase()).filter(Boolean))];
+  if (!normalized.length) {
+    throw new ContentServiceError('No movie languages were requested.', { code: 'NOT_FOUND', status: 404 });
+  }
+  const results = await Promise.allSettled(normalized.map((language) => getTmdbTrendingMoviesByLanguage(language, page)));
+  const fulfilled = results.filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled').map((result) => result.value);
+  if (!fulfilled.length) {
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
+    throw failure instanceof ContentServiceError ? failure : new ContentServiceError('The content provider returned an upstream error.', { code: 'UPSTREAM_ERROR', status: 502 });
+  }
+  const seen = new Set<string>();
+  const merged = fulfilled
+    .flatMap((result) => result.items)
+    .filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  merged.sort((left, right) => (right.popularity ?? 0) - (left.popularity ?? 0));
+  return {
+    items: rankForExposure(merged),
+    page,
+    hasNextPage: fulfilled.some((result) => result.hasNextPage),
+    source: { ...fulfilled[0].source, stale: fulfilled.some((result) => result.source.stale) }
+  };
 }
 
 function applyAnimeFilters(items: NormalizedMediaItem[], filters: SearchFilters) {
