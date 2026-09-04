@@ -16,9 +16,11 @@
 </script>
 
 <div class="auth-page">
-  <a class="back-pill" href={backHref}>
-    <ArrowLeft size={15} /> <span>{backLabel}</span>
-  </a>
+  <div class="auth-top-bar">
+    <a class="back-pill" href={backHref}>
+      <ArrowLeft size={15} /> <span>{backLabel}</span>
+    </a>
+  </div>
 
   <!-- Atmospheric backdrop: subtle neutral glow only, no colored ambient. -->
   <div class="auth-atmosphere" aria-hidden="true">
@@ -49,15 +51,23 @@
     position: relative;
     min-height: 100dvh;
     /* Auth bypasses AppShell, so it owns its own safe-area top padding.
-       No fixed topbar here — the back pill is absolutely positioned
-       below the status bar. */
-    padding: calc(env(safe-area-inset-top, 0px) + 28px) var(--a-gutter) calc(110px + env(safe-area-inset-bottom, 0px));
+       The layout is a flex column: back-pill bar at the top (flow, not
+       absolute), then the auth card centered in the remaining space.
+       This guarantees the back-pill can NEVER overlap the card. */
+    padding: calc(env(safe-area-inset-top, 0px) + 18px) var(--a-gutter) calc(60px + env(safe-area-inset-bottom, 0px));
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    align-items: stretch;
     background: #000;
     overflow: hidden;
+  }
+
+  .auth-top-bar {
+    position: relative; z-index: 2;
+    width: 100%;
+    max-width: 480px;
+    margin-inline: auto;
+    margin-bottom: 28px;
   }
 
   .auth-atmosphere {
@@ -82,10 +92,6 @@
   }
 
   .back-pill {
-    position: absolute;
-    top: calc(env(safe-area-inset-top, 0px) + 18px);
-    left: var(--a-gutter);
-    z-index: 2;
     display: inline-flex; align-items: center; gap: 7px;
     min-height: 44px;
     padding: 0 16px;
@@ -107,9 +113,13 @@
   .back-pill:active { transform: translateX(-2px) scale(.97); }
   .back-pill:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
 
+  /* The auth card centers in the remaining vertical space below the
+     back-pill bar. margin: auto centers it vertically + horizontally
+     in the flex column's remaining space. */
   .auth-card {
     position: relative; z-index: 1;
     width: min(440px, 100%);
+    margin: auto;
     padding: clamp(24px, 4vw, 36px);
     border: 1px solid rgba(255, 255, 255, .08);
     border-radius: 16px;
@@ -162,7 +172,8 @@
   .auth-content { display: grid; gap: 14px; }
 
   @media (max-width: 480px) {
-    .auth-page { padding-top: calc(env(safe-area-inset-top, 0px) + 24px); padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+    .auth-page { padding-top: calc(env(safe-area-inset-top, 0px) + 14px); padding-bottom: calc(40px + env(safe-area-inset-bottom, 0px)); }
+    .auth-top-bar { margin-bottom: 22px; }
     .auth-card { padding: 22px; border-radius: 14px; }
     .auth-title { font-size: clamp(1.4rem, 6vw, 1.9rem); }
     .auth-sub { font-size: .78rem; }

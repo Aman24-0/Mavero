@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowUpRight, Clock3, Heart, LogIn, LogOut, Settings2, ShieldCheck, Sparkles, UserRound } from 'lucide-svelte';
+  import { ArrowUpRight, CalendarClock, Clock3, Heart, LogIn, LogOut, Settings2, ShieldCheck, Sparkles, UserRound } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import { listFavoriteDeletions } from '$lib/client/progress/database';
@@ -191,13 +191,21 @@
       </div>
     </section>
 
-    <!-- Single Settings shortcut — My List and Discover are already in the
-         global bottom nav / sidebar, so they are intentionally not
-         duplicated here as quick-action cards. -->
+    <!-- Quick actions: Upcoming (release calendar) + Settings.
+         My List and Discover are intentionally NOT here — they are in
+         the global bottom nav / sidebar. -->
     <section class="actions-section" aria-labelledby="actions-heading">
-      <div class="section-eyebrow"><Settings2 size={12} /> Quick action</div>
-      <h2 id="actions-heading">Tune your experience.</h2>
+      <div class="section-eyebrow"><CalendarClock size={12} /> Quick actions</div>
+      <h2 id="actions-heading">Where to next.</h2>
       <div class="action-grid">
+        <a class="action-card" href="/upcoming">
+          <div class="action-icon"><CalendarClock size={18} /></div>
+          <div class="action-copy">
+            <strong>Upcoming</strong>
+            <small>Movies, series & anime releases</small>
+          </div>
+          <ArrowUpRight size={16} class="action-arrow" />
+        </a>
         <a class="action-card" href="/settings">
           <div class="action-icon"><Settings2 size={18} /></div>
           <div class="action-copy">
