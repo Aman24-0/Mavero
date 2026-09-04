@@ -138,6 +138,10 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
       'release_date.lte': lte,
       sort_by: 'popularity.desc',
       'vote_count.gte': 1,
+      // Pass the actual region so TMDB applies region-aware release-date
+      // context (e.g. IN theatrical/availability dates). Without this,
+      // the region only lives in the cache key and has no upstream effect.
+      region,
       page: 1
     });
     return result;
@@ -176,7 +180,12 @@ async function getTvWatchProviders(seriesId: number, region: string): Promise<Up
   const { value } = await getOrSet(key, providerPolicy, async () => {
     try {
       const result = await tmdbRequest<TmdbWatchProviders>(`/tv/${seriesId}/watch/providers`);
-      const regionData = result.results?.[region] ?? result.results?.IN ?? result.results?.US;
+      // Only use the requested region's flatrate data. Do NOT fall back
+      // to US or any other region — if the requested region (e.g. IN)
+      // has no flatrate data, the provider row is hidden cleanly. The UI
+      // does not label the provider region, so showing cross-region
+      // providers would be misleading.
+      const regionData = result.results?.[region];
       const flatrate = regionData?.flatrate ?? [];
       return flatrate
         .filter((p): p is { provider_id: number; provider_name: string; logo_path: string } => typeof p.provider_id === 'number' && typeof p.provider_name === 'string' && typeof p.logo_path === 'string')
@@ -214,13 +223,17 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
   return results;
 }
 
-async function buildSeriesItem(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[] }, year: number, month: number, region: string): Promise<UpcomingItem | null> {
+// Build one UpcomingItem per real TMDB episode airing in the selected
+// month. A series with 3 episodes airing in the month produces 3 items,
+// each with its actual season/episode/date/title. No metadata is
+// fabricated — if TMDB doesn't provide a field, it is omitted.
+async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[] }, year: number, month: number, region: string): Promise<UpcomingItem[]> {
   // Fetch series detail to find the most recent / current season.
   let detail: TmdbTvDetail;
   try {
     detail = await tmdbRequest<TmdbTvDetail>(`/tv/${raw.id}`);
   } catch {
-    return null;
+    return [];
   }
   // Determine the season to inspect: prefer last_episode_to_air's season,
   // otherwise the latest season with a future air_date, otherwise the
@@ -242,42 +255,54 @@ async function buildSeriesItem(raw: { id: number; name?: string; original_name?:
       .sort((a, b) => Math.abs(a.ms - startMs) - Math.abs(b.ms - startMs));
     seasonToInspect = withDates[0]?.number ?? candidateSeasons[candidateSeasons.length - 1];
   }
-  if (seasonToInspect === undefined) return null;
+  if (seasonToInspect === undefined) return [];
 
   const season = await getTvSeasonEpisodes(raw.id, seasonToInspect);
-  if (!season?.episodes?.length) return null;
+  if (!season?.episodes?.length) return [];
 
-  // Find episodes airing in the target month.
+  // Find ALL episodes airing in the target month. Each becomes its own
+  // UpcomingItem so the calendar shows every airing event.
   const { startMs, endMs } = monthBounds(year, month);
-  const inMonthEpisodes = season.episodes.filter((ep) => {
-    if (!ep.air_date) return false;
-    const ms = Date.parse(ep.air_date);
-    return ms >= startMs && ms <= endMs;
-  });
-  if (!inMonthEpisodes.length) return null;
+  const inMonthEpisodes = season.episodes
+    .filter((ep) => {
+      if (!ep.air_date) return false;
+      const ms = Date.parse(ep.air_date);
+      return ms >= startMs && ms <= endMs;
+    })
+    .sort((a, b) => (a.air_date ?? '').localeCompare(b.air_date ?? ''));
+  if (!inMonthEpisodes.length) return [];
 
-  // Take the first upcoming episode (earliest air date in month).
-  const episode = inMonthEpisodes.sort((a, b) => (a.air_date ?? '').localeCompare(b.air_date ?? ''))[0];
+  // Fetch providers once for the series (same for all episodes).
   const providers = await getTvWatchProviders(raw.id, region);
 
-  const date = episode.air_date ?? '';
-  return {
-    id: `series-${raw.id}-s${seasonToInspect}e${episode.episode_number ?? 0}`,
-    type: 'series',
-    title: detail.name || detail.original_name || raw.name || raw.original_name || 'Untitled',
-    poster: tmdbImage(detail.poster_path ?? raw.poster_path, 'w500'),
-    backdrop: tmdbImage(detail.backdrop_path ?? raw.backdrop_path, 'w780') || undefined,
-    date,
-    timestamp: Date.parse(date) || 0,
-    season: seasonToInspect,
-    episode: episode.episode_number ?? undefined,
-    episodeTitle: episode.name || undefined,
-    providers: providers.length ? providers.slice(0, 3) : undefined,
-    year: Number(date.slice(0, 4)) || undefined,
-    rating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : undefined,
-    genres: raw.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3),
-    source: 'tmdb'
-  };
+  const title = detail.name || detail.original_name || raw.name || raw.original_name || 'Untitled';
+  const poster = tmdbImage(detail.poster_path ?? raw.poster_path, 'w500');
+  const backdrop = tmdbImage(detail.backdrop_path ?? raw.backdrop_path, 'w780') || undefined;
+  const rating = detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : undefined;
+  const genres = raw.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3);
+  const providerSlice = providers.length ? providers.slice(0, 3) : undefined;
+
+  // Emit one item per in-month episode.
+  return inMonthEpisodes.map((episode) => {
+    const date = episode.air_date ?? '';
+    return {
+      id: `series-${raw.id}-s${seasonToInspect}e${episode.episode_number ?? 0}`,
+      type: 'series' as const,
+      title,
+      poster,
+      backdrop,
+      date,
+      timestamp: Date.parse(date) || 0,
+      season: seasonToInspect,
+      episode: episode.episode_number ?? undefined,
+      episodeTitle: episode.name || undefined,
+      providers: providerSlice,
+      year: Number(date.slice(0, 4)) || undefined,
+      rating,
+      genres,
+      source: 'tmdb' as const
+    } satisfies UpcomingItem;
+  });
 }
 
 async function loadUpcomingSeries(year: number, month: number, region: string): Promise<UpcomingItem[]> {
@@ -294,10 +319,11 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
     });
     const candidates = (result.results ?? []).filter((s) => s.id && (s.name || s.original_name)).slice(0, 20);
     // Step 2: for each candidate, fetch detail + season + episodes to
-    // find the actual Sxx/Exx airing in the month. Concurrency-limited
-    // to avoid N+1 request explosions.
-    const built = await mapWithConcurrency(candidates, (c) => buildSeriesItem(c, year, month, region), LOOKUP_CONCURRENCY);
-    return built.filter((item): item is UpcomingItem => item !== null);
+    // find ALL episodes airing in the month (one UpcomingItem per
+    // episode). Concurrency-limited to avoid N+1 request explosions.
+    const built = await mapWithConcurrency(candidates, (c) => buildSeriesItems(c, year, month, region), LOOKUP_CONCURRENCY);
+    // buildSeriesItems returns UpcomingItem[] per candidate — flatten.
+    return built.flat();
   });
   return value.sort((a, b) => a.timestamp - b.timestamp);
 }
@@ -454,6 +480,6 @@ export const upcomingInternals = {
   loadUpcomingSeries,
   loadUpcomingAnime,
   getTvWatchProviders,
-  buildSeriesItem,
+  buildSeriesItems,
   DEFAULT_REGION
 };

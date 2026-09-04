@@ -60,23 +60,33 @@ assert.match(upcomingSrc, /getUTCFullYear\(\)/, 'monthBounds uses getUTCFullYear
 assert.match(upcomingSrc, /getUTCMonth\(\) \+ 1/, 'monthBounds uses getUTCMonth + 1 (1-indexed)');
 assert.match(upcomingSrc, /getUTCDate\(\)/, 'monthBounds uses getUTCDate');
 
-// --- 5. Movie date-range filtering ---
+// --- 5. Movie date-range filtering + region ---
 // loadUpcomingMovies uses primary_release_date.gte/lte
 assert.match(upcomingSrc, /'primary_release_date\.gte': gte/, 'movies filtered by primary_release_date.gte');
 assert.match(upcomingSrc, /'primary_release_date\.lte': lte/, 'movies filtered by primary_release_date.lte');
+// Region is passed to TMDB /discover/movie (not just the cache key)
+assert.match(upcomingSrc, /region,\s*\n\s*page: 1/, 'region passed to TMDB /discover/movie params');
 // Movies must have a release_date to be included
 assert.match(upcomingSrc, /filter\(\(m\) => m\.id && \(m\.title \|\| m\.original_title\) && m\.release_date\)/, 'movies filtered to only those with release_date');
 // Movie items are sorted chronologically
 assert.match(upcomingSrc, /\.sort\(\(a, b\) => a\.timestamp - b\.timestamp\)/, 'movies sorted by timestamp ascending');
 
-// --- 6. TV episode date filtering ---
+// --- 6. TV episode date filtering — ALL in-month episodes emitted ---
 // loadUpcomingSeries uses air_date.gte/lte on discover/tv
 assert.match(upcomingSrc, /'air_date\.gte': gte/, 'series discover filtered by air_date.gte');
 assert.match(upcomingSrc, /'air_date\.lte': lte/, 'series discover filtered by air_date.lte');
 // Then fetches season episodes and filters to in-month air dates
 assert.match(upcomingSrc, /getTvSeasonEpisodes/, 'series fetches season episodes');
-assert.match(upcomingSrc, /inMonthEpisodes = season\.episodes\.filter/, 'episodes filtered to in-month air dates');
+assert.match(upcomingSrc, /inMonthEpisodes = season\.episodes/, 'episodes filtered to in-month air dates');
 assert.match(upcomingSrc, /startMs && ms <= endMs/, 'episode air date checked against month start/end ms');
+// ALL in-month episodes are emitted as separate items (not just the first)
+assert.match(upcomingSrc, /return inMonthEpisodes\.map\(/, 'ALL in-month episodes mapped to separate UpcomingItems');
+assert.doesNotMatch(upcomingSrc, /inMonthEpisodes\.sort\([^)]*\)\[0\]/, 'does NOT take only the first episode');
+// buildSeriesItems returns an array (not single item | null)
+assert.match(upcomingSrc, /async function buildSeriesItems\(/, 'function renamed to buildSeriesItems (plural — returns array)');
+assert.match(upcomingSrc, /: Promise<UpcomingItem\[\]>/, 'buildSeriesItems returns UpcomingItem[]');
+// loadUpcomingSeries flattens the arrays
+assert.match(upcomingSrc, /return built\.flat\(\)/, 'loadUpcomingSeries flattens episode arrays');
 
 // --- 7. Upcoming type filtering ---
 // loadUpcoming only loads the requested type(s)
@@ -105,8 +115,12 @@ assert.match(upcomingSrc, /\/tv\/\$\{seriesId\}\/watch\/providers/, 'providers f
 assert.match(upcomingSrc, /regionData\?\.flatrate \?\? \[\]/, 'only flatrate providers used');
 assert.doesNotMatch(upcomingSrc, /regionData\?\.buy/, 'buy providers NOT included');
 assert.doesNotMatch(upcomingSrc, /regionData\?\.rent/, 'rent providers NOT included');
-// IN region default
-assert.match(upcomingSrc, /result\.results\?\.\[region\] \?\? result\.results\?\.IN/, 'providers use IN region fallback');
+// Only the requested region is used — NO US/IN fallback. If the region
+// has no flatrate data, the provider row is hidden cleanly.
+assert.match(upcomingSrc, /const regionData = result\.results\?\.\[region\];/, 'providers use ONLY the requested region');
+assert.doesNotMatch(upcomingSrc, /result\.results\?\.\[region\] \?\? result\.results\?\.IN/, 'NO IN region fallback');
+assert.doesNotMatch(upcomingSrc, /result\.results\?\.\[region\] \?\? result\.results\?\.IN \?\? result\.results\?\.US/, 'NO US region fallback');
+assert.doesNotMatch(upcomingSrc, /result\.results\?\.US/, 'NO US fallback anywhere in provider lookup');
 // Max 3 providers on the card
 assert.match(upcomingSrc, /providers\.length \? providers\.slice\(0, 3\)/, 'max 3 providers per series item');
 // Provider logo uses TMDB logo_path
