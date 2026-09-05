@@ -1811,7 +1811,7 @@ HTMLVideoElement / iframe
 
 **Next phase:** Phase 2 — Default Provider + Automatic Fallback (NOT started).
 
-**Commit:** `<pending>` — `refactor(player): establish playback orchestration architecture`
+**Commit:** `d2640e9` — `refactor(player): establish playback orchestration architecture`
 
 ### Worklog template
 
