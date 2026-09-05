@@ -4,7 +4,6 @@
   import { page } from '$app/state';
   import { onDestroy, onMount } from 'svelte';
   import PlayerShell from '$lib/components/player/PlayerShell.svelte';
-  import { normalizePlayerSource } from '$lib/shared/player-guards';
   import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource } from '$lib/shared/player';
   import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
   import { appendReturnTo, safeReturnTo } from '$lib/shared/navigation';
@@ -12,6 +11,7 @@
   import { createProgressWriter, getLocalPersistenceState, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import type { PlaybackContext } from '$lib/client/progress/types';
+  import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
 
   export let data: PageData;
 
@@ -26,33 +26,100 @@
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
   $: playerContent = ({ id: item.id, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
 
-  let selectedSourceId = '';
+  // ----- Phase 1: PlaybackManager owns source resolution + adapter lifecycle -----
+  //
+  // The manager is the single authoritative owner of:
+  //   - resolvedSource
+  //   - resolutionState / resolutionMessage / errorCode
+  //   - resolver invocation (POST /api/playback/resolve)
+  //   - race-condition guards (sessionId, abortController)
+  //   - adapter lifecycle (load, destroy)
+  //
+  // The watch route retains (per Phase 1 scope):
+  //   - selectedSourceId (Phase 0 first-source selection — preserved exactly)
+  //   - progress writer (writer.update/flush — preserved per Phase 4 boundary)
+  //   - Viduki V1→V2 listener (preserved — Phase 3 will move into adapter)
+  //   - episode navigation (goto URL sync — preserved)
+  //   - resume time (loaded into manager via startPosition on loadSource)
+  //
+  // Reactive Svelte 4 `let` locals mirror manager state so PlayerShell's
+  // existing props continue to work without modification. The manager
+  // notifies subscribers on every state patch; this route's subscriber
+  // copies the snapshot into these locals.
+  const manager = new PlaybackManager();
   let resolvedSource: PlayerSource | null = null;
-  type ResolutionState = 'idle' | 'resolving' | 'ready' | 'provider-error' | 'unsupported' | 'unavailable' | 'network-error';
   let resolutionState: ResolutionState = 'idle';
   let resolutionMessage = '';
+  let active = true;
   let resumeTime = 0;
   let duration = 0;
   let progressReady = false;
   let localState = 'Preparing local progress…';
   let writer: ReturnType<typeof createProgressWriter> | undefined;
   let writerKey = '';
-  let active = true;
-  let resolutionRequestId = 0;
-  let resolutionController: AbortController | undefined;
   let startedHistory = false;
   let lastHistoryAt = 0;
   let watchingSavedForSession = false;
   let activePlaybackKey = '';
+  let selectedSourceId = '';
+
+  // Subscribe to manager state so the route's reactive locals mirror the
+  // manager snapshot. PlayerShell receives these via its existing props.
+  const unsubscribeManager = manager.subscribe((snapshot) => {
+    resolvedSource = snapshot.source as PlayerSource | null;
+    resolutionState = snapshot.resolutionState;
+    resolutionMessage = snapshot.resolutionMessage;
+    if (snapshot.duration && snapshot.duration !== duration) duration = snapshot.duration;
+  });
+
+  // Forward manager playback events to the existing progress writer.
+  // This is the integration boundary described in Phase 0 gap §0.10.6 —
+  // for direct sources, manager events translate to writer.update() calls
+  // exactly as Phase 0's PlayerShell.handlePlayerProgress did. For embed
+  // sources (no events), the writer is never updated — same as Phase 0.
+  const unsubscribeManagerEvents = manager.onEvent((event) => {
+    if (event.type === 'timeupdate' || event.type === 'seeked') {
+      const currentDuration = event.type === 'timeupdate' && typeof event.duration === 'number' ? event.duration : duration;
+      const completed = currentDuration > 0 && event.currentTime / currentDuration >= 0.9;
+      writer?.update(event.currentTime, currentDuration, completed);
+    } else if (event.type === 'pause') {
+      void writer?.pause();
+    } else if (event.type === 'ended') {
+      // `ended` carries no currentTime in the normalized PlayerEvent union;
+      // read the last known currentTime from the manager snapshot.
+      const currentTime = manager.getState().currentTime;
+      void writer?.complete(currentTime, duration);
+    }
+    // Authenticated history bookkeeping (preserved from Phase 0).
+    if (page.data.user) {
+      if ((event.type === 'timeupdate' || event.type === 'play') && !startedHistory) {
+        const currentTime = 'currentTime' in event ? event.currentTime : 0;
+        if (currentTime > 0) {
+          startedHistory = true;
+          void sendHistory('started', currentTime, duration);
+        }
+      }
+      if (event.type === 'timeupdate') {
+        const currentTime = event.currentTime;
+        if (currentTime - lastHistoryAt >= 60) {
+          lastHistoryAt = currentTime;
+          void sendHistory('progressed', currentTime, duration);
+        }
+      }
+      if (event.type === 'ended') {
+        const currentTime = manager.getState().currentTime;
+        const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+        void setFavoriteStatus(contentType, item.id, snapshot, 'completed').then(() => void syncAuthenticatedState());
+        void sendHistory('completed', currentTime, duration);
+      }
+    }
+  });
 
   $: if (browser && playbackKey !== activePlaybackKey) {
     activePlaybackKey = playbackKey;
-    resolutionRequestId += 1;
-    resolutionController?.abort();
-    resolutionController = undefined;
-    resolvedSource = null;
-    resolutionState = 'idle';
-    resolutionMessage = '';
+    // Episode changed — reset the manager session so a stale in-flight
+    // resolution cannot overwrite the new episode's state.
+    manager.reset();
     progressReady = false;
     watchingSavedForSession = false;
   }
@@ -79,22 +146,20 @@
     // documented origin. Does not trust arbitrary window messages. Does not allow
     // the iframe to inject arbitrary URLs — the switch only selects known
     // hard-coded Viduki provider endpoints already registered in Mavero.
+    //
+    // Phase 1: preserved here (not yet moved into a VidukiPlayerAdapter —
+    // that is Phase 3 work). The listener calls prepareSource(v2.id, false)
+    // which delegates to manager.loadSource() with allowFallback=false.
     const vidukiFallback = (event: MessageEvent) => {
       if (event.origin !== 'https://www.viduki.net') return;
       if (!event.data || typeof event.data !== 'object') return;
       const data = event.data as { type?: unknown };
       if (data.type !== 'viduki:all-servers-failed') return;
-      // Find the currently-selected source option.
       const current = sourceOptions.find((source) => source.id === selectedSourceId);
       if (!current) return;
-      // Find the sibling V2 source (same provider_id, different id).
-      // The V1 source slug is 'viduki-v1-source'; V2 is 'viduki-v2-source'.
-      // We match by provider_id to find the sibling, then pick the V2 by slug.
       const v2 = sourceOptions.find((source) => source.id !== current.id && source.name?.includes('V2'));
       if (!v2) return;
-      // Only auto-switch if the current source is a Viduki V1 source.
       if (!current.name?.includes('V1')) return;
-      // Switch to V2. allowFallback=false to prevent recursive fallback loops.
       void prepareSource(v2.id, false);
     };
     window.addEventListener('message', vidukiFallback);
@@ -111,9 +176,9 @@
 
   onDestroy(() => {
     active = false;
-    resolutionRequestId += 1;
-    resolutionController?.abort();
-    resolutionController = undefined;
+    unsubscribeManager();
+    unsubscribeManagerEvents();
+    manager.dispose();
     void writer?.flush();
     writer?.dispose();
   });
@@ -144,70 +209,57 @@
     writer = createProgressWriter({ ...playbackContext, selectedSourceId, snapshot });
   }
 
+  /**
+   * Delegate source resolution to the PlaybackManager. The manager owns:
+   *   - POST /api/playback/resolve invocation
+   *   - race-condition guards (sessionId, AbortController)
+   *   - adapter lifecycle (pick adapter, load, destroy)
+   *   - resolvedSource / resolutionState / resolutionMessage state
+   *
+   * The route retains:
+   *   - sourceId selection (Phase 0 behaviour — first source by admin ordering)
+   *   - allowFallback flag (true on initial resolution, false on manual switch)
+   *   - progress writer swap (replaceProgressSource — preserved)
+   *   - "watching" favorite promotion on first successful resolution
+   *
+   * If the manager selects a different sourceId (resolver walked the
+   * fallback candidate list and the request source failed), the writer
+   * is swapped to the new sourceId.
+   */
   async function prepareSource(sourceId = selectedSourceId, allowFallback = true) {
-    const requestId = ++resolutionRequestId;
-    resolutionController?.abort();
-    resolutionController = undefined;
     const selected = sourceOptions.find((source) => source.id === sourceId);
     if (!selected) {
-      resolvedSource = null;
+      // No source option — surface as unavailable without invoking the manager.
       resolutionState = 'unavailable';
       resolutionMessage = 'No authorized source is available for this title.';
+      resolvedSource = null;
       return;
     }
-    const controller = new AbortController();
-    resolutionController = controller;
     await replaceProgressSource(sourceId);
-    if (!active || requestId !== resolutionRequestId) return;
+    if (!active) return;
     selectedSourceId = sourceId;
-    resolutionState = 'resolving';
-    resolutionMessage = 'Resolving a safe playback source…';
-    resolvedSource = null;
-    try {
-      const response = await fetch('/api/playback/resolve', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sourceId, contentId: item.id, mediaType: contentType, season, episode, enableFallback: allowFallback }),
-        signal: controller.signal
-      });
-      const payload = await response.json() as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
-      if (!active || requestId !== resolutionRequestId) return;
-      const safeSource = normalizePlayerSource(payload.source);
-      if (!response.ok || !payload.ok || !safeSource) {
-        const error = new Error(payload.error?.message ?? 'This source is currently unavailable.') as Error & { code?: string };
-        error.code = payload.error?.code;
-        throw error;
+    await manager.loadSource(
+      { sourceId, contentId: item.id, mediaType: contentType, season, episode },
+      resumeTime,
+      allowFallback,
+    );
+    if (!active) return;
+    const resolved = manager.getSource();
+    // If the resolver walked the fallback list and selected a different source,
+    // swap the writer to that source's id (mirrors Phase 0 behaviour).
+    if (resolved && resolved.sourceId !== selectedSourceId) {
+      await replaceProgressSource(resolved.sourceId);
+      selectedSourceId = resolved.sourceId;
+    }
+    if (resolved && !watchingSavedForSession) {
+      watchingSavedForSession = true;
+      const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+      try {
+        await setFavoriteStatus(contentType, item.id, snapshot, 'watching');
+        if (active && page.data.user) void syncAuthenticatedState();
+      } catch {
+        // Playback remains available even if local list promotion is unavailable.
       }
-      if (safeSource.sourceId !== selectedSourceId) await replaceProgressSource(safeSource.sourceId);
-      if (!active || requestId !== resolutionRequestId) return;
-      selectedSourceId = safeSource.sourceId;
-      resolvedSource = safeSource;
-      resolutionState = 'ready';
-      resolutionMessage = safeSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.';
-      if (!watchingSavedForSession) {
-        watchingSavedForSession = true;
-        const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
-        try {
-          await setFavoriteStatus(contentType, item.id, snapshot, 'watching');
-          if (active && requestId === resolutionRequestId && page.data.user) void syncAuthenticatedState();
-        } catch {
-          // Playback remains available even if local list promotion is unavailable.
-        }
-      }
-    } catch (error) {
-      if (!active || requestId !== resolutionRequestId || (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError')) return;
-      resolvedSource = null;
-      const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined;
-      resolutionState = code === 'UNSUPPORTED_MEDIA_TYPE' ? 'unsupported' : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE' ? 'unavailable' : code ? 'provider-error' : 'network-error';
-      resolutionMessage = code === 'UNSUPPORTED_MEDIA_TYPE'
-        ? 'This provider does not support this title type.'
-        : code === 'SOURCE_DISABLED' || code === 'PROVIDER_DISABLED' || code === 'SOURCE_MAINTENANCE' || code === 'RESOLUTION_UNAVAILABLE'
-          ? 'This provider is unavailable. Choose another server.'
-          : error instanceof Error
-            ? error.message
-            : 'The provider could not be reached. Try again or choose another server.';
-    } finally {
-      if (requestId === resolutionRequestId) resolutionController = undefined;
     }
   }
 

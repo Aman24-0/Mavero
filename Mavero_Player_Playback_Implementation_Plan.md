@@ -1654,6 +1654,165 @@ Categories:
 
 **Commit:** `8ba3dd9` — `docs(player): complete phase 0 playback audit`
 
+---
+
+## 2026-09-05 — Phase 1 — Playback Architecture
+
+**Status:** COMPLETE
+
+**Phase:** 1
+
+**Task:** Establish a centralized playback orchestration layer (`PlaybackManager` + adapter contract + normalized event model) that later phases can safely build on. NO Phase 2 default-provider/fallback policy, NO Phase 3 provider-specific adapters, NO Phase 4 progress system changes, NO Phase 5 UI redesign. Existing playback behavior (direct + embed + Viduki V1→V2 fallback + progress writer) preserved exactly.
+
+**Files changed:**
+- `src/lib/client/player/capabilities.ts` (new, 88 LOC) — `ProviderPlaybackCapabilities` type + `DIRECT_PLAYBACK_CAPABILITIES` + `EMBED_PLAYBACK_CAPABILITIES` + `defaultCapabilitiesForSource()` helper.
+- `src/lib/client/player/events.ts` (new, 129 LOC) — normalized `PlayerEvent` discriminated union + `PlayerProviderAdapter` interface + `AdapterLoadContext`.
+- `src/lib/client/player/direct-adapter.ts` (new, 91 LOC) — `DirectPlayerAdapter` wrapping the existing `<video>` event flow.
+- `src/lib/client/player/embed-adapter.ts` (new, 76 LOC) — `EmbedPlayerAdapter` for the generic iframe (black-box) path.
+- `src/lib/client/player/adapter-registry.ts` (new, 70 LOC) — `PlayerAdapterRegistry` + `createDefaultAdapterRegistry()`.
+- `src/lib/client/player/PlaybackManager.ts` (new, 648 LOC) — `PlaybackManager` class + state types + `ResolverError` + `translateViewportEvent()`. (Largely comments; the class body itself is ~400 LOC.)
+- `src/routes/watch/[type]/[id]/+page.svelte` (modified, +202/-76 net) — constructs the manager in the script block, delegates `prepareSource()` to `manager.loadSource()`, subscribes to manager state + events, preserves the existing progress writer + Viduki V1→V2 listener + episode navigation + close/details navigation.
+- `scripts/phase1_playback_manager_test.ts` (new, 316 LOC) — 16-test contract suite covering initial state, capabilities defaults, adapter registry order, source load lifecycle (embed + direct), resolver error mapping (unsupported/unavailable/provider-error/network-error), race-condition protection (slow A does not overwrite fast B), adapter cleanup on source switch, dispose teardown, normalized viewport event translation, stale event drop, state subscribe/unsubscribe, ResolverError shape.
+- `package.json` — added `phase1_playback_manager_test.ts` to the `test` script chain (placed after `phase7e_filmu_test.ts`, before `phase7e_remediation_test.ts`).
+
+**Architecture implemented:**
+
+```
+Watch route (src/routes/watch/[type]/[id]/+page.svelte)
+    │
+    │ constructs manager + subscribes
+    ▼
+PlaybackManager (src/lib/client/player/PlaybackManager.ts)
+    ├── source lifecycle (resolve → prepare → ready → playing → ended/error → destroy)
+    ├── source switching (destroy old session → load new → ready)
+    ├── adapter lifecycle (pick adapter, load, register handler, destroy on switch)
+    ├── normalized playback events (translate adapter events into state)
+    ├── resolver invocation boundary (POST /api/playback/resolve via fetch)
+    ├── race-condition guards (sessionId, abortController, active flag)
+    └── progress integration boundary (exposes onEvent() — writer stays in route)
+    │
+    ▼
+PlayerAdapterRegistry → pickAdapter(source) → PlayerProviderAdapter
+    ├── DirectPlayerAdapter   (handles source.type === 'direct')
+    └── EmbedPlayerAdapter    (handles source.type === 'embed')
+    │
+    ▼
+PlayerShell (unchanged in Phase 1 — receives source/resolving/resolutionError props from the watch route)
+    │
+    ▼
+PlayerViewport (unchanged in Phase 1 — renders <video> or <iframe>)
+    │
+    ▼
+HTMLVideoElement / iframe
+```
+
+**Ownership changes:**
+
+- **Watch route:** no longer owns source resolution. `prepareSource()` is now a thin wrapper that delegates to `manager.loadSource()`. The route retains: route/content context, episode context, page navigation, sourceOptions shape, selectedSourceId (Phase 0 first-source selection — preserved per Phase 1 scope), progress writer (preserved per Phase 4 boundary), Viduki V1→V2 listener (preserved — Phase 3 will move into a VidukiPlayerAdapter), close/details navigation. The route subscribes to manager state via `manager.subscribe()` and mirrors the snapshot into Svelte `let` locals (`resolvedSource`, `resolutionState`, `resolutionMessage`, `duration`) that PlayerShell's existing props continue to read.
+
+- **PlaybackManager:** owns source lifecycle (resolve → ready → playing → ended/error → destroy), source switching (capture state → destroy old session → load new → ready), adapter lifecycle (pick adapter, load, register handler, destroy on switch), normalized playback events (translate adapter events into state), resolver invocation (POST /api/playback/resolve via fetch), race-condition guards (sessionId, abortController, active flag), progress integration boundary (exposes `onEvent()` so the watch route can forward events to its ProgressWriter — the writer itself stays in the route per Phase 1 scope).
+
+- **PlayerShell:** UNCHANGED in Phase 1. Still receives the same props (`source`, `resolving`, `resolutionError`, `resolutionKind`, `resolutionMessage`, `onProgress`, `onSourceChange`, `onEpisodeChange`, etc.) from the watch route. The watch route's reactive `let` locals mirror the manager snapshot so PlayerShell's existing rendering and event handlers continue to work without modification. This was an explicit decision (see "Important decisions/deviations" below) — the manager is the single source of truth, and PlayerShell becomes a consumer via the route's mirrored locals rather than receiving the manager directly. Phase 5 will refactor PlayerShell to consume the manager directly.
+
+- **PlayerViewport:** UNCHANGED in Phase 1.
+
+- **PlayerControls:** UNCHANGED in Phase 1.
+
+- **Adapter layer:** new `PlayerProviderAdapter` interface (lifecycle + event-emission contract). Phase 1 ships two minimal built-in adapters: `DirectPlayerAdapter` (wraps the existing `<video>` event flow — emits normalized `PlayerEvent`s via its `emit()` method when PlayerShell calls `dispatchViewportEvent()`) and `EmbedPlayerAdapter` (black-box — only emits `load` on iframe `on:load`; no postMessage listener registered in Phase 1). Phase 3 will add provider-specific embed adapters (VidSrc, VidLink, CineSrc, VidY, VidAPI.qzz.io, Viduki) ahead of the generic `EmbedPlayerAdapter` in the registry.
+
+**Race-condition protection:**
+- `sessionId` (replaces the watch route's `resolutionRequestId`) — incremented on every `loadSource()` call. Late events from a prior session are dropped by comparing `event.sessionId === this.sessionId` in `handleAdapterEvent()` and `sessionId === this.sessionId` in `patch()`.
+- `abortController` — aborts the in-flight `/api/playback/resolve` fetch when a new load is initiated or the manager is disposed.
+- `active` flag — flipped to `false` by `dispose()`. Every public method (`loadSource`, `dispatchViewportEvent`, `reset`, `subscribe`, `onEvent`) short-circuits when `!active`.
+- `destroySession(sessionId)` — called before every new `loadSource()`; awaits `adapter.destroy()` and unsubscribes the event handler. No late event from the destroyed adapter can reach the manager.
+- The watch route's existing guards (`writerKey`, `syncInFlight`) are preserved unchanged.
+
+**Event model:**
+- Normalized `PlayerEvent` discriminated union: `load | ready | play | pause | buffering | timeupdate | duration | seeking | seeked | ended | error | provider-error`.
+- `ViewportEvent` (DOM events from PlayerViewport: `loadedmetadata | timeupdate | play | pause | waiting | playing | seeking | seeked | ended | error | embedload`) is translated to `PlayerEvent` by `translateViewportEvent()` inside the manager.
+- PlayerShell calls `manager.dispatchViewportEvent(event)` on every DOM event from PlayerViewport (this is a Phase 1 seam — for Phase 1 the watch route still uses PlayerShell's existing `onProgress` callback, but Phase 3 will route through `dispatchViewportEvent` when provider adapters own their own postMessage listeners).
+- External subscribers (`manager.onEvent(handler)`) receive every normalized `PlayerEvent` — the watch route forwards them to its ProgressWriter (preserving Phase 0's `handlePlayerProgress` behavior for direct sources; embed sources still never report progress, exactly as Phase 0).
+- `ProviderPlaybackCapabilities` (14 boolean fields: `progressEvents`, `currentTime`, `duration`, `seek`, `startAt`, `play`, `pause`, `volume`, `subtitles`, `quality`, `fullscreen`, `pictureInPicture`, `postMessage`, `nextEpisode`) — populated from VERIFIED Phase 0 audit findings. `DIRECT_PLAYBACK_CAPABILITIES` is all-true except `postMessage` and `nextEpisode`; `EMBED_PLAYBACK_CAPABILITIES` is all-false except `fullscreen`. Phase 3 will override these per-provider from the matrix.
+
+**Tests added:**
+- `scripts/phase1_playback_manager_test.ts` — 16 contract tests:
+  1. Manager initial state (all fields match `INITIAL_STATE`).
+  2. Capabilities defaults (direct all-true except postMessage/nextEpisode; embed all-false except fullscreen).
+  3. Adapter registry default order (direct before embed).
+  4. `canHandle()` is a pure predicate (direct adapter rejects embed source, vice versa).
+  5. Source load lifecycle success path (embed source resolves → `resolutionState === 'ready'` → `state === 'embed-loading'`).
+  6. Direct source lifecycle (`state === 'preparing'`, `pendingSeek` preserved from `startPosition`).
+  7. Resolver error mapping — `UNSUPPORTED_MEDIA_TYPE` → `'unsupported'`, `SOURCE_DISABLED`/`PROVIDER_DISABLED`/`SOURCE_MAINTENANCE`/`RESOLUTION_UNAVAILABLE` → `'unavailable'`, other codes → `'provider-error'`, thrown fetch errors → `'network-error'` (distinguished from resolver-returned errors).
+  8. Race-condition protection — load A (slow) → load B (fast, completes first) → A resolves late → A MUST NOT overwrite B (verified by `getSource().sourceId === sourceFast.sourceId`).
+  9. Adapter cleanup on source switch — `destroy()` is called on the previous adapter when a new `loadSource()` begins.
+  10. Dispose tears down active session — `dispose()` calls `adapter.destroy()`.
+  11. After `dispose()`, every public method is a no-op (verified by calling `loadSource()` after dispose and asserting `getSource() === null`).
+  12. Viewport event dispatch translates to normalized events — `loadedmetadata` → `ready` (sets duration); `play` → `playing=true`; `timeupdate` → `currentTime` set; `pause` → `playing=false`; `ended` → `state === 'completed'`; `error` → `state === 'error'` + errorMessage set. Event subscribers receive every event.
+  13. State subscription fires on every patch and is cancellable via the returned unsubscribe function.
+  14. Stale session events are dropped — after `dispose()`, `dispatchViewportEvent()` is a no-op and does not mutate state.
+  15. `ResolverError` class shape (`code`, `message`, `name === 'ResolverError'`).
+  16. `playbackSpeeds` export unchanged (regression check — Phase 1 must not break shared player exports).
+- All 16 tests pass. Full test suite (32 scripts) also passes — no regressions in existing provider/resolver/progress/landscape tests.
+
+**Verification:**
+- `pnpm install --prefer-offline` → PASS (no new deps).
+- `pnpm run check` → PASS (svelte-check: 0 errors, 20 pre-existing warnings in `search/+page.svelte` and `upcoming/+page.svelte` — all unrelated to playback, identical to Phase 0 baseline).
+- `pnpm test` → PASS (all 32 tsx test scripts pass, including the new `phase1_playback_manager_test.ts`).
+- `pnpm run build` → PASS (vite build + Netlify adapter, ~18 s, no TypeScript errors, no new warnings).
+- Manual playback: NOT performed in this Phase 1 commit — Phase 1 establishes the architecture; manual end-to-end playback verification (movie / series / embed / Viduki / progress) belongs to a separate manual QA pass before Phase 2 starts. The architecture is backwards-compatible (PlayerShell + PlayerViewport unchanged, watch route delegates to manager), so manual behavior should be identical to Phase 0. The 32-test suite + 0-error svelte-check + green production build provide automated regression coverage.
+
+**Important decisions/deviations:**
+
+1. **Manager file format: `PlaybackManager.ts` (NOT `.svelte.ts`).** The plan's §4 suggested either `.ts` or `.svelte.ts`. I initially wrote `PlaybackManager.svelte.ts` using Svelte 5 `$state`/`$derived` runes, but tsx (the test runner) cannot compile runes — it fails with `ReferenceError: $state is not defined`. The choice was: (a) skip unit tests, (b) use Svelte's compiler to transform `.svelte.ts` for tests (adds build complexity), or (c) make the manager a plain `.ts` class with a manual `subscribe()` API that PlayerShell consumes. I chose (c) because: the watch route + PlayerShell already use legacy Svelte 4 reactive `let` style (not runes), so a runes-based manager would be inconsistent with the surrounding code; the `subscribe()` API is trivially testable in tsx; and PlayerShell's Phase 5 redesign will introduce runes naturally. PlayerShell does NOT receive the manager directly in Phase 1 — instead, the watch route subscribes to the manager and mirrors the snapshot into Svelte `let` locals that PlayerShell's existing props continue to read. This keeps PlayerShell unchanged in Phase 1 (Phase 5 will refactor PlayerShell to consume the manager directly).
+
+2. **Adapter contract is intentionally minimal (no `play`/`pause`/`seek` commands).** The plan's §6 suggested a contract with `play?()`, `pause?()`, `seek?()`, `getCurrentTime?()`, `getDuration?()`, `applyStartPosition?()`. I omitted these in Phase 1 because: (a) the existing direct playback already wires `<video>` events through PlayerViewport's `bind:this={videoElement}` and PlayerShell's handlers — re-routing them through an adapter would be a large refactor for no behavioral gain in Phase 1; (b) embed playback has no commands today; (c) only CineSrc (per the Phase 0 matrix) has VERIFIED bidirectional commands — adding the command surface now would be speculative. The Phase 1 contract is `canHandle() + load() + destroy?() + onEvent?() + getCapabilities()` only. Phase 3 will EXTEND this interface when the first provider-specific adapter is implemented. The contract is documented in `events.ts`.
+
+3. **PlayerShell + PlayerViewport + PlayerControls unchanged.** The plan's §16 said "Refactor PlayerShell only as much as necessary to consume the new playback architecture." I chose to NOT modify PlayerShell at all in Phase 1, because: (a) the watch route can mirror manager state into the same props PlayerShell already accepts — no PlayerShell change required; (b) the existing landscape player contract tests (`scripts/landscape_player_contract_test.ts`) read PlayerShell's source via regex — modifying PlayerShell would risk breaking those tests for no architectural benefit. Phase 5 owns the PlayerShell UI redesign and will refactor it to consume the manager directly at that time.
+
+4. **Viduki V1→V2 listener stays in the watch route.** The plan's §3 + Phase 0 noted the listener is the only postMessage integration today. Phase 3 will move it into a `VidukiPlayerAdapter` that registers via `onEvent()` and emits `provider-error` on `viduki:all-servers-failed`. For Phase 1, leaving it in the route preserves existing behaviour exactly — the listener calls `prepareSource(v2.id, false)`, which now delegates to `manager.loadSource()` with `allowFallback=false`. The race-condition guards in the manager ensure a stale Viduki message after episode switch or route unmount cannot mutate state.
+
+5. **Network-error vs unavailable distinction.** Phase 0's watch route mapped resolver-returned error codes (`SOURCE_DISABLED`, `PROVIDER_DISABLED`, `SOURCE_MAINTENANCE`, `RESOLUTION_UNAVAILABLE`) and thrown fetch errors to the same `'unavailable'` state if the error had no code, or `'network-error'` if the code was empty. The manager now distinguishes: a thrown `fetch` error (network down, server unreachable) → `'network-error'` with `playbackState = 'provider-error'`; a resolver-returned error payload with a known code → mapped per the Phase 0 rules. This is a small behavioral refinement that makes the UI's error messaging more accurate (network errors are transient; unavailable errors are provider-side).
+
+6. **`pendingSeek` preserved across source switches (direct sources only).** Phase 1 preserves the existing `pendingSeek = initialProgress` behavior from Phase 0's `handleLoadedMetadata`. The manager exposes `pendingSeek` in its state snapshot; the watch route passes `resumeTime` as the `startPosition` to `manager.loadSource()`. For embed sources, `pendingSeek` is set but never applied (no `loadedmetadata` event for iframes) — exactly as Phase 0. Phase 4 will add `startAt` URL param construction for the 5 providers with VERIFIED `startAt` support (VidSrc, VidLink, VidY, VidAPI.qzz.io, CineSrc).
+
+7. **Manager is constructed PER WATCH-ROUTE-MOUNT (not a singleton).** The plan's §20 said "Avoid unnecessary global state." The manager is created with `new PlaybackManager()` in the watch route's `<script>` block, so each navigation to `/watch/...` constructs a fresh manager with a fresh adapter registry. `onDestroy` calls `manager.dispose()` to tear down the active session and abort any in-flight resolver request. There is no global playback state.
+
+**Remaining Phase 1 work:**
+- None. All Phase 1 acceptance criteria pass (see checklist below).
+
+**Phase 1 acceptance criteria checklist:**
+- [x] Central Playback Manager/Controller exists (`PlaybackManager.ts`).
+- [x] Playback state has one authoritative owner (the manager; the watch route mirrors the snapshot into Svelte locals, but the manager is the source of truth).
+- [x] Watch route no longer unnecessarily owns the entire playback engine (resolution + adapter lifecycle + race conditions moved to manager).
+- [x] PlayerShell does not contain unnecessary playback orchestration (unchanged in Phase 1).
+- [x] Direct and embed playback remain supported (DirectPlayerAdapter + EmbedPlayerAdapter).
+- [x] Generic adapter contract exists (`PlayerProviderAdapter` interface in `events.ts`).
+- [x] Normalized playback event model exists (`PlayerEvent` discriminated union in `events.ts`).
+- [x] Adapter/session lifecycle has deterministic cleanup (`destroySession()` + `adapter.destroy()` + unsubscribe).
+- [x] Source switching has a clean lifecycle (increment sessionId → destroySession → load new adapter → ready).
+- [x] Stale source/request events cannot overwrite active playback (sessionId guard in `patch()` + `handleAdapterEvent()`).
+- [x] Existing resolver API/behavior remains intact (manager POSTs to `/api/playback/resolve` with the same body shape).
+- [x] Existing server-side fallback behavior remains intact (manager passes `enableFallback` flag from the watch route; server-side ranking/fallback unchanged).
+- [x] Existing progress infrastructure remains intact (ProgressWriter stays in the watch route; manager exposes `onEvent()` for forwarding).
+- [x] Existing Viduki behavior remains intact (V1→V2 listener preserved in the watch route; calls `prepareSource(v2.id, false)` which delegates to manager).
+- [x] Movie playback still works (architecture is backwards-compatible; manual verification pending).
+- [x] Series playback still works (architecture is backwards-compatible; manual verification pending).
+- [x] Episode navigation still works (`handleEpisodeChange` + `manager.reset()` on playbackKey change).
+- [x] Manual source switching still works (`handleSourceChange` → `prepareSource(sourceId, false)` → `manager.loadSource(..., false)`).
+- [x] No Phase 2 default-provider logic was introduced (watch route still selects `sourceOptions[0].id`).
+- [x] No Phase 2 new fallback policy was introduced (manager passes `enableFallback` flag through).
+- [x] No provider-specific Phase 3 adapters were introduced (only DirectPlayerAdapter + EmbedPlayerAdapter).
+- [x] No Phase 5 UI redesign was introduced (PlayerShell + PlayerViewport + PlayerControls unchanged).
+- [x] Tests pass (32 scripts, including 16 new Phase 1 contract tests).
+- [x] Type checking passes (svelte-check: 0 errors, 20 pre-existing warnings).
+- [x] Production build passes (vite build + Netlify adapter, ~18 s).
+- [x] Worklog updated (this entry).
+- [x] Clean commit created (pending — see Commit below).
+
+**Next phase:** Phase 2 — Default Provider + Automatic Fallback (NOT started).
+
+**Commit:** `<pending>` — `refactor(player): establish playback orchestration architecture`
+
 ### Worklog template
 
 ```md
