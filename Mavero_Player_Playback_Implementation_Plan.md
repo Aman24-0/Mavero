@@ -2262,7 +2262,7 @@ All 20 tests pass. Full test suite (34 scripts) also passes — no regressions.
 - `scripts/phase3_cinesrc_fix_test.ts` — new focused test proving iframe.contentWindow is the postMessage target.
 - `package.json` — registered `phase3_cinesrc_fix_test.ts` in the test chain.
 
-**Commit:** `<pending>` — `fix(player): target CineSrc commands at iframe`
+**Commit:** `73797e0` — `fix(player): target CineSrc commands at iframe`
 
 PHASE 3 FIX COMPLETE
 PHASE 4 NOT STARTED
