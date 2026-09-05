@@ -1527,7 +1527,7 @@ End-to-end flow that runs **today** (every step is the actual implementation, no
 
 ### G. Provider enumeration (complete registry from migrations)
 
-22 providers × 24 sources registered in `supabase/migrations/*_experimental.sql`. **ALL** ship `enabled=false`, `status='experimental'`, `sandbox_policy='required'`, `allow_experimental_playback=true`. None are enabled in code; activation is operator-driven via `/admin/providers` and `/admin/sources`.
+22 providers × 23 sources registered in `supabase/migrations/*_experimental.sql` (22 experimental migration files; Viduki registers 1 provider with 2 sources — `viduki-v1-source` + `viduki-v2-source` — and every other provider registers 1 source each → 22 providers × 1 source + 1 extra Viduki source = 23 sources). **ALL** ship `enabled=false`, `status='experimental'`, `sandbox_policy='required'`, `allow_experimental_playback=true`. None are enabled in code; activation is operator-driven via `/admin/providers` and `/admin/sources`.
 
 | # | Provider | Slug | Source slug | Ordering | Integration | Identifier mode | Movie URL | TV URL | Allowed origin |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1596,11 +1596,22 @@ Categories:
 
 **Cross-cutting findings:**
 1. Only **CineSrc** exposes a full bidirectional postMessage contract — 16 events + JSON-RPC commands (play/pause/seek/volume/rate + getters via `cinesrc:response`). It is the single provider that can be fully remote-controlled from the parent.
-2. One-way event emitters (player→parent only): VidSrc, VidLink, VidY, Viduki, VidAPI.qzz.io, VidPhantom (partial), CinemaOS — they post progress/play/pause/ended events to the parent but document no parent→player commands. They support `startAt` (except Viduki, VidPhantom, CinemaOS) and next-episode, but seek-as-a-command is not available.
-3. Explicit "no postMessage" providers: NHDAPI (docs plainly state no postMessage API, no progress events, no forcing query params) and SuperEmbed (JSON link API only, no iframe event contract).
-4. No accessible docs (Cloudflare/offline/SPA): VixSrc, Cineverse, Peachify, SLast, FilmU, MultiEmbed — all capabilities UNKNOWN.
-5. Consumer sites with no developer docs: RiveStream, Nxsha, Mapple, VidAPI.tw (vaplayer.ru = "PlayBox" UGC host).
-6. **Mavero currently listens to ZERO of the documented event streams** (except the single Viduki `viduki:all-servers-failed` signal). VidSrc, VidLink, VidY, CineSrc, VidAPI.qzz.io all emit progress/currentTime/duration events that Mavero discards.
+2. One-way event emitters (player→parent only): VidSrc, VidLink, VidY, Viduki, VidAPI.qzz.io, VidPhantom (partial), CinemaOS — 7 providers. They post progress/play/pause/ended events to the parent but document no parent→player commands. They support `startAt` (except Viduki, VidPhantom, CinemaOS) and next-episode, but seek-as-a-command is not available.
+3. Explicit "no postMessage" providers: NHDAPI (docs plainly state no postMessage API, no progress events, no forcing query params) and SuperEmbed (JSON link API only, no iframe event contract) — 2 providers.
+4. No accessible docs (Cloudflare/offline/SPA): VixSrc, Cineverse, Peachify, SLast, FilmU, MultiEmbed — 6 providers. All capabilities UNKNOWN.
+5. Consumer sites with no developer docs: RiveStream, Nxsha, Mapple, VidAPI.tw (vaplayer.ru = "PlayBox" UGC host) — 4 providers. All capabilities UNKNOWN.
+6. Documented embed parameters but no postMessage API: YapGrid — 1 provider. Subtitles/Quality/Fullscreen/PiP/Next-Ep are VERIFIED (via `sub_url`/`sub_lang`/`sub_label`, in-player quality selector, `allow="picture-in-picture"`, TV-URL season/episode path), but postMessage/Progress/CurrentTime/Duration/Seek/Play/Pause are UNKNOWN and `startAt` is explicitly UNSUPPORTED.
+7. **Mavero currently listens to ZERO of the documented event streams** (except the single Viduki `viduki:all-servers-failed` signal). VidSrc, VidLink, VidY, CineSrc, VidAPI.qzz.io all emit progress/currentTime/duration events that Mavero discards.
+
+**Capability counts (verified against the matrix above):**
+- VERIFIED postMessage (V): 7 providers — VidSrc, VidLink, VidY, Viduki, CinemaOS, CineSrc, VidAPI.qzz.io.
+- VERIFIED postMessage (V partial): 1 provider — VidPhantom (origin 522; only play/pause events confirmed via search snippet).
+- VERIFIED postMessage total (V + V partial): 8 providers.
+- UNSUPPORTED postMessage (U): 2 providers — NHDAPI, SuperEmbed (seapi).
+- UNKNOWN postMessage (?): 11 providers — VixSrc, Cineverse, SLast, FilmU, Peachify, RiveStream, Nxsha, Mapple, YapGrid, VidAPI.tw, MultiEmbed.
+- VERIFIED startAt: 5 providers — VidSrc, VidLink, VidY, VidAPI.qzz.io, CineSrc.
+- UNSUPPORTED startAt: 2 providers — NHDAPI (no forcing query params), YapGrid (no `t=`/`start=` param).
+- Total matrix rows: 21 (Viduki V1/V2 collapsed into one row; SuperEmbed Advanced — `superembed-advanced` provider that points to the same-origin `/api/playback/superembed` redirect route — is omitted from the matrix because it has no separate public docs target; it is still registered in the DB and counted in the 22 providers above).
 
 ### I. Major gaps discovered (vs Phase 1–9 target architecture)
 
@@ -1609,7 +1620,7 @@ Categories:
 - **Playback architecture (gap §0.10.1):** No central PlaybackManager — logic is split between `watch/[type]/[id]/+page.svelte` (source selection, resolver invocation, progress writer lifecycle, postMessage listener) and `PlayerShell.svelte` (direct-video state machine, fullscreen/PiP/orientation, UI). HIGH complexity/risk — heavily intertwined with route lifecycle and Svelte reactivity; refactor must preserve race-condition guards.
 - **Default provider (gap §0.10.2):** First source by admin `ordering` column. No "default provider" concept, no curated shortlist, no `is_default` flag. LOW complexity — `ordering` already provides priority.
 - **Automatic fallback (gap §0.10.3):** Server-side only on initial resolution; manual source switches disable fallback; no client-side fallback when an embed player fails internally. MEDIUM complexity — needs per-provider postMessage adapters.
-- **Provider adapters (gap §0.10.4):** Server-side has 2 custom adapters + generic template adapter. Client-side has NO per-provider adapter — only the Viduki listener is hardcoded. MEDIUM-HIGH complexity — CineSrc is the reference implementation (full bidirectional API); VidSrc/VidLink/VidY/VidAPI.qzz.io/Viduki are one-way event emitters; 16 providers have UNKNOWN capabilities and cannot be adapted.
+- **Provider adapters (gap §0.10.4):** Server-side has 2 custom adapters + generic template adapter. Client-side has NO per-provider adapter — only the Viduki listener is hardcoded. MEDIUM-HIGH complexity — CineSrc is the reference implementation (full bidirectional API); 7 providers are one-way event emitters (VidSrc, VidLink, VidY, VidAPI.qzz.io, Viduki, VidPhantom partial, CinemaOS); 11 providers have UNKNOWN postMessage capabilities (VixSrc, Cineverse, SLast, FilmU, Peachify, RiveStream, Nxsha, Mapple, YapGrid, VidAPI.tw, MultiEmbed) and cannot be adapted without further documentation; 2 providers explicitly UNSUPPORT postMessage (NHDAPI, SuperEmbed).
 - **Provider capabilities (gap §0.10.5):** Capabilities JSONB has no fields for `postMessage`, `progress_events`, `seek_command`, `startAt_param`, `pip`, `fullscreen`. LOW-MEDIUM complexity — additive schema, backwards-compatible.
 - **Progress / resume (gap §0.10.6):** Direct-only. Embed sources never report progress. `selectedSourceId` is stored but never consulted. `startAt` URL params are never appended to embed URLs (even for VidSrc/VidLink/VidY/VidAPI.qzz.io/CineSrc which officially support them). HIGH complexity — depends on provider adapters.
 - **Provider continuity (gap §0.10.7):** Cross-source resume: direct preserves `pendingSeek`, embed does not preserve position. MEDIUM complexity — only works for the 5 providers with VERIFIED `startAt` support.
