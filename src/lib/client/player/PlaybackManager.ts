@@ -3,7 +3,7 @@ import { isEmbedOriginAllowed, isPlayablePlayerSource, sourceIsExpired } from '$
 import type { ProviderPlaybackCapabilities } from './capabilities';
 import { EMBED_PLAYBACK_CAPABILITIES } from './capabilities';
 import { PlayerAdapterRegistry, createDefaultAdapterRegistry } from './adapter-registry';
-import type { AdapterLoadContext, PlayerEvent, PlayerEventHandler, PlayerProviderAdapter } from './events';
+import type { AdapterLoadContext, CommandResult, PlayerEvent, PlayerEventHandler, PlayerProviderAdapter } from './events';
 
 /**
  * PlaybackManager — Phase 1.
@@ -462,6 +462,81 @@ export class PlaybackManager {
       // Adapters without an `emit` method (future Phase 3 adapters that
       // own their own listeners) handle the event internally — skip.
     }
+  }
+
+  // ----- Phase 3: capability-aware command forwarding -----
+  //
+  // The manager exposes play/pause/seek/getCurrentTime/getDuration/setVolume
+  // methods that:
+  //   1. Check the active adapter's capabilities via `getCapabilities()`.
+  //   2. If the capability is `false`, return `{ ok: false, reason: 'unsupported' }`
+  //      WITHOUT calling the adapter — the caller should NOT fake local state.
+  //   3. If the capability is `true` and the adapter implements the command
+  //      method, delegate to the adapter.
+  //   4. If the adapter does NOT implement the command method (it's optional
+  //      in the interface), return `{ ok: false, reason: 'unsupported' }`.
+  //
+  // Race-condition-safe: commands are no-ops if the manager is disposed or
+  // no active session exists.
+
+  /**
+   * Check if the active adapter supports a given capability. Returns `false`
+   * if no adapter is active or the manager is disposed.
+   */
+  hasCapability(capability: keyof ProviderPlaybackCapabilities): boolean {
+    if (!this.active) return false;
+    return Boolean(this.session.adapter?.getCapabilities()[capability]);
+  }
+
+  /**
+   * Get the capabilities of the active adapter. Returns the conservative
+   * EMBED_PLAYBACK_CAPABILITIES if no adapter is active.
+   */
+  getActiveCapabilities(): ProviderPlaybackCapabilities {
+    if (!this.active || !this.session.adapter) return EMBED_PLAYBACK_CAPABILITIES;
+    return this.session.adapter.getCapabilities();
+  }
+
+  async play(): Promise<CommandResult> {
+    if (!this.active || !this.session.adapter) return { ok: false, reason: 'not-ready' };
+    if (!this.session.adapter.getCapabilities().play) return { ok: false, reason: 'unsupported' };
+    if (!this.session.adapter.play) return { ok: false, reason: 'unsupported' };
+    return this.session.adapter.play();
+  }
+
+  async pause(): Promise<CommandResult> {
+    if (!this.active || !this.session.adapter) return { ok: false, reason: 'not-ready' };
+    if (!this.session.adapter.getCapabilities().pause) return { ok: false, reason: 'unsupported' };
+    if (!this.session.adapter.pause) return { ok: false, reason: 'unsupported' };
+    return this.session.adapter.pause();
+  }
+
+  async seek(seconds: number): Promise<CommandResult> {
+    if (!this.active || !this.session.adapter) return { ok: false, reason: 'not-ready' };
+    if (!this.session.adapter.getCapabilities().seek) return { ok: false, reason: 'unsupported' };
+    if (!this.session.adapter.seek) return { ok: false, reason: 'unsupported' };
+    return this.session.adapter.seek(seconds);
+  }
+
+  async getCurrentTime(): Promise<CommandResult<number>> {
+    if (!this.active || !this.session.adapter) return { ok: false, reason: 'not-ready' };
+    if (!this.session.adapter.getCapabilities().currentTime) return { ok: false, reason: 'unsupported' };
+    if (!this.session.adapter.getCurrentTime) return { ok: false, reason: 'unsupported' };
+    return this.session.adapter.getCurrentTime();
+  }
+
+  async getDuration(): Promise<CommandResult<number>> {
+    if (!this.active || !this.session.adapter) return { ok: false, reason: 'not-ready' };
+    if (!this.session.adapter.getCapabilities().duration) return { ok: false, reason: 'unsupported' };
+    if (!this.session.adapter.getDuration) return { ok: false, reason: 'unsupported' };
+    return this.session.adapter.getDuration();
+  }
+
+  async setVolume(volume: number): Promise<CommandResult> {
+    if (!this.active || !this.session.adapter) return { ok: false, reason: 'not-ready' };
+    if (!this.session.adapter.getCapabilities().volume) return { ok: false, reason: 'unsupported' };
+    if (!this.session.adapter.setVolume) return { ok: false, reason: 'unsupported' };
+    return this.session.adapter.setVolume(volume);
   }
 
   // ----- Internal: handle normalized adapter events -----

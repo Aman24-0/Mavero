@@ -81,12 +81,17 @@ assert.equal(EMBED_PLAYBACK_CAPABILITIES.fullscreen, true, 'generic embed must r
 assert.equal(EMBED_PLAYBACK_CAPABILITIES.postMessage, false, 'generic embed must NOT report postMessage (Phase 1 has no listener)');
 
 // --- 3. Adapter registry default order (direct before embed) ---
+//
+// Phase 3 expanded the default registry from 2 adapters (direct + generic
+// embed) to 10 (direct + 8 provider-specific + generic embed). The Phase 1
+// contract — "DirectPlayerAdapter is first, EmbedPlayerAdapter is last" —
+// is preserved. Provider-specific adapters sit between them.
 
 const registry = createDefaultAdapterRegistry();
 const adapters = registry.list();
-assert.equal(adapters.length, 2, 'default registry must contain 2 adapters (direct + embed)');
+assert.ok(adapters.length >= 2, `registry must contain at least 2 adapters (direct + embed); got ${adapters.length}`);
 assert.ok(adapters[0] instanceof DirectPlayerAdapter, 'first adapter must be DirectPlayerAdapter');
-assert.ok(adapters[1] instanceof EmbedPlayerAdapter, 'second adapter must be EmbedPlayerAdapter');
+assert.ok(adapters[adapters.length - 1] instanceof EmbedPlayerAdapter, 'last adapter must be EmbedPlayerAdapter (generic fallback)');
 
 // Direct adapter only handles direct sources; embed adapter only handles embed.
 const directSource = makeSource({ type: 'direct', url: 'https://example.test/movie.mp4' });

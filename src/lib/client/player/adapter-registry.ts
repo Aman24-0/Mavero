@@ -2,22 +2,39 @@ import type { PlayerSource } from '$lib/shared/player';
 import type { PlayerProviderAdapter } from './events';
 import { DirectPlayerAdapter } from './direct-adapter';
 import { EmbedPlayerAdapter } from './embed-adapter';
+import { VidSrcPlayerAdapter } from './providers/vidsrc-adapter';
+import { VidLinkPlayerAdapter } from './providers/vidlink-adapter';
+import { VidYPlayerAdapter } from './providers/vidy-adapter';
+import { VidukiPlayerAdapter } from './providers/viduki-adapter';
+import { CineSrcPlayerAdapter } from './providers/cinesrc-adapter';
+import { VidApiQzzPlayerAdapter } from './providers/vidapi-qzz-adapter';
+import { CinemaOSPlayerAdapter } from './providers/cinemaos-adapter';
+import { VidPhantomPlayerAdapter } from './providers/vidphantom-adapter';
 
 /**
- * Adapter registry — Phase 1.
+ * Adapter registry — Phase 1 + Phase 3.
  *
  * Holds the ordered list of `PlayerProviderAdapter` instances. The
  * PlaybackManager calls `pickAdapter(source)` to find the first adapter
  * whose `canHandle(source)` returns true.
  *
- * Phase 1 registers exactly two adapters in this order:
- *   1. `DirectPlayerAdapter` — handles `source.type === 'direct'`.
- *   2. `EmbedPlayerAdapter` — handles `source.type === 'embed'`.
+ * Registration order (Phase 3):
+ *   1. DirectPlayerAdapter — handles `source.type === 'direct'`.
+ *   2. CineSrcPlayerAdapter — handles `https://cinesrc.st` (full bidirectional).
+ *   3. VidSrcPlayerAdapter — handles `https://vidsrc.wiki`.
+ *   4. VidLinkPlayerAdapter — handles `https://vidlink.pro`.
+ *   5. VidYPlayerAdapter — handles `https://vidy.st` / `https://www.vidy.st`.
+ *   6. VidukiPlayerAdapter — handles `https://www.viduki.net`.
+ *   7. VidApiQzzPlayerAdapter — handles `https://vidapi.qzz.io`.
+ *   8. CinemaOSPlayerAdapter — handles `https://cinemaos.tech` (skeleton).
+ *   9. VidPhantomPlayerAdapter — handles `https://vidphantom.com` (skeleton).
+ *  10. EmbedPlayerAdapter — generic fallback for all other embed sources.
  *
- * Phase 3 will insert provider-specific embed adapters (VidSrc, VidLink,
- * CineSrc, VidY, VidAPI.qzz.io, Viduki) AHEAD of the generic
- * `EmbedPlayerAdapter`. They will match by resolved source URL origin
- * (e.g. `https://cinesrc.st`, `https://vidlink.pro`).
+ * Provider-specific adapters are registered BEFORE the generic EmbedPlayerAdapter
+ * so that `pickAdapter(source)` matches the provider-specific adapter first
+ * (by URL origin). Sources whose URL origin does not match any provider-
+ * specific adapter fall through to the generic EmbedPlayerAdapter (black-box
+ * behavior — same as Phase 1).
  *
  * IMPORTANT: the registry is a plain array, not a service locator. There
  * is no DI container. The watch route constructs a single registry per
@@ -36,9 +53,9 @@ export class PlayerAdapterRegistry {
 
   /**
    * Return the first adapter whose `canHandle(source)` returns true, or
-   * `null` if none match. Order is registration order — Phase 3 will
-   * register provider-specific adapters first so they take priority over
-   * the generic embed adapter.
+   * `null` if none match. Order is registration order — provider-specific
+   * adapters are registered first so they take priority over the generic
+   * embed adapter.
    */
   pickAdapter(source: PlayerSource): PlayerProviderAdapter | null {
     for (const adapter of this.adapters) {
@@ -59,12 +76,27 @@ export class PlayerAdapterRegistry {
 }
 
 /**
- * Build the default Phase 1 registry with the direct + generic embed
- * adapters. Phase 3 will add provider-specific adapters here.
+ * Build the default Phase 3 registry with the direct adapter, all verified
+ * provider-specific embed adapters, and the generic embed fallback.
  *
  * The registry is constructed PER PLAYBACK SESSION (per watch route mount)
  * so adapters do not share state across sessions.
  */
 export function createDefaultAdapterRegistry(): PlayerAdapterRegistry {
-  return new PlayerAdapterRegistry([new DirectPlayerAdapter(), new EmbedPlayerAdapter()]);
+  return new PlayerAdapterRegistry([
+    new DirectPlayerAdapter(),
+    // Provider-specific embed adapters (by URL origin, in priority order).
+    // CineSrc first (full bidirectional — highest value).
+    new CineSrcPlayerAdapter(),
+    new VidSrcPlayerAdapter(),
+    new VidLinkPlayerAdapter(),
+    new VidYPlayerAdapter(),
+    new VidukiPlayerAdapter(),
+    new VidApiQzzPlayerAdapter(),
+    // Skeleton adapters (exist but conservative — pending docs verification).
+    new CinemaOSPlayerAdapter(),
+    new VidPhantomPlayerAdapter(),
+    // Generic fallback for all other embed sources (black-box).
+    new EmbedPlayerAdapter(),
+  ]);
 }

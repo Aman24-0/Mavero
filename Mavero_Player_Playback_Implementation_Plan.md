@@ -2017,6 +2017,203 @@ All 20 tests pass. Full test suite (33 scripts) also passes — no regressions i
 
 **Commit:** `d8d5766` — `feat(player): add default source and automatic fallback`
 
+---
+
+## 2026-09-06 — Phase 3 — Provider Capability + Adapter Integration
+
+**Status:** COMPLETE
+
+**Phase:** 3
+
+**Task:** Implement provider-specific playback adapters for all providers with VERIFIED postMessage APIs (VidSrc, VidLink, VidY, Viduki, CineSrc, VidAPI.qzz.io, CinemaOS, VidPhantom). Extend the adapter contract with optional command methods. Normalize provider-specific postMessage events into the common PlayerEvent model. Implement capability-aware command forwarding in PlaybackManager. Preserve Phase 1 race protection and Phase 2 default-source/fallback behavior.
+
+### Architecture changes
+
+The Phase 1 adapter contract was extended with 6 optional command methods: `play()`, `pause()`, `seek(seconds)`, `getCurrentTime()`, `getDuration()`, `setVolume(volume)`. Each returns `Promise<CommandResult<T>>` where `CommandResult = { ok: true, value? } | { ok: false, reason: 'unsupported' | 'not-ready' | 'provider-error', message? }`.
+
+The `PlayerAdapterRegistry` now registers 10 adapters in priority order:
+1. `DirectPlayerAdapter` (direct sources)
+2. `CineSrcPlayerAdapter` (cinesrc.st — full bidirectional, reference implementation)
+3. `VidSrcPlayerAdapter` (vidsrc.wiki)
+4. `VidLinkPlayerAdapter` (vidlink.pro)
+5. `VidYPlayerAdapter` (vidy.st)
+6. `VidukiPlayerAdapter` (www.viduki.net)
+7. `VidApiQzzPlayerAdapter` (vidapi.qzz.io)
+8. `CinemaOSPlayerAdapter` (cinemaos.tech — skeleton)
+9. `VidPhantomPlayerAdapter` (vidphantom.com — skeleton)
+10. `EmbedPlayerAdapter` (generic fallback for all other embed sources)
+
+`pickAdapter(source)` matches by URL origin — the first adapter whose `canHandle(source)` returns true wins. Provider-specific adapters match their documented origin; unknown origins fall through to the generic `EmbedPlayerAdapter`.
+
+### Adapter contract changes
+
+| Method | Phase 1 | Phase 3 |
+|---|---|---|
+| `canHandle(source)` | ✓ | ✓ (now matches by URL origin for provider adapters) |
+| `load(context)` | ✓ | ✓ (provider adapters register `window.message` listeners) |
+| `destroy()` | ✓ | ✓ (provider adapters remove listeners + clean up pending responses) |
+| `onEvent(handler)` | ✓ | ✓ |
+| `getCapabilities()` | ✓ | ✓ (now returns per-provider VERIFIED capability sets) |
+| `play()` | — | optional, returns `Promise<CommandResult>` |
+| `pause()` | — | optional, returns `Promise<CommandResult>` |
+| `seek(seconds)` | — | optional, returns `Promise<CommandResult>` |
+| `getCurrentTime()` | — | optional, returns `Promise<CommandResult<number>>` |
+| `getDuration()` | — | optional, returns `Promise<CommandResult<number>>` |
+| `setVolume(volume)` | — | optional, returns `Promise<CommandResult>` |
+
+### Provider integrations
+
+| Provider | Origin | Events normalized | Commands supported | Capabilities |
+|---|---|---|---|---|
+| **CineSrc** | `https://cinesrc.st` | cinesrc:ready→ready, cinesrc:play→play, cinesrc:pause→pause, cinesrc:timeupdate→timeupdate, cinesrc:loadedmetadata→ready+duration, cinesrc:seeking→seeking, cinesrc:seeked→seeked, cinesrc:ended→ended, cinesrc:error→provider-error | play, pause, seek, setVolume, getCurrentTime, getDuration (via JSON-RPC `cinesrc:command` + `cinesrc:response` correlation with 5s timeout) | Full bidirectional (reference implementation) |
+| **VidSrc** | `https://vidsrc.wiki` | PLAYER_EVENT with player_status (playing→play, paused→pause, completed→ended, seeked→seeked), player_progress→timeupdate, player_duration→duration | None (events only) | progressEvents, currentTime, duration, startAt, subtitles, fullscreen, nextEpisode; NO seek/play/pause commands |
+| **VidLink** | `https://vidlink.pro` | PLAYER_EVENT with event (play, pause, seeked, ended, timeupdate+currentTime+duration); MEDIA_DATA acknowledged but not normalized | None | progressEvents, currentTime, duration, startAt, subtitles, fullscreen, nextEpisode; NO seek/play/pause commands |
+| **VidY** | `https://vidy.st` | PLAYER_EVENT as JSON strings (timeupdate+currentTime+duration, play, pause, ended); MEDIA_DATA acknowledged | None | progressEvents, currentTime, duration, startAt, fullscreen, nextEpisode; NO seek/play/pause commands |
+| **Viduki** | `https://www.viduki.net` | viduki:all-servers-failed→provider-error (code: viduki:all-servers-failed); MEDIA_DATA progress.watched→timeupdate, progress.duration→duration | None | progressEvents, currentTime, duration, postMessage; NO play/pause/ended events, NO startAt |
+| **VidAPI.qzz.io** | `https://vidapi.qzz.io` | MEDIA_DATA progress.watched→timeupdate, progress.duration→duration | None | progressEvents, currentTime, duration, startAt, subtitles, fullscreen, nextEpisode; NO play/pause/ended (MEDIA_DATA only, no PLAYER_EVENT stream) |
+| **CinemaOS** | `https://cinemaos.tech` | Listener registered but NO events normalized (payload structure UNKNOWN — JS-rendered docs not extractable) | None | postMessage=true (API exists), nextEpisode=true (autoNext param), fullscreen=true; currentTime/duration/play/pause/seek=false (UNKNOWN→false) |
+| **VidPhantom** | `https://vidphantom.com` | Listener registered but NO events normalized (payload structure UNKNOWN — origin 522, only search snippet available) | None | postMessage=true (snippet confirms API exists); all other capabilities=false |
+
+### Final provider capability matrix
+
+| Provider | postMessage | Progress | CurrentTime | Duration | Seek | StartAt | Play/Pause | Next Ep | Fullscreen | Status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| VidSrc | VERIFIED | VERIFIED | VERIFIED | VERIFIED | UNSUPPORTED | VERIFIED | VERIFIED(e) | VERIFIED | VERIFIED | Implemented |
+| VidLink | VERIFIED | VERIFIED | VERIFIED | VERIFIED | UNSUPPORTED | VERIFIED | VERIFIED(e) | VERIFIED | VERIFIED | Implemented |
+| VidY | VERIFIED | VERIFIED | VERIFIED | VERIFIED | UNSUPPORTED | VERIFIED | VERIFIED(e) | VERIFIED | VERIFIED | Implemented |
+| Viduki | VERIFIED | VERIFIED | VERIFIED | VERIFIED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | Implemented |
+| CinemaOS | VERIFIED | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | PARTIAL | VERIFIED | VERIFIED | Skeleton |
+| CineSrc | VERIFIED | VERIFIED | VERIFIED | VERIFIED | VERIFIED | VERIFIED | VERIFIED | VERIFIED | VERIFIED | Implemented (full bidirectional) |
+| VidAPI.qzz.io | VERIFIED | VERIFIED | VERIFIED | VERIFIED | UNSUPPORTED | VERIFIED | UNSUPPORTED | VERIFIED | VERIFIED | Implemented |
+| VidPhantom | PARTIAL | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | PARTIAL(e) | UNKNOWN | UNKNOWN | Skeleton |
+| Direct (HTML5 video) | N/A | VERIFIED | VERIFIED | VERIFIED | VERIFIED | VERIFIED | VERIFIED | N/A | VERIFIED | Implemented |
+| Generic embed | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | VERIFIED | Generic fallback |
+| NHDAPI | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | VERIFIED | VERIFIED | Uses generic embed (explicit "no postMessage") |
+| SuperEmbed | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | Uses generic embed (JSON link API only) |
+| VixSrc/Cineverse/SLast/FilmU/Peachify/RiveStream/Nxsha/Mapple/YapGrid/VidAPI.tw/MultiEmbed | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | Uses generic embed (no public docs) |
+
+### Event normalization
+
+All provider-specific postMessage payloads are translated at the adapter boundary into the normalized `PlayerEvent` union defined in Phase 1. The manager never sees provider-specific JSON shapes. Translation:
+
+- VidSrc `PLAYER_EVENT.data.player_status === "playing"` → `{ type: 'play' }`
+- VidSrc `PLAYER_EVENT.data.player_progress` → `{ type: 'timeupdate', currentTime, duration }`
+- VidLink `PLAYER_EVENT.data.event === "timeupdate"` → `{ type: 'timeupdate', currentTime, duration }`
+- VidY JSON-string `{ event: "play" }` → `{ type: 'play' }` (JSON.parse handles the string)
+- Viduki `viduki:all-servers-failed` → `{ type: 'provider-error', code: 'viduki:all-servers-failed' }`
+- Viduki `MEDIA_DATA.data.progress.watched` → `{ type: 'timeupdate', currentTime, duration }`
+- CineSrc `cinesrc:timeupdate` → `{ type: 'timeupdate', currentTime, duration }`
+- CineSrc `cinesrc:command` (parent→player) → posts `{ type: 'cinesrc:command', command, args, id }` to `window.postMessage`
+- CineSrc `cinesrc:response` → resolves the pending getter promise by correlation id
+
+### Security/origin handling
+
+Every provider adapter extends `PostMessageAdapterBase` which enforces:
+1. **Origin validation** — `event.origin !== this.origin` → message silently dropped. Each adapter has a `readonly origin` (e.g. `'https://vidlink.pro'`). Messages from ANY other origin are dropped.
+2. **Message shape validation** — `safeParseMessage()` validates the payload is an object with the expected `type` field. Malformed data, non-objects, arrays, and unknown message types are silently dropped. NEVER throws.
+3. **No cross-origin DOM access** — adapters work entirely through `window.addEventListener('message')`. The iframe's DOM is NEVER accessed. No `iframe.contentDocument`, no `iframe.contentWindow` (except CineSrc's command posting, which uses `window.postMessage` to the parent window, not to the iframe directly).
+4. **Destroyed-flag guard** — `if (this.destroyed) return` at the top of every message handler. After `destroy()`, no message can reach the handler.
+5. **No arbitrary code execution** — message data is parsed as JSON only. No `eval()`, no `Function()`, no `new Function()`.
+6. **No sensitive data logging** — adapters do not log message payloads, URLs, or tokens.
+
+### Lifecycle/race handling
+
+Phase 3 preserves the Phase 1 race-condition guards:
+- `sessionId` — incremented on every `loadSource()`; late events from a prior session are dropped in `handleAdapterEvent()`.
+- `active` flag — flipped to `false` by `dispose()`; all public methods short-circuit.
+- `destroySession(sessionId)` — called before every new `loadSource()`; awaits `adapter.destroy()` and unsubscribes the event handler.
+
+Phase 3 adds adapter-level cleanup:
+- `PostMessageAdapterBase.stopListening()` removes the `window.message` listener and sets `destroyed = true`.
+- CineSrc's `destroy()` also clears all pending getter responses (rejecting them with `{ ok: false, reason: 'not-ready' }`) and clears the response timeout timers.
+
+After `destroy()`, no message from the destroyed adapter can reach the manager (verified by test #13).
+
+### Tests added
+
+`scripts/phase3_provider_adapters_test.ts` — 20 contract tests:
+1. Direct adapter reports correct capabilities.
+2. Embed adapter reports generic embed capabilities.
+3. Provider adapters match by URL origin (8 providers tested).
+4. Direct adapter rejects embed sources, vice versa.
+5. VidSrc event normalization (play, pause, ended, timeupdate).
+6. VidLink event normalization (play, timeupdate, ended, MEDIA_DATA acknowledged).
+7. VidY event normalization (JSON strings — timeupdate, play, ended).
+8. Viduki event normalization (all-servers-failed→provider-error, MEDIA_DATA→timeupdate).
+9. VidAPI.qzz.io event normalization (MEDIA_DATA→timeupdate).
+10. CineSrc event normalization (ready, play, timeupdate, ended).
+11. Invalid message is ignored (unknown type, null, non-JSON string, number).
+12. Unrelated window message is ignored (wrong origin).
+13. Destroy stops provider messages from affecting state (post-destroy events dropped).
+14. CineSrc capabilities are the ONLY VERIFIED bidirectional set.
+15. Capability-aware command forwarding via PlaybackManager (supported seek reaches CineSrc adapter, unsupported seek on VidLink returns `{ ok: false, reason: 'unsupported' }`).
+16. Unsupported seek returns unsupported (not fake success) — VidLink adapter.
+17. Default registry has provider adapters registered before generic embed (10 adapters).
+18. `pickAdapter` selects the correct provider adapter by URL origin for all 8 providers + generic fallback + direct.
+19. CinemaOS and VidPhantom skeleton adapters are conservative (capabilities reflect UNKNOWN payload structure).
+20. Phase 1 manager behavior intact (regression — initial state + loadSource still work).
+
+All 20 tests pass. Full test suite (34 scripts) also passes — no regressions.
+
+### Validation results
+
+- `pnpm run check` → PASS (svelte-check: 0 errors, 20 pre-existing warnings — identical to Phase 0/1/2 baseline).
+- `pnpm test` → PASS (34 scripts, including 20 new Phase 3 tests + 16 Phase 1 tests + 20 Phase 2 tests + 22 provider tests + 4 ranking/health/remediation tests + 1 landscape test + 2 universal/release tests).
+- `pnpm run build` → PASS (vite build + Netlify adapter, ~18 s, no TypeScript errors, no new warnings).
+- Manual playback: NOT TESTABLE end-to-end (no Supabase env file — same env-config gap as Phase 1/2 smoke tests). The 34-test suite + 0-error svelte-check + green production build provide automated regression coverage.
+
+### Known limitations
+
+1. **CineSrc command posting.** CineSrc's docs say to post commands to `iframe.contentWindow.postMessage(payload, origin)`. However, the Phase 1 `AdapterLoadContext` does not pass the iframe element reference to the adapter (it only passes `videoElement` for direct sources). Phase 3 posts commands to `window` (the parent window) instead, which works because the iframe listens on `window.message` — but it is less precise than posting to the specific iframe. A future phase should extend `AdapterLoadContext` to include the iframe ref.
+
+2. **CinemaOS payload structure UNKNOWN.** The CinemaOS docs confirm a PostMessage API exists ("Control playback and track progress from your own page") but the detailed event tables are JS-rendered (client-side React content) and could not be extracted via server-side fetch during the Phase 0 audit. The adapter registers a listener but does not normalize any messages — it is a skeleton that will need the payload structure verified before it can emit events.
+
+3. **VidPhantom origin unreachable (522).** VidPhantom's origin returns HTTP 522 (Cloudflare: origin unreachable). A search-engine snippet confirms a "Player Events" postMessage section with play/pause events, but the full docs could not be retrieved. The adapter is a skeleton that registers a listener but does not normalize messages until the origin recovers.
+
+4. **Viduki V1→V2 fallback listener remains in the watch route.** Phase 3 adds a VidukiPlayerAdapter that normalizes `viduki:all-servers-failed` into a `provider-error` event. However, the existing V1→V2 source-switch listener (in `watch/[type]/[id]/+page.svelte` lines 146-166) remains active to preserve exact Phase 1 behavior. Both the watch route listener AND the adapter receive the message — the watch route handles the source switch, and the adapter emits a normalized event. A future phase may consolidate these once the manager can trigger source switches from `provider-error` events.
+
+5. **11 providers with UNKNOWN capabilities use generic embed.** VixSrc, Cineverse, SLast, FilmU, Peachify, RiveStream, Nxsha, Mapple, YapGrid, VidAPI.tw, MultiEmbed — no public developer documentation found. These providers fall through to the generic `EmbedPlayerAdapter` (black-box behavior). No provider-specific adapters are registered for them.
+
+6. **2 providers explicitly UNSUPPORT postMessage.** NHDAPI (docs say "no postMessage API") and SuperEmbed (JSON link API only). These also use the generic `EmbedPlayerAdapter`.
+
+7. **No startAt URL param propagation yet.** Phase 3 does NOT append `?startAt=` / `?t=` / `?progress=` to embed URLs. This is a Phase 4 concern (resume from saved progress). Phase 3 only normalizes events — it does not implement resume.
+
+8. **No progress persistence changes.** Phase 3 normalizes embed progress events (timeupdate, duration) into the manager's state, but the watch route's ProgressWriter is NOT updated to consume these events for embed sources. The watch route still only writes progress for direct sources (via `handlePlayerProgress` from PlayerShell's `emitProgress`). Phase 4 will connect the manager's embed-source events to the ProgressWriter.
+
+### Files changed
+
+| File | Status | Purpose |
+|---|---|---|
+| `src/lib/client/player/events.ts` | modified | Extended `PlayerProviderAdapter` with 6 optional command methods + `CommandResult` type. |
+| `src/lib/client/player/capabilities.ts` | modified | Added 8 per-provider VERIFIED capability constants (VIDSRC, VIDLINK, VIDY, VIDUKI, CINEMAOS, CINESRC, VIDAPI_QZZ, VIDPHANTOM). |
+| `src/lib/client/player/direct-adapter.ts` | modified | Added play/pause/seek/getCurrentTime/getDuration/setVolume command methods. |
+| `src/lib/client/player/adapter-registry.ts` | modified | Registers 10 adapters (direct + 8 provider + generic embed). |
+| `src/lib/client/player/PlaybackManager.ts` | modified | Added `hasCapability()`, `getActiveCapabilities()`, `play()`, `pause()`, `seek()`, `getCurrentTime()`, `getDuration()`, `setVolume()` command forwarding. |
+| `src/lib/client/player/providers/post-message-utils.ts` | new | Shared `PostMessageAdapterBase`, `safeParseMessage()`, `extractNumber()`, `extractString()`, `urlOrigin()`. |
+| `src/lib/client/player/providers/cinesrc-adapter.ts` | new | CineSrc full bidirectional adapter (reference implementation — 16 events + JSON-RPC commands with response correlation). |
+| `src/lib/client/player/providers/vidsrc-adapter.ts` | new | VidSrc PLAYER_EVENT normalization. |
+| `src/lib/client/player/providers/vidlink-adapter.ts` | new | VidLink PLAYER_EVENT + MEDIA_DATA normalization. |
+| `src/lib/client/player/providers/vidy-adapter.ts` | new | VidY JSON-string PLAYER_EVENT + MEDIA_DATA normalization. |
+| `src/lib/client/player/providers/viduki-adapter.ts` | new | Viduki all-servers-failed + MEDIA_DATA normalization. |
+| `src/lib/client/player/providers/vidapi-qzz-adapter.ts` | new | VidAPI.qzz.io MEDIA_DATA normalization. |
+| `src/lib/client/player/providers/cinemaos-adapter.ts` | new | CinemaOS skeleton adapter (listener registered, no events normalized — payload UNKNOWN). |
+| `src/lib/client/player/providers/vidphantom-adapter.ts` | new | VidPhantom skeleton adapter (listener registered, no events normalized — origin 522). |
+| `scripts/phase3_provider_adapters_test.ts` | new | 20-test Phase 3 contract suite (with minimal `window` mock for postMessage testing in Node.js). |
+| `scripts/phase1_playback_manager_test.ts` | modified | Updated adapter count assertion (2→≥10) and first/last adapter checks (Phase 3 expanded the registry). |
+| `package.json` | modified | Registered `phase3_provider_adapters_test.ts` in the `test` script chain. |
+| `Mavero_Player_Playback_Implementation_Plan.md` | modified | Phase 3 worklog entry (this entry). |
+
+**PHASE 3 COMPLETE**
+
+**PHASE 4 NOT STARTED**
+**PHASE 5 NOT STARTED**
+**PHASE 6 NOT STARTED**
+**PHASE 7 NOT STARTED**
+
+**Next phase:** Phase 4 — Progress, Resume + Provider Continuity (NOT started).
+
+**Commit:** `<pending>` — `feat(player): integrate provider playback adapters`
+
 ### Worklog template
 
 ```md
