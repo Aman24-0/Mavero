@@ -10,7 +10,10 @@ import { parseResolverRequest } from './identifiers';
 import { resolveWithBoundedFallback, type FallbackCandidate } from './fallback';
 import { rankProviderSourceList } from './ranking';
 import { loadSourceHealthMap, recordRuntimeFailure, recordRuntimeSuccess } from '$lib/server/streaming/health-service';
+import { applyDefaultSourceOrdering } from './default-source';
 import type { ResolverDependencies, ResolverRequest, TrustedResolutionConfig } from './types';
+
+export { applyDefaultSourceOrdering } from './default-source';
 
 export type ResolverClient = SupabaseClient<Database>;
 
@@ -90,9 +93,18 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
     : dependencies.loadConfig
       ? [config]
       : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
+  // Phase 2: sort the admin-configured default source to the front of the
+  // candidate list. The ranking's `sourceOrder` parameter is the array
+  // index, so the default wins the `sourceOrder ASC` tiebreaker within its
+  // score bucket. NO health-score mutation — the default's reliability/
+  // health/stability scores are computed identically to every other
+  // candidate. If the default is ineligible (disabled, in cooldown,
+  // unsupported media type, etc.), the existing ranking gates exclude it
+  // and the resolver proceeds with the remaining candidates.
+  const sortedConfigs = applyDefaultSourceOrdering(orderedConfigs, request.defaultSourceId);
   const trustedClient = serviceClient();
-  const healthMap = await loadSourceHealthMap(trustedClient, orderedConfigs.map((candidate) => candidate.source.id));
-  const ranking = rankProviderSourceList(request, content, orderedConfigs, healthMap);
+  const healthMap = await loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id));
+  const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
   const candidates: FallbackCandidate[] = ranking.eligible.map((ranked) => ({ config: ranked.config, eligible: true }));
   const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
     allowFallback: true,
@@ -104,3 +116,4 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
   });
   return resolved.result;
 }
+

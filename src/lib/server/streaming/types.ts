@@ -47,4 +47,23 @@ export type PublicStreamingConfig = {
   sources: PublicStreamingSource[];
   categories: PublicStreamingCategory[];
   sourceCategories: StreamingSourceCategoryRow[];
+  /**
+   * Phase 2: admin-configured per-content-type default source ids. Only
+   * includes defaults whose source_id resolves to a currently-public,
+   * enabled, active-or-experimental source in `sources`. Invalid/disabled
+   * defaults are silently omitted by `getPublicStreamingConfig` so the
+   * resolver falls back to health/reliability ranking without surfacing
+   * a broken default to the user.
+   */
+  defaults: PublicStreamingDefaults;
 };
+
+export type PublicStreamingDefaults = {
+  movie?: string;
+  series?: string;
+  anime?: string;
+};
+
+export type StreamingDefaultRow = Tables<'streaming_default_sources'>;
+export type StreamingDefaultInsert = TablesInsert<'streaming_default_sources'>;
+export type StreamingDefaultUpdate = TablesUpdate<'streaming_default_sources'>;

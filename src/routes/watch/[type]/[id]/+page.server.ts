@@ -23,7 +23,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
     try {
       streamingConfig = await getPublicStreamingConfig(locals.supabase);
     } catch {
-      streamingConfig = { version: 1, updatedAt: new Date(0).toISOString(), providers: [], sources: [], categories: [], sourceCategories: [] };
+      streamingConfig = { version: 1, updatedAt: new Date(0).toISOString(), providers: [], sources: [], categories: [], sourceCategories: [], defaults: {} };
     }
     return { item: toMediaItem(item), streamingConfig, episodes };
   } catch {

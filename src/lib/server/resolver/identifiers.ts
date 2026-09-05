@@ -29,6 +29,13 @@ export function parseResolverRequest(input: unknown): ResolverRequest {
   if (episode !== undefined) request.episode = episode;
   const fallbackFlag = typeof input.enableFallback === 'boolean' ? input.enableFallback : input.allowFallback;
   if (typeof fallbackFlag === 'boolean') request.allowFallback = fallbackFlag;
+  // Phase 2: optional admin-configured default source. Validated as a UUID
+  // if present; the resolver's fallback walker uses it as a sort hint. The
+  // default may be absent, in which case the existing ranking-only order
+  // applies (Phase 1 behavior).
+  if (typeof input.defaultSourceId === 'string' && uuidPattern.test(input.defaultSourceId)) {
+    request.defaultSourceId = input.defaultSourceId;
+  }
   return request;
 }
 

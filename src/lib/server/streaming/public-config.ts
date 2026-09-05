@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
-import type { PublicStreamingConfig } from './types';
+import type { PublicStreamingConfig, PublicStreamingDefaults } from './types';
 
 type StreamingClient = SupabaseClient<Database>;
 
@@ -23,14 +23,15 @@ export async function getPublicStreamingConfig(client: StreamingClient): Promise
   const updatedAt = metaResult.data?.updated_at ?? new Date(0).toISOString();
   if (cached?.version === version && cached.updatedAt === updatedAt) return cached;
 
-  const [providersResult, sourcesResult, categoriesResult, mappingsResult] = await Promise.all([
+  const [providersResult, sourcesResult, categoriesResult, mappingsResult, defaultsResult] = await Promise.all([
     client.from('streaming_public_providers').select('id,name,slug,description,icon,status,enabled,integration_type,capabilities').eq('enabled', true).in('status', ['active', 'experimental', 'maintenance']).order('name'),
     client.from('streaming_public_sources').select('id,provider_id,name,slug,description,enabled,visibility,status,ordering,integration_type,capabilities,identifier_mode,language,audio_languages,subtitle_capability,quality_capability').eq('enabled', true).eq('visibility', 'public').in('status', ['active', 'experimental', 'maintenance']).order('ordering').order('name'),
     client.from('streaming_public_categories').select('id,name,slug,description,enabled,ordering').eq('enabled', true).order('ordering').order('name'),
     client.from('streaming_public_source_categories').select('source_id,category_id,ordering,created_at').order('ordering'),
+    client.from('streaming_default_sources').select('content_type,source_id,updated_at'),
   ]);
 
-  const firstError = providersResult.error ?? sourcesResult.error ?? categoriesResult.error ?? mappingsResult.error;
+  const firstError = providersResult.error ?? sourcesResult.error ?? categoriesResult.error ?? mappingsResult.error ?? defaultsResult.error;
   if (firstError) throw new Error(`Public streaming config lookup failed: ${firstError.message}`);
 
   const providers = (providersResult.data ?? []).flatMap((provider) => provider.id && provider.name && provider.slug && provider.status && provider.enabled !== null && provider.integration_type ? [{ ...provider, id: provider.id, name: provider.name, slug: provider.slug, status: provider.status, enabled: provider.enabled, integration_type: provider.integration_type, capabilities: provider.capabilities ?? {} }] : []);
@@ -39,7 +40,23 @@ export async function getPublicStreamingConfig(client: StreamingClient): Promise
   const publicSourceIds = new Set(sources.map((source) => source.id));
   const publicCategoryIds = new Set(categories.map((category) => category.id));
   const sourceCategories = (mappingsResult.data ?? []).flatMap((mapping) => mapping.source_id && mapping.category_id && mapping.ordering !== null && mapping.created_at && publicSourceIds.has(mapping.source_id) && publicCategoryIds.has(mapping.category_id) ? [{ source_id: mapping.source_id, category_id: mapping.category_id, ordering: mapping.ordering, created_at: mapping.created_at }] : []);
-  const config: PublicStreamingConfig = { version, updatedAt, providers, sources, categories, sourceCategories };
+
+  // Phase 2: load admin-configured per-content-type default sources. Only
+  // include a default whose source_id resolves to a currently-public source
+  // (present in the `sources` array above). Invalid/disabled defaults are
+  // silently omitted — the resolver falls back to health/reliability ranking.
+  const defaults: PublicStreamingDefaults = {};
+  const VALID_CONTENT_TYPES = new Set(['movie', 'series', 'anime']);
+  for (const row of defaultsResult.data ?? []) {
+    if (!row?.content_type || !row?.source_id) continue;
+    if (!VALID_CONTENT_TYPES.has(row.content_type)) continue;
+    if (!publicSourceIds.has(row.source_id)) continue;
+    if (row.content_type === 'movie') defaults.movie = row.source_id;
+    else if (row.content_type === 'series') defaults.series = row.source_id;
+    else if (row.content_type === 'anime') defaults.anime = row.source_id;
+  }
+
+  const config: PublicStreamingConfig = { version, updatedAt, providers, sources, categories, sourceCategories, defaults };
   cached = config;
   return config;
 }

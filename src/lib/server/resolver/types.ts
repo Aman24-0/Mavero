@@ -13,6 +13,18 @@ export type ResolverRequest = {
   season?: number;
   episode?: number;
   allowFallback?: boolean;
+  /**
+   * Phase 2: admin-configured per-content-type default source id. When
+   * `allowFallback !== false` and this is provided AND the default source
+   * appears in the fallback candidate list, the resolver sorts it to the
+   * front of the candidate order so it is attempted first. The default
+   * is NOT given an artificial health-score boost — it just wins the
+   * `sourceOrder ASC` tiebreaker within its score bucket in the existing
+   * `rankProviderSourceList` sort. If the default is ineligible (disabled,
+   * in cooldown, unsupported media type, etc.), the existing ranking gates
+   * exclude it and the resolver proceeds with the remaining candidates.
+   */
+  defaultSourceId?: string;
 };
 
 export type ContentIdentifiers = {

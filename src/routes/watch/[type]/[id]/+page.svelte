@@ -62,6 +62,10 @@
   let watchingSavedForSession = false;
   let activePlaybackKey = '';
   let selectedSourceId = '';
+  // Phase 2: admin-configured default source id for the current content type.
+  // Read from data.streamingConfig.defaults — only present when an admin has
+  // configured a default AND the default source is currently public+enabled.
+  let defaultSourceId: string | undefined;
 
   // Subscribe to manager state so the route's reactive locals mirror the
   // manager snapshot. PlayerShell receives these via its existing props.
@@ -124,7 +128,16 @@
     watchingSavedForSession = false;
   }
   $: if (browser && playbackKey !== writerKey) void setupProgressContext();
-  $: if (!selectedSourceId && sourceOptions.length) selectedSourceId = sourceOptions[0].id;
+  // Phase 2: select the admin-configured default source for this content type
+  // as the initial source. Falls back to sourceOptions[0].id (Phase 0/1
+  // behavior) when no default is configured or the default source is not in
+  // the public sources list (the public config reader already filtered out
+  // invalid/disabled defaults, so a present default is guaranteed eligible).
+  // The default is only used for the INITIAL selection — manual source
+  // switches set selectedSourceId directly and pass allowFallback=false, so
+  // the default is NOT forced back after a manual switch.
+  $: defaultSourceId = data.streamingConfig.defaults?.[contentType];
+  $: if (!selectedSourceId && sourceOptions.length) selectedSourceId = (defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId) ? defaultSourceId : sourceOptions[0].id);
   $: if (browser && progressReady && selectedSourceId && resolutionState === 'idle') void prepareSource();
 
   onMount(() => {
@@ -238,8 +251,13 @@
     await replaceProgressSource(sourceId);
     if (!active) return;
     selectedSourceId = sourceId;
+    // Phase 2: forward the admin-configured default source id when fallback
+    // is enabled (initial load). The resolver sorts the default to the front
+    // of the fallback candidate list so it is attempted first. When
+    // allowFallback is false (manual source switch), the default is NOT
+    // forwarded — the user's explicit selection is respected.
     await manager.loadSource(
-      { sourceId, contentId: item.id, mediaType: contentType, season, episode },
+      { sourceId, contentId: item.id, mediaType: contentType, season, episode, defaultSourceId: allowFallback ? defaultSourceId : undefined },
       resumeTime,
       allowFallback,
     );

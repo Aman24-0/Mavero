@@ -152,6 +152,32 @@ export type Database = {
         }
         Relationships: []
       }
+      streaming_default_sources: {
+        Row: {
+          content_type: string
+          source_id: string
+          updated_at: string
+        }
+        Insert: {
+          content_type: string
+          source_id: string
+          updated_at?: string
+        }
+        Update: {
+          content_type?: string
+          source_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "streaming_default_sources_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       streaming_provider_health: {
         Row: {
           consecutive_failures: number

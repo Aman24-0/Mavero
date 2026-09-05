@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, TablesInsert } from '$lib/server/supabase/database.types';
 import { invalidatePublicStreamingConfig } from './public-config';
-import type { CategoryInsert, CategoryUpdate, ProviderInsert, ProviderUpdate, SourceInsert, SourceUpdate, StreamingCategoryRow, StreamingProviderRow, StreamingSourceCategoryRow, StreamingSourceRow, AdminOverview, ProviderHealthSummary } from './types';
+import type { CategoryInsert, CategoryUpdate, ProviderInsert, ProviderUpdate, SourceInsert, SourceUpdate, StreamingCategoryRow, StreamingDefaultInsert, StreamingDefaultRow, StreamingProviderRow, StreamingSourceCategoryRow, StreamingSourceRow, AdminOverview, ProviderHealthSummary } from './types';
 import { listProviderHealthSummaries as loadProviderHealthSummaries } from './health-service';
 
 type StreamingClient = SupabaseClient<Database>;
@@ -157,5 +157,56 @@ export async function upsertSourceCategory(client: StreamingClient, input: Table
 export async function deleteSourceCategory(client: StreamingClient, sourceId: string, categoryId: string) {
   const { error } = await client.from('streaming_source_categories').delete().eq('source_id', sourceId).eq('category_id', categoryId);
   if (error) throwRegistryError('Remove source category', error);
+  invalidatePublicStreamingConfig();
+}
+
+// ----- Phase 2: default source management -----
+//
+// These functions persist the admin-configured per-content-type default
+// playback source. They are the minimum server-side API needed by Phase 7's
+// Admin default-management UI; the UI itself is NOT built in Phase 2 (Phase 7
+// owns the polished Admin controls). The functions are exposed here so the
+// resolver service (which uses a service-role client) can read defaults
+// without duplicating the query logic, and so Phase 7 can wire forms to them
+// directly without further admin-service changes.
+//
+// Validation contract:
+//   - contentType must be one of 'movie' | 'series' | 'anime' (matches the
+//     streaming_default_sources.content_type CHECK constraint).
+//   - sourceId must be a UUID that references an existing streaming_sources
+//     row. The FK constraint enforces existence; we do NOT enforce that the
+//     source is currently public+enabled+active here — that filter is the
+//     public config reader's responsibility (so an admin can pre-set a
+//     default for a source that is temporarily disabled and have it
+//     auto-activate when the source is re-enabled).
+//   - upsert semantics: at most one default per content_type (PRIMARY KEY).
+
+const VALID_DEFAULT_CONTENT_TYPES = new Set(['movie', 'series', 'anime']);
+
+function assertDefaultContentType(contentType: string): void {
+  if (!VALID_DEFAULT_CONTENT_TYPES.has(contentType)) {
+    throw new Error(`Invalid default content type '${contentType}'. Must be one of: movie, series, anime.`);
+  }
+}
+
+export async function listAdminDefaults(client: StreamingClient): Promise<StreamingDefaultRow[]> {
+  const { data, error } = await client.from('streaming_default_sources').select('*').order('content_type');
+  if (error) throwRegistryError('List default sources', error);
+  return data ?? [];
+}
+
+export async function upsertDefaultSource(client: StreamingClient, contentType: string, sourceId: string): Promise<StreamingDefaultRow> {
+  assertDefaultContentType(contentType);
+  const input: StreamingDefaultInsert = { content_type: contentType, source_id: sourceId };
+  const { data, error } = await client.from('streaming_default_sources').upsert(input, { onConflict: 'content_type' }).select('*').single();
+  if (error) throwRegistryError('Upsert default source', error);
+  invalidatePublicStreamingConfig();
+  return data;
+}
+
+export async function clearDefaultSource(client: StreamingClient, contentType: string): Promise<void> {
+  assertDefaultContentType(contentType);
+  const { error } = await client.from('streaming_default_sources').delete().eq('content_type', contentType);
+  if (error) throwRegistryError('Clear default source', error);
   invalidatePublicStreamingConfig();
 }

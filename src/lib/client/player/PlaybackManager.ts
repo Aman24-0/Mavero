@@ -271,17 +271,23 @@ export class PlaybackManager {
     });
 
     try {
+      const body: Record<string, unknown> = {
+        sourceId: request.sourceId,
+        contentId: request.contentId,
+        mediaType: request.mediaType,
+        enableFallback: allowFallback,
+      };
+      if (request.season !== undefined) body.season = request.season;
+      if (request.episode !== undefined) body.episode = request.episode;
+      // Phase 2: forward the admin-configured default source id so the
+      // resolver can sort it to the front of the fallback candidate list.
+      // Only forwarded when allowFallback is true (manual source switches
+      // pass allowFallback=false and do not want the default forced back).
+      if (allowFallback && request.defaultSourceId) body.defaultSourceId = request.defaultSourceId;
       const response = await this.fetcher('/api/playback/resolve', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          sourceId: request.sourceId,
-          contentId: request.contentId,
-          mediaType: request.mediaType,
-          season: request.season,
-          episode: request.episode,
-          enableFallback: allowFallback,
-        }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       const payload = (await response.json()) as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
@@ -564,6 +570,15 @@ export type ResolverRequest = {
   episode?: number;
   /** The bound HTMLVideoElement from PlayerViewport (direct sources only). */
   videoElement?: HTMLVideoElement;
+  /**
+   * Phase 2: admin-configured per-content-type default source id. Forwarded
+   * to `/api/playback/resolve` so the resolver can sort it to the front of
+   * the fallback candidate list. Only forwarded when `allowFallback` is true
+   * (manual source switches do not want the default forced back). When
+   * absent, the resolver uses the existing ranking-only order (Phase 1
+   * behavior).
+   */
+  defaultSourceId?: string;
 };
 
 export class ResolverError extends Error {
