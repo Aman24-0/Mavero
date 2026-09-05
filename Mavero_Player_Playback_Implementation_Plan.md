@@ -2015,7 +2015,7 @@ All 20 tests pass. Full test suite (33 scripts) also passes — no regressions i
 
 **Next phase:** Phase 3 — Provider Capability + Adapter Integration (NOT started).
 
-**Commit:** `<pending>` — `feat(player): add default source and automatic fallback`
+**Commit:** `d8d5766` — `feat(player): add default source and automatic fallback`
 
 ### Worklog template
 
