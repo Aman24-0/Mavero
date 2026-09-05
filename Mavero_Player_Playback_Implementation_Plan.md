@@ -1641,7 +1641,7 @@ Categories:
   3. Implement the CineSrc adapter first (it has the most complete API and serves as the reference implementation).
   4. Preserve all existing race-condition guards (`resolutionRequestId`, `writerKey`, `active`, `syncInFlight`).
 
-**Commit:** `<filled in after commit>` — `docs(player): complete phase 0 playback audit`
+**Commit:** `8ba3dd9` — `docs(player): complete phase 0 playback audit`
 
 ### Worklog template
 
