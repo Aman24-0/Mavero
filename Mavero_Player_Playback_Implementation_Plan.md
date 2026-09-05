@@ -1813,6 +1813,30 @@ HTMLVideoElement / iframe
 
 **Commit:** `d2640e9` — `refactor(player): establish playback orchestration architecture`
 
+**Manual QA (2026-09-05 smoke test):**
+
+End-to-end browser playback smoke test could not be performed because the repository has no Supabase env file (`.env` / `.env.local` / `.env.production` all absent). Without `PUBLIC_SUPABASE_URL` + `PUBLIC_SUPABASE_PUBLISHABLE_KEY`, the watch route's `getPublicStreamingConfig(locals.supabase)` returns an empty config (`{ providers: [], sources: [], ... }`) and the user would see "No authorized source is available for this title." Per the task instructions: "Do not change provider configuration just for this smoke test." No Supabase env was fabricated.
+
+| Check | Result | Notes |
+|---|---|---|
+| Movie | NOT TESTABLE | No Supabase env → empty `sourceOptions` → watch route falls through to `'unavailable'` state. The watch route also surfaces a 500 because `hooks.server.ts` line 44 fail-list does NOT include `/watch/` (so it falls through to `resolve(event)` without `safeGetSession` being set on `locals`). **This 500 is pre-existing behavior at commit `24a35d9` (verified by `git show 24a35d9:src/hooks.server.ts`) — NOT a Phase 1 regression.** Phase 1 did not modify `hooks.server.ts` or `+layout.server.ts`. |
+| Series | NOT TESTABLE | Same env-config gap as Movie. |
+| Source switching | NOT TESTABLE | Same env-config gap. |
+| Direct progress/resume | NOT TESTABLE | Same env-config gap. |
+| Viduki V1→V2 fallback | NOT TESTABLE | Viduki provider is registered but `enabled=false` by default; even with Supabase env, the provider is OFF until an admin toggles it. No provider config change made for this smoke test. |
+| Browser console | N/A (no live page) | Dev server `/auth/sign-in` returns the controlled 503 (it's in the hooks fail-list) — confirming the dev server itself runs. The 500 on `/watch/movie/550` is the env-config gap above, NOT a Phase 1 module error. Phase 1 module imports resolve correctly — verified via `grep -l` against `.svelte-kit/output/server/entries/pages/watch/_type_/_id_/_page.svelte.js`: `PlaybackManager`, `DirectPlayerAdapter`, `EmbedPlayerAdapter`, `PlayerAdapterRegistry` are all bundled. |
+
+**Automated regression coverage (in lieu of manual smoke):**
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings).
+- `pnpm test` → PASS (32 scripts, including 16 new Phase 1 contract tests covering: initial state, capabilities defaults, adapter registry order, source load lifecycle (embed + direct), resolver error mapping, race-condition protection (slow A does not overwrite fast B), adapter cleanup on source switch, dispose teardown, normalized viewport event translation, stale event drop, state subscribe/unsubscribe, ResolverError shape).
+- `pnpm run build` → PASS (vite build + Netlify adapter, ~17 s, no TypeScript errors, no new warnings).
+- Additional ad-hoc smoke script (NOT committed) verified the manager handles the no-Supabase-env scenario cleanly: `new PlaybackManager()` constructs, `subscribe()` fires immediately with the initial snapshot, `reset()` does not crash with no active session, `dispose()` tears down cleanly, and post-dispose `dispatchViewportEvent()` is a no-op. No runtime crash.
+
+**Phase 1 regression check — no genuine regression found:**
+
+The 500 on `/watch/movie/550` is a pre-existing env-config bug in `src/hooks.server.ts` (the `/watch/` path is missing from the controlled-503 fail-list at line 44), verified present at the Phase 0 commit `24a35d9`. Phase 1 did not modify `hooks.server.ts` or `+layout.server.ts`. Per task instructions, this pre-existing bug was NOT fixed (it is not caused by the Phase 1 refactor). A separate task should add `/watch/` to the fail-list (or add a `safeGetSession` stub to `locals` in the no-env branch) — out of scope for Phase 1 smoke.
+
 ### Worklog template
 
 ```md
