@@ -1379,6 +1379,270 @@ Maintain this table during implementation.
 - Baseline: Existing player/resolver/progress architecture exists.
 - Next action: Perform Phase 0 audit before modifying playback architecture.
 
+---
+
+## 2026-09-05 — Phase 0 — Baseline / Provider Audit
+
+**Status:** COMPLETE
+
+**Phase:** 0
+
+**Task:** Read-only audit of the entire Mavero playback stack — watch route, PlayerShell, PlayerViewport, PlayerControls, shared player types, progress modules, resolver service/ranking, admin pages, every provider migration, every provider's public documentation. Document current behaviour, enumerate providers, build a capability matrix, identify gaps vs Phase 1–9 target, run baseline build/test, commit a single Phase 0 documentation commit. **No production source code modified.**
+
+**Files changed:**
+- `Mavero_Player_Playback_Implementation_Plan.md` — appended this Phase 0 audit entry to the Worklog (the only change in this commit). No production source code, tests, or migrations were touched.
+
+**Audited (read-only, in full):**
+- `src/routes/watch/[type]/[id]/+page.svelte` (299 LOC) and `+page.server.ts` (33 LOC)
+- `src/routes/watch/[type]/[id]/[season]/[episode]/+page.server.ts` (10 LOC redirect)
+- `src/lib/components/player/PlayerShell.svelte` (498 LOC)
+- `src/lib/components/player/PlayerViewport.svelte` (121 LOC)
+- `src/lib/components/player/PlayerControls.svelte` (124 LOC)
+- `src/lib/shared/player.ts`, `player-state.ts`, `player-guards.ts`, `sandbox-policy.ts`
+- `src/lib/client/progress/{types,service,cloud,database}.ts`
+- `src/lib/shared/progress-merge.ts`
+- `src/routes/api/playback/resolve/+server.ts` and `src/routes/api/playback/discover/+server.ts`
+- `src/lib/server/resolver/{service,core,ranking,fallback,identifiers,types,adapters,safe-url,template,errors,vidsrc,vidlink}.ts`
+- `src/lib/server/streaming/{types,public-config,admin-service,validation,health-service}.ts`
+- `src/routes/admin/{providers,sources}/+page.{svelte,server.ts}`
+- `src/lib/server/supabase/records.ts` and `database.types.ts` (DB schema for `streaming_providers`, `streaming_sources`, `watch_progress`, `watch_history`, `favorites`, `favorite_deletions`, `streaming_provider_health`)
+- All 22 `supabase/migrations/*_experimental.sql` files
+- `src/lib/components/DetailPage.svelte` (entry point for "User opens content → Play")
+- `src/lib/components/DiscoverPage.svelte` (Continue Watching consumer)
+- `src/routes/api/account/{sync,history,favorites,delete}/+server.ts`
+- `src/lib/server/discovery/*` (universal discovery — present but unused by client)
+- `package.json` (scripts: `dev`, `build`, `check`, `test`)
+
+**Repository state at audit entry:**
+- Branch: `main`, latest commit `24a35d9 feat: add FilmU embed provider`.
+- After audit, an unrelated remote upload (`d0b8e13 Add files via upload`) added this plan file. Phase 0 was rebased onto that.
+
+**Implemented (audit findings — no production code changes):**
+
+### A. Current playback architecture summary
+
+End-to-end flow that runs **today** (every step is the actual implementation, not the planned one):
+
+1. **User opens content** — `DetailPage.svelte` computes `watchPath`:
+   - movie → `/watch/movie/{id}`
+   - series/anime → `/watch/{type}/{id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`
+   - `resumeEpisode` is populated only when the user's favorite status is `watching` (NOT for plain in-progress watchers).
+   - Play button is a plain `<a href>` — no prefetch.
+2. **Watch route loads** — `+page.server.ts` loads the title via `getDetail`, loads the requested season's episodes for `series` (anime is NOT covered here — depends on what the AniList adapter returned in `seasonsData`), and loads `getPublicStreamingConfig(locals.supabase)` — on Supabase failure it returns an empty config and the user sees "No authorized source available."
+3. **Watch client boots** — `+page.svelte`:
+   - `sourceOptions` is the public source list ordered by admin `ordering` then `name` (no client-side health ranking).
+   - `$: if (!selectedSourceId && sourceOptions.length) selectedSourceId = sourceOptions[0].id;` — **always picks the first source by admin ordering**.
+   - `setupProgressContext` creates a `ProgressWriter` and fetches `getResumeProgress` → `{ resumeTime, record }`. The record's `selectedSourceId` is stored but **never consulted** to preselect the source.
+   - `prepareSource(sourceId, allowFallback=true)` POSTs to `/api/playback/resolve`. Manual UI source switches pass `allowFallback=false`.
+4. **Resolver server-side path** — `service.ts`:
+   - Validates request (UUID sourceId, safe contentId, mediaType, positive-integer season/episode both-or-neither).
+   - Loads trusted config via service-role Supabase client.
+   - Loads content via `getDetail` (TMDB or AniList adapter, small in-memory cache).
+   - Fallback path (default): `loadTrustedFallbackCandidates` queries all enabled public sources ordered by `ordering`, the requested sourceId is unshifted to the front, `loadSourceHealthMap` reads `streaming_provider_health`, `rankProviderSourceList` applies the Phase 7G ranking algorithm, `resolveWithBoundedFallback` walks the ranked list calling `resolveSourceFromConfig` per source with `avoidDuplicateProviders: true`.
+   - No-fallback path: single `resolveSourceFromConfig` call.
+5. **Per-source resolution** — `core.ts`:
+   - Validates provider/source enabled + public + status active (or experimental+`allow_experimental_playback`), capability for media type, `content.type === request.mediaType`.
+   - Picks adapter via `adapterFor`: `provider.adapter_id` → `adaptersById` → `adapters[type]` → `createDefaultAdapters()[type]`. Only two custom adapters exist (`vidsrc-embed`, `vidlink-embed`); every other source uses generic `templateProviderAdapter` which interpolates `{tmdb_id|imdb_id|anilist_id|mal_id|season|episode|content_id|slug}` into the configured `movie_template`/`series_template`/`anime_template`.
+   - `validatePlaybackUrl` enforces HTTPS + non-private-host + (for embed) origin must be in `allowed_embed_origins` from capabilities (unless `allow_dynamic_embed_origins` is set — SuperEmbed API).
+6. **Player mounts** — `PlayerShell.svelte` (498 LOC, owns ALL playback state: `currentTime`, `duration`, `buffered`, `playing`, `muted`, `volume`, `playbackRate`, `fullscreen`, `landscapeMode`, `pictureInPicture`, `state`, `errorMessage`, `selectedQuality`, `selectedSubtitle`). `PlayerViewport.svelte` mounts either an `<video>` (direct) or `<iframe>` (embed) with `allow="autoplay; fullscreen; picture-in-picture; encrypted-media"` and `sandbox="allow-forms allow-presentation allow-same-origin allow-scripts"`. The iframe's DOM is **never** accessed by Mavero.
+7. **Playback begins (direct only)** — `handleLoadedMetadata` sets `duration`, applies `volume/muted/playbackRate`, seeks to `pendingSeek = initialProgress = resumeTime`. `handleTimeUpdate` throttles `emitProgress('progress')` to every 5 s.
+8. **Progress persistence** — `handlePlayerProgress` (watch route) calls `writer.update(currentTime, duration, completed)` (debounced 12 s flush to IndexedDB); on `pause`/`source-change`/`close`/`visibility` it flushes immediately; on `ended` it calls `writer.complete(...)`. For authenticated users, `sendHistory('started'|'progressed'|'completed', ...)` writes to `watch_history` (started on first non-zero `currentTime`, progressed every 60 s, completed on end). `syncAuthenticatedState()` reads/merges/writes cloud progress+favorites+deletions.
+9. **Source switching** — `handleSourceChange(sourceId)` calls `prepareSource(sourceId, false)` (fallback disabled). The progress writer is flushed and disposed, a new one is created with the new `selectedSourceId`. `pendingSeek = currentTime` is preserved for direct sources only (no `loadedmetadata` for embeds).
+10. **Viduki V1→V2 fallback** — the **only** `window.message` listener in the codebase. Origin-checked against `https://www.viduki.net`, parses `{type: 'viduki:all-servers-failed'}`, and calls `prepareSource(v2.id, false)`.
+11. **Episode navigation** — `handleEpisodeChange(target)` updates `season`/`episode` state and `goto('/watch/${type}/${id}?season=&episode=', { replaceState, keepFocus, noScroll })`. The reactive `playbackKey` block aborts the in-flight resolver, clears `resolvedSource`, and triggers a fresh setup+resolve cycle. Each episode has its own `progressKey` — no cross-episode timestamp preservation.
+12. **User exits** — `closePlayer()` navigates to the detail page (or back to `from` if `from` is a valid detail path). `onDestroy` aborts resolver, flushes writer, disposes it. `<svelte:window onbeforeunload onvisibilitychange>` emits a final `close`/`visibility` progress event.
+13. **Continue Watching / resume** — `getContinueWatching()` filters `progress` to `completionState !== 'completed' && currentTime > 0`, merges in `favorites` with status `watching`. `DiscoverPage.svelte` loads it on mount (cloud for authenticated users, IndexedDB for anonymous). `latestResumeEpisode` on the detail page deep-links to the user's last-watched episode — but only when their favorite status is `watching`.
+
+### B. Current source-selection behaviour
+
+- **First source always selected** — `selectedSourceId = sourceOptions[0].id` (watch route line 60).
+- **Admin priority (the `ordering` column) is respected** — sources come back ordered by `ordering` ASC then `name` ASC.
+- **Runtime health ranking (Phase 7G) is NOT applied at the client** — only admin ordering reaches the watch page. Health ranking runs server-side inside `/api/playback/resolve` when `enableFallback === true` (the default for the initial resolution).
+- **Saved `selectedSourceId` from the user's progress record is NOT considered.** Stored in DB column `selected_source_id`, written on every `saveProgress`, but never read back to preselect the source.
+- **Movie / series / anime selection is identical** — same `sourceOptions` array; capability filtering happens server-side in `core.ts` (`capabilityAllows(config, mediaType)`).
+- **Failure handling** — server-side fallback walks ranked candidates with `avoidDuplicateProviders: true` and `maxAttempts = candidates.length`. After exhaustion, throws `RESOLUTION_UNAVAILABLE`; the watch page shows the `unavailable` state with Retry/Change-source buttons. Retry calls `prepareSource(source.sourceId, false)` — same source, no fallback.
+- **Client-side fallback** — only Viduki V1→V2 (postMessage-driven).
+- **User-initiated source switches disable fallback** (`enableFallback: false`).
+
+### C. Current fallback behaviour
+
+- Server-side only, on initial resolution.
+- `resolveWithBoundedFallback` walks the ranked candidate list, calling `resolveSourceFromConfig` per candidate.
+- `recordRuntimeSuccess` / `recordRuntimeFailure` update `streaming_provider_health` (success_count, failure_count, consecutive_failures, last_checked_at, last_success_at, last_failure_at, cooldown_until).
+- `runtimeFailureType` only records failures for `invalid_response` / `provider_unavailable` / `resolution_failure` — admin-disabled, unsupported-media, missing-identifier, etc. are NOT counted against health.
+- `avoidDuplicateProviders: true` skips subsequent sources from the same provider (so Viduki V1 failure skips Viduki V2 in the fallback walk — the client-side Viduki listener is the only path that explicitly tries V2).
+- No client-side fallback when an embed player fails internally (no postMessage listeners except Viduki).
+
+### D. Current progress / resume behaviour
+
+| Question | Answer |
+|---|---|
+| Where does `currentTime` come from? | `videoElement.currentTime` on `timeupdate` — direct sources only. Embed sources never report. |
+| How is `duration` obtained? | `videoElement.duration` on `loadedmetadata` — direct only. Embed sources never set `duration`. |
+| How frequently is progress saved? | Every 5 s while playing (throttle in `handleTimeUpdate`); immediately on `pause`/`source-change`/`close`/`visibility`/`ended`. Writer flushes to IndexedDB at most every 12 s (`DEFAULT_FLUSH_INTERVAL`). |
+| Where is it stored locally? | IndexedDB database `mavero-local`, store `watch_progress`, key = `progressKey(context)` = `${contentType}:${contentId}:${season ?? '-'}:${episode ?? '-'}`. Falls back to an in-memory `Map` if IndexedDB is unavailable. |
+| Where is it stored remotely? | Supabase `watch_progress` table (per-user, keyed by `progress_key`). Synced via `GET/PUT /api/account/sync`. |
+| How does authenticated sync work? | `syncAuthenticatedState()` reads cloud, merges local + cloud (latest `updatedAt` wins, or latest `currentTime` on tie), writes merged back to cloud + local IndexedDB. Single-flight (one in-flight sync at a time). Triggered on visibilitychange, first progress event, completion, favorite toggle. |
+| How do anonymous users work? | IndexedDB only. On sign-in, the next `syncAuthenticatedState()` merges local into cloud. |
+| How is season/episode represented? | Nullable integers on `WatchProgressRecord`/DB row. Movies: `season=null, episode=null`. Series/anime: both set. The `progressKey` includes them, so each episode has its own resume record. |
+| How is `selectedSourceId` stored? | Column `selected_source_id` on `watch_progress` (nullable). Set on every `saveProgress` from the current `selectedSourceId` state. |
+| Is `selectedSourceId` actually USED when resuming? | **No.** The watch page reads `resumeTime` from the record but never consults `record.selectedSourceId`. The first source by admin ordering is always chosen. |
+| Is the timestamp applied when loading a source? | **For direct sources: yes** (`handleLoadedMetadata` seeks to `pendingSeek = initialProgress = resumeTime`). **For embed sources: no** — there is no `loadedmetadata` event for iframes, and no `startAt` query param is appended to embed URLs. |
+| Does source switching preserve timestamp? | **For direct sources: yes** (`pendingSeek = currentTime` on source change). **For embed sources: no** — iframe remounts, no seek. |
+| Does episode switching save progress? | Yes — the previous episode's writer is flushed and disposed in `setupProgressContext` before the new one is created. |
+| Does page close / visibility change save progress? | Yes — `flushBeforeUnload` calls `writer.flush()`; `flushWhenHidden` calls `writer.pause()` then `syncAuthenticatedState()`. PlayerShell also emits `close`/`visibility` progress events. |
+| What happens when a provider doesn't expose progress? | For embed sources, `handlePlayerProgress` is **never called** (no `emitProgress` for embeds). The writer never receives `update()`, so the existing record (if any) is preserved as-is and `lastWatchedAt` is **not refreshed**. Continue Watching shows the old timestamp. |
+| What happens when a provider changes? | For direct sources: `pendingSeek` preserves `currentTime` across the switch. For embed sources: no preservation — the iframe remounts and the user starts from the provider's own resume point (if any). The new source's `selectedSourceId` is written to the progress record on the next flush. |
+| What happens after content is completed? | `setFavoriteStatus(..., 'completed')` auto-promotes to a `completed` favorite. `sendHistory('completed', ...)` writes a `watch_history` row. On the detail page, a `completed` favorite does NOT trigger `resumeEpisode` lookup (only `watching` does). Next time the user opens the watch page, `getResumeProgress` returns `resumeTime = 0` for `completionState === 'completed'` records. |
+
+### E. Player architecture audit
+
+| Concern | Owner | Notes |
+|---|---|---|
+| Playback state | `PlayerShell.svelte` | Local `let` state. |
+| Source selection | `watch/[type]/[id]/+page.svelte` | `selectedSourceId` is a `let` in the route. |
+| Provider-specific logic | None on client | Server-side only: 2 custom adapters + generic template adapter. |
+| Iframe lifecycle | `PlayerViewport.svelte` | `{#key iframeKey}` remounts on `sourceId|url|sandbox` change. |
+| postMessage handling | `watch/[type]/[id]/+page.svelte` (Viduki-only) | Only one listener exists in the entire codebase. |
+| Error handling | `PlayerShell.svelte` + watch route | `errorMessage` string + `resolutionState` enum. |
+| Buffering representation | `PlayerShell.svelte` `state` | `'buffering'` for direct (on `waiting` event); embeds never enter `buffering` (go straight to `'playing'` on `embedload`). |
+| Source switching | `PlayerShell.chooseSource` → `onSourceChange` → `watch.handleSourceChange` → `prepareSource(sourceId, false)` | No client-side fallback on user switch. |
+| Player cleanup | `PlayerShell.onMount` return + `onDestroy` | Removes event listeners, clears timers. No leaked listeners detected. |
+
+- **Direct playback:** HTML5 `<video src>` with `preload="metadata"`, `playsinline`, poster. Subtitles via `<track kind="captions">`. Quality selection: `selectedQualityOption?.url ?? source.url`, seeks to `pendingSeek` on change. **No hls.js, dashjs, or shaka** — non-Safari browsers cannot play HLS direct sources.
+- **Embed playback:** `<iframe>` with the attributes above. `referrerpolicy="no-referrer"`, `loading="eager"`. The iframe's DOM is never accessed; no `iframe.contentWindow.postMessage(...)` is ever called by Mavero. The only postMessage interaction is the one-way Viduki listener. `embedload` is the only signal — fires on iframe `on:load`, regardless of whether the provider's player is actually ready.
+- **Race conditions:** `resolutionRequestId` guards stale resolver responses; `active` flag guards post-`onDestroy` writes; `writerKey` guards stale writer writes; `syncInFlight` deduplicates concurrent sync calls. No leaked listeners. The main potential race — rapid source switching overlapping `replaceProgressSource` — is bounded because each `prepareSource` increments `resolutionRequestId` and recreates the writer fresh.
+- **Logic that belongs in a future PlaybackManager:** source selection, resolver invocation + retry + fallback, progress writer lifecycle, postMessage listener registration/teardown, episode navigation URL sync, resume time + `selectedSourceId` lookup, direct-video seek-to-resume, embed-source startAt param construction (currently missing entirely), cloud sync triggering.
+
+### F. Fullscreen / orientation / PiP audit
+
+- **Fullscreen:** targets `playerRoot` (the `.player-shell` div), NOT the iframe — `await playerRoot?.requestFullscreen?.()`. `allowfullscreen` is set on every embed iframe, so the provider's own player can additionally fullscreen itself. Tracked via `document.fullscreenElement === playerRoot`. `toggleFullscreen()` also calls `screen.orientation.lock?.('landscape')` on enter. Direct and embed are identical from Mavero's perspective.
+- **Orientation:** `screen.orientation.lock?.('landscape')` / `unlock?.()` (PlayerShell uses a TS hack because the DOM lib doesn't include `screen.orientation.lock`). Only works in fullscreen + on mobile browsers. **iOS Safari has no orientation lock API** — failure is silently swallowed.
+- **Landscape mode:** A Mavero-specific UI mode (`landscapeMode` flag) that enters fullscreen, attempts orientation lock, collapses the header to 0 height after 5 s of inactivity (`LANDSCAPE_CONTROLS_HIDE_MS = 5000`), reveals on `pointermove`/`touchstart`, and has a dedicated toggle button. Superset of fullscreen.
+- **PiP:** Direct-only. `viewport.requestPictureInPicture()` calls `videoElement.requestPictureInPicture()`. The PiP button in PlayerControls is rendered only when `source?.type === 'direct'` — embed sources have NO Mavero-side PiP button. Embed PiP is theoretically possible via `allow="picture-in-picture"` (already set on the iframe) but the provider must implement it themselves.
+- **Wake Lock: NOT IMPLEMENTED.** No `navigator.wakeLock` usage anywhere in `src/`. Screen sleeps on mobile during long playback.
+- **Media Session: NOT IMPLEMENTED.** No `navigator.mediaSession` usage anywhere in `src/`. No OS-level media controls integration, no lock-screen metadata.
+- **Browser/device assumptions:** Fullscreen works everywhere. Orientation lock fails silently on iOS Safari iPhone. PiP works on Chrome/Edge/Safari desktop + iPad; **not on iOS Safari iPhone** (no PiP API for arbitrary video).
+- **Cross-origin iframe discipline:** Mavero **never** attempts to access or manipulate the cross-origin iframe DOM. No `iframe.contentWindow.postMessage(...)` is ever called. The only postMessage interaction is a one-way listener. This is correct and must be preserved.
+
+### G. Provider enumeration (complete registry from migrations)
+
+22 providers × 24 sources registered in `supabase/migrations/*_experimental.sql`. **ALL** ship `enabled=false`, `status='experimental'`, `sandbox_policy='required'`, `allow_experimental_playback=true`. None are enabled in code; activation is operator-driven via `/admin/providers` and `/admin/sources`.
+
+| # | Provider | Slug | Source slug | Ordering | Integration | Identifier mode | Movie URL | TV URL | Allowed origin |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Vidsrc | `vidsrc` | `vidsrc-source` | 90 | embed | tmdb_id | `https://vidsrc.wiki/embed/movie/{tmdb_id}/` | `https://vidsrc.wiki/embed/tv/{tmdb_id}/{season}/{episode}/` | `https://vidsrc.wiki` |
+| 2 | VidLink | `vidlink` | `vidlink-source` | 95 | embed | tmdb_id | `https://vidlink.pro/movie/{tmdb_id}` | `https://vidlink.pro/tv/{tmdb_id}/{season}/{episode}` | `https://vidlink.pro` |
+| 3 | Peachify | `peachify` | `peachify-source` | 100 | template | tmdb_id | `https://peachify.top/embed/movie/{tmdb_id}?accent=b1a1ff` | `https://peachify.top/embed/tv/{tmdb_id}/{season}/{episode}?accent=b1a1ff` | `https://peachify.top` |
+| 4 | RiveStream | `rivestream` | `rivestream-source` | 110 | template | tmdb_id | `https://www.rivestream.app/embed?type=movie&id={tmdb_id}` | `https://www.rivestream.app/embed?type=tv&id={tmdb_id}&season={season}&episode={episode}` | `https://www.rivestream.app` |
+| 5 | Nxsha | `nxsha` | `nxsha-source` | 120 | template | tmdb_id | `https://nxsha.space/embed/movie/{tmdb_id}` | `https://nxsha.space/embed/tv/{tmdb_id}/{season}/{episode}` | `https://nxsha.space` |
+| 6 | NHDAPI | `nhdapi` | `nhdapi-source` | 130 | template | tmdb_id | `https://nhdapi.com/movie/{tmdb_id}` | `https://nhdapi.com/tv/{tmdb_id}/{season}/{episode}` | `https://nhdapi.com` |
+| 7 | Mapple | `mapple` | `mapple-source` | 140 | template | tmdb_id | `https://mapple.uk/watch/movie/{tmdb_id}` | `https://mapple.uk/watch/tv/{tmdb_id}-{season}-{episode}` | `https://mapple.uk` |
+| 8 | CineSrc | `cinesrc` | `cinesrc-source` | 150 | template | tmdb_id | `https://cinesrc.st/embed/movie/{tmdb_id}` | `https://cinesrc.st/embed/tv/{tmdb_id}?s={season}&e={episode}` | `https://cinesrc.st` |
+| 9 | VidPhantom | `vidphantom` | `vidphantom-source` | 160 | template | tmdb_id | `https://vidphantom.com/movie/{tmdb_id}` | `https://vidphantom.com/tv/{tmdb_id}/{season}/{episode}` | `https://vidphantom.com` |
+| 10 | YapGrid | `yapgrid` | `yapgrid-source` | 170 | template | tmdb_id | `https://yapgrid.com/embed/movie/{tmdb_id}` | `https://yapgrid.com/embed/tv/{tmdb_id}/{season}/{episode}` | `https://yapgrid.com` |
+| 11 | VidAPI.tw | `vidapi-tw` | `vidapi-tw-source` | 180 | template | tmdb_id | `https://vaplayer.ru/embed/movie/{tmdb_id}` | `https://vaplayer.ru/embed/tv/{tmdb_id}/{season}/{episode}` | `https://vaplayer.ru` |
+| 12 | VidAPI.qzz.io | `vidapi-qzz` | `vidapi-qzz-source` | 190 | template | tmdb_id | `https://vidapi.qzz.io/movie/{tmdb_id}` | `https://vidapi.qzz.io/tv/{tmdb_id}/{season}/{episode}` | `https://vidapi.qzz.io` |
+| 13 | SuperEmbed (seapi) | `superembed` | `superembed-api` | 210 | api | tmdb_id | (none — JSON API at `seapi.link`) | (none) | `[]` (dynamic) |
+| 14 | MultiEmbed | `superembed-multiembed` | `superembed-multiembed-source` | 211 | template | tmdb_id | `https://multiembed.mov/?video_id={tmdb_id}&tmdb=1` | `https://multiembed.mov/?video_id={tmdb_id}&tmdb=1&s={season}&e={episode}` | `https://multiembed.mov` |
+| 15 | SuperEmbed Advanced | `superembed-advanced` | `superembed-advanced-source` | 212 | template | tmdb_id | `/api/playback/superembed?video_id={tmdb_id}&tmdb=1` | `/api/playback/superembed?video_id={tmdb_id}&tmdb=1&s={season}&e={episode}` | `[]` (same-origin redirect) |
+| 16 | Cineverse | `cineverse` | `cineverse-source` | 220 | template | imdb_id | `https://cineverse.modiplay.xyz/embed/imdb/movie?id={imdb_id}` | `https://cineverse.modiplay.xyz/embed/imdb/tv?id={imdb_id}&s={season}&e={episode}` | `https://cineverse.modiplay.xyz` |
+| 17 | VixSrc | `vixsrc` | `vixsrc-source` | 230 | template | tmdb_id | `https://vixsrc.to/movie/{tmdb_id}` | `https://vixsrc.to/tv/{tmdb_id}/{season}/{episode}` | `https://vixsrc.to` |
+| 18 | VidY | `vidy` | `vidy-source` | 240 | template | tmdb_id | `https://vidy.st/movie/{tmdb_id}` | `https://vidy.st/tv/{tmdb_id}/{season}/{episode}` | `https://www.vidy.st` |
+| 19 | Viduki V1 | `viduki` | `viduki-v1-source` | 250 | template | tmdb_id | `https://www.viduki.net/1/movie/{tmdb_id}` | `https://www.viduki.net/1/tv/{tmdb_id}/{season}/{episode}` | `https://www.viduki.net` |
+| 20 | Viduki V2 | `viduki` | `viduki-v2-source` | 251 | template | tmdb_id | `https://www.viduki.net/2/movie/{tmdb_id}` | `https://www.viduki.net/2/tv/{tmdb_id}/{season}/{episode}` | `https://www.viduki.net` |
+| 21 | SLast | `slast` | `slast-source` | 260 | template | imdb_id | `https://slast430did.com/play/{imdb_id}` | `https://slast430did.com/play/{imdb_id}` (no season/episode) | `https://slast430did.com` |
+| 22 | CinemaOS | `cinemaos` | `cinemaos-source` | 261 | template | tmdb_id | `https://cinemaos.tech/player/{tmdb_id}` | `https://cinemaos.tech/player/{tmdb_id}/{season}/{episode}` | `https://cinemaos.tech` |
+| 23 | FilmU | `filmu` | `filmu-source` | 262 | template | tmdb_id | `https://embed.filmu.in/embed/movie/{tmdb_id}` | `https://embed.filmu.in/embed/tv/{tmdb_id}/{season}/{episode}` | `https://embed.filmu.in` |
+
+Capabilities summary: all 23 ship `movie=true`, `series=true`, `anime=false` (except VidLink which has `anime=true` with `mal_id` identifier mode), `result_type='embed'`, `supports_episode=true` (except SLast), `sandbox_policy='required'`, `allow_experimental_playback=true`, `enabled=false`, `status='experimental'`.
+
+**Currently enabled providers:** NONE are enabled in code. The `/api/streaming/config` endpoint returns whatever is in the DB; activation is the operator's responsibility via `/admin/providers` and `/admin/sources`. There is NO "default provider" shortlist in code, env, or migrations — Phase 2 will need to determine and document the intended shortlist.
+
+VidZee and VidFast mentioned in the Phase 0 task brief are **NOT present** in the Mavero repository — no migration, adapter, or test references them.
+
+### H. Provider capability matrix (researched from public/official docs)
+
+Categories:
+- **V** = VERIFIED — official docs explicitly document it with API name / payload structure.
+- **U** = UNSUPPORTED — official docs explicitly say it is NOT supported.
+- **?** = UNKNOWN — no reliable public documentation found. **Do not infer from the player UI.**
+
+| Provider | postMessage | Progress | CurrentTime | Duration | Seek | StartAt | Play/Pause | Next Ep | Fullscreen | PiP | Subtitles | Quality | Evidence | Status |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| VidSrc | V | V | V | V | ? | V | V(e) | V | V | ? | V | V | vidsrc.io/vidsrc/docs — PLAYER_EVENT with player_progress/player_duration/player_status; ?startAt=; ?sub_url=; autonext=1 | Audited |
+| VidLink | V | V | V | V | ? | V | V(e) | V | V | ? | V | ? | vidlink.pro homepage "Api Documentation" — MEDIA_DATA + PLAYER_EVENT (play/pause/seeked/ended/timeupdate with currentTime+duration); startAt=; sub_file=; nextbutton= | Audited |
+| VixSrc | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | vixsrc.to is Cloudflare-403 on all paths; no public docs accessible without bypass | Audited |
+| Cineverse | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | cineverse.modiplay.xyz returns Cloudflare-403 on all paths | Audited |
+| VidY | V | V | V | V | ? | V | V(e) | V | V | ? | ? | ? | vidy.st homepage "Docs" — PLAYER_EVENT (timeupdate/play/pause/ended with currentTime+duration, posted as JSON strings); MEDIA_DATA; progress=; nextEpisode=; episodeSelector=; autoplayNextEpisode= | Audited |
+| Viduki V1/V2 | V | V | V | V | ? | ? | ? | ? | ? | ? | ? | ? | viduki.net homepage #api — `viduki:all-servers-failed` + `MEDIA_DATA` (progress.watched/duration); no play/pause/ended events documented; no startAt URL param; resume handled via provider's own localStorage | Audited |
+| SLast | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | slast430did.com returns "We are offline now" — site is offline | Audited |
+| CinemaOS | V | V | V | V | ? | ? | V(partial) | V | V | ? | ? | ? | cinemaos.tech/embed — "PostMessage API" section: "Control playback and track progress from your own page"; autoNext + autoPlay params; detailed event tables are JS-rendered (not server-extractable) | Audited |
+| FilmU | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | embed.filmu.in is a JS-only SPA — empty body to non-JS fetches; no GitHub docs found | Audited |
+| Peachify | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | peachify.top returns Cloudflare-403 on all paths | Audited |
+| RiveStream | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | rivestream.app is a consumer streaming site; /docs /api /developers all 404 | Audited |
+| Nxsha | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | nxsha.space is a consumer indexing site; /docs /api /developers all 404 | Audited |
+| NHDAPI | U | U | U | U | U | U | U | V | V | ? | V | V | nhdapi.com/docs — explicit "There is currently no postMessage API"; built-in next-episode auto-play, in-player CC, /api/subtitles endpoint | Audited |
+| Mapple | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | mapple.uk is a JS-rendered SPA; /docs /api /developers /embed all 404 | Audited |
+| CineSrc | V | V | V | V | V | V | V | V | V | V | ? | V | cinesrc.st/docs — full bidirectional API: 16 events (cinesrc:ready/play/pause/timeupdate/seeking/seeked/ended/volumechange/ratechange/loadedmetadata/nextepisode/skipintro/sourceused/close/error/response); JSON-RPC commands `{type:"cinesrc:command", command, args}`; methods play/pause/seek/setVolume/setMuted/setPlaybackRate/getCurrentTime/getDuration/getPaused; ?t=; ?quality=; autonext= | Audited |
+| VidPhantom | V(partial) | ? | ? | ? | ? | ? | V(e) | ? | ? | ? | ? | ? | vidphantom.com returns HTTP 522 (origin unreachable); search-engine snippet confirms a "Player Events" postMessage section with play/pause events | Audited |
+| YapGrid | ? | ? | ? | ? | ? | U | ? | V | V | V | V | V | yapgrid.com + github.com/enikqi/yapgrid — documented parameters (autoplay, server, lang, title, theme, sub_url, sub_lang, sub_label, ds_lang); NO t=/start= param; in-player quality + subtitle selector; allow="picture-in-picture" | Audited |
+| VidAPI.tw | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | vaplayer.ru is a UGC upload host ("PlayBox"); the movie/TV embed routes are undocumented; no postMessage docs | Audited |
+| VidAPI.qzz.io | V | V | V | V | ? | V | ? | V | V | ? | V | ? | vidapi.qzz.io homepage — `MEDIA_DATA` message with progress.watched/duration/percentage; startAt=; nextbutton=; sub_file=; sub_label=. NO PLAYER_EVENT stream (unlike vidlink.pro sibling) | Audited |
+| SuperEmbed (seapi) | U | U | U | U | ? | ? | ? | ? | ? | ? | ? | ? | superembed.stream docs + superembed.docs.apiary.io — JSON link API only; no iframe postMessage contract documented; seapi.link is currently NXDOMAIN | Audited |
+| MultiEmbed | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | ? | multiembed.mov 302-redirects to streamingnow.mov which is Cloudflare-gated; only `video_id` param publicly observable | Audited |
+
+**(e) suffix = documented as an event (player→parent) but NOT as a parent command.**
+
+**Cross-cutting findings:**
+1. Only **CineSrc** exposes a full bidirectional postMessage contract — 16 events + JSON-RPC commands (play/pause/seek/volume/rate + getters via `cinesrc:response`). It is the single provider that can be fully remote-controlled from the parent.
+2. One-way event emitters (player→parent only): VidSrc, VidLink, VidY, Viduki, VidAPI.qzz.io, VidPhantom (partial), CinemaOS — they post progress/play/pause/ended events to the parent but document no parent→player commands. They support `startAt` (except Viduki, VidPhantom, CinemaOS) and next-episode, but seek-as-a-command is not available.
+3. Explicit "no postMessage" providers: NHDAPI (docs plainly state no postMessage API, no progress events, no forcing query params) and SuperEmbed (JSON link API only, no iframe event contract).
+4. No accessible docs (Cloudflare/offline/SPA): VixSrc, Cineverse, Peachify, SLast, FilmU, MultiEmbed — all capabilities UNKNOWN.
+5. Consumer sites with no developer docs: RiveStream, Nxsha, Mapple, VidAPI.tw (vaplayer.ru = "PlayBox" UGC host).
+6. **Mavero currently listens to ZERO of the documented event streams** (except the single Viduki `viduki:all-servers-failed` signal). VidSrc, VidLink, VidY, CineSrc, VidAPI.qzz.io all emit progress/currentTime/duration events that Mavero discards.
+
+### I. Major gaps discovered (vs Phase 1–9 target architecture)
+
+(Phase 1 will plan the fixes; Phase 0 only documents them.)
+
+- **Playback architecture (gap §0.10.1):** No central PlaybackManager — logic is split between `watch/[type]/[id]/+page.svelte` (source selection, resolver invocation, progress writer lifecycle, postMessage listener) and `PlayerShell.svelte` (direct-video state machine, fullscreen/PiP/orientation, UI). HIGH complexity/risk — heavily intertwined with route lifecycle and Svelte reactivity; refactor must preserve race-condition guards.
+- **Default provider (gap §0.10.2):** First source by admin `ordering` column. No "default provider" concept, no curated shortlist, no `is_default` flag. LOW complexity — `ordering` already provides priority.
+- **Automatic fallback (gap §0.10.3):** Server-side only on initial resolution; manual source switches disable fallback; no client-side fallback when an embed player fails internally. MEDIUM complexity — needs per-provider postMessage adapters.
+- **Provider adapters (gap §0.10.4):** Server-side has 2 custom adapters + generic template adapter. Client-side has NO per-provider adapter — only the Viduki listener is hardcoded. MEDIUM-HIGH complexity — CineSrc is the reference implementation (full bidirectional API); VidSrc/VidLink/VidY/VidAPI.qzz.io/Viduki are one-way event emitters; 16 providers have UNKNOWN capabilities and cannot be adapted.
+- **Provider capabilities (gap §0.10.5):** Capabilities JSONB has no fields for `postMessage`, `progress_events`, `seek_command`, `startAt_param`, `pip`, `fullscreen`. LOW-MEDIUM complexity — additive schema, backwards-compatible.
+- **Progress / resume (gap §0.10.6):** Direct-only. Embed sources never report progress. `selectedSourceId` is stored but never consulted. `startAt` URL params are never appended to embed URLs (even for VidSrc/VidLink/VidY/VidAPI.qzz.io/CineSrc which officially support them). HIGH complexity — depends on provider adapters.
+- **Provider continuity (gap §0.10.7):** Cross-source resume: direct preserves `pendingSeek`, embed does not preserve position. MEDIUM complexity — only works for the 5 providers with VERIFIED `startAt` support.
+- **Player UI (gap §0.10.8):** `PlayerShell.svelte` is 498 LOC, mixes UI + state + direct-video event handling + landscape mode + fullscreen + PiP + sandbox toggle. The controls layer is **direct-only** (line 400: `{#if source?.type === 'direct'}`) — embed sources have NO Mavero-side controls. HIGH complexity — touches every playback surface.
+- **Fullscreen / orientation (gap §0.10.9):** Works for both direct and embed. No major change required — current implementation is reasonable. LOW complexity.
+- **PiP (gap §0.10.10):** Direct-only. For embed sources where the provider supports PiP via `allow="picture-in-picture"` (already set), the provider's own player handles PiP. LOW complexity — current behaviour is acceptable.
+- **Wake Lock (gap §0.10.11):** NOT IMPLEMENTED. Screen sleeps on mobile during long playback. LOW complexity — `navigator.wakeLock.request('screen')` on play, release on pause/exit. Well-supported API (Chrome 84+, Safari 16.4+).
+- **Media Session (gap §0.10.12):** NOT IMPLEMENTED. No OS-level media controls integration. MEDIUM complexity — direct sources get full control; embed sources would need adapter-driven forwarding (CineSrc, VidLink). For most providers, Media Session actions can only be no-ops.
+- **Admin testing / defaults (gap §0.10.13):** `/admin/providers` and `/admin/sources` allow CRUD on the registry. No "test this provider" button, no per-provider health-check runner, no "set as default" toggle. Health is recorded passively from runtime failures. MEDIUM complexity.
+- **Reliability (gap §0.10.14):** Phase 7F health tracking + Phase 7G ranking is sound. No major change. LOW complexity.
+- **Accessibility (gap §0.10.15):** PlayerShell uses `role="application"`, `aria-label`s, `aria-live`, `aria-expanded`. Keyboard shortcuts only for direct (Space/K/M/F/Escape); embed sources have no keyboard handling (cross-origin iframe). LOW complexity for direct; not possible for embed.
+- **Performance (gap §0.10.16):** No code-splitting for the player — `PlayerShell.svelte` (498 LOC) + `PlayerControls.svelte` (124 LOC) + `PlayerViewport.svelte` (121 LOC) are bundled with the watch route. Continue Watching loads on mount (single IndexedDB read). Cloud sync is single-flight. MEDIUM complexity.
+
+**Verification:**
+- `pnpm install --prefer-offline` → PASS (all deps resolved; `esbuild` build scripts ignored per pnpm policy)
+- `pnpm run check` → PASS (svelte-kit sync + svelte-check: 0 errors, 20 pre-existing warnings in `search/+page.svelte` and `upcoming/+page.svelte` — all unrelated to playback)
+- `pnpm test` → PASS (all 30+ tsx test scripts pass — discover_gallery, discover_collection, discover_ranking, search_discover_navigation, my_list_persistence, trailer_cast_flow, signout_reliability, upcoming, phase7e_peachify, phase7e_rivestream, phase7e_nxsha, phase7e_nhdapi, phase7e_mapple, phase7e_cinesrc, phase7e_vidphantom, phase7e_yapgrid, phase7e_vidapi_tw, phase7e_vidapi_qzz, phase7e_cineverse, phase7e_vixsrc, phase7e_vidy, phase7e_viduki, phase7e_slast, phase7e_cinemaos, phase7e_filmu, phase7e_remediation, phase7f_health, phase7g_ranking, landscape_player_contract, universal_resolver, release_audit, account_deletion)
+- `pnpm run build` → PASS (vite build + Netlify adapter, ~18 s, no TypeScript errors, no new warnings)
+- Note: The `./node_modules/.bin/vinxi build` mentioned in the Phase 0 task brief is **not the correct build command for this repo** — there is no `vinxi` dependency. The correct command is `pnpm run build` (which runs `vite build`).
+
+**Result:** PASS
+
+**Remaining:**
+- Phase 1 — Playback Architecture (NOT started).
+- All Phase 0 findings are documented above. No production source code was modified in Phase 0.
+- Recommended Phase 1 starting points (advisory only — Phase 1 plan is owned by the next session):
+  1. Create `src/lib/client/player/PlaybackManager.ts` (or `.svelte.ts` store) that owns source selection, resolver invocation, progress writer lifecycle, postMessage listener registration/teardown, episode/source switching, resume logic.
+  2. Define a `ProviderAdapter` interface on the client (`src/lib/client/player/adapter.ts`) that registers postMessage listeners, parses provider-specific event payloads, and exposes a normalised `{ currentTime, duration, playing, ended, error }` stream + command API (`play`, `pause`, `seek`, `setVolume`).
+  3. Implement the CineSrc adapter first (it has the most complete API and serves as the reference implementation).
+  4. Preserve all existing race-condition guards (`resolutionRequestId`, `writerKey`, `active`, `syncInFlight`).
+
+**Commit:** `<filled in after commit>` — `docs(player): complete phase 0 playback audit`
+
 ### Worklog template
 
 ```md
