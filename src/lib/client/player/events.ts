@@ -164,4 +164,14 @@ export interface PlayerProviderAdapter {
    * capabilities.volume === true.
    */
   setVolume?(volume: number): Promise<CommandResult>;
+
+  /**
+   * Phase 3 fix: provide the iframe element reference to the adapter.
+   * Called by the PlaybackManager after the iframe renders (via the
+   * watch route's `onIframeReady` callback → PlayerShell → PlayerViewport).
+   * Adapters that need `iframe.contentWindow.postMessage(...)` (CineSrc)
+   * store the ref for command targeting. Adapters that don't need it
+   * (direct adapter, event-only embed adapters) ignore this call.
+   */
+  setIframe?(iframe: HTMLIFrameElement): void;
 }

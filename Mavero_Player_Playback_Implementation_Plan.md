@@ -2214,6 +2214,59 @@ All 20 tests pass. Full test suite (34 scripts) also passes — no regressions.
 
 **Commit:** `05fb963` — `feat(player): integrate provider playback adapters`
 
+---
+
+## 2026-09-06 — Phase 3 Corrective Fix — CineSrc Command Target
+
+**Status:** COMPLETE
+
+**Phase:** 3 (corrective fix)
+
+**Original defect:** CineSrc commands (play, pause, seek, setVolume, getCurrentTime, getDuration) were posted to `window` (the parent window) instead of `iframe.contentWindow` (the CineSrc iframe's window). The CineSrc documentation explicitly requires `iframe.contentWindow.postMessage(payload, 'https://cinesrc.st')`. Posting to the parent window means the CineSrc player never receives commands — all commands were silently non-functional.
+
+**Root cause:** The Phase 1 `AdapterLoadContext` did not include the iframe element reference. The CineSrc adapter had no way to access `iframe.contentWindow` at load time (the iframe hasn't rendered yet when `adapter.load()` is called — it only renders after the manager sets `resolvedSource` and PlayerShell passes it to PlayerViewport). The Phase 3 implementation acknowledged this in comments but shipped anyway, incorrectly claiming it "works in practice."
+
+**Fix:**
+1. **PlayerViewport.svelte** — added `export let iframeElement: HTMLIFrameElement | undefined;` and `bind:this={iframeElement}` on the `<iframe>` tag.
+2. **PlayerShell.svelte** — added `let iframeElement: HTMLIFrameElement | undefined;`, `bind:iframeElement` on the PlayerViewport tag, `export let onIframeReady: (iframe: HTMLIFrameElement) => void = () => {};`, and updated `handleEmbedLoad()` to call `onIframeReady(iframeElement)` when the iframe finishes loading.
+3. **events.ts** — added `setIframe?(iframe: HTMLIFrameElement): void;` to the `PlayerProviderAdapter` interface (optional — adapters that don't need the iframe ref ignore it).
+4. **PlaybackManager.ts** — added `setIframe(iframe: HTMLIFrameElement): void` method that forwards to `session.adapter.setIframe?.(iframe)`. Race-condition-safe: only forwards to the current session's adapter.
+5. **cinesrc-adapter.ts** — replaced `this.iframeWindow` (was set to `window`) with `this.iframe: HTMLIFrameElement | null` (set via `setIframe()`). `sendCommand()` now calls `this.iframe.contentWindow.postMessage(payload, this.origin)` — the documented CineSrc API target. If the iframe/contentWindow is unavailable, returns `null` → commands return `{ ok: false, reason: 'not-ready' }`. No silent fallback to parent `window`.
+6. **watch/[type]/[id]/+page.svelte** — added `onIframeReady={(iframe) => manager.setIframe(iframe)}` to the PlayerShell tag.
+7. **Phase 3 test** (`phase3_provider_adapters_test.ts` test #15) — updated to call `manager.setIframe(mockIframe)` before testing CineSrc commands (previously the test relied on the broken `window` fallback).
+
+**Test proving iframe.contentWindow is the postMessage target:**
+`scripts/phase3_cinesrc_fix_test.ts` — 8 tests:
+1. Before `setIframe()`, commands return `{ ok: false, reason: 'not-ready' }` — no postMessage called on either target.
+2. After `setIframe()`, `play()` calls `iframe.contentWindow.postMessage` exactly once — parent `window.postMessage` is NOT called.
+3. Correct target origin: `'https://cinesrc.st'`.
+4. Correct payload: `{ type: 'cinesrc:command', command: 'play', args: [], id: <number> }`.
+5. `seek(120)` targets `iframe.contentWindow` with `args: [120]`.
+6. `setVolume(0.5)` targets `iframe.contentWindow`.
+7. After `destroy()`, commands return `{ ok: false, reason: 'not-ready' }` — no postMessage called on either target.
+8. Capabilities unchanged (play, seek, volume all still `true`).
+
+**Validation:**
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings).
+- `pnpm test` → PASS (35 scripts, including 8 new CineSrc fix tests + 20 Phase 3 adapter tests + 16 Phase 1 tests + 20 Phase 2 tests + 22 provider tests + 4 ranking/health/remediation tests + 1 landscape test + 2 universal/release tests).
+- `pnpm run build` → PASS (vite build + Netlify adapter, no TypeScript errors).
+
+**Files changed:**
+- `src/lib/components/player/PlayerViewport.svelte` — added `iframeElement` export + `bind:this`.
+- `src/lib/components/player/PlayerShell.svelte` — added `iframeElement` local + `bind:iframeElement` + `onIframeReady` callback prop + `handleEmbedLoad` forwards iframe ref.
+- `src/lib/client/player/events.ts` — added `setIframe?(iframe: HTMLIFrameElement): void` to the adapter interface.
+- `src/lib/client/player/PlaybackManager.ts` — added `setIframe(iframe)` method.
+- `src/lib/client/player/providers/cinesrc-adapter.ts` — replaced `iframeWindow` (was `window`) with `iframe` (set via `setIframe()`); `sendCommand()` targets `iframe.contentWindow.postMessage()`.
+- `src/routes/watch/[type]/[id]/+page.svelte` — added `onIframeReady` callback to PlayerShell tag.
+- `scripts/phase3_provider_adapters_test.ts` — updated test #15 to call `manager.setIframe(mockIframe)` before CineSrc command tests.
+- `scripts/phase3_cinesrc_fix_test.ts` — new focused test proving iframe.contentWindow is the postMessage target.
+- `package.json` — registered `phase3_cinesrc_fix_test.ts` in the test chain.
+
+**Commit:** `<pending>` — `fix(player): target CineSrc commands at iframe`
+
+PHASE 3 FIX COMPLETE
+PHASE 4 NOT STARTED
+
 ### Worklog template
 
 ```md

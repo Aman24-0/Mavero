@@ -18,6 +18,7 @@
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
   export let onClose: () => void = () => {};
   export let onDetails: () => void = () => {};
+  export let onIframeReady: (iframe: HTMLIFrameElement) => void = () => {};
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
@@ -25,6 +26,7 @@
 
   let viewport: PlayerViewport;
   let videoElement: HTMLVideoElement | undefined;
+  let iframeElement: HTMLIFrameElement | undefined;
   let playerRoot: HTMLElement;
   let currentTime = initialProgress;
   let duration = 0;
@@ -186,7 +188,16 @@
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
   function handleEnded() { playing = false; state = 'completed'; emitProgress('ended'); revealControls(); }
   function handleMediaError() { playing = false; state = 'error'; errorMessage = 'Playback could not be started. Try again or choose another source.'; revealControls(); }
-  function handleEmbedLoad() { state = 'playing'; errorMessage = ''; }
+  function handleEmbedLoad() {
+    state = 'playing';
+    errorMessage = '';
+    // Phase 3 fix: forward the iframe element ref to the watch route so
+    // provider adapters (CineSrc) can post commands to
+    // iframe.contentWindow.postMessage(payload, origin) — the documented
+    // CineSrc API target. Without this ref, commands cannot reach the
+    // provider's player.
+    if (iframeElement) onIframeReady(iframeElement);
+  }
 
   function toggleSandbox() {
     if (source?.type !== 'embed') return;
@@ -381,7 +392,7 @@
   </header>
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">

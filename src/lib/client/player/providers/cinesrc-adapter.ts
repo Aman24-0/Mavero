@@ -65,8 +65,14 @@ type PendingResponse = {
 export class CineSrcPlayerAdapter extends PostMessageAdapterBase implements PlayerProviderAdapter {
   protected readonly origin = CINESRC_ORIGIN;
 
-  /** The iframe contentWindow to post commands to. Set in `load()`. */
-  private iframeWindow: Window | null = null;
+  /**
+   * Phase 3 fix: the iframe element reference. Set via `setIframe()`
+   * after PlayerViewport renders the `<iframe>`. Commands are posted to
+   * `iframe.contentWindow.postMessage(payload, origin)` — the documented
+   * CineSrc API target. Until the iframe ref is available, commands
+   * return `{ ok: false, reason: 'not-ready' }`.
+   */
+  private iframe: HTMLIFrameElement | null = null;
 
   /** Pending getter responses, keyed by command id. */
   private pendingResponses = new Map<number, PendingResponse>();
@@ -78,30 +84,23 @@ export class CineSrcPlayerAdapter extends PostMessageAdapterBase implements Play
     return this.canHandleByOrigin(source, CINESRC_ORIGIN);
   }
 
-  load(context: AdapterLoadContext): void {
-    // The iframe contentWindow is not directly available in the load context
-    // (Phase 1's AdapterLoadContext only passes videoElement for direct
-    // sources). For embed sources, we post commands to `window` (which
-    // the iframe's parent receives) — but CineSrc's docs say to post to
-    // `iframe.contentWindow`. We need the iframe element reference.
-    //
-    // Phase 3 approach: we cannot access the cross-origin iframe's
-    // contentWindow from the parent without a reference to the iframe
-    // element. PlayerViewport binds the iframe via Svelte's `bind:this`,
-    // but that ref is not passed through to the adapter in Phase 1's
-    // AdapterLoadContext.
-    //
-    // For Phase 3, commands are posted to `window` (the parent window)
-    // which the iframe can listen to. This is the standard postMessage
-    // parent→child pattern — the docs say "post to iframe.contentWindow"
-    // but posting to `window` with the correct origin works in practice
-    // because the iframe listens on `window.message`.
-    //
-    // If the iframe ref becomes available in a future phase, this can be
-    // upgraded to `iframe.contentWindow.postMessage(...)`.
-    void context;
-    this.iframeWindow = typeof window !== 'undefined' ? window : null;
+  load(_context: AdapterLoadContext): void {
+    // The iframe element is NOT available at load time — it hasn't rendered
+    // yet. PlayerViewport renders the `<iframe>` after the manager sets
+    // `resolvedSource`, and PlayerShell's `handleEmbedLoad` forwards the
+    // iframe ref via `onIframeReady` → `manager.setIframe()` →
+    // `adapter.setIframe()`.
+    void _context;
     this.startListening();
+  }
+
+  /**
+   * Phase 3 fix: receive the iframe element reference from the manager.
+   * Called after the iframe renders. Until this is called, commands
+   * return `{ ok: false, reason: 'not-ready' }`.
+   */
+  setIframe(iframe: HTMLIFrameElement): void {
+    this.iframe = iframe;
   }
 
   destroy(): void {
@@ -112,7 +111,7 @@ export class CineSrcPlayerAdapter extends PostMessageAdapterBase implements Play
     }
     this.pendingResponses.clear();
     this.stopListening();
-    this.iframeWindow = null;
+    this.iframe = null;
   }
 
   getCapabilities(): ProviderPlaybackCapabilities {
@@ -199,15 +198,20 @@ export class CineSrcPlayerAdapter extends PostMessageAdapterBase implements Play
   // ----- Command methods (parent → player) -----
 
   /**
-   * Send a JSON-RPC command to the CineSrc player. Returns the command id
-   * (for getter correlation) or null if the command could not be sent.
+   * Send a JSON-RPC command to the CineSrc player. Posts to
+   * `iframe.contentWindow.postMessage(payload, origin)` — the documented
+   * CineSrc API target. Returns the command id (for getter correlation)
+   * or null if the command could not be sent (adapter destroyed or
+   * iframe/contentWindow not yet available).
    */
   private sendCommand(command: string, args: unknown[] = []): number | null {
-    if (this.destroyed || !this.iframeWindow) return null;
+    if (this.destroyed || !this.iframe) return null;
+    const target = this.iframe.contentWindow;
+    if (!target) return null;
     const id = this.nextCommandId++;
     const payload = { type: 'cinesrc:command', command, args, id };
     try {
-      this.iframeWindow.postMessage(payload, this.origin);
+      target.postMessage(payload, this.origin);
       return id;
     } catch {
       return null;
@@ -219,12 +223,12 @@ export class CineSrcPlayerAdapter extends PostMessageAdapterBase implements Play
    * Times out after 5 seconds if the provider does not respond.
    */
   private sendGetter<T>(command: string): Promise<CommandResult<T>> {
-    if (this.destroyed || !this.iframeWindow) {
+    if (this.destroyed || !this.iframe) {
       return Promise.resolve({ ok: false, reason: 'not-ready' });
     }
     const id = this.sendCommand(command);
     if (id === null) {
-      return Promise.resolve({ ok: false, reason: 'provider-error', message: 'Failed to send command.' });
+      return Promise.resolve({ ok: false, reason: 'not-ready', message: 'iframe contentWindow not available.' });
     }
     return new Promise<CommandResult<T>>((resolve) => {
       const timer = setTimeout(() => {

@@ -539,6 +539,22 @@ export class PlaybackManager {
     return this.session.adapter.setVolume(volume);
   }
 
+  /**
+   * Phase 3 fix: provide the iframe element reference to the active adapter.
+   * Called by the watch route after the iframe renders (via PlayerShell's
+   * `onIframeReady` callback). CineSrc's adapter stores the ref so its
+   * `sendCommand()` can post to `iframe.contentWindow.postMessage(payload,
+   * origin)` — the documented CineSrc API target.
+   *
+   * Race-condition-safe: only forwards to the current session's adapter.
+   */
+  setIframe(iframe: HTMLIFrameElement): void {
+    if (!this.active) return;
+    const session = this.session;
+    if (!session.adapter) return;
+    try { session.adapter.setIframe?.(iframe); } catch { /* adapters must never throw */ }
+  }
+
   // ----- Internal: handle normalized adapter events -----
 
   /**

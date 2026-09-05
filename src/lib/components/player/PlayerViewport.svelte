@@ -10,6 +10,7 @@
   export let sandboxEnabled = true;
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
+  export let iframeElement: HTMLIFrameElement | undefined;
   $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute('required') : undefined;
   $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${sandboxEnabled ? 'sandbox-on' : 'sandbox-off'}`;
 
@@ -85,6 +86,7 @@
   {:else if source?.type === 'embed' && source.url}
     {#key iframeKey}
       <iframe
+        bind:this={iframeElement}
         src={source.url}
         title={`${title} provider embed`}
         loading="eager"

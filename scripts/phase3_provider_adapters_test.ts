@@ -379,21 +379,29 @@ const manager = new PlaybackManager({
 });
 await manager.loadSource({ sourceId: 's', contentId: '550', mediaType: 'movie' }, 0, true);
 
+// Phase 3 fix: CineSrc commands require an iframe ref via setIframe().
+// Without it, commands return { ok: false, reason: 'not-ready' }.
+// Provide a mock iframe with a contentWindow that has postMessage.
+const mockIframeContentWindow = {
+  postMessage: (_payload: unknown, _origin: string) => { /* no-op spy */ },
+};
+const mockIframe = { contentWindow: mockIframeContentWindow } as unknown as HTMLIFrameElement;
+manager.setIframe(mockIframe);
+
 // Manager should report CineSrc capabilities.
 const caps = manager.getActiveCapabilities();
 assert.equal(caps.play, true, 'Manager: active adapter supports play');
 assert.equal(caps.seek, true, 'Manager: active adapter supports seek');
 
 // Manager should forward play command to CineSrc adapter (which posts a
-// cinesrc:command message). The command resolves ok because the adapter
-// successfully posts the message (the actual provider response is async
-// and not awaited for non-getter commands).
+// cinesrc:command message to iframe.contentWindow). The command resolves
+// ok because the adapter successfully posts the message.
 const playResult = await manager.play();
-assert.equal(playResult.ok, true, 'Manager: play command forwarded to CineSrc');
+assert.equal(playResult.ok, true, 'Manager: play command forwarded to CineSrc via iframe.contentWindow');
 
 // Seek command
 const seekResult = await manager.seek(120);
-assert.equal(seekResult.ok, true, 'Manager: seek command forwarded to CineSrc');
+assert.equal(seekResult.ok, true, 'Manager: seek command forwarded to CineSrc via iframe.contentWindow');
 
 manager.dispose();
 
