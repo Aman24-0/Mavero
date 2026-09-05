@@ -2212,7 +2212,7 @@ All 20 tests pass. Full test suite (34 scripts) also passes — no regressions.
 
 **Next phase:** Phase 4 — Progress, Resume + Provider Continuity (NOT started).
 
-**Commit:** `<pending>` — `feat(player): integrate provider playback adapters`
+**Commit:** `05fb963` — `feat(player): integrate provider playback adapters`
 
 ### Worklog template
 
