@@ -1081,12 +1081,29 @@
   /* Phase 9 fix: landscape source sheet is player-local (absolute, not fixed).
      .player-shell has position: relative, so absolute anchors to the player
      viewport — not the browser page. This prevents the drawer from floating
-     detached at the page edge. */
-  .player-shell.landscape-mode .source-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(320px, 30vw); max-height: 100%; height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
+     detached at the page edge.
+
+     IMPORTANT: The portrait bottom-sheet rule (.source-sheet, .episode-sheet)
+     and the desktop @media (min-width: 769px) centered-popover rule both set
+     `position: fixed` and `transform`/`bottom`/`left`/`right`/`max-height`/
+     `animation` that conflict with this landscape rule. To make the
+     landscape rule deterministically win, we explicitly RESET every
+     conflicting property here (transform, animation, bottom, left, right,
+     max-height, border-radius, border-top) and scope the desktop popover
+     rule to non-landscape via :not(.landscape-mode) below. Without these
+     resets, on a landscape phone whose viewport is ≥769px wide the desktop
+     popover rule (transform: translate(-50%, -50%)) would override the
+     landscape rule and the drawer would float as a small centered popup
+     near the top of the player instead of a full-height right-edge drawer. */
+  .player-shell.landscape-mode .source-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(320px, 30vw); height: 100%; max-height: 100%; margin: 0; transform: none; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
   .player-shell.landscape-mode .source-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-  .player-shell.landscape-mode .episode-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(340px, 32vw); max-height: 100%; height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
+  .player-shell.landscape-mode .episode-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(340px, 32vw); height: 100%; max-height: 100%; margin: 0; transform: none; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
   .player-shell.landscape-mode .episode-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-  .player-shell.landscape-mode .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.35); }
+  /* Phase 9 fix: landscape backdrop is player-local (absolute, not fixed).
+     Anchored to .player-shell via position: relative. Does NOT cover the
+     page viewport — only the player area. Drawer z-index (21) sits above
+     backdrop z-index (20) so the drawer is always visible above the scrim. */
+  .player-shell.landscape-mode .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.35); backdrop-filter: none; }
   @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   /* Portrait header: compact top bar */
   .player-header { position: relative; z-index: 8; flex: 0 0 auto; display: flex; align-items: center; padding: calc(10px + env(safe-area-inset-top)) clamp(12px, 4vw, 32px) 10px; background: rgba(0,0,0,.6); backdrop-filter: blur(12px); }
@@ -1133,9 +1150,12 @@
   .loading-copy strong { color: var(--ink); font-size: .72rem; }
   .loading-copy small { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }
   :global(.spin) { animation: spin 1s linear infinite; }
-  /* Phase 5: Compact source/episode sheets — bottom-anchored, not full-screen */
+  /* Phase 5: Compact source/episode sheets — bottom-anchored, not full-screen.
+     Scoped to non-landscape so the landscape rule above deterministically
+     wins, even on wide landscape phones (viewport ≥769px wide) that would
+     otherwise also match the desktop @media below. */
   .sheet-overlay { position: fixed; z-index: 20; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
-  .source-sheet, .episode-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); animation: sheet-up var(--motion-normal) var(--ease-out); }
+  .player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
   .episode-sheet { max-height: 65dvh; }
   .sheet-handle { width: 36px; height: 4px; margin: 8px auto 4px; border-radius: 999px; background: var(--line-strong); }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 10px; }
@@ -1152,10 +1172,13 @@
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-  /* Desktop: source/episode sheets become centered popovers */
+  /* Desktop: source/episode sheets become centered popovers.
+     Scoped to non-landscape so a wide landscape phone (≥769px wide) does
+     NOT pick up this centered-popover rule — the landscape right-edge
+     drawer rule above must win in landscape mode. */
   @media (min-width: 769px) {
-    .source-sheet, .episode-sheet { bottom: auto; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); width: min(400px, calc(100% - 48px)); max-height: min(70dvh, 560px); border-radius: var(--radius-lg); border: 1px solid var(--line-strong); animation: none; }
-    .episode-sheet { width: min(440px, calc(100% - 48px)); }
+    .player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet { bottom: auto; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); width: min(400px, calc(100% - 48px)); max-height: min(70dvh, 560px); border-radius: var(--radius-lg); border: 1px solid var(--line-strong); animation: none; }
+    .player-shell:not(.landscape-mode) .episode-sheet { width: min(440px, calc(100% - 48px)); }
   }
   /* Mobile: compact header, no label text */
   @media (max-width: 640px) {
