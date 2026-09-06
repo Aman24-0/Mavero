@@ -2797,6 +2797,65 @@ If environment becomes available, test:
 
 **Commit:** `59bf629` — `feat(player): add fullscreen/orientation/PiP/Wake Lock/Media Session (Phase 6)`
 
+## 2026-09-06 — Phase 6 Audit Fix — Wake Lock Race + Embed Semantics + PiP Lifecycle
+
+**Status:** COMPLETE
+
+**Phase:** 6
+
+**Task:** Independent audit of the Phase 6 implementation found 2 blockers and 1 lifecycle issue. Fix the underlying lifecycle behavior (not just tests), then strengthen tests with behavioral lifecycle coverage.
+
+### Blocker 1 — Wake Lock async race (FIXED)
+
+**Root cause:** `acquireWakeLock()` used `if (!playerRoot)` as the destroyed/request-validity guard. This was insufficient: if the user paused/changed source/changed episode while `wakeLock.request()` was in-flight, `releaseWakeLock()` found no sentinel, then the resolved sentinel was installed as a stale wake lock.
+
+**Fix:** Added `wakeLockRequestId` + `wakeLockDestroyed` state. Each `acquireWakeLock()` call captures the request id at call time (`const requestId = ++wakeLockRequestId`). After the `await`, a validity check verifies: (1) `wakeLockDestroyed` is false, (2) `requestId` still matches the current `wakeLockRequestId`, (3) document is not hidden, (4) no other sentinel is already held. If any check fails, the resolved sentinel is released immediately rather than installed. `releaseWakeLock()` increments the request id so any in-flight acquire is invalidated. The `wakeLockDestroyed` flag is set BEFORE `releaseWakeLock()` in `onMount` cleanup.
+
+### Blocker 2 — Embed wake lock semantics (FIXED)
+
+**Root cause:** `handleEmbedLoad()` called `acquireWakeLock()`, but iframe load only means the provider's player UI is displayed — it does NOT mean the user has pressed Play or that actual playback has started. This violated the Phase 6 requirement that Wake Lock should be active only during active playback.
+
+**Fix:** Removed `acquireWakeLock()` from `handleEmbedLoad()`. Added a new `embedPlaybackEvent` prop (a reactive event sink) that the watch route pushes normalized provider play/pause/ended events into via a `_seq` counter. The watch route's `manager.onEvent` handler forwards these events. PlayerShell's `handleEmbedPlaybackEvent()` acquires the wake lock only on `'play'` events and releases on `'pause'`/`'ended'`. For black-box embed providers that never post play/pause events, the wake lock is never acquired — which is the correct conservative behavior.
+
+### Issue 3 — PiP listener lifecycle (FIXED)
+
+**Root cause:** The previous fix moved PiP listeners from `document` to `videoElement`, but attached them only once in `onMount`. If the component mounted with an embed source (`videoElement = undefined`), then switched to a direct source, the new `<video>` element was created but PiP listeners were never attached.
+
+**Fix:** Moved `handlePictureInPicture`, `lastPipVideoElement`, `attachPipListeners`, and `detachPictureInPictureListeners` to the top level of the instance script (NOT inside `onMount`). Added a reactive block `$: attachPipListeners(videoElement)` that fires whenever `videoElement` identity changes. The function detaches from the previous element (if any) and attaches to the new element (if any), avoiding duplicates via the `lastPipVideoElement` identity check. This correctly handles embed→direct, direct→embed, and repeated embed→direct→embed→direct transitions.
+
+### Behavioral tests added (Section 13)
+
+- **Test A:** Wake Lock pause/release race — verifies stale sentinel is released, not installed.
+- **Test B:** Wake Lock source-change race — same verification for source switch.
+- **Test C:** Wake Lock destroy race — same verification for component destruction.
+- **Test D:** Wake Lock visibility behavior — D1 (playing+hidden→release), D2 (playing+hidden+visible→reacquire), D3 (paused+hidden+visible→do NOT reacquire).
+- **Test E:** Embed semantics — iframe load must NOT trigger wake lock.
+- **Test F:** PiP lifecycle — embed→direct transition attaches listeners.
+- **Test G:** PiP replacement — video A→video B removes from A, attaches to B.
+- **Test H:** PiP repeated switching — embed→direct→embed→direct produces no duplicates.
+
+The behavioral tests extract a minimal re-implementation of the Wake Lock state machine (`createWakeLockStateMachine`) and simulate the race scenarios with real async/await timing, proving the request-generation mechanism actually prevents stale sentinel installation.
+
+### Files changed
+
+| File | Status | Changes |
+|---|---|---|
+| `src/lib/components/player/PlayerShell.svelte` | modified | Wake Lock request-generation mechanism (`wakeLockRequestId`/`wakeLockDestroyed`), post-await validity check, `releaseWakeLock` id increment, `handleEmbedPlaybackEvent` function, `embedPlaybackEvent` prop + reactive watcher, removed `acquireWakeLock` from `handleEmbedLoad`, PiP listeners moved to top-level + reactive `attachPipListeners`, Media Session artwork MIME detection. |
+| `src/routes/watch/[type]/[id]/+page.svelte` | modified | `embedPlaybackEvent` state + `embedPlaybackSeq` counter, `manager.onEvent` forwards play/pause/ended events to PlayerShell via the prop. |
+| `scripts/phase6_player_apis_test.ts` | modified | Updated PiP/Wake Lock assertions to match new implementation + added Section 13 behavioral lifecycle tests (Tests A-H). |
+
+### Verification
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings — NO new warnings).
+- `pnpm test` → PASS (38 scripts: 37 existing + 1 new Phase 6 with behavioral tests).
+- `pnpm run build` → PASS.
+- Manual QA: NOT TESTABLE (no Supabase env).
+
+### Commits
+
+- `161d0a8` — `fix(player): harden wake lock lifecycle and bind pip listeners to video lifecycle`
+- `169c4f1` — `test(player): strengthen phase 6 lifecycle coverage`
+
 ### Worklog template
 
 ```md
