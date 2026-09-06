@@ -252,11 +252,12 @@ assert.match(viewport, /sandbox=\{sandboxAttribute\}/, 'sandbox attribute preser
 assert.match(shell, /class:landscape-mode=\{landscapeMode\}/, 'landscape-mode class binding preserved');
 assert.match(shell, /let landscapeControlsExpanded = true/, 'landscapeControlsExpanded preserved');
 assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/, 'LANDSCAPE_CONTROLS_HIDE_MS preserved');
-assert.match(shell, /data-landscape-controls-toggle/, 'data-landscape-controls-toggle preserved');
-assert.match(shell, /PanelTopClose/, 'PanelTopClose icon preserved');
-assert.match(shell, /PanelTopOpen/, 'PanelTopOpen icon preserved');
+assert.doesNotMatch(shell, /data-landscape-controls-toggle/, 'data-landscape-controls-toggle removed');
+// Phase 9: PanelTopClose/PanelTopOpen removed (landscape-controls-toggle button removed).
+assert.doesNotMatch(shell, /PanelTopClose/, 'PanelTopClose removed');
+assert.doesNotMatch(shell, /PanelTopOpen/, 'PanelTopOpen removed');
 assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/, 'landscape CSS preserved');
-assert.match(shell, /\.player-shell\.landscape-mode \.orientation-button[^}]*margin-right: 38px/, 'orientation-button clearance preserved (Phase 5 audit fix)');
+assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.orientation-button[^}]*margin-right: 38px/, 'orientation-button margin-right removed (Phase 9)');
 assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.header-actions[^}]*margin-right: 38px/, 'dead .header-actions CSS still absent');
 assert.match(shell, /100svh/, '100svh preserved');
 assert.match(shell, /env\(safe-area-inset-top\)/, 'safe-area-inset preserved');

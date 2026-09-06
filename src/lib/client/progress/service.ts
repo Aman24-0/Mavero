@@ -22,6 +22,7 @@ export async function saveProgress(input: SaveProgressInput): Promise<WatchProgr
     duration: safe.duration,
     completionState: completionFor(safe.currentTime, safe.duration, input.completed),
     selectedSourceId: input.selectedSourceId,
+    sourceRuntimes: input.sourceRuntimes,
     snapshot: input.snapshot,
     lastWatchedAt: now,
     updatedAt: now
@@ -131,12 +132,14 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   let latest: SaveProgressInput | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  // Phase 9: per-source runtime map. Accumulated across source switches.
+  let sourceRuntimes: Record<string, { duration: number; updatedAt: number }> = base.sourceRuntimes ? { ...base.sourceRuntimes } : {};
 
   const flush = async () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
     if (disposed || !latest) return;
-    const next = latest;
+    const next = { ...latest, sourceRuntimes: { ...sourceRuntimes } };
     latest = undefined;
     await saveProgress(next);
   };
@@ -148,17 +151,38 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
 
   return {
     update(currentTime: number, duration?: number, completed = false) {
-      latest = { ...base, currentTime, duration, completed };
+      // Phase 9: update per-source runtime when duration is reported.
+      if (duration && duration > 0 && base.selectedSourceId) {
+        sourceRuntimes[base.selectedSourceId] = { duration, updatedAt: Date.now() };
+      }
+      latest = { ...base, currentTime, duration, completed, sourceRuntimes: { ...sourceRuntimes } };
       schedule();
+    },
+    // Phase 9: update runtime independently from position updates.
+    // Allows runtime to be persisted promptly when a provider reports duration
+    // without waiting for a timeupdate event.
+    updateRuntime(sourceId: string, duration: number) {
+      if (disposed || !Number.isFinite(duration) || duration <= 0) return;
+      sourceRuntimes[sourceId] = { duration, updatedAt: Date.now() };
+      if (latest) {
+        latest.sourceRuntimes = { ...sourceRuntimes };
+      }
+      // Don't schedule separately — runtime will be persisted on next regular flush.
+      // But if there's no pending update, create one to ensure runtime is saved.
+      if (!latest) {
+        latest = { ...base, currentTime: 0, sourceRuntimes: { ...sourceRuntimes } };
+        schedule();
+      }
     },
     pause() {
       return flush();
     },
     complete(currentTime: number, duration?: number) {
-      latest = { ...base, currentTime, duration, completed: true };
+      latest = { ...base, currentTime, duration, completed: true, sourceRuntimes: { ...sourceRuntimes } };
       return flush();
     },
     flush,
+    getSourceRuntimes() { return { ...sourceRuntimes }; },
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);
@@ -168,8 +192,25 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   };
 }
 
+// Phase 9: helper to get the runtime for a specific source from a progress record.
+// Falls back to the record's top-level duration for backward compatibility.
+export function getRuntimeForSource(record: WatchProgressRecord | undefined, sourceId: string | undefined): number {
+  if (!record || !sourceId) return record?.duration ?? 0;
+  if (record.sourceRuntimes && record.sourceRuntimes[sourceId]) {
+    return record.sourceRuntimes[sourceId].duration;
+  }
+  // Backward compat: if no sourceRuntimes but the record has duration and selectedSourceId matches,
+  // lazily use the top-level duration.
+  if (record.selectedSourceId === sourceId && record.duration > 0) {
+    return record.duration;
+  }
+  return record?.duration ?? 0;
+}
+
 export function progressLabel(record: WatchProgressRecord) {
-  const remaining = record.duration > 0 ? Math.max(0, Math.round((record.duration - record.currentTime) / 60)) : 0;
+  // Phase 9: use per-source runtime if available for the selected source.
+  const effectiveDuration = getRuntimeForSource(record, record.selectedSourceId);
+  const remaining = effectiveDuration > 0 ? Math.max(0, Math.round((effectiveDuration - record.currentTime) / 60)) : 0;
   const time = remaining > 0 ? `${remaining}m left` : 'Resume';
   if (record.contentType === 'movie') return time;
   if (record.season !== undefined && record.episode !== undefined) return `S${String(record.season).padStart(2, '0')} E${String(record.episode).padStart(2, '0')} · ${time}`;
@@ -177,7 +218,8 @@ export function progressLabel(record: WatchProgressRecord) {
 }
 
 export function progressPercent(record: WatchProgressRecord) {
-  return record.duration > 0 ? Math.min(100, Math.round((record.currentTime / record.duration) * 100)) : 0;
+  const effectiveDuration = getRuntimeForSource(record, record.selectedSourceId);
+  return effectiveDuration > 0 ? Math.min(100, Math.round((record.currentTime / effectiveDuration) * 100)) : 0;
 }
 
 export type FutureCloudProgressAdapter = {

@@ -256,6 +256,15 @@
     reducedMotion = motionQuery.matches;
     motionQuery.addEventListener?.('change', handleMotionChange);
     document.addEventListener('visibilitychange', handleDocumentVisibility);
+    // Phase 9: handle BFCache restoration — when the browser serves the page
+    // from the Back/Forward Cache, visibilitychange does NOT fire. The pageshow
+    // event with event.persisted === true is the only reliable signal.
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        void loadContinue().then((records) => { if (destroyed) return; localContinueItems = records.map(progressToMedia); });
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
 
     let cancelled = false;
     void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
@@ -265,6 +274,7 @@
       cancelled = true; destroyed = true; clearTimers();
       motionQuery?.removeEventListener?.('change', handleMotionChange);
       document.removeEventListener('visibilitychange', handleDocumentVisibility);
+      window.removeEventListener('pageshow', handlePageShow);
     };
   });
 </script>

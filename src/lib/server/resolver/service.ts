@@ -93,24 +93,47 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
     : dependencies.loadConfig
       ? [config]
       : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
-  // Phase 2: sort the admin-configured default source to the front of the
-  // candidate list. The ranking's `sourceOrder` parameter is the array
-  // index, so the default wins the `sourceOrder ASC` tiebreaker within its
-  // score bucket. NO health-score mutation — the default's reliability/
-  // health/stability scores are computed identically to every other
-  // candidate. If the default is ineligible (disabled, in cooldown,
-  // unsupported media type, etc.), the existing ranking gates exclude it
-  // and the resolver proceeds with the remaining candidates.
-  const sortedConfigs = applyDefaultSourceOrdering(orderedConfigs, request.defaultSourceId);
+
+  // Phase 9: Default-first resolver policy.
+  // If an admin default source is configured AND it's in the candidate list,
+  // attempt it FIRST before health-ranked fallback. If the default succeeds,
+  // return immediately. If it fails, continue with health-ranked fallback
+  // from the remaining candidates (excluding the already-attempted default).
   const trustedClient = serviceClient();
+  const skipHealthMutation = dependencies.skipHealthMutation === true;
+  const defaultId = request.defaultSourceId;
+
+  // Build the full candidate list with ranking for fallback.
+  const sortedConfigs = applyDefaultSourceOrdering(orderedConfigs, defaultId);
   const healthMap = await loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id));
   const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
+
+  // If there's a valid default, attempt it FIRST before fallback ranking.
+  if (defaultId) {
+    const defaultConfig = sortedConfigs.find((c) => c.source.id === defaultId);
+    const defaultRanked = ranking.eligible.find((r) => r.config.source.id === defaultId);
+    if (defaultConfig && defaultRanked) {
+      try {
+        const defaultResult = await resolveSourceFromConfig(request, defaultConfig, content, dependencies);
+        if (defaultResult.type === 'direct' || defaultResult.type === 'embed') {
+          // Default succeeded — record health and return.
+          if (!skipHealthMutation) {
+            try { await recordRuntimeSuccess(trustedClient, defaultConfig.provider.id, defaultConfig.source.id); } catch { /* health mutation must never throw */ }
+          }
+          return defaultResult;
+        }
+      } catch {
+        // Default failed — fall through to health-ranked fallback.
+        if (!skipHealthMutation) {
+          try { await recordRuntimeFailure(trustedClient, defaultConfig.provider.id, defaultConfig.source.id, new Error('default source failed')); } catch { /* health mutation must never throw */ }
+        }
+      }
+    }
+  }
+
+  // Health-ranked fallback: walk all eligible candidates (including the default
+  // if it failed above — it gets another chance via the fallback walker).
   const candidates: FallbackCandidate[] = ranking.eligible.map((ranked) => ({ config: ranked.config, eligible: true }));
-  // Phase 7: when `skipHealthMutation` is true (admin source test), the
-  // onSuccess/onFailure callbacks become no-ops so the test does NOT mutate
-  // `streaming_provider_health`. Default is `false` — production behavior
-  // (the anonymous /api/playback/resolve endpoint) is unchanged.
-  const skipHealthMutation = dependencies.skipHealthMutation === true;
   const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
     allowFallback: true,
     maxAttempts: candidates.length,

@@ -7,23 +7,20 @@ const viewport = readFileSync(new URL('../src/lib/components/player/PlayerViewpo
 assert.match(shell, /class:landscape-mode=\{landscapeMode\}/);
 assert.match(shell, /let landscapeControlsExpanded = true/);
 assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/);
-assert.match(shell, /data-landscape-controls-toggle/);
-assert.match(shell, /PanelTopClose/);
-assert.match(shell, /PanelTopOpen/);
+// Phase 9: landscape-controls-toggle floating button removed — header now has exit + source buttons.
+assert.doesNotMatch(shell, /data-landscape-controls-toggle/, 'landscape-controls-toggle removed');
+assert.doesNotMatch(shell, /PanelTopClose/, 'PanelTopClose import removed');
+assert.doesNotMatch(shell, /PanelTopOpen/, 'PanelTopOpen import removed');
 assert.match(shell, /if \(!landscapeMode\) return/);
 assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/);
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{ display: flex; flex: 1 1 auto;/);
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap :global\(\.viewport\)/);
 assert.match(shell, /height: 100%; max-height: none; min-height: 0; aspect-ratio: auto/);
 assert.match(shell, /env\(safe-area-inset-top\)/);
-// Phase 5: the floating .landscape-controls-toggle button overlays the top-right
-// corner of the header (32px wide at right: 8px). The orientation-button is now
-// the right-edge element in the landscape header (after .header-actions was
-// removed when actions moved to the bottom shell toolbar). It must clear the
-// floating toggle button via margin-right: 38px, OR be otherwise offset.
-// This is the real contract — the OLD test asserted an obsolete .header-actions
-// selector that no longer matches any DOM element.
-assert.match(shell, /\.player-shell\.landscape-mode \.orientation-button[^}]*margin-right: 38px/);
+// Phase 9: bottom-bar is hidden in landscape via {#if !landscapeMode} — no landscape-controls-collapsed class.
+assert.doesNotMatch(shell, /landscape-controls-collapsed/, 'landscape-controls-collapsed removed');
+// Phase 9: orientation-button no longer needs margin-right clearance (no floating toggle button).
+assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.orientation-button[^}]*margin-right: 38px/, 'orientation-button margin-right removed (no floating toggle)');
 assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.header-actions[^}]*margin-right: 38px/, 'dead .header-actions CSS selector removed');
 assert.match(shell, /100svh/);
 
@@ -40,7 +37,6 @@ const fullscreenEnd = shell.indexOf('async function togglePictureInPicture()', f
 assert.match(shell.slice(fullscreenStart, fullscreenEnd), /requestFullscreen/);
 assert.match(shell.slice(fullscreenStart, fullscreenEnd), /exitFullscreen/);
 assert.match(shell, /provider iframe is never invoked or manipulated/);
-assert.match(shell, /aria-label="Open episode list"/);
 assert.doesNotMatch(shell, /class="episode-stepper"/);
 assert.doesNotMatch(shell, /aria-label="Previous episode"/);
 assert.doesNotMatch(shell, /aria-label="Next episode"/);
@@ -48,4 +44,4 @@ assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypt
 assert.match(viewport, /allowfullscreen/);
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/);
 
-console.log('Landscape PlayerShell contract tests passed: compact active layout, flex-fill viewport, safe-area sizing, separate fullscreen action, and cross-origin iframe boundary.');
+console.log('Landscape PlayerShell contract tests passed: compact active layout, flex-fill viewport, safe-area sizing, separate fullscreen action, cross-origin iframe boundary, removed landscape-controls-toggle, removed bottom-bar in landscape.');

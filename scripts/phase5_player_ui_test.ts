@@ -86,9 +86,10 @@ assert.match(shell, /Switching source/, 'loading: Switching source');
 assert.match(shell, /class:landscape-mode=\{landscapeMode\}/, 'landscape-mode class');
 assert.match(shell, /let landscapeControlsExpanded = true/, 'landscapeControlsExpanded');
 assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/, 'LANDSCAPE_CONTROLS_HIDE_MS');
-assert.match(shell, /data-landscape-controls-toggle/, 'data-landscape-controls-toggle');
-assert.match(shell, /PanelTopClose/, 'PanelTopClose');
-assert.match(shell, /PanelTopOpen/, 'PanelTopOpen');
+assert.doesNotMatch(shell, /data-landscape-controls-toggle/, 'data-landscape-controls-toggle removed');
+// Phase 9: PanelTopClose/PanelTopOpen removed (landscape-controls-toggle button removed).
+assert.doesNotMatch(shell, /PanelTopClose/, 'PanelTopClose removed');
+assert.doesNotMatch(shell, /PanelTopOpen/, 'PanelTopOpen removed');
 assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/, 'landscape CSS');
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{ display: flex; flex: 1 1 auto;/, 'landscape stage CSS');
 assert.match(shell, /height: 100%; max-height: none; min-height: 0; aspect-ratio: auto/, 'landscape viewport');

@@ -257,10 +257,13 @@
     if (!active || writerKey !== playbackKey) return;
     resumeTime = resume.resumeTime;
     duration = resume.record?.duration ?? 0;
-    // Phase 4: read the saved last-successful source from the progress
-    // record. This is used by the reactive initial-source-selection
-    // block below to prefer the saved source over the admin default.
-    savedSourceId = resume.record?.selectedSourceId;
+    // Phase 9: only use savedSourceId for INCOMPLETE progress. Completed
+    // records should NOT force the old source — they should use admin default.
+    if (resume.record && resume.record.completionState !== 'completed') {
+      savedSourceId = resume.record.selectedSourceId;
+    } else {
+      savedSourceId = undefined;
+    }
     localState = state.status === 'indexeddb' ? 'Local progress on this device' : 'Temporary local progress only';
     progressReady = true;
   }

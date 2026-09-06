@@ -16,8 +16,8 @@ assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{[\s\S]*?width
 // Header is overlay (absolute), not layout participant
 assert.match(shell, /\.player-shell\.landscape-mode \.player-header \{ position: absolute/, 'landscape header is absolute overlay');
 
-// Bottom bar is overlay (absolute)
-assert.match(shell, /\.player-shell\.landscape-mode \.bottom-bar \{ position: absolute/, 'landscape bottom-bar is absolute overlay');
+// Phase 9: bottom-bar is completely hidden in landscape (not rendered in DOM).
+assert.match(shell, /\{#if !landscapeMode\}/, 'bottom-bar gated on !landscapeMode');
 
 // ============================================================
 // 2. Landscape source drawer opens from RIGHT

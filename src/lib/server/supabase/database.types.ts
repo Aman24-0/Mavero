@@ -619,6 +619,7 @@ export type Database = {
           season: number | null
           selected_source_id: string | null
           snapshot: Json
+          source_runtimes: Json | null
           updated_at: string
           user_id: string
         }
@@ -637,6 +638,7 @@ export type Database = {
           season?: number | null
           selected_source_id?: string | null
           snapshot?: Json
+          source_runtimes?: Json | null
           updated_at?: string
           user_id: string
         }
@@ -655,6 +657,7 @@ export type Database = {
           season?: number | null
           selected_source_id?: string | null
           snapshot?: Json
+          source_runtimes?: Json | null
           updated_at?: string
           user_id?: string
         }

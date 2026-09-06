@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, PanelTopClose, PanelTopOpen, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
@@ -543,8 +543,7 @@
 
   function handleMaveroControlInteraction(event: Event) {
     if (!landscapeMode) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('[data-landscape-controls-toggle]')) return;
+    // Phase 9: landscape-controls-toggle removed — no need to skip timer reset for it.
     resetLandscapeControlsTimer();
   }
 
@@ -1034,12 +1033,14 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} onclick={handleMaveroControlInteraction} onpointerdown={handleMaveroControlInteraction} role="application" aria-label="MAVERO video player">
-  {#if landscapeMode}<button class="landscape-controls-toggle" data-landscape-controls-toggle type="button" aria-label={landscapeControlsExpanded ? 'Collapse MAVERO controls' : 'Expand MAVERO controls'} aria-expanded={landscapeControlsExpanded} onclick={toggleLandscapeControls}>{#if landscapeControlsExpanded}<PanelTopClose size={15} />{:else}<PanelTopOpen size={15} />{/if}</button>{/if}
   <header class="player-header" class:controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
     <div class="header-title-row">
       <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
       <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
-      <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
+      <div class="header-actions-right">
+        {#if landscapeMode && sourceOptions.length}<button class="header-button compact" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={17} /></button>{/if}
+        <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
+      </div>
     </div>
   </header>
 
@@ -1060,8 +1061,11 @@
 
   </section>
 
-  <!-- Bottom controls area: direct sources get full PlayerControls; embed sources get shell controls -->
-  <div class="bottom-bar" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
+  <!-- Bottom controls area: direct sources get full PlayerControls; embed sources get shell controls.
+       Phase 9: In landscape mode, the bottom-bar is completely hidden — the provider's own controls
+       are inside the iframe, and Mavero only shows the minimal header overlay (title + exit + source). -->
+  {#if !landscapeMode}
+  <div class="bottom-bar" class:visible={controlsVisible}>
     {#if source?.type === 'direct'}
       <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(document.activeElement as HTMLElement); }} />
     {:else if source?.type === 'embed' || effectiveState === 'embed-loading' || effectiveState === 'switching-source'}
@@ -1080,6 +1084,7 @@
       </div>
     {/if}
   </div>
+  {/if}
 
   {#if sourceMenuOpen}
     <!-- Phase 5: Compact source sheet — bottom-anchored sheet, not full-screen drawer -->
@@ -1110,27 +1115,16 @@
      This gives the player viewport maximum vertical space. */
   .player-shell.landscape-mode .player-header { position: absolute; z-index: 12; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: linear-gradient(180deg, rgba(0,0,0,.85), transparent); transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out); }
   .player-shell.landscape-mode .player-header.controls-collapsed { opacity: 0; transform: translateY(-100%); pointer-events: none; }
-  .landscape-controls-toggle { position: absolute; z-index: 14; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.74); cursor: pointer; box-shadow: var(--shadow-sm); backdrop-filter: blur(12px); }
-  .landscape-controls-toggle:hover, .landscape-controls-toggle:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
-  .landscape-controls-toggle:active { transform: scale(.96); }
-  .player-shell.landscape-mode .header-title-row { display: contents; }
+  .player-shell.landscape-mode .header-title-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .player-shell.landscape-mode .header-actions-right { display: flex; align-items: center; gap: 4px; margin-left: auto; }
   .player-shell.landscape-mode .header-title { display: grid; flex: 1 1 auto; justify-items: start; min-width: 0; text-align: left; }
-  .player-shell.landscape-mode .header-title strong { max-width: 28vw; }
+  .player-shell.landscape-mode .header-title strong { max-width: 40vw; }
   .player-shell.landscape-mode .header-button { min-width: 32px; min-height: 32px; padding: 0 7px; border-radius: var(--radius-sm); }
   .player-shell.landscape-mode .header-button span { display: none; }
-  /* Phase 5: orientation-button sits at the right edge of the landscape header
-     (via .header-title-row display:contents). The floating .landscape-controls-toggle
-     button overlays the top-right corner, so the orientation-button needs
-     margin-right to clear it — same 38px clearance the old .header-actions rule
-     provided before Phase 5 moved all actions into the bottom shell toolbar. */
-  .player-shell.landscape-mode .orientation-button { margin-right: 38px; }
   /* Phase 9: stage-wrap fills the ENTIRE viewport in landscape — no header/footer space. */
   .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0; width: 100%; height: 100%; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; width: 100%; height: 100%; }
-  /* Phase 9: bottom-bar is an OVERLAY in landscape — doesn't take layout space. */
-  .player-shell.landscape-mode .bottom-bar { position: absolute; z-index: 11; bottom: 0; left: 0; right: 0; flex: 0 0 auto; padding: max(8px, env(safe-area-inset-bottom)) clamp(12px, 3vw, 42px) max(8px, env(safe-area-inset-left)); background: linear-gradient(0deg, rgba(0,0,0,.85), transparent); }
-  .player-shell.landscape-mode .bottom-bar.landscape-controls-collapsed { opacity: 0; pointer-events: none; transform: translateY(100%); }
   /* Phase 9: landscape source sheet opens from the RIGHT (20-30% width), not bottom. */
   .player-shell.landscape-mode .source-sheet { position: fixed; z-index: 21; bottom: auto; top: 0; right: 0; left: auto; width: min(280px, 28vw); max-height: 100dvh; height: 100dvh; border-top: 0; border-left: 1px solid var(--line-strong); border-radius: 0; animation: slide-right var(--motion-normal) var(--ease-out); }
   .player-shell.landscape-mode .source-sheet .sheet-list { max-height: calc(100dvh - 120px); }
@@ -1143,6 +1137,7 @@
   .header-title-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; width: 100%; min-height: 40px; }
   .header-title-row .header-nav { justify-self: start; }
   .header-title-row .orientation-button { justify-self: end; }
+  .header-actions-right { display: flex; align-items: center; gap: 4px; justify-self: end; }
   .header-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 11px; color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; font: inherit; font-size: .68rem; transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .header-button:hover, .header-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .header-button:disabled { cursor: not-allowed; opacity: .3; }

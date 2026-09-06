@@ -1,10 +1,39 @@
-import { favoriteKey, normalizeWatchlistStatus, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord } from '$lib/client/progress/types';
+import { favoriteKey, normalizeWatchlistStatus, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord, type SourceRuntimeEntry } from '$lib/client/progress/types';
+
+// Phase 9: merge sourceRuntimes from both sides. For each source ID, prefer
+// the entry with the newer updatedAt. This preserves runtimes from both
+// local and cloud even if the record itself was chosen from one side.
+function mergeSourceRuntimes(
+  winner: WatchProgressRecord,
+  loser: WatchProgressRecord | undefined,
+): Record<string, SourceRuntimeEntry> | undefined {
+  if (!loser?.sourceRuntimes) return winner.sourceRuntimes;
+  if (!winner.sourceRuntimes) return loser.sourceRuntimes;
+  const merged: Record<string, SourceRuntimeEntry> = { ...loser.sourceRuntimes };
+  for (const [sourceId, entry] of Object.entries(winner.sourceRuntimes)) {
+    const existing = merged[sourceId];
+    if (!existing || entry.updatedAt >= existing.updatedAt) {
+      merged[sourceId] = entry;
+    }
+  }
+  return merged;
+}
 
 export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgressRecord[]) {
   const merged = new Map<string, WatchProgressRecord>();
   for (const record of [...local, ...cloud]) {
     const existing = merged.get(record.key);
-    if (!existing || record.updatedAt > existing.updatedAt || (record.updatedAt === existing.updatedAt && record.currentTime > existing.currentTime)) merged.set(record.key, record);
+    if (!existing) {
+      merged.set(record.key, record);
+    } else if (record.updatedAt > existing.updatedAt || (record.updatedAt === existing.updatedAt && record.currentTime > existing.currentTime)) {
+      // Phase 9: merge sourceRuntimes from the losing record before replacing.
+      const mergedRuntimes = mergeSourceRuntimes(record, existing);
+      merged.set(record.key, { ...record, sourceRuntimes: mergedRuntimes });
+    } else {
+      // The existing record wins, but merge sourceRuntimes from the losing record.
+      const mergedRuntimes = mergeSourceRuntimes(existing, record);
+      merged.set(record.key, { ...existing, sourceRuntimes: mergedRuntimes });
+    }
   }
   return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }

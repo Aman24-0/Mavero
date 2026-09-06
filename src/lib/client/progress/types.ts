@@ -20,12 +20,18 @@ export type PlaybackContext = {
   episodeTitle?: string;
 };
 
+export type SourceRuntimeEntry = {
+  duration: number;
+  updatedAt: number;
+};
+
 export type WatchProgressRecord = PlaybackContext & {
   key: string;
   currentTime: number;
   duration: number;
   completionState: CompletionState;
   selectedSourceId?: string;
+  sourceRuntimes?: Record<string, SourceRuntimeEntry>;
   snapshot: ContentSnapshot;
   lastWatchedAt: number;
   updatedAt: number;
@@ -58,6 +64,7 @@ export type SaveProgressInput = PlaybackContext & {
   currentTime: number;
   duration?: number;
   selectedSourceId?: string;
+  sourceRuntimes?: Record<string, SourceRuntimeEntry>;
   snapshot: ContentSnapshot;
   completed?: boolean;
   now?: number;
@@ -132,6 +139,15 @@ export function isPlaybackRecord(value: unknown): value is WatchProgressRecord {
   const validContext = record.contentType === 'movie'
     ? season === undefined && episode === undefined
     : (season === undefined && episode === undefined) || validEpisodeContext;
+  // Phase 9: validate sourceRuntimes if present (optional field, backward compatible).
+  const validSourceRuntimes = record.sourceRuntimes === undefined
+    || (typeof record.sourceRuntimes === 'object' && record.sourceRuntimes !== null && !Array.isArray(record.sourceRuntimes)
+      && Object.entries(record.sourceRuntimes).every(([key, entry]) =>
+        typeof key === 'string' && key.length > 0 && key.length <= 100
+        && typeof entry === 'object' && entry !== null
+        && typeof (entry as SourceRuntimeEntry).duration === 'number' && Number.isFinite((entry as SourceRuntimeEntry).duration) && (entry as SourceRuntimeEntry).duration > 0
+        && typeof (entry as SourceRuntimeEntry).updatedAt === 'number' && Number.isFinite((entry as SourceRuntimeEntry).updatedAt)
+      ));
   return isBoundedString(record.key, MAX_RECORD_KEY_LENGTH)
     && isBoundedString(record.contentId, MAX_CONTENT_ID_LENGTH)
     && validType
@@ -143,7 +159,8 @@ export function isPlaybackRecord(value: unknown): value is WatchProgressRecord {
     && (record.completionState === 'in_progress' || record.completionState === 'completed')
     && isFiniteTimestamp(record.lastWatchedAt)
     && isFiniteTimestamp(record.updatedAt)
-    && isContentSnapshot(record.snapshot);
+    && isContentSnapshot(record.snapshot)
+    && validSourceRuntimes;
 }
 
 export function isFavoriteRecord(value: unknown): value is FavoriteRecord {
