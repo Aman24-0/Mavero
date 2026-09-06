@@ -76,7 +76,15 @@ async function loadTrustedFallbackCandidates(primary: TrustedResolutionConfig): 
 
 async function loadContent(request: ResolverRequest): Promise<NormalizedMediaItem> {
   try {
-    return await getDetail(request.mediaType, request.contentId);
+    // Phase 7F+ v3: AniList-native anime content IDs start with 'anime-'.
+    // The resolver request's mediaType may be 'movie' or 'series' (derived
+    // from animeFormat by the watch route) — NOT 'anime'. But getDetail()
+    // MUST be called with 'anime' to load from the AniList adapter, which
+    // knows how to fetch the AniList record and its external IDs (anilist/mal).
+    const contentType = request.contentId.startsWith('anime-')
+      ? 'anime' as const
+      : request.mediaType;
+    return await getDetail(contentType, request.contentId);
   } catch (error) {
     throw new ResolverError('RESOLUTION_UNAVAILABLE', error);
   }

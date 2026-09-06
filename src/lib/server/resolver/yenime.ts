@@ -74,23 +74,36 @@ export const YENIME_ORIGIN = 'https://api.yenime.net';
  *   - INVALID_SOURCE_URL (URL origin is not https://api.yenime.net)
  */
 function resolveYenimeUrl(context: ResolverContext): string {
-  // Phase 7F+ (anime routing): accept any anime-flagged content regardless
-  // of the canonical `request.mediaType` (which stays as 'movie' or
-  // 'series' for TMDB-tagged anime). The anime-bridge in
-  // `capabilityAllows`/`supportsMediaType` already gated this provider
-  // in based on `content.isAnime + capability.anime`.
+  // Phase 7F+ v3: accept any anime-flagged content regardless of the
+  // canonical `request.mediaType` (which stays as 'movie' or 'series'
+  // for anime content). The anime-bridge in capabilityAllows/
+  // supportsMediaType already gated this provider in based on
+  // content.isAnime + capability.anime.
   if (context.content.isAnime !== true) {
     throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
   }
-  if (!context.request.episode) {
-    // Yenime's URL contract requires an episode number.
-    throw new ResolverError('MISSING_IDENTIFIER');
+
+  // Phase 7F+ v3: episode handling for anime movies vs series.
+  // - Anime movies (animeFormat='movie'): episode is optional. If absent,
+  //   default to 1 (Yenime's official API defaults to episode 1 when absent).
+  //   This lets the watch route send a clean movie request (no season/episode)
+  //   without triggering INVALID_REQUEST in identifiers.ts.
+  // - Anime series (animeFormat='series' or undefined): episode is REQUIRED.
+  //   If absent, throw MISSING_IDENTIFIER so the fallback walker tries
+  //   the next provider.
+  const isAnimeMovie = context.content.animeFormat === 'movie';
+  let effectiveEpisode = context.request.episode;
+  if (!effectiveEpisode) {
+    if (isAnimeMovie) {
+      effectiveEpisode = 1;
+    } else {
+      throw new ResolverError('MISSING_IDENTIFIER');
+    }
   }
 
   // Identifier resolution: Yenime accepts ONLY MAL ID. Do NOT fall back to
   // AniList or TMDB — that would produce a broken embed. If MAL is missing,
-  // throw MISSING_IDENTIFIER so the fallback walker tries the next anime
-  // provider (e.g. MegaPlay, which accepts AniList).
+  // throw MISSING_IDENTIFIER so the fallback walker tries the next provider.
   const malId = context.identifiers.malId;
   if (!malId) {
     throw new ResolverError('MISSING_IDENTIFIER');
@@ -108,7 +121,7 @@ function resolveYenimeUrl(context: ResolverContext): string {
 
   // Reconstruct the URL from trusted components.
   const safeMalId = encodeURIComponent(malId);
-  const safeEpisode = encodeURIComponent(String(context.request.episode));
+  const safeEpisode = encodeURIComponent(String(effectiveEpisode));
   return `${YENIME_ORIGIN}/anime/${safeMalId}/${safeEpisode}`;
 }
 

@@ -39,17 +39,12 @@
     : contentType) as 'movie' | 'series' | 'anime';
   let season = Number(page.url.searchParams.get('season') || '') || undefined;
   let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
-  // Phase 7F+ (anime routing): anime movies (TMDB type='movie' but isAnime=true,
-  // e.g. Demon Slayer: Infinity Castle) have no real season/episode, but anime
-  // providers (MegaPlay/Yenime) require an episode number in their URL contract.
-  // Default to season=1, episode=1 for these titles so anime providers can
-  // build a valid embed URL. Normal movie providers (VidSrc/VidLink) ignore
-  // season/episode for movie requests, so this default is harmless for them.
+  // Phase 7F+ v3: anime movies do NOT get forced season=1/episode=1 in the
+  // resolver request. The resolver's identifiers.ts rejects movie requests
+  // that contain season/episode as INVALID_REQUEST. Instead, anime movies
+  // send a clean movie request (no season/episode) to normal providers.
+  // Yenime internally defaults to episode 1 when absent (see yenime.ts).
   // Anime series retain their explicit season/episode from the URL.
-  $: if (item?.isAnime && item?.animeFormat === 'movie' && season === undefined && episode === undefined) {
-    season = 1;
-    episode = 1;
-  }
   $: currentEpisode = season !== undefined && episode !== undefined ? data.episodes.find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
   $: playbackContext = ({ contentType, contentId: item.id, season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
   $: playbackKey = [playbackContext.contentType, playbackContext.contentId, playbackContext.season ?? '-', playbackContext.episode ?? '-'].join(':');
