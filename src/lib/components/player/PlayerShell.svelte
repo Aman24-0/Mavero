@@ -73,6 +73,15 @@
   // the reactive watcher to detect new events even when the type is the same.
   let lastEmbedPlaybackSeq = 0;
   const LANDSCAPE_CONTROLS_HIDE_MS = 5000;
+  // Phase 8: embed iframe load timeout. If the iframe doesn't fire `on:load`
+  // within this window, we transition to the error state instead of leaving
+  // the player stuck in `embed-loading` indefinitely.
+  const EMBED_LOAD_TIMEOUT_MS = 18000;
+  let embedLoadTimer: ReturnType<typeof setTimeout> | undefined;
+  // Phase 8: identity guard for the embed load timeout. A stale timeout from
+  // source A must NOT affect source B. This is checked in the timeout
+  // callback — if the source identity has changed, the timeout is a no-op.
+  let embedLoadTimeoutSourceId = '';
 
   // Phase 6: Wake Lock state — shell-local, never exposed as a provider capability.
   let wakeLockSupported = false;
@@ -102,6 +111,11 @@
   // Phase 6: Media Session state — direct playback only.
   let mediaSessionSupported = false;
   let mediaSessionActive = false;
+
+  // Phase 8: focus management for source/episode sheets. When a sheet opens,
+  // we save the trigger element so we can restore focus when it closes.
+  let sourceSheetTrigger: HTMLElement | null = null;
+  let episodeSheetTrigger: HTMLElement | null = null;
 
   // Phase 6: local WakeLockSentinel type. lib.dom.d.ts may not include this on
   // older TS versions, so we declare the minimal shape we use, matching the
@@ -148,6 +162,11 @@
     errorMessage = '';
     playing = false;
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
+    // Phase 8: clear any previous embed load timeout, then start a new one
+    // for embed sources. Direct sources don't need this — the <video> element
+    // fires `error` on failure.
+    clearEmbedLoadTimeout();
+    if (source.type === 'embed') startEmbedLoadTimeout(source.sourceId);
     // Phase 6 audit fix 2: reset embed playback state on source switch. The
     // new source's embedPlaying will be set only if a reliable normalized
     // 'play' event arrives. Also stamp the sourceId so stale events from
@@ -171,6 +190,9 @@
   // Session + exit PiP here. The new episode's source will re-acquire them.
   $: if (currentEpisode && `${currentEpisode.season}:${currentEpisode.episode}` !== episodeIdentity) {
     episodeIdentity = `${currentEpisode.season}:${currentEpisode.episode}`;
+    // Phase 8: clear embed load timeout on episode switch — the new episode
+    // will start its own timeout when its source loads.
+    clearEmbedLoadTimeout();
     // Phase 6 audit fix 2: reset embed playback state on episode switch.
     embedPlaying = false;
     if (source?.sourceId) embedPlaybackSourceId = source.sourceId;
@@ -252,6 +274,11 @@
       }
     };
     const handleKeydown = (event: KeyboardEvent) => {
+      // Phase 8: sheet focus trap + Escape takes priority over player shortcuts.
+      if (sourceMenuOpen || episodeMenuOpen) {
+        handleSheetKeydown(event);
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, select, textarea, button, [contenteditable="true"]')) return;
       if (source?.type !== 'direct') return;
@@ -274,6 +301,8 @@
     return () => {
       if (hideTimer) clearTimeout(hideTimer);
       if (landscapeControlsTimer) clearTimeout(landscapeControlsTimer);
+      // Phase 8: clear embed load timeout on destroy.
+      clearEmbedLoadTimeout();
       document.removeEventListener('fullscreenchange', handleFullscreen);
       detachPictureInPictureListeners();
       window.removeEventListener('keydown', handleKeydown);
@@ -395,6 +424,9 @@
   function handleEmbedLoad() {
     state = 'playing';
     errorMessage = '';
+    // Phase 8: the iframe loaded successfully — clear the load timeout so
+    // it cannot fire and override the 'playing' state.
+    clearEmbedLoadTimeout();
     // Phase 3 fix: forward the iframe element ref to the watch route so
     // provider adapters (CineSrc) can post commands to
     // iframe.contentWindow.postMessage(payload, origin) — the documented
@@ -585,7 +617,8 @@
   }
 
   function chooseSource(sourceId: string) {
-    sourceMenuOpen = false;
+    // Phase 8: closeSourceSheet restores focus to the trigger.
+    closeSourceSheet();
     if (sourceId !== source?.sourceId) {
       state = 'switching-source';
       errorMessage = '';
@@ -599,7 +632,8 @@
   }
 
   function chooseEpisode(target: PlayerEpisodeTarget) {
-    episodeMenuOpen = false;
+    // Phase 8: closeEpisodeSheet restores focus to the trigger.
+    closeEpisodeSheet();
     onEpisodeChange(target);
   }
 
@@ -615,6 +649,8 @@
 
   function retry() {
     errorMessage = '';
+    // Phase 8: clear any pending embed load timeout before retrying.
+    clearEmbedLoadTimeout();
     if (source?.sourceId) {
       state = 'switching-source';
       onSourceChange(source.sourceId);
@@ -622,6 +658,141 @@
     }
     if (videoElement) { videoElement.load(); pendingSeek = currentTime; }
     state = source?.type === 'embed' ? 'embed-loading' : 'preparing';
+    // Phase 8: if retrying an embed, start the timeout again.
+    if (state === 'embed-loading' && source?.sourceId) startEmbedLoadTimeout(source.sourceId);
+  }
+
+  // ----- Phase 8: Embed load timeout -----
+  //
+  // If an embed iframe never fires `on:load`, the player would stay in
+  // `embed-loading` indefinitely. This timeout transitions to the error
+  // state after EMBED_LOAD_TIMEOUT_MS (18s) — conservative enough to not
+  // interrupt slow legitimate providers.
+  //
+  // Stale-source protection: the timeout captures the sourceId at start
+  // time. When it fires, it checks that the current sourceIdentity still
+  // matches. If the user switched sources while the timeout was pending,
+  // the timeout is a no-op — the new source's timeout is managed by its
+  // own startEmbedLoadTimeout call.
+
+  function startEmbedLoadTimeout(sourceId: string) {
+    clearEmbedLoadTimeout();
+    embedLoadTimeoutSourceId = sourceId;
+    embedLoadTimer = setTimeout(() => {
+      embedLoadTimer = undefined;
+      // Stale-source guard: if the user switched to a different source while
+      // this timeout was pending, do nothing. The new source has its own
+      // timeout (or is a direct source that doesn't need one).
+      if (sourceIdentity !== embedLoadTimeoutSourceId) return;
+      // Only transition to error if we're still in the embed-loading state.
+      // If handleEmbedLoad already fired, state will be 'playing' and we
+      // must NOT override it.
+      if (state !== 'embed-loading') return;
+      state = 'error';
+      errorMessage = 'This source is taking too long to load.';
+      revealControls();
+    }, EMBED_LOAD_TIMEOUT_MS);
+  }
+
+  function clearEmbedLoadTimeout() {
+    if (embedLoadTimer) {
+      clearTimeout(embedLoadTimer);
+      embedLoadTimer = undefined;
+    }
+    embedLoadTimeoutSourceId = '';
+  }
+
+  // ----- Phase 8: Focus management for source/episode sheets -----
+  //
+  // When a sheet opens, focus moves into the sheet (close button preferred).
+  // When it closes (via close button, backdrop, Escape, or selection), focus
+  // restores to the trigger element if it's still connected to the DOM.
+  //
+  // Tab/Shift+Tab is trapped within the active sheet so focus cannot escape
+  // behind the modal backdrop. Only one sheet can be open at a time.
+
+  function openSourceSheet(trigger: HTMLElement) {
+    sourceSheetTrigger = trigger;
+    episodeMenuOpen = false; // only one sheet at a time
+    sourceMenuOpen = true;
+    // Focus the close button after Svelte renders the sheet.
+    setTimeout(() => focusSheetCloseButton('source'), 0);
+  }
+
+  function openEpisodeSheet(trigger: HTMLElement) {
+    episodeSheetTrigger = trigger;
+    sourceMenuOpen = false; // only one sheet at a time
+    episodeMenuOpen = true;
+    setTimeout(() => focusSheetCloseButton('episode'), 0);
+  }
+
+  function closeSourceSheet() {
+    sourceMenuOpen = false;
+    restoreFocus(sourceSheetTrigger);
+    sourceSheetTrigger = null;
+  }
+
+  function closeEpisodeSheet() {
+    episodeMenuOpen = false;
+    restoreFocus(episodeSheetTrigger);
+    episodeSheetTrigger = null;
+  }
+
+  function restoreFocus(element: HTMLElement | null) {
+    if (element instanceof HTMLElement && element.isConnected) {
+      try { element.focus(); } catch { /* element not focusable */ }
+    }
+  }
+
+  function focusSheetCloseButton(which: 'source' | 'episode') {
+    const sheetClass = which === 'source' ? '.source-sheet' : '.episode-sheet';
+    const sheet = playerRoot?.querySelector(sheetClass);
+    if (!sheet) return;
+    const closeBtn = sheet.querySelector('.close-button');
+    if (closeBtn instanceof HTMLElement) {
+      closeBtn.focus();
+      return;
+    }
+    // Fallback: focus the first focusable element in the sheet.
+    const firstFocusable = sheet.querySelector('button, a, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (firstFocusable instanceof HTMLElement) firstFocusable.focus();
+  }
+
+  function handleSheetKeydown(event: KeyboardEvent) {
+    // Phase 8: focus trap + Escape for sheets. Only active when a sheet is open.
+    if (!sourceMenuOpen && !episodeMenuOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (sourceMenuOpen) closeSourceSheet();
+      else if (episodeMenuOpen) closeEpisodeSheet();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const activeSheet = sourceMenuOpen
+      ? playerRoot?.querySelector('.source-sheet')
+      : episodeMenuOpen
+        ? playerRoot?.querySelector('.episode-sheet')
+        : null;
+    if (!activeSheet) return;
+    const focusables = Array.from(activeSheet.querySelectorAll<HTMLElement>('button, a, input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((el) => el.offsetParent !== null);
+    if (!focusables.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey) {
+      if (active === first || !activeSheet.contains(active)) {
+        event.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (active === last || !activeSheet.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
   }
 
   // ----- Phase 6: Wake Lock -----
@@ -870,7 +1041,7 @@
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
         <div><strong>This source isn't available.</strong><p>{resolutionError || errorMessage || 'Choose another source or try again.'}</p></div>
-        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Switch source</button>{/if}</div>
+        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={(e) => openSourceSheet(e.currentTarget as HTMLElement)}><Settings2 size={14} /> Switch source</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
@@ -883,7 +1054,7 @@
   <!-- Bottom controls area: direct sources get full PlayerControls; embed sources get shell controls -->
   <div class="bottom-bar" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
     {#if source?.type === 'direct'}
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(document.activeElement as HTMLElement); }} />
     {:else if source?.type === 'embed' || effectiveState === 'embed-loading' || effectiveState === 'switching-source'}
       <!-- Phase 5: Embed source shell controls bar — Mavero-owned controls for embed playback -->
       <div class="embed-shell-controls" role="toolbar" aria-label="Embed playback controls">
@@ -891,8 +1062,8 @@
           <span class="shell-source-name">{sourceOptions.find((o) => o.id === source?.sourceId)?.name ?? 'Loading…'}</span>
         </div>
         <div class="shell-actions">
-          {#if sourceOptions.length}<button class="shell-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={16} /></button>{/if}
-          {#if episodes.length}<button class="shell-button" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={() => { episodeMenuOpen = !episodeMenuOpen; sourceMenuOpen = false; }}><ListVideo size={16} /></button>{/if}
+          {#if sourceOptions.length}<button class="shell-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={16} /></button>{/if}
+          {#if episodes.length}<button class="shell-button" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={(e) => { if (episodeMenuOpen) closeEpisodeSheet(); else openEpisodeSheet(e.currentTarget as HTMLElement); }}><ListVideo size={16} /></button>{/if}
           <button class="shell-button" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={16} /></button>
           <button class="shell-button" type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={16} /></button>
           {#if source?.type === 'embed'}<button class="shell-button" class:active={effectiveSandboxEnabled} type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={16} />{:else}<ShieldOff size={16} />{/if}</button>{/if}
@@ -903,20 +1074,20 @@
 
   {#if sourceMenuOpen}
     <!-- Phase 5: Compact source sheet — bottom-anchored sheet, not full-screen drawer -->
-    <div class="sheet-overlay" role="presentation" onclick={() => sourceMenuOpen = false}></div>
-    <div class="source-sheet" role="dialog" aria-label="Available playback sources">
+    <div class="sheet-overlay" role="presentation" onclick={() => closeSourceSheet()}></div>
+    <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
-      <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => sourceMenuOpen = false}><X size={17} /></button></div>
+      <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
       <div class="sheet-list">{#each sourceOptions as option}<button class="sheet-option" class:active={option.id === source?.sourceId} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{/each}</div>
     </div>
   {/if}
 
   {#if episodeMenuOpen}
     <!-- Phase 5: Compact episode sheet — matching the source sheet style -->
-    <div class="sheet-overlay" role="presentation" onclick={() => episodeMenuOpen = false}></div>
-    <div class="episode-sheet" role="dialog" aria-label="Episode list">
+    <div class="sheet-overlay" role="presentation" onclick={() => closeEpisodeSheet()}></div>
+    <div class="episode-sheet" role="dialog" aria-modal="true" aria-label="Episode list">
       <div class="sheet-handle" aria-hidden="true"></div>
-      <div class="sheet-head"><span class="eyebrow">Episodes · {episodes.length}</span><button class="close-button" type="button" aria-label="Close episode list" onclick={() => episodeMenuOpen = false}><X size={17} /></button></div>
+      <div class="sheet-head"><span class="eyebrow">Episodes · {episodes.length}</span><button class="close-button" type="button" aria-label="Close episode list" onclick={() => closeEpisodeSheet()}><X size={17} /></button></div>
       <div class="sheet-list">{#each episodes as episode}<button class="sheet-option" class:active={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number} type="button" onclick={() => chooseEpisode({ season: episode.season, episode: episode.number, title: episode.title })}><span class="episode-number">{String(episode.number).padStart(2, '0')}</span><span><strong>{episode.title}</strong><small>S{episode.season} · {episode.runtime ?? 'Episode'}</small></span></button>{/each}</div>
     </div>
   {/if}

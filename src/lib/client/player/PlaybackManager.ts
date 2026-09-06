@@ -247,6 +247,19 @@ export class PlaybackManager {
     const controller = new AbortController();
     this.session.abortController = controller;
 
+    // Phase 8: resolver timeout. If the fetch hangs, abort it after
+    // RESOLVER_TIMEOUT_MS so the player leaves the `resolving` state.
+    // The timeout is cleared on success, failure, or intentional abort.
+    // We track `timedOut` to distinguish a timeout-abort from an intentional
+    // source-switch abort — the latter should be silently dropped (the new
+    // source is loading), while the former should show an error.
+    const RESOLVER_TIMEOUT_MS = 15000;
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, RESOLVER_TIMEOUT_MS);
+
     // Tear down the previous session's adapter before starting a new one.
     await this.destroySession(sessionId);
 
@@ -367,9 +380,30 @@ export class PlaybackManager {
         resolutionMessage: resolvedSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.',
         capabilities,
       });
+      // Phase 8: clear the resolver timeout on successful resolution.
+      clearTimeout(timeoutId);
     } catch (error) {
+      // Phase 8: clear the resolver timeout on any error path.
+      clearTimeout(timeoutId);
       if (!this.active || sessionId !== this.sessionId) return;
-      if (error instanceof DOMException && error.name === 'AbortError') return; // Aborted by a newer load.
+      // Phase 8: distinguish timeout-abort from intentional source-switch abort.
+      // An intentional abort (new loadSource call) silently drops the old session.
+      // A timeout abort shows a user-facing error so the player isn't stuck.
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        if (timedOut) {
+          // Resolver timed out — show a user-facing error.
+          this.patch(sessionId, {
+            source: null,
+            resolving: false,
+            state: 'provider-error',
+            errorCode: '',
+            errorMessage: 'This source is taking too long to respond.',
+            resolutionState: 'provider-error',
+            resolutionMessage: 'This source is taking too long to respond.',
+          });
+        }
+        return; // Aborted (intentional or timeout).
+      }
       let resolutionState: ResolutionState;
       let playbackState: PlayerPlaybackState;
       let errorCode = '';
