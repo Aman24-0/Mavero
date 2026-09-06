@@ -38,7 +38,9 @@ await putFavorite(favorite(100));
 await putProgress(playback(300));
 await removeFavoriteFromMyList('movie', 'probe', 400);
 assert.equal((await listFavorites()).length, 0, 'local removal must delete only the favorite relationship');
-assert.equal((await listProgress()).length, 1, 'local removal must preserve playback progress');
+// Phase 9 fix: removal from My List now ALSO deletes all watch progress
+// so the title disappears from Continue Watching immediately.
+assert.equal((await listProgress()).length, 0, 'local removal must delete playback progress (Phase 9 fix)');
 assert.equal((await listFavoriteDeletions())[0]?.deletedAt, 400, 'local removal must persist a deletion tombstone');
 await clearLocalData();
 

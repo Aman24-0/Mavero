@@ -164,15 +164,15 @@ function createWriterMock(sourceId: string, existingRuntimes?: Record<string, { 
 
 const shell = readFileSync(new URL('../src/lib/components/player/PlayerShell.svelte', import.meta.url), 'utf8');
 
-// Test 15: Landscape header contains title.
-assert.match(shell, /\.player-shell\.landscape-mode \.header-title/, 'Test 15: landscape header has title');
+// Test 15: Landscape has source + exit overlay (no title/header).
+assert.match(shell, /class="landscape-controls-overlay"/, 'Test 15: landscape has overlay controls');
 
-// Test 16: Landscape header has exactly two Mavero action buttons (exit + source).
-assert.match(shell, /\{#if landscapeMode && sourceOptions\.length\}<button[^>]*aria-label="Switch source"/, 'Test 16: landscape source button exists');
-assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}/, 'Test 16: landscape exit button exists');
+// Test 16: Landscape overlay has exactly two buttons (source + exit).
+assert.match(shell, /class="landscape-overlay-button"[^>]*aria-label="Switch source"/, 'Test 16: landscape source button in overlay');
+assert.match(shell, /class="landscape-overlay-button"[^>]*aria-label="Exit landscape player"/, 'Test 16: landscape exit button in overlay');
 
-// Test 17: No Back button in landscape.
-assert.match(shell, /\{#if !landscapeMode\}<button class="header-button header-nav"/, 'Test 17: Back button gated on !landscapeMode');
+// Test 17: No Back button in landscape — Back is inside {#if !landscapeMode} block.
+assert.match(shell, /\{#if !landscapeMode\}[\s\S]*?header-nav/, 'Test 17: Back button gated on !landscapeMode');
 
 // Test 18: No bottom bar in landscape.
 assert.match(shell, /\{#if !landscapeMode\}/, 'Test 18: bottom-bar gated on !landscapeMode');

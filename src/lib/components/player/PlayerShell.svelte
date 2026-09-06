@@ -987,16 +987,20 @@
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); handleVisibilityChangeForWakeLock(); }} />
 
   <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
+  {#if !landscapeMode}
   <header class="player-header">
     <div class="header-title-row">
-      {#if !landscapeMode}<button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>{/if}
+      <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
       <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
-      <div class="header-actions-right">
-        {#if landscapeMode && sourceOptions.length}<button class="header-button compact" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={17} /></button>{/if}
-        <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
-      </div>
+      <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
     </div>
   </header>
+  {:else}
+  <div class="landscape-controls-overlay">
+    {#if sourceOptions.length}<button class="landscape-overlay-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={20} /></button>{/if}
+    <button class="landscape-overlay-button" type="button" aria-label="Exit landscape player" aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={20} /></button>
+  </div>
+  {/if}
 
   <section class="stage-wrap" aria-label="Player viewport">
     <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
@@ -1032,7 +1036,6 @@
           {#if sourceOptions.length}<button class="shell-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={16} /></button>{/if}
           {#if episodes.length}<button class="shell-button" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={(e) => { if (episodeMenuOpen) closeEpisodeSheet(); else openEpisodeSheet(e.currentTarget as HTMLElement); }}><ListVideo size={16} /></button>{/if}
           <button class="shell-button" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={16} /></button>
-          <button class="shell-button" type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={16} /></button>
           {#if source?.type === 'embed'}<button class="shell-button" class:active={effectiveSandboxEnabled} type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={16} />{:else}<ShieldOff size={16} />{/if}</button>{/if}
         </div>
       </div>
@@ -1065,15 +1068,11 @@
 <style>
   .player-shell { --player-bg: var(--base); position: relative; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); display: flex; flex-direction: column; }
   .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; overflow: hidden; }
-  /* Phase 9: landscape header is an OVERLAY, not a layout participant.
-     This gives the player viewport maximum vertical space. */
-  .player-shell.landscape-mode .player-header { position: absolute; z-index: 12; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: linear-gradient(180deg, rgba(0,0,0,.85), transparent); }
-  /* Phase 9 fix: removed landscape header collapse CSS — header is always visible. */
-  .player-shell.landscape-mode .header-title-row { display: flex; align-items: center; gap: 8px; width: 100%; }
-  .player-shell.landscape-mode .header-actions-right { display: flex; align-items: center; gap: 4px; margin-left: auto; }
-  .player-shell.landscape-mode .header-title { display: grid; flex: 1 1 auto; justify-items: start; min-width: 0; text-align: left; }
-  .player-shell.landscape-mode .header-title strong { max-width: 40vw; }
-  .player-shell.landscape-mode .header-button { min-width: 32px; min-height: 32px; padding: 0 7px; border-radius: var(--radius-sm); }
+  /* Phase 9 fix: landscape controls overlay — two buttons top-right only. */
+  .landscape-controls-overlay { position: absolute; z-index: 14; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); display: flex; gap: 6px; }
+  .landscape-overlay-button { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.74); cursor: pointer; box-shadow: var(--shadow-sm); backdrop-filter: blur(12px); }
+  .landscape-overlay-button:hover, .landscape-overlay-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  .landscape-overlay-button:active { transform: scale(.96); }
   .player-shell.landscape-mode .header-button span { display: none; }
   /* Phase 9: stage-wrap fills the ENTIRE viewport in landscape — no header/footer space. */
   .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0; width: 100%; height: 100%; }
@@ -1091,7 +1090,7 @@
   .header-title-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; width: 100%; min-height: 40px; }
   .header-title-row .header-nav { justify-self: start; }
   .header-title-row .orientation-button { justify-self: end; }
-  .header-actions-right { display: flex; align-items: center; gap: 4px; justify-self: end; }
+  /* Phase 9 fix: header-actions-right removed — landscape uses .landscape-controls-overlay instead. */
   .header-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 11px; color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; font: inherit; font-size: .68rem; transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .header-button:hover, .header-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .header-button:disabled { cursor: not-allowed; opacity: .3; }

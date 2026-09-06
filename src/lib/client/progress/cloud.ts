@@ -112,7 +112,23 @@ export async function deleteCloudFavorite(contentType: string, contentId: string
     if (syncInFlight) {
       try { await syncInFlight; } catch { /* deletion still gets its own request */ }
     }
+    // Phase 9 fix: also delete cloud watch_progress for this title (all episodes).
+    await deleteCloudProgress(contentType, contentId, fetcher);
     const response = await fetcher(`/api/account/favorites?contentType=${encodeURIComponent(contentType)}&contentId=${encodeURIComponent(contentId)}`, { method: 'DELETE' });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Phase 9 fix: Delete all cloud watch_progress records for a given title.
+ * The cloud API at /api/account/progress accepts DELETE with contentType + contentId
+ * and deletes ALL episode progress records for that title.
+ */
+export async function deleteCloudProgress(contentType: string, contentId: string, fetcher: typeof fetch = fetch) {
+  try {
+    const response = await fetcher(`/api/account/progress?contentType=${encodeURIComponent(contentType)}&contentId=${encodeURIComponent(contentId)}`, { method: 'DELETE' });
     return response.ok;
   } catch {
     return false;

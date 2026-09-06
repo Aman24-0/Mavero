@@ -13,8 +13,9 @@ const controls = readFileSync(new URL('../src/lib/components/player/PlayerContro
 assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column; height: 100dvh/, 'landscape fills 100dvh');
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{[\s\S]*?width: 100%; height: 100%/, 'stage-wrap fills 100% width+height');
 
-// Header is overlay (absolute), not layout participant
-assert.match(shell, /\.player-shell\.landscape-mode \.player-header \{ position: absolute/, 'landscape header is absolute overlay');
+// Phase 9 fix: landscape uses .landscape-controls-overlay (not .player-header).
+assert.match(shell, /class="landscape-controls-overlay"/, 'landscape controls overlay exists');
+assert.match(shell, /class="landscape-overlay-button"/, 'landscape overlay buttons exist');
 
 // Phase 9: bottom-bar is completely hidden in landscape (not rendered in DOM).
 assert.match(shell, /\{#if !landscapeMode\}/, 'bottom-bar gated on !landscapeMode');

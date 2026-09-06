@@ -111,8 +111,23 @@ export async function getFavoriteStatus(contentType: LocalContentType, contentId
 
 export async function removeFavoriteFromMyList(contentType: LocalContentType, contentId: string, deletedAt = Date.now()) {
   const key = favoriteKey(contentType, contentId);
+  // Phase 9 fix: delete ALL watch progress for this title (all episodes)
+  // so it disappears from Continue Watching immediately.
+  await deleteAllProgressForContent(contentType, contentId);
   await removeFavorite(contentType, contentId);
   await putFavoriteDeletion({ key, contentType, contentId, deletedAt });
+}
+
+/**
+ * Phase 9 fix: Delete ALL watch progress records for a given content title.
+ * For movies, this deletes the single movie progress record.
+ * For series/anime, this deletes ALL episode progress records belonging to
+ * the specified contentId (every season:episode combination).
+ */
+export async function deleteAllProgressForContent(contentType: LocalContentType, contentId: string) {
+  const allProgress = await listProgress();
+  const toDelete = allProgress.filter((record) => record.contentType === contentType && record.contentId === contentId);
+  await Promise.all(toDelete.map((record) => removeProgress(record)));
 }
 
 export async function deleteFavorite(contentType: LocalContentType, contentId: string) {
@@ -215,8 +230,9 @@ export function getRuntimeForSource(record: WatchProgressRecord | undefined, sou
 }
 
 export function progressLabel(record: WatchProgressRecord) {
-  // Phase 9: use per-source runtime if available for the selected source.
+  // Phase 9 fix: use per-source runtime if available for the selected source.
   const effectiveDuration = getRuntimeForSource(record, record.selectedSourceId);
+  // Phase 9 fix: show total remaining minutes (NOT converted to hours).
   const remaining = effectiveDuration > 0 ? Math.max(0, Math.round((effectiveDuration - record.currentTime) / 60)) : 0;
   const time = remaining > 0 ? `${remaining}m left` : 'Resume';
   if (record.contentType === 'movie') return time;
