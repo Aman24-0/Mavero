@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { Search, LoaderCircle, X, Compass } from 'lucide-svelte';
@@ -30,6 +30,37 @@
   let requestSequence = 0;
   let routeActive = true;
   let searchInputEl: HTMLInputElement | undefined;
+
+  // Re-sync local state from `data` whenever navigation changes it.
+  //
+  // `let query = $state(data.query)` only captures the initial value of
+  // `data.query` at first mount. When the user opens a result card and then
+  // presses Back, SvelteKit may reuse the component instance AND re-run the
+  // load — `data` updates with the fresh server result, but the local
+  // `$state` would still hold the old (or empty) value because `$state` only
+  // seeds once.
+  //
+  // This effect re-syncs `query`/`type`/`results`/`errorMessage` from
+  // `data` whenever `data` identity changes. The local state is updated
+  // inside `untrack` so the effect doesn't take a reactive dependency on
+  // the state variables it's writing — otherwise typing into the search
+  // input would feed back into the effect and re-trigger it.
+  //
+  // When the user types, `query` changes locally but `data` does NOT
+  // change (because the page uses `replaceState`, which doesn't trigger
+  // the load). So this effect does not fight user input.
+  $effect(() => {
+    const nextQuery = data.query;
+    const nextType: TypeFilter = data.type === 'movie' ? 'Movie' : data.type === 'series' ? 'TV Show' : 'All';
+    const nextItems = data.items;
+    const nextError = data.errorMessage ?? '';
+    untrack(() => {
+      if (query !== nextQuery) query = nextQuery;
+      if (type !== nextType) type = nextType;
+      if (results !== nextItems) results = nextItems;
+      if (errorMessage !== nextError) errorMessage = nextError;
+    });
+  });
 
   const typeOptions: { value: TypeFilter; label: string }[] = [
     { value: 'All', label: 'All' },

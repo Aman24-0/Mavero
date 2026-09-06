@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import AppShell from '$components/AppShell.svelte';
   import PwaExperience from '$components/PwaExperience.svelte';
+  import ScrollRestore from '$components/ScrollRestore.svelte';
   import type { Snippet } from 'svelte';
   import type { LayoutData } from './$types';
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -37,4 +38,5 @@
   </AppShell>
 {/if}
 
+<ScrollRestore />
 <PwaExperience />

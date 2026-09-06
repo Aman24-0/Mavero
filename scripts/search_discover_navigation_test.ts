@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/routes/search/+page.svelte', import.meta.url), 'utf8');
 
-assert.match(source, /import \{ onDestroy \} from 'svelte'/);
+// The import may also pull in `untrack` (used to sync local state from
+// `data` on navigation without creating a reactive feedback loop).
+assert.match(source, /import \{ onDestroy(?:, \w+)* \} from 'svelte'/);
 assert.match(source, /import \{ replaceState \} from '\$app\/navigation'/);
 assert.match(source, /replaceState\(`/);
 assert.doesNotMatch(source, /\bgoto\(/);
