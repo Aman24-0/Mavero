@@ -1,5 +1,5 @@
 import { getOrSet } from '../cache';
-import { fetchJson } from '../http';
+import { tmdbRequest } from './tmdb';
 import { env } from '$env/dynamic/private';
 
 /**
@@ -16,68 +16,57 @@ import { env } from '$env/dynamic/private';
  * Results are cached for 24 hours (anime-to-TMDB mappings rarely change).
  * Stale-while-revalidate is 7 days.
  *
- * This is a best-effort lookup. If TMDB is unavailable, has no API key
- * configured, or returns no match, the function returns `undefined`.
- * The caller (AniList adapter) leaves `externalIds.tmdb` undefined, and
- * normal providers return `MISSING_IDENTIFIER` — the fallback walker
- * then tries Yenime (which uses MAL ID).
+ * IMPORTANT: This module uses the shared `tmdbRequest` function from the main
+ * TMDB adapter (tmdb.ts) — NOT a separate fetch. This ensures the same
+ * authentication, 401/403 fallback, and error handling as the main adapter.
+ * A previous version used its own `fetchJson` calls with Bearer-only auth,
+ * which silently failed when the production TMDB credential was a v3 API key
+ * (a common Netlify misconfiguration that the main adapter handles via
+ * 401→api_key fallback).
  */
 
-const TMDB_API_BASE = 'https://api.themoviedb.org/3';
 const resolverPolicy = { ttlMs: 1000 * 60 * 60 * 24, staleWhileRevalidateMs: 1000 * 60 * 60 * 24 * 7 };
+
+type TmdbSearchItem = {
+  id?: number;
+  title?: string;
+  name?: string;
+  original_title?: string;
+  original_name?: string;
+  release_date?: string;
+  first_air_date?: string;
+  genre_ids?: number[];
+  poster_path?: string | null;
+  backdrop_path?: string | null;
+  overview?: string;
+  vote_average?: number;
+  popularity?: number;
+};
 
 type TmdbSearchResult = {
   page?: number;
   total_pages?: number;
   total_results?: number;
-  results?: { id?: number; title?: string; name?: string; original_title?: string; original_name?: string; release_date?: string; first_air_date?: string; genre_ids?: number[]; poster_path?: string | null; backdrop_path?: string | null; overview?: string; vote_average?: number; popularity?: number }[];
+  results?: TmdbSearchItem[];
 };
 
 type TmdbExternalIds = {
   imdb_id?: string | null;
 };
 
-function requireCredentials(): { token: string; apiKey: string } | null {
-  const token = env.TMDB_READ_ACCESS_TOKEN;
-  const apiKey = env.TMDB_API_KEY;
-  if (!token && !apiKey) return null;
-  return { token: token ?? '', apiKey: apiKey ?? '' };
-}
-
-function buildUrl(path: string, params: Record<string, string> = {}): URL {
-  const url = new URL(`${TMDB_API_BASE}${path}`);
-  const creds = requireCredentials();
-  if (creds?.token) {
-    // Bearer token auth (v4)
-  } else if (creds?.apiKey) {
-    url.searchParams.set('api_key', creds.apiKey);
-  }
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, value);
-  }
-  return url;
-}
-
-function authHeaders(): Record<string, string> {
-  const creds = requireCredentials();
-  const headers: Record<string, string> = { accept: 'application/json' };
-  if (creds?.token) {
-    headers.authorization = `Bearer ${creds.token}`;
-  }
-  return headers;
+function requireCredentials(): boolean {
+  return Boolean(env.TMDB_READ_ACCESS_TOKEN || env.TMDB_API_KEY);
 }
 
 async function tmdbSearch(query: string, type: 'movie' | 'tv'): Promise<TmdbSearchResult | null> {
   if (!requireCredentials()) return null;
 
-  const url = buildUrl(`/search/${type}`, {
-    query,
-    include_adult: 'false',
-    language: 'en-US'
-  });
-
   try {
-    return await fetchJson<TmdbSearchResult>(url.toString(), { headers: authHeaders(), timeoutMs: 8000 });
+    return await tmdbRequest<TmdbSearchResult>(`/search/${type}`, {
+      query,
+      include_adult: 'false',
+      language: 'en-US'
+    });
   } catch {
     return null;
   }
@@ -86,10 +75,8 @@ async function tmdbSearch(query: string, type: 'movie' | 'tv'): Promise<TmdbSear
 async function tmdbExternalIds(tmdbId: string, type: 'movie' | 'tv'): Promise<string | undefined> {
   if (!requireCredentials()) return undefined;
 
-  const url = buildUrl(`/${type}/${tmdbId}/external_ids`);
-
   try {
-    const result = await fetchJson<TmdbExternalIds>(url.toString(), { headers: authHeaders(), timeoutMs: 8000 });
+    const result = await tmdbRequest<TmdbExternalIds>(`/${type}/${tmdbId}/external_ids`);
     return result.imdb_id || undefined;
   } catch {
     return undefined;
@@ -155,7 +142,7 @@ export async function findTmdbResolution(title: string, year?: number, animeForm
     const normalizedSearch = normalizeTitle(normalized);
 
     // Scoring: prefer exact title match + year match, then exact title, then year, then popularity.
-    let bestMatch: typeof items[0] | undefined;
+    let bestMatch: TmdbSearchItem | undefined;
     let bestScore = -1;
 
     for (const item of items) {
