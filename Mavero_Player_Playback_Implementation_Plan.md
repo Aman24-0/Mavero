@@ -2856,6 +2856,82 @@ The behavioral tests extract a minimal re-implementation of the Wake Lock state 
 - `161d0a8` — `fix(player): harden wake lock lifecycle and bind pip listeners to video lifecycle`
 - `169c4f1` — `test(player): strengthen phase 6 lifecycle coverage`
 
+## 2026-09-06 — Phase 6 Audit Fix 2 — Embed Wake Lock Visibility Re-Acquire
+
+**Status:** COMPLETE
+
+**Phase:** 6
+
+**Task:** Independent audit of commit `b64a87f` found a remaining blocker: `handleEmbedPlaybackEvent()` correctly acquired/released the Wake Lock from normalized provider events, but did NOT update PlayerShell's `playing` state. The visibility handler used `wasPlayingBeforeHidden = playing` and `if (wasPlayingBeforeHidden && playing)`, so embed playback was NOT reacquired on document visible.
+
+### Root cause
+
+- `handleEmbedPlaybackEvent()` called `acquireWakeLock()`/`releaseWakeLock()` but never set `playing` (correct — `playing` is the direct HTMLVideoElement flag).
+- `handleVisibilityChangeForWakeLock()` checked only `playing` (direct), not embed playback state.
+- Result: embed play → wake lock acquired → document hidden → wake lock released → document visible → `playing` is still false → wake lock NOT reacquired.
+
+### Fix — separate `embedPlaying` state
+
+Added `embedPlaying` state driven ONLY by normalized provider play/pause/ended events (never by iframe DOM load). Updated `handleEmbedPlaybackEvent()`:
+
+- `play` event → `embedPlaying = true` + `acquireWakeLock()`
+- `pause` event → `embedPlaying = false` + `releaseWakeLock()`
+- `ended` event → `embedPlaying = false` + `releaseWakeLock()`
+
+Updated `handleVisibilityChangeForWakeLock()`:
+
+- On hidden: `wasPlayingBeforeHidden = playing || embedPlaying`
+- On visible: reacquire only if `wasPlayingBeforeHidden && (playing || embedPlaying)`
+- Does NOT reacquire if paused/ended/error/source-changed (both flags reset to false)
+
+### Stale source event rejection (secondary hardening)
+
+Added `sourceId` field to the `embedPlaybackEvent` prop. The watch route stamps it with `resolvedSource.sourceId ?? selectedSourceId` at emit time. PlayerShell stamps `embedPlaybackSourceId` on source switch and rejects events where `event.sourceId !== embedPlaybackSourceId`. This prevents a stale postMessage from an old source (arriving between the source switch and the adapter destroy) from activating the wake lock for the wrong source. The PlaybackManager already has session guards — this is a safety net at the PlayerShell level.
+
+### State resets
+
+- Source switch reactive block: `embedPlaying = false` + `embedPlaybackSourceId = source.sourceId`
+- Episode switch reactive block: `embedPlaying = false` + (if source exists) `embedPlaybackSourceId = source.sourceId`
+
+### Conservative rules preserved
+
+- iframe DOM load (`handleEmbedLoad`) NEVER acquires wake lock — still only sets shell `state = 'playing'` for display purposes.
+- Black-box embed providers with no reliable normalized play/pause events NEVER acquire wake lock.
+- Direct playback behavior unchanged — `playing` flag still driven by HTMLVideoElement events only.
+
+### Behavioral tests added (Tests E-L)
+
+- **Test E:** embed play sets `embedPlaying = true` and acquires wake lock.
+- **Test F:** embed pause clears `embedPlaying` and releases wake lock.
+- **Test G:** embed ended clears `embedPlaying` and releases wake lock.
+- **Test H:** embed play → hidden → visible reacquires wake lock (THE CORE FIX — previously failed because visibility handler only checked `playing`).
+- **Test I:** embed pause → hidden → visible does NOT reacquire.
+- **Test J:** source switch invalidates embed playback state.
+- **Test K:** episode switch invalidates embed playback state.
+- **Test L:** stale embed playback event cannot activate wake lock for a different source (sourceId guard).
+
+The `createWakeLockStateMachine` test harness was extended with `embedPlaying`, `embedPlaybackSourceId`, `sourceType`, `handleEmbedPlaybackEvent()`, `switchSource()`, and `getEmbedPlaying()` to mirror the PlayerShell implementation exactly.
+
+### Files changed
+
+| File | Status | Changes |
+|---|---|---|
+| `src/lib/components/player/PlayerShell.svelte` | modified | Added `embedPlaying` + `embedPlaybackSourceId` state; updated `handleEmbedPlaybackEvent` to set `embedPlaying` + reject stale source events; updated `handleVisibilityChangeForWakeLock` to use `playing \|\| embedPlaying`; reset `embedPlaying` on source switch + episode switch; updated `embedPlaybackEvent` prop type to include `sourceId`. |
+| `src/routes/watch/[type]/[id]/+page.svelte` | modified | `embedPlaybackEvent` now includes `sourceId` field (stamped from `resolvedSource.sourceId ?? selectedSourceId`). |
+| `scripts/phase6_player_apis_test.ts` | modified | Updated contract assertions for new state/signature; added 8 behavioral tests (Tests E-L) for embed playback state lifecycle. |
+
+### Verification
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings — NO new warnings).
+- `pnpm test` → PASS (38 scripts: 37 existing + 1 Phase 6 with 15 behavioral tests).
+- `pnpm run build` → PASS.
+- Manual QA: NOT TESTABLE (no Supabase env).
+
+### Commits
+
+- `55c9843` — `fix(player): add embedPlaying state for embed wake lock visibility re-acquire`
+- `2f9bfe0` — `test(player): add behavioral tests for embed playback state lifecycle`
+
 ### Worklog template
 
 ```md
