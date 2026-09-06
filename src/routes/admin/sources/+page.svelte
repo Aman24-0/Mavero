@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, ChevronDown, Plus, SlidersHorizontal, Trash2 } from 'lucide-svelte';
+  import { Check, ChevronDown, Plus, SlidersHorizontal, Trash2, FlaskConical, Loader2, X } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import { integrationTypes, identifierModes, providerStatuses, sourceVisibilities } from '$lib/shared/streaming';
   import { sandboxPolicies, sandboxPolicyDescription, sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
@@ -15,6 +15,57 @@
   const sandboxPolicyLabels = { required: 'Required — secure sandbox', optional: 'Optional — secure by default', unrestricted: 'Unrestricted — warning' };
   const sourceSandboxPolicy = (source: PageData['sources'][number]) => sandboxPolicyFromCapabilities(data.providers.find((provider) => provider.id === source.provider_id)?.capabilities, source.capabilities);
   const providerName = (id: string) => data.providers.find((provider) => provider.id === id)?.name ?? 'Unknown provider';
+
+  // Phase 7: source test state — per-source panel + result.
+  let testSourceId = '';
+  let testContentId = '';
+  let testMediaType: 'movie' | 'series' | 'anime' = 'movie';
+  let testSeason = '';
+  let testEpisode = '';
+  let testLoading = false;
+  let testResult: { ok: boolean; result?: { type: string; url: string | null }; attempts?: { sourceId: string; result: string; errorCode?: string }[]; rankingDiagnostics?: { eligible: { sourceId: string }[]; excluded: { sourceId: string; reason: string }[] }; durationMs?: number; error?: { code: string; message: string } } | null = null;
+
+  function openTestPanel(sourceId: string) {
+    testSourceId = sourceId;
+    testResult = null;
+  }
+
+  function closeTestPanel() {
+    testSourceId = '';
+    testResult = null;
+    testContentId = '';
+    testSeason = '';
+    testEpisode = '';
+    testMediaType = 'movie';
+  }
+
+  async function runTest(event: SubmitEvent) {
+    event.preventDefault();
+    if (!testSourceId || !testContentId) return;
+    testLoading = true;
+    testResult = null;
+    try {
+      const body: { sourceId: string; contentId: string; mediaType: 'movie' | 'series' | 'anime'; season?: number; episode?: number } = {
+        sourceId: testSourceId,
+        contentId: testContentId,
+        mediaType: testMediaType,
+      };
+      if (testMediaType !== 'movie' && testSeason && testEpisode) {
+        body.season = Number(testSeason);
+        body.episode = Number(testEpisode);
+      }
+      const response = await fetch('/api/admin/sources/test', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      testResult = await response.json();
+    } catch (err) {
+      testResult = { ok: false, error: { code: 'NETWORK_ERROR', message: String(err instanceof Error ? err.message : err) } };
+    } finally {
+      testLoading = false;
+    }
+  }
 </script>
 
 <svelte:head><title>Source Registry — Mavero</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
@@ -60,7 +111,28 @@
         <label>Description<textarea name="description" maxlength="500" rows="2">{source.description ?? ''}</textarea></label><label>Admin notes<textarea name="notes" maxlength="2000" rows="2">{source.notes ?? ''}</textarea></label>
         <div class="form-actions"><button class="btn btn-primary" type="submit">Save changes</button></div>
       </form>
-      <div class="form-actions secondary-actions"><form method="POST" action="?/toggleSource" class="inline-form" onsubmit={(event) => { const button = (event.currentTarget as HTMLFormElement).querySelector('button'); if (button) button.disabled = true; }}><input type="hidden" name="id" value={source.id} /><input type="hidden" name="enabled" value={source.enabled ? 'false' : 'true'} /><button class="btn btn-secondary" type="submit">{source.enabled ? 'Disable' : 'Enable'}</button></form><form method="POST" action="?/deleteSource" class="inline-form" onsubmit={() => confirm(`Delete ${source.name}? Assigned category records must be removed first.`)}><input type="hidden" name="id" value={source.id} /><button class="btn btn-danger" type="submit"><Trash2 size={14} /> Delete</button></form></div>
+      <div class="form-actions secondary-actions"><form method="POST" action="?/toggleSource" class="inline-form" onsubmit={(event) => { const button = (event.currentTarget as HTMLFormElement).querySelector('button'); if (button) button.disabled = true; }}><input type="hidden" name="id" value={source.id} /><input type="hidden" name="enabled" value={source.enabled ? 'false' : 'true'} /><button class="btn btn-secondary" type="submit">{source.enabled ? 'Disable' : 'Enable'}</button></form><form method="POST" action="?/deleteSource" class="inline-form" onsubmit={() => confirm(`Delete ${source.name}? Assigned category records must be removed first.`)}><input type="hidden" name="id" value={source.id} /><button class="btn btn-danger" type="submit"><Trash2 size={14} /> Delete</button></form><button class="btn btn-secondary" type="button" onclick={() => openTestPanel(source.id)}><FlaskConical size={14} /> Test</button></div>
+
+      {#if testSourceId === source.id}
+        <div class="test-panel" role="region" aria-label={`Test source ${source.name}`}>
+          <div class="test-panel-header"><strong>Resolution test</strong><button class="btn btn-secondary test-close" type="button" onclick={closeTestPanel} aria-label="Close test panel"><X size={14} /></button></div>
+          <p class="test-hint">Tests ONLY this source. Does NOT mutate health, defaults, or public config. <code>skipHealthMutation=true</code>.</p>
+          <form class="test-form" onsubmit={runTest}>
+            <div class="form-grid two"><label>Content ID<input bind:value={testContentId} required placeholder="e.g. tt1375666 or 550" /></label><label>Media type<select bind:value={testMediaType}><option value="movie">Movie</option><option value="series">Series</option><option value="anime">Anime</option></select></label></div>
+            {#if testMediaType !== 'movie'}<div class="form-grid two"><label>Season<input bind:value={testSeason} type="number" min="1" step="1" placeholder="1" /></label><label>Episode<input bind:value={testEpisode} type="number" min="1" step="1" placeholder="1" /></label></div>{/if}
+            <div class="form-actions"><button class="btn btn-primary" type="submit" disabled={testLoading}>{#if testLoading}<Loader2 size={14} class="spin" /> Testing…{:else}<FlaskConical size={14} /> Run test{/if}</button></div>
+          </form>
+          {#if testResult}
+            <div class="test-result" class:ok={testResult.ok} class:fail={!testResult.ok} role="status">
+              <div class="test-result-header">{#if testResult.ok}<Check size={15} /> <strong>Resolution succeeded</strong>{:else}<X size={15} /> <strong>Resolution failed</strong>{/if}{#if testResult.durationMs !== undefined}<span class="test-duration">{testResult.durationMs}ms</span>{/if}</div>
+              {#if testResult.result}<div class="test-detail"><span>Type:</span> <code>{testResult.result.type}</code></div>{#if testResult.result.url}<div class="test-detail"><span>URL:</span> <code class="test-url">{testResult.result.url}</code></div>{/if}{/if}
+              {#if testResult.error}<div class="test-detail"><span>Error:</span> <code>{testResult.error.code}</code> — {testResult.error.message}</div>{/if}
+              {#if testResult.attempts && testResult.attempts.length}<details class="test-attempts"><summary>Attempts ({testResult.attempts.length})</summary><ul>{#each testResult.attempts as attempt}<li><code>{attempt.sourceId.slice(0, 8)}…</code> — {attempt.result}{#if attempt.errorCode} (err: {attempt.errorCode}){/if}</li>{/each}</ul></details>{/if}
+              {#if testResult.rankingDiagnostics?.excluded.length}<details class="test-attempts"><summary>Excluded ({testResult.rankingDiagnostics.excluded.length})</summary><ul>{#each testResult.rankingDiagnostics.excluded as ex}<li><code>{ex.sourceId.slice(0, 8)}…</code> — {ex.reason}</li>{/each}</ul></details>{/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
     </details>
   {/each}</div>{/if}
 </AdminShell>
@@ -76,4 +148,26 @@
   .registry-list { display: grid; gap: 10px; margin-top: 15px; } .record { margin-top: 0; } .record summary { padding: 14px 16px; } .source-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--accent); background: var(--accent-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; } .record-main strong { display: block; color: var(--ink); font-size: .78rem; } .record-main span:not(.source-icon) { display: block; margin-top: 3px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; } .record-meta { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; } .record-meta .good { color: var(--success); } .record-meta .warning { color: #ffb020; }   .empty { margin-top: 15px; padding: 45px 20px; text-align: center; border: 1px dashed var(--line); border-radius: 14px; } .empty h2 { margin: 10px 0 5px; font-size: 1rem; } .empty p { margin: 0; color: var(--muted); font-size: .72rem; } .security-note { color: #ffb020; font-size: .55rem; line-height: 1.45; }
 
   @media (max-width: 700px) { .heading-row { align-items: start; flex-direction: column; } .form-grid.two, .form-grid.three { grid-template-columns: 1fr; } .record-meta span:nth-child(2) { display: none; } }
+
+  /* Phase 7: source test panel */
+  .test-panel { margin: 0 19px 16px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); }
+  .test-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ink); font-size: .72rem; }
+  .test-close { padding: 5px 8px; }
+  .test-hint { margin: 6px 0 11px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; line-height: 1.5; }
+  .test-hint code { color: var(--accent); background: var(--accent-soft); padding: 1px 4px; border-radius: 3px; }
+  .test-form { display: grid; gap: 10px; }
+  .test-result { margin-top: 12px; padding: 11px 13px; border-radius: 9px; font-size: .64rem; }
+  .test-result.ok { color: var(--success); border: 1px solid rgba(126,220,180,.25); background: rgba(126,220,180,.06); }
+  .test-result.fail { color: #ff8a8a; border: 1px solid rgba(228,133,105,.25); background: rgba(228,133,105,.07); }
+  .test-result-header { display: flex; align-items: center; gap: 7px; }
+  .test-duration { margin-left: auto; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
+  .test-detail { margin-top: 6px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
+  .test-detail span { color: var(--muted-deep); }
+  .test-detail code, .test-url { color: var(--ink); word-break: break-all; }
+  .test-attempts { margin-top: 8px; }
+  .test-attempts summary { cursor: pointer; color: var(--muted); font-size: .58rem; padding: 4px 0; }
+  .test-attempts ul { margin: 4px 0 0; padding-left: 16px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; }
+  .test-attempts li { margin-top: 2px; }
+  :global(.spin) { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>

@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { Check, ChevronDown, Plus, ShieldCheck, Trash2 } from 'lucide-svelte';
+  import { Check, ChevronDown, Plus, ShieldCheck, Trash2, HelpCircle, X } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import { integrationTypes, providerStatuses } from '$lib/shared/streaming';
   import { sandboxPolicies, sandboxPolicyDescription, sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
+  import { CAPABILITY_FIELDS, CAPABILITY_LABELS, type ProviderPlaybackCapabilities } from '$lib/shared/player-capabilities';
   import type { ActionData, PageData } from './$types';
 
   export let data: PageData;
@@ -15,6 +16,19 @@
   const healthStateLabels = { healthy: 'Healthy', degraded: 'Degraded', unhealthy: 'Unhealthy', cooldown: 'Cooldown', unknown: 'Unknown' } as const;
   const healthFor = (providerId: string) => data.health?.[providerId];
   const healthChecked = (providerId: string) => healthFor(providerId)?.lastCheckedAt ? new Date(healthFor(providerId)!.lastCheckedAt!).toLocaleString() : 'Not checked';
+
+  // Phase 7: capability matrix display.
+  // For each provider, look up the adapter's ProviderPlaybackCapabilities.
+  // If null, the adapter is unknown — display "Unknown" (NOT unsupported).
+  const capabilityFor = (providerId: string) => data.capabilityMap?.[providerId] ?? null;
+  // Helper: three-state capability value for a single field.
+  // 'supported' | 'unsupported' | 'unknown'
+  function capabilityState(providerId: string, field: keyof ProviderPlaybackCapabilities): 'supported' | 'unsupported' | 'unknown' {
+    const entry = capabilityFor(providerId);
+    if (!entry) return 'unknown';
+    if (entry.supported.includes(field)) return 'supported';
+    return 'unsupported';
+  }
 </script>
 
 <svelte:head><title>Provider Registry — Mavero</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
@@ -55,6 +69,32 @@
         <div class="form-actions"><button class="btn btn-primary" type="submit">Save changes</button></div>
       </form>
       <div class="form-actions secondary-actions"><form method="POST" action="?/toggleProvider" class="inline-form" onsubmit={(event) => { const button = (event.currentTarget as HTMLFormElement).querySelector('button'); if (button) button.disabled = true; }}><input type="hidden" name="id" value={provider.id} /><input type="hidden" name="enabled" value={provider.enabled ? 'false' : 'true'} /><button class="btn btn-secondary" type="submit">{provider.enabled ? 'Disable' : 'Enable'}</button></form><form method="POST" action="?/deleteProvider" class="inline-form" onsubmit={() => confirm(`Delete ${provider.name}? Providers with dependent sources cannot be deleted.`)}><input type="hidden" name="id" value={provider.id} /><button class="btn btn-danger" type="submit"><Trash2 size={14} /> Delete</button></form></div>
+
+      {#if provider.adapter_id}
+        <details class="capability-panel">
+          <summary><span class="cap-label">Playback capabilities</span><span class="cap-adapter">adapter: <code>{provider.adapter_id}</code></span><ChevronDown size={14} /></summary>
+          <div class="cap-matrix">
+            {#each CAPABILITY_FIELDS as field}
+              {@const state = capabilityState(provider.id, field)}
+              <div class="cap-cell" class:ok={state === 'supported'} class:no={state === 'unsupported'} class:unknown={state === 'unknown'}>
+                {#if state === 'supported'}<Check size={12} />{:else if state === 'unsupported'}<X size={12} />{:else}<HelpCircle size={12} />{/if}
+                <span>{CAPABILITY_LABELS[field]}</span>
+              </div>
+            {/each}
+          </div>
+          {#if !capabilityFor(provider.id)}<p class="cap-note">No dedicated adapter registered — capabilities are <strong>Unknown</strong>. The provider may still work via the generic template adapter; values are not assumed.</p>{/if}
+        </details>
+      {:else}
+        <details class="capability-panel">
+          <summary><span class="cap-label">Playback capabilities</span><span class="cap-adapter">no adapter_id set</span><ChevronDown size={14} /></summary>
+          <div class="cap-matrix">
+            {#each CAPABILITY_FIELDS as field}
+              <div class="cap-cell unknown"><HelpCircle size={12} /><span>{CAPABILITY_LABELS[field]}</span></div>
+            {/each}
+          </div>
+          <p class="cap-note">No <code>adapter_id</code> configured — all capabilities are <strong>Unknown</strong>. The generic template adapter will be used; no postMessage events are normalized.</p>
+        </details>
+      {/if}
     </details>
   {/each}</div>{/if}
 </AdminShell>
@@ -109,4 +149,19 @@
   .empty h2 { margin: 10px 0 5px; font-size: 1rem; }
   .empty p { margin: 0; color: var(--muted); font-size: .72rem; }
   @media (max-width: 700px) { .heading-row { align-items: start; flex-direction: column; } .form-grid.two, .form-grid.three { grid-template-columns: 1fr; } .record-meta span:nth-child(2) { display: none; } }
+
+  /* Phase 7: capability matrix panel */
+  .capability-panel { margin: 0 19px 16px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); }
+  .capability-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 14px; cursor: pointer; list-style: none; color: var(--ink); font-size: .68rem; }
+  .capability-panel summary::-webkit-details-marker { display: none; }
+  .cap-label { color: var(--accent); font-size: .62rem; }
+  .cap-adapter { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; }
+  .cap-adapter code { color: var(--ink); }
+  .cap-matrix { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; padding: 0 14px 12px; }
+  .cap-cell { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
+  .cap-cell.ok { color: var(--success); border-color: rgba(126,220,180,.2); background: rgba(126,220,180,.04); }
+  .cap-cell.no { color: #ff8a8a; border-color: rgba(228,133,105,.15); background: rgba(228,133,105,.03); }
+  .cap-cell.unknown { color: var(--muted-deep); border-color: var(--line); background: rgba(255,255,255,.02); }
+  .cap-note { margin: 0 14px 12px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; line-height: 1.5; }
+  .cap-note code { color: var(--ink); }
 </style>

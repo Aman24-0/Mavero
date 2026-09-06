@@ -135,4 +135,13 @@ export type ResolverDependencies = {
   loadConfig?: (request: ResolverRequest) => Promise<TrustedResolutionConfig>;
   adapters?: Partial<Record<IntegrationType, ProviderAdapter>>;
   adaptersById?: Record<string, ProviderAdapter>;
+  /**
+   * Phase 7: when `true`, the resolver MUST NOT mutate
+   * `streaming_provider_health` (the `recordRuntimeSuccess` /
+   * `recordRuntimeFailure` callbacks become no-ops). Default is `false` —
+   * production behavior (the anonymous /api/playback/resolve endpoint) is
+   * unchanged. Used by the admin source-test endpoint to test a source
+   * without polluting production health state.
+   */
+  skipHealthMutation?: boolean;
 };

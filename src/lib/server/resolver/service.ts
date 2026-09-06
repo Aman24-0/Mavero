@@ -7,7 +7,7 @@ import type { NormalizedMediaItem } from '$lib/server/content/types';
 import { resolveSourceFromConfig } from './core';
 import { ResolverError } from './errors';
 import { parseResolverRequest } from './identifiers';
-import { resolveWithBoundedFallback, type FallbackCandidate } from './fallback';
+import { resolveWithBoundedFallback, type FallbackAttempt, type FallbackCandidate } from './fallback';
 import { rankProviderSourceList } from './ranking';
 import { loadSourceHealthMap, recordRuntimeFailure, recordRuntimeSuccess } from '$lib/server/streaming/health-service';
 import { applyDefaultSourceOrdering } from './default-source';
@@ -106,14 +106,70 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
   const healthMap = await loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id));
   const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
   const candidates: FallbackCandidate[] = ranking.eligible.map((ranked) => ({ config: ranked.config, eligible: true }));
+  // Phase 7: when `skipHealthMutation` is true (admin source test), the
+  // onSuccess/onFailure callbacks become no-ops so the test does NOT mutate
+  // `streaming_provider_health`. Default is `false` — production behavior
+  // (the anonymous /api/playback/resolve endpoint) is unchanged.
+  const skipHealthMutation = dependencies.skipHealthMutation === true;
   const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
     allowFallback: true,
     maxAttempts: candidates.length,
     avoidDuplicateProviders: true,
     isEligible: async (candidate) => candidate.eligible !== false,
-    onSuccess: async (candidate) => recordRuntimeSuccess(trustedClient, candidate.config.provider.id, candidate.config.source.id),
-    onFailure: async (candidate, error) => recordRuntimeFailure(trustedClient, candidate.config.provider.id, candidate.config.source.id, error),
+    onSuccess: skipHealthMutation ? undefined : async (candidate) => recordRuntimeSuccess(trustedClient, candidate.config.provider.id, candidate.config.source.id),
+    onFailure: skipHealthMutation ? undefined : async (candidate, error) => recordRuntimeFailure(trustedClient, candidate.config.provider.id, candidate.config.source.id, error),
   });
   return resolved.result;
+}
+
+/**
+ * Phase 7: resolve a single source with full fallback diagnostics, without
+ * mutating provider/source health. Used by the admin source-test endpoint
+ * to give admins visibility into the resolution attempts and ranking without
+ * polluting production health state.
+ *
+ * Returns the resolved `SourceResult` (or error), the list of fallback
+ * attempts, and the ranking diagnostics (eligible + excluded candidates).
+ */
+export async function resolveSourceDiagnostics(
+  client: ResolverClient,
+  input: unknown,
+  dependencies: ResolverDependencies = {},
+): Promise<{
+  result: import('./types').SourceResult;
+  attempts: FallbackAttempt[];
+  ranking: { eligible: { sourceId: string; providerId: string }[]; excluded: { sourceId: string; providerId: string; reason: string }[] };
+}> {
+  const request = parseResolverRequest(input);
+  const config = await (dependencies.loadConfig ?? ((value: ResolverRequest) => loadTrustedConfig(client, value)))(request);
+  const content = await (dependencies.loadContent ?? loadContent)(request);
+
+  // For diagnostics, we resolve ONLY the requested source (no fallback to
+  // other sources). This ensures the admin test does NOT accidentally test
+  // or rank other production sources.
+  const orderedConfigs: TrustedResolutionConfig[] = [config];
+  const sortedConfigs = applyDefaultSourceOrdering(orderedConfigs, request.defaultSourceId);
+  const trustedClient = serviceClient();
+  const healthMap = await loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id));
+  const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
+
+  const eligibleCandidates: FallbackCandidate[] = ranking.eligible.map((ranked) => ({ config: ranked.config, eligible: true }));
+  // skipHealthMutation = true: no health table writes.
+  const resolved = await resolveWithBoundedFallback(request, content, eligibleCandidates, dependencies, {
+    allowFallback: true,
+    maxAttempts: eligibleCandidates.length,
+    avoidDuplicateProviders: true,
+    isEligible: async (candidate) => candidate.eligible !== false,
+    // No onSuccess/onFailure → no health mutation.
+  });
+
+  return {
+    result: resolved.result,
+    attempts: resolved.attempts,
+    ranking: {
+      eligible: ranking.eligible.map((r) => ({ sourceId: r.config.source.id, providerId: r.config.provider.id })),
+      excluded: ranking.excluded.map((r) => ({ sourceId: r.config.source.id, providerId: r.config.provider.id, reason: r.reason })),
+    },
+  };
 }
 

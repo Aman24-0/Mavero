@@ -12,7 +12,23 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     listAdminProviders(locals.supabase),
     listProviderHealthSummaries(locals.supabase),
   ]);
-  return { providers, health, notice: url.searchParams.get('notice') };
+  // Phase 7: build a capability map keyed by adapter_id for the UI matrix.
+  // lookupProviderCapabilities returns null for unknown adapters (display "Unknown").
+  const { lookupProviderCapabilities } = await import('$lib/shared/player-capabilities');
+  const capabilityMap: Record<string, { supported: string[]; unsupported: string[]; unknown: boolean } | null> = {};
+  for (const provider of providers) {
+    const caps = lookupProviderCapabilities(provider.adapter_id);
+    if (!caps) {
+      capabilityMap[provider.id] = null; // Unknown — display as "?" for all fields
+    } else {
+      capabilityMap[provider.id] = {
+        supported: Object.entries(caps).filter(([, v]) => v === true).map(([k]) => k),
+        unsupported: Object.entries(caps).filter(([, v]) => v === false).map(([k]) => k),
+        unknown: false,
+      };
+    }
+  }
+  return { providers, health, capabilityMap, notice: url.searchParams.get('notice') };
 };
 
 export const actions: Actions = {
