@@ -2477,6 +2477,141 @@ Preserved unchanged from Phase 0:
 
 **Commit:** `8d93b2c` — `feat(player): add progress resume and source continuity`
 
+---
+
+## 2026-09-06 — Phase 5 — Complete Player UI Redesign
+
+**Status:** COMPLETE
+
+**Phase:** 5
+
+**Task:** Redesign the player UI to match the Mavero neutral monochrome design system. Remove all old pink/purple/crimson hardcoded colors from PlayerShell, PlayerControls, and PlayerViewport. Replace with Mavero CSS variables (`--base`, `--ink`, `--ink-soft`, `--muted`, `--muted-deep`, `--line`, `--line-strong`, `--accent`, `--accent-strong`, `--accent-soft`, `--surface`, `--shadow-sm`, `--shadow-lg`, `--radius-sm`, `--radius-md`, `--radius-lg`, `--ease-out`, `--motion-fast`, `--motion-normal`). Preserve all Phase 1-4 playback/progress behavior, landscape contract, accessibility, and functional behavior.
+
+### Implementation summary
+
+Phase 5 is a **CSS-only redesign** — the `<script>` blocks of PlayerShell, PlayerControls, and PlayerViewport are completely unchanged. Only the `<style>` blocks were rewritten to replace hardcoded color values with Mavero design system CSS variables.
+
+**Color replacements:**
+
+| Old value | New value | Component(s) |
+|---|---|---|
+| `#07070c` (old dark background) | `var(--base)` | PlayerShell, PlayerViewport |
+| `rgba(4,4,6,.94)` (old header gradient) | `rgba(0,0,0,.92)` | PlayerShell |
+| `rgba(12,11,17,.58)` (old button background) | `rgba(0,0,0,.58)` | PlayerShell |
+| `rgba(255, 62, 94, .52)` (crimson hover) | `var(--line-strong)` + `var(--accent-soft)` | PlayerShell |
+| `rgba(255, 56, 96, .14)` (pink hover bg) | `var(--accent-soft)` | PlayerShell |
+| `#cabefd` (light purple text) | `var(--ink-soft)` / `var(--ink)` | PlayerShell |
+| `#c3b5fc` (light purple text) | `var(--ink-soft)` | PlayerShell |
+| `rgba(123, 92, 250, .14)` (violet bg) | `var(--accent-soft)` | PlayerShell |
+| `rgba(123, 92, 250, .18)` (violet bg) | `var(--accent-soft)` | PlayerShell |
+| `rgba(255, 62, 94, .26)` (crimson border) | `var(--line)` | PlayerShell |
+| `rgba(255, 62, 94, .35)` (crimson border) | `var(--line-strong)` | PlayerShell |
+| `rgba(255, 62, 94, .16)` (crimson bg) | `var(--accent-soft)` | PlayerShell |
+| `rgba(255, 62, 94, .22)` (crimson border) | `var(--line)` | PlayerShell |
+| `rgba(255, 62, 94, .1)` (crimson hover bg) | `var(--accent-soft)` | PlayerShell |
+| `rgba(255, 88, 120, .95)` (pink spinner) | `var(--ink-soft)` | PlayerShell |
+| `rgba(255, 62, 94,.2)` (pink spinner fade) | `var(--accent-soft)` | PlayerShell |
+| `rgba(155,135,245,.65)` (purple glow) | `rgba(255,255,255,.25)` | PlayerControls |
+| `rgba(194,181,255,.55)` (light purple hover) | `var(--line-strong)` | PlayerControls |
+| `rgba(33,27,52,.86)` (dark purple bg) | `var(--accent-soft)` | PlayerControls |
+| `rgba(155,135,245,.18)` (purple gradient) | `rgba(255,255,255,.06)` | PlayerViewport |
+| `rgba(194,181,255,.42)` (purple border) | `var(--line-strong)` | PlayerViewport |
+| `rgba(155,135,245,.05)` (purple shadow) | `rgba(255,255,255,.02)` | PlayerViewport |
+| `rgba(155,135,245,.23)` (purple glow) | `rgba(255,255,255,.08)` | PlayerViewport |
+| `#101018` (old dark bg) | `var(--surface)` | PlayerViewport |
+| `#0e0e16` (old spinner inner) | `var(--surface)` | PlayerShell |
+| `rgba(13,12,19,.95)` (old drawer bg) | `rgba(13,13,13,.96)` | PlayerShell |
+| `rgba(12,11,18,.88)` (old card bg) | `rgba(13,13,13,.92)` | PlayerShell |
+| `rgba(9,9,12,.74)` (old toggle bg) | `rgba(0,0,0,.74)` | PlayerShell |
+| `rgba(7,7,10,.68)` (old control bg) | `rgba(0,0,0,.68)` | PlayerControls |
+| Hardcoded border-radius (`8px`, `10px`, `11px`, `14px`, `15px`, `16px`) | `var(--radius-sm)`, `var(--radius-md)`, `var(--radius-lg)` | PlayerShell, PlayerControls |
+| Hardcoded transition timing (`160ms`, `220ms`, `180ms`) | `var(--motion-fast)`, `var(--motion-normal)`, `var(--ease-out)` | PlayerShell, PlayerControls |
+
+### UI changes
+
+- **PlayerShell:** Background uses `var(--base)` instead of hardcoded `#07070c`. All header buttons use `var(--line)` / `var(--line-strong)` borders and `var(--accent-soft)` hover backgrounds. Loading spinner uses `var(--ink-soft)` conic gradient instead of pink. Source/episode drawers use `var(--line)` borders and `var(--accent-soft)` hover. Message cards use `var(--line)` borders and `var(--shadow-lg)`. All radius values use `var(--radius-*)`.
+- **PlayerControls:** Timeline progress bar uses `var(--accent)` with subtle white glow instead of purple glow. Primary play button uses `var(--accent-strong)` (white) with black text instead of gradient. Control buttons use `var(--ink-soft)` text and `var(--accent-soft)` hover. Volume slider thumb uses `var(--ink)` border. All transitions use `var(--motion-fast)` / `var(--ease-out)`.
+- **PlayerViewport:** Background uses `var(--base)`. Empty viewport gradient uses `var(--surface)` / `var(--base)`. Empty orb uses `var(--line-strong)` border. State label uses `var(--muted)`. Viewport shade uses `rgba(0,0,0,.72)` instead of `rgba(4,4,6,.72)`.
+
+### Direct source behavior
+
+Preserved unchanged. PlayerControls still only rendered when `source?.type === 'direct'` (line 411 of PlayerShell). All play/pause/seek/volume/quality/subtitles/speed/PiP/fullscreen controls work exactly as before. The `onProgress` callback to the watch route is unchanged.
+
+### Embed source behavior
+
+Preserved unchanged. Embed sources show the header buttons (Back, Details, Episodes, Sources, Sandbox) and the provider's own player UI inside the iframe. No Mavero-side playback controls for generic embeds (only direct sources get PlayerControls). The `onIframeReady` callback and `manager.setIframe()` wiring are preserved.
+
+### Capability-aware controls
+
+Not expanded in Phase 5 — the existing architecture gates PlayerControls behind `source?.type === 'direct'` only. CineSrc command support (play/pause/seek via `manager.play()` etc.) exists in the PlaybackManager but is not yet wired to a UI control. This is intentionally deferred — the current UI correctly shows NO Mavero playback controls for embed sources, which is the correct graceful degradation. Phase 5 did not add capability-aware embed controls to avoid scope creep.
+
+### Accessibility
+
+All existing ARIA attributes preserved: `role="application"`, `aria-label` on all buttons, `aria-expanded` on dropdowns, `aria-pressed` on toggles, `role="alert"` on error cards, `role="status"` on loading/completion cards, `aria-label="Seek playback"` on timeline, `aria-label="Volume"` on volume slider. Keyboard shortcuts (Space/K, ArrowLeft/Right, M, F, Escape) preserved.
+
+### Responsive/landscape
+
+All responsive breakpoints preserved: `@media (max-width: 640px)`, `@media (orientation: landscape) and (max-height: 560px)`, `@media (prefers-reduced-motion: reduce)`. Landscape contract test (`landscape_player_contract_test.ts`) passes — all 14 structural checks verified.
+
+### Phase 4 regression check
+
+No Phase 4 code was modified. The `<script>` blocks of PlayerShell, PlayerControls, and PlayerViewport are identical to Phase 4. Only `<style>` blocks changed. All Phase 1-4 tests (36 scripts) pass. The watch route, PlaybackManager, adapters, progress system, and resolver are unchanged.
+
+### Tests added
+
+`scripts/phase5_player_ui_test.ts` — 15 test groups (75+ individual assertions):
+1. No old pink/crimson/purple colors in PlayerShell (12 checks).
+2. No old pink/crimson/purple colors in PlayerControls (4 checks).
+3. No old pink/purple colors in PlayerViewport (4 checks).
+4. Mavero design system CSS variables used (10 checks).
+5. Landscape contract preserved (14 structural checks).
+6. Player viewport permissions preserved (3 checks).
+7. Direct source controls gating preserved.
+8. Accessibility preserved (10 ARIA checks).
+9. Source/episode drawers preserved (5 checks).
+10. Loading/error states preserved (5 checks).
+11. Keyboard shortcuts preserved (3 checks).
+12. Sandbox toggle preserved.
+13. Iframe ready callback preserved.
+14. Cross-origin safety comment preserved.
+15. No episode stepper.
+
+### Validation results
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings — identical to Phase 0-4 baseline).
+- `pnpm test` → PASS (37 scripts, including 15 new Phase 5 test groups + all Phase 1-4 tests).
+- `pnpm run build` → PASS (vite build + Netlify adapter, no TypeScript errors).
+- Manual playback: NOT TESTABLE end-to-end (no Supabase env file — same env-config gap as Phase 1-4 smoke tests).
+
+### Files changed
+
+| File | Status | Changes |
+|---|---|---|
+| `src/lib/components/player/PlayerShell.svelte` | modified | CSS-only: replaced all hardcoded pink/purple/crimson colors with Mavero CSS variables. `<script>` and markup unchanged. |
+| `src/lib/components/player/PlayerControls.svelte` | modified | CSS-only: replaced all hardcoded colors with Mavero CSS variables. `<script>` and markup unchanged. |
+| `src/lib/components/player/PlayerViewport.svelte` | modified | CSS-only: replaced all hardcoded colors with Mavero CSS variables. `<script>` and markup unchanged. |
+| `scripts/phase5_player_ui_test.ts` | new | 15-test-group Phase 5 contract suite. |
+| `package.json` | modified | Registered `phase5_player_ui_test.ts` in the test chain. |
+
+### Known non-blocking limitations
+
+1. **No capability-aware embed controls added.** CineSrc's command support (play/pause/seek via manager) exists in the PlaybackManager but is not wired to UI controls. The current UI correctly shows NO Mavero playback controls for embed sources — this is the correct graceful degradation. Adding capability-aware embed controls (showing play/pause/seek only for providers that support commands) is a future enhancement.
+
+2. **No visual layout redesign.** Phase 5 focused on color/design-system alignment — replacing old hardcoded colors with Mavero CSS variables. The structural layout (portrait header + stage + controls, landscape collapsible header + full-viewport player) is preserved from Phase 0. A structural layout redesign (new portrait/landscape layout grid, compact source sheet, redesigned episode list) is a future enhancement that can build on this color-aligned foundation.
+
+3. **`dispatchViewportEvent()` remains dead code.** Direct sources still use `handlePlayerProgress` (from PlayerShell's `onProgress` callback), not the manager's `dispatchViewportEvent()`. Unifying this is a future architectural task.
+
+4. **Manual QA NOT TESTABLE.** No Supabase env file — same gap as Phase 1-4 smoke tests. The 37-test suite + 0-error svelte-check + green production build provide automated regression coverage.
+
+**PHASE 5 COMPLETE**
+
+**PHASE 6 NOT STARTED**
+**PHASE 7 NOT STARTED**
+
+**Next phase:** Phase 6 — Fullscreen / Orientation / PiP / Wake Lock / Media Session (NOT started).
+
+**Commit:** `<pending>` — `feat(player): redesign player UI with neutral monochrome design system`
+
 ### Worklog template
 
 ```md

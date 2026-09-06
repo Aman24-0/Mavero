@@ -86,33 +86,33 @@
 <style>
   .controls { position: relative; z-index: 4; width: min(100% - 28px, 1380px); margin: -72px auto 0; padding: 0 0 18px; color: var(--ink); }
   .timeline-wrap { position: relative; height: 22px; display: grid; align-items: center; }
-  .timeline-track { position: absolute; right: 0; left: 0; height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.23); pointer-events: none; }
+  .timeline-track { position: absolute; right: 0; left: 0; height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.15); pointer-events: none; }
   .timeline-buffered, .timeline-progress { position: absolute; inset: 0 auto 0 0; border-radius: inherit; }
-  .timeline-buffered { background: rgba(255,255,255,.34); }
-  .timeline-progress { background: var(--accent); box-shadow: 0 0 15px rgba(155,135,245,.65); }
+  .timeline-buffered { background: rgba(255,255,255,.25); }
+  .timeline-progress { background: var(--accent); box-shadow: 0 0 12px rgba(255,255,255,.25); }
   .timeline-input { position: relative; z-index: 2; width: 100%; height: 22px; margin: 0; appearance: none; cursor: pointer; background: transparent; accent-color: var(--accent); }
   .timeline-input::-webkit-slider-runnable-track { height: 4px; background: transparent; }
-  .timeline-input::-webkit-slider-thumb { width: 13px; height: 13px; margin-top: -4px; appearance: none; border: 2px solid #fff; border-radius: 50%; background: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+  .timeline-input::-webkit-slider-thumb { width: 13px; height: 13px; margin-top: -4px; appearance: none; border: 2px solid var(--ink); border-radius: 50%; background: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.4); }
   .timeline-input::-moz-range-track { height: 4px; background: transparent; }
-  .timeline-input::-moz-range-thumb { width: 11px; height: 11px; border: 2px solid #fff; border-radius: 50%; background: var(--accent); }
+  .timeline-input::-moz-range-thumb { width: 11px; height: 11px; border: 2px solid var(--ink); border-radius: 50%; background: var(--accent); }
   .control-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
   .control-group { display: flex; align-items: center; gap: 5px; min-width: 0; }
-  .control-button { display: inline-grid; place-items: center; min-width: 38px; min-height: 38px; border: 1px solid transparent; border-radius: 10px; color: rgba(255,255,255,.84); background: rgba(7,7,10,.68); cursor: pointer; transition: border-color 160ms ease-out, background 160ms ease-out, transform 160ms ease-out; }
-  .control-button:hover, .control-button:focus-visible { border-color: rgba(194,181,255,.55); background: rgba(33,27,52,.86); }
+  .control-button { display: inline-grid; place-items: center; min-width: 38px; min-height: 38px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.68); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .control-button:hover, .control-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .control-button:active { transform: scale(.97); }
-  .control-button.primary { color: #fff; background: var(--accent-gradient); box-shadow: 0 6px 18px rgba(255, 56, 96, .35); }
+  .control-button.primary { color: #000; background: var(--accent-strong); box-shadow: 0 4px 14px rgba(255,255,255,.15); }
   .control-button.skip { position: relative; min-width: 36px; }
   .control-button.skip span { position: absolute; font-size: .47rem; font-weight: 800; }
   .control-button.skip:first-of-type span { margin-left: 1px; }
   .control-button.skip:nth-of-type(3) span { margin-left: -1px; }
-  .time-label { padding: 0 7px; color: rgba(255,255,255,.75); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .62rem; white-space: nowrap; }
-  .time-label i { color: rgba(255,255,255,.36); font-style: normal; }
+  .time-label { padding: 0 7px; color: var(--ink-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .62rem; white-space: nowrap; }
+  .time-label i { color: var(--muted-deep); font-style: normal; }
   .volume-control { display: flex; align-items: center; gap: 4px; }
   .volume-input { width: 78px; accent-color: var(--accent); }
   .source-button { gap: 3px; min-width: 38px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .6rem; }
-  .source-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-  .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; padding: 0 7px; border: 1px solid transparent; border-radius: 10px; color: rgba(255,255,255,.78); background: rgba(7,7,10,.68); font-size: .62rem; }
-  .select-control:hover, .select-control:focus-within { border-color: rgba(194,181,255,.55); }
+  .source-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px rgba(255,255,255,.3); }
+  .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.68); font-size: .62rem; }
+  .select-control:hover, .select-control:focus-within { border-color: var(--line-strong); }
   .select-control select { max-width: 90px; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
   .select-control option { color: #181822; background: #f5f6fa; }
   .select-control.speed select { width: 37px; }
