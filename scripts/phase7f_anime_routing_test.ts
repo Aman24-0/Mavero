@@ -60,7 +60,7 @@ const megaplaySource = { id: megaplaySourceId, provider_id: megaplayProviderId, 
 const megaplayConfig: TrustedResolutionConfig = { provider: megaplayProvider, source: megaplaySource };
 
 const yenimeProvider = { id: yenimeProviderId, name: 'Yenime', status: 'active', enabled: true, integration_type: 'embed' as const, adapter_id: YENIME_ADAPTER_ID, capabilities: yenimeCapabilities };
-const yenimeSource = { id: yenimeSourceId, provider_id: yenimeProviderId, name: 'Yenime Anime Embed', status: 'active', enabled: true, visibility: 'public' as const, integration_type: 'embed' as const, capabilities: yenimeCapabilities, movie_template: null, series_template: null, anime_template: `${YENIME_ORIGIN}/anime/{mal_id}/{episode}`, identifier_mode: 'mal_id' as const, audio_languages: ['sub', 'dub'], subtitle_capability: false, quality_capability: [] };
+const yenimeSource = { id: yenimeSourceId, provider_id: yenimeProviderId, name: 'Yenime Anime Embed', status: 'active', enabled: true, visibility: 'public' as const, integration_type: 'embed' as const, capabilities: yenimeCapabilities, movie_template: null, series_template: null, anime_template: `${YENIME_ORIGIN}/anime/{mal_id}/{episode}`, identifier_mode: 'custom' as const, audio_languages: ['sub', 'dub'], subtitle_capability: false, quality_capability: [] };
 const yenimeConfig: TrustedResolutionConfig = { provider: yenimeProvider, source: yenimeSource };
 
 const vidlinkProvider = { id: vidlinkProviderId, name: 'VidLink', status: 'active', enabled: true, integration_type: 'embed' as const, adapter_id: 'vidlink-embed', capabilities: vidlinkCapabilities };

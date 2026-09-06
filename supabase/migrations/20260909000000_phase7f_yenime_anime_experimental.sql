@@ -15,6 +15,28 @@
 --     document a startAt parameter). The Yenime player adapter exposes
 --     `startAt: true` in its capabilities.
 --
+-- IDENTIFIER_MODE NOTE:
+--   The streaming_sources.identifier_mode CHECK constraint (defined in
+--   migration 20260820010000_phase7a_streaming_registry.sql) allows
+--   only: 'tmdb_id', 'anilist_id', 'imdb_id', 'slug', 'custom'.
+--   There is NO 'mal_id' value in the canonical set.
+--
+--   Yenime requires MAL ID, but the adapter reads context.identifiers.malId
+--   DIRECTLY from the resolver context (src/lib/server/resolver/yenime.ts),
+--   NOT via the identifier_mode column. The identifier_mode column is
+--   documentation/metadata — it does not drive runtime ID routing for
+--   Yenime (unlike the generic template adapter which uses
+--   identifierForMode()).
+--
+--   Therefore identifier_mode is set to 'custom' — the canonical catch-all
+--   for sources that use a provider-specific identifier scheme not covered
+--   by the four standard modes (tmdb/anilist/imdb/slug). The anime_template
+--   placeholder '{mal_id}' is a template placeholder NAME (handled by
+--   resolveTemplate() in template.ts), NOT the identifier_mode column value
+--   — these are independent concepts. The Yenime adapter validates the
+--   template shape independently and constructs the URL from trusted
+--   components.
+--
 -- Disabled by default. Admin can enable through the admin UI.
 
 do $$
@@ -107,13 +129,17 @@ begin
     -- IDs. The resolver throws MISSING_IDENTIFIER when the content has
     -- no MAL ID, and the fallback walker tries the next anime provider
     -- (e.g. MegaPlay, which accepts AniList).
+    -- NOTE: '{mal_id}' is a template placeholder NAME, NOT the
+    -- identifier_mode column value. See the header comment above for
+    -- why identifier_mode is 'custom' (the DB CHECK constraint does
+    -- not allow 'mal_id').
     'https://api.yenime.net/anime/{mal_id}/{episode}',
-    'mal_id',
+    'custom',
     'multi',
     array['sub', 'dub']::text[],
     false,
     array[]::text[],
-    'Disabled by default. Enable only through Admin after review. Anime-only — uses MAL ID + episode. SUB/DUB is an in-player toggle (no separate URL variants, no variant buttons in the source selector). Supports ?startAt=N for resume. Mavero does not use provider redirects, hidden iframe inspection, or provider-specific progress storage.'
+    'Disabled by default. Enable only through Admin after review. Anime-only — uses MAL ID + episode (identifier_mode = custom because the DB CHECK constraint allows only tmdb_id/anilist_id/imdb_id/slug/custom; the Yenime adapter reads context.identifiers.malId directly, NOT via identifier_mode). SUB/DUB is an in-player toggle (no separate URL variants, no variant buttons in the source selector). Supports ?startAt=N for resume. Mavero does not use provider redirects, hidden iframe inspection, or provider-specific progress storage.'
   )
   on conflict (provider_id, slug) do nothing;
 end $$;
