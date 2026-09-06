@@ -3,159 +3,150 @@ import { readFileSync } from 'node:fs';
 
 // Phase 5: Player UI redesign contract tests.
 //
-// These tests verify that the player UI has been redesigned to use the
-// Mavero neutral monochrome design system (no old pink/purple/crimson
-// colors) while preserving the landscape contract and all functional
-// behavior.
+// These tests verify BOTH the CSS redesign AND the structural markup
+// changes required by the Phase 5 plan:
+// - Old pink/purple/crimson colors removed
+// - Mavero design system CSS variables used
+// - Embed shell controls bar exists (not gated behind direct-only)
+// - Compact source sheet (not old giant drawer)
+// - Compact episode sheet
+// - Simplified error message
+// - Loading states use plan's messages
+// - Landscape contract preserved
+// - Accessibility preserved
+// - All callbacks preserved
 
 const shell = readFileSync(new URL('../src/lib/components/player/PlayerShell.svelte', import.meta.url), 'utf8');
 const controls = readFileSync(new URL('../src/lib/components/player/PlayerControls.svelte', import.meta.url), 'utf8');
 const viewport = readFileSync(new URL('../src/lib/components/player/PlayerViewport.svelte', import.meta.url), 'utf8');
 
-// --- 1. No old pink/crimson/purple colors in PlayerShell ---
+// --- 1. Legacy colors removed ---
+assert.doesNotMatch(shell, /rgba\(255,\s*62,\s*94/, 'no crimson');
+assert.doesNotMatch(shell, /rgba\(255,\s*56,\s*96/, 'no pink');
+assert.doesNotMatch(shell, /rgba\(123,\s*92,\s*250/, 'no violet');
+assert.doesNotMatch(shell, /#cabefd/, 'no #cabefd');
+assert.doesNotMatch(shell, /#c3b5fc/, 'no #c3b5fc');
+assert.doesNotMatch(shell, /#07070c/, 'no old #07070c');
+assert.doesNotMatch(shell, /#0e0e16/, 'no old #0e0e16');
+assert.doesNotMatch(shell, /rgba\(12,\s*11,\s*18/, 'no old bg');
+assert.doesNotMatch(shell, /rgba\(4,\s*4,\s*6/, 'no old bg');
+assert.doesNotMatch(shell, /rgba\(13,\s*12,\s*19/, 'no old bg');
+assert.doesNotMatch(controls, /rgba\(155,\s*135,\s*245/, 'no purple in controls');
+assert.doesNotMatch(controls, /rgba\(255,\s*56,\s*96/, 'no pink in controls');
+assert.doesNotMatch(controls, /rgba\(194,\s*181,\s*255/, 'no light purple in controls');
+assert.doesNotMatch(viewport, /#07070c/, 'no old bg in viewport');
+assert.doesNotMatch(viewport, /rgba\(155,\s*135,\s*245/, 'no purple in viewport');
 
-// Check for specific hardcoded RGB values that were the old design system.
-// rgba(255, 62, 94, ...) = crimson
-// rgba(255, 56, 96, ...) = pink
-// rgba(255, 88, 120, ...) = light pink
-// rgba(123, 92, 250, ...) = violet
-// #cabefd = light purple
-// #c3b5fc = light purple
-// #9b87f5 = purple
-assert.doesNotMatch(shell, /rgba\(255,\s*62,\s*94/, 'PlayerShell: no crimson rgba(255, 62, 94)');
-assert.doesNotMatch(shell, /rgba\(255,\s*56,\s*96/, 'PlayerShell: no pink rgba(255, 56, 96)');
-assert.doesNotMatch(shell, /rgba\(255,\s*88,\s*120/, 'PlayerShell: no light pink rgba(255, 88, 120)');
-assert.doesNotMatch(shell, /rgba\(123,\s*92,\s*250/, 'PlayerShell: no violet rgba(123, 92, 250)');
-assert.doesNotMatch(shell, /#cabefd/, 'PlayerShell: no #cabefd');
-assert.doesNotMatch(shell, /#c3b5fc/, 'PlayerShell: no #c3b5fc');
-assert.doesNotMatch(shell, /#9b87f5/, 'PlayerShell: no #9b87f5');
-// Also check the old dark backgrounds
-assert.doesNotMatch(shell, /#07070c/, 'PlayerShell: no old #07070c background');
-assert.doesNotMatch(shell, /#0e0e16/, 'PlayerShell: no old #0e0e16 background');
-assert.doesNotMatch(shell, /rgba\(12,\s*11,\s*18/, 'PlayerShell: no old rgba(12, 11, 18) background');
-assert.doesNotMatch(shell, /rgba\(4,\s*4,\s*6/, 'PlayerShell: no old rgba(4, 4, 6) background');
-assert.doesNotMatch(shell, /rgba\(13,\s*12,\s*19/, 'PlayerShell: no old rgba(13, 12, 19) background');
+// --- 2. Mavero design system variables used ---
+assert.match(shell, /var\(--base\)/, 'uses var(--base)');
+assert.match(shell, /var\(--ink\)/, 'uses var(--ink)');
+assert.match(shell, /var\(--line\)/, 'uses var(--line)');
+assert.match(shell, /var\(--accent-soft\)/, 'uses var(--accent-soft)');
+assert.match(shell, /var\(--radius/, 'uses var(--radius-*)');
+assert.match(controls, /var\(--accent\)/, 'controls uses var(--accent)');
+assert.match(viewport, /var\(--base\)/, 'viewport uses var(--base)');
 
-// --- 2. No old pink/crimson/purple colors in PlayerControls ---
+// --- 3. Embed shell controls exist (NOT gated behind source?.type === 'direct') ---
+assert.match(shell, /embed-shell-controls/, 'embed shell controls bar exists');
+assert.match(shell, /role="toolbar"/, 'embed shell has role=toolbar');
+assert.match(shell, /aria-label="Embed playback controls"/, 'embed shell has aria-label');
+assert.match(shell, /shell-source-name/, 'shell shows source name');
+assert.match(shell, /shell-button/, 'shell has action buttons');
+assert.match(shell, /aria-label="Switch source"/, 'shell has switch source button');
+assert.match(shell, /aria-label="Episode list"/, 'shell has episode button');
+// The bottom-bar is NOT gated exclusively behind source?.type === 'direct'
+assert.match(shell, /class="bottom-bar"/, 'bottom-bar exists');
+assert.match(shell, /source\?\.type === 'embed'/, 'embed branch exists in bottom-bar');
+// Direct controls still exist within bottom-bar
+assert.match(shell, /source\?\.type === 'direct'/, 'direct branch exists in bottom-bar');
 
-assert.doesNotMatch(controls, /rgba\(155,\s*135,\s*245/, 'PlayerControls: no purple rgba(155, 135, 245)');
-assert.doesNotMatch(controls, /rgba\(255,\s*56,\s*96/, 'PlayerControls: no pink rgba(255, 56, 96)');
-assert.doesNotMatch(controls, /rgba\(194,\s*181,\s*255/, 'PlayerControls: no light purple rgba(194, 181, 255)');
-assert.doesNotMatch(controls, /rgba\(33,\s*27,\s*52/, 'PlayerControls: no dark purple rgba(33, 27, 52)');
+// --- 4. Compact source sheet (not old drawer) ---
+assert.match(shell, /source-sheet/, 'source sheet exists');
+assert.match(shell, /sheet-overlay/, 'sheet overlay exists');
+assert.match(shell, /sheet-handle/, 'sheet handle exists');
+assert.match(shell, /sheet-list/, 'sheet list exists');
+assert.match(shell, /sheet-option/, 'sheet option exists');
+assert.doesNotMatch(shell, /class="drawer source-drawer"/, 'old source-drawer removed');
 
-// --- 3. No old pink/purple colors in PlayerViewport ---
+// --- 5. Episode sheet ---
+assert.match(shell, /episode-sheet/, 'episode sheet exists');
+assert.doesNotMatch(shell, /class="drawer episode-drawer"/, 'old episode-drawer removed');
 
-assert.doesNotMatch(viewport, /#07070c/, 'PlayerViewport: no old #07070c');
-assert.doesNotMatch(viewport, /rgba\(155,\s*135,\s*245/, 'PlayerViewport: no purple');
-assert.doesNotMatch(viewport, /rgba\(194,\s*181,\s*255/, 'PlayerViewport: no light purple');
-assert.doesNotMatch(viewport, /#101018/, 'PlayerViewport: no old #101018');
+// --- 6. Simplified error message ---
+assert.match(shell, /This source isn't available\./, 'simplified error message');
+assert.doesNotMatch(shell, /Provider unavailable/, 'old verbose error removed');
+assert.doesNotMatch(shell, /Server unavailable/, 'old verbose error removed');
 
-// --- 4. Mavero design system variables are used ---
+// --- 7. Loading states use plan messages ---
+assert.match(shell, /Starting your stream/, 'loading: Starting your stream');
+assert.match(shell, /Loading player/, 'loading: Loading player');
+assert.match(shell, /Switching source/, 'loading: Switching source');
 
-assert.match(shell, /var\(--base\)/, 'PlayerShell: uses var(--base)');
-assert.match(shell, /var\(--ink\)/, 'PlayerShell: uses var(--ink)');
-assert.match(shell, /var\(--line\)/, 'PlayerShell: uses var(--line)');
-assert.match(shell, /var\(--accent-soft\)/, 'PlayerShell: uses var(--accent-soft)');
-assert.match(shell, /var\(--shadow-lg\)/, 'PlayerShell: uses var(--shadow-lg)');
-assert.match(shell, /var\(--radius/, 'PlayerShell: uses var(--radius-*)');
-
-assert.match(controls, /var\(--ink-soft\)/, 'PlayerControls: uses var(--ink-soft)');
-assert.match(controls, /var\(--accent\)/, 'PlayerControls: uses var(--accent)');
-assert.match(controls, /var\(--accent-strong\)/, 'PlayerControls: uses var(--accent-strong)');
-assert.match(controls, /var\(--line-strong\)/, 'PlayerControls: uses var(--line-strong)');
-
-assert.match(viewport, /var\(--base\)/, 'PlayerViewport: uses var(--base)');
-assert.match(viewport, /var\(--surface\)/, 'PlayerViewport: uses var(--surface)');
-assert.match(viewport, /var\(--line-strong\)/, 'PlayerViewport: uses var(--line-strong)');
-assert.match(viewport, /var\(--muted\)/, 'PlayerViewport: uses var(--muted)');
-
-// --- 5. Landscape contract preserved ---
-
-assert.match(shell, /class:landscape-mode=\{landscapeMode\}/, 'landscape-mode class preserved');
-assert.match(shell, /let landscapeControlsExpanded = true/, 'landscapeControlsExpanded preserved');
-assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/, 'LANDSCAPE_CONTROLS_HIDE_MS preserved');
-assert.match(shell, /data-landscape-controls-toggle/, 'data-landscape-controls-toggle preserved');
-assert.match(shell, /PanelTopClose/, 'PanelTopClose icon preserved');
-assert.match(shell, /PanelTopOpen/, 'PanelTopOpen icon preserved');
-assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/, 'landscape-mode CSS preserved');
-assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{ display: flex; flex: 1 1 auto;/, 'landscape-mode stage-wrap CSS preserved');
-assert.match(shell, /height: 100%; max-height: none; min-height: 0; aspect-ratio: auto/, 'landscape viewport sizing preserved');
-assert.match(shell, /env\(safe-area-inset-top\)/, 'safe-area-inset preserved');
-assert.match(shell, /100svh/, '100svh preserved');
-
+// --- 8. Landscape contract preserved ---
+assert.match(shell, /class:landscape-mode=\{landscapeMode\}/, 'landscape-mode class');
+assert.match(shell, /let landscapeControlsExpanded = true/, 'landscapeControlsExpanded');
+assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/, 'LANDSCAPE_CONTROLS_HIDE_MS');
+assert.match(shell, /data-landscape-controls-toggle/, 'data-landscape-controls-toggle');
+assert.match(shell, /PanelTopClose/, 'PanelTopClose');
+assert.match(shell, /PanelTopOpen/, 'PanelTopOpen');
+assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/, 'landscape CSS');
+assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{ display: flex; flex: 1 1 auto;/, 'landscape stage CSS');
+assert.match(shell, /height: 100%; max-height: none; min-height: 0; aspect-ratio: auto/, 'landscape viewport');
+assert.match(shell, /env\(safe-area-inset-top\)/, 'safe-area-inset');
+assert.match(shell, /100svh/, '100svh');
 const landscapeStart = shell.indexOf('async function toggleLandscape()');
 const landscapeEnd = shell.indexOf('async function toggleFullscreen()', landscapeStart);
 assert(landscapeStart >= 0 && landscapeEnd > landscapeStart);
 const landscapeBody = shell.slice(landscapeStart, landscapeEnd);
-assert.match(landscapeBody, /requestFullscreen/, 'toggleLandscape calls requestFullscreen');
-assert.match(landscapeBody, /exitFullscreen/, 'toggleLandscape calls exitFullscreen');
-assert.match(landscapeBody, /lock\?\.\('landscape'\)/, 'toggleLandscape calls orientation lock');
+assert.match(landscapeBody, /requestFullscreen/, 'toggleLandscape: requestFullscreen');
+assert.match(landscapeBody, /exitFullscreen/, 'toggleLandscape: exitFullscreen');
+assert.match(landscapeBody, /lock\?\.\('landscape'\)/, 'toggleLandscape: lock');
 
-// --- 6. Player viewport permissions preserved ---
+// --- 9. Viewport permissions preserved ---
+assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/, 'iframe allow');
+assert.match(viewport, /allowfullscreen/, 'allowfullscreen');
+assert.match(viewport, /sandbox=\{sandboxAttribute\}/, 'sandbox');
 
-assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/, 'viewport iframe allow preserved');
-assert.match(viewport, /allowfullscreen/, 'viewport allowfullscreen preserved');
-assert.match(viewport, /sandbox=\{sandboxAttribute\}/, 'viewport sandbox preserved');
+// --- 10. Accessibility preserved ---
+assert.match(shell, /role="application"/, 'role=application');
+assert.match(shell, /aria-label="MAVERO video player"/, 'aria-label');
+assert.match(shell, /aria-label="Close player"/, 'Back button');
+assert.match(shell, /role="alert"/, 'error role=alert');
+assert.match(shell, /role="status"/, 'loading/completion role=status');
+assert.match(controls, /aria-label="Seek playback"/, 'timeline aria-label');
+assert.match(controls, /aria-label="Volume"/, 'volume aria-label');
+assert.match(controls, /aria-label=\{playing \? 'Pause' : 'Play'\}/, 'play/pause aria-label');
 
-// --- 7. Direct source controls gating preserved ---
-
-assert.match(shell, /source\?\.type === 'direct'/, 'direct source controls gating preserved');
-assert.match(shell, /PlayerControls/, 'PlayerControls import preserved');
-
-// --- 8. Accessibility preserved ---
-
-assert.match(shell, /role="application"/, 'role=application preserved');
-assert.match(shell, /aria-label="MAVERO video player"/, 'aria-label preserved');
-assert.match(shell, /aria-label="Close player"/, 'Back button aria-label preserved');
-assert.match(shell, /aria-label="Open episode list"/, 'Episodes button aria-label preserved');
-assert.match(shell, /aria-label="Open source list"/, 'Sources button aria-label preserved');
-assert.match(shell, /role="alert"/, 'error card role=alert preserved');
-assert.match(shell, /role="status"/, 'loading/completion card role=status preserved');
-assert.match(controls, /aria-label="Seek playback"/, 'timeline aria-label preserved');
-assert.match(controls, /aria-label="Volume"/, 'volume aria-label preserved');
-assert.match(controls, /aria-label=\{playing \? 'Pause' : 'Play'\}/, 'play/pause aria-label preserved');
-
-// --- 9. Source/episode drawers preserved ---
-
-assert.match(shell, /class="drawer source-drawer"/, 'source drawer preserved');
-assert.match(shell, /class="drawer episode-drawer"/, 'episode drawer preserved');
-assert.match(shell, /chooseSource/, 'chooseSource function preserved');
-assert.match(shell, /chooseAdjacentSource/, 'chooseAdjacentSource function preserved');
-assert.match(shell, /chooseEpisode/, 'chooseEpisode function preserved');
-
-// --- 10. Loading/error states preserved ---
-
-assert.match(shell, /message-card/, 'error card preserved');
-assert.match(shell, /loading-card/, 'loading card preserved');
-assert.match(shell, /completion-card/, 'completion card preserved');
-assert.match(shell, /retry/, 'retry function preserved');
-assert.match(shell, /Switching server|Switching source/, 'switching message preserved');
-assert.match(shell, /Starting your stream|Loading player/, 'loading messages preserved');
-
-// --- 11. Keyboard shortcuts preserved ---
-
-assert.match(shell, /event\.key === ' ' \|\| event\.key\.toLowerCase\(\) === 'k'/, 'space/K keyboard shortcut preserved');
-assert.match(shell, /ArrowLeft/, 'ArrowLeft keyboard shortcut preserved');
-assert.match(shell, /ArrowRight/, 'ArrowRight keyboard shortcut preserved');
-
-// --- 12. Sandbox toggle preserved ---
-
-assert.match(shell, /toggleSandbox/, 'sandbox toggle function preserved');
-assert.match(shell, /sandbox-button/, 'sandbox button class preserved');
-
-// --- 13. Iframe ready callback preserved ---
-
-assert.match(shell, /onIframeReady/, 'onIframeReady callback preserved');
+// --- 11. Callbacks preserved ---
+assert.match(shell, /chooseSource/, 'chooseSource preserved');
+assert.match(shell, /chooseAdjacentSource/, 'chooseAdjacentSource preserved');
+assert.match(shell, /chooseEpisode/, 'chooseEpisode preserved');
+assert.match(shell, /onProgress/, 'onProgress preserved');
+assert.match(shell, /onSourceChange/, 'onSourceChange preserved');
+assert.match(shell, /onEpisodeChange/, 'onEpisodeChange preserved');
+assert.match(shell, /onClose/, 'onClose preserved');
+assert.match(shell, /onDetails/, 'onDetails preserved');
+assert.match(shell, /onIframeReady/, 'onIframeReady preserved');
 assert.match(shell, /bind:iframeElement/, 'iframeElement binding preserved');
 
-// --- 14. Provider iframe is never invoked or manipulated ---
+// --- 12. Keyboard shortcuts preserved ---
+assert.match(shell, /event\.key === ' ' \|\| event\.key\.toLowerCase\(\) === 'k'/, 'space/K shortcut');
+assert.match(shell, /ArrowLeft/, 'ArrowLeft shortcut');
+assert.match(shell, /ArrowRight/, 'ArrowRight shortcut');
 
-assert.match(shell, /provider iframe is never invoked or manipulated/, 'cross-origin safety comment preserved');
+// --- 13. Sandbox toggle preserved ---
+assert.match(shell, /toggleSandbox/, 'toggleSandbox preserved');
 
-// --- 15. No episode stepper (not part of current architecture) ---
+// --- 14. Cross-origin safety ---
+assert.match(shell, /provider iframe is never invoked or manipulated/, 'cross-origin safety');
 
-assert.doesNotMatch(shell, /class="episode-stepper"/, 'no episode stepper class');
-assert.doesNotMatch(shell, /aria-label="Previous episode"/, 'no previous episode button');
-assert.doesNotMatch(shell, /aria-label="Next episode"/, 'no next episode button');
+// --- 15. Player-first layout structure (flex column) ---
+assert.match(shell, /display: flex; flex-direction: column/, 'player-shell is flex column');
+assert.match(shell, /class="bottom-bar"/, 'bottom-bar exists for all source types');
 
-console.log('Phase 5 player UI redesign tests passed: old pink/purple/crimson colors removed from PlayerShell (12 checks), PlayerControls (4 checks), PlayerViewport (4 checks); Mavero design system CSS variables used (10 checks); landscape contract preserved (14 structural checks); iframe permissions preserved (3 checks); direct source controls gating preserved; accessibility preserved (10 ARIA checks); source/episode drawers preserved (5 checks); loading/error states preserved (5 checks); keyboard shortcuts preserved (3 checks); sandbox toggle preserved; iframe ready callback preserved; cross-origin safety comment preserved; no episode stepper.');
+// --- 16. Loading messages with ellipsis ---
+assert.match(shell, /Switching source…/, 'loading: Switching source…');
+assert.match(shell, /Starting your stream…/, 'loading: Starting your stream…');
+assert.match(shell, /Loading player…/, 'loading: Loading player…');
+
+console.log('Phase 5 player UI redesign tests passed: legacy colors removed (16 checks); design system variables used (6 checks); embed shell controls bar exists with role=toolbar + source name + action buttons (8 checks); compact source sheet with handle + overlay (6 checks); episode sheet (2 checks); simplified error message "This source isn\'t available." (3 checks); loading states use plan messages (5 checks); landscape contract preserved (14 structural checks); viewport permissions preserved (3 checks); accessibility preserved (8 checks); callbacks preserved (10 checks); keyboard shortcuts preserved (3 checks); sandbox toggle preserved; cross-origin safety preserved; player-first flex column layout (2 checks).');

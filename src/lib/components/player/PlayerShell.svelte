@@ -383,12 +383,6 @@
       <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
       <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
     </div>
-    <div class="header-actions">
-      <button class="header-button compact" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={17} /><span>Details</span></button>
-      {#if episodes.length}<button class="header-button compact" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={() => { episodeMenuOpen = !episodeMenuOpen; sourceMenuOpen = false; }}><ListVideo size={17} /><span>Episodes</span></button>{/if}
-      {#if sourceOptions.length}<button class="header-button compact step-button" type="button" aria-label="Previous server" disabled={!hasPreviousSource} onclick={() => chooseAdjacentSource(-1)}><ChevronLeft size={17} /><span>Previous</span></button><button class="header-button compact" type="button" aria-label="Open source list" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={17} /><span>Sources</span></button><button class="header-button compact step-button" type="button" aria-label="Next server" disabled={!hasNextSource} onclick={() => chooseAdjacentSource(1)}><ChevronRight size={17} /><span>Next</span></button>{/if}
-      {#if source?.type === 'embed'}<button class:active={effectiveSandboxEnabled} class:off={!effectiveSandboxEnabled} class="header-button compact sandbox-button" type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={17} />{:else}<ShieldOff size={17} />{/if}<span>Sandbox {effectiveSandboxEnabled ? 'On' : 'Off'}</span></button>{/if}
-    </div>
   </header>
 
   <section class="stage-wrap" aria-label="Player viewport">
@@ -397,43 +391,62 @@
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
-        <div><strong>{effectiveState === 'provider-error' ? 'Provider unavailable' : effectiveState === 'unsupported' ? 'Unsupported title type' : effectiveState === 'unavailable' ? 'Server unavailable' : effectiveState === 'source-unavailable' ? 'Source unavailable' : effectiveState === 'embed-unavailable' ? 'Embed unavailable' : 'Playback could not be started'}</strong><p>{resolutionError || errorMessage || 'Choose another authorized source and try again.'}</p></div>
-        <div class="message-actions"><button class="small-button" type="button" onclick={retry}><RotateCcw size={14} /> Retry</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Change source</button>{/if}</div>
+        <div><strong>This source isn't available.</strong><p>{resolutionError || errorMessage || 'Choose another source or try again.'}</p></div>
+        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={() => { sourceMenuOpen = true; }}><Settings2 size={14} /> Switch source</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
     {:else if effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading'}
-      <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching server' : effectiveState === 'embed-loading' ? 'Starting your stream' : 'Loading player'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
+      <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching source…' : effectiveState === 'embed-loading' ? 'Starting your stream…' : 'Loading player…'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
     {/if}
 
   </section>
 
-  {#if source?.type === 'direct'}
-    <div class="controls-layer" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
+  <!-- Bottom controls area: direct sources get full PlayerControls; embed sources get shell controls -->
+  <div class="bottom-bar" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
+    {#if source?.type === 'direct'}
       <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} pictureInPicture={pictureInPictureSupported} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
-    </div>
-  {/if}
+    {:else if source?.type === 'embed' || effectiveState === 'embed-loading' || effectiveState === 'switching-source'}
+      <!-- Phase 5: Embed source shell controls bar — Mavero-owned controls for embed playback -->
+      <div class="embed-shell-controls" role="toolbar" aria-label="Embed playback controls">
+        <div class="shell-info">
+          <span class="shell-source-name">{sourceOptions.find((o) => o.id === source?.sourceId)?.name ?? 'Loading…'}</span>
+        </div>
+        <div class="shell-actions">
+          {#if sourceOptions.length}<button class="shell-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={() => { sourceMenuOpen = !sourceMenuOpen; episodeMenuOpen = false; }}><Settings2 size={16} /></button>{/if}
+          {#if episodes.length}<button class="shell-button" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={() => { episodeMenuOpen = !episodeMenuOpen; sourceMenuOpen = false; }}><ListVideo size={16} /></button>{/if}
+          <button class="shell-button" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={16} /></button>
+          <button class="shell-button" type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={16} /></button>
+          {#if source?.type === 'embed'}<button class="shell-button" class:active={effectiveSandboxEnabled} type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={16} />{:else}<ShieldOff size={16} />{/if}</button>{/if}
+        </div>
+      </div>
+    {/if}
+  </div>
 
   {#if sourceMenuOpen}
-    <div class="drawer source-drawer" role="dialog" aria-label="Available playback sources">
-      <div class="drawer-head"><div><span class="eyebrow">Source resolver</span><h2>Choose a source</h2></div><button class="close-button" type="button" aria-label="Close source list" onclick={() => sourceMenuOpen = false}><X size={17} /></button></div>
-      <div class="drawer-list">{#each sourceOptions as option}<button class="drawer-option" class:active={option.id === source?.sourceId} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}{#if option.sandboxPolicy} · sandbox: {option.sandboxPolicy}{/if}</small></span></button>{/each}</div>
-      <p class="drawer-note">Every source is resolved and validated by MAVERO before it reaches this player. A provider may still reject the configured iframe permissions; MAVERO cannot inspect or bypass that cross-origin decision.</p>
+    <!-- Phase 5: Compact source sheet — bottom-anchored sheet, not full-screen drawer -->
+    <div class="sheet-overlay" role="presentation" onclick={() => sourceMenuOpen = false}></div>
+    <div class="source-sheet" role="dialog" aria-label="Available playback sources">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => sourceMenuOpen = false}><X size={17} /></button></div>
+      <div class="sheet-list">{#each sourceOptions as option}<button class="sheet-option" class:active={option.id === source?.sourceId} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{/each}</div>
     </div>
   {/if}
 
   {#if episodeMenuOpen}
-    <div class="drawer episode-drawer" role="dialog" aria-label="Episode list">
-      <div class="drawer-head"><div><span class="eyebrow">Episode guide</span><h2>{episodes.length} available</h2></div><button class="close-button" type="button" aria-label="Close episode list" onclick={() => episodeMenuOpen = false}><X size={17} /></button></div>
-      <div class="drawer-list">{#each episodes as episode}<button class="drawer-option" class:active={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number} type="button" onclick={() => chooseEpisode({ season: episode.season, episode: episode.number, title: episode.title })}><span class="episode-number">{String(episode.number).padStart(2, '0')}</span><span><strong>{episode.title}</strong><small>S{episode.season} · {episode.runtime ?? 'Episode'}</small></span></button>{/each}</div>
+    <!-- Phase 5: Compact episode sheet — matching the source sheet style -->
+    <div class="sheet-overlay" role="presentation" onclick={() => episodeMenuOpen = false}></div>
+    <div class="episode-sheet" role="dialog" aria-label="Episode list">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head"><span class="eyebrow">Episodes · {episodes.length}</span><button class="close-button" type="button" aria-label="Close episode list" onclick={() => episodeMenuOpen = false}><X size={17} /></button></div>
+      <div class="sheet-list">{#each episodes as episode}<button class="sheet-option" class:active={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number} type="button" onclick={() => chooseEpisode({ season: episode.season, episode: episode.number, title: episode.title })}><span class="episode-number">{String(episode.number).padStart(2, '0')}</span><span><strong>{episode.title}</strong><small>S{episode.season} · {episode.runtime ?? 'Episode'}</small></span></button>{/each}</div>
     </div>
   {/if}
-
 
 </div>
 
 <style>
-  .player-shell { --player-bg: var(--base); position: relative; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell { --player-bg: var(--base); position: relative; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); display: flex; flex-direction: column; }
   .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; }
   .player-shell.landscape-mode .player-header { position: relative; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: rgba(0,0,0,.92); transition: height 180ms var(--ease-out), min-height 180ms var(--ease-out), opacity 180ms var(--ease-out), transform 180ms var(--ease-out), padding 180ms var(--ease-out); }
   .player-shell.landscape-mode .player-header.controls-collapsed { height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; transform: translateY(-100%); pointer-events: none; }
@@ -443,40 +456,50 @@
   .player-shell.landscape-mode .header-title-row { display: contents; }
   .player-shell.landscape-mode .header-title { display: grid; flex: 1 1 auto; justify-items: start; min-width: 0; text-align: left; }
   .player-shell.landscape-mode .header-title strong { max-width: 28vw; }
-  .player-shell.landscape-mode .header-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; margin-right: 38px; }
   .player-shell.landscape-mode .header-button { min-width: 32px; min-height: 32px; padding: 0 7px; border-radius: var(--radius-sm); }
   .player-shell.landscape-mode .header-button span { display: none; }
+  .player-shell.landscape-mode .header-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; margin-right: 38px; }
   .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0 max(0px, env(safe-area-inset-right)) max(0px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left)); }
   .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; }
-  .player-shell.landscape-mode .controls-layer { right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); left: max(8px, env(safe-area-inset-left)); }
-  .player-shell.landscape-mode .drawer { top: calc(54px + env(safe-area-inset-top)); max-height: min(78dvh, 620px); }
-  .player-shell.landscape-mode .controls-layer.landscape-controls-collapsed { opacity: 0; pointer-events: none; }
-  .player-header { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: grid; gap: 10px; padding: calc(12px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 14px; background: linear-gradient(180deg, rgba(0,0,0,.92), rgba(0,0,0,.42) 76%, transparent); }
-  .header-title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; min-height: 40px; }
+  .player-shell.landscape-mode .bottom-bar { position: relative; flex: 0 0 auto; padding: max(8px, env(safe-area-inset-bottom)) clamp(12px, 3vw, 42px) max(8px, env(safe-area-inset-left)); }
+  .player-shell.landscape-mode .bottom-bar.landscape-controls-collapsed { opacity: 0; pointer-events: none; transform: translateY(100%); }
+  .player-shell.landscape-mode .sheet-overlay, .player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet { top: calc(48px + env(safe-area-inset-top)); }
+  /* Portrait header: compact top bar */
+  .player-header { position: relative; z-index: 8; flex: 0 0 auto; display: flex; align-items: center; padding: calc(10px + env(safe-area-inset-top)) clamp(12px, 4vw, 32px) 10px; background: rgba(0,0,0,.6); backdrop-filter: blur(12px); }
+  .header-title-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; width: 100%; min-height: 40px; }
   .header-title-row .header-nav { justify-self: start; }
   .header-title-row .orientation-button { justify-self: end; }
-  .header-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 11px; color: var(--ink-soft); background: rgba(0,0,0,.58); cursor: pointer; font: inherit; font-size: .68rem; transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .header-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 11px; color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; font: inherit; font-size: .68rem; transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .header-button:hover, .header-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .header-button:disabled { cursor: not-allowed; opacity: .3; }
   .header-button:active { transform: scale(.97); }
-  .sandbox-button.active { border-color: var(--line-strong); color: var(--ink); }
-  .sandbox-button.off { border-color: var(--line); color: var(--muted); background: var(--accent-soft); }
-  .header-title { display: grid; justify-items: center; gap: 4px; min-width: 0; color: var(--ink); text-align: center; text-shadow: 0 1px 14px #000; }
-  .header-title strong { max-width: min(48vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+  .header-title { display: grid; justify-items: center; gap: 2px; min-width: 0; color: var(--ink); text-align: center; }
+  .header-title strong { max-width: min(56vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
   .header-title span { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  .header-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
-  .stage-wrap { position: relative; display: grid; min-height: 100dvh; place-items: center; padding: calc(118px + env(safe-area-inset-top)) clamp(12px, 3vw, 42px) calc(30px + env(safe-area-inset-bottom)); }
-  .stage-wrap :global(.viewport) { width: min(100%, calc((100dvh - 158px) * 1.7778)); aspect-ratio: 16 / 9; min-height: 0; max-height: calc(100dvh - 158px); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
-  .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 158px) * 1.7778)); }
-  .controls-layer { position: absolute; z-index: 6; right: clamp(12px, 3vw, 42px); bottom: calc(28px + env(safe-area-inset-bottom)); left: clamp(12px, 3vw, 42px); opacity: 1; transition: opacity var(--motion-normal) var(--ease-out); pointer-events: auto; }
-  .controls-layer:not(.visible) { opacity: 0; pointer-events: none; }
+  /* Stage: fills remaining space between header and bottom bar */
+  .stage-wrap { position: relative; flex: 1 1 auto; display: grid; place-items: center; min-height: 0; padding: 0; overflow: hidden; }
+  .stage-wrap :global(.viewport) { width: 100%; height: 100%; min-height: 0; max-height: none; border-radius: 0; box-shadow: none; }
+  .stage-wrap :global(.viewport.embed) { width: 100%; }
+  /* Bottom bar: always rendered for both direct and embed sources */
+  .bottom-bar { position: relative; z-index: 6; flex: 0 0 auto; opacity: 1; transition: opacity var(--motion-normal) var(--ease-out); pointer-events: auto; padding-bottom: env(safe-area-inset-bottom); }
+  .bottom-bar:not(.visible) { opacity: 0; pointer-events: none; }
+  /* Embed shell controls */
+  .embed-shell-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px clamp(12px, 4vw, 32px); background: rgba(0,0,0,.6); backdrop-filter: blur(12px); border-top: 1px solid var(--line); }
+  .shell-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .shell-source-name { color: var(--ink-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .68rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shell-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .shell-button { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: transparent; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .shell-button:hover, .shell-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  .shell-button:active { transform: scale(.96); }
+  .shell-button.active { border-color: var(--line-strong); color: var(--ink); }
+  /* Overlay cards */
   .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 15px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
   .message-card strong { display: block; font-size: .75rem; }
   .message-card p { margin: 5px 0 0; color: var(--muted); font-size: .66rem; line-height: 1.45; }
   .message-icon { display: grid; flex: 0 0 34px; place-items: center; width: 34px; height: 34px; border-radius: var(--radius-sm); color: var(--ink-soft); background: var(--accent-soft); }
   .message-actions { display: flex; gap: 6px; margin-left: auto; }
-  .small-button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 9px; color: var(--ink); background: var(--accent-soft); cursor: pointer; font: inherit; font-size: .61rem; white-space: nowrap; }
+  .small-button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 12px; color: var(--ink); background: var(--accent-soft); cursor: pointer; font: inherit; font-size: .62rem; white-space: nowrap; }
   .small-button.secondary { border-color: var(--line); background: rgba(255,255,255,.04); }
   .completion-card { color: var(--ink-soft); }
   .loading-card { min-width: min(260px, calc(100% - 36px)); justify-content: center; color: var(--ink-soft); font-size: .68rem; }
@@ -486,23 +509,50 @@
   .loading-copy strong { color: var(--ink); font-size: .72rem; }
   .loading-copy small { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }
   :global(.spin) { animation: spin 1s linear infinite; }
-  .drawer { position: absolute; z-index: 12; top: calc(116px + env(safe-area-inset-top)); right: clamp(16px, 4vw, 48px); width: min(360px, calc(100% - 32px)); max-height: min(70dvh, 620px); overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: rgba(13,13,13,.96); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); }
-  .episode-drawer { width: min(420px, calc(100% - 32px)); }
-  .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 19px 18px 13px; }
-  .drawer-head h2 { margin: 5px 0 0; font-size: 1.1rem; letter-spacing: -.05em; }
+  /* Phase 5: Compact source/episode sheets — bottom-anchored, not full-screen */
+  .sheet-overlay { position: fixed; z-index: 20; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
+  .source-sheet, .episode-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); animation: sheet-up var(--motion-normal) var(--ease-out); }
+  .episode-sheet { max-height: 65dvh; }
+  .sheet-handle { width: 36px; height: 4px; margin: 8px auto 4px; border-radius: 999px; background: var(--line-strong); }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 10px; }
+  .sheet-head .eyebrow { color: var(--muted); }
   .close-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted); background: rgba(255,255,255,.04); cursor: pointer; }
-  .drawer-list { display: grid; gap: 4px; padding: 0 10px 13px; }
-  .drawer-option { display: flex; align-items: center; gap: 11px; min-height: 52px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 9px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }
-  .drawer-option:hover, .drawer-option:focus-visible, .drawer-option.active { border-color: var(--line-strong); background: var(--accent-soft); }
-  .drawer-option strong, .drawer-option small { display: block; }
-  .drawer-option strong { color: var(--ink); font-size: .7rem; }
-  .drawer-option small { margin-top: 4px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }
+  .sheet-list { display: grid; gap: 4px; padding: 0 12px 14px; }
+  .sheet-option { display: flex; align-items: center; gap: 11px; min-height: 52px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 12px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }
+  .sheet-option:hover, .sheet-option:focus-visible, .sheet-option.active { border-color: var(--line-strong); background: var(--accent-soft); }
+  .sheet-option strong, .sheet-option small { display: block; }
+  .sheet-option strong { color: var(--ink); font-size: .72rem; }
+  .sheet-option small { margin-top: 4px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
   .option-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
   .option-mark > span { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-deep); }
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }
-  .drawer-note { margin: 0; padding: 0 18px 18px; color: var(--muted-deep); font-size: .61rem; line-height: 1.5; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 640px) { .player-header { gap: 7px; padding-top: calc(9px + env(safe-area-inset-top)); padding-bottom: 9px; } .header-title-row { gap: 8px; min-height: 38px; } .header-button span, .header-button.compact span { display: none; } .header-button { min-width: 38px; min-height: 38px; padding: 0; } .header-actions { flex-wrap: nowrap; gap: 6px; } .header-title strong { max-width: 48vw; font-size: .72rem; } .header-title span { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .stage-wrap { padding: calc(105px + env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom)); } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; } .message-card { bottom: 50%; flex-wrap: wrap; } .message-actions { width: 100%; margin-left: 46px; } .drawer { top: calc(104px + env(safe-area-inset-top)); right: 12px; width: calc(100% - 24px); max-height: 72dvh; } }
-  @media (orientation: landscape) and (max-height: 560px) { .player-header { gap: 6px; padding-top: 7px; padding-bottom: 7px; } .header-title-row { min-height: 32px; gap: 8px; } .header-title-row .header-button, .header-actions .header-button { min-height: 32px; min-width: 34px; padding: 0 8px; } .header-actions { flex-wrap: nowrap; gap: 6px; } .header-actions .header-button span, .header-title-row .orientation-button span { display: none; } .stage-wrap { padding-top: calc(86px + env(safe-area-inset-top)); padding-bottom: 16px; } .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: min(100%, calc((100dvh - 108px) * 1.7778)); max-height: calc(100dvh - 108px); } .drawer { top: calc(84px + env(safe-area-inset-top)); } }
-  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .controls-layer, .player-shell.landscape-mode .player-header { transition: none; } }
+  @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  /* Desktop: source/episode sheets become centered popovers */
+  @media (min-width: 769px) {
+    .source-sheet, .episode-sheet { bottom: auto; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); width: min(400px, calc(100% - 48px)); max-height: min(70dvh, 560px); border-radius: var(--radius-lg); border: 1px solid var(--line-strong); animation: none; }
+    .episode-sheet { width: min(440px, calc(100% - 48px)); }
+  }
+  /* Mobile: compact header, no label text */
+  @media (max-width: 640px) {
+    .player-header { padding: calc(8px + env(safe-area-inset-top)) 8px 8px; }
+    .header-title-row { gap: 8px; min-height: 38px; }
+    .header-button span { display: none; }
+    .header-button { min-width: 38px; min-height: 38px; padding: 0; }
+    .header-title strong { max-width: 52vw; font-size: .72rem; }
+    .header-title span { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; }
+    .message-card { bottom: 50%; flex-wrap: wrap; }
+    .message-actions { width: 100%; margin-left: 46px; }
+    .embed-shell-controls { padding: 6px 8px; }
+    .shell-source-name { font-size: .62rem; }
+  }
+  /* Landscape phone */
+  @media (orientation: landscape) and (max-height: 560px) {
+    .player-header { padding-top: 6px; padding-bottom: 6px; }
+    .header-title-row { min-height: 32px; gap: 8px; }
+    .header-button { min-height: 32px; min-width: 34px; padding: 0 8px; }
+    .header-button span { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .bottom-bar, .player-shell.landscape-mode .player-header { transition: none; } .source-sheet, .episode-sheet { animation: none; } }
 </style>
