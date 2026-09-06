@@ -2932,6 +2932,86 @@ The `createWakeLockStateMachine` test harness was extended with `embedPlaying`, 
 - `55c9843` — `fix(player): add embedPlaying state for embed wake lock visibility re-acquire`
 - `2f9bfe0` — `test(player): add behavioral tests for embed playback state lifecycle`
 
+## 2026-09-06 — Phase 7 — Admin Default Management, Source Testing, Capability Display
+
+**Status:** COMPLETE
+
+**Phase:** 7
+
+**Task:** Implement admin provider/source/default management, health-isolated source testing, and provider playback capability display. Preserve all Phase 1-6 behavior. No database migrations. No parallel playback architecture.
+
+### Implementation summary
+
+Phase 7 is a **server-side additive** implementation — no Phase 1-6 code was modified behaviorally. The only Phase 1-6 file touched is `src/lib/server/resolver/service.ts` (additive `skipHealthMutation` flag + new `resolveSourceDiagnostics` function) and `src/lib/client/player/capabilities.ts` (pure re-export from shared module).
+
+**5 capability areas implemented:**
+
+1. **Default source management** — New `/admin/defaults` route with `requireAdmin` on load + `saveDefault`/`clearDefault` actions. Reuses existing `listAdminDefaults`/`upsertDefaultSource`/`clearDefaultSource` — no SQL duplication, no DB changes. Three independent sections (movie/series/anime) with Save + Clear per row. Shows warning when default is disabled/non-public (intentional Phase 2 design preserved).
+
+2. **Health-isolated source testing** — New `POST /api/admin/sources/test` endpoint. Admin-only (`requireAdmin` at the top). Reuses `resolveSourceDiagnostics()` with `skipHealthMutation: true` — no parallel resolver. Resolves ONLY the requested source (single-element candidate list). Returns safe diagnostics (result, attempts, rankingDiagnostics, durationMs). No secrets exposed.
+
+3. **Resolver `skipHealthMutation` flag** — Added `skipHealthMutation?: boolean` to `ResolverDependencies`. `resolveSource()` gates `onSuccess`/`onFailure` on `!skipHealthMutation`. Default is `false`/`undefined` → production behavior unchanged. New `resolveSourceDiagnostics()` function resolves a single source with no health callbacks and returns attempts + ranking diagnostics.
+
+4. **Provider playback capability matrix** — Extracted capability constants from `src/lib/client/player/capabilities.ts` to `src/lib/shared/player-capabilities.ts` (single source of truth). Client module re-exports from shared — existing imports unchanged. Added `PROVIDER_CAPABILITY_MAP` + `lookupProviderCapabilities()` for adapter_id lookup. Providers page displays a 14-field matrix per provider with three states: Supported (✓), Unsupported (✕), Unknown (?). Unknown uses `HelpCircle` icon — NOT `X` (unknown ≠ unsupported). DB capabilities JSON (media-type/sandbox/origins) remains a separate concept.
+
+5. **Source test UI** — Each source record in `/admin/sources` has a "Test" button that opens an inline test panel. Form: contentId, mediaType (movie/series/anime), season/episode (when applicable). Submits to `POST /api/admin/sources/test` via `fetch` (separate from CRUD forms). Shows loading state, success/failure, resolved URL, attempts, ranking diagnostics, and duration.
+
+### Security review
+
+- ✅ `requireAdmin` called at the top of `/api/admin/sources/test` (before any resolver logic).
+- ✅ `requireAdmin` called on `/admin/defaults` load + `saveDefault` + `clearDefault` actions.
+- ✅ Service-role key never sent to browser (`$env/dynamic/private` only).
+- ✅ No private columns (`notes`, `templates`, `adapter_id`) in admin test response.
+- ✅ `skipHealthMutation: true` → `streaming_provider_health` NOT mutated during admin test.
+- ✅ Admin test resolves ONLY the requested source — no default/public-config/source-ordering mutation.
+- ✅ `cache-control: no-store` on admin test response.
+- ✅ Production `/api/playback/resolve` endpoint unchanged.
+
+### Files changed
+
+| File | Status | Changes |
+|---|---|---|
+| `src/lib/shared/player-capabilities.ts` | **NEW** | Single source of truth for `ProviderPlaybackCapabilities` type + all per-provider constants + `PROVIDER_CAPABILITY_MAP` + `lookupProviderCapabilities()` + `CAPABILITY_FIELDS` + `CAPABILITY_LABELS`. |
+| `src/lib/client/player/capabilities.ts` | modified | Pure re-export from shared module — existing client imports unchanged. |
+| `src/lib/server/resolver/service.ts` | modified | Added `skipHealthMutation` gating to `resolveSource()` + new `resolveSourceDiagnostics()` function. |
+| `src/lib/server/resolver/types.ts` | modified | Added `skipHealthMutation?: boolean` to `ResolverDependencies`. |
+| `src/lib/components/AdminShell.svelte` | modified | Added "Defaults" nav link. |
+| `src/routes/admin/defaults/+page.server.ts` | **NEW** | Load defaults + eligible sources; `saveDefault`/`clearDefault` actions. |
+| `src/routes/admin/defaults/+page.svelte` | **NEW** | Three independent sections (movie/series/anime) with Save + Clear + ineligible warning. |
+| `src/routes/api/admin/sources/test/+server.ts` | **NEW** | Admin-only source test endpoint with `skipHealthMutation: true`. |
+| `src/routes/admin/sources/+page.svelte` | modified | Added "Test" button + inline test panel per source. |
+| `src/routes/admin/providers/+page.server.ts` | modified | Loads capability map via `lookupProviderCapabilities`. |
+| `src/routes/admin/providers/+page.svelte` | modified | Displays 14-field capability matrix per provider (three-state). |
+| `scripts/phase7_admin_defaults_test.ts` | **NEW** | Default management contract + behavioral tests. |
+| `scripts/phase7_admin_source_test_test.ts` | **NEW** | Source test endpoint + health isolation + auth tests. |
+| `scripts/phase7_admin_capability_display_test.ts` | **NEW** | Capability matrix + three-state model tests. |
+| `package.json` | modified | Registered 3 new test scripts. |
+
+### Files NOT changed (Phase 1-6 contracts preserved)
+
+- `src/lib/client/player/PlaybackManager.ts` — dual-path architecture preserved.
+- `src/lib/client/player/providers/*-adapter.ts` — adapters unchanged.
+- `src/lib/server/streaming/admin-service.ts` — default functions already existed.
+- `src/lib/server/streaming/admin-auth.ts` — auth unchanged.
+- `src/lib/server/streaming/public-config.ts` — public reader unchanged.
+- `src/lib/server/streaming/health*.ts` — health system unchanged.
+- `src/lib/server/resolver/core.ts`, `fallback.ts`, `ranking.ts` — resolver core unchanged.
+- `src/routes/api/playback/resolve/+server.ts` — production endpoint unchanged.
+- `supabase/migrations/*` — NO database changes.
+- All Phase 1-6 player files — unchanged.
+
+### Verification
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings — NO new warnings).
+- `pnpm test` → PASS (41 scripts: 38 existing + 3 new Phase 7).
+- `pnpm run build` → PASS.
+- Manual QA: NOT TESTABLE (no Supabase env).
+
+### Commits
+
+- `af096ff` — `feat(admin): add default management, isolated source testing, capability matrix`
+- `34a1e0d` — `test(admin): add phase 7 coverage for defaults, source testing, capabilities`
+
 ### Worklog template
 
 ```md
