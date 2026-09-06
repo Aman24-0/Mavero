@@ -2612,6 +2612,67 @@ No Phase 4 code was modified. The `<script>` blocks of PlayerShell, PlayerContro
 
 **Commit:** `1ccd4f7` — `feat(player): redesign player UI with neutral monochrome design system`
 
+## 2026-09-06 — Phase 5 — Structural Redesign + Post-Implementation Audit Fix
+
+**Status:** COMPLETE
+
+**Phase:** 5
+
+**Task:** Independent post-implementation audit of the Phase 5 structural redesign (commit `b3cd759`) identified one new svelte-check warning introduced by Phase 5: an unused CSS selector `.player-shell.landscape-mode .header-actions` retained only to satisfy a stale regex-based landscape contract test. Audit was to determine whether the selector was (A) genuinely needed by the new UI, (B) dead CSS, or (C) existing only to satisfy a stale test.
+
+### Audit findings
+
+**Warning classification:** Option C — dead CSS existing only to satisfy a stale test.
+
+The Phase 5 redesign (commit `b3cd759`) moved all header actions into the new `.embed-shell-controls` toolbar inside the bottom bar, removing the `<div class="header-actions">` element from the markup. The matching landscape CSS rule (`.player-shell.landscape-mode .header-actions { ... margin-right: 38px; }`) was retained solely to satisfy the regex `/header-actions[^}]*margin-right: 38px/` on line 19 of `scripts/landscape_player_contract_test.ts`.
+
+However, the `margin-right: 38px` was serving a real layout purpose: it cleared the floating `.landscape-controls-toggle` button (absolute-positioned at `right: 8px`, 32px wide) so the right-edge header content did not overlap it in landscape mode. After Phase 5, the `orientation-button` is now the right-edge element in the landscape header (via `.header-title-row` `display: contents`), so it inherited the overlap bug — the orientation-button visually overlapped with the floating toggle button in landscape mode with controls expanded.
+
+### Fix
+
+| File | Change |
+|---|---|
+| `src/lib/components/player/PlayerShell.svelte` | Removed dead `.player-shell.landscape-mode .header-actions { ... }` CSS rule. Added `.player-shell.landscape-mode .orientation-button { margin-right: 38px; }` to preserve the actual layout contract (no overlap with the floating toggle button). |
+| `scripts/landscape_player_contract_test.ts` | Replaced the stale regex `header-actions[^}]*margin-right: 38px` with a new assertion matching the actual contract: `.player-shell.landscape-mode .orientation-button[^}]*margin-right: 38px`. Added a negative assertion `doesNotMatch` to guard against re-introduction of the dead `.header-actions` rule. |
+
+### Full audit (13 sections) — all PASS
+
+- **A. Warning audit:** Phase 5 warning classified as Option C (dead CSS kept for stale test). Fix applied.
+- **B. Markup/binding audit:** All bindings (`bind:this={playerRoot}`, `bind:this={viewport}`, `bind:videoElement`, `bind:iframeElement`) and callbacks (`onProgress`, `onSourceChange`, `onEpisodeChange`, `onClose`, `onDetails`, `onIframeReady`, `toggleLandscape`, `toggleSandbox`, `retry`, `chooseSource`, `chooseEpisode`) preserved and wired to valid elements.
+- **C. Embed control audit:** Embed shell controls (`source-switch`, `episode-list`, `details`, `landscape-toggle`, `sandbox-toggle`) all wired to existing callbacks. NO provider playback controls added (correct — embed sources use their own provider controls).
+- **D. Source sheet audit:** Mobile = bottom sheet (`position: fixed; bottom: 0; max-height: 60dvh`), desktop = compact popover (`top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(400px, ...)`), backdrop exists, close behavior works (overlay click + close-button + chooseSource), selected source visually clear (`.sheet-option.active` with Check icon), touch-friendly rows (`min-height: 52px`), sheet not too large, does not hide important controls.
+- **E. Episode sheet audit:** Same structure as source sheet. `max-height: 65dvh` (mobile), `width: min(440px, ...)` (desktop). Selected episode visually clear (`currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number`).
+- **F. Portrait layout audit:** Header compact (`flex: 0 0 auto`, padding `calc(10px + env(safe-area-inset-top)) clamp(12px, 4vw, 32px) 10px`), stage fills remaining space (`flex: 1 1 auto; min-height: 0`), bottom bar visible (`flex: 0 0 auto; opacity: 1`), video/iframe not distorted (`object-fit: contain`, `aspect-ratio: 16/9` for embeds), controls don't overlap viewport, safe-area insets handled, no horizontal/vertical overflow (`overflow: hidden` on player-shell).
+- **G. Landscape audit:** Landscape mode toggled via `class:landscape-mode={landscapeMode}`, collapsible header (`.controls-collapsed` hides header), immersive viewport (`.stage-wrap` flex-fills, `padding: 0` for full-bleed), bottom controls (`.bottom-bar.landscape-controls-collapsed` hides), safe-area handling, existing fullscreen/orientation behavior preserved (`toggleLandscape()` calls `requestFullscreen` + `orientation.lock('landscape')`; `toggleFullscreen()` is separate).
+- **H. Accessibility audit:** Every new control has `type="button"`, `aria-label` where needed, `aria-expanded` for sheet toggles, `aria-pressed` for stateful toggles (landscape, sandbox), `role="application"` on player shell, `role="toolbar"` on embed shell controls, `role="dialog"` + `aria-label` on sheets, `role="presentation"` on backdrop, `role="alert"` on error card, `role="status"` on loading/completion cards. All native `<button>` elements (keyboard accessible).
+- **I. Phase 4 regression:** Phase 5 commit `b3cd759` only touched `PlayerShell.svelte` and `phase5_player_ui_test.ts` — NO changes to `PlaybackManager.ts`, `ProgressWriter`, progress service/cloud/local, adapters, resolver, provider configuration, `selectedSourceId` logic, or resume/startAt logic.
+- **J. Test results:** 37/37 tests pass (including landscape_player_contract_test.ts with new assertions).
+- **K. Check/build results:** `pnpm run check` → 0 errors, 20 warnings (down from 21 — the Phase 5 `.header-actions` warning is eliminated; 20 baseline warnings remain identical to pre-Phase 5). `pnpm run build` → PASS.
+- **L. Manual QA:** NOT TESTABLE (no Supabase env file — same env-config gap as Phase 1-4 smoke tests).
+- **M. Changes made:** 2 files changed, 15 insertions, 2 deletions (smallest correct fix).
+- **N. Git status:** Phase 5 structural redesign commit `b3cd759` intact. New audit fix commit `5bbfd72` pushed on top.
+
+### Pre-existing warnings (unchanged baseline, NOT caused by Phase 5)
+
+1. `ScrollToTop.svelte:21:7` — `fabEl` not declared with `$state(...)`
+2. `auth/reset/+page.svelte:129:3` — Unused CSS selector `.input-icon`
+3. `auth/sign-in/+page.svelte:16:27, 17:32` — `form` initial value capture (×2)
+4. `auth/sign-in/+page.svelte:165:3` — Unused CSS selector `.input-icon`
+5. `auth/sign-up/+page.svelte:162:3` — Unused CSS selector `.input-icon`
+6. `profile/+page.svelte:494:3, 495:3` — Unused CSS selectors `.action-arrow`, `.action-card:hover .action-arrow`
+7. `search/+page.svelte:19-26` — `data` initial value capture (×8)
+8. `upcoming/+page.svelte:39-41` — `data.filters` initial value capture (×3)
+
+### Phase 5 warnings (eliminated by this fix)
+
+1. ~~`PlayerShell.svelte:461:3` — Unused CSS selector `.player-shell.landscape-mode .header-actions`~~ FIXED
+
+### Final verdict
+
+**PHASE 5 VERIFIED**
+
+**Commit:** `5bbfd72` — `fix(player): remove dead .header-actions CSS, apply clearance to orientation-button`
+
 ### Worklog template
 
 ```md
