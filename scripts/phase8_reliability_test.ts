@@ -57,7 +57,10 @@ assert.match(shell, /return \(\) => \{[\s\S]{0,200}clearEmbedLoadTimeout\(\)/, '
 assert.match(shell, /function retry\(\)[\s\S]{0,100}clearEmbedLoadTimeout\(\)/, 'timeout cleared on retry');
 
 // 1k. Stale-source guard: timeout checks sourceIdentity before acting.
-assert.match(shell, /if \(sourceIdentity !== embedLoadTimeoutSourceId\) return/, 'stale-source guard checks sourceIdentity');
+// Phase 8 bug fix: the guard must validate against a captured immutable
+// per-timer identity (timeoutSourceId), NOT the mutable embedLoadTimeoutSourceId.
+assert.match(shell, /const timeoutSourceId = sourceId/, 'timeoutSourceId captured as immutable per-timer const');
+assert.match(shell, /if \(sourceIdentity !== timeoutSourceId\) return/, 'stale-source guard checks captured timeoutSourceId, not mutable variable');
 
 // 1l. Timeout checks state === 'embed-loading' before transitioning to error.
 assert.match(shell, /if \(state !== 'embed-loading'\) return/, 'timeout only fires if still in embed-loading state');
@@ -85,12 +88,17 @@ function createEmbedTimeoutStateMachine() {
   let timeoutFired = false;
   let errorTransitioned = false;
 
+  // Phase 8 bug fix: capture the sourceId in a local const per timer invocation
+  // so the callback validates against THIS timer's identity, not the mutable
+  // embedLoadTimeoutSourceId which may be overwritten by a newer source.
   function startEmbedLoadTimeout(sourceId: string, delay = 50) {
     clearEmbedLoadTimeout();
-    embedLoadTimeoutSourceId = sourceId;
+    const timeoutSourceId = sourceId; // immutable capture
+    embedLoadTimeoutSourceId = timeoutSourceId;
     embedLoadTimer = setTimeout(() => {
       embedLoadTimer = undefined;
-      if (sourceIdentity !== embedLoadTimeoutSourceId) return;
+      // Guard against the captured per-timer identity, NOT the mutable variable.
+      if (sourceIdentity !== timeoutSourceId) return;
       if (state !== 'embed-loading') return;
       timeoutFired = true;
       state = 'error';
@@ -195,6 +203,135 @@ function createEmbedTimeoutStateMachine() {
 }
 
 // ============================================================
+// 2f. CRITICAL REGRESSION TEST: stale-callback race (Phase 8 bug fix)
+// ============================================================
+//
+// This test specifically reproduces the race described in the bug report:
+//
+//   1. Source A starts → timeout A is scheduled with captured identity 'A'
+//   2. Source A's callback becomes queued (has not executed yet)
+//   3. User switches to source B → start('B') is called
+//   4. start('B') clears A's timer (clearEmbedLoadTimeout) and schedules B's timer
+//   5. BUT: if A's callback was already queued by the event loop (not cancelled
+//      in time, or the clear happened after the callback was already on the
+//      microtask queue), A's callback executes
+//   6. A's callback reads the CAPTURED timeoutSourceId ('A') — NOT the mutable
+//      embedLoadTimeoutSourceId (now 'B')
+//   7. sourceIdentity is 'B' → 'B' !== 'A' → callback is a no-op
+//
+// The OLD (buggy) code read the mutable embedLoadTimeoutSourceId which is now 'B',
+// and sourceIdentity is also 'B' → 'B' === 'B' → callback INCORRECTLY fires
+// and transitions source B to error.
+//
+// This test uses a manual-callback state machine that captures each timer's
+// callback function so it can be fired manually AFTER the mutable variable
+// has been overwritten. This proves the fix works against the exact race.
+
+function createManualCallbackStateMachine() {
+  let embedLoadTimeoutSourceId = ''; // mutable — overwritten by each start()
+  let sourceIdentity = '';
+  let state: string = 'embed-loading';
+  let errorMessage = '';
+  let timeoutFired = false;
+
+  // Returns the callback function for manual firing. The callback captures
+  // `timeoutSourceId` as a local const — this is the fix.
+  function startEmbedLoadTimeout(sourceId: string): () => void {
+    const timeoutSourceId = sourceId; // immutable per-timer capture (the fix)
+    embedLoadTimeoutSourceId = timeoutSourceId; // mutable variable (the bug source)
+    return () => {
+      // Guard against captured per-timer identity, NOT the mutable variable.
+      if (sourceIdentity !== timeoutSourceId) return;
+      if (state !== 'embed-loading') return;
+      timeoutFired = true;
+      state = 'error';
+      errorMessage = 'This source is taking too long to load.';
+    };
+  }
+
+  return {
+    start: startEmbedLoadTimeout,
+    setSourceIdentity: (id: string) => { sourceIdentity = id; },
+    setState: (s: string) => { state = s; },
+    getState: () => state,
+    getErrorMessage: () => errorMessage,
+    didTimeoutFire: () => timeoutFired,
+    getMutableTimeoutSourceId: () => embedLoadTimeoutSourceId,
+  };
+}
+
+// Test F: stale callback from source A must NOT affect source B after B
+// has overwritten the mutable embedLoadTimeoutSourceId.
+{
+  const sm = createManualCallbackStateMachine();
+
+  // 1. Source A starts — callback A is "queued" (captured).
+  sm.setSourceIdentity('source-A');
+  sm.setState('embed-loading');
+  const callbackA = sm.start('source-A');
+
+  // 2. User switches to source B — start('B') overwrites the mutable variable.
+  sm.setSourceIdentity('source-B');
+  sm.setState('embed-loading');
+  const callbackB = sm.start('source-B');
+
+  // Verify the mutable variable is now 'B' (simulating the race condition).
+  assert.strictEqual(sm.getMutableTimeoutSourceId(), 'source-B', 'Test F: mutable embedLoadTimeoutSourceId is now B');
+
+  // 3. Source A's callback fires (it was already queued before clear could cancel it).
+  callbackA();
+
+  // 4. Assert that source B is NOT affected — state must remain 'embed-loading'.
+  assert.strictEqual(sm.getState(), 'embed-loading', 'Test F: source A stale callback did NOT transition source B to error');
+  assert.ok(!sm.didTimeoutFire(), 'Test F: source A stale callback was a no-op (captured identity mismatch)');
+
+  // 5. Source B's own callback fires — this SHOULD transition to error.
+  callbackB();
+  assert.strictEqual(sm.getState(), 'error', 'Test F: source B callback correctly transitions to error');
+  assert.ok(sm.didTimeoutFire(), 'Test F: source B callback fired (correct behavior)');
+}
+
+// Test F-buggy: verify the OLD (buggy) code WOULD have failed this test.
+// This proves the test is meaningful — it would catch a regression if
+// someone reverted the fix.
+{
+  // Simulate the OLD buggy behavior: callback reads the mutable variable
+  // instead of the captured const.
+  let embedLoadTimeoutSourceId = '';
+  let sourceIdentity = '';
+  let state: string = 'embed-loading';
+  let timeoutFired = false;
+
+  function startBuggy(sourceId: string): () => void {
+    embedLoadTimeoutSourceId = sourceId;
+    // BUG: reads the mutable embedLoadTimeoutSourceId instead of captured sourceId
+    return () => {
+      if (sourceIdentity !== embedLoadTimeoutSourceId) return; // BUG: reads mutable
+      if (state !== 'embed-loading') return;
+      timeoutFired = true;
+      state = 'error';
+    };
+  }
+
+  // 1. Source A starts.
+  sourceIdentity = 'source-A';
+  state = 'embed-loading';
+  const callbackA = startBuggy('source-A');
+
+  // 2. Source B starts — overwrites the mutable variable.
+  sourceIdentity = 'source-B';
+  state = 'embed-loading';
+  const callbackB = startBuggy('source-B');
+
+  // 3. Source A's stale callback fires.
+  callbackA();
+
+  // BUG: source A's callback reads the mutable 'B', sourceIdentity is 'B' → match → fires!
+  assert.strictEqual(state, 'error', 'Test F-buggy: OLD buggy code WOULD incorrectly transition source B to error');
+  assert.ok(timeoutFired, 'Test F-buggy: OLD buggy code WOULD fire for the wrong source — proving the test is meaningful');
+}
+
+// ============================================================
 // 3. CLIENT-SIDE RESOLVER TIMEOUT — contract assertions
 // ============================================================
 
@@ -255,4 +392,4 @@ assert.deepEqual(evaluateAbortHandling(true, true), { silentlyDrop: false, showT
 // Non-abort error (network failure): not an AbortError → normal error handling.
 assert.deepEqual(evaluateAbortHandling(false, false), { silentlyDrop: false, showTimeoutError: false }, 'non-abort error handled normally');
 
-console.log('Phase 8 reliability tests passed: embed timeout constant + value check (2); embed timeout state + functions (4); embed timeout lifecycle wiring (6); stale-source guard + state check (3); behavioral timeout tests A-E (5 tests); resolver timeout constant + AbortController + timedOut flag (3); resolver timeout cleanup on success/error (2); intentional-abort vs timeout-abort distinction (2); existing sessionId/AbortController guards preserved (4); behavioral abort-handling tests (3 tests).');
+console.log('Phase 8 reliability tests passed: embed timeout constant + value check (2); embed timeout state + functions (4); embed timeout lifecycle wiring (6); stale-source guard + captured-identity check (4); behavioral timeout tests A-F (7 tests including stale-callback race regression + buggy-code proof); resolver timeout constant + AbortController + timedOut flag (3); resolver timeout cleanup on success/error (2); intentional-abort vs timeout-abort distinction (2); existing sessionId/AbortController guards preserved (4); behavioral abort-handling tests (3 tests).');

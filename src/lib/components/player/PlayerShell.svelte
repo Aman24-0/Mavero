@@ -677,13 +677,22 @@
 
   function startEmbedLoadTimeout(sourceId: string) {
     clearEmbedLoadTimeout();
-    embedLoadTimeoutSourceId = sourceId;
+    // Phase 8 bug fix: capture the sourceId in a local const so the timeout
+    // callback validates against the identity that belonged to THIS PARTICULAR
+    // timer invocation — NOT the mutable `embedLoadTimeoutSourceId` which
+    // may have been overwritten by a newer source's startEmbedLoadTimeout call.
+    // Without this capture, a stale queued callback from source A could read
+    // the current mutable value ('B') after source B started, and incorrectly
+    // transition source B to error.
+    const timeoutSourceId = sourceId;
+    embedLoadTimeoutSourceId = timeoutSourceId;
     embedLoadTimer = setTimeout(() => {
       embedLoadTimer = undefined;
-      // Stale-source guard: if the user switched to a different source while
-      // this timeout was pending, do nothing. The new source has its own
-      // timeout (or is a direct source that doesn't need one).
-      if (sourceIdentity !== embedLoadTimeoutSourceId) return;
+      // Stale-source guard: compare against the captured `timeoutSourceId`
+      // (immutable per-timer), NOT the mutable `embedLoadTimeoutSourceId`.
+      // If the user switched to a different source while this timeout was
+      // pending, sourceIdentity will not match timeoutSourceId.
+      if (sourceIdentity !== timeoutSourceId) return;
       // Only transition to error if we're still in the embed-loading state.
       // If handleEmbedLoad already fired, state will be 'playing' and we
       // must NOT override it.
