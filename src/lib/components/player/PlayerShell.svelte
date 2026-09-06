@@ -39,6 +39,7 @@
   let landscapeMode = false;
   let landscapeControlsExpanded = true;
   let landscapeControlsTimer: ReturnType<typeof setTimeout> | undefined;
+  let landscapeToggleInFlight = false;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
   let state: PlayerPlaybackState = source ? 'preparing' : 'source-unavailable';
@@ -54,7 +55,30 @@
   let sourceIdentity = '';
   let sandboxEnabled = true;
   let sandboxSourceIdentity = '';
+  // Phase 6: episode identity tracker for the episode-switch reactive block.
+  let episodeIdentity = '';
   const LANDSCAPE_CONTROLS_HIDE_MS = 5000;
+
+  // Phase 6: Wake Lock state — shell-local, never exposed as a provider capability.
+  let wakeLockSupported = false;
+  let wakeLockSentinel: WakeLockSentinelHandle | null = null;
+  let wasPlayingBeforeHidden = false;
+
+  // Phase 6: Media Session state — direct playback only.
+  let mediaSessionSupported = false;
+  let mediaSessionActive = false;
+
+  // Phase 6: local WakeLockSentinel type. lib.dom.d.ts may not include this on
+  // older TS versions, so we declare the minimal shape we use, matching the
+  // existing OrientationController optional-method pattern.
+  type WakeLockSentinelHandle = {
+    released?: boolean;
+    addEventListener?: (type: 'release', listener: () => void) => void;
+    removeEventListener?: (type: 'release', listener: () => void) => void;
+    release?: () => Promise<void>;
+  };
+  type WakeLockNavigator = Navigator & { wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelHandle> } };
+  type MediaSessionNavigator = Navigator & { mediaSession?: { playbackState?: string; metadata?: MediaMetadata | null; setActionHandler?: (action: string, handler: (() => void) | null) => void; setPositionState?: (state: { duration?: number; playbackRate?: number; position?: number }) => void } };
 
   $: qualities = source?.qualities ?? [];
   $: subtitles = source?.subtitles ?? [];
@@ -79,20 +103,74 @@
     errorMessage = '';
     playing = false;
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
+    // Phase 6: release wake lock + clear Media Session on source switch.
+    // Wake lock is re-acquired when the new source starts playing (handlePlay
+    // or handleEmbedLoad). Media Session metadata is re-set in handleLoadedMetadata.
+    void releaseWakeLock();
+    clearMediaSession();
+    // Phase 6: exit PiP if the active PiP element was Mavero's video. This
+    // prevents the PiP window from showing stale video after a source switch.
+    if (document.pictureInPictureElement === videoElement) {
+      try { void document.exitPictureInPicture?.(); } catch { /* already exited */ }
+    }
+  }
+  // Phase 6: episode switch cleanup. PlayerShell stays mounted across episode
+  // changes (only props change), so we must release wake lock + clear Media
+  // Session + exit PiP here. The new episode's source will re-acquire them.
+  $: if (currentEpisode && `${currentEpisode.season}:${currentEpisode.episode}` !== episodeIdentity) {
+    episodeIdentity = `${currentEpisode.season}:${currentEpisode.episode}`;
+    void releaseWakeLock();
+    clearMediaSession();
+    if (document.pictureInPictureElement === videoElement) {
+      try { void document.exitPictureInPicture?.(); } catch { /* already exited */ }
+    }
   }
 
   onMount(() => {
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
+    // Phase 6: detect Wake Lock + Media Session support at mount, matching the
+    // existing pictureInPictureSupported pattern (Boolean coercion, no try/catch,
+    // optional chaining on every API call).
+    wakeLockSupported = Boolean('wakeLock' in navigator && (navigator as WakeLockNavigator).wakeLock?.request);
+    mediaSessionSupported = Boolean('mediaSession' in navigator && (navigator as MediaSessionNavigator).mediaSession);
+    // Phase 6: register Media Session action handlers for DIRECT playback only.
+    // Embed sources cannot be commanded reliably (except CineSrc, but the
+    // postMessage round-trip makes Media Session state updates unreliable).
+    if (mediaSessionSupported) registerMediaSessionHandlers();
     const handleFullscreen = () => {
       fullscreen = document.fullscreenElement === playerRoot;
       if (!fullscreen && landscapeMode) {
+        // Phase 6: browser-initiated fullscreen exit (Esc / F11 / navigation)
+        // must release the orientation lock explicitly. The Screen Orientation
+        // API spec says the browser auto-releases the lock when the document
+        // exits fullscreen, but some browsers leave a stale lock — calling
+        // unlock() is safe (it's a no-op if the lock was already released).
+        try { orientationController()?.unlock?.(); } catch { /* unsupported */ }
         landscapeMode = false;
         landscapeControlsExpanded = true;
         clearLandscapeControlsTimer();
         revealControls();
       }
     };
+    // Phase 6: PiP events fire on the HTMLVideoElement, NOT on document.
+    // The previous implementation attached these to document, where they never
+    // fired (events do not bubble), leaving the `pictureInPicture` state stuck
+    // at its initial value. Attach to videoElement when it becomes available.
     const handlePictureInPicture = () => { pictureInPicture = document.pictureInPictureElement === videoElement; };
+    const attachPictureInPictureListeners = () => {
+      if (!videoElement) return;
+      videoElement.addEventListener('enterpictureinpicture', handlePictureInPicture);
+      videoElement.addEventListener('leavepictureinpicture', handlePictureInPicture);
+    };
+    const detachPictureInPictureListeners = () => {
+      if (!videoElement) return;
+      videoElement.removeEventListener('enterpictureinpicture', handlePictureInPicture);
+      videoElement.removeEventListener('leavepictureinpicture', handlePictureInPicture);
+    };
+    // Attach PiP listeners once the videoElement binds (direct sources only).
+    // handleLoadedMetadata re-checks pictureInPictureSupported and runs after
+    // bind:this completes for the <video> element.
+    attachPictureInPictureListeners();
     const handleKeydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, select, textarea, button, [contenteditable="true"]')) return;
@@ -110,8 +188,6 @@
       if (playing && !landscapeMode) hideTimer = setTimeout(() => { controlsVisible = false; }, 2600);
     };
     document.addEventListener('fullscreenchange', handleFullscreen);
-    document.addEventListener('enterpictureinpicture', handlePictureInPicture);
-    document.addEventListener('leavepictureinpicture', handlePictureInPicture);
     window.addEventListener('keydown', handleKeydown);
     playerRoot?.addEventListener('pointermove', showControls);
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
@@ -119,11 +195,17 @@
       if (hideTimer) clearTimeout(hideTimer);
       if (landscapeControlsTimer) clearTimeout(landscapeControlsTimer);
       document.removeEventListener('fullscreenchange', handleFullscreen);
-      document.removeEventListener('enterpictureinpicture', handlePictureInPicture);
-      document.removeEventListener('leavepictureinpicture', handlePictureInPicture);
+      detachPictureInPictureListeners();
       window.removeEventListener('keydown', handleKeydown);
       playerRoot?.removeEventListener('pointermove', showControls);
       playerRoot?.removeEventListener('touchstart', showControls);
+      // Phase 6: explicit teardown of shell-level playback features. The browser
+      // auto-exits fullscreen/PiP when playerRoot leaves the DOM, but explicit
+      // calls are deterministic and prevent stale state across SPA navigation.
+      if (document.pictureInPictureElement === videoElement) { try { void document.exitPictureInPicture?.(); } catch { /* already exited */ } }
+      if (document.fullscreenElement === playerRoot) { try { void document.exitFullscreen?.(); } catch { /* already exited */ } }
+      releaseWakeLock();
+      clearMediaSession();
     };
   });
 
@@ -156,6 +238,11 @@
       currentTime = pendingSeek;
     }
     pendingSeek = 0;
+    // Phase 6: set Media Session metadata + initial position state once the
+    // direct source has loaded. Safe to call for embed sources too —
+    // setupMediaSession is a no-op when mediaSessionSupported is false.
+    setupMediaSession();
+    syncMediaSessionPositionState();
   }
 
   function handleTimeUpdate(event: CustomEvent<{ currentTime: number; duration: number }>) {
@@ -166,6 +253,12 @@
       lastProgressReport = currentTime;
       emitProgress('progress');
     }
+    // Phase 6: keep Media Session position state in sync. setPositionState is
+    // only called for direct sources (mediaSessionActive gate) and only when
+    // values are finite/positive. Called on every timeupdate (throttled by the
+    // 5-second progress gate above is too coarse for position state — the OS
+    // media controls should update more frequently).
+    syncMediaSessionPositionState();
   }
 
   function handlePlay() {
@@ -173,6 +266,12 @@
     state = 'playing';
     errorMessage = '';
     revealControls();
+    // Phase 6: acquire wake lock when playback starts. Safe for both direct
+    // and embed sources — for embeds, `state === 'playing'` is set by
+    // handleEmbedLoad, and the wake lock keeps the screen awake while the
+    // provider plays inside the iframe.
+    acquireWakeLock();
+    syncMediaSessionPlaybackState('playing');
   }
 
   function handlePause() {
@@ -180,14 +279,34 @@
     if (state !== 'completed') state = 'paused';
     emitProgress('pause');
     revealControls();
+    // Phase 6: release wake lock on pause. Wake Lock must NOT remain active
+    // indefinitely while playback is paused.
+    releaseWakeLock();
+    syncMediaSessionPlaybackState('paused');
   }
 
   function handleWaiting() { state = 'buffering'; }
   function handlePlaying() { state = 'playing'; errorMessage = ''; }
   function handleSeeking() { state = 'seeking'; }
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
-  function handleEnded() { playing = false; state = 'completed'; emitProgress('ended'); revealControls(); }
-  function handleMediaError() { playing = false; state = 'error'; errorMessage = 'Playback could not be started. Try again or choose another source.'; revealControls(); }
+  function handleEnded() {
+    playing = false;
+    state = 'completed';
+    emitProgress('ended');
+    revealControls();
+    // Phase 6: release wake lock on end.
+    releaseWakeLock();
+    syncMediaSessionPlaybackState('paused');
+  }
+  function handleMediaError() {
+    playing = false;
+    state = 'error';
+    errorMessage = 'Playback could not be started. Try again or choose another source.';
+    revealControls();
+    // Phase 6: release wake lock on error.
+    releaseWakeLock();
+    syncMediaSessionPlaybackState('paused');
+  }
   function handleEmbedLoad() {
     state = 'playing';
     errorMessage = '';
@@ -197,6 +316,13 @@
     // CineSrc API target. Without this ref, commands cannot reach the
     // provider's player.
     if (iframeElement) onIframeReady(iframeElement);
+    // Phase 6: embed playback started — acquire wake lock so the screen stays
+    // awake while the provider plays. Sync Media Session playbackState too
+    // (metadata is set in handleLoadedMetadata — for embeds, that fires for
+    // the wrapping <iframe> element, which is fine; the title/poster come from
+    // the content prop, not from inside the iframe).
+    acquireWakeLock();
+    syncMediaSessionPlaybackState('playing');
   }
 
   function toggleSandbox() {
@@ -217,7 +343,12 @@
   function seekBy(delta: number) { seek(currentTime + delta); }
   function toggleMute() { muted = !muted; if (videoElement) videoElement.muted = muted; }
   function setVolume(value: number) { volume = Math.min(1, Math.max(0, value)); muted = volume === 0; if (videoElement) { videoElement.volume = volume; videoElement.muted = muted; } }
-  function setPlaybackRate(value: number) { playbackRate = value; if (videoElement) videoElement.playbackRate = value; }
+  function setPlaybackRate(value: number) {
+    playbackRate = value;
+    if (videoElement) videoElement.playbackRate = value;
+    // Phase 6: position state includes playbackRate — re-sync on change.
+    syncMediaSessionPositionState();
+  }
 
   function setSubtitle(url: string) {
     selectedSubtitle = url;
@@ -278,8 +409,14 @@
   }
 
   async function toggleLandscape() {
+    // Phase 6: rapid double-toggle guard. Without this, two rapid taps could
+    // both read the same `landscapeMode` value, both await requestFullscreen(),
+    // and the second await could resolve after the first exit has already
+    // cleared landscapeMode — producing inconsistent state.
+    if (landscapeToggleInFlight) return;
     const entering = !landscapeMode;
     revealControls();
+    landscapeToggleInFlight = true;
     try {
       const orientation = orientationController();
       if (entering) {
@@ -304,6 +441,8 @@
       landscapeControlsExpanded = true;
       clearLandscapeControlsTimer();
       errorMessage = 'Landscape mode is not available in this browser.';
+    } finally {
+      landscapeToggleInFlight = false;
     }
   }
 
@@ -369,9 +508,189 @@
     if (videoElement) { videoElement.load(); pendingSeek = currentTime; }
     state = source?.type === 'embed' ? 'embed-loading' : 'preparing';
   }
+
+  // ----- Phase 6: Wake Lock -----
+  //
+  // Shell-local screen wake lock. Acquired while Mavero considers playback
+  // to be actively playing (direct video 'play' event, or embed 'embedload'
+  // event). Released on pause/end/error/source-switch/episode-switch/destroy
+  // and when the document becomes hidden. Re-acquired on visibility-visible
+  // if playback was still active when the document hid.
+  //
+  // The sentinel's `release` event is observed so that a system-initiated
+  // release (e.g. OS power management) updates internal state.
+  //
+  // Race-condition-safe: if `request('screen')` resolves after PlayerShell
+  // is destroyed, the sentinel is released immediately and no destroyed
+  // component state is touched.
+
+  async function acquireWakeLock() {
+    if (!wakeLockSupported) return;
+    // Don't acquire if we already hold a sentinel that hasn't been released.
+    if (wakeLockSentinel && !wakeLockSentinel.released) return;
+    try {
+      const nav = navigator as WakeLockNavigator;
+      const sentinel = await nav.wakeLock!.request('screen');
+      // Race guard: if the component was destroyed while the request was in
+      // flight, release the sentinel immediately and do not touch local state.
+      if (!playerRoot) {
+        try { await sentinel?.release?.(); } catch { /* already released */ }
+        return;
+      }
+      wakeLockSentinel = sentinel;
+      try { sentinel?.addEventListener?.('release', handleWakeLockSentinelRelease); } catch { /* some browsers lack addEventListener on the sentinel */ }
+    } catch {
+      // Spec: rejects if document not visible, or if permission denied.
+      // Silently no-op — wake lock is best-effort.
+      wakeLockSentinel = null;
+    }
+  }
+
+  function handleWakeLockSentinelRelease() {
+    // The sentinel fired its `release` event (system-initiated or our own
+    // release() call). Clear the local ref so acquireWakeLock() can re-acquire.
+    if (wakeLockSentinel) {
+      try { wakeLockSentinel.removeEventListener?.('release', handleWakeLockSentinelRelease); } catch { /* already removed */ }
+    }
+    wakeLockSentinel = null;
+  }
+
+  async function releaseWakeLock() {
+    const sentinel = wakeLockSentinel;
+    wakeLockSentinel = null;
+    if (!sentinel) return;
+    try { sentinel.removeEventListener?.('release', handleWakeLockSentinelRelease); } catch { /* already removed */ }
+    try { await sentinel.release?.(); } catch { /* already released */ }
+  }
+
+  // ----- Phase 6: Media Session -----
+  //
+  // Media Session metadata + action handlers for DIRECT playback only.
+  // Embed sources cannot be commanded reliably (except CineSrc, but the
+  // postMessage round-trip makes Media Session state updates unreliable).
+  //
+  // Action handlers registered: play, pause, seekbackward, seekforward, seekto.
+  // NOT registered: previoustrack/nexttrack (no existing chooseAdjacentEpisode
+  // helper exists in the current architecture).
+  //
+  // setPositionState is called only when:
+  //   - duration is finite and > 0
+  //   - position is finite, >= 0, and <= duration
+  //   - playbackRate is finite and > 0
+
+  function setupMediaSession() {
+    if (!mediaSessionSupported) return;
+    const nav = navigator as MediaSessionNavigator;
+    const session = nav.mediaSession;
+    if (!session) return;
+    // Build metadata. Artwork is only included when a valid image URL exists
+    // — empty URLs would create invalid artwork entries.
+    const artworkUrl = content.backdrop ?? content.poster ?? '';
+    const artwork = artworkUrl ? [{ src: artworkUrl, sizes: '512x512', type: 'image/jpeg' }] : undefined;
+    try {
+      if ('MediaMetadata' in window) {
+        session.metadata = new MediaMetadata({
+          title: content.title,
+          artist: currentEpisode?.title ?? (content.type === 'movie' ? 'Movie' : content.type === 'series' ? 'Series' : 'Anime'),
+          album: 'MAVERO',
+          ...(artwork ? { artwork } : {})
+        });
+      }
+      mediaSessionActive = true;
+    } catch {
+      // MediaMetadata constructor may be unavailable on older Safari.
+      mediaSessionActive = false;
+    }
+  }
+
+  function registerMediaSessionHandlers() {
+    if (!mediaSessionSupported) return;
+    const nav = navigator as MediaSessionNavigator;
+    const session = nav.mediaSession;
+    if (!session?.setActionHandler) return;
+    // Only register handlers that can be correctly implemented for DIRECT
+    // playback. Embed sources do not get action handlers (caller gates this
+    // by only invoking on direct sources — see handleLoadedMetadata).
+    const trySet = (action: string, handler: () => void) => {
+      try { session.setActionHandler!(action, handler); } catch { /* some Safari versions throw for unsupported actions */ }
+    };
+    trySet('play', () => { if (source?.type === 'direct' && videoElement?.paused) void videoElement.play(); });
+    trySet('pause', () => { if (source?.type === 'direct' && videoElement && !videoElement.paused) videoElement.pause(); });
+    trySet('seekbackward', () => seekBy(-10));
+    trySet('seekforward', () => seekBy(10));
+    // seekto: MediaSessionActionDetails includes seekTime / fastSeek. The handler
+    // signature accepts an optional details argument; we cast through unknown
+    // to avoid relying on lib.dom typings that may not be present on older TS.
+    type SeekToDetails = { seekTime?: number; fastSeek?: boolean };
+    const seekToHandler = (raw: unknown) => {
+      const details = raw as SeekToDetails | undefined;
+      if (typeof details?.seekTime === 'number' && Number.isFinite(details.seekTime)) seek(details.seekTime);
+    };
+    try { session.setActionHandler('seekto', seekToHandler as () => void); } catch { /* unsupported */ }
+  }
+
+  function clearMediaSession() {
+    if (!mediaSessionSupported) return;
+    const nav = navigator as MediaSessionNavigator;
+    const session = nav.mediaSession;
+    if (!session) return;
+    try { session.metadata = null; } catch { /* unsupported */ }
+    try { session.playbackState = 'none'; } catch { /* unsupported */ }
+    // Clear action handlers. Wrapped in try/catch because browser
+    // implementations differ (Safari may throw for null handler on some actions).
+    const actions = ['play', 'pause', 'seekbackward', 'seekforward', 'seekto'];
+    for (const action of actions) {
+      try { session.setActionHandler?.(action, null); } catch { /* unsupported */ }
+    }
+    mediaSessionActive = false;
+  }
+
+  function syncMediaSessionPlaybackState(value: 'playing' | 'paused' | 'none') {
+    if (!mediaSessionSupported || !mediaSessionActive) return;
+    const nav = navigator as MediaSessionNavigator;
+    try { nav.mediaSession!.playbackState = value; } catch { /* unsupported */ }
+  }
+
+  function syncMediaSessionPositionState() {
+    if (!mediaSessionSupported || !mediaSessionActive) return;
+    const nav = navigator as MediaSessionNavigator;
+    const session = nav.mediaSession;
+    if (!session?.setPositionState) return;
+    // Validate per spec — invalid values throw or are silently ignored.
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    if (!Number.isFinite(currentTime) || currentTime < 0 || currentTime > duration) return;
+    if (!Number.isFinite(playbackRate) || playbackRate <= 0) return;
+    try {
+      session.setPositionState({ duration, playbackRate, position: currentTime });
+    } catch { /* invalid position state — silently skip */ }
+  }
+
+  // ----- Phase 6: visibility/wake-lock coordination -----
+  //
+  // Wake Lock spec: the sentinel auto-releases when the document becomes
+  // hidden. We track whether playback was active when the document hid so we
+  // can re-acquire on visibility-visible. This is invoked from the existing
+  // svelte:window onvisibilitychange handler (extended below to call this).
+
+  function handleVisibilityChangeForWakeLock() {
+    if (document.hidden) {
+      // Capture playing state before the auto-release.
+      wasPlayingBeforeHidden = playing;
+      // Per spec, the sentinel auto-releases. But explicit release is safer
+      // for cross-browser consistency — some browsers hold the lock briefly.
+      void releaseWakeLock();
+    } else {
+      // Re-acquire only if playback was active when the document hid.
+      // Do NOT re-acquire while paused/completed/error.
+      if (wasPlayingBeforeHidden && playing) {
+        void acquireWakeLock();
+      }
+      wasPlayingBeforeHidden = false;
+    }
+  }
 </script>
 
-<svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); }} />
+<svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); handleVisibilityChangeForWakeLock(); }} />
 
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -405,7 +724,7 @@
   <!-- Bottom controls area: direct sources get full PlayerControls; embed sources get shell controls -->
   <div class="bottom-bar" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
     {#if source?.type === 'direct'}
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} pictureInPicture={pictureInPictureSupported} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { sourceMenuOpen = !sourceMenuOpen; }} />
     {:else if source?.type === 'embed' || effectiveState === 'embed-loading' || effectiveState === 'switching-source'}
       <!-- Phase 5: Embed source shell controls bar — Mavero-owned controls for embed playback -->
       <div class="embed-shell-controls" role="toolbar" aria-label="Embed playback controls">

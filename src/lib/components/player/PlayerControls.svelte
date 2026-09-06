@@ -11,6 +11,12 @@
   export let buffered = 0;
   export let playbackRate = 1;
   export let fullscreen = false;
+  // Phase 6: split capability flag from active state.
+  //   pictureInPictureSupported — whether the PiP button renders at all.
+  //   pictureInPicture — whether PiP is currently active (drives aria-label/icon).
+  // Previously the parent passed the supported flag into `pictureInPicture`
+  // which made the active-state label always wrong.
+  export let pictureInPictureSupported = false;
   export let pictureInPicture = false;
   export let subtitles: PlayerSubtitleTrack[] = [];
   export let selectedSubtitle = '';
@@ -77,8 +83,8 @@
       {#if subtitles.length}<label class="select-control" aria-label="Subtitles"><Captions size={16} /><select value={selectedSubtitle} onchange={(event) => onSubtitle((event.currentTarget as HTMLSelectElement).value)}><option value="">Subtitles off</option>{#each subtitles as track, index}<option value={track.url}>{track.label ?? track.language ?? `Track ${index + 1}`}</option>{/each}</select></label>{/if}
       {#if qualities.length > 1}<label class="select-control quality" aria-label="Quality"><Settings2 size={15} /><select value={selectedQuality} onchange={(event) => onQuality((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each qualities as quality}<option value={quality.url}>{qualityLabel(quality)}</option>{/each}</select></label>{/if}
       <label class="select-control speed" aria-label="Playback speed"><span>{playbackRate}×</span><select value={playbackRate} onchange={(event) => onPlaybackRate(Number((event.currentTarget as HTMLSelectElement).value))}>{#each playbackSpeeds as speed}<option value={speed}>{speed}×</option>{/each}</select></label>
-      {#if pictureInPicture}<button class="control-button optional" type="button" aria-label="Picture-in-Picture" onclick={onPictureInPicture}><PictureInPicture2 size={16} /></button>{/if}
-      <button class="control-button" type="button" aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} onclick={onFullscreen}>{#if fullscreen}<Minimize size={17} />{:else}<Maximize size={17} />{/if}</button>
+      {#if pictureInPictureSupported}<button class="control-button optional" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={16} /></button>{/if}
+      <button class="control-button" type="button" aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreen} onclick={onFullscreen}>{#if fullscreen}<Minimize size={17} />{:else}<Maximize size={17} />{/if}</button>
     </div>
   </div>
 </div>
