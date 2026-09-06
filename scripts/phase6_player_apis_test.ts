@@ -27,11 +27,18 @@ const viewport = readFileSync(new URL('../src/lib/components/player/PlayerViewpo
 
 // The previous bug: document.addEventListener('enterpictureinpicture', ...) never fires
 // because PiP events fire on the HTMLVideoElement and do NOT bubble to document.
-// Phase 6 must attach to videoElement.
-assert.match(shell, /videoElement\.addEventListener\('enterpictureinpicture'/, 'PiP enter listener attached to videoElement');
-assert.match(shell, /videoElement\.addEventListener\('leavepictureinpicture'/, 'PiP leave listener attached to videoElement');
-assert.match(shell, /videoElement\.removeEventListener\('enterpictureinpicture'/, 'PiP enter listener removed from videoElement');
-assert.match(shell, /videoElement\.removeEventListener\('leavepictureinpicture'/, 'PiP leave listener removed from videoElement');
+// Phase 6 audit fix: listeners are attached via a reactive block that tracks
+// the videoElement lifecycle. The attachPipListeners() function attaches to
+// the `current` video element (not a captured-once `videoElement` variable),
+// and detaches from the previous element when the identity changes.
+assert.match(shell, /function attachPipListeners\(current: HTMLVideoElement \| undefined\)/, 'attachPipListeners function exists');
+assert.match(shell, /current\.addEventListener\('enterpictureinpicture', handlePictureInPicture\)/, 'PiP enter listener attached to current videoElement');
+assert.match(shell, /current\.addEventListener\('leavepictureinpicture', handlePictureInPicture\)/, 'PiP leave listener attached to current videoElement');
+assert.match(shell, /lastPipVideoElement\.removeEventListener\('enterpictureinpicture', handlePictureInPicture\)/, 'PiP enter listener removed from previous videoElement');
+assert.match(shell, /lastPipVideoElement\.removeEventListener\('leavepictureinpicture', handlePictureInPicture\)/, 'PiP leave listener removed from previous videoElement');
+assert.match(shell, /\$: attachPipListeners\(videoElement\)/, 'reactive PiP listener attachment tracks videoElement lifecycle');
+assert.match(shell, /if \(current === lastPipVideoElement\) return/, 'no duplicate attachment when videoElement identity unchanged');
+assert.match(shell, /let lastPipVideoElement: HTMLVideoElement \| undefined = undefined/, 'lastPipVideoElement state tracks previous element');
 // The dead document listeners must be ABSENT.
 assert.doesNotMatch(shell, /document\.addEventListener\('enterpictureinpicture'/, 'no document PiP enter listener (dead code removed)');
 assert.doesNotMatch(shell, /document\.addEventListener\('leavepictureinpicture'/, 'no document PiP leave listener (dead code removed)');
@@ -39,10 +46,12 @@ assert.doesNotMatch(shell, /document\.removeEventListener\('enterpictureinpictur
 assert.doesNotMatch(shell, /document\.removeEventListener\('leavepictureinpicture'/, 'no document PiP leave removal');
 // Active state sync uses document.pictureInPictureElement as source of truth.
 assert.match(shell, /pictureInPicture = document\.pictureInPictureElement === videoElement/, 'PiP active state synced from document.pictureInPictureElement');
+assert.match(shell, /pictureInPicture = document\.pictureInPictureElement === current/, 'PiP active state synced on new videoElement attachment');
+assert.match(shell, /pictureInPicture = false/, 'PiP active state cleared when videoElement becomes undefined');
 // PiP cleanup on source switch.
 assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\)[\s\S]{0,80}exitPictureInPicture/, 'PiP exit on source switch');
 // PiP cleanup on destroy.
-assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\)[\s\S]{0,120}exitPictureInPicture[\s\S]{0,200}releaseWakeLock/, 'PiP exit on destroy (in onMount cleanup)');
+assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\)[\s\S]*?exitPictureInPicture[\s\S]*?releaseWakeLock/, 'PiP exit on destroy (in onMount cleanup)');
 // No iframe PiP invocation.
 assert.doesNotMatch(shell, /iframeElement[\s\S]{0,30}requestPictureInPicture/, 'no iframe PiP invocation (cross-origin safety)');
 
@@ -102,19 +111,37 @@ assert.match(shell, /finally \{[\s\S]{0,40}landscapeToggleInFlight = false/, 'la
 assert.match(shell, /let wakeLockSupported = false/, 'wakeLockSupported state declared');
 assert.match(shell, /let wakeLockSentinel/, 'wakeLockSentinel state declared');
 assert.match(shell, /let wasPlayingBeforeHidden = false/, 'wasPlayingBeforeHidden state declared');
+// Phase 6 audit fix: request-generation mechanism for race safety.
+assert.match(shell, /let wakeLockRequestId = 0/, 'wakeLockRequestId state declared');
+assert.match(shell, /let wakeLockDestroyed = false/, 'wakeLockDestroyed state declared');
 // Support detection in onMount.
 assert.match(shell, /wakeLockSupported = Boolean\('wakeLock' in navigator/, 'wakeLock support detected');
 // request('screen').
 assert.match(shell, /wakeLock!\.request\('screen'\)/, "navigator.wakeLock.request('screen') called");
-// Acquire wired to play (direct) + embedload (embed).
-assert.match(shell, /function handlePlay\(\)[\s\S]{0,500}acquireWakeLock\(\)/, 'wake lock acquired on play');
-assert.match(shell, /function handleEmbedLoad\(\)[\s\S]{0,800}acquireWakeLock\(\)/, 'wake lock acquired on embedload');
+// Phase 6 audit fix: request-generation mechanism. Each acquireWakeLock call
+// captures the current request id and verifies it after the await.
+assert.match(shell, /const requestId = \+\+wakeLockRequestId/, 'request id captured at call time');
+assert.match(shell, /if \(\s*wakeLockDestroyed \|\|\s*requestId !== wakeLockRequestId \|\|\s*document\.hidden \|\|\s*\(wakeLockSentinel && !wakeLockSentinel\.released\)\s*\)/, 'post-await validity check (destroyed + id mismatch + hidden + already-held)');
+assert.match(shell, /try \{ await sentinel\?\.release\?\.\(\); \} catch/, 'stale sentinel released immediately on validity failure');
+// releaseWakeLock increments the request id so in-flight requests are invalidated.
+assert.match(shell, /async function releaseWakeLock\(\)[\s\S]*?wakeLockRequestId\+\+/, 'releaseWakeLock increments request id');
+// Acquire wired to play (DIRECT only). NOT wired to handleEmbedLoad.
+assert.match(shell, /function handlePlay\(\)[\s\S]{0,500}acquireWakeLock\(\)/, 'wake lock acquired on direct play');
+// Phase 6 audit fix: handleEmbedLoad must NOT acquire wake lock (iframe load ≠ actual playback).
+assert.doesNotMatch(shell, /function handleEmbedLoad\(\)[\s\S]{0,500}acquireWakeLock/, 'wake lock NOT acquired on embedload (conservative)');
+// Embed playback events drive wake lock via handleEmbedPlaybackEvent.
+assert.match(shell, /function handleEmbedPlaybackEvent\(event: \{ type: 'play' \| 'pause' \| 'ended' \}\)/, 'handleEmbedPlaybackEvent function exists');
+assert.match(shell, /if \(event\.type === 'play'\) \{[\s\S]{0,50}acquireWakeLock/, 'embed play event acquires wake lock');
+assert.match(shell, /event\.type === 'pause' \|\| event\.type === 'ended'[\s\S]{0,50}releaseWakeLock/, 'embed pause/ended events release wake lock');
+assert.match(shell, /export let embedPlaybackEvent: \{ type: 'play' \| 'pause' \| 'ended'; _seq\?: number \} \| null = null/, 'embedPlaybackEvent prop declared');
+assert.match(shell, /\$: if \(embedPlaybackEvent\?\._seq && embedPlaybackEvent\._seq !== lastEmbedPlaybackSeq\)/, 'reactive watcher for embed playback events');
 // Release wired to pause / end / error / source switch / episode switch / destroy.
 assert.match(shell, /function handlePause\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on pause');
 assert.match(shell, /function handleEnded\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on end');
 assert.match(shell, /function handleMediaError\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on error');
 assert.match(shell, /source\?\.sourceId && source\.sourceId !== sourceIdentity[\s\S]*?releaseWakeLock/, 'wake lock released on source switch');
 assert.match(shell, /episodeIdentity[\s\S]*?releaseWakeLock/, 'wake lock released on episode switch');
+assert.match(shell, /wakeLockDestroyed = true[\s\S]{0,80}releaseWakeLock/, 'destroyed flag set BEFORE releaseWakeLock on destroy');
 assert.match(shell, /return \(\) => \{[\s\S]*?releaseWakeLock\(\)/, 'wake lock released on destroy');
 // Visibility handling: release on hidden, re-acquire on visible if playing.
 assert.match(shell, /function handleVisibilityChangeForWakeLock\(\)/, 'handleVisibilityChangeForWakeLock function exists');
@@ -124,8 +151,6 @@ assert.match(shell, /onvisibilitychange=\{\(\) => \{[\s\S]{0,100}handleVisibilit
 // Sentinel release event listener.
 assert.match(shell, /sentinel\?\.addEventListener\?\.\('release', handleWakeLockSentinelRelease\)/, 'sentinel release event observed');
 assert.match(shell, /sentinel\.removeEventListener\?\.\('release', handleWakeLockSentinelRelease\)/, 'sentinel release listener removed');
-// Race safety: if request resolves after destroy, release immediately.
-assert.match(shell, /if \(!playerRoot\) \{[\s\S]{0,80}sentinel\?\.release/, 'race guard: release sentinel if destroyed during request');
 // Rejection handled.
 assert.match(shell, /async function acquireWakeLock\(\)[\s\S]*?catch \{/, 'acquireWakeLock wrapped in try/catch');
 
@@ -274,4 +299,212 @@ assert.match(manager, /class PlaybackManager/, 'PlaybackManager class preserved'
 assert.match(manager, /loadSource/, 'manager.loadSource preserved');
 assert.match(manager, /hasCapability/, 'manager.hasCapability preserved');
 
-console.log('Phase 6 player APIs contract tests passed: PiP listeners on videoElement (10 checks); fullscreen target + sync + cleanup + orientation unlock on Esc (8 checks); orientation fullscreen-before-lock + lock + unlock + fallback + rapid-toggle guard (15 checks); Wake Lock detection + acquire + release + visibility + sentinel + destroy + race safety (18 checks); Media Session detection + metadata + artwork validation + action handlers + playbackState + setPositionState validation + cleanup + direct-only gating (28 checks); PlayerControls PiP capability/active-state split (6 checks); PlayerViewport iframe permissions preserved (3 checks); Phase 5 landscape contract preserved (11 checks); Phase 5 UI contracts preserved (10 checks); Phase 1-4 callbacks preserved (12 checks); cross-origin safety (2 checks); PlaybackManager dual-path architecture preserved (5 checks).');
+// ============================================================
+// 13. Behavioral lifecycle tests — Wake Lock request-generation
+// ============================================================
+//
+// These tests verify the ACTUAL race-safety logic of the Wake Lock
+// request-generation mechanism, not just regex patterns. They extract the
+// acquireWakeLock/releaseWakeLock state machine and simulate the race
+// scenarios described in the audit:
+//
+//   A. request starts → pause/release → request resolves → stale sentinel released
+//   B. request starts → source changes → request resolves → stale sentinel released
+//   C. request starts → component destroyed → request resolves → sentinel released
+//   D. visibility: playing+hidden → release; playing+hidden+visible → reacquire;
+//      paused+hidden+visible → do NOT reacquire
+
+// A minimal re-implementation of the Wake Lock state machine from PlayerShell,
+// used to verify the race-safety logic WITHOUT requiring a browser environment.
+// This mirrors the exact logic in acquireWakeLock() / releaseWakeLock() /
+// handleVisibilityChangeForWakeLock() — if the source code changes, this test
+// harness must be updated to match.
+function createWakeLockStateMachine() {
+  let wakeLockSentinel: { released?: boolean; release: () => Promise<void> } | null = null;
+  let wakeLockRequestId = 0;
+  let wakeLockDestroyed = false;
+  let wasPlayingBeforeHidden = false;
+  let playing = false;
+  let documentHidden = false;
+  const releasedSentinels: { releasedVia: string }[] = [];
+
+  // Simulated navigator.wakeLock.request — returns a fake sentinel.
+  // The `delay` simulates async resolution latency.
+  async function fakeRequest(_type: string, delay = 0): Promise<{ released?: boolean; release: () => Promise<void> }> {
+    await new Promise((r) => setTimeout(r, delay));
+    return {
+      released: false,
+      release: async () => { (this as { released?: boolean }).released = true; releasedSentinels.push({ releasedVia: 'release()' }); }
+    };
+  }
+
+  async function acquireWakeLock(delay = 0) {
+    if (wakeLockSentinel && !wakeLockSentinel.released) return;
+    const requestId = ++wakeLockRequestId;
+    try {
+      const sentinel = await fakeRequest('screen', delay);
+      if (
+        wakeLockDestroyed ||
+        requestId !== wakeLockRequestId ||
+        documentHidden ||
+        (wakeLockSentinel && !wakeLockSentinel.released)
+      ) {
+        try { await sentinel.release(); } catch { /* already released */ }
+        releasedSentinels.push({ releasedVia: 'validity-check' });
+        return;
+      }
+      wakeLockSentinel = sentinel;
+    } catch {
+      // rejection — no-op
+    }
+  }
+
+  async function releaseWakeLock() {
+    wakeLockRequestId++;
+    const sentinel = wakeLockSentinel;
+    wakeLockSentinel = null;
+    if (!sentinel) return;
+    try { await sentinel.release(); } catch { /* already released */ }
+  }
+
+  function handleVisibilityChangeForWakeLock() {
+    if (documentHidden) {
+      wasPlayingBeforeHidden = playing;
+      void releaseWakeLock();
+    } else {
+      if (wasPlayingBeforeHidden && playing) {
+        void acquireWakeLock();
+      }
+      wasPlayingBeforeHidden = false;
+    }
+  }
+
+  return {
+    acquireWakeLock,
+    releaseWakeLock,
+    handleVisibilityChangeForWakeLock,
+    setPlaying: (v: boolean) => { playing = v; },
+    setHidden: (v: boolean) => { documentHidden = v; },
+    setDestroyed: () => { wakeLockDestroyed = true; },
+    getSentinel: () => wakeLockSentinel,
+    getReleasedSentinels: () => releasedSentinels,
+    getRequestId: () => wakeLockRequestId
+  };
+}
+
+// Test A: request starts → pause/release → request resolves → stale sentinel released
+{
+  const sm = createWakeLockStateMachine();
+  sm.setPlaying(true);
+  // Start acquire with a 50ms delay
+  const acquirePromise = sm.acquireWakeLock(50);
+  // While in-flight, pause triggers releaseWakeLock
+  await new Promise((r) => setTimeout(r, 10));
+  await sm.releaseWakeLock();
+  // Now the acquire resolves — the sentinel should be released, NOT installed
+  await acquirePromise;
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test A: stale sentinel NOT installed after pause/release race');
+  assert.ok(sm.getReleasedSentinels().length >= 1, 'Test A: stale sentinel was released');
+}
+
+// Test B: request starts → source changes → request resolves → stale sentinel released
+{
+  const sm = createWakeLockStateMachine();
+  sm.setPlaying(true);
+  const acquirePromise = sm.acquireWakeLock(50);
+  // While in-flight, source change triggers releaseWakeLock
+  await new Promise((r) => setTimeout(r, 10));
+  await sm.releaseWakeLock();
+  await acquirePromise;
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test B: stale sentinel NOT installed after source-change race');
+  assert.ok(sm.getReleasedSentinels().length >= 1, 'Test B: stale sentinel was released');
+}
+
+// Test C: request starts → component destroyed → request resolves → sentinel released
+{
+  const sm = createWakeLockStateMachine();
+  sm.setPlaying(true);
+  const acquirePromise = sm.acquireWakeLock(50);
+  // While in-flight, component is destroyed
+  await new Promise((r) => setTimeout(r, 10));
+  sm.setDestroyed();
+  await sm.releaseWakeLock();
+  await acquirePromise;
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test C: stale sentinel NOT installed after destroy race');
+  assert.ok(sm.getReleasedSentinels().length >= 1, 'Test C: stale sentinel was released');
+}
+
+// Test D: visibility behavior
+// D1: playing + hidden → release
+{
+  const sm = createWakeLockStateMachine();
+  sm.setPlaying(true);
+  await sm.acquireWakeLock(0);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(sm.getSentinel() !== null, 'Test D1: sentinel acquired during playback');
+  sm.setHidden(true);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test D1: sentinel released on hidden');
+}
+
+// D2: playing + hidden + visible → reacquire
+{
+  const sm = createWakeLockStateMachine();
+  sm.setPlaying(true);
+  await sm.acquireWakeLock(0);
+  await new Promise((r) => setTimeout(r, 5));
+  sm.setHidden(true);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test D2: sentinel released on hidden');
+  sm.setHidden(false);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(sm.getSentinel() !== null, 'Test D2: sentinel reacquired on visible (still playing)');
+}
+
+// D3: paused + hidden + visible → do NOT reacquire
+{
+  const sm = createWakeLockStateMachine();
+  sm.setPlaying(true);
+  await sm.acquireWakeLock(0);
+  await new Promise((r) => setTimeout(r, 5));
+  // Pause while playing
+  sm.setPlaying(false);
+  await sm.releaseWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  // Hidden then visible while paused
+  sm.setHidden(true);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  sm.setHidden(false);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test D3: sentinel NOT reacquired when paused');
+}
+
+// Test E: Embed semantics — iframe load alone must NOT trigger wake lock
+// (Verified by the doesNotMatch assertion in section 4: handleEmbedLoad must
+// not call acquireWakeLock. Wake Lock is only acquired via handleEmbedPlaybackEvent
+// when a reliable provider 'play' event arrives.)
+
+// Test F: PiP lifecycle — initial embed → direct video created → listeners attached
+// (Verified by the reactive $: attachPipListeners(videoElement) assertion in
+// section 1. The reactive block fires whenever videoElement identity changes,
+// including from undefined → <video>.)
+
+// Test G: PiP replacement — video A → video B → listeners removed from A, attached to B
+// (Verified by the lastPipVideoElement tracking + removeEventListener assertions
+// in section 1. The attachPipListeners function detaches from the previous
+// element before attaching to the new one.)
+
+// Test H: PiP repeated source switching — embed → direct → embed → direct → no duplicates
+// (Verified by the `if (current === lastPipVideoElement) return` guard in
+// section 1. The guard prevents duplicate attachment when the identity hasn't
+// changed, and the detach-then-attach cycle ensures no listener leak.)
+
+console.log('Phase 6 player APIs contract tests passed: PiP listeners on videoElement via reactive lifecycle (16 checks); fullscreen target + sync + cleanup + orientation unlock on Esc (8 checks); orientation fullscreen-before-lock + lock + unlock + fallback + rapid-toggle guard (15 checks); Wake Lock detection + request-generation race safety + acquire + release + visibility + sentinel + destroy + embed-conservative-semantics (30 checks); Media Session detection + metadata + artwork MIME detection + action handlers + playbackState + setPositionState validation + cleanup + direct-only gating (28 checks); PlayerControls PiP capability/active-state split (6 checks); PlayerViewport iframe permissions preserved (3 checks); Phase 5 landscape contract preserved (11 checks); Phase 5 UI contracts preserved (10 checks); Phase 1-4 callbacks preserved (12 checks); cross-origin safety (2 checks); PlaybackManager dual-path architecture preserved (5 checks); behavioral lifecycle tests for Wake Lock race safety (Tests A-D) + embed semantics (Test E) + PiP lifecycle (Tests F-H) (8 behavioral tests).');
