@@ -2475,7 +2475,7 @@ Preserved unchanged from Phase 0:
 
 **Next phase:** Phase 5 — Complete Player UI Redesign (NOT started).
 
-**Commit:** `<pending>` — `feat(player): add progress resume and source continuity`
+**Commit:** `8d93b2c` — `feat(player): add progress resume and source continuity`
 
 ### Worklog template
 
