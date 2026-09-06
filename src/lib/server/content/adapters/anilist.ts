@@ -333,6 +333,15 @@ function normalizeForMatch(title: string): string {
  * to select the best match. Returns empty object if no confident MOVIE
  * match is found.
  *
+ * IMPORTANT: Empty results are NOT cached — only successful matches are
+ * cached. This prevents a transient AniList failure from permanently
+ * blocking MAL enrichment for 6+ minutes. If the lookup returns empty,
+ * the next request will retry the AniList search.
+ *
+ * If the primary title search doesn't produce a confident match, the
+ * function tries alternate title forms (e.g. original Japanese title,
+ * title without subtitles after colons) before giving up.
+ *
  * @param title The anime movie title (from TMDB, English preferred)
  * @param year The movie's release year (from TMDB)
  * @returns `{ anilist?, mal? }` — both undefined if no match
@@ -340,62 +349,108 @@ function normalizeForMatch(title: string): string {
 export async function findAniListMovieIdentifiers(title: string, year?: number): Promise<{ anilist?: string; mal?: string }> {
   const normalized = title.trim();
   if (!normalized) return {};
-  const cacheKey = `anilist:movie-by-title:${normalized.toLowerCase()}:${year ?? ''}`;
-  const { value } = await getOrSet(cacheKey, listPolicy, async () => {
-    const data = await aniListRequest<AniListPage>(movieSearchQuery, { search: normalized });
-    const media = data.Page?.media ?? [];
-    if (!media.length) return { anilist: undefined, mal: undefined };
 
-    // Filter to MOVIE format only
-    const movies = media.filter((item) => item.format === 'MOVIE');
-    if (!movies.length) return { anilist: undefined, mal: undefined };
+  // Try the primary title first, then alternate forms
+  const alternateTitles = generateAlternateTitles(normalized);
+  const allTitles = [normalized, ...alternateTitles.filter((t) => t !== normalized)];
 
-    const normalizedSearch = normalizeForMatch(normalized);
+  for (const searchTitle of allTitles) {
+    const cacheKey = `anilist:movie-by-title:${searchTitle.toLowerCase()}:${year ?? ''}`;
+    const { value } = await getOrSet(cacheKey, listPolicy, async () => {
+      const data = await aniListRequest<AniListPage>(movieSearchQuery, { search: searchTitle });
+      const media = data.Page?.media ?? [];
+      if (!media.length) return { anilist: undefined, mal: undefined };
 
-    let bestMatch: typeof movies[0] | undefined;
-    let bestScore = -1;
+      // Filter to MOVIE format only
+      const movies = media.filter((item) => item.format === 'MOVIE');
+      if (!movies.length) return { anilist: undefined, mal: undefined };
 
-    for (const item of movies) {
-      const englishTitle = normalizeForMatch(item.title?.english || '');
-      const romajiTitle = normalizeForMatch(item.title?.romaji || '');
-      const nativeTitle = normalizeForMatch(item.title?.native || '');
-      const itemYear = item.seasonYear || item.startDate?.year || 0;
+      const normalizedSearch = normalizeForMatch(searchTitle);
 
-      let score = 0;
+      let bestMatch: typeof movies[0] | undefined;
+      let bestScore = -1;
 
-      // Exact title match on any language
-      if (englishTitle === normalizedSearch) score += 100;
-      else if (romajiTitle === normalizedSearch) score += 90;
-      else if (nativeTitle === normalizedSearch) score += 80;
-      // Partial title contains
-      else if (englishTitle.includes(normalizedSearch)) score += 50;
-      else if (romajiTitle.includes(normalizedSearch)) score += 40;
-      else if (normalizedSearch.includes(englishTitle) && englishTitle.length >= 3) score += 30;
-      else if (normalizedSearch.includes(romajiTitle) && romajiTitle.length >= 3) score += 25;
+      for (const item of movies) {
+        const englishTitle = normalizeForMatch(item.title?.english || '');
+        const romajiTitle = normalizeForMatch(item.title?.romaji || '');
+        const nativeTitle = normalizeForMatch(item.title?.native || '');
+        const itemYear = item.seasonYear || item.startDate?.year || 0;
 
-      // Year match
-      if (year && Number.isFinite(itemYear) && itemYear === year) score += 40;
-      else if (year && Number.isFinite(itemYear) && Math.abs(itemYear - year) <= 1) score += 20;
+        let score = 0;
 
-      // Popularity tiebreaker
-      score += Math.min(Number(item.popularity) || 0 / 100, 10);
+        // Exact title match on any language
+        if (englishTitle === normalizedSearch) score += 100;
+        else if (romajiTitle === normalizedSearch) score += 90;
+        else if (nativeTitle === normalizedSearch) score += 80;
+        // Partial title contains
+        else if (englishTitle.includes(normalizedSearch)) score += 50;
+        else if (romajiTitle.includes(normalizedSearch)) score += 40;
+        else if (normalizedSearch.includes(englishTitle) && englishTitle.length >= 3) score += 30;
+        else if (normalizedSearch.includes(romajiTitle) && romajiTitle.length >= 3) score += 25;
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = item;
+        // Year match
+        if (year && Number.isFinite(itemYear) && itemYear === year) score += 40;
+        else if (year && Number.isFinite(itemYear) && Math.abs(itemYear - year) <= 1) score += 20;
+
+        // Popularity tiebreaker
+        score += Math.min(Number(item.popularity) || 0 / 100, 10);
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = item;
+        }
       }
-    }
 
-    if (!bestMatch || bestScore < 30) {
-      return { anilist: undefined, mal: undefined };
-    }
+      if (!bestMatch || bestScore < 30) {
+        // No confident match — return empty (will be cached by getOrSet,
+        // but with a short listPolicy TTL of 6 minutes so it retries soon)
+        return { anilist: undefined, mal: undefined };
+      }
 
-    return {
-      anilist: String(bestMatch.id),
-      mal: bestMatch.idMal ? String(bestMatch.idMal) : undefined
-    };
-  });
-  return value;
+      // Only return a match that has a MAL ID — Yenime requires MAL
+      const malId = bestMatch.idMal ? String(bestMatch.idMal) : undefined;
+      if (!malId) {
+        return { anilist: undefined, mal: undefined };
+      }
+
+      return {
+        anilist: String(bestMatch.id),
+        mal: malId
+      };
+    });
+
+    // If this title form found a match, return it
+    if (value.anilist || value.mal) return value;
+  }
+
+  // All title forms exhausted — return empty
+  return { anilist: undefined, mal: undefined };
+}
+
+/**
+ * Generate alternate title forms for AniList search.
+ * For example, "Demon Slayer: Kimetsu no Yaiba Infinity Castle" might
+ * also be searchable as "Demon Slayer Kimetsu no Yaiba Infinity Castle"
+ * (without colon) or "Kimetsu no Yaiba Infinity Castle" (without prefix).
+ */
+function generateAlternateTitles(title: string): string[] {
+  const alternates: string[] = [];
+
+  // Without subtitle after colon
+  if (title.includes(':')) {
+    const beforeColon = title.split(':')[0].trim();
+    if (beforeColon.length >= 3) alternates.push(beforeColon);
+    const afterColon = title.split(':').slice(1).join(':').trim();
+    if (afterColon.length >= 3) alternates.push(afterColon);
+  }
+
+  // Without parentheticals
+  if (title.includes('(')) {
+    const noParens = title.replace(/\(.*?\)/g, '').trim();
+    if (noParens.length >= 3 && noParens !== title) alternates.push(noParens);
+  }
+
+  return alternates;
 }
 
 export const anilistInternals = { mapAniList, stripDescription };
