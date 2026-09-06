@@ -458,7 +458,12 @@
   .player-shell.landscape-mode .header-title strong { max-width: 28vw; }
   .player-shell.landscape-mode .header-button { min-width: 32px; min-height: 32px; padding: 0 7px; border-radius: var(--radius-sm); }
   .player-shell.landscape-mode .header-button span { display: none; }
-  .player-shell.landscape-mode .header-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; margin-right: 38px; }
+  /* Phase 5: orientation-button sits at the right edge of the landscape header
+     (via .header-title-row display:contents). The floating .landscape-controls-toggle
+     button overlays the top-right corner, so the orientation-button needs
+     margin-right to clear it — same 38px clearance the old .header-actions rule
+     provided before Phase 5 moved all actions into the bottom shell toolbar. */
+  .player-shell.landscape-mode .orientation-button { margin-right: 38px; }
   .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0 max(0px, env(safe-area-inset-right)) max(0px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left)); }
   .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; }

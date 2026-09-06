@@ -16,7 +16,15 @@ assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap \{ display: fle
 assert.match(shell, /\.player-shell\.landscape-mode \.stage-wrap :global\(\.viewport\)/);
 assert.match(shell, /height: 100%; max-height: none; min-height: 0; aspect-ratio: auto/);
 assert.match(shell, /env\(safe-area-inset-top\)/);
-assert.match(shell, /header-actions[^}]*margin-right: 38px/);
+// Phase 5: the floating .landscape-controls-toggle button overlays the top-right
+// corner of the header (32px wide at right: 8px). The orientation-button is now
+// the right-edge element in the landscape header (after .header-actions was
+// removed when actions moved to the bottom shell toolbar). It must clear the
+// floating toggle button via margin-right: 38px, OR be otherwise offset.
+// This is the real contract — the OLD test asserted an obsolete .header-actions
+// selector that no longer matches any DOM element.
+assert.match(shell, /\.player-shell\.landscape-mode \.orientation-button[^}]*margin-right: 38px/);
+assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.header-actions[^}]*margin-right: 38px/, 'dead .header-actions CSS selector removed');
 assert.match(shell, /100svh/);
 
 const landscapeStart = shell.indexOf('async function toggleLandscape()');
