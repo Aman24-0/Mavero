@@ -2610,7 +2610,7 @@ No Phase 4 code was modified. The `<script>` blocks of PlayerShell, PlayerContro
 
 **Next phase:** Phase 6 — Fullscreen / Orientation / PiP / Wake Lock / Media Session (NOT started).
 
-**Commit:** `<pending>` — `feat(player): redesign player UI with neutral monochrome design system`
+**Commit:** `1ccd4f7` — `feat(player): redesign player UI with neutral monochrome design system`
 
 ### Worklog template
 
