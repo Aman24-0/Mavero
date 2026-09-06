@@ -141,8 +141,9 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
   const animeFormat: 'movie' | 'series' | undefined = isAnime ? (isMovie ? 'movie' : 'series') : undefined;
   // External IDs (forwarded to the resolver so each provider picks the
   // identifier it supports). TMDB populates `tmdb` always, `imdb` when
-  // available. AniList/MAL IDs are looked up separately by the resolver
-  // pipeline (see `resolveAnimeExternalIds`) for anime-flagged TMDB items.
+  // available. Anime content (genre 16 + 'ja') is detected separately
+  // via `isAnime`/`animeFormat` and routed through the normal movie/series
+  // provider pipeline — no AniList/MAL lookup is performed.
   const externalIds: NormalizedMediaItem['externalIds'] = {
     tmdb: String(raw.id),
     imdb: isMovie ? movie.imdb_id ?? undefined : tv.external_ids?.imdb_id ?? undefined
@@ -360,55 +361,10 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
     const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations,credits' });
     const item = mapTmdb(raw, type);
-    // Phase 7F+ v3: for TMDB-tagged anime titles, look up AniList + MAL IDs
-    // via a cached title search. This populates `externalIds.anilist` and
-    // `externalIds.mal` so the resolver pipeline can route to anime
-    // providers (Yenime→mal) without doing another HTTP call at resolve time.
-    //
-    // IMPORTANT: Anime MOVIES use a dedicated `findAniListMovieIdentifiers()`
-    // that filters AniList results to format === 'MOVIE' only. This prevents
-    // matching a TV series when searching for a movie title (e.g. "Spirited
-    // Away" could match a TV special instead of the movie).
-    //
-    // Anime SERIES continue to use the generic `findAniListByTitle()` —
-    // unchanged from the previous working behavior.
-    //
-    // The lookup is best-effort — if AniList is unavailable or no match is
-    // found, the IDs stay undefined and anime providers return
-    // MISSING_IDENTIFIER, triggering fallback to normal providers.
-    if (item.isAnime) {
-      try {
-        if (item.animeFormat === 'movie') {
-          // Dedicated MOVIE resolver — filters to format=MOVIE only
-          const { findAniListMovieIdentifiers } = await import('./anilist');
-          const animeIds = await findAniListMovieIdentifiers(item.title, item.year);
-          if (animeIds.anilist || animeIds.mal) {
-            item.externalIds = {
-              ...(item.externalIds ?? {}),
-              ...(animeIds.anilist ? { anilist: animeIds.anilist } : {}),
-              ...(animeIds.mal ? { mal: animeIds.mal } : {})
-            };
-          }
-        } else {
-          // Generic resolver for anime series — unchanged
-          const { findAniListByTitle } = await import('./anilist');
-          const animeIds = await findAniListByTitle(item.title, item.year);
-          if (animeIds.anilist || animeIds.mal) {
-            item.externalIds = {
-              ...(item.externalIds ?? {}),
-              ...(animeIds.anilist ? { anilist: animeIds.anilist } : {}),
-              ...(animeIds.mal ? { mal: animeIds.mal } : {})
-            };
-          }
-        }
-      } catch {
-        // AniList lookup is best-effort. If it fails (network error,
-        // rate limit, etc.), the item is still returned with the TMDB
-        // ID. Normal providers work; anime providers return
-        // MISSING_IDENTIFIER, and the fallback walker tries the next
-        // eligible provider.
-      }
-    }
+    // Anime detection (genre 16 + original_language 'ja') is set inside
+    // `mapTmdb`. There is NO AniList enrichment step — anime content is
+    // treated as a regular TMDB movie/series and routed through normal
+    // providers via TMDB/IMDb identifiers.
     const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
     return { ...item, recommendations };
   });

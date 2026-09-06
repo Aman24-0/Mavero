@@ -1,5 +1,5 @@
 export type ContentType = 'movie' | 'series' | 'anime';
-export type ContentProvider = 'tmdb' | 'anilist' | 'fixtures';
+export type ContentProvider = 'tmdb' | 'fixtures';
 
 export type ContentSource = {
   provider: ContentProvider;
@@ -41,21 +41,20 @@ export type NormalizedMediaItem = {
   year: number;
   type: ContentType;
   /**
-   * Phase 7F+ (anime routing): true when this title is anime, regardless
-   * of its TMDB format. TMDB marks Demon Slayer: Infinity Castle as
-   * `type: 'movie'` and Attack on Titan as `type: 'series'`, but both
-   * are anime and must reach anime-capable providers (MegaPlay/Yenime).
-   * The watch route uses `isAnime` to override the resolver request's
-   * `mediaType` to 'anime' for these titles so the resolver pipeline
-   * selects anime providers. The URL stays `/watch/movie/...` or
-   * `/watch/series/...` — only the resolver sees 'anime'.
+   * True when this title is anime. TMDB marks Demon Slayer: Infinity
+   * Castle as `type: 'movie'` and Attack on Titan as `type: 'series'`,
+   * but both are anime — detected via genre 16 'Animation' + original
+   * language 'ja'. The card UI uses `isAnime` to render an ANIME badge
+   * alongside the canonical Movie/Series badge. Anime content is resolved
+   * via the normal movie/series provider pipeline (no anime-specific
+   * routing) — `isAnime` is purely a UI/categorization hint.
    */
   isAnime?: boolean;
   /**
-   * Phase 7F+ (anime routing): the anime-specific format ('movie' or
-   * 'series'). Set when `isAnime === true`. The card UI renders both
-   * ANIME (top-left) and MOVIE/SERIES (top-right) badges using
-   * `isAnime` + `animeFormat` (or `type` if animeFormat is absent).
+   * The anime-specific format ('movie' or 'series'). Set when
+   * `isAnime === true`. The card UI renders both ANIME (top-left) and
+   * MOVIE/SERIES (top-right) badges using `isAnime` + `animeFormat`
+   * (or `type` if animeFormat is absent).
    */
   animeFormat?: 'movie' | 'series';
   maturity?: string;

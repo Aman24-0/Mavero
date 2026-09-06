@@ -1,6 +1,4 @@
 import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason } from './adapters/tmdb';
-import { getAniListCollection, getAniListDetail, getAniListDiscover, getAniListTrending, searchAniList } from './adapters/anilist';
-import { getJikanAnimeSeason, generateFallbackEpisodes } from './adapters/jikan';
 import { media } from '$data/content';
 import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
@@ -10,13 +8,20 @@ function fixtureSource(): NormalizedMediaItem['source'] {
 }
 
 function fixturesFor(type: ContentType) {
-  return media.filter((item) => item.type === type).map((item) => ({ ...item, source: fixtureSource(), externalIds: { [type === 'anime' ? 'anilist' : 'tmdb']: item.id } } as NormalizedMediaItem));
+  // Anime content now comes from TMDB (TMDB TV series flagged as anime via
+  // genre 16 'Animation' + original_language 'ja'). Fixtures remain as a
+  // last-resort fallback only — anime fixture items keep their original
+  // `type: 'anime'` so the card UI and detail route preserve their identity,
+  // but their `externalIds.tmdb` mirrors their fixture id (which is not a
+  // real TMDB id, so resolver attempts on fixture anime return NOT_FOUND
+  // rather than silently failing with a broken embed).
+  return media.filter((item) => item.type === type).map((item) => ({ ...item, source: fixtureSource(), externalIds: { tmdb: item.id } } as NormalizedMediaItem));
 }
 
 function fixtureDetail(type: ContentType, id: string) {
   const item = media.find((candidate) => candidate.type === type && candidate.id === id);
   if (!item) return undefined;
-  return { ...item, source: fixtureSource(), externalIds: { [type === 'anime' ? 'anilist' : 'tmdb']: item.id } } as NormalizedMediaItem;
+  return { ...item, source: fixtureSource(), externalIds: { tmdb: item.id } } as NormalizedMediaItem;
 }
 
 function isMissingConfig(error: unknown) {
@@ -90,14 +95,30 @@ export function selectFeatured<T extends RankableMedia>(items: T[]) {
   })[0];
 }
 
+// Anime is now a TMDB TV subtype. The TMDB adapter sets `isAnime === true`
+// AND `animeFormat === 'series'` for TV series whose genre_ids include 16
+// (Animation) and whose original_language is 'ja'. The discover/collection/
+// popular rails for type === 'anime' load the TMDB TV rail and filter
+// client-side to anime-flagged items. Anime movies (TMDB-tagged type ===
+// 'movie' with isAnime === true + animeFormat === 'movie') are NOT included
+// in the anime rail — they appear in the regular movie rails and play
+// through the normal movie provider pipeline.
+function isAnimeSeries(item: NormalizedMediaItem) {
+  return item.isAnime === true && item.animeFormat !== 'movie';
+}
+
+function filterAnimeSeries(items: NormalizedMediaItem[]): NormalizedMediaItem[] {
+  return items.filter(isAnimeSeries);
+}
+
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {
   try {
-    if (type === 'anime') {
-      const result = await getAniListTrending(page);
-      return { ...result, items: rankForExposure(result.items) };
-    }
-    const result = await getTmdbDiscover(type, page);
-    return { ...result, items: rankForExposure(result.items) };
+    // Anime maps to the TMDB TV path. The TMDB adapter marks anime-flagged
+    // items via genre 16 + original_language 'ja'; we filter client-side.
+    const tmdbType: Exclude<ContentType, 'anime'> = type === 'anime' ? 'series' : type;
+    const result = await getTmdbDiscover(tmdbType, page);
+    const items = type === 'anime' ? filterAnimeSeries(result.items) : result.items;
+    return { ...result, items: rankForExposure(items) };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -106,12 +127,10 @@ export async function discover(type: ContentType, page = 1): Promise<ContentList
 
 export async function collection(type: ContentType, page = 1, filters: CollectionFilters = {}): Promise<ContentList> {
   try {
-    if (type === 'anime') {
-      const result = await getAniListCollection(page, filters);
-      return { ...result, items: rankForExposure(result.items, filters.sort === 'Top rated' ? 'top-rated' : filters.sort === 'Newest' ? 'newest' : 'for-you') };
-    }
-    const result = await getTmdbCollection(type, page, filters);
-    return { ...result, items: rankForExposure(result.items, filters.sort === 'Top rated' ? 'top-rated' : filters.sort === 'Newest' ? 'newest' : 'for-you') };
+    const tmdbType: Exclude<ContentType, 'anime'> = type === 'anime' ? 'series' : type;
+    const result = await getTmdbCollection(tmdbType, page, filters);
+    const items = type === 'anime' ? filterAnimeSeries(result.items) : result.items;
+    return { ...result, items: rankForExposure(items, filters.sort === 'Top rated' ? 'top-rated' : filters.sort === 'Newest' ? 'newest' : 'for-you') };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type).slice(0, 20), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -120,12 +139,10 @@ export async function collection(type: ContentType, page = 1, filters: Collectio
 
 export async function popular(type: ContentType, page = 1): Promise<ContentList> {
   try {
-    if (type === 'anime') {
-      const result = await getAniListDiscover(page);
-      return { ...result, items: rankForExposure(result.items) };
-    }
-    const result = await getTmdbPopular(type, page);
-    return { ...result, items: rankForExposure(result.items) };
+    const tmdbType: Exclude<ContentType, 'anime'> = type === 'anime' ? 'series' : type;
+    const result = await getTmdbPopular(tmdbType, page);
+    const items = type === 'anime' ? filterAnimeSeries(result.items) : result.items;
+    return { ...result, items: rankForExposure(items) };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -185,28 +202,34 @@ export async function search(query: string, type?: ContentType, page = 1, filter
   if (!normalized) return { query: normalized, items: [], page, hasNextPage: false, filters, source: fixtureSource() };
   try {
     if (type === 'anime') {
-      const result = await searchAniList(normalized, page);
-      return { ...result, items: applyAnimeFilters(result.items, filters), query: normalized, filters };
+      // Anime search uses TMDB TV (the same /search/tv endpoint as Series)
+      // and filters to anime-flagged items (genre 16 + ja original_language).
+      // The user can refine via the genre filter (default: Animation).
+      const result = await searchTmdb(normalized, 'series', page, filters);
+      const items = applyAnimeFilters(filterAnimeSeries(result.items), filters);
+      return { ...result, items, query: normalized, filters };
     }
     if (type === 'movie' || type === 'series') {
       const result = await searchTmdb(normalized, type, page, filters);
       return { ...result, query: normalized, filters };
     }
 
-    const [movies, series, anime] = await Promise.allSettled([searchTmdb(normalized, 'movie', page, filters), searchTmdb(normalized, 'series', page, filters), searchAniList(normalized, page)]);
+    // "All" search — only TMDB movies + series. Anime is no longer a separate
+    // search source; anime titles surface via the TMDB Series search (they
+    // carry isAnime === true + animeFormat === 'series' for UI badges).
+    const [movies, series] = await Promise.allSettled([searchTmdb(normalized, 'movie', page, filters), searchTmdb(normalized, 'series', page, filters)]);
     const tmdbResults = [movies, series].filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled');
-    const animeResults = anime.status === 'fulfilled' ? [anime] : [];
     if (!tmdbResults.length) {
       const failure = [movies, series].find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
       throw failure instanceof ContentServiceError ? failure : new ContentServiceError('TMDB search is unavailable.', { code: 'UPSTREAM_ERROR', status: 502 });
     }
-    const fulfilled = [...tmdbResults, ...animeResults];
-    const sources = fulfilled.map((result) => result.value.source);
-    const items = applyAnimeFilters(fulfilled.flatMap((result) => result.value.items), filters);
-    return { query: normalized, items, page, hasNextPage: fulfilled.some((result) => result.value.hasNextPage), filters, source: { provider: sources.every((item) => item.provider === sources[0].provider) ? sources[0].provider : 'fixtures', fetchedAt: new Date().toISOString(), stale: sources.some((item) => item.stale) } };
+    const sources = tmdbResults.map((result) => result.value.source);
+    const items = applyAnimeFilters(tmdbResults.flatMap((result) => result.value.items), filters);
+    return { query: normalized, items, page, hasNextPage: tmdbResults.some((result) => result.value.hasNextPage), filters, source: { provider: sources.every((item) => item.provider === sources[0].provider) ? sources[0].provider : 'fixtures', fetchedAt: new Date().toISOString(), stale: sources.some((item) => item.stale) } };
   } catch (error) {
-    // In mixed "All" search, never present AniList/fixture data as if it were a successful TMDB catalog search.
-    // Keep fixture fallback for explicit type searches and discovery/detail flows.
+    // In mixed "All" search, never present fixture data as if it were a
+    // successful TMDB catalog search. Keep fixture fallback for explicit
+    // type searches and discovery/detail flows.
     if (!type && error instanceof ContentServiceError && canFallback(error)) throw error;
     if (!canFallback(error)) throw error;
     const items = media.filter((item) => `${item.title} ${item.genres.join(' ')}`.toLowerCase().includes(normalized.toLowerCase()) && (!type || item.type === type)).map((item) => ({ ...item, source: fixtureSource() } as NormalizedMediaItem));
@@ -215,7 +238,9 @@ export async function search(query: string, type?: ContentType, page = 1, filter
 }
 
 export async function getSeriesSeason(id: string, seasonNumber: number) {
-  const cleanId = id.replace(/^series-/, '');
+  // Accept both 'series-{tmdbId}' and 'anime-{tmdbId}' IDs — anime series
+  // are now TMDB TV series, so the same TMDB season endpoint serves both.
+  const cleanId = id.replace(/^(series|anime)-/, '');
   if (/^\d+$/.test(cleanId)) return getTmdbSeason(cleanId, seasonNumber);
   const fixture = media.find((item) => item.type === 'series' && item.id === cleanId);
   const count = fixture?.episodes ?? 8;
@@ -234,66 +259,13 @@ export async function getSeriesSeason(id: string, seasonNumber: number) {
   };
 }
 
-/**
- * Phase 7F+ (anime routing): fetch the anime episode guide for a title.
- *
- * For anime series, this uses Jikan (MyAnimeList API) to fetch real
- * episode metadata (title, synopsis, air date, thumbnail). Jikan is
- * paginated — long-running anime (e.g. Hunter x Hunter with 148
- * episodes) require multiple page fetches.
- *
- * If Jikan is unavailable or returns no data, falls back to a
- * generated episode list based on the AniList `episodes: number`
- * count so the UI can still render an episode guide and the player
- * can navigate episodes.
- *
- * For anime movies (animeFormat === 'movie'), returns an empty
- * season — movies don't have an episode guide.
- *
- * The `item` parameter is the full NormalizedMediaItem (with
- * externalIds.mal and episodes count). The `malId` can be passed
- * directly when the caller already has it.
- */
-export async function getAnimeSeason(item: NormalizedMediaItem, seasonNumber = 1, malIdOverride?: string) {
-  // Anime movies have no episode guide.
-  if (item.animeFormat === 'movie') {
-    return { number: seasonNumber, title: `Season ${seasonNumber}`, episodeCount: 0, episodes: [] };
-  }
-
-  const malId = malIdOverride ?? item.externalIds?.mal;
-  const episodeCount = item.episodes ?? 0;
-
-  // Try Jikan first for real episode metadata.
-  if (malId) {
-    try {
-      // Pass the anime's poster/backdrop as a fallback image for episodes
-      // that Jikan doesn't have per-episode images for (very common).
-      const fallbackImage = item.backdrop || item.poster || undefined;
-      const jikanSeason = await getJikanAnimeSeason(malId, fallbackImage);
-      if (jikanSeason?.episodes?.length) {
-        return jikanSeason;
-      }
-    } catch {
-      // Jikan failure is non-fatal — fall through to generated episodes.
-    }
-  }
-
-  // Fallback: generate generic episode list from the AniList count.
-  // Use the anime's poster/backdrop as the episode still so the guide
-  // doesn't show blank rectangles.
-  const fallbackImage = item.backdrop || item.poster || undefined;
-  const fallbackEpisodes = generateFallbackEpisodes(episodeCount, seasonNumber, fallbackImage);
-  return {
-    number: seasonNumber,
-    title: `Season ${seasonNumber}`,
-    episodeCount: fallbackEpisodes.length,
-    episodes: fallbackEpisodes
-  };
-}
-
 export async function getDetail(type: ContentType, id: string): Promise<ContentDetail> {
   try {
-    if (type === 'anime') return await getAniListDetail(id.replace(/^anime-/, ''));
+    // Anime is now backed by TMDB TV. The 'anime-' / 'series-' prefix is
+    // stripped and the TMDB TV detail endpoint is queried. The returned
+    // item has `type: 'series'` and `isAnime: true` (when genre 16 + 'ja'
+    // match) so the card UI and resolver both treat it correctly.
+    if (type === 'anime') return await getTmdbDetail('series', id.replace(/^(anime|series)-/, ''));
     return await getTmdbDetail(type, id.replace(/^(movie|series)-/, ''));
   } catch (error) {
     const fixture = fixtureDetail(type, id);

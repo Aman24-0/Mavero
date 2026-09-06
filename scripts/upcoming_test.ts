@@ -8,10 +8,10 @@
 //   5. Movie date-range filtering (items only contain dates in range)
 //   6. TV episode date filtering (only in-month episodes)
 //   7. Upcoming type filtering (only requested type returned)
-//   8. Anime schedule mapping (episode number + date from airingAt)
+//   8. Anime schedule mapping (TMDB /discover/tv with Animation genre)
 //   9. Provider mapping (flatrate only, IN region, max 3)
 //  10. Empty results (no upstream data → empty array, no fake items)
-//  11. Partial TMDB/AniList failure (one source fails → others still return)
+//  11. Partial TMDB failure (one source fails → others still return)
 //  12. No fabricated episode metadata (missing upstream fields → undefined)
 //
 // These tests import the upcoming module's pure helpers + internals
@@ -99,14 +99,11 @@ assert.match(upcomingSrc, /if \(wantSeries\) \{[\s\S]*?tasks\.push/, 'series tas
 assert.match(upcomingSrc, /if \(wantAnime\) \{[\s\S]*?tasks\.push/, 'anime task only pushed when wantAnime');
 
 // --- 8. Anime schedule mapping ---
-// loadUpcomingAnime uses AiringSchedule query with airingAt_greater/lesser
-assert.match(upcomingSrc, /airingSchedules\(airingAt_greater/, 'anime uses AiringSchedule with airingAt_greater');
-assert.match(upcomingSrc, /airingAt_lesser/, 'anime uses airingAt_lesser');
-// Episode number comes from schedule.episode (real AniList data)
-assert.match(upcomingSrc, /episode: s\.episode \?\? undefined/, 'anime episode number from AniList schedule.episode');
-// Date derived from airingAt (unix seconds → YYYY-MM-DD)
-assert.match(upcomingSrc, /const ts = \(s\.airingAt \?\? 0\) \* 1000/, 'anime timestamp from airingAt seconds');
-assert.match(upcomingSrc, /const date = .+getUTCFullYear.+getUTCMonth.+getUTCDate/, 'anime date derived from airingAt UTC');
+// loadUpcomingAnime now uses TMDB /discover/tv with Animation genre + ja language
+assert.match(upcomingSrc, /loadUpcomingAnime/, 'anime load function exists');
+assert.match(upcomingSrc, /\/discover\/tv/, 'anime uses TMDB /discover/tv endpoint');
+assert.match(upcomingSrc, /with_genres.*16/, 'anime uses TMDB Animation genre 16');
+assert.match(upcomingSrc, /with_original_language.*ja/, 'anime filters by Japanese original language');
 
 // --- 9. Provider mapping ---
 // getTvWatchProviders fetches /tv/{id}/watch/providers
@@ -132,7 +129,7 @@ assert.match(upcomingSrc, /logo: tmdbImage\(p\.logo_path, 'w92'\)/, 'provider lo
 assert.match(upcomingSrc, /const items: UpcomingItem\[\] = \[\];/, 'items initialized as empty array');
 assert.match(upcomingSrc, /errorMessage: items\.length === 0 && errors\.length > 0/, 'errorMessage only when no items AND errors exist');
 
-// --- 11. Partial TMDB/AniList failure ---
+// --- 11. Partial TMDB failure ---
 // Each source is loaded independently via Promise.all with individual catch
 assert.match(upcomingSrc, /tasks\.push\([\s\S]*?\.then\([\s\S]*?\.catch\(/, 'each source has independent catch');
 assert.match(upcomingSrc, /errors\.push\(`Movies: \$\{safeMessage\(err\)\}`\)/, 'failed movie source pushes Movies error');
@@ -148,8 +145,8 @@ assert.match(upcomingSrc, /then\(\(a\) => \{ items\.push\(\.\.\.a\); \}\)/, 'suc
 assert.match(upcomingSrc, /season: seasonToInspect/, 'series season from real TMDB season number');
 assert.match(upcomingSrc, /episode: episode\.episode_number \?\? undefined/, 'series episode from real TMDB episode_number (undefined if missing)');
 assert.match(upcomingSrc, /episodeTitle: episode\.name \|\| undefined/, 'series episodeTitle from real TMDB episode name (undefined if missing)');
-// Anime episode only set when provided
-assert.match(upcomingSrc, /episode: s\.episode \?\? undefined/, 'anime episode undefined when AniList does not provide it');
+// Anime episode comes from TMDB episode data (same as series)
+assert.match(upcomingSrc, /episode: episode\.episode_number \?\? undefined/, 'anime episode from TMDB episode_number (undefined if missing)');
 // No hardcoded S01/E01 anywhere
 assert.doesNotMatch(upcomingSrc, /season: 1[,}]/, 'no hardcoded season: 1');
 assert.doesNotMatch(upcomingSrc, /episode: 1[,}]/, 'no hardcoded episode: 1');
@@ -158,7 +155,7 @@ assert.doesNotMatch(upcomingSrc, /episode: 1[,}]/, 'no hardcoded episode: 1');
 // Cache key includes month/year/type/region
 assert.match(upcomingSrc, /const key = `upcoming:movies:\$\{year\}:\$\{month\}:\$\{region\}`/, 'movie cache key includes year+month+region');
 assert.match(upcomingSrc, /const key = `upcoming:series:\$\{year\}:\$\{month\}:\$\{region\}`/, 'series cache key includes year+month+region');
-assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}`/, 'anime cache key includes year+month');
+assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}`/, 'anime cache key includes year+month+region');
 // TTL set
 assert.match(upcomingSrc, /upcomingPolicy = \{ ttlMs: 1000 \* 60 \* 10/, 'upcoming cache has 10-minute TTL');
 // Concurrency limit on season lookups

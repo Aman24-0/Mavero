@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { getAnimeSeason, getSeriesSeason, getDetail } from '$lib/server/content/service';
+import { getSeriesSeason } from '$lib/server/content/service';
 import { contentErrorResponse } from '$lib/server/content/response';
 import { isValidContentId } from '$lib/server/content/types';
 import type { RequestHandler } from './$types';
@@ -10,17 +10,10 @@ export const GET: RequestHandler = async ({ params }) => {
     return json({ ok: false, error: { code: 'INVALID_SEASON', message: 'Unsupported series season.' } }, { status: 400 });
   }
   try {
-    // Phase 7F+ (anime routing): if the ID is an anime ID (starts with
-    // 'anime-'), fetch the episode guide via Jikan (MyAnimeList API).
-    // This handles both /anime/ route content (type='anime') and
-    // TMDB-tagged anime series (type='series', isAnime=true) that
-    // are displayed via the /series/ route but need anime episode data.
-    if (params.id.startsWith('anime-')) {
-      // Load the full item to get externalIds.mal and episodes count.
-      const item = await getDetail('anime', params.id);
-      const result = await getAnimeSeason(item, season);
-      return json({ ok: true, season: result });
-    }
+    // All content IDs (series-*, anime-*) now resolve via the TMDB TV season
+    // endpoint. getSeriesSeason strips both 'series-' and 'anime-' prefixes
+    // and queries /tv/{tmdbId}/season/{n}. Anime is no longer routed
+    // through a separate Jikan-based episode guide.
     const result = await getSeriesSeason(params.id, season);
     return json({ ok: true, season: result });
   } catch (error) {

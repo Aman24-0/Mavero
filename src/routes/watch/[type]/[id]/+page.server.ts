@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { getAnimeSeason, getDetail, getSeriesSeason } from '$lib/server/content/service';
+import { getDetail, getSeriesSeason } from '$lib/server/content/service';
 import { getPublicStreamingConfig } from '$lib/server/streaming/public-config';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { isContentType } from '$lib/server/content/types';
@@ -8,29 +8,24 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ params, locals, url }) => {
   if (!isContentType(params.type)) throw error(404, 'Unsupported content type');
   try {
+    // Anime content is now backed by TMDB TV. getDetail('anime', id) maps
+    // internally to the TMDB /tv/{id} endpoint and returns an item with
+    // type='series' + isAnime=true (when genre 16 + 'ja' match).
     const item = await getDetail(params.type, params.id);
     let episodes = item.seasonsData?.flatMap((season) => season.episodes ?? []) ?? [];
-    if (params.type === 'series') {
+    // For series AND anime series, fetch the explicit season episode list
+    // via TMDB. Anime movies (animeFormat === 'movie') have no episode
+    // guide — the player just plays the movie file.
+    const isSeriesLike = params.type === 'series'
+      || (item.isAnime === true && item.animeFormat !== 'movie')
+      || params.type === 'anime';
+    if (isSeriesLike) {
       const seasonNumber = Number(url.searchParams.get('season') || '') || 1;
       try {
         const season = await getSeriesSeason(params.id, seasonNumber);
         episodes = season.episodes ?? episodes;
       } catch {
         // Episode navigation stays optional when the provider cannot load a season.
-      }
-    } else if (params.type === 'anime' || item.isAnime === true) {
-      // Phase 7F+ (anime routing): for anime series (including TMDB-tagged
-      // anime series like Attack on Titan), fetch the episode guide via
-      // Jikan (MyAnimeList API). For anime movies (Demon Slayer: Infinity
-      // Castle), getAnimeSeason returns an empty episode list — no guide.
-      if (item.animeFormat !== 'movie') {
-        try {
-          const season = await getAnimeSeason(item, 1);
-          episodes = season.episodes ?? [];
-        } catch {
-          // Jikan failure is non-fatal — episodes stays empty, the player
-          // still works with default episode=1.
-        }
       }
     }
     let streamingConfig;

@@ -15,8 +15,7 @@ assert.match(loader, /collection\(type, page, filters\)/);
 assert.match(loader, /hasNextPage: result\.hasNextPage/);
 assert.match(loader, /validCollectionSorts/);
 assert.match(service, /export async function collection\(type: ContentType, page = 1, filters: CollectionFilters = \{\}\)/);
-assert.match(service, /getAniListCollection\(page, filters\)/);
-assert.match(service, /getTmdbCollection\(type, page, filters\)/);
+assert.match(service, /getTmdbCollection\(tmdbType, page, filters\)/);
 for (const route of routes) assert.match(route, /loadCollectionData\('[^']+', url\)/);
 
 assert.match(collection, /export let currentPage = 1/);

@@ -6,7 +6,10 @@
 //     the selected month, then TMDB TV season endpoint for the actual
 //     Sxx/Exx episode metadata
 //   - TMDB watch providers (flatrate only, IN region) for series OTT logos
-//   - AniList AiringSchedule query for anime episodes airing in the month
+//   - TMDB Discover TV (air_date.gte/lte + with_genres=16 +
+//     with_original_language=ja) for anime episodes airing in the month —
+//     anime is now sourced from TMDB TV (Animation genre + Japanese
+//     original_language) and shares the same episode-fetch path as Series.
 //
 // Reliability:
 //   - Each source is loaded independently. A failure in one source
@@ -16,10 +19,7 @@
 //     (`tmdbRequest` in ./adapters/tmdb) so Upcoming gets the same
 //     credential handling as the rest of the content layer — including
 //     the 401/403 -> api_key fallback for deployments whose
-//     TMDB_READ_ACCESS_TOKEN actually holds a v3 API key. Previously this
-//     module had its own Bearer-only request helper, so those deployments
-//     failed every Movies/Series lookup with an opaque upstream error
-//     while Anime (AniList) and Discover (shared adapter) kept working.
+//     TMDB_READ_ACCESS_TOKEN actually holds a v3 API key.
 //   - A genuine upstream failure is NEVER reported as an empty month:
 //     per-series lookup failures are counted, and if every candidate
 //     series lookup fails the series source reports an error instead of
@@ -30,15 +30,12 @@
 // No fake data: episode numbers, dates, and providers come exclusively
 // from upstream. If a field is missing it is omitted (undefined).
 
-import { env } from '$env/dynamic/private';
 import { getOrSet } from './cache';
-import { fetchJson } from './http';
 import { tmdbRequest } from './adapters/tmdb';
 import { ContentServiceError } from './types';
 import type { UpcomingFilters, UpcomingItem, UpcomingProvider, UpcomingResult, UpcomingType } from './upcoming-types';
 
 const TMDB_IMAGE = 'https://image.tmdb.org/t/p';
-const ANILIST_API = env.ANILIST_API_URL || 'https://graphql.anilist.co';
 const DEFAULT_REGION = 'IN';
 
 // Cache: upcoming data is relatively slow to assemble (TMDB TV needs
@@ -54,6 +51,11 @@ const providerPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 6
 // Concurrency limit for season + provider lookups (matches existing
 // Mavero OTT_LOOKUP_CONCURRENCY pattern).
 const LOOKUP_CONCURRENCY = 4;
+
+// TMDB genre id 16 = Animation. Anime is identified as TMDB TV with
+// genre 16 AND with_original_language='ja'.
+const ANIME_GENRE_ID = 16;
+const ANIME_ORIGINAL_LANGUAGE = 'ja';
 
 // ---------- filter parsing & validation ----------
 
@@ -162,7 +164,7 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
 
 // ---------- TMDB TV episodes ----------
 
-type TmdbTvList = { results?: Array<{ id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; first_air_date?: string; vote_average?: number; genre_ids?: number[]; popularity?: number }> };
+type TmdbTvList = { results?: Array<{ id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; first_air_date?: string; vote_average?: number; genre_ids?: number[]; popularity?: number; original_language?: string }> };
 type TmdbTvDetail = { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; number_of_seasons?: number; last_episode_to_air?: { season_number?: number; episode_number?: number; air_date?: string }; seasons?: Array<{ season_number?: number; air_date?: string; episode_count?: number; poster_path?: string | null }> };
 type TmdbSeason = { season_number?: number; episodes?: Array<{ id: number; episode_number?: number; season_number?: number; name?: string; air_date?: string; still_path?: string | null; overview?: string }> };
 type TmdbWatchProviders = { results?: Record<string, { flatrate?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }> }> };
@@ -219,7 +221,12 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 // month. A series with 3 episodes airing in the month produces 3 items,
 // each with its actual season/episode/date/title. No metadata is
 // fabricated — if TMDB doesn't provide a field, it is omitted.
-async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[] }, year: number, month: number, region: string): Promise<UpcomingItem[]> {
+//
+// `itemType` controls the `type` field on the emitted UpcomingItem and
+// the id prefix ('series-' or 'anime-'). Anime uses the same TMDB TV
+// path as Series — the difference is that anime candidates are
+// pre-filtered to genre 16 + original_language 'ja' in loadUpcomingAnime.
+async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[] }, year: number, month: number, region: string, itemType: 'series' | 'anime' = 'series'): Promise<UpcomingItem[]> {
   // Fetch series detail to find the most recent / current season.
   // NOT caught: a failed detail lookup propagates so loadUpcomingSeries can
   // distinguish "no episodes this month" from "upstream failure".
@@ -271,12 +278,14 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
   const genres = raw.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3);
   const providerSlice = providers.length ? providers.slice(0, 3) : undefined;
 
-  // Emit one item per in-month episode.
+  // Emit one item per in-month episode. The id prefix differs for anime
+  // (type='anime', id='anime-...') so the upcoming page can render the
+  // Anime badge and route the click to the /anime/{tmdbId} detail page.
   return inMonthEpisodes.map((episode) => {
     const date = episode.air_date ?? '';
     return {
-      id: `series-${raw.id}-s${seasonToInspect}e${episode.episode_number ?? 0}`,
-      type: 'series' as const,
+      id: `${itemType}-${raw.id}-s${seasonToInspect}e${episode.episode_number ?? 0}`,
+      type: itemType,
       title,
       poster,
       backdrop,
@@ -332,91 +341,57 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
   return value.sort((a, b) => a.timestamp - b.timestamp);
 }
 
-// ---------- AniList anime ----------
+// ---------- TMDB TV anime (genre 16 + original_language 'ja') ----------
 
-type AniListAiringSchedule = {
-  id: number;
-  episode: number | null;
-  airingAt: number | null; // unix seconds
-  media?: {
-    id: number;
-    title?: { romaji?: string | null; english?: string | null; native?: string | null };
-    coverImage?: { extraLarge?: string | null; large?: string | null; medium?: string | null; color?: string | null };
-    bannerImage?: string | null;
-    averageScore?: number | null;
-    genres?: string[] | null;
-    seasonYear?: number | null;
-  } | null;
-};
-type AniListAiringResponse = { data?: { Page?: { airingSchedules?: AniListAiringSchedule[] } }; errors?: { message?: string }[] };
-
-const animeAiringQuery = `query ($page: Int, $airingAt_greater: Int, $airingAt_lesser: Int) {
-  Page(page: $page, perPage: 50) {
-    airingSchedules(airingAt_greater: $airingAt_greater, airingAt_lesser: $airingAt_lesser, sort: TIME) {
-      id
-      episode
-      airingAt
-      media {
-        id
-        title { romaji english native }
-        coverImage { extraLarge large medium color }
-        bannerImage
-        averageScore
-        genres
-        seasonYear
-      }
-    }
-  }
-}`;
-
-export async function loadUpcomingAnime(year: number, month: number): Promise<UpcomingItem[]> {
-  const { startMs, endMs } = monthBounds(year, month);
-  const key = `upcoming:anime:${year}:${month}`;
+// Anime airing schedule now comes from TMDB TV (Animation genre + Japanese
+// original_language). The /discover/tv endpoint accepts air_date.gte/lte +
+// with_genres=16 + with_original_language='ja' to filter server-side. The
+// candidate series are then processed by the same buildSeriesItems path as
+// Series — the only difference is the `itemType='anime'` flag, which
+// controls the UpcomingItem.type field and the id prefix so the upcoming
+// page can render the Anime badge and route clicks to /anime/{tmdbId}.
+//
+// IMPORTANT: this replaces the previous AniList AiringSchedule source.
+// AniList is no longer used — anime is now TMDB content only.
+export async function loadUpcomingAnime(year: number, month: number, region: string = DEFAULT_REGION): Promise<UpcomingItem[]> {
+  const { gte, lte } = monthBounds(year, month);
+  const key = `upcoming:anime:${year}:${month}:${region}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
-    const response = await fetchJson<AniListAiringResponse>(ANILIST_API, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        query: animeAiringQuery,
-        variables: {
-          page: 1,
-          airingAt_greater: Math.floor(startMs / 1000),
-          airingAt_lesser: Math.floor(endMs / 1000)
-        }
-      })
+    // Step 1: discover anime TV series with episodes airing in the month.
+    // TMDB filters server-side by Animation genre (16) + ja language.
+    const result = await tmdbRequest<TmdbTvList>('/discover/tv', {
+      'air_date.gte': gte,
+      'air_date.lte': lte,
+      with_genres: ANIME_GENRE_ID,
+      with_original_language: ANIME_ORIGINAL_LANGUAGE,
+      sort_by: 'popularity.desc',
+      'vote_count.gte': 1,
+      page: 1
     });
-    if (response.errors?.length) {
-      throw new ContentServiceError('AniList returned a GraphQL error.', { code: 'UPSTREAM_ERROR', status: 502 });
+    const candidates = (result.results ?? [])
+      .filter((s) => s.id && (s.name || s.original_name))
+      // Defense in depth: TMDB filters server-side, but ensure the
+      // candidate actually looks like anime (genre 16 in genre_ids).
+      .filter((s) => Array.isArray(s.genre_ids) ? s.genre_ids.includes(ANIME_GENRE_ID) : true)
+      .slice(0, 20);
+    // Step 2: for each candidate, fetch detail + season + episodes via
+    // the shared buildSeriesItems path. itemType='anime' so the emitted
+    // UpcomingItems have type='anime' and id='anime-{tmdbId}-s{S}e{E}'.
+    let failures = 0;
+    const built = await mapWithConcurrency(candidates, async (c) => {
+      try {
+        return await buildSeriesItems(c, year, month, region, 'anime');
+      } catch {
+        failures += 1;
+        return [];
+      }
+    }, LOOKUP_CONCURRENCY);
+    if (candidates.length > 0 && failures === candidates.length) {
+      throw new ContentServiceError('The content provider returned an upstream error.', { code: 'UPSTREAM_ERROR', status: 502 });
     }
-    const schedules = response.data?.Page?.airingSchedules ?? [];
-    return schedules
-      .filter((s) => s.media && (s.media.title?.english || s.media.title?.romaji || s.media.title?.native))
-      .map((s) => {
-        const media = s.media!;
-        const title = media.title?.english || media.title?.romaji || media.title?.native || 'Untitled anime';
-        const poster = media.coverImage?.extraLarge || media.coverImage?.large || media.coverImage?.medium || '';
-        const ts = (s.airingAt ?? 0) * 1000;
-        const d = new Date(ts);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-        return {
-          id: `anime-${media.id}-ep${s.episode ?? 0}`,
-          type: 'anime' as const,
-          title,
-          poster,
-          backdrop: media.bannerImage || undefined,
-          date,
-          timestamp: ts,
-          episode: s.episode ?? undefined,
-          year: media.seasonYear || d.getUTCFullYear(),
-          rating: media.averageScore ? Math.round((media.averageScore / 10) * 10) / 10 : undefined,
-          genres: media.genres?.slice(0, 3),
-          source: 'anilist' as const
-        } satisfies UpcomingItem;
-      })
-      .sort((a, b) => a.timestamp - b.timestamp);
+    return built.flat();
   });
-  return value;
+  return value.sort((a, b) => a.timestamp - b.timestamp);
 }
 
 // ---------- top-level orchestrator ----------
@@ -448,7 +423,7 @@ export async function loadUpcoming(filters: UpcomingFilters): Promise<UpcomingRe
   }
   if (wantAnime) {
     tasks.push(
-      loadUpcomingAnime(filters.year, filters.month)
+      loadUpcomingAnime(filters.year, filters.month, region)
         .then((a) => { items.push(...a); })
         .catch((err) => { errors.push(`Anime: ${safeMessage(err)}`); })
     );
@@ -485,5 +460,7 @@ export const upcomingInternals = {
   loadUpcomingAnime,
   getTvWatchProviders,
   buildSeriesItems,
-  DEFAULT_REGION
+  DEFAULT_REGION,
+  ANIME_GENRE_ID,
+  ANIME_ORIGINAL_LANGUAGE
 };

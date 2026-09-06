@@ -231,7 +231,7 @@
       <div class="about-list">
         <div class="about-row"><span>Application</span><strong>Mavero</strong></div>
         <div class="about-row"><span>Category</span><strong>Movies, series & anime</strong></div>
-        <div class="about-row"><span>Data source</span><strong>TMDB · AniList</strong></div>
+        <div class="about-row"><span>Data source</span><strong>TMDB</strong></div>
         <div class="about-row">
           <span>Attribution</span>
           <a class="tmdb-link" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">

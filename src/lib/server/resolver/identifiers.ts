@@ -56,7 +56,7 @@ export function normalizeContentIdentifiers(content: NormalizedMediaItem, reques
     slug: request.contentId,
     tmdbId: cleanExternalId(externalIds.tmdb) ?? (content.source.provider === 'tmdb' ? sourceExternalId : undefined),
     imdbId: cleanExternalId(externalIds.imdb),
-    anilistId: cleanExternalId(externalIds.anilist) ?? (content.source.provider === 'anilist' ? sourceExternalId : undefined),
+    anilistId: cleanExternalId(externalIds.anilist),
     malId: cleanExternalId(externalIds.mal),
   };
   return ids;

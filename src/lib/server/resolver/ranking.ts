@@ -1,5 +1,4 @@
 import { deriveRuntimeHealthState, isRuntimeHealthEligible, type RuntimeHealthRow, type RuntimeHealthState } from '$lib/server/streaming/health';
-import { getCanonicalPlaybackMediaType, isAnimeWithFormat } from './anime-routing';
 import type { NormalizedMediaItem } from '$lib/server/content/types';
 import type { FallbackCandidate } from './fallback';
 import type { ResolverRequest, TrustedResolutionConfig } from './types';
@@ -46,22 +45,12 @@ function lifecycleAllows(config: TrustedResolutionConfig): boolean {
   return providerAllowed && sourceAllowed;
 }
 
-function supportsMediaType(config: TrustedResolutionConfig, request: ResolverRequest, content: NormalizedMediaItem): boolean {
-  // Phase 7F+ v2: derive the canonical playback mediaType from content.type +
-  // animeFormat. For AniList-native anime (type='anime'), this maps to 'movie'
-  // or 'series' based on animeFormat. This lets normal providers (VidSrc/VidLink
-  // with movie:true/series:true) be eligible for anime content.
-  //
-  // The anime-bridge additionally lets anime-only providers (Yenime with
-  // anime:true) be eligible for anime-flagged content regardless of the
-  // canonical type.
-  //
-  // For the legacy /anime/ route path (request.mediaType='anime' +
-  // content.type='anime'), the canonical type is derived from animeFormat.
-  const canonicalMediaType = getCanonicalPlaybackMediaType(content);
-  if (capabilityValue(config, canonicalMediaType) !== false) return true;
-  if (content.isAnime === true && capabilityValue(config, 'anime') !== false) return true;
-  return false;
+function supportsMediaType(config: TrustedResolutionConfig, request: ResolverRequest, _content: NormalizedMediaItem): boolean {
+  // Simplified: anime is no longer a separate playback path. Anime
+  // content (TMDB TV series flagged as anime) is resolved via the normal
+  // series pipeline. The provider's capability[request.mediaType] is the
+  // single gate — there is no anime-bridge bypass.
+  return capabilityValue(config, request.mediaType) !== false;
 }
 
 function dateValue(value: string | null | undefined, now: number): number | null {

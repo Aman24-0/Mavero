@@ -3,7 +3,8 @@
 // A single normalized item representing an upcoming release event:
 //   - a movie (TMDB) with a release date
 //   - a TV series episode (TMDB) with an air date + season/episode numbers
-//   - an anime episode (AniList) with an airing date + episode number
+//   - an anime episode (TMDB TV with genre 16 + original_language 'ja')
+//     with an air date + episode number
 //
 // All fields are sourced from real upstream data. Episode numbers and
 // dates are NEVER fabricated — if the upstream doesn't provide them,
@@ -32,7 +33,7 @@ export type UpcomingItem = {
   year?: number;
   rating?: number;
   genres?: string[];
-  source: 'tmdb' | 'anilist';
+  source: 'tmdb';
 };
 
 export type UpcomingFilters = {

@@ -2,7 +2,6 @@ import { createDefaultAdapterIds, createDefaultAdapters } from './adapters';
 import { ResolverError, asResolverError } from './errors';
 import { normalizeContentIdentifiers } from './identifiers';
 import { allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
-import { getCanonicalPlaybackMediaType, isAnimeWithFormat } from './anime-routing';
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
 import type { ProviderAdapter, ResolverDependencies, ResolverRequest, SourceResult, TrustedResolutionConfig } from './types';
 import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
@@ -11,34 +10,18 @@ import type { IntegrationType } from '$lib/server/streaming/types';
 const activeProviderStatuses = new Set(['active']);
 const activeSourceStatuses = new Set(['active']);
 
-function capabilityAllows(config: TrustedResolutionConfig, mediaType: ContentType, content: NormalizedMediaItem): boolean {
-  // Phase 7F+ v2: a provider is eligible when EITHER:
-  //   1. CANONICAL MATCH — the provider declares `mediaType` as supported.
-  //   2. ANIME BRIDGE — content is anime-flagged AND the provider declares
-  //      `anime:true`. This lets anime-only providers (Yenime) accept
-  //      anime content regardless of the canonical type.
-  //
-  // The canonical mediaType is derived from content.type + animeFormat:
-  //   - TMDB movie → 'movie'
-  //   - TMDB series → 'series'
-  //   - AniList anime (animeFormat=movie) → 'movie'
-  //   - AniList anime (animeFormat=series or undefined) → 'series'
-  //
-  // This means a normal movie provider (VidSrc with movie:true) is eligible
-  // for an AniList-native anime movie (type='anime', animeFormat='movie')
-  // because the canonical mediaType is 'movie'. The anime-bridge additionally
-  // lets Yenime (anime:true only) be eligible for the same content.
+function capabilityAllows(config: TrustedResolutionConfig, mediaType: ContentType): boolean {
+  // Anime is no longer a separate playback path — anime content (TMDB TV
+  // series flagged as anime via genre 16 + 'ja') now flows through the
+  // normal movie/series pipeline. The resolver request's `mediaType` is
+  // always one of 'movie' | 'series' (anime-only content URLs are no
+  // longer produced by the UI). A provider is eligible when its
+  // capabilities JSON does not explicitly set `mediaType` to `false`.
   const sourceCapabilities = config.source.capabilities;
   const providerCapabilities = config.provider.capabilities;
   const sourceValue = sourceCapabilities && typeof sourceCapabilities === 'object' && !Array.isArray(sourceCapabilities) ? sourceCapabilities[mediaType] : undefined;
   const providerValue = providerCapabilities && typeof providerCapabilities === 'object' && !Array.isArray(providerCapabilities) ? providerCapabilities[mediaType] : undefined;
-  if (sourceValue !== false && providerValue !== false) return true;
-  if (content.isAnime === true) {
-    const sourceAnimeValue = sourceCapabilities && typeof sourceCapabilities === 'object' && !Array.isArray(sourceCapabilities) ? sourceCapabilities.anime : undefined;
-    const providerAnimeValue = providerCapabilities && typeof providerCapabilities === 'object' && !Array.isArray(providerCapabilities) ? providerCapabilities.anime : undefined;
-    if (sourceAnimeValue !== false && providerAnimeValue !== false) return true;
-  }
-  return false;
+  return sourceValue !== false && providerValue !== false;
 }
 
 function experimentalPlaybackAllowed(config: TrustedResolutionConfig): boolean {
@@ -92,26 +75,13 @@ export async function resolveSourceFromConfig(request: ResolverRequest, config: 
   if (!config.source.enabled) throw new ResolverError('SOURCE_DISABLED');
   if (config.source.visibility !== 'public') throw new ResolverError('SOURCE_DISABLED');
   if (!activeSourceStatuses.has(config.source.status) && !experimentalPlaybackAllowed(config)) throw new ResolverError('SOURCE_MAINTENANCE');
-  // Phase 7F+ v2: derive the canonical playback mediaType from content.type +
-  // animeFormat. For AniList-native anime (type='anime'), this maps:
-  //   animeFormat='movie' → 'movie'
-  //   animeFormat='series' → 'series'
-  // This lets normal providers (VidSrc/VidLink with movie:true/series:true)
-  // be eligible for anime content. The anime-bridge in capabilityAllows
-  // additionally lets anime-only providers (Yenime with anime:true) be eligible.
-  const canonicalMediaType = getCanonicalPlaybackMediaType(content);
-  if (!capabilityAllows(config, canonicalMediaType, content)) throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
-  // Phase 7F+ v2: the strict `content.type !== request.mediaType` check is
-  // relaxed for anime. The resolver accepts:
-  //   1. request.mediaType matches the canonical playback type (movie/series
-  //      derived from content.type + animeFormat).
-  //   2. request.mediaType is 'anime' AND content.type is 'anime' (the
-  //      AniList-native /anime/ route path — legacy compatibility).
-  //   3. content.isAnime === true AND the canonical type matches
-  //      (the anime-bridge path — TMDB-tagged anime with mediaType=movie/series).
-  if (request.mediaType !== canonicalMediaType
-    && !(request.mediaType === 'anime' && content.type === 'anime')
-    && !isAnimeWithFormat(content, canonicalMediaType)) throw new ResolverError('INVALID_REQUEST');
+  // Strict capability + identity check: the resolver request's mediaType
+  // must match the loaded content's type AND the provider must declare
+  // that mediaType as supported. Anime no longer bypasses this check —
+  // anime content has type='series' (or 'movie' for anime movies) and is
+  // resolved via the normal movie/series provider pipeline.
+  if (content.type !== request.mediaType) throw new ResolverError('INVALID_REQUEST');
+  if (!capabilityAllows(config, request.mediaType)) throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
 
   const context = { request, content, identifiers: normalizeContentIdentifiers(content, request), config };
   const adapter = adapterFor(config, dependencies);

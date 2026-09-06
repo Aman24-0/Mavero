@@ -362,45 +362,6 @@ export const VIDPHANTOM_CAPABILITIES: ProviderPlaybackCapabilities = {
   nextEpisode: false,
 };
 
-/**
- * Yenime — api.yenime.net (anime-only, MAL ID based).
- *
- * Verified from the official Yenime API homepage at https://api.yenime.net
- * and the player JS chunks. Yenime is built on top of MegaPlay's
- * infrastructure (docs say "direct megaplay extraction") and reuses
- * VidLink's `PLAYER_EVENT` postMessage protocol.
- *
- * VERIFIED: postMessage events (player→parent):
- *   { type: "PLAYER_EVENT", data: { event: "play"|"pause"|"seeked"|
- *     "ended"|"timeupdate"|"playing"|"waiting"|"error", currentTime,
- *     duration, mtmdbId, mediaType, season, episode } }
- * VERIFIED: `?startAt=N` URL parameter (documented at the API homepage
- *   "Query Parameters" section: `?startAt=90` → begin at 90 seconds).
- * VERIFIED: fullscreen (allowfullscreen set on the iframe).
- * VERIFIED: SUB/DUB is an in-player toggle button (no separate URL
- *   variants) — Mavero does NOT expose variant toggles for Yenime.
- * NOT VERIFIED: seek command (only a `seeked` event).
- * NOT VERIFIED: play/pause as commands (Yenime posts them as state
- *   changes, but the parent cannot command the player).
- * NOT VERIFIED: volume, subtitles, quality, PiP, nextEpisode.
- */
-export const YENIME_CAPABILITIES: ProviderPlaybackCapabilities = {
-  progressEvents: true,
-  currentTime: true,
-  duration: true,
-  seek: false,
-  startAt: true,
-  play: false,
-  pause: false,
-  volume: false,
-  subtitles: false,
-  quality: false,
-  fullscreen: true,
-  pictureInPicture: false,
-  postMessage: true,
-  nextEpisode: false,
-};
-
 // ----- Phase 7: adapter_id → capabilities lookup -----
 //
 // The admin capability matrix uses this map to display per-adapter
@@ -434,7 +395,6 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderPlaybackCapabilitie
   'cinesrc': CINESRC_CAPABILITIES,
   'vidapi-qzz': VIDAPI_QZZ_CAPABILITIES,
   'vidphantom': VIDPHANTOM_CAPABILITIES,
-  'yenime-embed': YENIME_CAPABILITIES,
 };
 
 /**

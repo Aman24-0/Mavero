@@ -5,7 +5,6 @@ import type { AdapterResult, ProviderAdapter, ResolverContext } from './types';
 import type { IntegrationType } from '$lib/server/streaming/types';
 import { vidsrcProviderAdapter } from './vidsrc';
 import { vidlinkProviderAdapter } from './vidlink';
-import { yenimeProviderAdapter } from './yenime';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
   const sourceCapabilities = context.config.source.capabilities;
@@ -66,10 +65,11 @@ export function createDefaultAdapters(): Record<IntegrationType, ProviderAdapter
 }
 
 export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
+  // Yenime was removed (anime-only MAL-embed provider is no longer
+  // supported). Only VidSrc and VidLink adapter IDs remain registered.
   return {
     [vidsrcProviderAdapter.adapterId ?? 'vidsrc-embed']: vidsrcProviderAdapter,
-    [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter,
-    [yenimeProviderAdapter.adapterId ?? 'yenime-embed']: yenimeProviderAdapter
+    [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter
   };
 }
 
@@ -83,3 +83,4 @@ export function createMockAdapter(integrationType: IntegrationType, result: Adap
     },
   };
 }
+

@@ -16,48 +16,27 @@
   export let data: PageData;
 
   $: item = data.item;
-  // Phase 7F+ v2: the canonical `contentType` for the URL and progress keys
-  // stays as the original route type ('movie', 'series', or 'anime'). This
-  // preserves progress identity, My List keys, and Continue Watching.
+  // The canonical `contentType` for the URL and progress keys stays as the
+  // original route type ('movie', 'series', or 'anime'). This preserves
+  // progress identity, My List keys, and Continue Watching.
   //
-  // For the RESOLVER REQUEST, we derive the canonical playback mediaType
-  // from content.type + animeFormat. For AniList-native anime (type='anime'),
-  // this maps animeFormat='movie' → 'movie', animeFormat='series' → 'series'.
-  // This lets normal providers (VidSrc/VidLink) be eligible for anime content
-  // because they receive 'movie' or 'series' (NOT 'anime') as the mediaType.
-  //
-  // Anime-specific providers (Yenime) are eligible via the anime-bridge path
-  // (content.isAnime + capability.anime) regardless of the mediaType.
+  // Anime content now comes from TMDB (TMDB TV series flagged as anime via
+  // genre 16 + 'ja'). The resolver request's `mediaType` is `contentType`
+  // directly — anime content with `contentType='series'` (the typical case
+  // for TMDB-tagged anime series) routes through the normal series pipeline.
+  // The legacy `/watch/anime/{id}` URL path still works for backward
+  // compatibility with deep links but is no longer produced by the UI.
   $: contentType = (page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
-  // The resolver mediaType is derived from the canonical playback type:
-  // - For TMDB content: same as contentType (movie/series)
-  // - For AniList anime (type='anime'): derived from animeFormat
-  //   animeFormat='movie' → 'movie'
-  //   animeFormat='series' or undefined → 'series'
-  $: resolverMediaType = (item?.isAnime && item?.type === 'anime'
-    ? (item?.animeFormat === 'movie' ? 'movie' : 'series')
-    : contentType) as 'movie' | 'series' | 'anime';
   let season = Number(page.url.searchParams.get('season') || '') || undefined;
   let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
-  // Phase 7F+ v3: anime movies do NOT get forced season=1/episode=1 in the
-  // resolver request. The resolver's identifiers.ts rejects movie requests
-  // that contain season/episode as INVALID_REQUEST. Instead, anime movies
-  // send a clean movie request (no season/episode) to normal providers.
-  // Yenime internally defaults to episode 1 when absent (see yenime.ts).
-  // Anime series retain their explicit season/episode from the URL.
   $: currentEpisode = season !== undefined && episode !== undefined ? data.episodes.find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
   $: playbackContext = ({ contentType, contentId: item.id, season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
   $: playbackKey = [playbackContext.contentType, playbackContext.contentId, playbackContext.season ?? '-', playbackContext.episode ?? '-'].join(':');
-  // Phase 7F (MegaPlay): expose SUB/DUB variants inside the source option when
-  // the source declares audio_languages containing 'sub' and/or 'dub'. Only
-  // these two values are recognized as runtime variants — other audio language
-  // tags (e.g. 'multi', 'en', 'ja') are not MegaPlay-style variants.
+  // Source options are built directly from the public streaming config. The
+  // MegaPlay-style SUB/DUB variant toggle was removed alongside the Yenime
+  // anime provider — all sources are now opaque options selected by name.
   $: sourceOptions = data.streamingConfig.sources.map((source) => {
     const provider = data.streamingConfig.providers.find((provider) => provider.id === source.provider_id);
-    const audioLanguages = Array.isArray(source.audio_languages) ? source.audio_languages : [];
-    const variants = audioLanguages
-      .map((v) => String(v).toLowerCase())
-      .filter((v) => v === 'sub' || v === 'dub');
     const option: PlayerSourceOption = {
       id: source.id,
       name: source.name,
@@ -65,7 +44,6 @@
       integrationType: source.integration_type ?? undefined,
       sandboxPolicy: sandboxPolicyFromCapabilities(provider?.capabilities, source.capabilities)
     };
-    if (variants.length > 0) option.variants = [...new Set(variants)];
     return option;
   });
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
@@ -107,11 +85,6 @@
   let watchingSavedForSession = false;
   let activePlaybackKey = '';
   let selectedSourceId = '';
-  // Phase 7F (MegaPlay): currently-selected playback variant for the active
-  // source. Only meaningful when the source exposes `variants` (e.g. MegaPlay
-  // SUB/DUB). When undefined, the resolver uses the source's first declared
-  // variant (e.g. 'sub').
-  let selectedVariant: string | undefined;
   // Phase 2: admin-configured default source id for the current content type.
   let defaultSourceId: string | undefined;
   // Phase 4: saved last-successful source from progress record. Used for
@@ -360,7 +333,7 @@
    * fallback candidate list and the request source failed), the writer
    * is swapped to the new sourceId.
    */
-  async function prepareSource(sourceId = selectedSourceId, allowFallback = true, variant: string | undefined = selectedVariant) {
+  async function prepareSource(sourceId = selectedSourceId, allowFallback = true) {
     const selected = sourceOptions.find((source) => source.id === sourceId);
     if (!selected) {
       resolutionState = 'unavailable';
@@ -371,12 +344,6 @@
     await replaceProgressSource(sourceId);
     if (!active) return;
     selectedSourceId = sourceId;
-    // Phase 7F (MegaPlay): persist the variant we are about to load so the
-    // source selector can highlight the active SUB/DUB button. When `variant`
-    // is undefined (e.g. initial auto-resolution of a non-variant source),
-    // the player still works — the resolver uses the source's first declared
-    // variant for variant-capable sources and ignores variant for others.
-    selectedVariant = variant;
     // Phase 4: reset resume-once flag for the new source session.
     resumeApplied = false;
     // Phase 4: pass the current playback position as startPosition so the
@@ -386,15 +353,8 @@
     // For MANUAL source switches, startPosition = currentPlaybackTime
     // (the position the user was at in the previous source).
     const startPosition = allowFallback ? resumeTime : currentPlaybackTime;
-    const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: resolverMediaType, season, episode };
+    const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
     if (allowFallback && defaultSourceId) request.defaultSourceId = defaultSourceId;
-    // Phase 7F (MegaPlay): forward the user-selected variant only when the
-    // source actually exposes variants. Sending `variant` for a non-variant
-    // source would be silently ignored by other adapters, but we keep the
-    // request body minimal for clarity and to avoid resolver-side surprises.
-    if (variant && selected.variants && selected.variants.includes(variant)) {
-      request.variant = variant;
-    }
     await manager.loadSource(
       request,
       startPosition,
@@ -408,22 +368,6 @@
     if (resolved && resolved.sourceId !== selectedSourceId) {
       await replaceProgressSource(resolved.sourceId);
       selectedSourceId = resolved.sourceId;
-      // Phase 7F: when fallback walks to a different source, clear the
-      // selected variant — the new source may not expose the same variants.
-      // The resolver will use the new source's first declared variant.
-      const newOption = sourceOptions.find((source) => source.id === resolved.sourceId);
-      selectedVariant = newOption?.variants?.[0];
-    } else if (resolved) {
-      // Phase 7F: when the resolved source has metadata.selectedVariant,
-      // sync our local selectedVariant so the source sheet highlights the
-      // correct SUB/DUB button (the resolver may have defaulted to 'sub'
-      // when no variant was requested).
-      if (resolved.metadata?.selectedVariant) {
-        selectedVariant = resolved.metadata.selectedVariant;
-      } else if (!resolved.metadata?.variants || resolved.metadata.variants.length === 0) {
-        // Resolved source doesn't expose variants — clear local selection.
-        selectedVariant = undefined;
-      }
     }
     if (resolved && !watchingSavedForSession) {
       watchingSavedForSession = true;
@@ -480,24 +424,16 @@
   // Phase 9 fix: generation token — the latest source switch wins.
   let sourceSwitchGeneration = 0;
 
-  function handleSourceChange(sourceId: string, variant?: string) {
+  function handleSourceChange(sourceId: string) {
     // Phase 9 fix: removed the separate void writer?.flush() call.
     // replaceProgressSource() inside prepareSource() already does the flush.
     // This was causing a double-flush race.
-    // Phase 7F (MegaPlay): forward the variant through to prepareSource.
-    // When the user clicks a variant toggle inside a source option, the
-    // PlayerShell calls this with the SAME sourceId and the new variant
-    // (e.g. 'dub'). The manager re-resolves with the new variant and the
-    // MegaPlay resolver adapter substitutes the URL path segment.
     const generation = ++sourceSwitchGeneration;
     sourceSwitchChain = sourceSwitchChain.then(() => {
       // If a newer source switch was initiated while we were waiting, abort.
       if (generation !== sourceSwitchGeneration) return;
       // Pass allowFallback=false (manual switch — do NOT walk fallback).
-      // Pass variant only when it's a valid variant for the target source.
-      const target = sourceOptions.find((source) => source.id === sourceId);
-      const safeVariant = variant && target?.variants?.includes(variant) ? variant : undefined;
-      return prepareSource(sourceId, false, safeVariant);
+      return prepareSource(sourceId, false);
     }).catch(() => {
       // Swallow — prepareSource handles its own errors via resolutionState.
     });
