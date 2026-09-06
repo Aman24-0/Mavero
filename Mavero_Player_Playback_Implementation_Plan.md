@@ -3012,6 +3012,89 @@ Phase 7 is a **server-side additive** implementation — no Phase 1-6 code was m
 - `af096ff` — `feat(admin): add default management, isolated source testing, capability matrix`
 - `34a1e0d` — `test(admin): add phase 7 coverage for defaults, source testing, capabilities`
 
+## 2026-09-06 — Phase 8 — Reliability, Edge Cases, Accessibility, Performance
+
+**Status:** COMPLETE
+
+**Phase:** 8
+
+**Task:** Implement the four concrete gaps identified by the Phase 8 pre-implementation audit: iframe/embed load timeout, client-side resolver timeout, source/episode sheet focus management, and aria-modal accessibility semantics. Preserve all Phase 1-7 behavior.
+
+### Implementation summary
+
+Phase 8 is a **targeted additive** implementation — no Phase 1-7 architecture was modified. The only files touched are `PlayerShell.svelte` (additive timeout + focus management) and `PlaybackManager.ts` (additive resolver timeout using existing AbortController).
+
+**4 capability areas implemented:**
+
+1. **Iframe/embed load timeout** — `EMBED_LOAD_TIMEOUT_MS = 18000` (conservative 18s). `startEmbedLoadTimeout(sourceId)` starts a one-shot timer when an embed source enters `embed-loading` state. `clearEmbedLoadTimeout()` clears the timer on: successful embed load, source switch, episode switch, retry, component destroy. **Stale-source protection:** the timeout captures the sourceId at start time and checks `sourceIdentity` before acting — if the user switched sources while the timeout was pending, the timeout is a no-op. **State guard:** the timeout only transitions to error if `state` is still `'embed-loading'`. Uses existing error UI — no second error card created.
+
+2. **Client-side resolver timeout** — `RESOLVER_TIMEOUT_MS = 15000` (15s). Uses the **existing** `AbortController` — no new abort mechanism. `setTimeout` aborts the controller after 15s if the fetch hasn't resolved. `timedOut` flag distinguishes timeout-abort from intentional source-switch abort: intentional abort is silently dropped (existing behavior); timeout abort shows "This source is taking too long to respond." Timeout is cleared on: successful resolution, error, abort, destroy.
+
+3. **Focus management for source/episode sheets** — `openSourceSheet(trigger)` / `openEpisodeSheet(trigger)` capture the trigger element, close any other open sheet, and focus the close button after render. `closeSourceSheet()` / `closeEpisodeSheet()` close the sheet + restore focus to the trigger if it's still connected (`isConnected` guard). `handleSheetKeydown(event)` provides focus trap for Tab/Shift+Tab — focus wraps to first/last focusable element. Escape closes the active sheet. Takes priority over player keyboard shortcuts. Only one sheet can be open at a time.
+
+4. **aria-modal accessibility semantics** — Added `aria-modal="true"` to both source and episode sheet dialogs. All existing ARIA attributes preserved (`role`, `aria-label`, `aria-expanded`, `aria-pressed`).
+
+### Reliability — stale-source protection (most critical requirement)
+
+The most important Phase 8 reliability requirement is: "SOURCE A → pending timeout → SOURCE B → old timeout fires → OLD WORK MUST NOT AFFECT SOURCE B."
+
+This is protected by:
+- `embedLoadTimeoutSourceId` captured at start time
+- `if (sourceIdentity !== embedLoadTimeoutSourceId) return` in the timeout callback
+- `clearEmbedLoadTimeout()` called on source switch, episode switch, retry, and destroy
+- `if (state !== 'embed-loading') return` in the timeout callback (handles the case where the timer wasn't cleared but the state changed)
+
+For the resolver timeout: `timedOut` flag ensures intentional source-switch abort is silently dropped while timeout-abort shows an error. The existing `sessionId` guard prevents stale session state updates.
+
+### Accessibility — focus management (most critical requirement)
+
+The most important Phase 8 accessibility requirement is: "OPEN SHEET → focus enters sheet → Tab/Shift+Tab remains inside → close → focus returns to original trigger."
+
+This is implemented by:
+- `openSourceSheet`/`openEpisodeSheet` capture `trigger: HTMLElement` and focus the close button
+- `handleSheetKeydown` traps Tab (wraps to first) and Shift+Tab (wraps to last) within the active sheet
+- `closeSourceSheet`/`closeEpisodeSheet` call `restoreFocus(trigger)` which checks `element instanceof HTMLElement && element.isConnected`
+- `chooseSource`/`chooseEpisode` call the close functions so focus is restored after selection
+- Backdrop click and close button use the same close functions
+
+### Files changed
+
+| File | Status | Changes |
+|---|---|---|
+| `src/lib/components/player/PlayerShell.svelte` | modified | Embed load timeout (constant, start/clear functions, stale-source guard, state guard, lifecycle wiring); focus management (open/close functions, restoreFocus, focusSheetCloseButton, handleSheetKeydown focus trap, trigger capture/restore, aria-modal); existing keydown handler updated to delegate sheet keydown. |
+| `src/lib/client/player/PlaybackManager.ts` | modified | Resolver timeout (RESOLVER_TIMEOUT_MS, setTimeout on existing AbortController, timedOut flag, cleanup on success/error, timeout-abort vs intentional-abort distinction). |
+| `scripts/phase8_reliability_test.ts` | **NEW** | Embed timeout contract + behavioral tests (Tests A-E); resolver timeout contract + behavioral tests. |
+| `scripts/phase8_accessibility_test.ts` | **NEW** | aria-modal, focus management, focus trap, Escape, trigger capture/restore, existing ARIA preservation. |
+| `package.json` | modified | Registered 2 new test scripts. |
+
+### Files NOT changed (Phase 1-7 contracts preserved)
+
+- `src/lib/client/player/providers/*-adapter.ts` — adapters unchanged
+- `src/lib/client/player/events.ts` — event contract unchanged
+- `src/lib/client/player/capabilities.ts` — re-export unchanged
+- `src/lib/server/resolver/*` — resolver core/fallback/ranking unchanged
+- `src/lib/server/streaming/*` — admin/health/public-config unchanged
+- `src/lib/client/progress/*` — progress system unchanged (Phase 4 verified sufficient)
+- `src/routes/api/playback/resolve/+server.ts` — production endpoint unchanged
+- `src/routes/watch/[type]/[id]/+page.svelte` — watch route unchanged
+- `src/lib/components/player/PlayerViewport.svelte` — no changes
+- `src/lib/components/player/PlayerControls.svelte` — no changes
+- `supabase/migrations/*` — no DB changes
+- All Phase 6 player features (Wake Lock, PiP, Media Session, fullscreen, orientation) — unchanged
+- All Phase 7 admin files — unchanged
+
+### Verification
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings — NO new warnings).
+- `pnpm test` → PASS (43 scripts: 41 existing + 2 new Phase 8).
+- `pnpm run build` → PASS.
+- Manual QA: NOT TESTABLE (no Supabase env).
+
+### Commits
+
+- `cc512e9` — `feat(player): add playback loading timeouts and sheet focus management`
+- `d472b69` — `test(player): add phase 8 reliability and accessibility tests`
+
 ### Worklog template
 
 ```md
