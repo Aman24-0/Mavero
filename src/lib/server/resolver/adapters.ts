@@ -5,7 +5,6 @@ import type { AdapterResult, ProviderAdapter, ResolverContext } from './types';
 import type { IntegrationType } from '$lib/server/streaming/types';
 import { vidsrcProviderAdapter } from './vidsrc';
 import { vidlinkProviderAdapter } from './vidlink';
-import { megaplayProviderAdapter } from './megaplay';
 import { yenimeProviderAdapter } from './yenime';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
@@ -70,7 +69,6 @@ export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
   return {
     [vidsrcProviderAdapter.adapterId ?? 'vidsrc-embed']: vidsrcProviderAdapter,
     [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter,
-    [megaplayProviderAdapter.adapterId ?? 'megaplay-embed']: megaplayProviderAdapter,
     [yenimeProviderAdapter.adapterId ?? 'yenime-embed']: yenimeProviderAdapter
   };
 }

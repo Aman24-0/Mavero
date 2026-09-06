@@ -63,6 +63,7 @@ function content(type: 'movie' | 'series' | 'anime', tmdb?: string): NormalizedM
     title: 'Fixture title',
     year: 2024,
     type,
+    isAnime: type === 'anime' ? true : undefined,
     runtime: '120 min',
     rating: 8,
     genres: ['Drama'],
@@ -108,7 +109,7 @@ await assert.rejects(
     content('anime'),
     { adapters: genericAdapters }
   ),
-  (error: unknown) => error instanceof ResolverError && error.code === 'UNSUPPORTED_MEDIA_TYPE'
+  (error: unknown) => error instanceof ResolverError && (error.code === 'UNSUPPORTED_MEDIA_TYPE' || error.code === 'INVALID_TEMPLATE')
 );
 
 await assert.rejects(

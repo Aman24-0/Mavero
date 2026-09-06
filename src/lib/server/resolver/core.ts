@@ -2,6 +2,7 @@ import { createDefaultAdapterIds, createDefaultAdapters } from './adapters';
 import { ResolverError, asResolverError } from './errors';
 import { normalizeContentIdentifiers } from './identifiers';
 import { allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
+import { getCanonicalPlaybackMediaType, isAnimeWithFormat } from './anime-routing';
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
 import type { ProviderAdapter, ResolverDependencies, ResolverRequest, SourceResult, TrustedResolutionConfig } from './types';
 import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
@@ -11,18 +12,22 @@ const activeProviderStatuses = new Set(['active']);
 const activeSourceStatuses = new Set(['active']);
 
 function capabilityAllows(config: TrustedResolutionConfig, mediaType: ContentType, content: NormalizedMediaItem): boolean {
-  // Phase 7F+ (anime routing): accept the provider when EITHER:
+  // Phase 7F+ v2: a provider is eligible when EITHER:
   //   1. CANONICAL MATCH — the provider declares `mediaType` as supported.
-  //      (Legacy behavior — e.g. VidSrc with `movie:true` for a movie request.)
-  //   2. ANIME BRIDGE — when the content is anime-flagged AND the provider
-  //      declares `anime:true`. This lets MegaPlay/Yenime (which declare
-  //      `movie:false, series:false, anime:true`) accept a Demon Slayer
-  //      movie (`type:'movie', isAnime:true`) without forcing the canonical
-  //      content type to be mutated to `'anime'`.
+  //   2. ANIME BRIDGE — content is anime-flagged AND the provider declares
+  //      `anime:true`. This lets anime-only providers (Yenime) accept
+  //      anime content regardless of the canonical type.
   //
-  // The canonical `content.type` and `request.mediaType` stay as
-  // `'movie'`/`'series'` for TMDB-tagged anime — progress keys, My List,
-  // and the URL all keep their original identity.
+  // The canonical mediaType is derived from content.type + animeFormat:
+  //   - TMDB movie → 'movie'
+  //   - TMDB series → 'series'
+  //   - AniList anime (animeFormat=movie) → 'movie'
+  //   - AniList anime (animeFormat=series or undefined) → 'series'
+  //
+  // This means a normal movie provider (VidSrc with movie:true) is eligible
+  // for an AniList-native anime movie (type='anime', animeFormat='movie')
+  // because the canonical mediaType is 'movie'. The anime-bridge additionally
+  // lets Yenime (anime:true only) be eligible for the same content.
   const sourceCapabilities = config.source.capabilities;
   const providerCapabilities = config.provider.capabilities;
   const sourceValue = sourceCapabilities && typeof sourceCapabilities === 'object' && !Array.isArray(sourceCapabilities) ? sourceCapabilities[mediaType] : undefined;
@@ -87,15 +92,26 @@ export async function resolveSourceFromConfig(request: ResolverRequest, config: 
   if (!config.source.enabled) throw new ResolverError('SOURCE_DISABLED');
   if (config.source.visibility !== 'public') throw new ResolverError('SOURCE_DISABLED');
   if (!activeSourceStatuses.has(config.source.status) && !experimentalPlaybackAllowed(config)) throw new ResolverError('SOURCE_MAINTENANCE');
-  if (!capabilityAllows(config, request.mediaType, content)) throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
-  // Phase 7F+ (anime routing): the strict `content.type !== request.mediaType`
-  // check is preserved. The canonical content type stays as `'movie'` or
-  // `'series'` for TMDB-tagged anime (e.g. Demon Slayer: Infinity Castle is
-  // `type:'movie', isAnime:true`). The anime-bridge in `capabilityAllows`
-  // lets anime-capable providers (MegaPlay/Yenime) be eligible WITHOUT
-  // mutating the canonical type — so progress keys, My List, Continue
-  // Watching, and the URL all keep their original `movie`/`series` identity.
-  if (content.type !== request.mediaType) throw new ResolverError('INVALID_REQUEST');
+  // Phase 7F+ v2: derive the canonical playback mediaType from content.type +
+  // animeFormat. For AniList-native anime (type='anime'), this maps:
+  //   animeFormat='movie' → 'movie'
+  //   animeFormat='series' → 'series'
+  // This lets normal providers (VidSrc/VidLink with movie:true/series:true)
+  // be eligible for anime content. The anime-bridge in capabilityAllows
+  // additionally lets anime-only providers (Yenime with anime:true) be eligible.
+  const canonicalMediaType = getCanonicalPlaybackMediaType(content);
+  if (!capabilityAllows(config, canonicalMediaType, content)) throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
+  // Phase 7F+ v2: the strict `content.type !== request.mediaType` check is
+  // relaxed for anime. The resolver accepts:
+  //   1. request.mediaType matches the canonical playback type (movie/series
+  //      derived from content.type + animeFormat).
+  //   2. request.mediaType is 'anime' AND content.type is 'anime' (the
+  //      AniList-native /anime/ route path — legacy compatibility).
+  //   3. content.isAnime === true AND the canonical type matches
+  //      (the anime-bridge path — TMDB-tagged anime with mediaType=movie/series).
+  if (request.mediaType !== canonicalMediaType
+    && !(request.mediaType === 'anime' && content.type === 'anime')
+    && !isAnimeWithFormat(content, canonicalMediaType)) throw new ResolverError('INVALID_REQUEST');
 
   const context = { request, content, identifiers: normalizeContentIdentifiers(content, request), config };
   const adapter = adapterFor(config, dependencies);

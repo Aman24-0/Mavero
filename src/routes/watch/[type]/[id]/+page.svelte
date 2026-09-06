@@ -16,24 +16,27 @@
   export let data: PageData;
 
   $: item = data.item;
-  // Phase 7F+ (anime routing): the canonical `contentType` stays as the
-  // original TMDB type ('movie' or 'series') for anime-flagged content.
-  // The `isAnime` flag is an ADDITIVE capability — it lets anime-capable
-  // providers (MegaPlay/Yenime) be eligible via the resolver's
-  // anime-bridge in `capabilityAllows`/`supportsMediaType`, WITHOUT
-  // excluding normal movie/series providers (VidSrc/VidLink) and WITHOUT
-  // mutating the canonical content identity.
+  // Phase 7F+ v2: the canonical `contentType` for the URL and progress keys
+  // stays as the original route type ('movie', 'series', or 'anime'). This
+  // preserves progress identity, My List keys, and Continue Watching.
   //
-  // This preserves:
-  //   - URL routing: /watch/movie/... and /watch/series/... unchanged
-  //   - Progress keys: movie:ID / series:ID unchanged
-  //   - My List / Continue Watching / favorite keys unchanged
-  //   - Normal providers receive TMDB ID as before
-  //   - Anime providers receive AniList/MAL ID per their adapter contract
+  // For the RESOLVER REQUEST, we derive the canonical playback mediaType
+  // from content.type + animeFormat. For AniList-native anime (type='anime'),
+  // this maps animeFormat='movie' → 'movie', animeFormat='series' → 'series'.
+  // This lets normal providers (VidSrc/VidLink) be eligible for anime content
+  // because they receive 'movie' or 'series' (NOT 'anime') as the mediaType.
   //
-  // For the dedicated /anime route (AniList adapter), `page.params.type`
-  // is 'anime' and `item.type === 'anime'` — this path is unchanged.
+  // Anime-specific providers (Yenime) are eligible via the anime-bridge path
+  // (content.isAnime + capability.anime) regardless of the mediaType.
   $: contentType = (page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
+  // The resolver mediaType is derived from the canonical playback type:
+  // - For TMDB content: same as contentType (movie/series)
+  // - For AniList anime (type='anime'): derived from animeFormat
+  //   animeFormat='movie' → 'movie'
+  //   animeFormat='series' or undefined → 'series'
+  $: resolverMediaType = (item?.isAnime && item?.type === 'anime'
+    ? (item?.animeFormat === 'movie' ? 'movie' : 'series')
+    : contentType) as 'movie' | 'series' | 'anime';
   let season = Number(page.url.searchParams.get('season') || '') || undefined;
   let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
   // Phase 7F+ (anime routing): anime movies (TMDB type='movie' but isAnime=true,
@@ -388,7 +391,7 @@
     // For MANUAL source switches, startPosition = currentPlaybackTime
     // (the position the user was at in the previous source).
     const startPosition = allowFallback ? resumeTime : currentPlaybackTime;
-    const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
+    const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: resolverMediaType, season, episode };
     if (allowFallback && defaultSourceId) request.defaultSourceId = defaultSourceId;
     // Phase 7F (MegaPlay): forward the user-selected variant only when the
     // source actually exposes variants. Sending `variant` for a non-variant

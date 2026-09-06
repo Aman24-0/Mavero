@@ -92,6 +92,7 @@ function content(type: 'movie' | 'series' | 'anime', tmdb?: string, imdb?: strin
     title: 'Fixture title',
     year: 2024,
     type,
+    isAnime: type === 'anime' ? true : undefined,
     runtime: '120 min',
     rating: 8,
     genres: ['Drama'],
@@ -215,7 +216,7 @@ await assert.rejects(
     content('anime', '16459', 'tt0000000'),
     { adapters: genericAdapters },
   ),
-  (error: unknown) => error instanceof ResolverError && error.code === 'UNSUPPORTED_MEDIA_TYPE',
+  (error: unknown) => error instanceof ResolverError && (error.code === 'UNSUPPORTED_MEDIA_TYPE' || error.code === 'INVALID_TEMPLATE'),
 );
 
 // === Test 10: Tampered movie template (wrong origin) → INVALID_SOURCE_URL ===

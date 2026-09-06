@@ -72,12 +72,17 @@ function mapJikanEpisode(raw: JikanEpisode, seasonNumber: number): Episode {
  * Returns a Season object with all episodes (treated as Season 1
  * since Jikan doesn't expose a traditional season structure).
  *
+ * The `fallbackImage` parameter (the anime's poster or backdrop) is used
+ * as the `still` for episodes that have no per-episode image — Jikan's
+ * /episodes endpoint frequently returns `images: null` for episodes.
+ * Without this fallback, the episode guide would show blank thumbnails.
+ *
  * Returns `null` when Jikan has no episode data (e.g. the MAL ID
  * is missing, the anime is a movie, or Jikan is unavailable). The
  * caller should fall back to a generated episode list based on the
  * AniList `episodes: number` count.
  */
-export async function getJikanAnimeSeason(malId: string): Promise<Season | null> {
+export async function getJikanAnimeSeason(malId: string, fallbackImage?: string): Promise<Season | null> {
   const numericId = Number(malId);
   if (!Number.isInteger(numericId) || numericId <= 0) return null;
 
@@ -119,7 +124,24 @@ export async function getJikanAnimeSeason(malId: string): Promise<Season | null>
   });
 
   if (stale && value) {
-    return { ...value, episodes: value.episodes?.map((e) => ({ ...e })) };
+    // Deep-copy the cached value to avoid mutation across callers.
+    const season: Season = {
+      ...value,
+      episodes: value.episodes?.map((e) => ({ ...e }))
+    };
+    // Apply fallback images for episodes without stills.
+    if (fallbackImage && season.episodes) {
+      for (const ep of season.episodes) {
+        if (!ep.still) ep.still = fallbackImage;
+      }
+    }
+    return season;
+  }
+  // Apply fallback images for the fresh value too.
+  if (fallbackImage && value?.episodes) {
+    for (const ep of value.episodes) {
+      if (!ep.still) ep.still = fallbackImage;
+    }
   }
   return value;
 }
@@ -132,8 +154,12 @@ export async function getJikanAnimeSeason(malId: string): Promise<Season | null>
  *
  * This is ONLY a fallback — real metadata comes from Jikan when
  * available.
+ *
+ * The `fallbackImage` parameter (the anime's poster/backdrop) is used
+ * as the `still` for all generated episodes so the episode guide shows
+ * a visual placeholder instead of a blank rectangle.
  */
-export function generateFallbackEpisodes(count: number, seasonNumber = 1): Episode[] {
+export function generateFallbackEpisodes(count: number, seasonNumber = 1, fallbackImage?: string): Episode[] {
   const safeCount = Math.max(0, Math.min(count, 1000));
   if (safeCount === 0) return [];
   return Array.from({ length: safeCount }, (_, index) => ({
@@ -144,7 +170,7 @@ export function generateFallbackEpisodes(count: number, seasonNumber = 1): Episo
     overview: undefined,
     airDate: undefined,
     runtime: undefined,
-    still: undefined
+    still: fallbackImage
   }));
 }
 

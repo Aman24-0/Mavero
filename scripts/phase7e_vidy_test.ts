@@ -88,7 +88,7 @@ await assert.rejects(
 // Test 5: Anime rejected
 await assert.rejects(
   () => resolveSourceFromConfig({ sourceId, contentId: 'a', mediaType: 'anime', season: 1, episode: 1 }, config, content('anime'), { adapters }),
-  (e: unknown) => e instanceof ResolverError && e.code === 'UNSUPPORTED_MEDIA_TYPE',
+  (e: unknown) => e instanceof ResolverError && (e.code === 'UNSUPPORTED_MEDIA_TYPE' || e.code === 'INVALID_TEMPLATE'),
 );
 
 // Test 6: Series without episode → INVALID_REQUEST

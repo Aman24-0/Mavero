@@ -29,6 +29,21 @@ export function resolveTemplate(template: string | null | undefined, context: Re
 }
 
 export function templateForContext(context: ResolverContext): string | null {
+  // Phase 7F+ v2: the resolver request's `mediaType` is the CANONICAL
+  // playback type (derived from content.type + animeFormat by the watch
+  // route). For AniList-native anime (type='anime'), mediaType is
+  // 'movie' (animeFormat='movie') or 'series' (animeFormat='series').
+  // For TMDB-tagged anime, mediaType is the TMDB type ('movie'/'series').
+  //
+  // This means normal providers (VidSrc/VidLink with `movie:true` or
+  // `series:true`) use their canonical movie_template/series_template
+  // even for anime-flagged content — the URL uses the TMDB ID. The
+  // anime_template is only reached when the request's mediaType is
+  // 'anime' (the legacy /anime/ route path).
+  //
+  // Anime-only providers (Yenime with `anime:true`) bypass this function
+  // entirely — the Yenime adapter uses `anime_template` directly because
+  // Yenime's identifier contract is MAL ID (not TMDB ID).
   if (context.request.mediaType === 'movie') return context.config.source.movie_template;
   if (context.request.mediaType === 'series') return context.config.source.series_template;
   return context.config.source.anime_template;

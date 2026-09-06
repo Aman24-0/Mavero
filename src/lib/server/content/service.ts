@@ -266,7 +266,10 @@ export async function getAnimeSeason(item: NormalizedMediaItem, seasonNumber = 1
   // Try Jikan first for real episode metadata.
   if (malId) {
     try {
-      const jikanSeason = await getJikanAnimeSeason(malId);
+      // Pass the anime's poster/backdrop as a fallback image for episodes
+      // that Jikan doesn't have per-episode images for (very common).
+      const fallbackImage = item.backdrop || item.poster || undefined;
+      const jikanSeason = await getJikanAnimeSeason(malId, fallbackImage);
       if (jikanSeason?.episodes?.length) {
         return jikanSeason;
       }
@@ -276,7 +279,10 @@ export async function getAnimeSeason(item: NormalizedMediaItem, seasonNumber = 1
   }
 
   // Fallback: generate generic episode list from the AniList count.
-  const fallbackEpisodes = generateFallbackEpisodes(episodeCount, seasonNumber);
+  // Use the anime's poster/backdrop as the episode still so the guide
+  // doesn't show blank rectangles.
+  const fallbackImage = item.backdrop || item.poster || undefined;
+  const fallbackEpisodes = generateFallbackEpisodes(episodeCount, seasonNumber, fallbackImage);
   return {
     number: seasonNumber,
     title: `Season ${seasonNumber}`,

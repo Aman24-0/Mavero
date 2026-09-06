@@ -10,7 +10,6 @@ import { CineSrcPlayerAdapter } from './providers/cinesrc-adapter';
 import { VidApiQzzPlayerAdapter } from './providers/vidapi-qzz-adapter';
 import { CinemaOSPlayerAdapter } from './providers/cinemaos-adapter';
 import { VidPhantomPlayerAdapter } from './providers/vidphantom-adapter';
-import { MegaPlayPlayerAdapter } from './providers/megaplay-adapter';
 import { YenimePlayerAdapter } from './providers/yenime-adapter';
 
 /**
@@ -30,9 +29,8 @@ import { YenimePlayerAdapter } from './providers/yenime-adapter';
  *   7. VidApiQzzPlayerAdapter — handles `https://vidapi.qzz.io`.
  *   8. CinemaOSPlayerAdapter — handles `https://cinemaos.tech` (skeleton).
  *   9. VidPhantomPlayerAdapter — handles `https://vidphantom.com` (skeleton).
- *  10. MegaPlayPlayerAdapter — handles `https://megaplay.buzz` (anime SUB/DUB).
- *  11. YenimePlayerAdapter — handles `https://api.yenime.net` (anime MAL, startAt).
- *  12. EmbedPlayerAdapter — generic fallback for all other embed sources.
+ *  10. YenimePlayerAdapter — handles `https://api.yenime.net` (anime MAL, startAt).
+ *  11. EmbedPlayerAdapter — generic fallback for all other embed sources.
  *
  * Provider-specific adapters are registered BEFORE the generic EmbedPlayerAdapter
  * so that `pickAdapter(source)` matches the provider-specific adapter first
@@ -101,8 +99,6 @@ export function createDefaultAdapterRegistry(): PlayerAdapterRegistry {
     // Skeleton adapters (exist but conservative — pending docs verification).
     new CinemaOSPlayerAdapter(),
     new VidPhantomPlayerAdapter(),
-    // MegaPlay (anime-only SUB/DUB embed — Phase 7F).
-    new MegaPlayPlayerAdapter(),
     // Yenime (anime-only MAL-embed — Phase 7F+).
     new YenimePlayerAdapter(),
     // Generic fallback for all other embed sources (black-box).
