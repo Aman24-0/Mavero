@@ -111,11 +111,26 @@ export async function getFavoriteStatus(contentType: LocalContentType, contentId
 
 export async function removeFavoriteFromMyList(contentType: LocalContentType, contentId: string, deletedAt = Date.now()) {
   const key = favoriteKey(contentType, contentId);
-  // Phase 9 fix: invalidate any active writer for this title BEFORE deleting
-  // progress, so a pending/queued flush cannot recreate the deleted record.
+  // Phase 9 fix (race-safe): invalidate any active writer for this title BEFORE
+  // deleting progress, AND drain any in-flight flush before deleting. This
+  // guarantees that a pending/queued/in-flight flush cannot recreate the
+  // deleted record.
+  //
+  // Step 1: invalidateWritersForContent() bumps the per-title generation
+  //   token and disposes every active writer for this title. From this point
+  //   on, any writer callback (queued setTimeout, pause, complete, update,
+  //   updateRuntime, flush) will see disposed=true and return immediately
+  //   without persisting.
   invalidateWritersForContent(contentType, contentId);
-  // Phase 9 fix: delete ALL watch progress for this title (all episodes)
-  // so it disappears from Continue Watching immediately.
+  // Step 2: drain in-flight persistence. Any flush() that already passed the
+  //   disposed check and is currently awaiting saveProgress() will finish
+  //   its post-check (which sees the bumped generation and undoes its write
+  //   via removeProgress). We MUST wait for these to settle before deleting
+  //   progress, otherwise the in-flight put transaction would commit AFTER
+  //   deleteAllProgressForContent and recreate the deleted record.
+  await drainPendingWritesForContent(contentType, contentId);
+  // Step 3: delete ALL watch progress for this title (every season:episode)
+  //   so it disappears from Continue Watching immediately.
   await deleteAllProgressForContent(contentType, contentId);
   await removeFavorite(contentType, contentId);
   await putFavoriteDeletion({ key, contentType, contentId, deletedAt });
@@ -134,43 +149,153 @@ export async function deleteAllProgressForContent(contentType: LocalContentType,
 }
 
 // ============================================================
-// Phase 9 fix: Title-level writer invalidation registry.
-// Prevents stale/pending writer flushes from recreating deleted progress.
+// Phase 9 fix (race-safe): Title-level writer invalidation registry.
+//
+// PREVIOUS BUG: activeWriters stored only `{ dispose }` and
+// unregisterWriter() blindly called `activeWriters.delete(key)`. When
+// writer A was replaced by writer B for the same title, A's late
+// dispose() (e.g. from component unmount) would delete the registry
+// entry that now belonged to B. After that, removeFavoriteFromMyList()
+// could not find B to invalidate it, so B's pending flush recreated
+// the deleted progress.
+//
+// FIX: each registry entry carries a unique identity `id` (Symbol) and
+// the per-title `generation` token at the time it was registered.
+//
+//   - unregisterWriter(key, writerId) only deletes the entry if its id
+//     still equals writerId. An old writer can NEVER unregister a newer
+//     writer.
+//
+//   - invalidateWritersForContent() bumps the per-title generation
+//     BEFORE disposing. Every flush captures its generation token
+//     before awaiting saveProgress(); after the await it re-checks the
+//     title generation. If the title was invalidated during the await
+//     (delete-wins semantics), the flush undoes its just-completed
+//     putProgress via removeProgress.
+//
+//   - drainPendingWritesForContent() awaits all in-flight flushes for
+//     the title so removeFavoriteFromMyList() can deterministically
+//     delete progress AFTER every stale write has settled.
 // ============================================================
 
-const activeWriters = new Map<string, { dispose: () => void }>();
+type ActiveWriterEntry = {
+  id: symbol;
+  dispose: () => void;
+};
+
+const activeWriters = new Map<string, ActiveWriterEntry>();
+const titleGenerations = new Map<string, number>();
+const activeTitleFlushes = new Map<string, Set<Promise<unknown>>>();
 
 function writerRegistryKey(contentType: string, contentId: string): string {
   return `${contentType}:${contentId}`;
 }
 
-function registerWriter(contentType: string, contentId: string, dispose: () => void) {
-  const key = writerRegistryKey(contentType, contentId);
-  // If a previous writer for the same title exists, dispose it first.
-  const existing = activeWriters.get(key);
-  if (existing) { try { existing.dispose(); } catch { /* already disposed */ } }
-  activeWriters.set(key, { dispose });
+function getTitleGeneration(key: string): number {
+  return titleGenerations.get(key) ?? 0;
 }
 
-function unregisterWriter(contentType: string, contentId: string) {
+function bumpTitleGeneration(key: string): number {
+  const next = (titleGenerations.get(key) ?? 0) + 1;
+  titleGenerations.set(key, next);
+  return next;
+}
+
+function registerWriter(contentType: string, contentId: string, dispose: () => void): { id: symbol; generation: number } {
   const key = writerRegistryKey(contentType, contentId);
-  activeWriters.delete(key);
+  // If a previous writer for the same title exists, dispose it first.
+  // This only runs the OLD writer's dispose closure (sets disposed=true,
+  // clears its timer + latest). It does NOT touch the registry entry
+  // beyond overwriting it below.
+  const existing = activeWriters.get(key);
+  if (existing) { try { existing.dispose(); } catch { /* already disposed */ } }
+  const id = Symbol('progress-writer');
+  // Capture the current title generation. The writer's flush() will use
+  // this token to detect that the title was invalidated while it was
+  // awaiting saveProgress().
+  const generation = getTitleGeneration(key);
+  activeWriters.set(key, { id, dispose });
+  return { id, generation };
 }
 
 /**
- * Phase 9 fix: Invalidate and dispose ALL active writers for a specific title.
- * Called by removeFavoriteFromMyList() BEFORE deleting progress records.
- * This ensures that any pending/queued flush from the watch route's writer
- * will be a no-op (disposed = true, latest = undefined) and cannot recreate
- * the deleted progress.
+ * Identity-safe unregister: only deletes the registry entry if its id
+ * still matches `writerId`. If a newer writer has replaced this one
+ * (same title, different id), this call is a no-op so the newer writer
+ * remains reachable by invalidateWritersForContent().
+ */
+function unregisterWriter(contentType: string, contentId: string, writerId: symbol) {
+  const key = writerRegistryKey(contentType, contentId);
+  const entry = activeWriters.get(key);
+  if (entry && entry.id === writerId) {
+    activeWriters.delete(key);
+  }
+  // else: a newer writer replaced this one. Leave the registry entry
+  // intact so removeFavoriteFromMyList() can still find and invalidate
+  // the active writer.
+}
+
+/**
+ * Phase 9 fix (race-safe): Invalidate and dispose ALL active writers for a
+ * specific title. Called by removeFavoriteFromMyList() BEFORE deleting
+ * progress records.
+ *
+ * This does TWO things, in this order:
+ *   1. Bumps the per-title generation token. Any in-flight flush() that
+ *      has already passed its `disposed` check and is awaiting
+ *      saveProgress() will, on resolution, see that its captured
+ *      generation no longer matches the title's current generation and
+ *      will undo its write via removeProgress().
+ *   2. Disposes every active writer for the title (sets disposed=true,
+ *      clears the setTimeout timer, clears `latest`). Any subsequent
+ *      callback (queued setTimeout, pause, complete, update,
+ *      updateRuntime, flush) is a no-op from this point on.
  */
 export function invalidateWritersForContent(contentType: string, contentId: string) {
   const key = writerRegistryKey(contentType, contentId);
+  bumpTitleGeneration(key);
   const entry = activeWriters.get(key);
   if (entry) {
     try { entry.dispose(); } catch { /* already disposed */ }
     activeWriters.delete(key);
   }
+}
+
+function trackFlush(contentType: string, contentId: string, promise: Promise<unknown>) {
+  const key = writerRegistryKey(contentType, contentId);
+  let set = activeTitleFlushes.get(key);
+  if (!set) {
+    set = new Set();
+    activeTitleFlushes.set(key, set);
+  }
+  set.add(promise);
+  // Auto-remove on settle so the set never grows unbounded.
+  promise.then(
+    () => {
+      const current = activeTitleFlushes.get(key);
+      if (current) { current.delete(promise); if (current.size === 0) activeTitleFlushes.delete(key); }
+    },
+    () => {
+      const current = activeTitleFlushes.get(key);
+      if (current) { current.delete(promise); if (current.size === 0) activeTitleFlushes.delete(key); }
+    }
+  );
+}
+
+/**
+ * Await every in-flight flush() promise tracked for this title.
+ * Used by removeFavoriteFromMyList() to guarantee that no stale
+ * putProgress transaction can commit AFTER deleteAllProgressForContent()
+ * and recreate the deleted record. Safe to call when there are no
+ * pending flushes (returns immediately).
+ */
+async function drainPendingWritesForContent(contentType: string, contentId: string) {
+  const key = writerRegistryKey(contentType, contentId);
+  const set = activeTitleFlushes.get(key);
+  if (!set || set.size === 0) return;
+  // allSettled: a rejected flush must not abort the drain — we still
+  // need deleteAllProgressForContent to run afterward.
+  await Promise.allSettled([...set]);
 }
 
 export async function deleteFavorite(contentType: LocalContentType, contentId: string) {
@@ -190,20 +315,26 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   let latest: SaveProgressInput | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
-  // Phase 9 fix: validity generation. Each writer gets a generation number.
-  // When the title is invalidated, the registry calls dispose() which sets
-  // disposed=true and clears latest. The flush() function checks disposed,
-  // so a queued callback (from setTimeout that already fired before clear)
-  // will find disposed=true and return without saving.
   // Phase 9: per-source runtime map. Accumulated across source switches.
   let sourceRuntimes: Record<string, { duration: number; updatedAt: number }> = base.sourceRuntimes ? { ...base.sourceRuntimes } : {};
   // Phase 9 fix: initialize knownCurrentTime from existing progress so
   // updateRuntime() never resets it to 0 over an existing resume position.
   let knownCurrentTime = Math.max(0, Number.isFinite(base.initialCurrentTime) ? (base.initialCurrentTime ?? 0) : 0);
 
-  // Phase 9 fix: register this writer in the title-level registry so
-  // removeFavoriteFromMyList() can invalidate it before deleting progress.
-  registerWriter(base.contentType, base.contentId, () => {
+  // Phase 9 fix (race-safe): register this writer in the title-level
+  // registry so removeFavoriteFromMyList() can invalidate it. The
+  // registry gives us back:
+  //   - writerId: unique Symbol identity token. Used by our public
+  //     dispose() to identity-check before unregistering, so we can
+  //     NEVER kick out a newer writer that replaced us.
+  //   - writerGeneration: snapshot of the per-title generation token at
+  //     registration time. Our flush() captures this BEFORE awaiting
+  //     saveProgress(); if the title was invalidated during the await
+  //     (generation bumped), the post-check undoes the just-completed
+  //     putProgress via removeProgress. This closes the async in-flight
+  //     race that the disposed-only check could not cover.
+  const writerKey = writerRegistryKey(base.contentType, base.contentId);
+  const { id: writerId, generation: writerGeneration } = registerWriter(base.contentType, base.contentId, () => {
     disposed = true;
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -213,13 +344,42 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   const flush = async () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
-    // Phase 9 fix: disposed check prevents stale flushes from recreating
-    // deleted progress. Even if a callback was already queued before
-    // clearTimeout() ran, it will find disposed=true and return.
+    // Phase 9 fix: disposed check prevents stale flushes (queued
+    // setTimeout callback that fired before clearTimeout, or a writer
+    // replaced by a newer writer) from persisting.
     if (disposed || !latest) return;
     const next = { ...latest, sourceRuntimes: { ...sourceRuntimes } };
     latest = undefined;
-    await saveProgress(next);
+    // Phase 9 fix (race-safe): capture the title generation token
+    // BEFORE awaiting saveProgress(). If removeFavoriteFromMyList()
+    // invalidates the title during the await, the title's current
+    // generation will no longer match this captured value, and the
+    // post-check below will undo our write via removeProgress().
+    const capturedGeneration = writerGeneration;
+    // Track the in-flight promise so removeFavoriteFromMyList() can
+    // deterministically drain it before deleting progress.
+    const promise = (async () => {
+      try {
+        await saveProgress(next);
+      } catch {
+        // saveProgress itself failed; nothing to undo. Swallow so the
+        // tracked promise resolves and the drain step in
+        // removeFavoriteFromMyList is not blocked by a stale error.
+        return;
+      }
+      // Post-check (delete-wins): if the title was invalidated while
+      // we were awaiting saveProgress(), undo the write so we never
+      // recreate a deleted progress record. This is the only line of
+      // defense against the async in-flight race because the disposed
+      // check at the top of flush() ran BEFORE the invalidation.
+      if (capturedGeneration !== getTitleGeneration(writerKey)) {
+        try {
+          await removeProgress({ contentType: next.contentType, contentId: next.contentId, season: next.season, episode: next.episode });
+        } catch { /* cleanup is best-effort; deleteAllProgressForContent will retry */ }
+      }
+    })();
+    trackFlush(base.contentType, base.contentId, promise);
+    return promise;
   };
 
   const schedule = () => {
@@ -265,8 +425,14 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
       if (timer) clearTimeout(timer);
       timer = undefined;
       latest = undefined;
-      // Phase 9 fix: unregister from the title-level registry.
-      unregisterWriter(base.contentType, base.contentId);
+      // Phase 9 fix (race-safe): identity-safe unregister. Only delete
+      // the registry entry if it still belongs to THIS writer (same id).
+      // If a newer writer has replaced us, the registry entry now belongs
+      // to that newer writer, and we MUST NOT evict it — otherwise
+      // removeFavoriteFromMyList() would be unable to invalidate the
+      // active writer and its pending flush would recreate the deleted
+      // progress.
+      unregisterWriter(base.contentType, base.contentId, writerId);
     }
   };
   return writer;
