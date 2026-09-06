@@ -75,6 +75,11 @@
   // (handlePlayerProgress) and embed (manager.onEvent) sources. Used to
   // pass the timestamp to the new source when manually switching.
   let currentPlaybackTime = 0;
+  // Phase 6 audit fix: embed playback event sink + sequence counter. Pushed
+  // into PlayerShell via the embedPlaybackEvent prop whenever the
+  // PlaybackManager receives a normalized provider play/pause/ended event.
+  let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq: number } | null = null;
+  let embedPlaybackSeq = 0;
 
   // Subscribe to manager state so the route's reactive locals mirror the
   // manager snapshot. PlayerShell receives these via its existing props.
@@ -105,6 +110,16 @@
     } else if (event.type === 'ended') {
       const ct = manager.getState().currentTime || currentPlaybackTime;
       void writer?.complete(ct, duration);
+    }
+    // Phase 6 audit fix: forward normalized embed playback events (play/pause/ended)
+    // to PlayerShell via the embedPlaybackEvent prop. PlayerShell uses these to
+    // acquire/release the Wake Lock conservatively — only when the provider
+    // actually reports playback state changes, NOT merely on iframe DOM load.
+    // The _seq counter forces Svelte to re-trigger the reactive block even if
+    // the same event type fires twice in a row.
+    if (event.type === 'play' || event.type === 'pause' || event.type === 'ended') {
+      embedPlaybackSeq++;
+      embedPlaybackEvent = { type: event.type, _seq: embedPlaybackSeq };
     }
     // Authenticated history bookkeeping (preserved from Phase 0).
     if (page.data.user) {
@@ -390,7 +405,7 @@
 <svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
 
 {#if progressReady}
-  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} />
+  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} />
 {:else}
   <main class="watch-loading" aria-live="polite"><div class="loading-ring" aria-hidden="true"><span></span></div><div class="loading-copy"><strong>{progressReady ? 'Starting your stream' : 'Loading player'}</strong><span>{progressReady ? 'Connecting to your provider…' : 'Preparing your watch session…'}</span></div><small>{progressReady ? resolutionMessage || 'Finding the best available source' : localState}</small></main>
 {/if}

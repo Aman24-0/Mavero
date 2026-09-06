@@ -19,6 +19,14 @@
   export let onClose: () => void = () => {};
   export let onDetails: () => void = () => {};
   export let onIframeReady: (iframe: HTMLIFrameElement) => void = () => {};
+  // Phase 6 audit fix: embed playback event sink. The watch route sets this
+  // prop to { type: 'play' | 'pause' | 'ended' } whenever the PlaybackManager
+  // receives a normalized provider playback event from an embed adapter.
+  // PlayerShell watches this prop reactively and acquires/releases the Wake
+  // Lock accordingly. This is the conservative path: for black-box embed
+  // providers that never post play/pause events, the wake lock is never
+  // acquired, which is correct (iframe load ≠ actual playback).
+  export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number } | null = null;
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
@@ -57,12 +65,23 @@
   let sandboxSourceIdentity = '';
   // Phase 6: episode identity tracker for the episode-switch reactive block.
   let episodeIdentity = '';
+  // Phase 6 audit fix: sequence counter for embed playback events. Used by
+  // the reactive watcher to detect new events even when the type is the same.
+  let lastEmbedPlaybackSeq = 0;
   const LANDSCAPE_CONTROLS_HIDE_MS = 5000;
 
   // Phase 6: Wake Lock state — shell-local, never exposed as a provider capability.
   let wakeLockSupported = false;
   let wakeLockSentinel: WakeLockSentinelHandle | null = null;
   let wasPlayingBeforeHidden = false;
+  // Phase 6 audit fix: request-generation mechanism. Each acquireWakeLock()
+  // call increments wakeLockRequestId and captures the new value. After the
+  // async request resolves, we verify the current request id still matches.
+  // If releaseWakeLock() or any other invalidating event fired during the
+  // await, the id will have changed (or destroyed will be true), and the
+  // resolved sentinel is released immediately rather than installed.
+  let wakeLockRequestId = 0;
+  let wakeLockDestroyed = false;
 
   // Phase 6: Media Session state — direct playback only.
   let mediaSessionSupported = false;
@@ -97,6 +116,16 @@
     sandboxEnabled = source.sandboxPolicy !== 'unrestricted';
   }
   $: effectiveSandboxEnabled = source?.type === 'embed' ? sandboxEnabled : true;
+  // Phase 6 audit fix: reactive watcher for embed playback events. The watch
+  // route pushes { type, _seq } into the embedPlaybackEvent prop whenever the
+  // PlaybackManager receives a normalized provider play/pause/ended event.
+  // The _seq counter forces Svelte to re-trigger the reactive block even if
+  // the same event type fires twice in a row. PlayerShell acquires/releases
+  // the Wake Lock conservatively — only when a reliable provider event arrives.
+  $: if (embedPlaybackEvent?._seq && embedPlaybackEvent._seq !== lastEmbedPlaybackSeq) {
+    lastEmbedPlaybackSeq = embedPlaybackEvent._seq;
+    handleEmbedPlaybackEvent(embedPlaybackEvent);
+  }
   $: if (source?.sourceId && source.sourceId !== sourceIdentity) {
     sourceIdentity = source.sourceId;
     pendingSeek = currentTime;
@@ -126,6 +155,50 @@
     }
   }
 
+  // Phase 6 audit fix: PiP events fire on the HTMLVideoElement, NOT on
+  // document. The handler and listener attachment are at the top level of the
+  // instance script (NOT inside onMount) so that the reactive block
+  // `$: attachPipListeners(videoElement)` can track the actual videoElement
+  // lifecycle. This correctly handles:
+  //   - embed → direct (videoElement goes from undefined → <video>)
+  //   - direct → embed (videoElement goes from <video> → undefined)
+  //   - embed → direct → embed → direct (no duplicate listeners)
+  // The reactive block detaches from the old element and attaches to the
+  // new element whenever the identity of videoElement changes.
+  let lastPipVideoElement: HTMLVideoElement | undefined = undefined;
+  function handlePictureInPicture() { pictureInPicture = document.pictureInPictureElement === videoElement; }
+  function attachPipListeners(current: HTMLVideoElement | undefined) {
+    if (current === lastPipVideoElement) return; // no change — avoid duplicates
+    // Detach from the previous video element (if any).
+    if (lastPipVideoElement) {
+      try {
+        lastPipVideoElement.removeEventListener('enterpictureinpicture', handlePictureInPicture);
+        lastPipVideoElement.removeEventListener('leavepictureinpicture', handlePictureInPicture);
+      } catch { /* already removed */ }
+    }
+    // Attach to the new video element (if any).
+    if (current) {
+      current.addEventListener('enterpictureinpicture', handlePictureInPicture);
+      current.addEventListener('leavepictureinpicture', handlePictureInPicture);
+      // Sync active state immediately — the new video might already be in PiP.
+      pictureInPicture = document.pictureInPictureElement === current;
+    } else {
+      pictureInPicture = false;
+    }
+    lastPipVideoElement = current;
+  }
+  // Reactive attachment: runs whenever videoElement identity changes.
+  $: attachPipListeners(videoElement);
+  function detachPictureInPictureListeners() {
+    if (lastPipVideoElement) {
+      try {
+        lastPipVideoElement.removeEventListener('enterpictureinpicture', handlePictureInPicture);
+        lastPipVideoElement.removeEventListener('leavepictureinpicture', handlePictureInPicture);
+      } catch { /* already removed */ }
+      lastPipVideoElement = undefined;
+    }
+  }
+
   onMount(() => {
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
     // Phase 6: detect Wake Lock + Media Session support at mount, matching the
@@ -152,25 +225,6 @@
         revealControls();
       }
     };
-    // Phase 6: PiP events fire on the HTMLVideoElement, NOT on document.
-    // The previous implementation attached these to document, where they never
-    // fired (events do not bubble), leaving the `pictureInPicture` state stuck
-    // at its initial value. Attach to videoElement when it becomes available.
-    const handlePictureInPicture = () => { pictureInPicture = document.pictureInPictureElement === videoElement; };
-    const attachPictureInPictureListeners = () => {
-      if (!videoElement) return;
-      videoElement.addEventListener('enterpictureinpicture', handlePictureInPicture);
-      videoElement.addEventListener('leavepictureinpicture', handlePictureInPicture);
-    };
-    const detachPictureInPictureListeners = () => {
-      if (!videoElement) return;
-      videoElement.removeEventListener('enterpictureinpicture', handlePictureInPicture);
-      videoElement.removeEventListener('leavepictureinpicture', handlePictureInPicture);
-    };
-    // Attach PiP listeners once the videoElement binds (direct sources only).
-    // handleLoadedMetadata re-checks pictureInPictureSupported and runs after
-    // bind:this completes for the <video> element.
-    attachPictureInPictureListeners();
     const handleKeydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, select, textarea, button, [contenteditable="true"]')) return;
@@ -204,6 +258,11 @@
       // calls are deterministic and prevent stale state across SPA navigation.
       if (document.pictureInPictureElement === videoElement) { try { void document.exitPictureInPicture?.(); } catch { /* already exited */ } }
       if (document.fullscreenElement === playerRoot) { try { void document.exitFullscreen?.(); } catch { /* already exited */ } }
+      // Phase 6 audit fix: set the destroyed flag BEFORE releaseWakeLock() so
+      // any in-flight acquireWakeLock() request that resolves after this
+      // cleanup will see wakeLockDestroyed === true and release its sentinel
+      // immediately instead of installing a stale wake lock.
+      wakeLockDestroyed = true;
       releaseWakeLock();
       clearMediaSession();
     };
@@ -316,13 +375,32 @@
     // CineSrc API target. Without this ref, commands cannot reach the
     // provider's player.
     if (iframeElement) onIframeReady(iframeElement);
-    // Phase 6: embed playback started — acquire wake lock so the screen stays
-    // awake while the provider plays. Sync Media Session playbackState too
-    // (metadata is set in handleLoadedMetadata — for embeds, that fires for
-    // the wrapping <iframe> element, which is fine; the title/poster come from
-    // the content prop, not from inside the iframe).
-    acquireWakeLock();
+    // Phase 6 audit fix: do NOT acquire the wake lock here. iframe load only
+    // means the provider's player UI is displayed — it does NOT mean the
+    // user has pressed Play or that actual playback has started. Wake Lock
+    // is acquired only when a reliable 'play' event arrives from the provider
+    // via the onEmbedPlaybackEvent callback (wired by the watch route to
+    // manager.onEvent). For black-box embed providers that never post
+    // play/pause events, the wake lock is never acquired — which is the
+    // correct conservative behavior.
+    // Media Session playbackState is synced here only to reflect the
+    // shell-level 'embed-loading → playing' state transition; this does not
+    // claim the provider is actually playing audio/video.
     syncMediaSessionPlaybackState('playing');
+  }
+
+  // Phase 6 audit fix: handle normalized embed playback events forwarded by
+  // the watch route from the PlaybackManager. Only these events (not iframe
+  // load) indicate actual provider playback state. Used to acquire/release
+  // the wake lock conservatively — if the provider never posts these events,
+  // no wake lock is acquired.
+  function handleEmbedPlaybackEvent(event: { type: 'play' | 'pause' | 'ended' }) {
+    if (source?.type !== 'embed') return;
+    if (event.type === 'play') {
+      acquireWakeLock();
+    } else if (event.type === 'pause' || event.type === 'ended') {
+      releaseWakeLock();
+    }
   }
 
   function toggleSandbox() {
@@ -528,12 +606,26 @@
     if (!wakeLockSupported) return;
     // Don't acquire if we already hold a sentinel that hasn't been released.
     if (wakeLockSentinel && !wakeLockSentinel.released) return;
+    // Phase 6 audit fix: request-generation mechanism. Capture the request id
+    // at call time. After the async request resolves, verify the id is still
+    // current. If releaseWakeLock() or any other invalidating event fired
+    // during the await (incrementing wakeLockRequestId or setting
+    // wakeLockDestroyed), the resolved sentinel is released immediately
+    // rather than installed as a stale wake lock.
+    const requestId = ++wakeLockRequestId;
     try {
       const nav = navigator as WakeLockNavigator;
       const sentinel = await nav.wakeLock!.request('screen');
-      // Race guard: if the component was destroyed while the request was in
-      // flight, release the sentinel immediately and do not touch local state.
-      if (!playerRoot) {
+      // Validity check after await: the request must still be current, the
+      // component must not be destroyed, the document must still be visible
+      // (wake lock is meaningless if hidden), and playback must still require
+      // a wake lock (no newer acquire superseded this one).
+      if (
+        wakeLockDestroyed ||
+        requestId !== wakeLockRequestId ||
+        document.hidden ||
+        (wakeLockSentinel && !wakeLockSentinel.released)
+      ) {
         try { await sentinel?.release?.(); } catch { /* already released */ }
         return;
       }
@@ -541,8 +633,7 @@
       try { sentinel?.addEventListener?.('release', handleWakeLockSentinelRelease); } catch { /* some browsers lack addEventListener on the sentinel */ }
     } catch {
       // Spec: rejects if document not visible, or if permission denied.
-      // Silently no-op — wake lock is best-effort.
-      wakeLockSentinel = null;
+      // Silently no-op — wake lock is best-effort. Do NOT install a sentinel.
     }
   }
 
@@ -556,6 +647,11 @@
   }
 
   async function releaseWakeLock() {
+    // Phase 6 audit fix: increment the request id so any in-flight
+    // acquireWakeLock() call that resolves AFTER this release will fail
+    // the validity check and release its sentinel immediately instead of
+    // installing a stale wake lock.
+    wakeLockRequestId++;
     const sentinel = wakeLockSentinel;
     wakeLockSentinel = null;
     if (!sentinel) return;
@@ -578,15 +674,32 @@
   //   - position is finite, >= 0, and <= duration
   //   - playbackRate is finite and > 0
 
+  // Phase 6 audit fix: derive artwork MIME type from URL extension. Falls back
+  // to 'image/jpeg' (the most common poster/backdrop format) when the extension
+  // is unknown or missing. Avoids claiming every artwork is JPEG when the URL
+  // might be PNG or WebP.
+  function artworkMimeType(url: string): string {
+    const lower = url.toLowerCase().split('?')[0].split('#')[0];
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.svg')) return 'image/svg+xml';
+    if (lower.endsWith('.avif')) return 'image/avif';
+    return 'image/jpeg'; // conservative fallback
+  }
+
   function setupMediaSession() {
     if (!mediaSessionSupported) return;
     const nav = navigator as MediaSessionNavigator;
     const session = nav.mediaSession;
     if (!session) return;
     // Build metadata. Artwork is only included when a valid image URL exists
-    // — empty URLs would create invalid artwork entries.
+    // — empty URLs would create invalid artwork entries. The MIME type is
+    // derived from the URL extension when possible (avoids claiming every
+    // artwork is JPEG when the URL might be PNG/WebP).
     const artworkUrl = content.backdrop ?? content.poster ?? '';
-    const artwork = artworkUrl ? [{ src: artworkUrl, sizes: '512x512', type: 'image/jpeg' }] : undefined;
+    const artwork = artworkUrl ? [{ src: artworkUrl, sizes: '512x512', type: artworkMimeType(artworkUrl) }] : undefined;
     try {
       if ('MediaMetadata' in window) {
         session.metadata = new MediaMetadata({
