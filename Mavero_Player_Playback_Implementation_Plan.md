@@ -3196,6 +3196,136 @@ The MegaPlay adapter only listens and parses events — it never commands the if
 - svelte-check: 0 errors, 20 pre-existing warnings (unchanged).
 - Production build: PASS.
 
+## 2026-09-09 — Phase 7F+ — Anime Classification + Provider ID Routing + Yenime
+
+**Status:** COMPLETE
+
+**Goal:** Fix the root cause of the "MegaPlay source does not support this title type" error for anime movies (Demon Slayer: Infinity Castle, TMDB-tagged `type:'movie'`) and anime series (Attack on Titan, TMDB-tagged `type:'series'`). Add Yenime as the second anime provider using MAL IDs.
+
+### Root cause of the MegaPlay "source not supported" problem
+
+TMDB does not have an "anime" type. Anime movies are returned as `type:'movie'` and anime series as `type:'series'`. Mavero's resolver core rejected these at two gates:
+1. `capabilityAllows(config, 'movie')` returned `false` for MegaPlay (which declares `movie:false, series:false, anime:true`).
+2. `content.type !== request.mediaType` threw `INVALID_REQUEST` because `content.type === 'movie'` but `request.mediaType === 'movie'` while MegaPlay's capability gate only allows `'anime'`.
+
+The watch route was passing `mediaType: page.params.type` (which is `'movie'` for `/watch/movie/...`) instead of recognizing that the content is anime.
+
+### How anime classification now works
+
+- `NormalizedMediaItem` gains `isAnime?: boolean` and `animeFormat?: 'movie' | 'series'`.
+- The AniList adapter sets `isAnime: true` and derives `animeFormat` from AniList's `format` field (`MOVIE` → `'movie'`, `TV`/`TV_SHORT`/`ONA`/`OVA`/`SPECIAL` → `'series'`).
+- The TMDB adapter detects anime via TMDB genre `Animation` (id 16) AND `original_language === 'ja'`. This catches Japanese animation tagged as movies/series on TMDB. Western animation (Toy Story, `original_language='en'`) is NOT classified as anime.
+- For TMDB-tagged anime, the TMDB adapter does a one-time cached AniList title-search lookup (`findAniListByTitle`) to populate `externalIds.anilist` and `externalIds.mal`. This is best-effort — failures leave the IDs undefined and anime providers return `MISSING_IDENTIFIER`, triggering fallback.
+- `MediaItem` (client-side) mirrors `isAnime`, `animeFormat`, and `externalIds`.
+- The watch route overrides `contentType = 'anime'` when `item.isAnime === true`. The URL stays `/watch/movie/...` or `/watch/series/...` — only the resolver sees `'anime'`. This preserves the existing route architecture and progress keys are consistent.
+
+### How anime movie vs anime series is represented
+
+- An anime movie: `{ type: 'movie', isAnime: true, animeFormat: 'movie' }`. URL: `/watch/movie/...`. Resolver sees `mediaType: 'anime'`. Card badges: `ANIME` (top-left) + `MOVIE` (top-right). For anime movies without explicit season/episode, the watch route defaults to `season=1, episode=1` so anime providers (which require an episode number in the URL) can build a valid embed.
+- An anime series: `{ type: 'series', isAnime: true, animeFormat: 'series' }`. URL: `/watch/series/...?season=1&episode=1`. Resolver sees `mediaType: 'anime'`. Card badges: `ANIME` (top-left) + `SERIES` (top-right).
+- A plain movie/series: `isAnime` is `undefined`/`false`. Single card badge. Existing behavior unchanged.
+
+### Exact ID used by each provider
+
+- **MegaPlay** (anime-only, `anilist_id` identifier mode): uses `externalIds.anilist` (primary). Falls back to `externalIds.mal` if AniList is missing. Does NOT accept TMDB. Throws `MISSING_IDENTIFIER` when both are missing.
+- **Yenime** (anime-only, `mal_id` identifier mode): uses `externalIds.mal` ONLY. Does NOT accept AniList or TMDB. Throws `MISSING_IDENTIFIER` when MAL is missing. This is intentional — Yenime is the second anime option for users whose content has MAL but no AniList, and a clean failure triggers fallback to the next anime provider.
+- **VidLink** (movie/series/anime): existing `tmdb_id` mode for movie/series, `mal_id` for anime. Unchanged.
+- **VidSrc, VidPhantom, etc.**: existing identifier modes. Unchanged.
+
+The resolver's `identifier_mode` column on `streaming_sources` already encodes this — the MegaPlay source row uses `anilist_id` and the Yenime source row uses `mal_id`. The adapters double-check the template shape and throw `INVALID_TEMPLATE` if an admin tampers with it.
+
+### MegaPlay routing behavior (after this fix)
+
+- Anime movie (Demon Slayer: Infinity Castle): TMDB classifies as `type:'movie'` with genre Animation + original_language `ja`. The TMDB adapter sets `isAnime=true, animeFormat='movie'`. The watch route overrides `contentType='anime'`. The resolver's `content.type !== request.mediaType` gate is relaxed: `content.type === 'movie'` but `request.mediaType === 'anime'` is accepted because `content.isAnime === true`. The MegaPlay adapter resolves the URL via `/stream/ani/{anilist_id}/{episode}/{variant}`.
+- Anime series (Attack on Titan): same flow, `animeFormat='series'`, season/episode from URL.
+- The `capabilityAllows` gate naturally passes because the request's `mediaType === 'anime'` and MegaPlay declares `anime: true`.
+- MegaPlay still requires an AniList ID (or MAL fallback). If both are missing, it returns `MISSING_IDENTIFIER` and the fallback walker tries the next anime provider.
+
+### Yenime API contract discovered
+
+Inspected the official Yenime API at `https://api.yenime.net` (homepage + JS chunks):
+- **Embed URL**: `https://api.yenime.net/anime/{mal_id}/{episode}` (e.g. `https://api.yenime.net/anime/52991/1` for Frieren MAL 52991, episode 1).
+- **Identifier**: MAL ID ONLY. Yenime does NOT accept AniList or TMDB IDs.
+- **Query parameters** (verified from the docs section "Query Parameters"):
+  - `?autoplay=true` — start video immediately (muted). Mavero does NOT pass this.
+  - `?color=ffffff` — custom accent color. Mavero does NOT pass this.
+  - `?startAt=N` — begin playback from N seconds. **Mavero passes this when a resume position exists.**
+- **Player events** (verified from the Yenime player JS chunks): same `PLAYER_EVENT` postMessage protocol as VidLink. `{type:"PLAYER_EVENT", data:{event, currentTime, duration, mtmdbId, mediaType, season, episode}}` where event is `play`/`pause`/`seeked`/`ended`/`timeupdate`/`playing`/`waiting`/`error`.
+- **Origin**: `https://api.yenime.net`.
+- Yenime is built on top of MegaPlay's infrastructure (the docs explicitly say "direct megaplay extraction") but accepts MAL IDs directly.
+
+### Yenime SUB/DUB behavior
+
+Yenime's player has an INTERNAL "Toggle SUB/DUB" button (verified from the player HTML — there is a `<button title="Toggle SUB/DUB">SUB</button>`). There is NO separate `/sub` or `/dub` URL segment. Therefore:
+- Mavero does NOT expose variant toggle buttons on the Yenime source option (unlike MegaPlay, which has separate `/sub` and `/dub` URL paths).
+- The user toggles SUB/DUB inside the iframe player.
+- The `audio_languages: ['sub','dub']` column on the Yenime source row is for capability display only — the resolver does NOT generate variants metadata for Yenime.
+
+### Yenime resume/startAt behavior
+
+- Yenime documents `?startAt=N` in its API "Query Parameters" section. Verified.
+- The Yenime player adapter exposes `startAtParam() = 'startAt'` and `capabilities.startAt = true`.
+- The PlaybackManager appends `?startAt=N` to the resolved URL when a resume position exists.
+- Contrast with MegaPlay, which does NOT document a startAt parameter (`capabilities.startAt = false`, `startAtParam() = null`). MegaPlay playback always starts at 0; Mavero tracks progress locally via the `time` postMessage event.
+
+### Card UI changes
+
+- `formatBadges(item)` helper added to `src/lib/data/content.ts`. Returns `{primary, secondary?}`:
+  - Anime movie → `{primary: 'Anime', secondary: 'Movie'}`
+  - Anime series → `{primary: 'Anime', secondary: 'Series'}`
+  - Plain movie → `{primary: 'Movie'}` (no secondary)
+  - Plain series → `{primary: 'Series'}` (no secondary)
+- `MediaCard.svelte` renders the primary badge at top-left and the secondary badge at top-right (next to the rating). When the secondary badge is present (anime content), the rating pill drops to bottom-right to avoid overlap. Mobile sizing preserved.
+- `DetailPage.svelte` renders the eyebrow as `primary · secondary` for anime content.
+- Plain movie/series cards are unchanged (single badge at top-left, rating at top-right — legacy layout).
+
+### Database migration
+
+- `supabase/migrations/20260909000000_phase7f_yenime_anime_experimental.sql`: ONE provider row (`slug='yenime'`, `adapter_id='yenime-embed'`, anime-only capabilities) and ONE source row (`slug='yenime-embed'`, `audio_languages: ['sub','dub']`, `anime_template='https://api.yenime.net/anime/{mal_id}/{episode}'`, `identifier_mode='mal_id'`). Disabled by default — admin can enable.
+- No separate Yenime SUB / Yenime DUB rows. No default-source row change needed (Yenime is one source ID; admin can configure it as the anime default via the existing `streaming_default_sources` table).
+
+### Tests added/passed
+
+`scripts/phase7f_anime_routing_test.ts` — 35 behavioral tests, all PASS:
+1-4. Anime classification (movie/series isAnime + animeFormat).
+5-8. Card badges (anime movie/series, plain movie/series).
+9-16. Provider ID routing (MegaPlay→AniList, Yenime→MAL, VidLink→TMDB, missing identifiers).
+17-19. Anime movie eligibility (MegaPlay, Yenime, no INVALID_REQUEST).
+20-21. Anime series eligibility (MegaPlay, Yenime).
+22-26. Yenime URL format, SUB/DUB in-player, startAt, origin validation, malformed handling.
+27. Yenime player events (PLAYER_EVENT protocol, JSON string form, destroy).
+28-29. No regression to MegaPlay / VidLink.
+30. Adapter routing by origin.
+31. Fallback walker (MegaPlay tampered → Yenime succeeds).
+32. Default-source ordering.
+33. Source switching preserved (Phase 9).
+34. Progress writer API surface preserved.
+35. Landscape source drawer + variant buttons unchanged.
+
+Full test suite (52 scripts): all PASS.
+
+### svelte-check
+
+0 errors, 20 pre-existing warnings (unchanged from `8dbb85e`).
+
+### Build
+
+`vite build` — PASS (built in ~17s, no errors, no new warnings).
+
+### Known limitations / requires real-device testing
+
+- **MANUAL QA NOT AVAILABLE from this environment.** Final verification requires:
+  - The Yenime migration must be applied to Supabase before Yenime appears in the public streaming config.
+  - Real browser/device testing to confirm:
+    - The MegaPlay iframe loads and plays an anime MOVIE (Demon Slayer: Infinity Castle) correctly via `/stream/ani/{anilist_id}/1/{variant}`.
+    - The MegaPlay iframe loads and plays an anime SERIES (Attack on Titan) correctly.
+    - The Yenime iframe loads and plays via `/anime/{mal_id}/{episode}` and the `?startAt=N` resume parameter actually seeks to the saved position.
+    - The Yenime SUB/DUB in-player toggle works as documented.
+    - The card dual-badge (ANIME + MOVIE/SERIES) renders correctly on mobile and desktop.
+    - The AniList title-search lookup (`findAniListByTitle`) returns correct matches for popular anime movies/series.
+- The AniList lookup is best-effort — if AniList is unavailable or no match is found, anime providers return `MISSING_IDENTIFIER` and the fallback walker tries the next eligible provider.
+- Yenime's actual player script could not be fully inspected (the embed page requires JS execution). The postMessage event shape is taken from the player JS chunks (`23-b5c2ac231c8eb63d.js`) which explicitly reference `PLAYER_EVENT` with the same payload as VidLink. If the real player deviates, the adapter will silently drop unrecognized messages (defense in depth).
+
 ## YYYY-MM-DD — Phase X — Task name
 
 **Status:** IN PROGRESS / COMPLETE / BLOCKED
