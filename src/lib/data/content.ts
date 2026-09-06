@@ -12,6 +12,18 @@ export type MediaItem = {
   title: string;
   year: number;
   type: ContentType;
+  /**
+   * Phase 7F+ (anime routing): true when this title is anime. The card UI
+   * renders both ANIME (top-left) and MOVIE/SERIES (top-right) badges
+   * for these titles. The watch route overrides the resolver request's
+   * mediaType to 'anime' when isAnime is true.
+   */
+  isAnime?: boolean;
+  /**
+   * Phase 7F+ (anime routing): the anime-specific format ('movie' or
+   * 'series'). Falls back to `type` when absent.
+   */
+  animeFormat?: 'movie' | 'series';
   maturity?: string;
   runtime: string;
   rating: number;
@@ -32,6 +44,17 @@ export type MediaItem = {
   tags?: string[];
   trailerKey?: string;
   cast?: CastMember[];
+  /**
+   * Phase 7F+ (anime routing): external IDs available for this title.
+   * The resolver picks the ID each provider actually supports
+   * (MegaPlay→anilist, Yenime→mal, VidLink→tmdb for non-anime, etc.).
+   */
+  externalIds?: {
+    tmdb?: string;
+    imdb?: string;
+    anilist?: string;
+    mal?: string;
+  };
 };
 
 const image = (id: string, width = 900) =>
@@ -216,4 +239,38 @@ export function getMedia(id: string) {
 
 export function formatType(type: ContentType) {
   return type === 'movie' ? 'Movie' : type === 'series' ? 'Series' : 'Anime';
+}
+
+/**
+ * Phase 7F+ (anime routing): badge layout for a content card.
+ *
+ * Returns `{ primary, secondary }` where:
+ *   - `primary` is the top-LEFT badge (the classification tag).
+ *   - `secondary` is the top-RIGHT badge next to the rating (the format).
+ *
+ * Rules:
+ *   - Anime movie  → primary: 'Anime', secondary: 'Movie'
+ *   - Anime series → primary: 'Anime', secondary: 'Series'
+ *   - Plain movie  → primary: 'Movie', secondary: undefined
+ *   - Plain series → primary: 'Series', secondary: undefined
+ *   - AniList-tagged anime (type === 'anime') with no explicit animeFormat
+ *     → primary: 'Anime', secondary: undefined (preserves the legacy
+ *       single-badge behavior for the dedicated /anime route).
+ *
+ * The caller renders primary at top-left and secondary at top-right (next
+ * to the rating). When `secondary` is undefined, only the primary badge is
+ * rendered (legacy behavior preserved for non-anime content).
+ */
+export function formatBadges(item: Pick<MediaItem, 'type' | 'isAnime' | 'animeFormat'>): { primary: string; secondary?: string } {
+  if (item.isAnime) {
+    // Anime-flagged content (e.g. TMDB-tagged Demon Slayer movie / AoT series).
+    // Show ANIME + the original TMDB format.
+    const format = item.animeFormat ?? (item.type === 'movie' ? 'movie' : item.type === 'series' ? 'series' : undefined);
+    return {
+      primary: 'Anime',
+      secondary: format === 'movie' ? 'Movie' : format === 'series' ? 'Series' : undefined
+    };
+  }
+  // Non-anime content: legacy single-badge behavior.
+  return { primary: formatType(item.type) };
 }

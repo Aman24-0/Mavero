@@ -7,6 +7,8 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     title: item.title,
     year: item.year,
     type: item.type,
+    isAnime: item.isAnime,
+    animeFormat: item.animeFormat,
     maturity: item.maturity,
     runtime: item.runtime,
     rating: item.rating,
@@ -25,6 +27,7 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     seasons: item.seasons,
     tags: item.tags,
     trailerKey: item.trailerKey,
-    cast: item.cast
+    cast: item.cast,
+    externalIds: item.externalIds
   };
 }

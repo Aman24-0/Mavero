@@ -80,12 +80,24 @@ function mapAniList(raw: AniListMedia, tag?: string): NormalizedMediaItem {
   const isAiring = raw.status === 'RELEASING';
   const genres = asStringArray(raw.genres);
   const primaryColor = raw.coverImage?.color || '#9b87f5';
+  // Phase 7F+ (anime routing): AniList's `format` field tells us the
+  // anime-specific format. 'MOVIE' → 'movie' (e.g. Demon Slayer: Mugen
+  // Train, Jujutsu Kaisen 0). Everything else (TV, TV_SHORT, ONA, OVA,
+  // SPECIAL) is treated as 'series' for card-badge purposes. This
+  // preserves the legacy single-'Anime' badge for the /anime route
+  // while still exposing the format for the resolver pipeline.
+  const animeFormat: 'movie' | 'series' | undefined =
+    raw.format === 'MOVIE' ? 'movie'
+      : raw.format === 'TV' || raw.format === 'TV_SHORT' || raw.format === 'ONA' || raw.format === 'OVA' || raw.format === 'SPECIAL' ? 'series'
+        : undefined;
   return {
     id: `anime-${raw.id}`,
     title: titleOf(raw),
     nativeTitle: raw.title?.native ?? undefined,
     year: raw.seasonYear || raw.startDate?.year || new Date().getFullYear(),
     type: 'anime',
+    isAnime: true,
+    animeFormat,
     maturity: raw.isAdult ? '16+' : '13+',
     runtime: runtime(raw.duration, raw.episodes),
     rating: Math.round((asNumber(raw.averageScore) / 10) * 10) / 10,
@@ -210,6 +222,45 @@ export async function getAniListDetail(externalId: string): Promise<ContentDetai
     return { ...item, recommendations };
   });
   return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Phase 7F+ (anime routing): best-effort lookup of AniList + MAL IDs for a
+ * TMDB-tagged anime title. Used by the resolver pipeline when a TMDB-tagged
+ * anime movie (e.g. Demon Slayer: Infinity Castle) or anime series (e.g.
+ * Attack on Titan) needs to reach an anime-only provider (MegaPlay/Yenime)
+ * that requires an anime-specific identifier.
+ *
+ * Performs a single AniList GraphQL `Page(search: title, type: ANIME)` query
+ * and returns the first match's AniList ID and MAL ID. Cached via the
+ * standard AniList cache (list policy: 6 minutes fresh, 20 minutes stale).
+ *
+ * Returns `{ anilist: undefined, mal: undefined }` when no match is found
+ * — the caller (resolver) then returns `MISSING_IDENTIFIER` for providers
+ * that require an anime ID, and the fallback walker tries the next
+ * eligible provider.
+ *
+ * This is a best-effort lookup. Title collisions (rare but possible) are
+ * mitigated by the AniList search algorithm which ranks by popularity.
+ * A wrong match would still produce a playable embed, just for the wrong
+ * anime — the user can manually switch providers.
+ */
+export async function findAniListByTitle(title: string, year?: number): Promise<{ anilist?: string; mal?: string }> {
+  const normalized = title.trim();
+  if (!normalized) return {};
+  const cacheKey = `anilist:by-title:${normalized.toLowerCase()}:${year ?? ''}`;
+  const { value } = await getOrSet(cacheKey, listPolicy, async () => {
+    const data = await aniListRequest<AniListPage>(listQuery, { page: 1, search: normalized });
+    const pageData = data.Page;
+    const media = pageData?.media ?? [];
+    if (!media.length) return { anilist: undefined, mal: undefined };
+    // Prefer exact year match if available, else fall back to the first
+    // popularity-ranked result.
+    const byYear = year ? media.find((item) => item.seasonYear === year || item.startDate?.year === year) : undefined;
+    const match = byYear ?? media[0];
+    return { anilist: String(match.id), mal: match.idMal ? String(match.idMal) : undefined };
+  });
+  return value;
 }
 
 export const anilistInternals = { mapAniList, stripDescription };

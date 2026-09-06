@@ -5,7 +5,7 @@
   import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, X } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import type { ContentType } from '$data/content';
-  import { getMedia, media, formatType, type MediaItem } from '$data/content';
+  import { getMedia, media, formatBadges, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
   import { getFavoriteStatus, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
@@ -32,6 +32,10 @@
     { key: 'remove', label: 'Remove from My List', icon: '×', description: 'Take it out of your saved library.' },
   ];
   $: item = dataItem ?? getMedia(id);
+  // Phase 7F+ (anime routing): dual-badge layout for anime-flagged
+  // titles. Anime movie → "Anime · Movie", anime series → "Anime · Series".
+  // Plain movie/series keep their single label (legacy).
+  $: detailBadges = formatBadges(item);
   $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6);
   $: statusSheetOptions = watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove');
   $: canonicalUrl = `${page.url.origin}/${type}/${item.id}`;
@@ -165,7 +169,7 @@
   <div class="detail-container">
     <!-- Title + metadata + overview + genres -->
     <section class="identity">
-      <div class="detail-eyebrow">{formatType(type)}</div>
+      <div class="detail-eyebrow">{detailBadges.primary}{#if detailBadges.secondary} · {detailBadges.secondary}{/if}</div>
       <h1 class="detail-title">{item.title}</h1>
 
       <div class="meta-row">

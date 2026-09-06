@@ -4,7 +4,7 @@
   import { Play, Star } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
   import type { MediaItem } from '$data/content';
-  import { formatType } from '$data/content';
+  import { formatBadges } from '$data/content';
 
   export let item: MediaItem;
   export let compact = false;
@@ -32,6 +32,11 @@
   $: watchHref = appendReturnTo(`/watch/${item.type}/${item.id}`, returnTo);
   $: posterSrcset = item.posterSmall ? `${item.posterSmall} 342w, ${item.poster} 500w` : undefined;
   $: posterSizes = compact ? '(max-width: 640px) calc((100vw - 38px) / 2), 150px' : '(max-width: 640px) 40vw, 178px';
+  // Phase 7F+ (anime routing): dual-badge layout. Anime-flagged titles
+  // (TMDB-tagged Demon Slayer movie, Attack on Titan series) render
+  // ANIME at top-left and MOVIE/SERIES at top-right (next to the rating).
+  // Plain movie/series keep their single badge at top-left (legacy).
+  $: badges = formatBadges(item);
 </script>
 
 <div class:compact class:editorial class="mc-wrap">
@@ -45,7 +50,8 @@
         <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
       {/if}
     </a>
-    <span class="mc-type">{formatType(item.type)}</span>
+    <span class="mc-type">{badges.primary}</span>
+    {#if badges.secondary}<span class="mc-type mc-type-secondary">{badges.secondary}</span>{/if}
     {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
     <a class="mc-play" href={watchHref} aria-label={`Play ${item.title}`} onclick={(e) => e.stopPropagation()}>
       <Play size={12} fill="currentColor" strokeWidth={0} />
@@ -86,12 +92,26 @@
     color: rgba(255,255,255,.8); font-size: .5rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
     background: rgba(0,0,0,.55);
   }
+  /* Phase 7F+ (anime routing): the secondary badge sits next to the
+     primary badge at top-left, separated by a small gap. Both stay
+     compact (.5rem font, 4px radius) so they fit on mobile without
+     overlapping the rating pill at top-right. */
+  .mc-type-secondary {
+    left: auto; right: 5px;
+  }
   .mc-rating {
-    position: absolute; top: 5px; right: 5px; z-index: 2;
+    position: absolute; top: 5px; right: 5px; z-index: 1;
     display: inline-flex; align-items: center; gap: 2px;
     padding: 2px 6px; border-radius: 4px;
     color: #ffc94d; font-size: .52rem; font-weight: 700;
     background: rgba(0,0,0,.55);
+  }
+  /* When the secondary badge is present, the rating pill drops to
+     bottom-right so it doesn't overlap the secondary badge. This
+     only happens for anime-flagged content (rare). For all other
+     content, the rating stays at top-right (legacy behavior). */
+  .mc-type-secondary ~ .mc-rating {
+    top: auto; bottom: 5px; right: 5px;
   }
 
   .mc-play {
@@ -125,6 +145,7 @@
     .mc-play :global(svg) { width: 11px; height: 11px; }
     .mc-detail { display: none; }
     .mc-type { font-size: .46rem; padding: 1px 5px; }
+    .mc-type-secondary { font-size: .46rem; padding: 1px 5px; }
     .mc-rating { font-size: .48rem; padding: 1px 5px; }
     .mc-wrap:has(.mc-card-link:hover) .mc-poster { transform: none; box-shadow: none; }
   }

@@ -40,6 +40,24 @@ export type NormalizedMediaItem = {
   title: string;
   year: number;
   type: ContentType;
+  /**
+   * Phase 7F+ (anime routing): true when this title is anime, regardless
+   * of its TMDB format. TMDB marks Demon Slayer: Infinity Castle as
+   * `type: 'movie'` and Attack on Titan as `type: 'series'`, but both
+   * are anime and must reach anime-capable providers (MegaPlay/Yenime).
+   * The watch route uses `isAnime` to override the resolver request's
+   * `mediaType` to 'anime' for these titles so the resolver pipeline
+   * selects anime providers. The URL stays `/watch/movie/...` or
+   * `/watch/series/...` — only the resolver sees 'anime'.
+   */
+  isAnime?: boolean;
+  /**
+   * Phase 7F+ (anime routing): the anime-specific format ('movie' or
+   * 'series'). Set when `isAnime === true`. The card UI renders both
+   * ANIME (top-left) and MOVIE/SERIES (top-right) badges using
+   * `isAnime` + `animeFormat` (or `type` if animeFormat is absent).
+   */
+  animeFormat?: 'movie' | 'series';
   maturity?: string;
   runtime: string;
   rating: number;

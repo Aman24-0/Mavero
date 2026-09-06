@@ -9,6 +9,7 @@ type TmdbMovie = {
   id: number;
   title?: string;
   original_title?: string;
+  original_language?: string;
   overview?: string;
   poster_path?: string | null;
   backdrop_path?: string | null;
@@ -29,6 +30,7 @@ type TmdbTv = {
   id: number;
   name?: string;
   original_name?: string;
+  original_language?: string;
   overview?: string;
   poster_path?: string | null;
   backdrop_path?: string | null;
@@ -122,11 +124,36 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
   const seasons = isMovie ? undefined : tv.number_of_seasons ?? tv.seasons?.filter((season) => (season.season_number ?? 0) > 0).length;
   const episodes = isMovie ? undefined : tv.number_of_episodes ?? tv.seasons?.reduce((sum, season) => sum + (season.episode_count ?? 0), 0);
   const rating = Math.round(asNumber(raw.vote_average) * 10) / 10;
+  // Phase 7F+ (anime routing): detect anime via TMDB genre 'Animation' (16)
+  // AND Japanese original_language ('ja'). This catches anime movies like
+  // Demon Slayer: Infinity Castle (TMDB movie, animation+ja) and anime
+  // series like Attack on Titan (TMDB series, animation+ja). For these
+  // titles, `isAnime === true` and `animeFormat === type` so the resolver
+  // can route to anime-capable providers (MegaPlay/Yenime) while the URL
+  // and card UI keep their original movie/series classification.
+  //
+  // IMPORTANT: we only set isAnime=true when BOTH conditions are met. A
+  // western animation movie (e.g. Toy Story, original_language='en') is
+  // NOT anime and must continue to use the normal movie provider pipeline.
+  const genreIds = raw.genre_ids ?? raw.genres?.map((g) => g.id) ?? [];
+  const originalLanguage = raw.original_language;
+  const isAnime = genreIds.includes(16) && originalLanguage === 'ja';
+  const animeFormat: 'movie' | 'series' | undefined = isAnime ? (isMovie ? 'movie' : 'series') : undefined;
+  // External IDs (forwarded to the resolver so each provider picks the
+  // identifier it supports). TMDB populates `tmdb` always, `imdb` when
+  // available. AniList/MAL IDs are looked up separately by the resolver
+  // pipeline (see `resolveAnimeExternalIds`) for anime-flagged TMDB items.
+  const externalIds: NormalizedMediaItem['externalIds'] = {
+    tmdb: String(raw.id),
+    imdb: isMovie ? movie.imdb_id ?? undefined : tv.external_ids?.imdb_id ?? undefined
+  };
   return {
     id: `${type}-${raw.id}`,
     title,
     year: dateYear(isMovie ? movie.release_date : tv.first_air_date),
     type,
+    isAnime,
+    animeFormat,
     maturity: '13+',
     runtime: isMovie ? runtime(movie.runtime) : seasons ? `${seasons} season${seasons === 1 ? '' : 's'}` : 'Series',
     rating,
@@ -145,7 +172,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     seasons,
     tags: tag ? [tag] : undefined,
     source: tmdbSource(String(raw.id)),
-    externalIds: { tmdb: String(raw.id), imdb: isMovie ? movie.imdb_id ?? undefined : tv.external_ids?.imdb_id ?? undefined },
+    externalIds,
     trailerKey: raw.videos?.results?.find((video) => video.site === 'YouTube' && video.type === 'Trailer')?.key,
     cast: extractCast(raw)
   };
@@ -333,6 +360,32 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
     const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations,credits' });
     const item = mapTmdb(raw, type);
+    // Phase 7F+ (anime routing): for TMDB-tagged anime titles (Demon
+    // Slayer movie, Attack on Titan series), look up AniList + MAL IDs
+    // via a single cached title search. This populates `externalIds.anilist`
+    // and `externalIds.mal` so the resolver pipeline can route to anime
+    // providers (MegaPlay→anilist, Yenime→mal) without doing another
+    // HTTP call at resolve time. The lookup is best-effort — if AniList
+    // is unavailable or no match is found, the IDs stay undefined and
+    // anime providers return MISSING_IDENTIFIER, triggering fallback.
+    if (item.isAnime) {
+      try {
+        const { findAniListByTitle } = await import('./anilist');
+        const animeIds = await findAniListByTitle(item.title, item.year);
+        if (animeIds.anilist || animeIds.mal) {
+          item.externalIds = {
+            ...(item.externalIds ?? {}),
+            ...(animeIds.anilist ? { anilist: animeIds.anilist } : {}),
+            ...(animeIds.mal ? { mal: animeIds.mal } : {})
+          };
+        }
+      } catch {
+        // AniList lookup is best-effort. If it fails (network error,
+        // rate limit, etc.), the item is still returned with the TMDB
+        // ID. Anime providers will return MISSING_IDENTIFIER at resolve
+        // time, and the fallback walker tries the next eligible provider.
+      }
+    }
     const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
     return { ...item, recommendations };
   });

@@ -15,10 +15,29 @@
 
   export let data: PageData;
 
-  $: contentType = (page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
   $: item = data.item;
+  // Phase 7F+ (anime routing): TMDB-tagged anime titles (Demon Slayer:
+  // Infinity Castle → /movie/..., Attack on Titan → /series/...) are
+  // flagged with `isAnime: true` by the content adapters. When isAnime
+  // is true, override `contentType` to 'anime' for the resolver pipeline
+  // so anime-capable providers (MegaPlay/Yenime) are selected. The URL
+  // stays `/watch/movie/...` or `/watch/series/...` — only the resolver
+  // sees 'anime'. This preserves the existing route architecture AND
+  // lets anime movies/series reach anime providers via the standard
+  // capability gate (provider has `anime: true`).
+  $: contentType = (item?.isAnime ? 'anime' : page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
   let season = Number(page.url.searchParams.get('season') || '') || undefined;
   let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
+  // Phase 7F+ (anime routing): anime movies (TMDB type='movie' but isAnime=true,
+  // e.g. Demon Slayer: Infinity Castle) have no real season/episode — but
+  // anime providers (MegaPlay/Yenime) require an episode number in their URL
+  // contract. Default to season=1, episode=1 for these titles so the
+  // resolver can build a valid embed URL. Anime series retain their explicit
+  // season/episode from the URL.
+  $: if (item?.isAnime && season === undefined && episode === undefined) {
+    season = 1;
+    episode = 1;
+  }
   $: currentEpisode = season !== undefined && episode !== undefined ? data.episodes.find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
   $: playbackContext = ({ contentType, contentId: item.id, season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
   $: playbackKey = [playbackContext.contentType, playbackContext.contentId, playbackContext.season ?? '-', playbackContext.episode ?? '-'].join(':');

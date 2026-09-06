@@ -70,7 +70,14 @@ export async function resolveSourceFromConfig(request: ResolverRequest, config: 
   if (config.source.visibility !== 'public') throw new ResolverError('SOURCE_DISABLED');
   if (!activeSourceStatuses.has(config.source.status) && !experimentalPlaybackAllowed(config)) throw new ResolverError('SOURCE_MAINTENANCE');
   if (!capabilityAllows(config, request.mediaType)) throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
-  if (content.type !== request.mediaType) throw new ResolverError('INVALID_REQUEST');
+  // Phase 7F+ (anime routing): the strict `content.type !== request.mediaType`
+  // check is relaxed when the content is anime-flagged. TMDB-tagged anime
+  // movies (e.g. Demon Slayer: Infinity Castle) and anime series (e.g.
+  // Attack on Titan) have `content.type === 'movie'|'series'` but the watch
+  // route overrides the resolver request's `mediaType` to 'anime' for them
+  // so anime-capable providers (MegaPlay/Yenime) get selected. The check
+  // below accepts EITHER the strict match OR the anime-routing case.
+  if (content.type !== request.mediaType && !(content.isAnime === true && request.mediaType === 'anime')) throw new ResolverError('INVALID_REQUEST');
 
   const context = { request, content, identifiers: normalizeContentIdentifiers(content, request), config };
   const adapter = adapterFor(config, dependencies);
