@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Captions, ChevronLeft, ChevronRight, Maximize, Minimize, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  import { Captions, ChevronLeft, ChevronRight, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
   import type { PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds } from '$lib/shared/player';
 
@@ -10,7 +10,8 @@
   export let duration = 0;
   export let buffered = 0;
   export let playbackRate = 1;
-  export let fullscreen = false;
+  // Phase 9: fullscreen prop removed — fullscreen is handled by the header
+  // orientation button in PlayerShell, not duplicated in PlayerControls.
   // Phase 6: split capability flag from active state.
   //   pictureInPictureSupported — whether the PiP button renders at all.
   //   pictureInPicture — whether PiP is currently active (drives aria-label/icon).
@@ -30,8 +31,8 @@
   export let onPlaybackRate: (value: number) => void = () => {};
   export let onSubtitle: (value: string) => void = () => {};
   export let onQuality: (value: string) => void = () => {};
-  export let onFullscreen: () => void = () => {};
   export let onPictureInPicture: () => void = () => {};
+  // Phase 9: onFullscreen removed — handled by PlayerShell header.
   export let onStep: (delta: number) => void = () => {};
   export let onSources: () => void = () => {};
 
@@ -84,7 +85,8 @@
       {#if qualities.length > 1}<label class="select-control quality" aria-label="Quality"><Settings2 size={15} /><select value={selectedQuality} onchange={(event) => onQuality((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each qualities as quality}<option value={quality.url}>{qualityLabel(quality)}</option>{/each}</select></label>{/if}
       <label class="select-control speed" aria-label="Playback speed"><span>{playbackRate}×</span><select value={playbackRate} onchange={(event) => onPlaybackRate(Number((event.currentTarget as HTMLSelectElement).value))}>{#each playbackSpeeds as speed}<option value={speed}>{speed}×</option>{/each}</select></label>
       {#if pictureInPictureSupported}<button class="control-button optional" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={16} /></button>{/if}
-      <button class="control-button" type="button" aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreen} onclick={onFullscreen}>{#if fullscreen}<Minimize size={17} />{:else}<Maximize size={17} />{/if}</button>
+      <!-- Phase 9: removed duplicate fullscreen button — the header orientation button
+           handles fullscreen/landscape for both direct and embed sources. -->
     </div>
   </div>
 </div>

@@ -174,15 +174,12 @@
   // switches set selectedSourceId directly and pass allowFallback=false, so
   // the default is NOT forced back after a manual switch.
   $: defaultSourceId = data.streamingConfig.defaults?.[contentType];
-  // Phase 4: resume source selection order:
-  //   1. Saved last-successful source (from progress record)
-  //   2. Admin-configured default source
-  //   3. First source by admin ordering (Phase 0 fallback)
-  // The saved source is only used if it's in the public sources list
-  // (the public config reader already filtered out invalid/disabled sources).
-  // The saved source is only used for INITIAL selection — manual source
-  // switches set selectedSourceId directly and pass allowFallback=false.
-  $: if (!selectedSourceId && sourceOptions.length) {
+  // Phase 9 fix: source selection MUST wait for progressReady before selecting.
+  // The old code used `!selectedSourceId` which fired as soon as sourceOptions
+  // was populated — before savedSourceId was loaded from IndexedDB. This caused
+  // sourceOptions[0] to be selected instead of the admin default or saved source.
+  // Now we gate on progressReady so the saved/default source is known first.
+  $: if (browser && progressReady && !selectedSourceId && sourceOptions.length) {
     const savedValid = savedSourceId && sourceOptions.some((s) => s.id === savedSourceId);
     const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
     selectedSourceId = savedValid ? savedSourceId! : (defaultValid ? defaultSourceId! : sourceOptions[0].id);
@@ -270,6 +267,9 @@
 
   async function replaceProgressSource(sourceId: string) {
     if (!browser || !writer || sourceId === selectedSourceId) return;
+    // Phase 9 fix: flush the old writer BEFORE disposing it so the latest
+    // playback position is persisted under the old source's ID. Then create
+    // the new writer with the new source ID.
     await writer.flush();
     writer.dispose();
     selectedSourceId = sourceId;
@@ -378,6 +378,9 @@
   }
 
   function handleSourceChange(sourceId: string) {
+    // Phase 9 fix: flush the current writer before switching so the latest
+    // playback position is persisted under the old source's ID immediately.
+    void writer?.flush();
     void prepareSource(sourceId, false);
   }
 

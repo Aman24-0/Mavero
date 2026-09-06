@@ -231,8 +231,9 @@ assert.match(controls, /export let pictureInPicture = false/, 'pictureInPicture 
 assert.match(controls, /\{#if pictureInPictureSupported\}<button[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/, 'PiP button gated on supported flag + dynamic aria-label');
 assert.match(controls, /aria-pressed=\{pictureInPicture\}/, 'PiP button has aria-pressed reflecting active state');
 // Fullscreen button label reflects active state (unchanged from Phase 5, but verify).
-assert.match(controls, /aria-label=\{fullscreen \? 'Exit fullscreen' : 'Enter fullscreen'\}/, 'fullscreen button dynamic aria-label preserved');
-assert.match(controls, /aria-pressed=\{fullscreen\}/, 'fullscreen button has aria-pressed');
+// Phase 9: fullscreen button removed from PlayerControls — handled by header.
+// assert removed: /aria-label=\{fullscreen \? 'Exit fullscreen' : 'Enter fullscreen'\}/
+// assert removed: /aria-pressed=\{fullscreen\}/ — no fullscreen button in PlayerControls anymore
 // PlayerShell passes BOTH props.
 assert.match(shell, /\{pictureInPictureSupported\} \{pictureInPicture\}/, 'PlayerShell passes both pictureInPictureSupported and pictureInPicture to PlayerControls');
 

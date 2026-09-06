@@ -1063,7 +1063,7 @@
   <!-- Bottom controls area: direct sources get full PlayerControls; embed sources get shell controls -->
   <div class="bottom-bar" class:visible={controlsVisible} class:landscape-controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
     {#if source?.type === 'direct'}
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {fullscreen} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onFullscreen={toggleFullscreen} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(document.activeElement as HTMLElement); }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(document.activeElement as HTMLElement); }} />
     {:else if source?.type === 'embed' || effectiveState === 'embed-loading' || effectiveState === 'switching-source'}
       <!-- Phase 5: Embed source shell controls bar — Mavero-owned controls for embed playback -->
       <div class="embed-shell-controls" role="toolbar" aria-label="Embed playback controls">
@@ -1105,9 +1105,11 @@
 
 <style>
   .player-shell { --player-bg: var(--base); position: relative; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); display: flex; flex-direction: column; }
-  .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; }
-  .player-shell.landscape-mode .player-header { position: relative; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: rgba(0,0,0,.92); transition: height 180ms var(--ease-out), min-height 180ms var(--ease-out), opacity 180ms var(--ease-out), transform 180ms var(--ease-out), padding 180ms var(--ease-out); }
-  .player-shell.landscape-mode .player-header.controls-collapsed { height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; transform: translateY(-100%); pointer-events: none; }
+  .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; overflow: hidden; }
+  /* Phase 9: landscape header is an OVERLAY, not a layout participant.
+     This gives the player viewport maximum vertical space. */
+  .player-shell.landscape-mode .player-header { position: absolute; z-index: 12; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: linear-gradient(180deg, rgba(0,0,0,.85), transparent); transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out); }
+  .player-shell.landscape-mode .player-header.controls-collapsed { opacity: 0; transform: translateY(-100%); pointer-events: none; }
   .landscape-controls-toggle { position: absolute; z-index: 14; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.74); cursor: pointer; box-shadow: var(--shadow-sm); backdrop-filter: blur(12px); }
   .landscape-controls-toggle:hover, .landscape-controls-toggle:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .landscape-controls-toggle:active { transform: scale(.96); }
@@ -1122,12 +1124,20 @@
      margin-right to clear it — same 38px clearance the old .header-actions rule
      provided before Phase 5 moved all actions into the bottom shell toolbar. */
   .player-shell.landscape-mode .orientation-button { margin-right: 38px; }
-  .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0 max(0px, env(safe-area-inset-right)) max(0px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left)); }
+  /* Phase 9: stage-wrap fills the ENTIRE viewport in landscape — no header/footer space. */
+  .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0; width: 100%; height: 100%; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
-  .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; }
-  .player-shell.landscape-mode .bottom-bar { position: relative; flex: 0 0 auto; padding: max(8px, env(safe-area-inset-bottom)) clamp(12px, 3vw, 42px) max(8px, env(safe-area-inset-left)); }
+  .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; width: 100%; height: 100%; }
+  /* Phase 9: bottom-bar is an OVERLAY in landscape — doesn't take layout space. */
+  .player-shell.landscape-mode .bottom-bar { position: absolute; z-index: 11; bottom: 0; left: 0; right: 0; flex: 0 0 auto; padding: max(8px, env(safe-area-inset-bottom)) clamp(12px, 3vw, 42px) max(8px, env(safe-area-inset-left)); background: linear-gradient(0deg, rgba(0,0,0,.85), transparent); }
   .player-shell.landscape-mode .bottom-bar.landscape-controls-collapsed { opacity: 0; pointer-events: none; transform: translateY(100%); }
-  .player-shell.landscape-mode .sheet-overlay, .player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet { top: calc(48px + env(safe-area-inset-top)); }
+  /* Phase 9: landscape source sheet opens from the RIGHT (20-30% width), not bottom. */
+  .player-shell.landscape-mode .source-sheet { position: fixed; z-index: 21; bottom: auto; top: 0; right: 0; left: auto; width: min(280px, 28vw); max-height: 100dvh; height: 100dvh; border-top: 0; border-left: 1px solid var(--line-strong); border-radius: 0; animation: slide-right var(--motion-normal) var(--ease-out); }
+  .player-shell.landscape-mode .source-sheet .sheet-list { max-height: calc(100dvh - 120px); }
+  .player-shell.landscape-mode .episode-sheet { position: fixed; z-index: 21; bottom: auto; top: 0; right: 0; left: auto; width: min(320px, 30vw); max-height: 100dvh; height: 100dvh; border-top: 0; border-left: 1px solid var(--line-strong); border-radius: 0; animation: slide-right var(--motion-normal) var(--ease-out); }
+  .player-shell.landscape-mode .episode-sheet .sheet-list { max-height: calc(100dvh - 120px); }
+  .player-shell.landscape-mode .sheet-overlay { background: rgba(0,0,0,.25); }
+  @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   /* Portrait header: compact top bar */
   .player-header { position: relative; z-index: 8; flex: 0 0 auto; display: flex; align-items: center; padding: calc(10px + env(safe-area-inset-top)) clamp(12px, 4vw, 32px) 10px; background: rgba(0,0,0,.6); backdrop-filter: blur(12px); }
   .header-title-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; width: 100%; min-height: 40px; }
@@ -1217,5 +1227,5 @@
     .header-button { min-height: 32px; min-width: 34px; padding: 0 8px; }
     .header-button span { display: none; }
   }
-  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .bottom-bar, .player-shell.landscape-mode .player-header { transition: none; } .source-sheet, .episode-sheet { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .bottom-bar, .player-shell.landscape-mode .player-header { transition: none; } .source-sheet, .episode-sheet { animation: none; } .player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet { animation: none; } }
 </style>

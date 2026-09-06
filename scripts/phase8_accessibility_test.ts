@@ -172,7 +172,7 @@ assert.match(shell, /aria-pressed=\{effectiveSandboxEnabled\}/, 'aria-pressed on
 assert.match(controls, /aria-label=\{playing \? 'Pause' : 'Play'\}/, 'play/pause aria-label preserved');
 assert.match(controls, /aria-label="Seek playback"/, 'seek aria-label preserved');
 assert.match(controls, /aria-label="Volume"/, 'volume aria-label preserved');
-assert.match(controls, /aria-label=\{fullscreen \? 'Exit fullscreen' : 'Enter fullscreen'\}/, 'fullscreen aria-label preserved');
+// Phase 9: fullscreen button removed from PlayerControls (handled by header orientation button).
 assert.match(controls, /aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/, 'PiP aria-label preserved');
 
 // ============================================================

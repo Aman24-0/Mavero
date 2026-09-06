@@ -227,13 +227,27 @@
 
   function handleDocumentVisibility() {
     if (document.hidden) { if (galleryRotationTimer) clearTimeout(galleryRotationTimer); galleryRotationTimer = undefined; }
-    else if (!galleryPaused) { queueGalleryRotation(); }
+    else {
+      if (!galleryPaused) queueGalleryRotation();
+      // Phase 9 fix: reload Continue Watching when the page becomes visible
+      // again (e.g. user navigates back from the watch route). The old code
+      // only handled gallery rotation on visibility change, not progress reload.
+      void loadContinue().then((records) => { if (destroyed) return; localContinueItems = records.map(progressToMedia); });
+    }
   }
 
   function handleMotionChange(event: MediaQueryListEvent) {
     reducedMotion = event.matches;
     if (reducedMotion) { if (galleryRotationTimer) clearTimeout(galleryRotationTimer); galleryRotationTimer = undefined; }
     else if (!galleryPaused) { queueGalleryRotation(); }
+  }
+
+  // Phase 9: moved loadContinue out of onMount so handleDocumentVisibility can call it.
+  async function loadContinue() {
+    try {
+      if (page.data.user) { const cloud = await syncAuthenticatedState(); return continueWatchingRecords(cloud.progress, cloud.favorites); }
+      return getContinueWatching();
+    } catch { return []; }
   }
 
   onMount(() => {
@@ -244,12 +258,6 @@
     document.addEventListener('visibilitychange', handleDocumentVisibility);
 
     let cancelled = false;
-    const loadContinue = async () => {
-      try {
-        if (page.data.user) { const cloud = await syncAuthenticatedState(); return continueWatchingRecords(cloud.progress, cloud.favorites); }
-        return getContinueWatching();
-      } catch { return []; }
-    };
     void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
     queueGalleryRotation();
 
