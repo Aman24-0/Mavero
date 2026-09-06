@@ -218,22 +218,26 @@ export async function getAniListDetail(externalId: string): Promise<ContentDetai
     const data = await aniListRequest<{ Media?: AniListMedia }>(detailQuery, { id: numericId });
     if (!data.Media) throw new ContentServiceError('The anime title was not found.', { code: 'NOT_FOUND', status: 404 });
     const item = mapAniList(data.Media);
-    // Phase 7F+ v2: look up TMDB ID for AniList-native anime so normal
-    // providers (VidSrc/VidLink) can resolve via TMDB ID. This is a
-    // best-effort, cached title search. If TMDB is unavailable or no
-    // match is found, the TMDB ID stays undefined and normal providers
-    // return MISSING_IDENTIFIER — the fallback walker then tries the
-    // next eligible provider (e.g. Yenime via MAL ID).
+    // Phase 7F+ v3: look up TMDB ID AND IMDb ID for AniList-native anime so
+    // normal providers (VidSrc/VidLink) can resolve via TMDB or IMDb ID.
+    // This is a best-effort, cached title search with scoring-based matching.
+    // If TMDB is unavailable or no confident match is found, the IDs stay
+    // undefined and normal providers return MISSING_IDENTIFIER — the fallback
+    // walker then tries Yenime (which uses MAL ID).
     if (!item.externalIds?.tmdb) {
       try {
-        const { findTmdbIdByTitle } = await import('./tmdb-id-resolver');
-        const tmdbId = await findTmdbIdByTitle(item.title, item.year, item.animeFormat);
-        if (tmdbId) {
-          item.externalIds = { ...(item.externalIds ?? {}), tmdb: tmdbId };
+        const { findTmdbResolution } = await import('./tmdb-id-resolver');
+        const resolution = await findTmdbResolution(item.title, item.year, item.animeFormat);
+        if (resolution.tmdbId || resolution.imdbId) {
+          item.externalIds = {
+            ...(item.externalIds ?? {}),
+            ...(resolution.tmdbId ? { tmdb: resolution.tmdbId } : {}),
+            ...(resolution.imdbId ? { imdb: resolution.imdbId } : {})
+          };
         }
       } catch {
         // TMDB lookup is best-effort. If it fails, the item is returned
-        // without a TMDB ID. Normal providers will return
+        // without TMDB/IMDb IDs. Normal providers will return
         // MISSING_IDENTIFIER, and the fallback walker tries Yenime.
       }
     }
