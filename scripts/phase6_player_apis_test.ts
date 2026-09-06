@@ -130,11 +130,23 @@ assert.match(shell, /function handlePlay\(\)[\s\S]{0,500}acquireWakeLock\(\)/, '
 // Phase 6 audit fix: handleEmbedLoad must NOT acquire wake lock (iframe load ≠ actual playback).
 assert.doesNotMatch(shell, /function handleEmbedLoad\(\)[\s\S]{0,500}acquireWakeLock/, 'wake lock NOT acquired on embedload (conservative)');
 // Embed playback events drive wake lock via handleEmbedPlaybackEvent.
-assert.match(shell, /function handleEmbedPlaybackEvent\(event: \{ type: 'play' \| 'pause' \| 'ended' \}\)/, 'handleEmbedPlaybackEvent function exists');
-assert.match(shell, /if \(event\.type === 'play'\) \{[\s\S]{0,50}acquireWakeLock/, 'embed play event acquires wake lock');
-assert.match(shell, /event\.type === 'pause' \|\| event\.type === 'ended'[\s\S]{0,50}releaseWakeLock/, 'embed pause/ended events release wake lock');
-assert.match(shell, /export let embedPlaybackEvent: \{ type: 'play' \| 'pause' \| 'ended'; _seq\?: number \} \| null = null/, 'embedPlaybackEvent prop declared');
+// Phase 6 audit fix 2: signature includes sourceId for stale-event rejection.
+assert.match(shell, /function handleEmbedPlaybackEvent\(event: \{ type: 'play' \| 'pause' \| 'ended'; sourceId\?: string \}\)/, 'handleEmbedPlaybackEvent function exists with sourceId');
+assert.match(shell, /if \(event\.type === 'play'\) \{[\s\S]{0,80}embedPlaying = true[\s\S]{0,30}acquireWakeLock/, 'embed play sets embedPlaying + acquires wake lock');
+assert.match(shell, /event\.type === 'pause' \|\| event\.type === 'ended'[\s\S]{0,80}embedPlaying = false[\s\S]{0,30}releaseWakeLock/, 'embed pause/ended clears embedPlaying + releases wake lock');
+assert.match(shell, /if \(event\.sourceId && embedPlaybackSourceId && event\.sourceId !== embedPlaybackSourceId\) return/, 'stale source events rejected');
+assert.match(shell, /export let embedPlaybackEvent: \{ type: 'play' \| 'pause' \| 'ended'; _seq\?: number; sourceId\?: string \} \| null = null/, 'embedPlaybackEvent prop declared with sourceId');
 assert.match(shell, /\$: if \(embedPlaybackEvent\?\._seq && embedPlaybackEvent\._seq !== lastEmbedPlaybackSeq\)/, 'reactive watcher for embed playback events');
+assert.match(shell, /let embedPlaying = false/, 'embedPlaying state declared');
+assert.match(shell, /let embedPlaybackSourceId = ''/, 'embedPlaybackSourceId state declared');
+// embedPlaying reset on source switch.
+assert.match(shell, /source\?\.sourceId && source\.sourceId !== sourceIdentity[\s\S]*?embedPlaying = false/, 'embedPlaying reset on source switch');
+assert.match(shell, /source\?\.sourceId && source\.sourceId !== sourceIdentity[\s\S]*?embedPlaybackSourceId = source\.sourceId/, 'embedPlaybackSourceId stamped on source switch');
+// embedPlaying reset on episode switch.
+assert.match(shell, /episodeIdentity[\s\S]*?embedPlaying = false/, 'embedPlaying reset on episode switch');
+// Visibility handler considers both playing OR embedPlaying.
+assert.match(shell, /wasPlayingBeforeHidden = playing \|\| embedPlaying/, 'visibility handler captures direct OR embed playback state');
+assert.match(shell, /wasPlayingBeforeHidden && \(playing \|\| embedPlaying\)/, 'visibility handler re-acquires only if same state still active');
 // Release wired to pause / end / error / source switch / episode switch / destroy.
 assert.match(shell, /function handlePause\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on pause');
 assert.match(shell, /function handleEnded\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on end');
@@ -145,8 +157,9 @@ assert.match(shell, /wakeLockDestroyed = true[\s\S]{0,80}releaseWakeLock/, 'dest
 assert.match(shell, /return \(\) => \{[\s\S]*?releaseWakeLock\(\)/, 'wake lock released on destroy');
 // Visibility handling: release on hidden, re-acquire on visible if playing.
 assert.match(shell, /function handleVisibilityChangeForWakeLock\(\)/, 'handleVisibilityChangeForWakeLock function exists');
-assert.match(shell, /if \(document\.hidden\)[\s\S]{0,200}wasPlayingBeforeHidden = playing/, 'captured playing state on hide');
-assert.match(shell, /if \(wasPlayingBeforeHidden && playing\)[\s\S]{0,100}acquireWakeLock/, 're-acquire on visible if still playing');
+// Phase 6 audit fix 2: visibility handler now captures BOTH direct + embed playback.
+assert.match(shell, /wasPlayingBeforeHidden = playing \|\| embedPlaying/, 'visibility handler captures direct OR embed playback state on hide');
+assert.match(shell, /wasPlayingBeforeHidden && \(playing \|\| embedPlaying\)/, 'visibility handler re-acquires only if same state still active on visible');
 assert.match(shell, /onvisibilitychange=\{\(\) => \{[\s\S]{0,100}handleVisibilityChangeForWakeLock/, 'visibility handler wired to svelte:window');
 // Sentinel release event listener.
 assert.match(shell, /sentinel\?\.addEventListener\?\.\('release', handleWakeLockSentinelRelease\)/, 'sentinel release event observed');
@@ -325,6 +338,11 @@ function createWakeLockStateMachine() {
   let wakeLockDestroyed = false;
   let wasPlayingBeforeHidden = false;
   let playing = false;
+  // Phase 6 audit fix 2: separate embed playback state.
+  let embedPlaying = false;
+  let embedPlaybackSourceId = '';
+  // The source type: 'direct' or 'embed'. Used to gate handleEmbedPlaybackEvent.
+  let sourceType: 'direct' | 'embed' | null = null;
   let documentHidden = false;
   const releasedSentinels: { releasedVia: string }[] = [];
 
@@ -367,26 +385,55 @@ function createWakeLockStateMachine() {
     try { await sentinel.release(); } catch { /* already released */ }
   }
 
+  // Phase 6 audit fix 2: handleEmbedPlaybackEvent now sets embedPlaying state
+  // and rejects stale source events. This mirrors the PlayerShell implementation.
+  function handleEmbedPlaybackEvent(event: { type: 'play' | 'pause' | 'ended'; sourceId?: string }) {
+    if (sourceType !== 'embed') return;
+    if (event.sourceId && embedPlaybackSourceId && event.sourceId !== embedPlaybackSourceId) return;
+    if (event.type === 'play') {
+      embedPlaying = true;
+      void acquireWakeLock();
+    } else if (event.type === 'pause' || event.type === 'ended') {
+      embedPlaying = false;
+      void releaseWakeLock();
+    }
+  }
+
+  // Phase 6 audit fix 2: visibility handler now considers both playing OR embedPlaying.
   function handleVisibilityChangeForWakeLock() {
     if (documentHidden) {
-      wasPlayingBeforeHidden = playing;
+      wasPlayingBeforeHidden = playing || embedPlaying;
       void releaseWakeLock();
     } else {
-      if (wasPlayingBeforeHidden && playing) {
+      const stillActive = wasPlayingBeforeHidden && (playing || embedPlaying);
+      if (stillActive) {
         void acquireWakeLock();
       }
       wasPlayingBeforeHidden = false;
     }
   }
 
+  // Phase 6 audit fix 2: source switch resets embedPlaying and stamps sourceId.
+  function switchSource(newSourceId: string, newType: 'direct' | 'embed') {
+    embedPlaying = false;
+    embedPlaybackSourceId = newSourceId;
+    sourceType = newType;
+    playing = false;
+    void releaseWakeLock();
+  }
+
   return {
     acquireWakeLock,
     releaseWakeLock,
+    handleEmbedPlaybackEvent,
     handleVisibilityChangeForWakeLock,
+    switchSource,
     setPlaying: (v: boolean) => { playing = v; },
+    setSourceType: (t: 'direct' | 'embed' | null) => { sourceType = t; },
     setHidden: (v: boolean) => { documentHidden = v; },
     setDestroyed: () => { wakeLockDestroyed = true; },
     getSentinel: () => wakeLockSentinel,
+    getEmbedPlaying: () => embedPlaying,
     getReleasedSentinels: () => releasedSentinels,
     getRequestId: () => wakeLockRequestId
   };
@@ -491,20 +538,147 @@ function createWakeLockStateMachine() {
 // (Verified by the doesNotMatch assertion in section 4: handleEmbedLoad must
 // not call acquireWakeLock. Wake Lock is only acquired via handleEmbedPlaybackEvent
 // when a reliable provider 'play' event arrives.)
+//
+// Test E-behavioral: embed play sets embedPlaying and acquires Wake Lock
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  // Simulate normalized provider 'play' event
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), true, 'Test E: embed play sets embedPlaying = true');
+  assert.ok(sm.getSentinel() !== null, 'Test E: embed play acquires wake lock');
+}
 
-// Test F: PiP lifecycle — initial embed → direct video created → listeners attached
+// Test F: Embed pause clears embedPlaying and releases wake lock
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(sm.getSentinel() !== null, 'Test F: sentinel acquired on embed play');
+  // Simulate normalized provider 'pause' event
+  sm.handleEmbedPlaybackEvent({ type: 'pause', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), false, 'Test F: embed pause clears embedPlaying');
+  assert.strictEqual(sm.getSentinel(), null, 'Test F: embed pause releases wake lock');
+}
+
+// Test G: Embed ended clears embedPlaying and releases wake lock
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(sm.getSentinel() !== null, 'Test G: sentinel acquired on embed play');
+  // Simulate normalized provider 'ended' event
+  sm.handleEmbedPlaybackEvent({ type: 'ended', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), false, 'Test G: embed ended clears embedPlaying');
+  assert.strictEqual(sm.getSentinel(), null, 'Test G: embed ended releases wake lock');
+}
+
+// Test H: Embed play → hidden → visible reacquires Wake Lock
+// This is the core fix for the audit blocker: previously the visibility handler
+// only checked `playing` (direct), so embed playback was NOT reacquired on visible.
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(sm.getSentinel() !== null, 'Test H: sentinel acquired on embed play');
+  // Document hidden — sentinel released, wasPlayingBeforeHidden = embedPlaying
+  sm.setHidden(true);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test H: sentinel released on hidden');
+  // Document visible — embedPlaying is still true, so sentinel should be reacquired
+  sm.setHidden(false);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(sm.getSentinel() !== null, 'Test H: sentinel reacquired on visible (embed still playing)');
+}
+
+// Test I: Embed pause → hidden → visible does NOT reacquire
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  // Pause before hidden
+  sm.handleEmbedPlaybackEvent({ type: 'pause', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), false, 'Test I: embedPlaying false after pause');
+  // Hidden then visible while paused
+  sm.setHidden(true);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  sm.setHidden(false);
+  sm.handleVisibilityChangeForWakeLock();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getSentinel(), null, 'Test I: sentinel NOT reacquired when embed paused');
+}
+
+// Test J: Source switch invalidates embed playback state
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), true, 'Test J: embedPlaying true after play');
+  assert.ok(sm.getSentinel() !== null, 'Test J: sentinel acquired');
+  // Switch to a new source
+  sm.switchSource('source-B', 'embed');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), false, 'Test J: embedPlaying reset on source switch');
+  assert.strictEqual(sm.getSentinel(), null, 'Test J: sentinel released on source switch');
+}
+
+// Test K: Episode switch invalidates embed playback state
+// (Simulated by switching source within the same episode — the watch route's
+// episode-switch reactive block calls releaseWakeLock + resets embedPlaying,
+// which is the same switchSource mechanism in this harness.)
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), true, 'Test K: embedPlaying true after play');
+  // Episode switch resets embed state (same as source switch in this harness)
+  sm.switchSource('source-A', 'embed');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), false, 'Test K: embedPlaying reset on episode switch');
+  assert.strictEqual(sm.getSentinel(), null, 'Test K: sentinel released on episode switch');
+}
+
+// Test L: Stale embed playback event cannot activate Wake Lock for a different source
+// This verifies the sourceId guard in handleEmbedPlaybackEvent.
+{
+  const sm = createWakeLockStateMachine();
+  sm.switchSource('source-A', 'embed');
+  // Switch to source-B — now embedPlaybackSourceId = 'source-B'
+  sm.switchSource('source-B', 'embed');
+  await new Promise((r) => setTimeout(r, 5));
+  // A stale 'play' event arrives for source-A (the old source)
+  sm.handleEmbedPlaybackEvent({ type: 'play', sourceId: 'source-A' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.strictEqual(sm.getEmbedPlaying(), false, 'Test L: stale source-A play does NOT set embedPlaying');
+  assert.strictEqual(sm.getSentinel(), null, 'Test L: stale source-A play does NOT acquire wake lock');
+}
+
+// Test M: PiP lifecycle — initial embed → direct video created → listeners attached
 // (Verified by the reactive $: attachPipListeners(videoElement) assertion in
 // section 1. The reactive block fires whenever videoElement identity changes,
 // including from undefined → <video>.)
 
-// Test G: PiP replacement — video A → video B → listeners removed from A, attached to B
+// Test N: PiP replacement — video A → video B → listeners removed from A, attached to B
 // (Verified by the lastPipVideoElement tracking + removeEventListener assertions
 // in section 1. The attachPipListeners function detaches from the previous
 // element before attaching to the new one.)
 
-// Test H: PiP repeated source switching — embed → direct → embed → direct → no duplicates
+// Test O: PiP repeated source switching — embed → direct → embed → direct → no duplicates
 // (Verified by the `if (current === lastPipVideoElement) return` guard in
 // section 1. The guard prevents duplicate attachment when the identity hasn't
 // changed, and the detach-then-attach cycle ensures no listener leak.)
 
-console.log('Phase 6 player APIs contract tests passed: PiP listeners on videoElement via reactive lifecycle (16 checks); fullscreen target + sync + cleanup + orientation unlock on Esc (8 checks); orientation fullscreen-before-lock + lock + unlock + fallback + rapid-toggle guard (15 checks); Wake Lock detection + request-generation race safety + acquire + release + visibility + sentinel + destroy + embed-conservative-semantics (30 checks); Media Session detection + metadata + artwork MIME detection + action handlers + playbackState + setPositionState validation + cleanup + direct-only gating (28 checks); PlayerControls PiP capability/active-state split (6 checks); PlayerViewport iframe permissions preserved (3 checks); Phase 5 landscape contract preserved (11 checks); Phase 5 UI contracts preserved (10 checks); Phase 1-4 callbacks preserved (12 checks); cross-origin safety (2 checks); PlaybackManager dual-path architecture preserved (5 checks); behavioral lifecycle tests for Wake Lock race safety (Tests A-D) + embed semantics (Test E) + PiP lifecycle (Tests F-H) (8 behavioral tests).');
+console.log('Phase 6 player APIs contract tests passed: PiP listeners on videoElement via reactive lifecycle (16 checks); fullscreen target + sync + cleanup + orientation unlock on Esc (8 checks); orientation fullscreen-before-lock + lock + unlock + fallback + rapid-toggle guard (15 checks); Wake Lock detection + request-generation race safety + acquire + release + visibility + sentinel + destroy + embed-conservative-semantics + embedPlaying state + stale-source rejection (44 checks); Media Session detection + metadata + artwork MIME detection + action handlers + playbackState + setPositionState validation + cleanup + direct-only gating (28 checks); PlayerControls PiP capability/active-state split (6 checks); PlayerViewport iframe permissions preserved (3 checks); Phase 5 landscape contract preserved (11 checks); Phase 5 UI contracts preserved (10 checks); Phase 1-4 callbacks preserved (12 checks); cross-origin safety (2 checks); PlaybackManager dual-path architecture preserved (5 checks); behavioral lifecycle tests for Wake Lock race safety (Tests A-D) + embed playback state (Tests E-L) + PiP lifecycle (Tests M-O) (15 behavioral tests).');
