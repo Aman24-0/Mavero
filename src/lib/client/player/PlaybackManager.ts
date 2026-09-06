@@ -297,6 +297,11 @@ export class PlaybackManager {
       // Only forwarded when allowFallback is true (manual source switches
       // pass allowFallback=false and do not want the default forced back).
       if (allowFallback && request.defaultSourceId) body.defaultSourceId = request.defaultSourceId;
+      // Phase 7F (MegaPlay): forward the user-selected playback variant
+      // (e.g. 'sub' or 'dub'). Adapters that do not support variants
+      // ignore this field. MegaPlay's resolver adapter substitutes the
+      // URL path segment based on this value.
+      if (request.variant) body.variant = request.variant;
       const response = await this.fetcher('/api/playback/resolve', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -732,6 +737,13 @@ export type ResolverRequest = {
    * behavior).
    */
   defaultSourceId?: string;
+  /**
+   * Phase 7F (MegaPlay): optional playback variant requested by the user
+   * (e.g. 'sub' or 'dub'). Forwarded to `/api/playback/resolve`. Only
+   * consumed by adapters that support variants (currently only MegaPlay's
+   * anime resolver). Other adapters silently ignore it.
+   */
+  variant?: string;
 };
 
 export class ResolverError extends Error {

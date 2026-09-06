@@ -362,6 +362,58 @@ export const VIDPHANTOM_CAPABILITIES: ProviderPlaybackCapabilities = {
   nextEpisode: false,
 };
 
+/**
+ * MegaPlay — megaplay.buzz/api (Anikoto library).
+ *
+ * Anime-only embed provider. Verified from the official MegaPlay API
+ * documentation page at https://megaplay.buzz/api.
+ *
+ * VERIFIED: postMessage events (player→parent):
+ *   { event: "time", time, duration, percent } — progress (currentTime
+ *     field is `time`, NOT `currentTime`).
+ *   { event: "complete" } — ended.
+ *   { event: "error" } — playback failure (provider emits this when
+ *     the episode/variant is missing).
+ *   { type: "watching-log", currentTime, duration } — alternate
+ *     progress event (same payload shape as `time` but with different
+ *     key names).
+ *   { channel: "megacloud", ... } — debugging channel (acknowledged,
+ *     not normalized).
+ * VERIFIED: messages may arrive as JSON STRINGS (the docs explicitly
+ *   call out `typeof data === "string"` → JSON.parse). The adapter
+ *   uses safeParseMessage() which handles both shapes.
+ * VERIFIED: origin — https://megaplay.buzz.
+ * VERIFIED: iframe allowfullscreen (the docs example sets it).
+ * NOT VERIFIED: seek command (only `time` event, no parent→player seek).
+ * NOT VERIFIED: play/pause as commands (MegaPlay posts `complete` and
+ *   `error` but does NOT document play/pause events or commands).
+ * NOT VERIFIED: startAt URL parameter (MegaPlay always starts at 0 —
+ *   Mavero tracks progress locally via the `time` event).
+ * NOT VERIFIED: volume, subtitles, quality, PiP.
+ *
+ * Because MegaPlay returns HTTP 200 even for missing episodes (it serves
+ * a "We're Sorry" 410 page inside the iframe), Mavero cannot preflight
+ * availability. The `error` postMessage event is the runtime signal —
+ * when it fires, the watch route's fallback walker tries the next
+ * eligible anime source.
+ */
+export const MEGAPLAY_CAPABILITIES: ProviderPlaybackCapabilities = {
+  progressEvents: true,
+  currentTime: true,
+  duration: true,
+  seek: false,
+  startAt: false,
+  play: false,
+  pause: false,
+  volume: false,
+  subtitles: false,
+  quality: false,
+  fullscreen: true,
+  pictureInPicture: false,
+  postMessage: true,
+  nextEpisode: false,
+};
+
 // ----- Phase 7: adapter_id → capabilities lookup -----
 //
 // The admin capability matrix uses this map to display per-adapter
@@ -395,6 +447,7 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderPlaybackCapabilitie
   'cinesrc': CINESRC_CAPABILITIES,
   'vidapi-qzz': VIDAPI_QZZ_CAPABILITIES,
   'vidphantom': VIDPHANTOM_CAPABILITIES,
+  'megaplay-embed': MEGAPLAY_CAPABILITIES,
 };
 
 /**

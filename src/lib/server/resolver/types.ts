@@ -25,6 +25,14 @@ export type ResolverRequest = {
    * exclude it and the resolver proceeds with the remaining candidates.
    */
   defaultSourceId?: string;
+  /**
+   * Phase 7F (MegaPlay): optional playback variant requested by the user.
+   * Currently only consumed by the MegaPlay anime adapter to switch
+   * between SUB and DUB audio. Adapters that do not support variants
+   * ignore this field. The value is provider-specific (e.g. 'sub' or
+   * 'dub' for MegaPlay).
+   */
+  variant?: string;
 };
 
 export type ContentIdentifiers = {
@@ -60,6 +68,17 @@ export type SafeSourceMetadata = {
   providerName?: string;
   protocol?: PlaybackProtocol;
   note?: string;
+  /**
+   * Phase 7F (MegaPlay): variants exposed by this source at runtime
+   * (e.g. ['sub','dub']). Forwarded into PlayerSource.metadata.variants
+   * so the source selector can render inline variant toggles.
+   */
+  variants?: string[];
+  /**
+   * Phase 7F (MegaPlay): the variant currently encoded in `url`
+   * (e.g. 'sub' or 'dub'). Forwarded into PlayerSource.metadata.selectedVariant.
+   */
+  selectedVariant?: string;
 };
 
 export type ResolverErrorCode =

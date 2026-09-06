@@ -3098,6 +3098,104 @@ This is implemented by:
 ### Worklog template
 
 ```md
+## 2026-09-08 — Phase 7F — MegaPlay Anime Integration (SUB/DUB Variants)
+
+**Status:** COMPLETE
+
+**Goal:** Integrate MegaPlay (https://megaplay.buzz/api) as an anime-only embed provider with TWO playback variants (SUB and DUB) exposed from ONE provider/source row — not two separate providers.
+
+### MegaPlay API contract (verified from official docs)
+
+Inspected the official MegaPlay API documentation page at `https://megaplay.buzz/api` and the live Anikoto catalog API at `https://anikotoapi.site`. The contract is:
+
+1. **Embed endpoints** (the ONLY URLs Mavero uses — no server-side catalog API calls):
+   - `https://megaplay.buzz/stream/ani/{anilist_id}/{episode}/{language}` — AniList ID form (primary)
+   - `https://megaplay.buzz/stream/mal/{mal_id}/{episode}/{language}` — MAL ID form (fallback)
+   - `https://megaplay.buzz/stream/s-2/{aniwatch-ep-id}/{language}` — Anikoto catalog episode form (NOT used by Mavero — we have our own anime catalog via the AniList adapter)
+
+2. **`{language}` path segment** is the variant: `sub` or `dub`. Both variants are generated from ONE source row.
+
+3. **Identifier mode**: `anilist_id` (primary, sourced from Mavero's AniList adapter) or `mal_id` (fallback when AniList ID is missing but MAL ID is present).
+
+4. **Player events via postMessage** (player → parent):
+   - `{ event: "time", time, duration, percent }` — progress (NOTE: the field is `time`, NOT `currentTime`)
+   - `{ event: "complete" }` — playback ended
+   - `{ event: "error" }` — playback failure (missing episode/variant)
+   - `{ type: "watching-log", currentTime, duration }` — alternate progress event with `currentTime`
+   - `{ channel: "megacloud", ... }` — debugging channel (acknowledged, not normalized)
+   - Messages may arrive as JSON STRINGS (the docs explicitly mention `typeof data === "string"` → JSON.parse)
+   - Origin: `https://megaplay.buzz`
+
+5. **NO documented commands** (parent → player). MegaPlay only posts events; Mavero cannot command play/pause/seek.
+
+6. **NO documented startAt URL parameter**. Playback always starts at 0. Mavero tracks progress locally via the `time` event and the existing ProgressWriter.
+
+7. **HTTP status cannot preflight availability**: MegaPlay returns HTTP 200 even for missing episodes (it serves a "We're Sorry" 410 page inside the iframe). The runtime signal for missing content is the `error` postMessage event.
+
+### Files changed
+
+- `src/lib/shared/player.ts` — added `variants?: string[]` to `PlayerSourceOption` and `metadata.variants`/`metadata.selectedVariant` to `PlayerSource`.
+- `src/lib/shared/player-capabilities.ts` — added `MEGAPLAY_CAPABILITIES` (verified per docs: progressEvents/currentTime/duration/fullscreen/postMessage = true; seek/startAt/play/pause/volume/subtitles/quality/PiP/nextEpisode = false). Registered in `PROVIDER_CAPABILITY_MAP['megaplay-embed']`.
+- `src/lib/client/player/capabilities.ts` — re-export `MEGAPLAY_CAPABILITIES`.
+- `src/lib/client/player/providers/megaplay-adapter.ts` — NEW. `MegaPlayPlayerAdapter extends PostMessageAdapterBase`. Handles `https://megaplay.buzz` origin. Parses `time`/`complete`/`error`/`watching-log` events (including JSON string form). Drops `megacloud` channel messages and unknown shapes silently. `startAtParam()` returns `null` (no documented startAt).
+- `src/lib/client/player/adapter-registry.ts` — registered `MegaPlayPlayerAdapter` ahead of the generic `EmbedPlayerAdapter` in `createDefaultAdapterRegistry()`.
+- `src/lib/server/resolver/megaplay.ts` — NEW. `megaplayProviderAdapter` with `adapterId: 'megaplay-embed'`, `integrationType: 'embed'`. Anime-only — throws `UNSUPPORTED_MEDIA_TYPE` for movie/series. Accepts `request.variant` ('sub' or 'dub', defaulting to first entry in `audio_languages`). Reconstructs URL from trusted components — does NOT blindly trust the configured template (validates against the expected AniList or MAL shape). Returns `metadata.variants` and `metadata.selectedVariant` so the player UI can render inline SUB/DUB toggles.
+- `src/lib/server/resolver/adapters.ts` — registered `megaplayProviderAdapter` in `createDefaultAdapterIds()`.
+- `src/lib/server/resolver/types.ts` — added `variant?: string` to `ResolverRequest`, `variants?: string[]`/`selectedVariant?: string` to `SafeSourceMetadata`.
+- `src/lib/server/resolver/identifiers.ts` — `parseResolverRequest` now accepts and normalizes `variant` (lowercased, length-bounded, alphanumeric+dash/underscore only).
+- `src/lib/client/player/PlaybackManager.ts` — added `variant?: string` to the local `ResolverRequest` type. `loadSource()` forwards `request.variant` in the POST `/api/playback/resolve` body.
+- `src/lib/components/player/PlayerShell.svelte` — `onSourceChange` signature now accepts an optional `variant`. Source sheet renders inline SUB/DUB toggle buttons inside the MegaPlay source option (NOT as separate source entries). New CSS for `.sheet-option-row`, `.variant-row`, `.variant-button`.
+- `src/routes/watch/[type]/[id]/+page.svelte` — derives `variants` from `source.audio_languages` (filtered to `['sub','dub']`) and exposes them on `PlayerSourceOption.variants`. Tracks `selectedVariant` state. `prepareSource` forwards `variant` to `manager.loadSource`. `handleSourceChange` accepts and forwards variant. Syncs `selectedVariant` from `resolvedSource.metadata.selectedVariant` after resolution.
+- `supabase/migrations/20260908000000_phase7f_megaplay_anime_experimental.sql` — NEW. ONE provider row (`slug='megaplay'`, anime-only capabilities, `adapter_id='megaplay-embed'`). ONE source row (`slug='megaplay-embed'`, `audio_languages: ['sub','dub']`, `anime_template='https://megaplay.buzz/stream/ani/{anilist_id}/{episode}/sub'`, `identifier_mode='anilist_id'`). Disabled by default — admin can enable.
+- `scripts/phase7f_megaplay_test.ts` — NEW. 25 behavioral tests covering: anime-only enforcement, AniList/MAL ID resolution, SUB/DUB availability, both/neither variants, missing identifiers, embed URL format, tampered template rejection, origin validation, postMessage event parsing (time/complete/error/watching-log/JSON string), capabilities reflect verified behavior, adapter registry, stale session protection, rapid variant switching, fallback after failure, default-source compatibility, manual variant switching request parsing, progress continuity, no regression to VidLink.
+
+### How MegaPlay is represented as ONE provider
+
+- ONE `streaming_providers` row: `slug='megaplay'`, `adapter_id='megaplay-embed'`, `capabilities={ movie: false, series: false, anime: true, ... }`.
+- ONE `streaming_sources` row: `slug='megaplay-embed'`, `audio_languages: ['sub','dub']`, `anime_template` with `/sub` default variant suffix.
+- The resolver adapter reads `audio_languages` to declare `metadata.variants = ['sub','dub']`. The user-selected `variant` is forwarded via the resolver request body and substituted into the URL path segment.
+- The source sheet renders ONE source option with inline SUB/DUB toggle buttons — both variants belong to the SAME provider/source.
+
+### Adapter capabilities actually implemented
+
+VERIFIED (true): `progressEvents`, `currentTime`, `duration`, `fullscreen`, `postMessage`.
+NOT VERIFIED (false): `seek`, `startAt`, `play`, `pause`, `volume`, `subtitles`, `quality`, `pictureInPicture`, `nextEpisode`.
+
+The MegaPlay adapter only listens and parses events — it never commands the iframe (no documented command API).
+
+### Progress / resume behavior
+
+- MegaPlay does NOT support startAt — playback always starts at 0. Mavero tracks progress locally via the `time` postMessage event and the existing Phase 4/9 ProgressWriter.
+- Source identity remains MegaPlay (one sourceId for both SUB and DUB).
+- Switching SUB ↔ DUB does NOT change sourceId — the progressKey (`contentType:contentId:season:episode`) is unchanged, so progress continues seamlessly across variant switches.
+- The `selectedVariant` is recorded in `PlayerSource.metadata.selectedVariant` for UI highlight, but is NOT persisted in the progress DB record (no schema change needed). This is acceptable because variant selection is a per-session UX choice, not a resume hint — playback resumes at the same `currentTime` regardless of which variant is active.
+
+### Fallback behavior
+
+- MegaPlay participates in the existing resolver fallback walker.
+- If MegaPlay is the configured anime default AND fails (e.g. tampered template, missing identifiers, runtime `error` postMessage event), the resolver continues to the next eligible anime source via `resolveWithBoundedFallback` with `avoidDuplicateProviders: true`.
+- Manual variant switching (SUB ↔ DUB) passes `allowFallback=false` to `manager.loadSource` — it does NOT trigger fallback to other providers.
+
+### Known limitations / requires real-device testing
+
+- **MANUAL QA NOT AVAILABLE from this environment.** Final verification requires opening the deployed app on a real browser/device and confirming:
+  - The MegaPlay iframe loads and plays an anime episode.
+  - The `time`/`complete`/`error` postMessage events actually arrive (the docs describe them but real-world player implementations sometimes deviate).
+  - The SUB/DUB toggle buttons switch the iframe URL correctly.
+  - The `error` postMessage event fires for missing episodes (not just the 410 page silently loading in the iframe).
+- The migration is created but NOT applied to the production Supabase. An admin must run the migration SQL before MegaPlay appears in the public streaming config.
+- MegaPlay's actual player script could not be inspected (the stream URLs returned "410 Error" pages during this session because the test MAL ID had been removed). The postMessage event shape is taken directly from the official API docs at https://megaplay.buzz/api — if the real player deviates from the docs, the adapter will silently drop unrecognized messages (defense in depth).
+
+### Tests
+
+`scripts/phase7f_megaplay_test.ts` — 25 tests, all PASS.
+
+### Validation
+
+- Full test suite (51 scripts): all PASS.
+- svelte-check: 0 errors, 20 pre-existing warnings (unchanged).
+- Production build: PASS.
+
 ## YYYY-MM-DD — Phase X — Task name
 
 **Status:** IN PROGRESS / COMPLETE / BLOCKED

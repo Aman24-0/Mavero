@@ -14,7 +14,7 @@
   export let episodes: PlayerEpisode[] = [];
   export let currentEpisode: PlayerEpisodeTarget | null = null;
   export let onProgress: (event: PlayerProgressEvent) => void = () => {};
-  export let onSourceChange: (sourceId: string) => void = () => {};
+  export let onSourceChange: (sourceId: string, variant?: string) => void = () => {};
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
   export let onClose: () => void = () => {};
   export let onDetails: () => void = () => {};
@@ -571,13 +571,18 @@
     }
   }
 
-  function chooseSource(sourceId: string) {
+  function chooseSource(sourceId: string, variant?: string) {
     // Phase 8: closeSourceSheet restores focus to the trigger.
     closeSourceSheet();
-    if (sourceId !== source?.sourceId) {
+    // Phase 7F (MegaPlay): only fire onSourceChange when the source
+    // OR the variant actually changed. Clicking the active variant
+    // button should be a no-op (no re-resolution).
+    const sourceChanged = sourceId !== source?.sourceId;
+    const variantChanged = variant !== undefined && variant !== source?.metadata?.selectedVariant;
+    if (sourceChanged || variantChanged) {
       state = 'switching-source';
       errorMessage = '';
-      onSourceChange(sourceId);
+      onSourceChange(sourceId, variant);
     }
   }
 
@@ -1049,7 +1054,7 @@
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each sourceOptions as option}<button class="sheet-option" class:active={option.id === source?.sourceId} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{/each}</div>
+      <div class="sheet-list">{#each sourceOptions as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}</div>
     </div>
   {/if}
 
@@ -1167,6 +1172,15 @@
   .sheet-option strong, .sheet-option small { display: block; }
   .sheet-option strong { color: var(--ink); font-size: .72rem; }
   .sheet-option small { margin-top: 4px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
+  /* Phase 7F (MegaPlay): source option row wraps the base button + optional
+     variant toggle row. The variant row renders SUB/DUB buttons inline so
+     the user can see both variants belong to the SAME provider — they are
+     NOT separate source entries. Touch targets remain >= 44px. */
+  .sheet-option-row { display: flex; flex-direction: column; gap: 6px; }
+  .variant-row { display: flex; gap: 6px; padding: 0 12px 6px; }
+  .variant-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; min-width: 56px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; font-size: .58rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+  .variant-button:hover, .variant-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
+  .variant-button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .option-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
   .option-mark > span { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-deep); }
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }

@@ -36,6 +36,11 @@ export function parseResolverRequest(input: unknown): ResolverRequest {
   if (typeof input.defaultSourceId === 'string' && uuidPattern.test(input.defaultSourceId)) {
     request.defaultSourceId = input.defaultSourceId;
   }
+  // Phase 7F (MegaPlay): optional playback variant. Lowercased, length-bounded
+  // (e.g. 'sub' or 'dub'). Adapters that do not support variants ignore it.
+  if (typeof input.variant === 'string' && input.variant.length > 0 && input.variant.length <= 16 && /^[a-z0-9_-]+$/i.test(input.variant)) {
+    request.variant = input.variant.toLowerCase();
+  }
   return request;
 }
 

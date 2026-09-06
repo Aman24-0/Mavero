@@ -33,6 +33,18 @@ export type PlayerSource = {
     providerName?: string;
     protocol?: PlayerProtocol;
     note?: string;
+    /**
+     * Phase 7F (MegaPlay): the variants this source exposes at runtime
+     * (e.g. ['sub','dub']). Populated by adapters that support
+     * multiple audio tracks behind one source row.
+     */
+    variants?: string[];
+    /**
+     * Phase 7F (MegaPlay): the variant currently resolved into `url`
+     * (e.g. 'sub' or 'dub'). Lets the source selector highlight the
+     * active variant button without re-resolving.
+     */
+    selectedVariant?: string;
   };
   error?: {
     code: string;
@@ -47,6 +59,17 @@ export type PlayerSourceOption = {
   status?: string;
   integrationType?: string;
   sandboxPolicy?: SandboxPolicy;
+  /**
+   * Phase 7F (MegaPlay): optional playback variants exposed by a single
+   * source. When present, the source selector renders inline variant
+   * toggle buttons (e.g. SUB | DUB) inside this source option — both
+   * variants belong to the SAME provider/source, just different audio
+   * tracks. Switching variant does NOT switch providers; it asks the
+   * resolver to re-resolve with a different `variant` field on the
+   * request. Only providers that explicitly expose variants
+   * (currently only MegaPlay) populate this field.
+   */
+  variants?: string[];
 };
 
 export type PlayerEpisode = {
