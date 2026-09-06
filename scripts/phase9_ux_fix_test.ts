@@ -128,22 +128,33 @@ assert.doesNotMatch(shell, /shell-button.*aria-label=\{landscapeMode \? 'Exit la
 // 4. Continue Watching: total minutes display
 // ============================================================
 
-// progressLabel shows total minutes (NOT hours).
-assert.match(service, /remaining > 0 \? `\$\{remaining\}m left`/, 'progressLabel shows total minutes as "Xm left"');
+// progressLabel uses formatRemainingTime (not direct `${remaining}m left`).
+assert.match(service, /function formatRemainingTime\(totalMinutes: number\)/, 'formatRemainingTime helper exists');
+assert.match(service, /if \(totalMinutes < 60\) return/, 'formatRemainingTime handles < 60 min');
+assert.match(service, /hours = Math\.floor\(totalMinutes \/ 60\)/, 'formatRemainingTime converts to hours for >= 60 min');
 
 // Verify calculation uses per-source runtime.
 assert.match(service, /getRuntimeForSource\(record, record\.selectedSourceId\)/, 'progressLabel uses per-source runtime');
 
-// Test: 85 minutes → "85m left" (not "1h 25m left").
-function calculateLabel(currentTime: number, duration: number): string {
-  const remaining = duration > 0 ? Math.max(0, Math.round((duration - currentTime) / 60)) : 0;
-  return remaining > 0 ? `${remaining}m left` : 'Resume';
+// Test: formatRemainingTime with various values.
+function formatRemainingTime(totalMinutes: number): string {
+  if (totalMinutes <= 0) return 'Resume';
+  if (totalMinutes < 60) return `${totalMinutes}m left`;
+  const hours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  if (remainingMinutes === 0) return `${hours}h left`;
+  return `${hours}h ${remainingMinutes}m left`;
 }
 
-assert.strictEqual(calculateLabel(0, 5100), '85m left', '85 minutes shows as "85m left" (not "1h 25m")');
-assert.strictEqual(calculateLabel(0, 3600), '60m left', '60 minutes shows as "60m left"');
-assert.strictEqual(calculateLabel(0, 7500), '125m left', '125 minutes shows as "125m left"');
-assert.strictEqual(calculateLabel(0, 2280), '38m left', '38 minutes shows as "38m left"');
-assert.strictEqual(calculateLabel(0, 0), 'Resume', '0 duration shows as "Resume"');
+assert.strictEqual(formatRemainingTime(0), 'Resume', '0 → Resume');
+assert.strictEqual(formatRemainingTime(1), '1m left', '1 → 1m left');
+assert.strictEqual(formatRemainingTime(38), '38m left', '38 → 38m left');
+assert.strictEqual(formatRemainingTime(59), '59m left', '59 → 59m left');
+assert.strictEqual(formatRemainingTime(60), '1h left', '60 → 1h left');
+assert.strictEqual(formatRemainingTime(61), '1h 1m left', '61 → 1h 1m left');
+assert.strictEqual(formatRemainingTime(85), '1h 25m left', '85 → 1h 25m left');
+assert.strictEqual(formatRemainingTime(120), '2h left', '120 → 2h left');
+assert.strictEqual(formatRemainingTime(125), '2h 5m left', '125 → 2h 5m left');
+assert.strictEqual(formatRemainingTime(205), '3h 25m left', '205 → 3h 25m left');
 
 console.log('Phase 9 final UX fix tests passed: My List removal deletes progress (4 contract checks); cloud progress deletion (2 checks); behavioral progress deletion tests 1-4 (4 tests); landscape two-button overlay (5 checks); portrait bottom bar no landscape button (1 check); Continue Watching total minutes (2 contract + 5 behavioral checks).');

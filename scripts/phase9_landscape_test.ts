@@ -26,20 +26,20 @@ assert.match(shell, /\{#if !landscapeMode\}/, 'bottom-bar gated on !landscapeMod
 
 assert.match(shell, /\.player-shell\.landscape-mode \.source-sheet \{[\s\S]*?right: 0/, 'landscape source sheet opens from right');
 assert.match(shell, /\.player-shell\.landscape-mode \.source-sheet \{[\s\S]*?left: auto/, 'landscape source sheet does not use left: 0');
-assert.match(shell, /width: min\(280px, 28vw\)/, 'landscape source sheet width is ~20-28% (280px/28vw)');
+assert.match(shell, /width: min\(320px, 30vw\)/, 'landscape source sheet width ~320px/30vw');
 
 // ============================================================
 // 3. Landscape episode sheet also opens from right
 // ============================================================
 
 assert.match(shell, /\.player-shell\.landscape-mode \.episode-sheet \{[\s\S]*?right: 0/, 'landscape episode sheet opens from right');
-assert.match(shell, /width: min\(320px, 30vw\)/, 'landscape episode sheet width is ~30% (320px/30vw)');
+assert.match(shell, /width: min\(340px, 32vw\)/, 'landscape episode sheet width ~340px/32vw');
 
 // ============================================================
 // 4. Landscape backdrop does NOT fully obscure player
 // ============================================================
 
-assert.match(shell, /\.player-shell\.landscape-mode \.sheet-overlay \{ background: rgba\(0,0,0,\.25\)/, 'landscape overlay is semi-transparent (player visible)');
+assert.match(shell, /\.player-shell\.landscape-mode \.sheet-overlay \{[\s\S]*?rgba\(0,0,0,\.35\)/, 'landscape overlay is semi-transparent (player visible)');
 
 // ============================================================
 // 5. Landscape slide-right animation + reduced motion

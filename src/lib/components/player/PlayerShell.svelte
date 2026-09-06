@@ -1078,12 +1078,15 @@
   .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0; width: 100%; height: 100%; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
   .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; width: 100%; height: 100%; }
-  /* Phase 9: landscape source sheet opens from the RIGHT (20-30% width), not bottom. */
-  .player-shell.landscape-mode .source-sheet { position: fixed; z-index: 21; bottom: auto; top: 0; right: 0; left: auto; width: min(280px, 28vw); max-height: 100dvh; height: 100dvh; border-top: 0; border-left: 1px solid var(--line-strong); border-radius: 0; animation: slide-right var(--motion-normal) var(--ease-out); }
-  .player-shell.landscape-mode .source-sheet .sheet-list { max-height: calc(100dvh - 120px); }
-  .player-shell.landscape-mode .episode-sheet { position: fixed; z-index: 21; bottom: auto; top: 0; right: 0; left: auto; width: min(320px, 30vw); max-height: 100dvh; height: 100dvh; border-top: 0; border-left: 1px solid var(--line-strong); border-radius: 0; animation: slide-right var(--motion-normal) var(--ease-out); }
-  .player-shell.landscape-mode .episode-sheet .sheet-list { max-height: calc(100dvh - 120px); }
-  .player-shell.landscape-mode .sheet-overlay { background: rgba(0,0,0,.25); }
+  /* Phase 9 fix: landscape source sheet is player-local (absolute, not fixed).
+     .player-shell has position: relative, so absolute anchors to the player
+     viewport — not the browser page. This prevents the drawer from floating
+     detached at the page edge. */
+  .player-shell.landscape-mode .source-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(320px, 30vw); max-height: 100%; height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
+  .player-shell.landscape-mode .source-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .player-shell.landscape-mode .episode-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(340px, 32vw); max-height: 100%; height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
+  .player-shell.landscape-mode .episode-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .player-shell.landscape-mode .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.35); }
   @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   /* Portrait header: compact top bar */
   .player-header { position: relative; z-index: 8; flex: 0 0 auto; display: flex; align-items: center; padding: calc(10px + env(safe-area-inset-top)) clamp(12px, 4vw, 32px) 10px; background: rgba(0,0,0,.6); backdrop-filter: blur(12px); }

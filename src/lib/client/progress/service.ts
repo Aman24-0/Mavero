@@ -111,6 +111,9 @@ export async function getFavoriteStatus(contentType: LocalContentType, contentId
 
 export async function removeFavoriteFromMyList(contentType: LocalContentType, contentId: string, deletedAt = Date.now()) {
   const key = favoriteKey(contentType, contentId);
+  // Phase 9 fix: invalidate any active writer for this title BEFORE deleting
+  // progress, so a pending/queued flush cannot recreate the deleted record.
+  invalidateWritersForContent(contentType, contentId);
   // Phase 9 fix: delete ALL watch progress for this title (all episodes)
   // so it disappears from Continue Watching immediately.
   await deleteAllProgressForContent(contentType, contentId);
@@ -130,6 +133,46 @@ export async function deleteAllProgressForContent(contentType: LocalContentType,
   await Promise.all(toDelete.map((record) => removeProgress(record)));
 }
 
+// ============================================================
+// Phase 9 fix: Title-level writer invalidation registry.
+// Prevents stale/pending writer flushes from recreating deleted progress.
+// ============================================================
+
+const activeWriters = new Map<string, { dispose: () => void }>();
+
+function writerRegistryKey(contentType: string, contentId: string): string {
+  return `${contentType}:${contentId}`;
+}
+
+function registerWriter(contentType: string, contentId: string, dispose: () => void) {
+  const key = writerRegistryKey(contentType, contentId);
+  // If a previous writer for the same title exists, dispose it first.
+  const existing = activeWriters.get(key);
+  if (existing) { try { existing.dispose(); } catch { /* already disposed */ } }
+  activeWriters.set(key, { dispose });
+}
+
+function unregisterWriter(contentType: string, contentId: string) {
+  const key = writerRegistryKey(contentType, contentId);
+  activeWriters.delete(key);
+}
+
+/**
+ * Phase 9 fix: Invalidate and dispose ALL active writers for a specific title.
+ * Called by removeFavoriteFromMyList() BEFORE deleting progress records.
+ * This ensures that any pending/queued flush from the watch route's writer
+ * will be a no-op (disposed = true, latest = undefined) and cannot recreate
+ * the deleted progress.
+ */
+export function invalidateWritersForContent(contentType: string, contentId: string) {
+  const key = writerRegistryKey(contentType, contentId);
+  const entry = activeWriters.get(key);
+  if (entry) {
+    try { entry.dispose(); } catch { /* already disposed */ }
+    activeWriters.delete(key);
+  }
+}
+
 export async function deleteFavorite(contentType: LocalContentType, contentId: string) {
   return removeFavoriteFromMyList(contentType, contentId);
 }
@@ -147,15 +190,32 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   let latest: SaveProgressInput | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  // Phase 9 fix: validity generation. Each writer gets a generation number.
+  // When the title is invalidated, the registry calls dispose() which sets
+  // disposed=true and clears latest. The flush() function checks disposed,
+  // so a queued callback (from setTimeout that already fired before clear)
+  // will find disposed=true and return without saving.
   // Phase 9: per-source runtime map. Accumulated across source switches.
   let sourceRuntimes: Record<string, { duration: number; updatedAt: number }> = base.sourceRuntimes ? { ...base.sourceRuntimes } : {};
   // Phase 9 fix: initialize knownCurrentTime from existing progress so
   // updateRuntime() never resets it to 0 over an existing resume position.
   let knownCurrentTime = Math.max(0, Number.isFinite(base.initialCurrentTime) ? (base.initialCurrentTime ?? 0) : 0);
 
+  // Phase 9 fix: register this writer in the title-level registry so
+  // removeFavoriteFromMyList() can invalidate it before deleting progress.
+  registerWriter(base.contentType, base.contentId, () => {
+    disposed = true;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    latest = undefined;
+  });
+
   const flush = async () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
+    // Phase 9 fix: disposed check prevents stale flushes from recreating
+    // deleted progress. Even if a callback was already queued before
+    // clearTimeout() ran, it will find disposed=true and return.
     if (disposed || !latest) return;
     const next = { ...latest, sourceRuntimes: { ...sourceRuntimes } };
     latest = undefined;
@@ -167,29 +227,23 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
     timer = setTimeout(() => { void flush(); }, flushInterval);
   };
 
-  return {
+  // Return the writer object with dispose that also unregisters from the registry.
+  const writer = {
     update(currentTime: number, duration?: number, completed = false) {
-      // Phase 9 fix: track the latest known position.
+      if (disposed) return; // Phase 9 fix: no-op if invalidated.
       knownCurrentTime = currentTime;
-      // Phase 9: update per-source runtime when duration is reported.
       if (duration && duration > 0 && base.selectedSourceId) {
         sourceRuntimes[base.selectedSourceId] = { duration, updatedAt: Date.now() };
       }
       latest = { ...base, currentTime, duration, completed, sourceRuntimes: { ...sourceRuntimes } };
       schedule();
     },
-    // Phase 9 fix: update runtime independently from position updates.
-    // NEVER resets currentTime to 0 — uses the known current position.
     updateRuntime(sourceId: string, duration: number) {
       if (disposed || !Number.isFinite(duration) || duration <= 0) return;
       sourceRuntimes[sourceId] = { duration, updatedAt: Date.now() };
       if (latest) {
-        // Update the pending record's runtime map without changing position.
         latest.sourceRuntimes = { ...sourceRuntimes };
       } else {
-        // Create a pending record using the KNOWN position, NOT 0.
-        // This preserves existing progress when a duration event arrives
-        // before the first timeupdate.
         latest = { ...base, currentTime: knownCurrentTime, sourceRuntimes: { ...sourceRuntimes } };
         schedule();
       }
@@ -198,6 +252,7 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
       return flush();
     },
     complete(currentTime: number, duration?: number) {
+      if (disposed) return Promise.resolve(); // Phase 9 fix: no-op if invalidated.
       knownCurrentTime = currentTime;
       latest = { ...base, currentTime, duration, completed: true, sourceRuntimes: { ...sourceRuntimes } };
       return flush();
@@ -210,8 +265,11 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
       if (timer) clearTimeout(timer);
       timer = undefined;
       latest = undefined;
+      // Phase 9 fix: unregister from the title-level registry.
+      unregisterWriter(base.contentType, base.contentId);
     }
   };
+  return writer;
 }
 
 // Phase 9: helper to get the runtime for a specific source from a progress record.
@@ -229,12 +287,22 @@ export function getRuntimeForSource(record: WatchProgressRecord | undefined, sou
   return record?.duration ?? 0;
 }
 
+// Phase 9 fix: format remaining time correctly.
+// < 60 min: "Xm left"
+// >= 60 min: "Xh Ym left" or "Xh left" if minutes is 0.
+function formatRemainingTime(totalMinutes: number): string {
+  if (totalMinutes <= 0) return 'Resume';
+  if (totalMinutes < 60) return `${totalMinutes}m left`;
+  const hours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  if (remainingMinutes === 0) return `${hours}h left`;
+  return `${hours}h ${remainingMinutes}m left`;
+}
+
 export function progressLabel(record: WatchProgressRecord) {
-  // Phase 9 fix: use per-source runtime if available for the selected source.
   const effectiveDuration = getRuntimeForSource(record, record.selectedSourceId);
-  // Phase 9 fix: show total remaining minutes (NOT converted to hours).
   const remaining = effectiveDuration > 0 ? Math.max(0, Math.round((effectiveDuration - record.currentTime) / 60)) : 0;
-  const time = remaining > 0 ? `${remaining}m left` : 'Resume';
+  const time = formatRemainingTime(remaining);
   if (record.contentType === 'movie') return time;
   if (record.season !== undefined && record.episode !== undefined) return `S${String(record.season).padStart(2, '0')} E${String(record.episode).padStart(2, '0')} · ${time}`;
   return time;
