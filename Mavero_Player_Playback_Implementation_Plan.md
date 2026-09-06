@@ -2673,6 +2673,130 @@ However, the `margin-right: 38px` was serving a real layout purpose: it cleared 
 
 **Commit:** `5bbfd72` — `fix(player): remove dead .header-actions CSS, apply clearance to orientation-button`
 
+## 2026-09-06 — Phase 6 — Fullscreen / Orientation / PiP / Wake Lock / Media Session
+
+**Status:** COMPLETE
+
+**Phase:** 6
+
+**Task:** Implement the shell-level playback experience improvements defined in implementation plan §13: fullscreen lifecycle, orientation handling, Picture-in-Picture state sync, Screen Wake Lock, and Media Session. Preserve all Phase 0-5 functionality, the dual-path architecture (PlayerShell owns shell-level state; PlaybackManager/adapters own normalized provider state), and the cross-origin iframe boundary.
+
+### Implementation summary
+
+Phase 6 is a **shell-level additive** implementation — no Phase 1-5 code was modified behaviorally. All new state lives in PlayerShell; PlaybackManager, ProgressWriter, adapters, resolver, provider config, and database schema are untouched.
+
+**5 capability areas implemented:**
+
+1. **Fullscreen lifecycle improvements** — `handleFullscreen` now calls `orientationController()?.unlock?.()` when the browser initiates a fullscreen exit (Esc/F11) while `landscapeMode` is active (previously only the flag was reset, leaving a potential stale lock). `onMount` cleanup explicitly exits fullscreen if `playerRoot` is the active fullscreen element (deterministic across SPA navigation).
+
+2. **Orientation handling** — preserved existing `toggleLandscape()` contract (fullscreen-before-lock ordering, `lock('landscape')`, inner try/catch for rejection, `unlock()` on exit, optional chaining for unsupported API). Added rapid-toggle guard via `landscapeToggleInFlight` flag to prevent inconsistent state from two rapid taps both awaiting `requestFullscreen()`.
+
+3. **Picture-in-Picture state synchronization** — fixed the dead-listener bug: `enterpictureinpicture`/`leavepictureinpicture` listeners moved from `document` (where they never fired because the events don't bubble) to `videoElement`. The `pictureInPicture` active-state variable now updates correctly. `PlayerControls` now accepts both `pictureInPictureSupported` (capability — drives button render) AND `pictureInPicture` (active state — drives aria-label/aria-pressed). PiP button aria-label is now dynamic: `'Enter Picture-in-Picture'` / `'Exit Picture-in-Picture'`. PiP cleanup added to source-switch, episode-switch, and destroy paths.
+
+4. **Screen Wake Lock** — `wakeLockSupported` detected in `onMount`. `acquireWakeLock()` requests `navigator.wakeLock.request('screen')` with race-guard (if the request resolves after destroy, the sentinel is released immediately). `releaseWakeLock()` releases the sentinel and removes the release listener. `handleWakeLockSentinelRelease()` observes the sentinel's `release` event for system-initiated releases. Acquire wired to `handlePlay` (direct) + `handleEmbedLoad` (embed). Release wired to `handlePause` + `handleEnded` + `handleMediaError` + source-switch + episode-switch + destroy. `handleVisibilityChangeForWakeLock()` releases on document-hidden and re-acquires on document-visible if playback was active when hidden (reuses existing `svelte:window onvisibilitychange` handler — no duplicate listener). All async operations wrapped in try/catch.
+
+5. **Media Session** (direct playback only) — `mediaSessionSupported` detected in `onMount`. `setupMediaSession()` sets metadata (title from `content.title`, artist from `currentEpisode.title` or content type, album=`'MAVERO'`, artwork only when a valid image URL exists — empty URLs omitted). `registerMediaSessionHandlers()` registers `play`, `pause`, `seekbackward`, `seekforward`, `seekto` action handlers delegating to existing PlayerShell functions. `previoustrack`/`nexttrack` NOT registered (no `chooseAdjacentEpisode` helper exists). `syncMediaSessionPlaybackState()` sets `playbackState` to `'playing'`/`'paused'`. `syncMediaSessionPositionState()` calls `setPositionState` only when duration is finite+>0, position is finite+>=0+<=duration, playbackRate is finite+>0. `clearMediaSession()` clears metadata, sets `playbackState='none'`, and removes all action handlers (wrapped in try/catch for Safari compat). Cleanup wired to source-switch + episode-switch + destroy. Embed sources do not get action handlers (postMessage round-trip makes state updates unreliable).
+
+### State ownership (dual-path architecture preserved)
+
+| State | Owner | Phase 6 change |
+|---|---|---|
+| `playing`, `paused`, `currentTime`, `duration` | PlayerShell (direct) / PlaybackManager (embed) | None |
+| `fullscreen` | PlayerShell | None (cleanup hardened) |
+| `landscapeMode` | PlayerShell | None (rapid-toggle guard added) |
+| `pictureInPicture` (active) | PlayerShell | Fixed (dead listeners → videoElement) |
+| `pictureInPictureSupported` (capability) | PlayerShell | None |
+| `wakeLockSupported`, `wakeLockSentinel`, `wasPlayingBeforeHidden` | PlayerShell | **NEW** |
+| `mediaSessionSupported`, `mediaSessionActive` | PlayerShell | **NEW** |
+
+### Lifecycle/cleanup
+
+| Event | Listener target | Register | Remove | Phase 6 status |
+|---|---|---|---|---|
+| `fullscreenchange` | `document` | `onMount` | `onMount` cleanup | Preserved + `unlock()` added |
+| `enterpictureinpicture` | `videoElement` (was: `document`) | `onMount` | `onMount` cleanup | **FIXED** |
+| `leavepictureinpicture` | `videoElement` (was: `document`) | `onMount` | `onMount` cleanup | **FIXED** |
+| `keydown` | `window` | `onMount` | `onMount` cleanup | Preserved |
+| `pointermove`, `touchstart` | `playerRoot` | `onMount` | `onMount` cleanup | Preserved |
+| `beforeunload`, `visibilitychange` | `svelte:window` | Svelte-managed | Svelte-managed | Preserved + wake-lock handler added |
+| WakeLockSentinel `release` | sentinel instance | `acquireWakeLock` | `releaseWakeLock` | **NEW** |
+
+### Cross-origin safety
+
+- `iframeElement.requestFullscreen()` — NEVER called (verified by test).
+- `iframeElement.requestPictureInPicture()` — NEVER called (verified by test).
+- Provider iframe's `allow="autoplay; fullscreen; picture-in-picture; encrypted-media"` and `allowfullscreen` preserved (Phase 5 contract).
+- Cross-origin boundary comment `// provider iframe is never invoked or manipulated` preserved.
+
+### Files changed
+
+| File | Status | Changes |
+|---|---|---|
+| `src/lib/components/player/PlayerShell.svelte` | modified | +337 lines: Wake Lock state/helpers, Media Session state/helpers, PiP listener fix, fullscreen cleanup, orientation unlock on Esc, rapid-toggle guard, episode-switch reactive block, visibility wake-lock coordination. All Phase 5 markup/CSS/contracts preserved verbatim. |
+| `src/lib/components/player/PlayerControls.svelte` | modified | +10/-4 lines: split `pictureInPictureSupported` (capability) from `pictureInPicture` (active state). Dynamic PiP aria-label + aria-pressed. Fullscreen button aria-pressed added. |
+| `scripts/phase6_player_apis_test.ts` | new | 12 test groups, ~120 assertions covering all Phase 6 capabilities + Phase 1-5 regression. |
+| `package.json` | modified | Registered `phase6_player_apis_test.ts` in the test chain. |
+
+### Files NOT changed (Phase 1-5 contracts preserved)
+
+- `src/lib/client/player/PlaybackManager.ts` — dual-path architecture preserved (verified by test: no wakeLock/mediaSession references).
+- `src/lib/client/player/capabilities.ts` — provider capability flags unchanged.
+- `src/lib/client/player/providers/*-adapter.ts` — adapters unchanged.
+- `src/lib/client/player/events.ts` — normalized event contract unchanged.
+- `src/lib/client/progress/*` — ProgressWriter, service, cloud, database unchanged.
+- `src/lib/server/resolver/*` — resolver unchanged.
+- `src/lib/server/streaming/*` — provider config, health, ranking unchanged.
+- `src/lib/shared/player.ts` — closed union types NOT extended.
+- `src/lib/components/player/PlayerViewport.svelte` — iframe permissions preserved.
+- `src/routes/watch/[type]/[id]/+page.svelte` — progress flow unchanged.
+- `supabase/migrations/*` — schema unchanged.
+
+### Verification
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings — identical to Phase 5 baseline. NO new warnings introduced by Phase 6.)
+- `pnpm test` → PASS (38 scripts: 37 existing + 1 new Phase 6).
+- `pnpm run build` → PASS (vite build + Netlify adapter, no TypeScript errors).
+- Manual QA: NOT TESTABLE end-to-end (no Supabase env — same gap as Phase 1-5).
+
+### Pre-existing warnings (unchanged baseline, NOT caused by Phase 6)
+
+1. `ScrollToTop.svelte:21:7` — `fabEl` not declared with `$state(...)`
+2. `auth/reset/+page.svelte:129:3` — Unused CSS `.input-icon`
+3. `auth/sign-in/+page.svelte:16-17` — `form` initial value capture (×2)
+4. `auth/sign-in/+page.svelte:165:3` — Unused CSS `.input-icon`
+5. `auth/sign-up/+page.svelte:162:3` — Unused CSS `.input-icon`
+6. `profile/+page.svelte:494-495` — Unused CSS `.action-arrow` (×2)
+7. `search/+page.svelte:19-26` — `data` initial value capture (×8)
+8. `upcoming/+page.svelte:39-41` — `data.filters` initial value capture (×3)
+
+### Phase 6 warnings
+
+None. Phase 6 introduced zero new svelte-check warnings.
+
+### Manual QA plan (NOT TESTABLE — no Supabase env)
+
+If environment becomes available, test:
+- DIRECT: play, pause, fullscreen, landscape, PiP, Wake Lock, Media Session, seek, source switching, episode switching
+- FULLSCREEN: enter, exit with button, exit with Esc, orientation unlock after Esc
+- PIP: enter, exit, state/label updates, source switch while PiP active, player close while PiP active
+- WAKE LOCK: starts during playback, releases on pause, releases on hidden, reacquires on visible, releases on end, releases on destroy
+- MEDIA SESSION: metadata, play/pause, seek backward, seek forward, seekto, position state, cleanup after navigation
+- MOBILE: Chrome Android landscape/portrait/safe-area/unsupported API fallback; iOS fullscreen/orientation graceful degradation/PiP capability/Media Session fallback
+
+### Phase boundary check
+
+- Phase 7 (Admin UI, provider testing UI, default management UI) NOT started.
+- Resolver, provider configuration, database schema, progress schema NOT modified.
+- All changes confined to `src/lib/components/player/PlayerShell.svelte`, `src/lib/components/player/PlayerControls.svelte`, `scripts/phase6_player_apis_test.ts`, and `package.json`.
+
+**PHASE 6 COMPLETE**
+
+**PHASE 7 NOT STARTED**
+
+**Next phase:** Phase 7 — Admin Provider Testing + Default Management (NOT started).
+
+**Commit:** `59bf629` — `feat(player): add fullscreen/orientation/PiP/Wake Lock/Media Session (Phase 6)`
+
 ### Worklog template
 
 ```md
