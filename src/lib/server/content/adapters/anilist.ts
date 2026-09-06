@@ -286,4 +286,116 @@ export async function findAniListByTitle(title: string, year?: number): Promise<
   return value;
 }
 
+// ============================================================
+// Phase 7F+ v3: Dedicated anime-MOVIE AniList identifier resolver.
+//
+// The generic findAniListByTitle() does not filter by format and can
+// return a TV series when searching for a movie title (e.g. searching
+// for "Spirited Away" may return the Spirited Away TV special instead
+// of the movie). This dedicated resolver:
+//   - Searches AniList with the same title query
+//   - Filters results to format === 'MOVIE' ONLY
+//   - Uses scoring: exact title match + year match
+//   - Returns { anilist, mal } only when a confident MOVIE match is found
+//
+// Used exclusively by getTmdbDetail() when item.isAnime === true AND
+// item.animeFormat === 'movie'. Does NOT affect anime-series enrichment
+// (which continues to use findAniListByTitle).
+// ============================================================
+
+const movieSearchQuery = `query ($search: String) {
+  Page(page: 1, perPage: 25) {
+    pageInfo { currentPage hasNextPage lastPage }
+    media(type: ANIME, search: $search, sort: [POPULARITY_DESC, SCORE_DESC], isAdult: false) {
+      id
+      idMal
+      title { romaji english native }
+      format
+      seasonYear
+      startDate { year }
+      popularity
+    }
+  }
+}`;
+
+function normalizeForMatch(title: string): string {
+  return title.toLowerCase().trim()
+    .replace(/\(.*?\)/g, '')
+    .replace(/:.*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Find AniList + MAL IDs for an anime MOVIE by searching AniList.
+ *
+ * Filters results to format === 'MOVIE' only. Uses title + year scoring
+ * to select the best match. Returns empty object if no confident MOVIE
+ * match is found.
+ *
+ * @param title The anime movie title (from TMDB, English preferred)
+ * @param year The movie's release year (from TMDB)
+ * @returns `{ anilist?, mal? }` — both undefined if no match
+ */
+export async function findAniListMovieIdentifiers(title: string, year?: number): Promise<{ anilist?: string; mal?: string }> {
+  const normalized = title.trim();
+  if (!normalized) return {};
+  const cacheKey = `anilist:movie-by-title:${normalized.toLowerCase()}:${year ?? ''}`;
+  const { value } = await getOrSet(cacheKey, listPolicy, async () => {
+    const data = await aniListRequest<AniListPage>(movieSearchQuery, { search: normalized });
+    const media = data.Page?.media ?? [];
+    if (!media.length) return { anilist: undefined, mal: undefined };
+
+    // Filter to MOVIE format only
+    const movies = media.filter((item) => item.format === 'MOVIE');
+    if (!movies.length) return { anilist: undefined, mal: undefined };
+
+    const normalizedSearch = normalizeForMatch(normalized);
+
+    let bestMatch: typeof movies[0] | undefined;
+    let bestScore = -1;
+
+    for (const item of movies) {
+      const englishTitle = normalizeForMatch(item.title?.english || '');
+      const romajiTitle = normalizeForMatch(item.title?.romaji || '');
+      const nativeTitle = normalizeForMatch(item.title?.native || '');
+      const itemYear = item.seasonYear || item.startDate?.year || 0;
+
+      let score = 0;
+
+      // Exact title match on any language
+      if (englishTitle === normalizedSearch) score += 100;
+      else if (romajiTitle === normalizedSearch) score += 90;
+      else if (nativeTitle === normalizedSearch) score += 80;
+      // Partial title contains
+      else if (englishTitle.includes(normalizedSearch)) score += 50;
+      else if (romajiTitle.includes(normalizedSearch)) score += 40;
+      else if (normalizedSearch.includes(englishTitle) && englishTitle.length >= 3) score += 30;
+      else if (normalizedSearch.includes(romajiTitle) && romajiTitle.length >= 3) score += 25;
+
+      // Year match
+      if (year && Number.isFinite(itemYear) && itemYear === year) score += 40;
+      else if (year && Number.isFinite(itemYear) && Math.abs(itemYear - year) <= 1) score += 20;
+
+      // Popularity tiebreaker
+      score += Math.min(Number(item.popularity) || 0 / 100, 10);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = item;
+      }
+    }
+
+    if (!bestMatch || bestScore < 30) {
+      return { anilist: undefined, mal: undefined };
+    }
+
+    return {
+      anilist: String(bestMatch.id),
+      mal: bestMatch.idMal ? String(bestMatch.idMal) : undefined
+    };
+  });
+  return value;
+}
+
 export const anilistInternals = { mapAniList, stripDescription };
