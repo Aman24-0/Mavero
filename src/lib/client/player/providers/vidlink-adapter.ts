@@ -62,6 +62,8 @@ export class VidLinkPlayerAdapter extends PostMessageAdapterBase implements Play
     return VIDLINK_CAPABILITIES;
   }
 
+  startAtParam(): string | null { return 'startAt'; }
+
   protected handleMessage(event: MessageEvent): void {
     const message = safeParseMessage(event.data, isVidLinkMessage);
     if (!message) return;

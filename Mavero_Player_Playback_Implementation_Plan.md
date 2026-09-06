@@ -2267,6 +2267,216 @@ All 20 tests pass. Full test suite (34 scripts) also passes — no regressions.
 PHASE 3 FIX COMPLETE
 PHASE 4 NOT STARTED
 
+---
+
+## 2026-09-06 — Phase 4 — Progress, Resume + Provider Continuity
+
+**Status:** COMPLETE
+
+**Phase:** 4
+
+**Task:** Connect the Phase 3 normalized playback events to the existing ProgressWriter so that progress works for both direct AND embed sources. Implement resume from saved progress (saved-source → admin default → fallback). Implement startAt URL params for embed providers that document them. Preserve timestamps during source switching. Maintain per-episode progress. Preserve existing IndexedDB + cloud sync architecture.
+
+### Progress architecture
+
+Phase 4 establishes a **dual-path progress pipeline** that works within the existing Phase 1-3 architecture without redesigning PlayerShell:
+
+```
+DIRECT sources:
+  PlayerViewport <video> → PlayerShell handlers → onProgress callback
+      → watch route handlePlayerProgress() → ProgressWriter.update()
+
+EMBED sources (Phase 3+4):
+  Provider iframe postMessage → ProviderAdapter → normalized PlayerEvent
+      → PlaybackManager.onEvent() → watch route subscriber → ProgressWriter.update()
+```
+
+Both paths write to the SAME `ProgressWriter` instance. No double-writes because:
+- Direct sources never emit manager events (the manager's `dispatchViewportEvent()` is not called by the watch route — PlayerShell handles direct video events internally via its existing `emitProgress` → `onProgress` callback).
+- Embed sources only emit events through the adapter's postMessage listener → `handleAdapterEvent()` → `onEvent()` subscriber.
+
+### Event → ProgressWriter pipeline
+
+The `manager.onEvent()` subscriber in the watch route (lines 95-131) handles:
+- `timeupdate` / `seeked` → `writer.update(currentTime, duration, completed)` (debounced 12s via ProgressWriter)
+- `pause` → `writer.pause()` (immediate flush)
+- `ended` → `writer.complete(currentTime, duration)` (immediate flush + completion flag)
+- `play` → triggers `sendHistory('started')` for authenticated users (first play only)
+- `timeupdate` (every 60s) → `sendHistory('progressed')` for authenticated users
+
+The `handlePlayerProgress()` callback (lines 318-336) handles the same events for DIRECT sources via PlayerShell's `onProgress` prop.
+
+### Persistence/throttling behavior
+
+Preserved unchanged from Phase 0:
+- `DEFAULT_FLUSH_INTERVAL = 12_000` (12 seconds) — high-frequency `timeupdate` events update in-memory state only; persistence is debounced.
+- Immediate flush on: `pause`, `ended`, `source-change`, `visibility` (hidden), `beforeunload`.
+- `COMPLETION_THRESHOLD = 0.9` — 90% of duration marks completion.
+- `clampTime()` validates `currentTime ≥ 0` and `currentTime ≤ duration`.
+- Per-episode `progressKey` = `${contentType}:${contentId}:${season ?? '-'}:${episode ?? '-'}`.
+
+### Resume policy
+
+Phase 4 implements the source-selection order for RESUME:
+
+```
+1. Saved last-successful source (from progress record's selectedSourceId)
+2. Admin-configured default source (from streaming_default_sources)
+3. First source by admin ordering (Phase 0 fallback)
+```
+
+The saved source is read in `setupProgressContext()` via `resume.record?.selectedSourceId`. The reactive initial-source-selection block (lines 151-164) checks if the saved source is in the public sources list before using it. If the saved source is disabled/removed, it falls back to the admin default, then to `sourceOptions[0].id`.
+
+Manual source selection (`handleSourceChange` → `prepareSource(sourceId, false)`) does NOT consult the saved source — the user's explicit choice is respected.
+
+### Saved-source → default → fallback behavior
+
+- **New playback (no saved progress):** admin default → health-ranked fallback (Phase 2 behavior, preserved).
+- **Resume (saved progress exists):** saved source → admin default → health-ranked fallback.
+- **Manual switch:** user-selected source → no automatic default override (Phase 2 behavior, preserved).
+- **Resolver fallback (saved/default source fails):** the resolver walks ranked candidates (Phase 2). When a fallback source succeeds, `replaceProgressSource(resolved.sourceId)` updates the writer's `selectedSourceId` — the ACTUAL successful source is recorded in the next progress write.
+
+### StartAt implementations
+
+Phase 4 implements startAt URL parameter propagation for embed providers that document it:
+
+| Provider | Parameter | Example URL |
+|---|---|---|
+| VidSrc | `?startAt=N` | `https://vidsrc.wiki/embed/movie/550/?startAt=420` |
+| VidLink | `?startAt=N` | `https://vidlink.pro/movie/550?startAt=120` |
+| VidY | `?progress=N` | `https://vidy.st/movie/550?progress=60` |
+| CineSrc | `?t=N` | `https://cinesrc.st/embed/movie/550?t=300` |
+| VidAPI.qzz.io | `?startAt=N` | `https://vidapi.qzz.io/movie/550?startAt=99` |
+
+The `PlaybackManager.loadSource()` method appends the startAt parameter after resolution, using the adapter's `startAtParam()` method and the `startPosition` argument. The parameter is:
+- Only appended when `startPosition > 0` and `capabilities.startAt === true`.
+- Idempotent — not appended if the URL already has the parameter.
+- Floor'd to an integer (`Math.floor(startPosition)`).
+- NOT appended for direct sources (they use native `video.currentTime` seeking after `loadedmetadata`).
+- NOT appended for generic embed sources (no verified startAt support).
+
+### Direct playback resume
+
+Direct sources use the existing Phase 0/1 `pendingSeek = initialProgress` mechanism. `PlayerShell.handleLoadedMetadata()` seeks to `pendingSeek` when `0 < pendingSeek < duration`. Phase 4 passes `resumeTime` as `startPosition` to `manager.loadSource()` on initial load — the manager stores it as `pendingSeek` in its state, and PlayerShell reads `initialProgress` from the watch route's `resumeTime` local (which is set from `getResumeProgress`).
+
+### Embed/provider resume support
+
+For embed providers that support startAt (VidSrc, VidLink, VidY, CineSrc, VidAPI.qzz.io), resume is achieved by appending the startAt URL parameter to the embed URL — the provider's own player starts from the specified position. No postMessage seek command is needed (most providers don't support seek-as-a-command).
+
+For embed providers that do NOT support startAt (Viduki, CinemaOS, VidPhantom, generic embeds), resume is NOT possible — playback starts from the beginning. Phase 4 does NOT fake resume success. The progress writer still records progress from provider events (where available).
+
+### Source-switch continuity
+
+When the user manually switches sources:
+1. `handleSourceChange(sourceId)` calls `prepareSource(sourceId, false)`.
+2. `prepareSource` passes `currentPlaybackTime` (tracked from both direct `handlePlayerProgress` and embed `onEvent` events) as `startPosition` to `manager.loadSource()`.
+3. The manager appends startAt to the new source's URL if the new source's adapter supports it.
+4. If the new source doesn't support startAt, playback starts from the beginning — no fake resume.
+
+### Series/episode continuity
+
+Phase 4 preserves the existing per-episode progress architecture:
+- Each episode has its own `progressKey` = `${contentType}:${contentId}:${season}:${episode}`.
+- `setupProgressContext()` loads the new episode's saved progress when `playbackKey` changes.
+- `savedSourceId` is cleared on episode switch so the new episode's source selection starts fresh.
+- `resumeApplied` is reset on episode switch.
+- `currentPlaybackTime` is reset on episode switch.
+- The old episode's writer is flushed and disposed before the new one is created.
+
+### Local/cloud synchronization
+
+Preserved unchanged from Phase 0:
+- IndexedDB (`mavero-local` DB, `watch_progress` store) for local persistence.
+- Supabase `watch_progress` table for authenticated cloud sync.
+- `syncAuthenticatedState()` merges local + cloud by latest `updatedAt`.
+- Single-flight sync (one in-flight sync at a time).
+- Cloud sync triggered on: visibility hidden, first progress event, completion, favorite toggle.
+
+### Tests added
+
+`scripts/phase4_progress_resume_test.ts` — 20 tests:
+1. CineSrc startAt URL param (`?t=300`).
+2. VidLink startAt URL param (`?startAt=120`).
+3. VidY startAt URL param (`?progress=60`).
+4. No startAt when `startPosition=0`.
+5. No startAt for unsupported providers (generic embed).
+6. Idempotent startAt (not appended twice).
+7. VidSrc startAt URL param (`?startAt=420`).
+8. VidAPI.qzz.io startAt URL param (`?startAt=99`).
+9. Embed events reach manager state (VidLink timeupdate → currentTime=60, duration=5400).
+10. Completion threshold 0.9 verified.
+11. Invalid resume position clamping (negative, > duration, NaN, zero duration).
+12. Per-episode progressKey (movie ≠ series, episode 1 ≠ episode 2).
+13. Completed record returns `resumeTime=0`.
+14. In-progress record returns `resumeTime=currentTime` + preserves `selectedSourceId`.
+15. Race condition: stale session events cannot overwrite new source.
+16. Manager state tracks embed events (currentTime, duration, playing, pause, ended).
+17. `startAtParam()` returns correct values per provider.
+18. Capabilities: only CineSrc has seek command.
+19. Dispose cleanup — no crash on post-dispose events.
+20. StartAt position is floor'd to integer.
+
+### Validation results
+
+- `pnpm run check` → PASS (0 errors, 20 pre-existing warnings).
+- `pnpm test` → PASS (36 scripts, including 20 new Phase 4 tests + 20 Phase 3 tests + 8 CineSrc fix tests + 16 Phase 1 tests + 20 Phase 2 tests + 22 provider tests + 4 ranking/health/remediation tests + 1 landscape test + 2 universal/release tests).
+- `pnpm run build` → PASS (vite build + Netlify adapter, no TypeScript errors).
+- Manual playback: NOT TESTABLE end-to-end (no Supabase env file — same env-config gap as Phase 1/2/3 smoke tests).
+
+### Performance/leak review
+
+- No duplicate timers — the existing `ProgressWriter` debounce (12s) is preserved; no new timers added.
+- No duplicate event listeners — the `onEvent` subscriber is registered once per manager instance; the Viduki V1→V2 listener is registered once in `onMount`.
+- No progress write storms — `ProgressWriter.update()` only schedules a debounced flush; high-frequency `timeupdate` events update in-memory state only.
+- No repeated resume seeks — `resumeApplied` flag prevents repeated seeks (though in the current architecture, startAt is a URL parameter, not a seek command — so there's no seek loop risk. The flag is documented for future use if postMessage seek is added).
+- No unnecessary Supabase requests — cloud sync is single-flight and triggered only on lifecycle events (visibility, completion, favorite toggle).
+- No memory leaks — `onDestroy` calls `unsubscribeManager()`, `unsubscribeManagerEvents()`, `manager.dispose()`, `writer.flush()`, `writer.dispose()`.
+- Stale subscriptions cleared on episode switch — `manager.reset()` + writer disposal.
+- Source-switch listener leaks — `removeEventListener` on all three listeners (visibilitychange, beforeunload, message) in `onMount` cleanup.
+
+### Known limitations
+
+1. **Direct sources don't go through the manager.** The manager's `dispatchViewportEvent()` is never called by the watch route — PlayerShell handles direct video events internally via its existing `emitProgress` → `onProgress` callback → `handlePlayerProgress`. This means the manager's state (`currentTime`, `playing`, `buffering`) is frozen at `ready` for direct sources. This is intentional — rewiring PlayerShell to route direct video events through the manager is a Phase 5 concern (UI redesign). The progress writer still receives correct data from `handlePlayerProgress`.
+
+2. **Embed providers without startAt cannot resume.** Viduki, CinemaOS, VidPhantom, and all unknown/generic embed providers do not support startAt. For these providers, playback starts from the beginning — progress is still recorded from events (where available), but resume is not possible. Phase 4 does NOT fake resume success.
+
+3. **CineSrc seek-as-a-command for resume.** CineSrc supports both startAt (`?t=`) and seek-as-a-command (`cinesrc:command` with `seek`). Phase 4 uses startAt (URL param) for resume because it's simpler and works before the iframe renders. CineSrc's seek command could be used as a fallback if startAt fails, but this is not implemented in Phase 4 (would require waiting for `cinesrc:ready` before seeking).
+
+4. **No schema changes.** Phase 4 does NOT modify the `watch_progress` table or any Supabase migration. The existing `selected_source_id` column (added in Phase 5/auth-sync migration) is used as-is. No new columns or indexes were added.
+
+5. **No progress UI changes.** Phase 4 does NOT modify PlayerShell, PlayerControls, or PlayerViewport. The existing `initialProgress` prop is used for direct-source resume. Embed-source resume is handled by the startAt URL parameter (the provider's own player shows the position).
+
+6. **`resumeApplied` flag is tracked but not yet used for seek-command-based resume.** The flag is reset on source switch and episode change, but since Phase 4 uses startAt URL params (not seek commands) for embed resume, the flag currently serves as a documentation marker. It will become functional when postMessage seek-based resume is added in a future phase.
+
+7. **Viduki V1→V2 listener remains in the watch route.** Phase 3's VidukiPlayerAdapter emits a `provider-error` event for `viduki:all-servers-failed`, but the actual V1→V2 source-switch action remains in the watch route's `onMount` listener (to preserve exact Phase 1 behavior).
+
+### Files changed
+
+| File | Status | Purpose |
+|---|---|---|
+| `src/lib/client/player/events.ts` | modified | Added `startAtParam?(): string \| null` to the adapter interface. |
+| `src/lib/client/player/capabilities.ts` | unchanged | Per-provider startAt capability flags already set in Phase 3. |
+| `src/lib/client/player/direct-adapter.ts` | modified | Added `startAtParam()` returning `null` (direct uses native seek). |
+| `src/lib/client/player/providers/vidsrc-adapter.ts` | modified | Added `startAtParam()` returning `'startAt'`. |
+| `src/lib/client/player/providers/vidlink-adapter.ts` | modified | Added `startAtParam()` returning `'startAt'`. |
+| `src/lib/client/player/providers/vidy-adapter.ts` | modified | Added `startAtParam()` returning `'progress'`. |
+| `src/lib/client/player/providers/cinesrc-adapter.ts` | modified | Added `startAtParam()` returning `'t'`. |
+| `src/lib/client/player/providers/vidapi-qzz-adapter.ts` | modified | Added `startAtParam()` returning `'startAt'`. |
+| `src/lib/client/player/PlaybackManager.ts` | modified | Appends startAt URL param to embed URLs after resolution; uses adapter's `startAtParam()` and `capabilities.startAt`. |
+| `src/routes/watch/[type]/[id]/+page.svelte` | modified | Phase 4: reads `savedSourceId` from progress record; resume source selection (saved→default→fallback); passes `currentPlaybackTime` as `startPosition` for manual source switches; `resumeApplied` flag; `currentPlaybackTime` tracking; episode switch resets; `onEvent` subscriber updated to track `currentPlaybackTime` and update `duration`. |
+| `scripts/phase4_progress_resume_test.ts` | new | 20-test Phase 4 suite. |
+| `package.json` | modified | Registered `phase4_progress_resume_test.ts` in the test chain. |
+
+**PHASE 4 COMPLETE**
+
+**PHASE 5 NOT STARTED**
+**PHASE 6 NOT STARTED**
+**PHASE 7 NOT STARTED**
+
+**Next phase:** Phase 5 — Complete Player UI Redesign (NOT started).
+
+**Commit:** `<pending>` — `feat(player): add progress resume and source continuity`
+
 ### Worklog template
 
 ```md

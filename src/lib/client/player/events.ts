@@ -174,4 +174,13 @@ export interface PlayerProviderAdapter {
    * (direct adapter, event-only embed adapters) ignore this call.
    */
   setIframe?(iframe: HTMLIFrameElement): void;
+
+  /**
+   * Phase 4: the URL query parameter name this provider uses for startAt
+   * (e.g. 'startAt' for VidSrc/VidLink/VidAPI.qzz.io, 't' for CineSrc,
+   * 'progress' for VidY). Returns `null` if the provider does not support
+   * startAt. The manager uses this to append `?param=N` to the resolved
+   * embed URL when a resume position exists and the adapter supports it.
+   */
+  startAtParam?(): string | null;
 }

@@ -86,6 +86,10 @@ export class DirectPlayerAdapter implements PlayerProviderAdapter {
     return DIRECT_PLAYBACK_CAPABILITIES;
   }
 
+  // Direct sources don't use URL params for startAt — they use native
+  // video.currentTime seeking after loadedmetadata. Returns null.
+  startAtParam(): string | null { return null; }
+
   // ----- Phase 3: command methods -----
 
   async play(): Promise<CommandResult> {

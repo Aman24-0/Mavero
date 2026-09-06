@@ -63,9 +63,18 @@
   let activePlaybackKey = '';
   let selectedSourceId = '';
   // Phase 2: admin-configured default source id for the current content type.
-  // Read from data.streamingConfig.defaults — only present when an admin has
-  // configured a default AND the default source is currently public+enabled.
   let defaultSourceId: string | undefined;
+  // Phase 4: saved last-successful source from progress record. Used for
+  // resume source selection: saved → admin default → health-ranked fallback.
+  let savedSourceId: string | undefined;
+  // Phase 4: resume-once flag. Prevents repeated seeks when timeupdate events
+  // arrive after the resume position has already been applied. Reset on
+  // source switch and episode change.
+  let resumeApplied = false;
+  // Phase 4: the current playback position, tracked from BOTH direct
+  // (handlePlayerProgress) and embed (manager.onEvent) sources. Used to
+  // pass the timestamp to the new source when manually switching.
+  let currentPlaybackTime = 0;
 
   // Subscribe to manager state so the route's reactive locals mirror the
   // manager snapshot. PlayerShell receives these via its existing props.
@@ -77,22 +86,25 @@
   });
 
   // Forward manager playback events to the existing progress writer.
-  // This is the integration boundary described in Phase 0 gap §0.10.6 —
-  // for direct sources, manager events translate to writer.update() calls
-  // exactly as Phase 0's PlayerShell.handlePlayerProgress did. For embed
-  // sources (no events), the writer is never updated — same as Phase 0.
+  // Phase 4: this is the UNIFIED progress pipeline for embed sources.
+  // Direct sources use handlePlayerProgress (from PlayerShell's onProgress
+  // callback) — both paths write to the same ProgressWriter. No double
+  // writes because direct sources never emit manager events (the manager's
+  // dispatchViewportEvent is never called for direct sources — PlayerShell
+  // handles direct video events internally).
   const unsubscribeManagerEvents = manager.onEvent((event) => {
     if (event.type === 'timeupdate' || event.type === 'seeked') {
+      const ct = event.currentTime;
+      currentPlaybackTime = ct;
       const currentDuration = event.type === 'timeupdate' && typeof event.duration === 'number' ? event.duration : duration;
-      const completed = currentDuration > 0 && event.currentTime / currentDuration >= 0.9;
-      writer?.update(event.currentTime, currentDuration, completed);
+      if (currentDuration && currentDuration !== duration) duration = currentDuration;
+      const completed = currentDuration > 0 && ct / currentDuration >= 0.9;
+      writer?.update(ct, currentDuration, completed);
     } else if (event.type === 'pause') {
       void writer?.pause();
     } else if (event.type === 'ended') {
-      // `ended` carries no currentTime in the normalized PlayerEvent union;
-      // read the last known currentTime from the manager snapshot.
-      const currentTime = manager.getState().currentTime;
-      void writer?.complete(currentTime, duration);
+      const ct = manager.getState().currentTime || currentPlaybackTime;
+      void writer?.complete(ct, duration);
     }
     // Authenticated history bookkeeping (preserved from Phase 0).
     if (page.data.user) {
@@ -126,6 +138,11 @@
     manager.reset();
     progressReady = false;
     watchingSavedForSession = false;
+    resumeApplied = false;
+    currentPlaybackTime = 0;
+    // Phase 4: clear savedSourceId so the new episode's progress record
+    // is loaded fresh (different episode = different progressKey).
+    savedSourceId = undefined;
   }
   $: if (browser && playbackKey !== writerKey) void setupProgressContext();
   // Phase 2: select the admin-configured default source for this content type
@@ -137,7 +154,19 @@
   // switches set selectedSourceId directly and pass allowFallback=false, so
   // the default is NOT forced back after a manual switch.
   $: defaultSourceId = data.streamingConfig.defaults?.[contentType];
-  $: if (!selectedSourceId && sourceOptions.length) selectedSourceId = (defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId) ? defaultSourceId : sourceOptions[0].id);
+  // Phase 4: resume source selection order:
+  //   1. Saved last-successful source (from progress record)
+  //   2. Admin-configured default source
+  //   3. First source by admin ordering (Phase 0 fallback)
+  // The saved source is only used if it's in the public sources list
+  // (the public config reader already filtered out invalid/disabled sources).
+  // The saved source is only used for INITIAL selection — manual source
+  // switches set selectedSourceId directly and pass allowFallback=false.
+  $: if (!selectedSourceId && sourceOptions.length) {
+    const savedValid = savedSourceId && sourceOptions.some((s) => s.id === savedSourceId);
+    const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
+    selectedSourceId = savedValid ? savedSourceId! : (defaultValid ? defaultSourceId! : sourceOptions[0].id);
+  }
   $: if (browser && progressReady && selectedSourceId && resolutionState === 'idle') void prepareSource();
 
   onMount(() => {
@@ -201,6 +230,8 @@
     writerKey = playbackKey;
     watchingSavedForSession = false;
     progressReady = false;
+    resumeApplied = false;
+    currentPlaybackTime = 0;
     await writer?.flush();
     writer?.dispose();
     const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
@@ -209,6 +240,10 @@
     if (!active || writerKey !== playbackKey) return;
     resumeTime = resume.resumeTime;
     duration = resume.record?.duration ?? 0;
+    // Phase 4: read the saved last-successful source from the progress
+    // record. This is used by the reactive initial-source-selection
+    // block below to prefer the saved source over the admin default.
+    savedSourceId = resume.record?.selectedSourceId;
     localState = state.status === 'indexeddb' ? 'Local progress on this device' : 'Temporary local progress only';
     progressReady = true;
   }
@@ -242,7 +277,6 @@
   async function prepareSource(sourceId = selectedSourceId, allowFallback = true) {
     const selected = sourceOptions.find((source) => source.id === sourceId);
     if (!selected) {
-      // No source option — surface as unavailable without invoking the manager.
       resolutionState = 'unavailable';
       resolutionMessage = 'No authorized source is available for this title.';
       resolvedSource = null;
@@ -251,20 +285,25 @@
     await replaceProgressSource(sourceId);
     if (!active) return;
     selectedSourceId = sourceId;
-    // Phase 2: forward the admin-configured default source id when fallback
-    // is enabled (initial load). The resolver sorts the default to the front
-    // of the fallback candidate list so it is attempted first. When
-    // allowFallback is false (manual source switch), the default is NOT
-    // forwarded — the user's explicit selection is respected.
+    // Phase 4: reset resume-once flag for the new source session.
+    resumeApplied = false;
+    // Phase 4: pass the current playback position as startPosition so the
+    // manager can append startAt URL params for embed providers that
+    // support it (VidSrc, VidLink, VidY, CineSrc, VidAPI.qzz.io).
+    // For the INITIAL load, startPosition = resumeTime (from saved progress).
+    // For MANUAL source switches, startPosition = currentPlaybackTime
+    // (the position the user was at in the previous source).
+    const startPosition = allowFallback ? resumeTime : currentPlaybackTime;
     await manager.loadSource(
       { sourceId, contentId: item.id, mediaType: contentType, season, episode, defaultSourceId: allowFallback ? defaultSourceId : undefined },
-      resumeTime,
+      startPosition,
       allowFallback,
     );
     if (!active) return;
     const resolved = manager.getSource();
-    // If the resolver walked the fallback list and selected a different source,
-    // swap the writer to that source's id (mirrors Phase 0 behaviour).
+    // Phase 4: if the resolver walked the fallback list and selected a
+    // different source, swap the writer to that source's id. This records
+    // the ACTUAL successful source in the progress record's selectedSourceId.
     if (resolved && resolved.sourceId !== selectedSourceId) {
       await replaceProgressSource(resolved.sourceId);
       selectedSourceId = resolved.sourceId;
@@ -283,6 +322,7 @@
 
   function handlePlayerProgress(event: PlayerProgressEvent) {
     duration = event.duration || duration;
+    currentPlaybackTime = event.currentTime;
     writer?.update(event.currentTime, duration, event.completed);
     if (event.reason === 'pause' || event.reason === 'source-change' || event.reason === 'close' || event.reason === 'visibility') void writer?.pause();
     if (event.reason === 'ended') void writer?.complete(event.currentTime, duration);

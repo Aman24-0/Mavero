@@ -69,6 +69,8 @@ export class VidYPlayerAdapter extends PostMessageAdapterBase implements PlayerP
     return VIDY_CAPABILITIES;
   }
 
+  startAtParam(): string | null { return 'progress'; }
+
   protected handleMessage(event: MessageEvent): void {
     const message = safeParseMessage(event.data, isVidYMessage);
     if (!message) return;

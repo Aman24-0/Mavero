@@ -61,6 +61,8 @@ export class VidApiQzzPlayerAdapter extends PostMessageAdapterBase implements Pl
     return VIDAPI_QZZ_CAPABILITIES;
   }
 
+  startAtParam(): string | null { return 'startAt'; }
+
   protected handleMessage(event: MessageEvent): void {
     const message = safeParseMessage(event.data, isVidApiQzzMessage);
     if (!message) return;

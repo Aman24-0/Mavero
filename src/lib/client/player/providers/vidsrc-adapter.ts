@@ -62,6 +62,8 @@ export class VidSrcPlayerAdapter extends PostMessageAdapterBase implements Playe
     return VIDSRC_CAPABILITIES;
   }
 
+  startAtParam(): string | null { return 'startAt'; }
+
   protected handleMessage(event: MessageEvent): void {
     const message = safeParseMessage(event.data, isVidSrcPlayerEvent);
     if (!message) return;

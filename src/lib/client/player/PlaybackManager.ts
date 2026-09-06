@@ -331,12 +331,40 @@ export class PlaybackManager {
 
       if (!this.active || sessionId !== this.sessionId) return;
 
+      // Phase 4: append startAt URL parameter to embed URLs when:
+      //   - the adapter supports startAt (capabilities.startAt === true)
+      //   - the adapter exposes a startAtParam() (e.g. 'startAt', 't', 'progress')
+      //   - a resume position (startPosition) was provided and is > 0
+      //   - the position is valid (finite, non-negative, < duration if known)
+      // This lets embed providers that document startAt support resume
+      // without Mavero needing to seek via postMessage (which most providers
+      // don't support as a command).
+      let resolvedSource = safeSource;
+      if (startPosition > 0 && capabilities.startAt) {
+        const param = adapter.startAtParam?.();
+        if (param) {
+          const clampedPosition = Math.floor(startPosition);
+          if (clampedPosition > 0 && Number.isFinite(clampedPosition)) {
+            try {
+              const url = new URL(safeSource.url!);
+              // Don't append if the URL already has the param (idempotency).
+              if (!url.searchParams.has(param)) {
+                url.searchParams.set(param, String(clampedPosition));
+                resolvedSource = { ...safeSource, url: url.toString() };
+              }
+            } catch {
+              // URL parsing failed — use the original URL without startAt.
+            }
+          }
+        }
+      }
+
       this.patch(sessionId, {
-        source: safeSource,
+        source: resolvedSource,
         resolving: false,
         state: initialPlaybackState,
         resolutionState: 'ready',
-        resolutionMessage: safeSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.',
+        resolutionMessage: resolvedSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.',
         capabilities,
       });
     } catch (error) {

@@ -118,6 +118,8 @@ export class CineSrcPlayerAdapter extends PostMessageAdapterBase implements Play
     return CINESRC_CAPABILITIES;
   }
 
+  startAtParam(): string | null { return 't'; }
+
   // ----- Event handling (player → parent) -----
 
   protected handleMessage(event: MessageEvent): void {
