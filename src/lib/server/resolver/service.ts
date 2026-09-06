@@ -108,11 +108,13 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
   const healthMap = await loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id));
   const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
 
-  // If there's a valid default, attempt it FIRST before fallback ranking.
+  // Phase 9 fix: If there's a valid default, attempt it FIRST before fallback ranking.
+  let defaultAttempted = false;
   if (defaultId) {
     const defaultConfig = sortedConfigs.find((c) => c.source.id === defaultId);
     const defaultRanked = ranking.eligible.find((r) => r.config.source.id === defaultId);
     if (defaultConfig && defaultRanked) {
+      defaultAttempted = true;
       try {
         const defaultResult = await resolveSourceFromConfig(request, defaultConfig, content, dependencies);
         if (defaultResult.type === 'direct' || defaultResult.type === 'embed') {
@@ -131,9 +133,11 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
     }
   }
 
-  // Health-ranked fallback: walk all eligible candidates (including the default
-  // if it failed above — it gets another chance via the fallback walker).
-  const candidates: FallbackCandidate[] = ranking.eligible.map((ranked) => ({ config: ranked.config, eligible: true }));
+  // Phase 9 fix: Health-ranked fallback EXCLUDING the default if it was already
+  // attempted and failed. Do not give the default a second chance via fallback.
+  const candidates: FallbackCandidate[] = ranking.eligible
+    .filter((ranked) => !(defaultAttempted && ranked.config.source.id === defaultId))
+    .map((ranked) => ({ config: ranked.config, eligible: true }));
   const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
     allowFallback: true,
     maxAttempts: candidates.length,

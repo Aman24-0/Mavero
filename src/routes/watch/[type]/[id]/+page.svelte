@@ -250,9 +250,10 @@
     resumeApplied = false;
     currentPlaybackTime = 0;
     await writer?.flush();
+    const existingRuntimes = writer?.getSourceRuntimes();
     writer?.dispose();
-    const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, snapshot });
+    // Phase 9 fix: load existing progress BEFORE creating the writer so
+    // sourceRuntimes from the record are available at writer initialization.
     const [resume, state] = await Promise.all([getResumeProgress(playbackContext), getLocalPersistenceState()]);
     if (!active || writerKey !== playbackKey) return;
     resumeTime = resume.resumeTime;
@@ -264,20 +265,30 @@
     } else {
       savedSourceId = undefined;
     }
+    // Phase 9 fix: initialize sourceRuntimes from the existing record.
+    // If the record has no sourceRuntimes but has selectedSourceId + duration,
+    // lazily initialize the map for backward compatibility.
+    let sourceRuntimes = resume.record?.sourceRuntimes;
+    if (!sourceRuntimes && resume.record?.selectedSourceId && resume.record.duration > 0) {
+      sourceRuntimes = { [resume.record.selectedSourceId]: { duration: resume.record.duration, updatedAt: resume.record.updatedAt } };
+    }
+    const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot });
     localState = state.status === 'indexeddb' ? 'Local progress on this device' : 'Temporary local progress only';
     progressReady = true;
   }
 
   async function replaceProgressSource(sourceId: string) {
     if (!browser || !writer || sourceId === selectedSourceId) return;
-    // Phase 9 fix: flush the old writer BEFORE disposing it so the latest
-    // playback position is persisted under the old source's ID. Then create
-    // the new writer with the new source ID.
+    // Phase 9 fix: flush + capture sourceRuntimes + known position BEFORE disposing.
     await writer.flush();
+    const sourceRuntimes = writer.getSourceRuntimes();
     writer.dispose();
     selectedSourceId = sourceId;
     const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId, snapshot });
+    // Phase 9 fix: pass the accumulated sourceRuntimes into the new writer
+    // so per-source runtimes survive source switches within the same episode.
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId, sourceRuntimes, snapshot });
   }
 
   /**

@@ -134,6 +134,9 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   let disposed = false;
   // Phase 9: per-source runtime map. Accumulated across source switches.
   let sourceRuntimes: Record<string, { duration: number; updatedAt: number }> = base.sourceRuntimes ? { ...base.sourceRuntimes } : {};
+  // Phase 9 fix: track the known current position so updateRuntime() never
+  // resets it to 0. Initialized from existing progress if available.
+  let knownCurrentTime = 0;
 
   const flush = async () => {
     if (timer) clearTimeout(timer);
@@ -151,6 +154,8 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
 
   return {
     update(currentTime: number, duration?: number, completed = false) {
+      // Phase 9 fix: track the latest known position.
+      knownCurrentTime = currentTime;
       // Phase 9: update per-source runtime when duration is reported.
       if (duration && duration > 0 && base.selectedSourceId) {
         sourceRuntimes[base.selectedSourceId] = { duration, updatedAt: Date.now() };
@@ -158,19 +163,19 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
       latest = { ...base, currentTime, duration, completed, sourceRuntimes: { ...sourceRuntimes } };
       schedule();
     },
-    // Phase 9: update runtime independently from position updates.
-    // Allows runtime to be persisted promptly when a provider reports duration
-    // without waiting for a timeupdate event.
+    // Phase 9 fix: update runtime independently from position updates.
+    // NEVER resets currentTime to 0 — uses the known current position.
     updateRuntime(sourceId: string, duration: number) {
       if (disposed || !Number.isFinite(duration) || duration <= 0) return;
       sourceRuntimes[sourceId] = { duration, updatedAt: Date.now() };
       if (latest) {
+        // Update the pending record's runtime map without changing position.
         latest.sourceRuntimes = { ...sourceRuntimes };
-      }
-      // Don't schedule separately — runtime will be persisted on next regular flush.
-      // But if there's no pending update, create one to ensure runtime is saved.
-      if (!latest) {
-        latest = { ...base, currentTime: 0, sourceRuntimes: { ...sourceRuntimes } };
+      } else {
+        // Create a pending record using the KNOWN position, NOT 0.
+        // This preserves existing progress when a duration event arrives
+        // before the first timeupdate.
+        latest = { ...base, currentTime: knownCurrentTime, sourceRuntimes: { ...sourceRuntimes } };
         schedule();
       }
     },
@@ -178,11 +183,13 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
       return flush();
     },
     complete(currentTime: number, duration?: number) {
+      knownCurrentTime = currentTime;
       latest = { ...base, currentTime, duration, completed: true, sourceRuntimes: { ...sourceRuntimes } };
       return flush();
     },
     flush,
     getSourceRuntimes() { return { ...sourceRuntimes }; },
+    getKnownCurrentTime() { return knownCurrentTime; },
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);

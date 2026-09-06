@@ -49,8 +49,6 @@
   let playbackRate = 1;
   let fullscreen = false;
   let landscapeMode = false;
-  let landscapeControlsExpanded = true;
-  let landscapeControlsTimer: ReturnType<typeof setTimeout> | undefined;
   let landscapeToggleInFlight = false;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
@@ -72,7 +70,7 @@
   // Phase 6 audit fix: sequence counter for embed playback events. Used by
   // the reactive watcher to detect new events even when the type is the same.
   let lastEmbedPlaybackSeq = 0;
-  const LANDSCAPE_CONTROLS_HIDE_MS = 5000;
+  // Phase 9 fix: removed landscape controls hide timer — landscape header is always visible.
   // Phase 8: embed iframe load timeout. If the iframe doesn't fire `on:load`
   // within this window, we transition to the error state instead of leaving
   // the player stuck in `embed-loading` indefinitely.
@@ -268,8 +266,6 @@
         // unlock() is safe (it's a no-op if the lock was already released).
         try { orientationController()?.unlock?.(); } catch { /* unsupported */ }
         landscapeMode = false;
-        landscapeControlsExpanded = true;
-        clearLandscapeControlsTimer();
         revealControls();
       }
     };
@@ -300,7 +296,6 @@
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
     return () => {
       if (hideTimer) clearTimeout(hideTimer);
-      if (landscapeControlsTimer) clearTimeout(landscapeControlsTimer);
       // Phase 8: clear embed load timeout on destroy.
       clearEmbedLoadTimeout();
       document.removeEventListener('fullscreenchange', handleFullscreen);
@@ -521,39 +516,6 @@
     return screen.orientation as OrientationController;
   }
 
-  function clearLandscapeControlsTimer() {
-    if (landscapeControlsTimer) clearTimeout(landscapeControlsTimer);
-    landscapeControlsTimer = undefined;
-  }
-
-  function scheduleLandscapeControlsCollapse() {
-    clearLandscapeControlsTimer();
-    if (!landscapeMode || !landscapeControlsExpanded) return;
-    landscapeControlsTimer = setTimeout(() => {
-      landscapeControlsExpanded = false;
-      landscapeControlsTimer = undefined;
-    }, LANDSCAPE_CONTROLS_HIDE_MS);
-  }
-
-  function resetLandscapeControlsTimer() {
-    if (!landscapeMode) return;
-    landscapeControlsExpanded = true;
-    scheduleLandscapeControlsCollapse();
-  }
-
-  function handleMaveroControlInteraction(event: Event) {
-    if (!landscapeMode) return;
-    // Phase 9: landscape-controls-toggle removed — no need to skip timer reset for it.
-    resetLandscapeControlsTimer();
-  }
-
-  function toggleLandscapeControls() {
-    if (!landscapeMode) return;
-    landscapeControlsExpanded = !landscapeControlsExpanded;
-    if (landscapeControlsExpanded) scheduleLandscapeControlsCollapse();
-    else clearLandscapeControlsTimer();
-  }
-
   async function toggleLandscape() {
     // Phase 6: rapid double-toggle guard. Without this, two rapid taps could
     // both read the same `landscapeMode` value, both await requestFullscreen(),
@@ -570,22 +532,16 @@
         await playerRoot?.requestFullscreen?.();
         try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
         landscapeMode = true;
-        landscapeControlsExpanded = true;
         if (hideTimer) clearTimeout(hideTimer);
         hideTimer = undefined;
-        scheduleLandscapeControlsCollapse();
       } else {
         try { orientation?.unlock?.(); } catch { /* unsupported */ }
         landscapeMode = false;
-        landscapeControlsExpanded = true;
-        clearLandscapeControlsTimer();
         if (document.fullscreenElement === playerRoot) await document.exitFullscreen?.();
         revealControls();
       }
     } catch {
       landscapeMode = false;
-      landscapeControlsExpanded = true;
-      clearLandscapeControlsTimer();
       errorMessage = 'Landscape mode is not available in this browser.';
     } finally {
       landscapeToggleInFlight = false;
@@ -1030,12 +986,10 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); handleVisibilityChangeForWakeLock(); }} />
 
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} onclick={handleMaveroControlInteraction} onpointerdown={handleMaveroControlInteraction} role="application" aria-label="MAVERO video player">
-  <header class="player-header" class:controls-collapsed={landscapeMode && !landscapeControlsExpanded}>
+  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
+  <header class="player-header">
     <div class="header-title-row">
-      <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
+      {#if !landscapeMode}<button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>{/if}
       <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
       <div class="header-actions-right">
         {#if landscapeMode && sourceOptions.length}<button class="header-button compact" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={17} /></button>{/if}
@@ -1113,8 +1067,8 @@
   .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; overflow: hidden; }
   /* Phase 9: landscape header is an OVERLAY, not a layout participant.
      This gives the player viewport maximum vertical space. */
-  .player-shell.landscape-mode .player-header { position: absolute; z-index: 12; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: linear-gradient(180deg, rgba(0,0,0,.85), transparent); transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out); }
-  .player-shell.landscape-mode .player-header.controls-collapsed { opacity: 0; transform: translateY(-100%); pointer-events: none; }
+  .player-shell.landscape-mode .player-header { position: absolute; z-index: 12; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; height: calc(48px + env(safe-area-inset-top)); min-height: 48px; padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); background: linear-gradient(180deg, rgba(0,0,0,.85), transparent); }
+  /* Phase 9 fix: removed landscape header collapse CSS — header is always visible. */
   .player-shell.landscape-mode .header-title-row { display: flex; align-items: center; gap: 8px; width: 100%; }
   .player-shell.landscape-mode .header-actions-right { display: flex; align-items: center; gap: 4px; margin-left: auto; }
   .player-shell.landscape-mode .header-title { display: grid; flex: 1 1 auto; justify-items: start; min-width: 0; text-align: left; }
@@ -1222,5 +1176,5 @@
     .header-button { min-height: 32px; min-width: 34px; padding: 0 8px; }
     .header-button span { display: none; }
   }
-  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .bottom-bar, .player-shell.landscape-mode .player-header { transition: none; } .source-sheet, .episode-sheet { animation: none; } .player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .bottom-bar { transition: none; } .source-sheet, .episode-sheet { animation: none; } .player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet { animation: none; } }
 </style>

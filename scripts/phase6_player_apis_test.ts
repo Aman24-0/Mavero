@@ -250,8 +250,9 @@ assert.match(viewport, /sandbox=\{sandboxAttribute\}/, 'sandbox attribute preser
 // ============================================================
 
 assert.match(shell, /class:landscape-mode=\{landscapeMode\}/, 'landscape-mode class binding preserved');
-assert.match(shell, /let landscapeControlsExpanded = true/, 'landscapeControlsExpanded preserved');
-assert.match(shell, /const LANDSCAPE_CONTROLS_HIDE_MS = 5000/, 'LANDSCAPE_CONTROLS_HIDE_MS preserved');
+// Phase 9 fix: removed landscapeControlsExpanded, LANDSCAPE_CONTROLS_HIDE_MS, data-landscape-controls-toggle.
+assert.doesNotMatch(shell, /let landscapeControlsExpanded/, 'landscapeControlsExpanded removed');
+assert.doesNotMatch(shell, /LANDSCAPE_CONTROLS_HIDE_MS/, 'LANDSCAPE_CONTROLS_HIDE_MS removed');
 assert.doesNotMatch(shell, /data-landscape-controls-toggle/, 'data-landscape-controls-toggle removed');
 // Phase 9: PanelTopClose/PanelTopOpen removed (landscape-controls-toggle button removed).
 assert.doesNotMatch(shell, /PanelTopClose/, 'PanelTopClose removed');
