@@ -78,7 +78,11 @@
   // Phase 6 audit fix: embed playback event sink + sequence counter. Pushed
   // into PlayerShell via the embedPlaybackEvent prop whenever the
   // PlaybackManager receives a normalized provider play/pause/ended event.
-  let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq: number } | null = null;
+  // The sourceId field lets PlayerShell reject stale events from an old source
+  // after a source switch — the PlaybackManager has its own session guards,
+  // but a stale postMessage could still arrive between the source switch and
+  // the adapter destroy. Including selectedSourceId here is a safety net.
+  let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq: number; sourceId?: string } | null = null;
   let embedPlaybackSeq = 0;
 
   // Subscribe to manager state so the route's reactive locals mirror the
@@ -116,10 +120,11 @@
     // acquire/release the Wake Lock conservatively — only when the provider
     // actually reports playback state changes, NOT merely on iframe DOM load.
     // The _seq counter forces Svelte to re-trigger the reactive block even if
-    // the same event type fires twice in a row.
+    // the same event type fires twice in a row. The sourceId field lets
+    // PlayerShell reject stale events from an old source after a source switch.
     if (event.type === 'play' || event.type === 'pause' || event.type === 'ended') {
       embedPlaybackSeq++;
-      embedPlaybackEvent = { type: event.type, _seq: embedPlaybackSeq };
+      embedPlaybackEvent = { type: event.type, _seq: embedPlaybackSeq, sourceId: resolvedSource?.sourceId ?? selectedSourceId };
     }
     // Authenticated history bookkeeping (preserved from Phase 0).
     if (page.data.user) {

@@ -19,14 +19,18 @@
   export let onClose: () => void = () => {};
   export let onDetails: () => void = () => {};
   export let onIframeReady: (iframe: HTMLIFrameElement) => void = () => {};
-  // Phase 6 audit fix: embed playback event sink. The watch route sets this
-  // prop to { type: 'play' | 'pause' | 'ended' } whenever the PlaybackManager
-  // receives a normalized provider playback event from an embed adapter.
-  // PlayerShell watches this prop reactively and acquires/releases the Wake
-  // Lock accordingly. This is the conservative path: for black-box embed
-  // providers that never post play/pause events, the wake lock is never
-  // acquired, which is correct (iframe load ≠ actual playback).
-  export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number } | null = null;
+  // Phase 6 audit fix 2: embed playback event sink. The watch route sets this
+  // prop to { type, _seq, sourceId } whenever the PlaybackManager receives a
+  // normalized provider playback event from an embed adapter. PlayerShell
+  // watches this prop reactively and acquires/releases the Wake Lock
+  // accordingly. The `sourceId` field lets PlayerShell reject stale events
+  // from an old source after a source switch — the PlaybackManager has its
+  // own session guards, but a stale postMessage could still arrive between
+  // the source switch and the adapter destroy. The `embedPlaying` state is
+  // driven ONLY by these normalized events (never by iframe DOM load), so
+  // black-box embed providers that never post play/pause events never
+  // acquire a wake lock — which is correct (iframe load ≠ actual playback).
+  export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number; sourceId?: string } | null = null;
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
@@ -82,6 +86,18 @@
   // resolved sentinel is released immediately rather than installed.
   let wakeLockRequestId = 0;
   let wakeLockDestroyed = false;
+  // Phase 6 audit fix 2: separate embed playback state. Driven ONLY by
+  // normalized provider play/pause/ended events (NOT by iframe DOM load).
+  // Used by the visibility handler to decide whether to re-acquire the wake
+  // lock when the document becomes visible again. The direct `playing` flag
+  // cannot be reused for embed sources because handleEmbedLoad sets state to
+  // 'playing' but that does not reflect actual provider playback.
+  let embedPlaying = false;
+  // Phase 6 audit fix 2: the sourceId that the current embedPlaybackEvent
+  // was emitted for. Used to reject stale events from an old source after a
+  // source switch. Set in the source-switch reactive block, checked in
+  // handleEmbedPlaybackEvent.
+  let embedPlaybackSourceId = '';
 
   // Phase 6: Media Session state — direct playback only.
   let mediaSessionSupported = false;
@@ -132,9 +148,16 @@
     errorMessage = '';
     playing = false;
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
+    // Phase 6 audit fix 2: reset embed playback state on source switch. The
+    // new source's embedPlaying will be set only if a reliable normalized
+    // 'play' event arrives. Also stamp the sourceId so stale events from
+    // the old source can be rejected in handleEmbedPlaybackEvent.
+    embedPlaying = false;
+    embedPlaybackSourceId = source.sourceId;
     // Phase 6: release wake lock + clear Media Session on source switch.
     // Wake lock is re-acquired when the new source starts playing (handlePlay
-    // or handleEmbedLoad). Media Session metadata is re-set in handleLoadedMetadata.
+    // for direct, handleEmbedPlaybackEvent for embeds). Media Session metadata
+    // is re-set in handleLoadedMetadata.
     void releaseWakeLock();
     clearMediaSession();
     // Phase 6: exit PiP if the active PiP element was Mavero's video. This
@@ -148,6 +171,9 @@
   // Session + exit PiP here. The new episode's source will re-acquire them.
   $: if (currentEpisode && `${currentEpisode.season}:${currentEpisode.episode}` !== episodeIdentity) {
     episodeIdentity = `${currentEpisode.season}:${currentEpisode.episode}`;
+    // Phase 6 audit fix 2: reset embed playback state on episode switch.
+    embedPlaying = false;
+    if (source?.sourceId) embedPlaybackSourceId = source.sourceId;
     void releaseWakeLock();
     clearMediaSession();
     if (document.pictureInPictureElement === videoElement) {
@@ -393,12 +419,23 @@
   // the watch route from the PlaybackManager. Only these events (not iframe
   // load) indicate actual provider playback state. Used to acquire/release
   // the wake lock conservatively — if the provider never posts these events,
-  // no wake lock is acquired.
-  function handleEmbedPlaybackEvent(event: { type: 'play' | 'pause' | 'ended' }) {
+  // no wake lock is acquired. Also maintains the `embedPlaying` state which
+  // the visibility handler uses to decide whether to re-acquire the wake lock
+  // when the document becomes visible again.
+  function handleEmbedPlaybackEvent(event: { type: 'play' | 'pause' | 'ended'; sourceId?: string }) {
     if (source?.type !== 'embed') return;
+    // Phase 6 audit fix 2: reject stale events from an old source. The watch
+    // route stamps the sourceId at emit time. If a source switch happened
+    // between emit and this reactive handler firing, the event's sourceId
+    // will not match the current embedPlaybackSourceId. This is a safety net
+    // — the PlaybackManager already has session guards — but it prevents a
+    // stale postMessage from activating the wake lock for the wrong source.
+    if (event.sourceId && embedPlaybackSourceId && event.sourceId !== embedPlaybackSourceId) return;
     if (event.type === 'play') {
+      embedPlaying = true;
       acquireWakeLock();
     } else if (event.type === 'pause' || event.type === 'ended') {
+      embedPlaying = false;
       releaseWakeLock();
     }
   }
@@ -787,15 +824,24 @@
 
   function handleVisibilityChangeForWakeLock() {
     if (document.hidden) {
-      // Capture playing state before the auto-release.
-      wasPlayingBeforeHidden = playing;
+      // Phase 6 audit fix 2: capture BOTH direct and embed playback state
+      // before the auto-release. The `playing` flag tracks direct HTMLVideo
+      // playback; `embedPlaying` tracks normalized provider playback events.
+      // Either may be active when the document hides, and either should
+      // trigger re-acquisition on visible.
+      wasPlayingBeforeHidden = playing || embedPlaying;
       // Per spec, the sentinel auto-releases. But explicit release is safer
       // for cross-browser consistency — some browsers hold the lock briefly.
       void releaseWakeLock();
     } else {
-      // Re-acquire only if playback was active when the document hid.
-      // Do NOT re-acquire while paused/completed/error.
-      if (wasPlayingBeforeHidden && playing) {
+      // Phase 6 audit fix 2: re-acquire only if the same playback state is
+      // still active. Do NOT re-acquire if the user paused/stopped while
+      // hidden, or if the source changed while hidden (which resets both
+      // playing and embedPlaying). Direct playback re-acquires if `playing`
+      // is still true; embed playback re-acquires if `embedPlaying` is still
+      // true. Either path uses the same acquireWakeLock mechanism.
+      const stillActive = wasPlayingBeforeHidden && (playing || embedPlaying);
+      if (stillActive) {
         void acquireWakeLock();
       }
       wasPlayingBeforeHidden = false;
