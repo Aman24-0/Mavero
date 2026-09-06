@@ -273,7 +273,7 @@
       sourceRuntimes = { [resume.record.selectedSourceId]: { duration: resume.record.duration, updatedAt: resume.record.updatedAt } };
     }
     const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot });
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot, initialCurrentTime: resume.record?.currentTime ?? 0 });
     localState = state.status === 'indexeddb' ? 'Local progress on this device' : 'Temporary local progress only';
     progressReady = true;
   }
@@ -283,12 +283,14 @@
     // Phase 9 fix: flush + capture sourceRuntimes + known position BEFORE disposing.
     await writer.flush();
     const sourceRuntimes = writer.getSourceRuntimes();
+    const knownCurrentTime = writer.getKnownCurrentTime();
     writer.dispose();
     selectedSourceId = sourceId;
     const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
-    // Phase 9 fix: pass the accumulated sourceRuntimes into the new writer
-    // so per-source runtimes survive source switches within the same episode.
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId, sourceRuntimes, snapshot });
+    // Phase 9 fix: pass the accumulated sourceRuntimes + knownCurrentTime
+    // into the new writer so per-source runtimes survive source switches
+    // within the same episode, and the known position is never reset to 0.
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime });
   }
 
   /**
@@ -391,11 +393,24 @@
     });
   }
 
+  // Phase 9 fix: serialized source-switch chain. Rapid A→B→C must not
+  // interleave writer mutations. Each prepareSource chains after the previous.
+  let sourceSwitchChain: Promise<void> = Promise.resolve();
+  // Phase 9 fix: generation token — the latest source switch wins.
+  let sourceSwitchGeneration = 0;
+
   function handleSourceChange(sourceId: string) {
-    // Phase 9 fix: flush the current writer before switching so the latest
-    // playback position is persisted under the old source's ID immediately.
-    void writer?.flush();
-    void prepareSource(sourceId, false);
+    // Phase 9 fix: removed the separate void writer?.flush() call.
+    // replaceProgressSource() inside prepareSource() already does the flush.
+    // This was causing a double-flush race.
+    const generation = ++sourceSwitchGeneration;
+    sourceSwitchChain = sourceSwitchChain.then(() => {
+      // If a newer source switch was initiated while we were waiting, abort.
+      if (generation !== sourceSwitchGeneration) return;
+      return prepareSource(sourceId, false);
+    }).catch(() => {
+      // Swallow — prepareSource handles its own errors via resolutionState.
+    });
   }
 
   async function handleEpisodeChange(target: PlayerEpisodeTarget) {

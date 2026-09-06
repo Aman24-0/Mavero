@@ -128,15 +128,15 @@ export async function getLocalPersistenceState() {
   return getLocalProgressState();
 }
 
-export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime' | 'duration'>, flushInterval = DEFAULT_FLUSH_INTERVAL) {
+export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime' | 'duration'> & { initialCurrentTime?: number }, flushInterval = DEFAULT_FLUSH_INTERVAL) {
   let latest: SaveProgressInput | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   // Phase 9: per-source runtime map. Accumulated across source switches.
   let sourceRuntimes: Record<string, { duration: number; updatedAt: number }> = base.sourceRuntimes ? { ...base.sourceRuntimes } : {};
-  // Phase 9 fix: track the known current position so updateRuntime() never
-  // resets it to 0. Initialized from existing progress if available.
-  let knownCurrentTime = 0;
+  // Phase 9 fix: initialize knownCurrentTime from existing progress so
+  // updateRuntime() never resets it to 0 over an existing resume position.
+  let knownCurrentTime = Math.max(0, Number.isFinite(base.initialCurrentTime) ? (base.initialCurrentTime ?? 0) : 0);
 
   const flush = async () => {
     if (timer) clearTimeout(timer);

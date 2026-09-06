@@ -14,7 +14,7 @@ const resolverService = readFileSync(new URL('../src/lib/server/resolver/service
 
 // replaceProgressSource must call getSourceRuntimes and pass to new writer.
 assert.match(watchRoute, /const sourceRuntimes = writer\.getSourceRuntimes\(\)/, 'replaceProgressSource captures sourceRuntimes from old writer');
-assert.match(watchRoute, /writer = createProgressWriter\(\{ \.\.\.playbackContext, selectedSourceId, sourceRuntimes, snapshot \}\)/, 'new writer receives sourceRuntimes');
+assert.match(watchRoute, /writer = createProgressWriter\(\{ \.\.\.playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime \}\)/, 'new writer receives sourceRuntimes + initialCurrentTime');
 
 // setupProgressContext must load progress BEFORE creating writer (BLOCKER 2).
 assert.match(watchRoute, /getResumeProgress\(playbackContext\)[\s\S]*?writer = createProgressWriter/, 'getResumeProgress called BEFORE createProgressWriter');
@@ -26,7 +26,7 @@ assert.match(watchRoute, /if \(!sourceRuntimes && resume\.record\?\.selectedSour
 // 2. updateRuntime never resets currentTime to 0 (BLOCKER 3)
 // ============================================================
 
-assert.match(progressService, /let knownCurrentTime = 0/, 'knownCurrentTime tracked');
+assert.match(progressService, /let knownCurrentTime = Math\.max\(0/, 'knownCurrentTime initialized from initialCurrentTime (NOT hardcoded 0)');
 assert.match(progressService, /knownCurrentTime = currentTime/, 'knownCurrentTime updated on update()');
 assert.match(progressService, /knownCurrentTime = currentTime/, 'knownCurrentTime updated on complete()');
 assert.match(progressService, /currentTime: knownCurrentTime/, 'updateRuntime uses knownCurrentTime, NOT 0');
