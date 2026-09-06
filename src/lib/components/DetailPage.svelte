@@ -180,6 +180,8 @@
         {#if item.maturity}<span class="dot"></span><span>{item.maturity}</span>{/if}
         {#if type === 'series' && item.seasons}
           <span class="dot"></span><span>{item.seasons} season{item.seasons === 1 ? '' : 's'}</span>
+        {:else if item.isAnime && item.episodes}
+          <span class="dot"></span><span>{item.episodes} episode{item.episodes === 1 ? '' : 's'}</span>
         {:else if type === 'movie' && item.runtime}
           <span class="dot"></span><span>{item.runtime}</span>
         {/if}
@@ -244,9 +246,9 @@
       </section>
     {/if}
 
-    <!-- Series: seasons + episodes -->
-    {#if type === 'series'}
-      <SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} />
+    <!-- Series: seasons + episodes (includes anime series via isAnime + animeFormat) -->
+    {#if type === 'series' || (item.isAnime && item.animeFormat !== 'movie')}
+      <SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} watchType={type === 'anime' ? 'anime' : 'series'} />
     {/if}
 
     <!-- Recommendations -->

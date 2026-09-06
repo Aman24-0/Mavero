@@ -1,5 +1,6 @@
 import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason } from './adapters/tmdb';
 import { getAniListCollection, getAniListDetail, getAniListDiscover, getAniListTrending, searchAniList } from './adapters/anilist';
+import { getJikanAnimeSeason, generateFallbackEpisodes } from './adapters/jikan';
 import { media } from '$data/content';
 import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
@@ -230,6 +231,57 @@ export async function getSeriesSeason(id: string, seasonNumber: number) {
       overview: fixture?.description,
       runtime: '44m'
     }))
+  };
+}
+
+/**
+ * Phase 7F+ (anime routing): fetch the anime episode guide for a title.
+ *
+ * For anime series, this uses Jikan (MyAnimeList API) to fetch real
+ * episode metadata (title, synopsis, air date, thumbnail). Jikan is
+ * paginated — long-running anime (e.g. Hunter x Hunter with 148
+ * episodes) require multiple page fetches.
+ *
+ * If Jikan is unavailable or returns no data, falls back to a
+ * generated episode list based on the AniList `episodes: number`
+ * count so the UI can still render an episode guide and the player
+ * can navigate episodes.
+ *
+ * For anime movies (animeFormat === 'movie'), returns an empty
+ * season — movies don't have an episode guide.
+ *
+ * The `item` parameter is the full NormalizedMediaItem (with
+ * externalIds.mal and episodes count). The `malId` can be passed
+ * directly when the caller already has it.
+ */
+export async function getAnimeSeason(item: NormalizedMediaItem, seasonNumber = 1, malIdOverride?: string) {
+  // Anime movies have no episode guide.
+  if (item.animeFormat === 'movie') {
+    return { number: seasonNumber, title: `Season ${seasonNumber}`, episodeCount: 0, episodes: [] };
+  }
+
+  const malId = malIdOverride ?? item.externalIds?.mal;
+  const episodeCount = item.episodes ?? 0;
+
+  // Try Jikan first for real episode metadata.
+  if (malId) {
+    try {
+      const jikanSeason = await getJikanAnimeSeason(malId);
+      if (jikanSeason?.episodes?.length) {
+        return jikanSeason;
+      }
+    } catch {
+      // Jikan failure is non-fatal — fall through to generated episodes.
+    }
+  }
+
+  // Fallback: generate generic episode list from the AniList count.
+  const fallbackEpisodes = generateFallbackEpisodes(episodeCount, seasonNumber);
+  return {
+    number: seasonNumber,
+    title: `Season ${seasonNumber}`,
+    episodeCount: fallbackEpisodes.length,
+    episodes: fallbackEpisodes
   };
 }
 

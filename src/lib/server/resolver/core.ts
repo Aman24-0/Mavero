@@ -10,12 +10,30 @@ import type { IntegrationType } from '$lib/server/streaming/types';
 const activeProviderStatuses = new Set(['active']);
 const activeSourceStatuses = new Set(['active']);
 
-function capabilityAllows(config: TrustedResolutionConfig, mediaType: ContentType): boolean {
+function capabilityAllows(config: TrustedResolutionConfig, mediaType: ContentType, content: NormalizedMediaItem): boolean {
+  // Phase 7F+ (anime routing): accept the provider when EITHER:
+  //   1. CANONICAL MATCH — the provider declares `mediaType` as supported.
+  //      (Legacy behavior — e.g. VidSrc with `movie:true` for a movie request.)
+  //   2. ANIME BRIDGE — when the content is anime-flagged AND the provider
+  //      declares `anime:true`. This lets MegaPlay/Yenime (which declare
+  //      `movie:false, series:false, anime:true`) accept a Demon Slayer
+  //      movie (`type:'movie', isAnime:true`) without forcing the canonical
+  //      content type to be mutated to `'anime'`.
+  //
+  // The canonical `content.type` and `request.mediaType` stay as
+  // `'movie'`/`'series'` for TMDB-tagged anime — progress keys, My List,
+  // and the URL all keep their original identity.
   const sourceCapabilities = config.source.capabilities;
   const providerCapabilities = config.provider.capabilities;
   const sourceValue = sourceCapabilities && typeof sourceCapabilities === 'object' && !Array.isArray(sourceCapabilities) ? sourceCapabilities[mediaType] : undefined;
   const providerValue = providerCapabilities && typeof providerCapabilities === 'object' && !Array.isArray(providerCapabilities) ? providerCapabilities[mediaType] : undefined;
-  return sourceValue !== false && providerValue !== false;
+  if (sourceValue !== false && providerValue !== false) return true;
+  if (content.isAnime === true) {
+    const sourceAnimeValue = sourceCapabilities && typeof sourceCapabilities === 'object' && !Array.isArray(sourceCapabilities) ? sourceCapabilities.anime : undefined;
+    const providerAnimeValue = providerCapabilities && typeof providerCapabilities === 'object' && !Array.isArray(providerCapabilities) ? providerCapabilities.anime : undefined;
+    if (sourceAnimeValue !== false && providerAnimeValue !== false) return true;
+  }
+  return false;
 }
 
 function experimentalPlaybackAllowed(config: TrustedResolutionConfig): boolean {
@@ -69,15 +87,15 @@ export async function resolveSourceFromConfig(request: ResolverRequest, config: 
   if (!config.source.enabled) throw new ResolverError('SOURCE_DISABLED');
   if (config.source.visibility !== 'public') throw new ResolverError('SOURCE_DISABLED');
   if (!activeSourceStatuses.has(config.source.status) && !experimentalPlaybackAllowed(config)) throw new ResolverError('SOURCE_MAINTENANCE');
-  if (!capabilityAllows(config, request.mediaType)) throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
+  if (!capabilityAllows(config, request.mediaType, content)) throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
   // Phase 7F+ (anime routing): the strict `content.type !== request.mediaType`
-  // check is relaxed when the content is anime-flagged. TMDB-tagged anime
-  // movies (e.g. Demon Slayer: Infinity Castle) and anime series (e.g.
-  // Attack on Titan) have `content.type === 'movie'|'series'` but the watch
-  // route overrides the resolver request's `mediaType` to 'anime' for them
-  // so anime-capable providers (MegaPlay/Yenime) get selected. The check
-  // below accepts EITHER the strict match OR the anime-routing case.
-  if (content.type !== request.mediaType && !(content.isAnime === true && request.mediaType === 'anime')) throw new ResolverError('INVALID_REQUEST');
+  // check is preserved. The canonical content type stays as `'movie'` or
+  // `'series'` for TMDB-tagged anime (e.g. Demon Slayer: Infinity Castle is
+  // `type:'movie', isAnime:true`). The anime-bridge in `capabilityAllows`
+  // lets anime-capable providers (MegaPlay/Yenime) be eligible WITHOUT
+  // mutating the canonical type — so progress keys, My List, Continue
+  // Watching, and the URL all keep their original `movie`/`series` identity.
+  if (content.type !== request.mediaType) throw new ResolverError('INVALID_REQUEST');
 
   const context = { request, content, identifiers: normalizeContentIdentifiers(content, request), config };
   const adapter = adapterFor(config, dependencies);

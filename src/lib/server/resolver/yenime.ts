@@ -74,9 +74,12 @@ export const YENIME_ORIGIN = 'https://api.yenime.net';
  *   - INVALID_SOURCE_URL (URL origin is not https://api.yenime.net)
  */
 function resolveYenimeUrl(context: ResolverContext): string {
-  const mediaType = context.request.mediaType;
-  if (mediaType !== 'anime') {
-    // Defense in depth — DB capability gates should have excluded this.
+  // Phase 7F+ (anime routing): accept any anime-flagged content regardless
+  // of the canonical `request.mediaType` (which stays as 'movie' or
+  // 'series' for TMDB-tagged anime). The anime-bridge in
+  // `capabilityAllows`/`supportsMediaType` already gated this provider
+  // in based on `content.isAnime + capability.anime`.
+  if (context.content.isAnime !== true) {
     throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
   }
   if (!context.request.episode) {
@@ -113,8 +116,10 @@ export const yenimeProviderAdapter: ProviderAdapter = {
   integrationType: 'embed',
   adapterId: YENIME_ADAPTER_ID,
   async resolve(context): Promise<AdapterResult> {
-    // Anime-only — defense in depth.
-    if (context.request.mediaType !== 'anime') {
+    // Anime-only — defense in depth. We check `content.isAnime` (NOT
+    // request.mediaType) because the canonical mediaType stays as
+    // 'movie'/'series' for TMDB-tagged anime.
+    if (context.content.isAnime !== true) {
       throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
     }
 

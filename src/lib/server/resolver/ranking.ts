@@ -46,8 +46,31 @@ function lifecycleAllows(config: TrustedResolutionConfig): boolean {
 }
 
 function supportsMediaType(config: TrustedResolutionConfig, request: ResolverRequest, content: NormalizedMediaItem): boolean {
+  // Phase 7F+ (anime routing): a provider is eligible for a request when
+  // EITHER of the following is true:
+  //
+  //   1. CANONICAL MATCH — the provider declares the request's `mediaType`
+  //      as supported (e.g. VidSrc has `movie:true` for a movie request).
+  //      This is the legacy behavior and is the only path for non-anime
+  //      content.
+  //
+  //   2. ANIME BRIDGE — when the content is anime-flagged (`isAnime === true`)
+  //      AND the provider declares `anime:true` as a capability, the
+  //      provider is ALSO eligible even if it does not declare the
+  //      request's `mediaType` directly. This lets anime-capable providers
+  //      (MegaPlay/Yenime with `movie:false, series:false, anime:true`)
+  //      accept a Demon Slayer movie (`type:'movie', isAnime:true`) or
+  //      Attack on Titan series (`type:'series', isAnime:true`) without
+  //      forcing the canonical content type to be mutated to `'anime'`.
+  //
+  // IMPORTANT: the canonical `content.type` and `request.mediaType` stay
+  // as `'movie'` or `'series'` for TMDB-tagged anime — progress keys,
+  // Continue Watching, My List, and the URL all keep their original
+  // identity. The anime-bridge is purely a provider-eligibility signal.
   if (content.type !== request.mediaType) return false;
-  return capabilityValue(config, request.mediaType) !== false;
+  if (capabilityValue(config, request.mediaType) !== false) return true;
+  if (content.isAnime === true && capabilityValue(config, 'anime') !== false) return true;
+  return false;
 }
 
 function dateValue(value: string | null | undefined, now: number): number | null {

@@ -9,6 +9,10 @@
 
   export let id: string;
   export let seasonCount = 1;
+  // Phase 7F+ (anime routing): the URL type segment for watch links.
+  // Defaults to 'series'. For anime content loaded via /anime/ route,
+  // pass 'anime' so episode links go to /watch/anime/{id}?season=1&episode=N.
+  export let watchType: 'series' | 'anime' = 'series';
   let selectedSeason = 1;
   let season: Season | undefined;
   let loading = true;
@@ -39,11 +43,13 @@
 <section class="ep-section" aria-labelledby="ep-heading">
   <div class="ep-head">
     <div><div class="ep-eyebrow">MAVERO / Series guide</div><h2 class="ep-title" id="ep-heading">Episodes</h2></div>
-    <div class="season-tabs" role="group" aria-label="Select season">
-      {#each Array(Math.max(seasonCount, 1)) as _, index}
-        <button class:active={selectedSeason === index + 1} aria-pressed={selectedSeason === index + 1} onclick={() => loadSeason(index + 1)}>S{index + 1}</button>
-      {/each}
-    </div>
+    {#if seasonCount > 1}
+      <div class="season-tabs" role="group" aria-label="Select season">
+        {#each Array(Math.max(seasonCount, 1)) as _, index}
+          <button class:active={selectedSeason === index + 1} aria-pressed={selectedSeason === index + 1} onclick={() => loadSeason(index + 1)}>S{index + 1}</button>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   {#if loading}
@@ -65,7 +71,7 @@
             <div class="ep-meta">{episode.runtime ?? 'Episode'}{#if episode.airDate}<span>·</span>{episode.airDate}{/if}</div>
             <p>{episode.overview || 'Episode details are not available yet.'}</p>
           </div>
-          <a class="ep-play" href={appendReturnTo(`/watch/series/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo)} aria-label={`Watch ${episode.title}`}>
+          <a class="ep-play" href={appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo)} aria-label={`Watch ${episode.title}`}>
             <Play size={13} fill="currentColor" strokeWidth={0} />
           </a>
         </article>

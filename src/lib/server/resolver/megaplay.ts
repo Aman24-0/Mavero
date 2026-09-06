@@ -120,21 +120,24 @@ function normalizeVariant(variant: string | undefined, available: string[]): str
 
 /**
  * Resolve the MegaPlay embed URL. Throws ResolverError on:
- *   - UNSUPPORTED_MEDIA_TYPE (movie/series)
+ *   - UNSUPPORTED_MEDIA_TYPE (non-anime content)
  *   - MISSING_IDENTIFIER (no AniList ID and no MAL ID)
  *   - MISSING_IDENTIFIER (anime request without episode number)
  *   - INVALID_TEMPLATE (admin tampered with the template)
  *   - INVALID_SOURCE_URL (URL origin is not https://megaplay.buzz)
  */
 function resolveMegaPlayUrl(context: ResolverContext, variant: string): string {
-  const mediaType = context.request.mediaType;
-  if (mediaType !== 'anime') {
-    // The DB capability gates should have excluded this already, but we
-    // double-check here for defense in depth.
+  // Phase 7F+ (anime routing): accept any anime-flagged content regardless
+  // of the canonical `request.mediaType` (which stays as 'movie' or
+  // 'series' for TMDB-tagged anime like Demon Slayer: Infinity Castle).
+  // The anime-bridge in `capabilityAllows`/`supportsMediaType` already
+  // gated this provider in based on `content.isAnime + capability.anime`,
+  // so here we just verify the content is anime-flagged.
+  if (context.content.isAnime !== true) {
     throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
   }
   if (!context.request.episode) {
-    // Anime requires an episode number —MegaPlay's URL contract is
+    // Anime requires an episode number — MegaPlay's URL contract is
     // /stream/{ani|mal}/{id}/{episode}/{language}.
     throw new ResolverError('MISSING_IDENTIFIER');
   }
@@ -187,9 +190,12 @@ export const megaplayProviderAdapter: ProviderAdapter = {
   integrationType: 'embed',
   adapterId: MEGAPLAY_ADAPTER_ID,
   async resolve(context): Promise<AdapterResult> {
-    // Anime-only — defense in depth even though DB capability gates
-    // should exclude this adapter for movie/series requests.
-    if (context.request.mediaType !== 'anime') {
+    // Anime-only — defense in depth even though the resolver's
+    // anime-bridge capability gate should have excluded this adapter for
+    // non-anime content. We check `content.isAnime` (NOT request.mediaType)
+    // because the canonical mediaType stays as 'movie'/'series' for
+    // TMDB-tagged anime.
+    if (context.content.isAnime !== true) {
       throw new ResolverError('UNSUPPORTED_MEDIA_TYPE');
     }
 

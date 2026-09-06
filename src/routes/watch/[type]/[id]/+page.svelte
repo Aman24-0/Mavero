@@ -16,25 +16,34 @@
   export let data: PageData;
 
   $: item = data.item;
-  // Phase 7F+ (anime routing): TMDB-tagged anime titles (Demon Slayer:
-  // Infinity Castle → /movie/..., Attack on Titan → /series/...) are
-  // flagged with `isAnime: true` by the content adapters. When isAnime
-  // is true, override `contentType` to 'anime' for the resolver pipeline
-  // so anime-capable providers (MegaPlay/Yenime) are selected. The URL
-  // stays `/watch/movie/...` or `/watch/series/...` — only the resolver
-  // sees 'anime'. This preserves the existing route architecture AND
-  // lets anime movies/series reach anime providers via the standard
-  // capability gate (provider has `anime: true`).
-  $: contentType = (item?.isAnime ? 'anime' : page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
+  // Phase 7F+ (anime routing): the canonical `contentType` stays as the
+  // original TMDB type ('movie' or 'series') for anime-flagged content.
+  // The `isAnime` flag is an ADDITIVE capability — it lets anime-capable
+  // providers (MegaPlay/Yenime) be eligible via the resolver's
+  // anime-bridge in `capabilityAllows`/`supportsMediaType`, WITHOUT
+  // excluding normal movie/series providers (VidSrc/VidLink) and WITHOUT
+  // mutating the canonical content identity.
+  //
+  // This preserves:
+  //   - URL routing: /watch/movie/... and /watch/series/... unchanged
+  //   - Progress keys: movie:ID / series:ID unchanged
+  //   - My List / Continue Watching / favorite keys unchanged
+  //   - Normal providers receive TMDB ID as before
+  //   - Anime providers receive AniList/MAL ID per their adapter contract
+  //
+  // For the dedicated /anime route (AniList adapter), `page.params.type`
+  // is 'anime' and `item.type === 'anime'` — this path is unchanged.
+  $: contentType = (page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
   let season = Number(page.url.searchParams.get('season') || '') || undefined;
   let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
   // Phase 7F+ (anime routing): anime movies (TMDB type='movie' but isAnime=true,
-  // e.g. Demon Slayer: Infinity Castle) have no real season/episode — but
-  // anime providers (MegaPlay/Yenime) require an episode number in their URL
-  // contract. Default to season=1, episode=1 for these titles so the
-  // resolver can build a valid embed URL. Anime series retain their explicit
-  // season/episode from the URL.
-  $: if (item?.isAnime && season === undefined && episode === undefined) {
+  // e.g. Demon Slayer: Infinity Castle) have no real season/episode, but anime
+  // providers (MegaPlay/Yenime) require an episode number in their URL contract.
+  // Default to season=1, episode=1 for these titles so anime providers can
+  // build a valid embed URL. Normal movie providers (VidSrc/VidLink) ignore
+  // season/episode for movie requests, so this default is harmless for them.
+  // Anime series retain their explicit season/episode from the URL.
+  $: if (item?.isAnime && item?.animeFormat === 'movie' && season === undefined && episode === undefined) {
     season = 1;
     episode = 1;
   }

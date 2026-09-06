@@ -71,6 +71,7 @@ function animeContent({ anilist, mal }: { anilist?: string; mal?: string } = {})
     title: 'Fixture anime',
     year: 2024,
     type: 'anime',
+    isAnime: true,
     runtime: '24m',
     rating: 8,
     genres: ['Action'],
