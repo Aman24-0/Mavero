@@ -302,6 +302,103 @@ export async function deleteFavorite(contentType: LocalContentType, contentId: s
   return removeFavoriteFromMyList(contentType, contentId);
 }
 
+// ============================================================
+// My List management: batch helpers.
+//
+// These are thin orchestrators over the existing single-title
+// primitives (`removeFavoriteFromMyList`, `saveFavorite`) so that all
+// race-safety / tombstone / progress-deletion guarantees are reused
+// unchanged — no second persistence architecture.
+//
+// `batchRemoveFromMyList` runs each removal sequentially. The
+// underlying `removeFavoriteFromMyList` already awaits in-flight
+// writer flushes and bumps the per-title generation token, so running
+// them sequentially (rather than in parallel) avoids unnecessary
+// contention on the IndexedDB transaction queue and makes partial-
+// failure recovery simpler.
+// ============================================================
+
+export type FavoriteIdentity = { contentType: LocalContentType; contentId: string };
+
+/**
+ * Remove multiple favorites locally + persist tombstones for each.
+ *
+ * Reuses `removeFavoriteFromMyList` for each identity, which means:
+ *   - active progress writers for each title are invalidated BEFORE
+ *     the favorite is removed (delete-wins semantics),
+ *   - in-flight flushes are drained so no stale putProgress can
+ *     recreate a deleted record,
+ *   - ALL watch_progress records for each title are deleted,
+ *   - a favorite_deletions tombstone is written for each identity.
+ *
+ * Returns per-identity success/failure so the caller can report
+ * partial results honestly without silently dropping failures.
+ */
+export async function batchRemoveFromMyList(items: FavoriteIdentity[]): Promise<{ succeeded: FavoriteIdentity[]; failed: { item: FavoriteIdentity; error: string }[] }> {
+  const succeeded: FavoriteIdentity[] = [];
+  const failed: { item: FavoriteIdentity; error: string }[] = [];
+  for (const item of items) {
+    try {
+      await removeFavoriteFromMyList(item.contentType, item.contentId);
+      succeeded.push(item);
+    } catch (error) {
+      failed.push({ item, error: error instanceof Error ? error.message : 'unknown' });
+    }
+  }
+  return { succeeded, failed };
+}
+
+/**
+ * Update the status of multiple favorites locally.
+ *
+ * Reuses `saveFavorite` for each identity so that:
+ *   - createdAt is preserved (saveFavorite reads the existing record),
+ *   - updatedAt is bumped to the current timestamp,
+ *   - snapshot/content identity is preserved,
+ *   - any prior favorite_deletions tombstone is cleared (the user is
+ *     explicitly re-adding the title to a status).
+ *
+ * Returns per-identity success/failure. The caller should perform a
+ * SINGLE cloud sync after the batch completes (not one sync per
+ * item).
+ */
+export async function batchSetFavoriteStatus(items: FavoriteIdentity[], status: WatchlistStatus, now = Date.now()): Promise<{ succeeded: FavoriteIdentity[]; failed: { item: FavoriteIdentity; error: string }[] }> {
+  const succeeded: FavoriteIdentity[] = [];
+  const failed: { item: FavoriteIdentity; error: string }[] = [];
+  // Pre-fetch the existing records so we can preserve their snapshot
+  // exactly. listFavorites is one IndexedDB read; doing it once here
+  // is cheaper than N getFavorite calls.
+  const existing = await listFavorites();
+  const byKey = new Map(existing.map((record) => [record.key, record]));
+  for (const item of items) {
+    try {
+      const key = favoriteKey(item.contentType, item.contentId);
+      const prior = byKey.get(key);
+      // If the title isn't in My List anymore (race with another tab),
+      // there is nothing to update — record as failed so the caller
+      // can refresh and reconcile.
+      if (!prior) {
+        failed.push({ item, error: 'not-found' });
+        continue;
+      }
+      // Preserve createdAt + snapshot from the prior record; bump updatedAt.
+      await putFavorite({
+        key,
+        contentType: item.contentType,
+        contentId: item.contentId,
+        snapshot: prior.snapshot,
+        status: normalizeWatchlistStatus(status),
+        createdAt: prior.createdAt,
+        updatedAt: now
+      });
+      succeeded.push(item);
+    } catch (error) {
+      failed.push({ item, error: error instanceof Error ? error.message : 'unknown' });
+    }
+  }
+  return { succeeded, failed };
+}
+
 /** @deprecated Use removeFavoriteFromMyList. Kept as a safe compatibility alias; playback is never deleted. */
 export async function deleteFavoriteAndProgress(contentType: LocalContentType, contentId: string) {
   return removeFavoriteFromMyList(contentType, contentId);

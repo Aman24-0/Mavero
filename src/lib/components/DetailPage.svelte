@@ -14,6 +14,7 @@
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { appendReturnTo } from '$lib/shared/navigation';
   import { haptic } from '$lib/client/haptics';
+  import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
 
   export let id = 'afterlight';
   export let type: ContentType = 'movie';
@@ -83,19 +84,41 @@
         watchlistStatus = null;
         if (page.data.user) {
           const deleted = await deleteCloudFavorite(type, item.id);
-          if (!deleted) { saveError = 'Removed from this device; cloud removal will retry automatically.'; void syncAuthenticatedState(); }
-          else { saveError = ''; }
-        } else { saveError = ''; }
-        haptic('success');
+          if (!deleted) {
+            saveError = 'Removed from this device; cloud removal will retry automatically.';
+            void syncAuthenticatedState();
+            showErrorToast('Removed locally. Cloud sync will retry.');
+          } else {
+            saveError = '';
+            showSuccessToast('Removed from My List');
+          }
+        } else {
+          saveError = '';
+          showSuccessToast('Removed from My List');
+        }
+        haptic('destructive');
       } else if (key === 'watching' || key === 'planned' || key === 'completed') {
         const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
         const record = await setFavoriteStatus(type, item.id, snapshot, key);
+        const wasNew = watchlistStatus === null;
         watchlistStatus = record.status ?? key;
         if (page.data.user) void syncAuthenticatedState();
         haptic('success');
+        // Toast feedback:
+        //   - If the title was NOT in My List before, this is an Add.
+        //   - Otherwise it's a status change ("Moved to Watching").
+        if (wasNew) {
+          showSuccessToast('Added to My List');
+        } else {
+          const label = key.charAt(0).toUpperCase() + key.slice(1);
+          showSuccessToast(`Moved to ${label}`);
+        }
       }
       if (key !== 'remove') saveError = '';
-    } catch { saveError = 'This device could not update your local list.'; }
+    } catch {
+      saveError = 'This device could not update your local list.';
+      showErrorToast('Could not update My List. Please try again.');
+    }
   }
 
   function statusLabel(status: WatchlistStatus | null) {

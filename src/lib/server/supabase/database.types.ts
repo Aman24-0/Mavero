@@ -679,6 +679,19 @@ export type Database = {
         }
         Returns: boolean
       }
+      // Added by 20260912000000_batch_remove_favorites.sql.
+      // Atomic batch removal of favorites + their watch_progress + tombstones.
+      // Returns one row per input identity with ok/error so the caller can
+      // report partial results honestly.
+      batch_remove_favorites: {
+        Args: { p_items: unknown }
+        Returns: {
+          content_type: string | null
+          content_id: string | null
+          ok: boolean | null
+          error: string | null
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

@@ -135,6 +135,57 @@ export async function deleteCloudProgress(contentType: string, contentId: string
   }
 }
 
+/**
+ * Batch cloud removal for the My List page.
+ *
+ * Calls the dedicated `/api/account/favorites/batch-delete` endpoint,
+ * which delegates to a single atomic Postgres RPC
+ * (`public.batch_remove_favorites(jsonb)`) that:
+ *   - upserts a `favorite_deletions` tombstone per identity,
+ *   - deletes the matching `favorites` rows,
+ *   - deletes ALL `watch_progress` rows for those titles,
+ *   - does NOT touch `watch_history` (separate audit log).
+ *
+ * The endpoint runs entirely inside the database, scoped to the
+ * authenticated user's own rows (SECURITY INVOKER + RLS), and returns
+ * per-identity success/failure so the caller can report partial results
+ * honestly.
+ *
+ * Returns `{ ok, succeeded, failed }`. `ok=false` means the entire
+ * request failed (network, auth, 503, malformed payload). Otherwise
+ * callers should consult `succeeded` / `failed`.
+ */
+export type BatchCloudFavoriteItem = { contentType: string; contentId: string };
+export type BatchCloudDeleteResult = {
+  ok: boolean;
+  succeeded: BatchCloudFavoriteItem[];
+  failed: { contentType: string; contentId: string; error: string }[];
+};
+
+export async function batchDeleteCloudFavorites(items: BatchCloudFavoriteItem[], fetcher: typeof fetch = fetch): Promise<BatchCloudDeleteResult> {
+  if (items.length === 0) return { ok: true, succeeded: [], failed: [] };
+  try {
+    if (syncInFlight) {
+      try { await syncInFlight; } catch { /* deletion still gets its own request */ }
+    }
+    const response = await fetcher('/api/account/favorites/batch-delete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: items.map((item) => ({ contentType: item.contentType, contentId: item.contentId })) })
+    });
+    if (response.status === 401) return { ok: false, succeeded: [], failed: items.map((item) => ({ ...item, error: 'auth' })) };
+    if (!response.ok) return { ok: false, succeeded: [], failed: items.map((item) => ({ ...item, error: 'cloud' })) };
+    const payload = await response.json() as { ok: boolean; succeeded?: BatchCloudFavoriteItem[]; failed?: { contentType: string; contentId: string; error: string }[] };
+    return {
+      ok: Boolean(payload.ok),
+      succeeded: Array.isArray(payload.succeeded) ? payload.succeeded : [],
+      failed: Array.isArray(payload.failed) ? payload.failed : []
+    };
+  } catch {
+    return { ok: false, succeeded: [], failed: items.map((item) => ({ ...item, error: 'network' })) };
+  }
+}
+
 export async function recordCloudHistory(event: Record<string, unknown>, fetcher: typeof fetch = fetch) {
   try {
     const response = await fetcher('/api/account/history', {

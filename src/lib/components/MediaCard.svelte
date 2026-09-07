@@ -1,14 +1,38 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { Play, Star } from 'lucide-svelte';
+  import { Play, Star, Check } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
+  import { haptic } from '$lib/client/haptics';
   import type { MediaItem } from '$data/content';
   import { formatBadges } from '$data/content';
 
   export let item: MediaItem;
   export let compact = false;
   export let editorial = false;
+  // ============================================================
+  // Opt-in selection props (My List management only).
+  //
+  // Default behavior is UNCHANGED: selectable=false means the card
+  // behaves exactly as before (poster link → DetailPage, play button
+  // → /watch). Discover / Search / Upcoming / Continue Watching /
+  // recommendation rails never set these props.
+  //
+  // When `selectable=true`, the card:
+  //   - shows a checkbox badge in the top-left of the poster,
+  //   - intercepts the poster click and the title click so they
+  //     toggle selection instead of navigating to DetailPage,
+  //   - hides the play button (so the user cannot accidentally
+  //     start a stream while batch-selecting),
+  //   - adds a subtle selected outline to the poster.
+  //
+  // Selection identity is the caller's responsibility — the card just
+  // reports `onSelect(item)` and renders `selected` (bool). Callers
+  // key selection by `contentType + contentId` (stable identity).
+  // ============================================================
+  export let selectable = false;
+  export let selected = false;
+  export let onSelect: (item: MediaItem) => void = () => {};
   let imageFailed = false;
   let imageReady = false;
   let posterElement: HTMLElement;
@@ -37,37 +61,81 @@
   // ANIME at top-left and MOVIE/SERIES at top-right (next to the rating).
   // Plain movie/series keep their single badge at top-left (legacy).
   $: badges = formatBadges(item);
+
+  function handleSelectToggle(event: Event) {
+    if (!selectable) return;
+    // Prevent the poster <a> from navigating.
+    event.preventDefault();
+    event.stopPropagation();
+    haptic('light');
+    onSelect(item);
+  }
 </script>
 
-<div class:compact class:editorial class="mc-wrap">
+<div class:compact class:editorial class:selectable class:selected class="mc-wrap">
   <div class="mc-poster" bind:this={posterElement} style={`--poster-accent: ${item.accent}`}>
-    <a class="mc-card-link" href={cardHref} aria-label={`${item.title}`}>
-      {#if !imageReady}
-        <div class="mc-placeholder" aria-hidden="true"></div>
-      {:else if imageFailed}
-        <div class="mc-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
-      {:else}
-        <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
+    {#if selectable}
+      <!-- Selection mode: a button overlaying the whole poster so the
+           tap target is the entire card. We do NOT nest the button
+           inside the <a> (that would be invalid HTML). Instead we
+           render the <a> as a non-interactive backdrop (tabindex=-1,
+           aria-hidden) and let the button own the interaction. -->
+      <a class="mc-card-link mc-card-link-disabled" href={cardHref} aria-label={`${item.title}`} tabindex="-1" aria-hidden="true" onclick={handleSelectToggle}>
+        {#if !imageReady}
+          <div class="mc-placeholder" aria-hidden="true"></div>
+        {:else if imageFailed}
+          <div class="mc-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
+        {:else}
+          <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
+        {/if}
+      </a>
+      <button
+        class="mc-select"
+        type="button"
+        aria-pressed={selected}
+        aria-label={selected ? `Deselect ${item.title}` : `Select ${item.title}`}
+        onclick={handleSelectToggle}
+      >
+        <span class="mc-select-box" class:checked={selected}>
+          {#if selected}<Check size={14} strokeWidth={3} />{/if}
+        </span>
+      </button>
+    {:else}
+      <a class="mc-card-link" href={cardHref} aria-label={`${item.title}`}>
+        {#if !imageReady}
+          <div class="mc-placeholder" aria-hidden="true"></div>
+        {:else if imageFailed}
+          <div class="mc-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
+        {:else}
+          <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
+        {/if}
+      </a>
+      <span class="mc-type">{badges.primary}</span>
+      {#if badges.secondary}<span class="mc-type mc-type-secondary">{badges.secondary}</span>{/if}
+      {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
+      <a class="mc-play" href={watchHref} aria-label={`Play ${item.title}`} onclick={(e) => e.stopPropagation()}>
+        <Play size={12} fill="currentColor" strokeWidth={0} />
+      </a>
+      {#if item.progress}
+        <div class="mc-progress" role="progressbar" aria-label={`${item.progress}% watched`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item.progress}><span style={`width: ${item.progress}%`}></span></div>
       {/if}
-    </a>
-    <span class="mc-type">{badges.primary}</span>
-    {#if badges.secondary}<span class="mc-type mc-type-secondary">{badges.secondary}</span>{/if}
-    {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
-    <a class="mc-play" href={watchHref} aria-label={`Play ${item.title}`} onclick={(e) => e.stopPropagation()}>
-      <Play size={12} fill="currentColor" strokeWidth={0} />
-    </a>
-    {#if item.progress}
-      <div class="mc-progress" role="progressbar" aria-label={`${item.progress}% watched`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item.progress}><span style={`width: ${item.progress}%`}></span></div>
     {/if}
   </div>
   <div class="mc-info">
-    <a class="mc-title-link" href={cardHref}>
-      <h3 class="mc-title">{item.title}</h3>
-      <div class="mc-meta"><span>{item.year}</span>{#if item.runtime}<span class="mc-sep">·</span><span>{item.runtime}</span>{/if}</div>
-    </a>
+    {#if selectable}
+      <button class="mc-title-link mc-title-btn" type="button" onclick={handleSelectToggle}>
+        <h3 class="mc-title">{item.title}</h3>
+        <div class="mc-meta"><span>{item.year}</span>{#if item.runtime}<span class="mc-sep">·</span><span>{item.runtime}</span>{/if}</div>
+      </button>
+    {:else}
+      <a class="mc-title-link" href={cardHref}>
+        <h3 class="mc-title">{item.title}</h3>
+        <div class="mc-meta"><span>{item.year}</span>{#if item.runtime}<span class="mc-sep">·</span><span>{item.runtime}</span>{/if}</div>
+      </a>
+    {/if}
     {#if item.progressLabel}<div class="mc-progress-label">{item.progressLabel}</div>{/if}
   </div>
-  {#if item.resumeHref}<a class="mc-detail" href={detailHref} aria-label={`Open details for ${item.title}`}>Details</a>{/if}
+  {#if !selectable && item.resumeHref}<a class="mc-detail" href={detailHref} aria-label={`Open details for ${item.title}`}>Details</a>{/if}
 </div>
 
 <style>
@@ -80,6 +148,52 @@
     transition: transform 220ms cubic-bezier(.22, 1, .36, 1), box-shadow 220ms cubic-bezier(.22, 1, .36, 1);
   }
   .mc-card-link { display: block; height: 100%; }
+  /* In selection mode the <a> becomes a non-interactive backdrop so we
+     can layer the selection button on top of the poster without nesting
+     interactive elements. */
+  .mc-card-link-disabled { pointer-events: none; cursor: default; }
+  .mc-select {
+    position: absolute; inset: 0; z-index: 4;
+    padding: 0; border: 0; background: transparent; cursor: pointer;
+    display: grid;
+    align-content: start;
+    justify-content: start;
+  }
+  .mc-select:focus-visible { outline: none; }
+  .mc-select-box {
+    display: grid; place-items: center;
+    width: 26px; height: 26px;
+    margin: 8px;
+    border: 2px solid rgba(255, 255, 255, .8);
+    border-radius: 7px;
+    background: rgba(0, 0, 0, .55);
+    color: #000;
+    backdrop-filter: blur(6px);
+    transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  }
+  .mc-select-box.checked {
+    background: #f5f5f5;
+    border-color: #f5f5f5;
+  }
+  .mc-select:focus-visible .mc-select-box {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, .35);
+  }
+  .mc-select:active .mc-select-box { transform: scale(.92); }
+  .mc-title-btn {
+    display: block; width: 100%;
+    padding: 6px 2px 0; margin: 0;
+    border: 0; background: transparent; text-align: left; cursor: pointer;
+  }
+  /* Subtle selected outline on the poster. */
+  .mc-wrap.selectable .mc-poster {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    transition: transform 220ms cubic-bezier(.22, 1, .36, 1), outline-color 180ms ease;
+  }
+  .mc-wrap.selectable.selected .mc-poster {
+    outline-color: #f5f5f5;
+  }
+  .mc-wrap.selectable .mc-poster:hover { transform: none; box-shadow: none; }
   .mc-placeholder { position: absolute; inset: 0; background: linear-gradient(135deg, var(--surface-2), rgba(255,255,255,.02)); }
   .mc-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.1); background: radial-gradient(circle at 72% 24%, color-mix(in srgb, var(--poster-accent) 25%, transparent), transparent 42%), var(--surface-2); }
   .mc-fallback span { font-size: clamp(1.5rem, 6vw, 3rem); font-weight: 800; }
