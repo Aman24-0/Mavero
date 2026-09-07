@@ -11,6 +11,7 @@
   import DiscoverSection from '$components/DiscoverSection.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
+  import AppFooter from '$components/AppFooter.svelte';
   import { haptic } from '$lib/client/haptics';
   import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
   import type { DiscoverSectionKey } from '$lib/server/content/types';
@@ -484,19 +485,7 @@
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}
-    <footer class="discover-footer">
-      <strong>MAVERO</strong>
-      <span>Movies, series &amp; anime — all in one place.</span>
-      <!-- TMDB + JustWatch attribution. TMDB watch-provider data is
-           powered by JustWatch; TMDB's API terms require attribution. -->
-      <div class="discover-attribution">
-        <a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">
-          <span>Data from</span>
-          <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database (TMDB)" loading="lazy" />
-        </a>
-        <span class="justwatch-credit">Provider availability powered by <a href="https://www.justwatch.com" target="_blank" rel="noreferrer">JustWatch</a></span>
-      </div>
-    </footer>
+    <AppFooter />
   </div>
 </div>
 
@@ -631,16 +620,6 @@
   .genre-label { position: relative; z-index: 1; color: var(--d-ink); font-size: .76rem; font-weight: 700; letter-spacing: .02em; }
 
   .catalog-warning { margin: 16px var(--d-gutter) 0; padding: 10px 12px; border: 1px solid rgba(255,176,32,.3); border-radius: 6px; color: var(--warning); font-size: .7rem; }
-  .discover-footer { padding: 40px 0 20px; text-align: center; }
-  .discover-footer strong { color: var(--d-ink); font-size: .8rem; }
-  .discover-footer span { display: block; margin-top: 3px; color: var(--d-muted); font-size: .65rem; }
-  .discover-attribution { margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-  .tmdb-credit { display: inline-flex; align-items: center; gap: 5px; color: var(--d-muted); font-size: .6rem; text-decoration: none; }
-  .tmdb-credit:hover { color: var(--d-ink-soft); }
-  .tmdb-logo { height: 12px; width: auto; opacity: .8; }
-  .justwatch-credit { color: var(--d-muted); font-size: .58rem; }
-  .justwatch-credit a { color: var(--d-ink-soft); text-decoration: none; }
-  .justwatch-credit a:hover { text-decoration: underline; }
 
   @media (max-width: 900px) {
     .hero-slide { min-height: min(68vh, 540px); }

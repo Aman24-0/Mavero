@@ -7,6 +7,7 @@
   import { getLocalFavorites, getLocalProgressRecords } from '$lib/client/progress/service';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
+  import AppFooter from '$components/AppFooter.svelte';
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
@@ -238,12 +239,7 @@
       </section>
     {/if}
 
-    <footer class="profile-footer">
-      <span class="footer-line">Mavero @2026</span>
-      <a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">
-        Data from <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database" />
-      </a>
-    </footer>
+    <AppFooter />
   </div>
 </div>
 
@@ -558,21 +554,6 @@
   .signout-btn:active { transform: scale(.98); }
   .signout-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-  .profile-footer {
-    /* Centered single block: Mavero copyright on one line, TMDB
-       attribution beneath it. Subtle, small, neutral gray. */
-    display: grid; justify-items: center; gap: 6px;
-    margin-top: 32px;
-    padding-top: 22px;
-    border-top: 1px solid rgba(255,255,255,.05);
-    color: #77777f;
-    font-size: .62rem;
-    text-align: center;
-  }
-  .footer-line { color: #77777f; letter-spacing: .04em; }
-  .tmdb-credit { display: inline-flex; align-items: center; gap: 7px; color: #77777f; text-decoration: none; }
-  .tmdb-credit:hover { color: #c7c7cc; }
-  .tmdb-logo { width: 38px; height: 27px; object-fit: contain; }
   .dialog-error { margin: 12px 0 0; color: #ffb020; font-size: .72rem; line-height: 1.45; }
 
   @media (max-width: 720px) {

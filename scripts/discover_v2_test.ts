@@ -13,6 +13,7 @@ const types = await readFile(path.join(repoRoot, 'src/lib/server/content/types.t
 const railEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover/rail/+server.ts'), 'utf8');
 const providersEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover/providers/+server.ts'), 'utf8');
 const discoverLoad = await readFile(path.join(repoRoot, 'src/lib/server/content/discover-load.ts'), 'utf8');
+const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFooter.svelte'), 'utf8');
 
 // ============================================================================
 // A. Section configuration — exactly these sections in this order.
@@ -334,11 +335,14 @@ const discoverLoad = await readFile(path.join(repoRoot, 'src/lib/server/content/
 // T. Attribution — TMDB + JustWatch in the Discover footer.
 // ============================================================================
 {
-  assert.match(discoverPage, /tmdb-credit/, 'TMDB credit present');
-  assert.match(discoverPage, /tmdb-logo/, 'TMDB logo present');
-  assert.match(discoverPage, /themoviedb\.org\/about\/logos-attribution/, 'links to TMDB attribution page');
-  assert.match(discoverPage, /justwatch-credit/, 'JustWatch credit present');
-  assert.match(discoverPage, /justwatch\.com/, 'links to JustWatch');
+  // Attribution now lives in the shared AppFooter component (BUG 4 fix).
+  assert.match(discoverPage, /import AppFooter from/, 'DiscoverPage imports AppFooter');
+  assert.match(discoverPage, /<AppFooter/, 'DiscoverPage renders AppFooter');
+  assert.match(appFooter, /tmdb-credit/, 'TMDB credit present in AppFooter');
+  assert.match(appFooter, /tmdb-logo/, 'TMDB logo present in AppFooter');
+  assert.match(appFooter, /themoviedb\.org\/about\/logos-attribution/, 'links to TMDB attribution page in AppFooter');
+  assert.match(appFooter, /justwatch-credit/, 'JustWatch credit present in AppFooter');
+  assert.match(appFooter, /justwatch\.com/, 'links to JustWatch in AppFooter');
 }
 
 // ============================================================================
