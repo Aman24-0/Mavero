@@ -1,10 +1,11 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 3 complete (TMDB catalog migrated from watch providers to TV networks). Phase 2 was the network registry + classifier foundation; Phase 1 was audit-only.
+> **Status:** Phase 4 complete (adult-aware search with bounded N+1 classification). Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
 > **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
 > **Phase 3 implemented:** 2026-09-07 against branch `main`, starting from commit `34a6469b1f4d39398f86b1d6d3dcc88e877ffca0` (Phase 2 commit).
+> **Phase 4 implemented:** 2026-09-07 against branch `main`, starting from commit `8c675679ad0ccc3add90bc336798b2b3ca9881eb` (Phase 3 commit).
 
 ---
 
@@ -73,7 +74,7 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 - [x] Phase 1 — Repository audit, baseline & worklog
 - [x] Phase 2 — Adult network registry, classifier & metadata foundation
 - [x] Phase 3 — TMDB adapter/network-based catalog migration
-- [ ] Phase 4 — Adult-aware Search + bounded N+1 classification
+- [x] Phase 4 — Adult-aware Search + bounded N+1 classification
 - [ ] Phase 5 — Authorization, Supabase policy & HMAC guest cookie
 - [ ] Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
 - [ ] Phase 7 — Indian Adult Shows Discover backend/API
@@ -199,19 +200,46 @@ Network-filter support re-confirmed against live TMDB in the Phase 9 diagnostic 
 
 ### Phase 4 — Adult-aware Search + bounded N+1 classification
 
-**Status:** Not Started
+**Status:** Complete
+
+**The problem (confirmed against the Phase 4-start code):** TMDB `/search/{movie,tv}` supports NEITHER `without_watch_providers` NOR `without_networks`, and TV search rows carry no `networks[]`. The pre-Phase-4 search path computed an `adultExclusion` string from watch-provider IDs that was used ONLY as a cache-key dimension — `isAdultContent` was never called anywhere in the search path (Phase 1 finding F3, still true at Phase 4 start). `include_adult=false` cannot keep adult-network titles (TMDB `adult=false` as a rule) out of unauthorized results. Also: the SSR search page never evaluated the adult policy while the API route did (SSR/API inconsistency).
 
 **Files changed:**
-- (planned) `searchTmdb` / `service.search`; new bounded-concurrency detail classifier
+- `src/lib/server/content/concurrency.ts` (new) — the generic bounded-concurrency mapper, extracted verbatim from the adapter so the adapter and the pure orchestrator share ONE implementation (the adapter now imports it; its local copy is deleted).
+- `src/lib/server/content/search-classify.ts` (new) — PURE, env-free, tsx-testable orchestration layer: `searchFilterMode(canAccessAdult)` (authorized-passthrough vs classify-and-exclude — the server-side decision, behaviorally testable), `movieRowVerdict` (cheap movie-row verdict delegating to the ONE central classifier `isAdultContent` — TMDB adult flag + anime exemption; movies carry no networks), `detailVerdict` (reads the central classification `getTmdbDetail` already produced over networks[]/providers/adult/isAnime), and `collectSafeSearchPage` (the page-continuation orchestrator: bounded-concurrency classification, adult/uncertain exclusion with fail-closed semantics, canonical-identity dedup, stop at pageSize / TMDB `total_pages` / hard cap; page-fetch failures propagate to preserve the existing fallback contract).
+- `src/lib/server/content/adapters/tmdb.ts` — `searchTmdb` rewritten around the two modes: **authorized** (`searchFilterMode(canAccessAdult) === 'authorized-passthrough'`) → exactly the pre-Phase-4 behavior (single upstream page, no classification N+1, adult MAY appear); **unauthorized** → `collectSafeSearchPage` with `classifySearchRow` (movie rows: cheap central-classifier verdict from the raw adult flag + isAnime — no detail request; TV rows: the cached, in-flight-deduplicated detail path via `getTmdbDetail('series', id)` whose central classification reads the VERIFIED network registry; failure → `'uncertain'` → fail-closed exclusion). Constants: `SEARCH_CLASSIFY_CONCURRENCY = 4` (spec range 4–6), `SEARCH_MAX_UPSTREAM_PAGES = 3`, `SEARCH_PAGE_SIZE = 20`. The search request still sends ONLY supported params (`query`, `page`, `include_adult: false`) — never any network/provider filter. The search response cache key now carries the authorization dimension (`adult-allowed` / `adult-excluded`) instead of the old provider-id `adultExclusion` value.
+- `src/lib/server/content/service.ts` — `search()` passes `canAccessAdult` straight through to `searchTmdb` (all three call paths: anime/typed/merged); the provider-id `adultExclusion` computation is gone; `ensureAdultProvidersResolved` kept so the classifier's transitional movie-side provider signal stays warm for detail classification. Fixture fallback unchanged — `src/lib/data` fixtures contain no adult items (Phase 1 verified), so a TMDB failure cannot leak adult content, and fail-closed exclusions happen BEFORE any fallback.
+- `src/routes/search/+page.server.ts` — SSR/API parity: the SSR search page now evaluates the SAME existing policy function (`canAccessAdultContent`) as `/api/content/search` and passes the decision down. No authorization redesign (Phase 5 owns the cookie/policy-cache hardening).
+- `scripts/adult_search_test.ts` (new) — **behavioral** suite (18 checks covering all spec §19 scenarios A–V with mocked TMDB-shaped upstream pages; registered in the `pnpm test` chain): unauthorized filtering of Ullu-network candidates (real registry + real verdict mapping), authorized passthrough mode, movie flag path incl. anime exemption through the REAL central classifier, fail-closed uncertain exclusion without crashing the request, page continuation (page 1 underfilled → page 2 fetched and page filled), stop at `total_pages`, hard cap proof, cross-page duplicate removal by canonical identity, **measured** bounded concurrency (active-in-flight tracking with delays: max 4, parallelism proven >1), real-cache classification reuse (sequential + in-flight dedup), content-keyed authorization-independent classification cache, and separate authorized/unauthorized response cache keys.
+- `scripts/adult_mode_test.ts` — static sections H (service passes `canAccessAdult`; SSR policy parity) and R (auth-dimension cache key; content-keyed classification via the cached detail path) rewritten; new section **Y** (orchestrator module, single-classifier imports, no hardcoded network IDs, env-free, fail-closed constant, concurrency constants, mode branch, search requests carry NO unsupported filter params, `include_adult: false` retained); summary line extended.
+- `package.json` — test chain includes `scripts/adult_search_test.ts` (59 scripts total).
 
-**Tests:**
-- (planned) behavioral tests: adult excluded from search when unauthorized; present when authorized; failure policy = fail-closed
+**N+1 detail strategy:** TV candidates always need network classification (search rows carry no networks and `adult=false` proves nothing) → cached detail lookups; movie candidates use the cheap metadata path only (TMDB adult flag via the central classifier — the Phase 4 movie contract; adult-provider movies with `adult=false` remain a documented movie-side gap owned by Phase 6/7, consistent with the Phase 3 movie-half decision). The cheap path runs first wherever it can decide (movie flag), and detail lookups are skipped entirely for authorized users (no classification N+1 at all).
 
-**Notes:**
-- `/search/*` supports no network filter → candidate results need bounded-concurrency detail lookups inspecting `networks`/metadata, then classify → filter → continue pages if necessary. Current code has **none** of this (see findings). Decide explicitly that **failed detail classification must fail closed** (exclude) — note the existing precedent in `matchesOtt` allows results on lookup failure (safe there, NOT acceptable for adult).
+**Bounded concurrency:** 4 simultaneous detail classifications per search request via the shared `mapWithConcurrency`; proven behaviorally by tracking max in-flight work (never exceeds 4, actually parallelizes). The OTT-filter lookup path keeps its own pre-existing bound (`OTT_LOOKUP_CONCURRENCY = 4`). No unbounded `Promise.all` over candidates anywhere in search.
+
+**Page continuation:** when filtering, the orchestrator fetches upstream page N (= the visible page), classifies, and keeps fetching while the visible page is underfilled — bounded by `SEARCH_MAX_UPSTREAM_PAGES = 3` upstream pages per request and never beyond TMDB's reported `total_pages` (an empty page also terminates). `hasNextPage` = upstream not exhausted. Duplicate candidates across pages are removed by the canonical `type:id` identity (same convention as the catalog rails; anime identity untouched).
+
+**Documented pagination limitation:** the visible-page→upstream-page mapping stays stateless (visible page N starts at upstream page N). When heavy filtering forces a visible page to consume multiple upstream pages, a subsequent visible page can re-yield safe candidates already shown (server-side pagination state would be required to prevent this). The shipped UI requests only page 1 (verified: `search/+page.svelte` never sends `page`), so this affects only hypothetical API consumers paginating unauthorized searches; in-response dedup is always guaranteed.
+
+**Fail-closed behavior:** classification uncertainty (detail lookup failure) → candidate EXCLUDED for unauthorized search — never mapped to "not adult"; the failure of ONE candidate never fails the whole request; upstream search-page failures propagate to the pre-existing service fallback (fixtures, which contain no adult items). When Adult Mode is ON the orchestrator is not invoked at all, so classification failures cannot suppress authorized results.
+
+**Classification cache & authorization/cache separation:** classification reuses the existing cached detail path (`tmdb:detail:{type}:{id}`, 30-min TTL, in-flight-deduplicated by `cache.ts`) — pure content metadata, NO authorization dimension (§13's preferred architecture: cache content classification, perform authorization after). The search RESPONSE cache keeps storing filtered/unfiltered result sets but its key now carries the explicit `adult-allowed` / `adult-excluded` dimension, so an authorized result set can never be served to an unauthorized context or vice versa (behaviorally proven with the real cache; no `adultAllowed`-style entries exist).
+
+**Anime invariants:** anime search candidates flow through the same detail classification — the central classifier's exemption (`adult=true` + anime + no verified network signal → NOT adult) applies unchanged; `filterAnimeSeries`/`applyAnimeFilters` untouched; anime detection (`genre 16 + 'ja'`) untouched; no AniList/MAL/Yenime/Anime World India/Tatakai/MegaPlay reintroduction.
+
+**Explicitly NOT implemented (later phases):** HMAC guest cookie / policy-cache removal / authorization redesign (Phase 5 — the existing policy API is used exactly as-is, known weaknesses documented in F6/F7 and untouched); direct watch-route guard + structural cache isolation (Phase 6); adult rail/dropdown redesign incl. movie-side provider retirement (Phase 7); Popular TV `without_genres=10764\|10766\|10767` (Phase 8); full A–R behavioral suite + live TMDB diagnostic (Phase 9); any UI/playback/resolver/progress/navigation/My List change (none).
+
+**Test result:** `pnpm test` **PASS** (exit 0) — 59 scripts incl. new `adult_search_test.ts` (18 checks) and `adult_mode_test.ts` A–Y.
+**Check result:** `pnpm run check` **PASS** (exit 0) — 0 errors / 38 warnings (unchanged pre-existing warnings in 11 files).
+**Build result:** `pnpm run build` **PASS** (exit 0) — `@sveltejs/adapter-netlify` build completed.
+
+**Commit SHA:** this commit — `feat(adult): add network-aware search filtering` (exact SHA in `git log -1`; the worklog cannot contain its own commit's hash).
 
 **Remaining work:**
-- Everything (Not Started).
+- Phase 5: replace the forgeable guest cookie with HMAC-SHA256 + dedicated secret (fail-closed), remove the process-local policy cache, admin-override regression tests.
+- Phase 6: direct watch-route guard, trending/theatre/upcoming/genre/related enforcement (server-side classification where endpoints support no filters), structural cache-boundary isolation; consider absorbing the movie-side search gap.
+- Phases 7–10 as planned.
 
 ### Phase 5 — Authorization, Supabase policy & HMAC guest cookie
 

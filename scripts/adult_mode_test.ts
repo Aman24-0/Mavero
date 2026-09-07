@@ -192,18 +192,23 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 // ============================================================================
-// H. Search — adult excluded when unavailable.
+// H. Search — adult excluded when unavailable (Phase 4: server-side classification).
 // ============================================================================
 {
   assert.match(searchEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'search endpoint evaluates adult policy with cookies');
   assert.match(service, /export async function search\(query.*canAccessAdult = false/, 'search accepts canAccessAdult parameter');
-  // Adult exclusion: searchTmdb cache key includes adultExclusion dimension.
-  assert.match(tmdb, /searchTmdb[\s\S]*?adultExclusion/, 'searchTmdb uses adultExclusion');
-  // searchExclusion is computed when adult access is OFF.
-  assert.match(service, /adultExclusion = !canAccessAdult && adultIds\.length > 0/, 'search excludes adult when access is OFF');
+  // Phase 4: service passes the authorization decision to searchTmdb —
+  // classification + filtering happen server-side in the content layer.
+  assert.match(service, /searchTmdb\(normalized, 'series', page, filters, canAccessAdult\)/, 'service passes canAccessAdult to searchTmdb for anime');
+  assert.match(service, /searchTmdb\(normalized, type, page, filters, canAccessAdult\)/, 'service passes canAccessAdult to searchTmdb for typed search');
+  assert.match(service, /searchTmdb\(normalized, 'movie', page, filters, canAccessAdult\)/, 'service passes canAccessAdult to searchTmdb for the merged search');
   // No client-side bypass parameter (the endpoint must not accept ?adult=true as a query param).
   assert.doesNotMatch(searchEndpoint, /url\.searchParams\.get\('adult'\)/, 'search endpoint does NOT accept adult query param');
   assert.doesNotMatch(searchEndpoint, /url\.searchParams\.get\('userId'\)/, 'search endpoint does NOT accept userId query param');
+  // SSR parity: the search page evaluates the same policy server-side.
+  const searchPageServer = await readFile(path.join(repoRoot, 'src/routes/search/+page.server.ts'), 'utf8');
+  assert.match(searchPageServer, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'SSR search page evaluates the adult policy server-side');
+  assert.match(searchPageServer, /search\(query, type, 1, \{\}, canAccessAdult\)/, 'SSR search page passes the authorization decision down');
 }
 
 // ============================================================================
@@ -340,16 +345,20 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 // ============================================================================
-// R. BUG 2 — Search cache key includes adult-exclusion dimension.
+// R. BUG 2 — Search cache key separates authorized from unauthorized results
+// (Phase 4: auth dimension + classification stays content-keyed).
 // ============================================================================
 {
-  // searchTmdb cache key includes adultExclusion.
-  assert.match(tmdb, /searchTmdb[\s\S]*?key = `tmdb:search:.*:\$\{adultExclusion \?\? 'no-adult'\}`/, 'search cache key includes adultExclusion');
-  // searchTmdb accepts adultExclusion parameter.
-  assert.match(tmdb, /export async function searchTmdb\(.*adultExclusion\?: string\)/, 'searchTmdb accepts adultExclusion parameter');
-  // service.search passes adultExclusion to searchTmdb.
-  assert.match(service, /searchTmdb\(normalized, 'series', page, filters, adultExclusion\)/, 'service passes adultExclusion to searchTmdb for anime');
-  assert.match(service, /searchTmdb\(normalized, type, page, filters, adultExclusion\)/, 'service passes adultExclusion to searchTmdb for movie/series');
+  // searchTmdb cache key carries the authorization dimension — an authorized
+  // (adult-allowed) response can never be served to an unauthorized context.
+  assert.match(tmdb, /const authDimension = canAccessAdult \? 'adult-allowed' : 'adult-excluded'/, 'search cache auth dimension computed from the server-side decision');
+  assert.match(tmdb, /searchTmdb[\s\S]*?key = `tmdb:search:.*:\$\{authDimension\}`/, 'search cache key includes the auth dimension');
+  // searchTmdb receives the authorization decision (not a precomputed exclusion value).
+  assert.match(tmdb, /export async function searchTmdb\(query: string, type: Exclude<ContentType, 'anime'>, page = 1, filters: SearchFilters = \{\}, canAccessAdult = false\)/, 'searchTmdb accepts the canAccessAdult decision');
+  // The classification cache stays content-keyed: the detail path used by
+  // search classification has NO authorization dimension (J asserts the
+  // tmdb:detail key; Phase 2/4 behavioral suites prove the semantics).
+  assert.match(tmdb, /const detail = await getTmdbDetail\('series', String\(item\.id\)\)/, 'search TV classification flows through the cached detail path');
 }
 
 // ============================================================================
@@ -475,4 +484,41 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(tmdb, /key = `tmdb:new-ott:.*:\$\{networkExclusion \?\? 'no-nets'\}:\$\{providerExclusion \?\? 'no-providers'\}`/, 'new-ott cache key embeds both exclusion dimensions');
 }
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X).');
+// ============================================================================
+// Y. Phase 4 — adult-aware search with bounded N+1 classification.
+// ============================================================================
+{
+  // Pure search-classification module exists and is registry/classifier-driven only.
+  const searchClassify = await readFile(path.join(repoRoot, 'src/lib/server/content/search-classify.ts'), 'utf8');
+  assert.match(searchClassify, /export async function collectSafeSearchPage/, 'page-continuation orchestrator exists');
+  assert.match(searchClassify, /export function movieRowVerdict/, 'movie-row cheap verdict exists');
+  assert.match(searchClassify, /export function detailVerdict/, 'detail verdict reader exists');
+  assert.match(searchClassify, /export function searchFilterMode/, 'authorization-aware mode decision exists');
+  assert.match(searchClassify, /import \{ isAdultContent \} from '\.\/adult-providers'/, 'verdicts delegate to the ONE central classifier (no second classifier)');
+  assert.match(searchClassify, /import \{ mapWithConcurrency \} from '\.\/concurrency'/, 'orchestrator uses the shared bounded-concurrency helper');
+  assert.doesNotMatch(searchClassify, /\b(2902|4573|7355)\b/, 'search classification contains no hardcoded network ids');
+  assert.doesNotMatch(searchClassify, /\$env/, 'search classification is env-free (tsx-testable)');
+  // Fail-closed: the orchestrator drops uncertain candidates when filtering.
+  assert.match(searchClassify, /if \(excludeUncertain\) continue/, 'uncertain candidates fail CLOSED for unauthorized search');
+  // Shared concurrency helper exists once.
+  const concurrencyModule = await readFile(path.join(repoRoot, 'src/lib/server/content/concurrency.ts'), 'utf8');
+  assert.match(concurrencyModule, /export async function mapWithConcurrency/, 'shared bounded-concurrency helper exists');
+  assert.doesNotMatch(tmdb, /async function mapWithConcurrency/, 'adapter no longer carries a duplicated concurrency helper');
+  // Adapter wiring: constants, orchestrator use, mode branch.
+  assert.match(tmdb, /const SEARCH_CLASSIFY_CONCURRENCY = 4/, 'search detail classification is bounded at 4 (spec: 4-6)');
+  assert.match(tmdb, /const SEARCH_MAX_UPSTREAM_PAGES = 3/, 'upstream page walking is hard-capped');
+  assert.match(tmdb, /collectSafeSearchPage<SearchCandidateRow>/, 'searchTmdb runs the classification orchestrator when filtering');
+  assert.match(tmdb, /searchFilterMode\(canAccessAdult\) === 'authorized-passthrough'/, 'authorized branch decided by the pure mode function');
+  // Search NEVER pretends TMDB supports provider/network filters on /search.
+  const searchFn = tmdb.match(/export async function searchTmdb[\s\S]*?^}/m);
+  assert.ok(searchFn, 'searchTmdb function body found');
+  assert.doesNotMatch(searchFn![0], /without_watch_providers|without_networks|with_networks|with_watch_providers/, 'search requests carry NO unsupported TMDB filter params');
+  assert.match(searchFn![0], /include_adult: false/, 'search keeps include_adult: false (untrusted first-pass filter)');
+  // Fail-closed wiring: detail classification failure -> 'uncertain' (never "not adult").
+  const classifyFn = tmdb.match(/async function classifySearchRow[\s\S]*?^}/m);
+  assert.ok(classifyFn, 'classifySearchRow exists');
+  assert.match(classifyFn![0], /catch \{\s*return 'uncertain';/, 'detail classification failure returns uncertain (fail-closed)');
+  assert.match(classifyFn![0], /movieRowVerdict\(\{ adult: rawAdult, isAnime: item\.isAnime \}\)/, 'movie rows use the central-classifier cheap verdict');
+}
+
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y).');

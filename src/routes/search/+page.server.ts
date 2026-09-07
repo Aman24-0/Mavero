@@ -1,10 +1,11 @@
 import { search } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { ContentServiceError, isContentType, type ContentType } from '$lib/server/content/types';
+import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { MediaItem } from '$data/content';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals, cookies }) => {
   const query = url.searchParams.get('q')?.trim() ?? '';
   const typeValue = url.searchParams.get('type');
   const type = isContentType(typeValue) ? typeValue : undefined;
@@ -26,7 +27,14 @@ export const load: PageServerLoad = async ({ url }) => {
   }
 
   try {
-    const result = await search(query, type, 1);
+    // Phase 4: SSR/API parity — the SSR search page evaluates the SAME
+    // server-side adult policy as /api/content/search and passes the
+    // decision down, so authorized users see consistent results on both
+    // paths. Classification + filtering still happen server-side in the
+    // content layer; the client is never trusted.
+    const { user } = await locals.safeGetSession();
+    const canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
+    const result = await search(query, type, 1, {}, canAccessAdult);
     return {
       query: result.query, type,
       items: result.items.map(toMediaItem),

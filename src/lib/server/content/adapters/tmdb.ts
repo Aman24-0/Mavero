@@ -5,6 +5,8 @@ import { ContentServiceError, type CollectionFilters, type ContentList, type Con
 import { ottProviders } from '$lib/shared/ott';
 import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved } from '../adult-providers';
 import { adultNetworkExclusionValue, withAdultNetworksParams, getVerifiedAdultNetworkIdForKey } from '../adult-catalog';
+import { mapWithConcurrency } from '../concurrency';
+import { movieRowVerdict, detailVerdict, collectSafeSearchPage, searchFilterMode, type CandidateVerdict, type UpstreamSearchPage } from '../search-classify';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -383,50 +385,118 @@ async function matchesOtt(type: Exclude<ContentType, 'anime'>, id: number, ottKe
   return value === null || value.includes(provider.providerId);
 }
 
-async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise<R>, concurrency: number): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      const item = items[index];
-      if (item !== undefined) results[index] = await worker(item);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 function releaseDate(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
   return type === 'movie' ? (raw as TmdbMovie).release_date ?? '' : (raw as TmdbTv).first_air_date ?? '';
 }
 
-export async function searchTmdb(query: string, type: Exclude<ContentType, 'anime'>, page = 1, filters: SearchFilters = {}, adultExclusion?: string): Promise<ContentList> {
+// ============================================================
+// Phase 4 — Adult-aware search classification.
+//
+// TMDB /search supports NEITHER network NOR provider filters and TV
+// search rows carry no networks[] metadata, so include_adult=false
+// CANNOT keep adult-network titles (TMDB adult=false as a rule) out of
+// unauthorized results. When adult access is OFF, every candidate is
+// classified server-side through the ONE central classifier:
+//   - movie rows: cheap metadata verdict (movieRowVerdict → isAdultContent)
+//     — no detail request needed for the flag signal;
+//   - TV rows: the authoritative network signal requires the detail
+//     response, so the (cached, in-flight-deduplicated) detail path is
+//     used and its central classification verdict is read. Failures are
+//     'uncertain' and fail CLOSED (excluded), never "not adult".
+// Bounded concurrency (4) — never unbounded Promise.all, never sequential.
+// ============================================================
+
+/** Max simultaneous detail classifications for search candidates (spec: 4–6). */
+const SEARCH_CLASSIFY_CONCURRENCY = 4;
+/** Hard cap on upstream pages walked per visible search page while filtering. */
+const SEARCH_MAX_UPSTREAM_PAGES = 3;
+/** Visible page size — TMDB's natural search page size (UI contract). */
+const SEARCH_PAGE_SIZE = 20;
+
+/** One search candidate as seen by the classifier: normalized row + the raw TMDB adult flag. */
+type SearchCandidateRow = { item: NormalizedMediaItem; rawAdult: boolean | undefined };
+
+/**
+ * Classify one search candidate through the central classifier. MUST NOT
+ * throw: any failure is reported as 'uncertain' and handled fail-closed
+ * by the orchestrator (excluded for unauthorized search).
+ */
+async function classifySearchRow(row: SearchCandidateRow): Promise<CandidateVerdict> {
+  const { item, rawAdult } = row;
+  // Movies: search rows carry no networks and movie identity has no
+  // network signal — the cheap metadata path via the central classifier
+  // (TMDB adult flag + anime exemption) is the movie-side contract (Phase 4).
+  if (item.type === 'movie') return movieRowVerdict({ adult: rawAdult, isAnime: item.isAnime });
+  // TV: network identity is authoritative and list rows carry no
+  // networks[] — read the central classification from the cached detail
+  // (getTmdbDetail classifies via isAdultContent over networks[]/
+  // providers/adult/isAnime and is cached 30 min, in-flight deduplicated).
+  try {
+    const detail = await getTmdbDetail('series', String(item.id));
+    return detailVerdict(detail.tags);
+  } catch {
+    return 'uncertain';
+  }
+}
+
+export async function searchTmdb(query: string, type: Exclude<ContentType, 'anime'>, page = 1, filters: SearchFilters = {}, canAccessAdult = false): Promise<ContentList> {
   const normalized = query.trim();
-  const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}:${filters.ott ?? ''}:${filters.genre ?? ''}:${filters.sort ?? ''}:${adultExclusion ?? 'no-adult'}`;
+  // Phase 4 authorization-aware cache dimension: the adult-allowed and the
+  // adult-excluded (classified + filtered) result sets are DIFFERENT cache
+  // entries. An authorized response can never be served to an unauthorized
+  // context or vice versa. Classification itself is cached per CONTENT (the
+  // detail cache) with no authorization dimension — see search-classify.ts.
+  const authDimension = canAccessAdult ? 'adult-allowed' : 'adult-excluded';
+  const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}:${filters.ott ?? ''}:${filters.genre ?? ''}:${filters.sort ?? ''}:${authDimension}`;
   const { value, stale } = await getOrSet(key, { ttlMs: 1000 * 60 * 2, staleWhileRevalidateMs: 1000 * 60 * 5 }, async () => {
     const path = type === 'movie' ? '/search/movie' : '/search/tv';
-    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { query: normalized, page, include_adult: false });
-    let rawItems = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
-    if (filters.genre) rawItems = rawItems.filter((item) => item.genre_ids?.includes(Number(filters.genre)));
-    if (filters.ott) {
-      const matches = await mapWithConcurrency(rawItems, (item) => matchesOtt(type, item.id, filters.ott as string), OTT_LOOKUP_CONCURRENCY);
-      rawItems = rawItems.filter((_, index) => matches[index]);
+    // NOTE: /search supports NO network/provider filter params — server-side
+    // classification below is the only adult filter that exists here.
+    // include_adult=false stays (pre-existing upstream cheap filter).
+    const fetchUpstreamPage = async (upstreamPage: number): Promise<UpstreamSearchPage<SearchCandidateRow>> => {
+      const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { query: normalized, page: upstreamPage, include_adult: false });
+      let rawItems = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+      if (filters.genre) rawItems = rawItems.filter((item) => item.genre_ids?.includes(Number(filters.genre)));
+      if (filters.ott) {
+        const matches = await mapWithConcurrency(rawItems, (item) => matchesOtt(type, item.id, filters.ott as string), OTT_LOOKUP_CONCURRENCY);
+        rawItems = rawItems.filter((_, index) => matches[index]);
+      }
+      if (filters.sort) rawItems.sort((left, right) => releaseDate(left, type).localeCompare(releaseDate(right, type)) * (filters.sort === 'release-desc' ? -1 : 1));
+      // Normalize to the output shape, keeping the raw adult flag for the
+      // cheap movie-row verdict (normalized rows do not carry the flag).
+      const items = rawItems.map((item) => ({ item: mapTmdb(item, type), rawAdult: (item as TmdbMovie).adult }));
+      return { items, totalPages: result.total_pages ?? upstreamPage };
+    };
+
+    if (searchFilterMode(canAccessAdult) === 'authorized-passthrough') {
+      // Adult Mode ON / authorized: adult results MAY appear — the exact
+      // pre-Phase-4 behavior (single upstream page, no classification N+1).
+      // Authorization was evaluated server-side (service/route layer).
+      const result = await fetchUpstreamPage(page);
+      return { items: result.items.map((row) => row.item), page, hasNextPage: page < result.totalPages, source: tmdbSource() };
     }
-    if (filters.sort) rawItems.sort((left, right) => releaseDate(left, type).localeCompare(releaseDate(right, type)) * (filters.sort === 'release-desc' ? -1 : 1));
-    const items = rawItems.map((item) => mapTmdb(item, type));
-    // BUG 2 fix: Filter out adult-classified items from search results
-    // when adult access is OFF. This is a defense-in-depth check on top
-    // of the TMDB include_adult=false filter. The isAdultContent
-    // classifier checks: tags (not set for search), TMDB adult flag
-    // (already false via include_adult=false), and provider IDs.
-    // For search results we don't have per-title provider IDs without
-    // N+1 calls, so we rely on the TMDB adult flag here. The primary
-    // defense is the without_watch_providers filter applied at the
-    // /discover level (not /search — TMDB's /search endpoint doesn't
-    // support without_watch_providers). This is the best we can do
-    // without N+1 provider lookups per search result.
-    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
+
+    // Adult Mode OFF / unauthorized: classify every candidate (TV via the
+    // cached detail path, movies via the cheap metadata path), exclude
+    // adult AND uncertain (fail-closed), and continue upstream pages while
+    // the visible page is underfilled — capped at SEARCH_MAX_UPSTREAM_PAGES
+    // and never past TMDB total_pages.
+    const outcome = await collectSafeSearchPage<SearchCandidateRow>({
+      startPage: page,
+      pageSize: SEARCH_PAGE_SIZE,
+      maxUpstreamPages: SEARCH_MAX_UPSTREAM_PAGES,
+      excludeUncertain: true,
+      concurrency: SEARCH_CLASSIFY_CONCURRENCY,
+      fetchUpstreamPage,
+      classifyCandidate: classifySearchRow,
+      identityOf: (row) => `${row.item.type}:${row.item.id}`
+    });
+    const items = outcome.items.map((row) => row.item);
+    // Keep the sort dimension meaningful across continued pages (year is
+    // the mapped-item field; within one upstream page the upstream
+    // release-date order is already applied).
+    if (filters.sort) items.sort((left, right) => (left.year - right.year) * (filters.sort === 'release-desc' ? -1 : 1));
+    return { items, page, hasNextPage: !outcome.upstreamExhausted, source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
 }
