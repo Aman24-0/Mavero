@@ -65,7 +65,7 @@ assert.match(upcomingSrc, /getUTCDate\(\)/, 'monthBounds uses getUTCDate');
 assert.match(upcomingSrc, /'primary_release_date\.gte': gte/, 'movies filtered by primary_release_date.gte');
 assert.match(upcomingSrc, /'primary_release_date\.lte': lte/, 'movies filtered by primary_release_date.lte');
 // Region is passed to TMDB /discover/movie (not just the cache key)
-assert.match(upcomingSrc, /region,\s*\n\s*page: 1/, 'region passed to TMDB /discover/movie params');
+assert.match(upcomingSrc, /region,\s*\n\s*\/\/ Transitional movie-side adult exclusion[\s\S]*?page: 1/, 'region passed to TMDB /discover/movie params (Phase 6: ahead of the transitional exclusion)');
 // Movies must have a release_date to be included
 assert.match(upcomingSrc, /filter\(\(m\) => m\.id && \(m\.title \|\| m\.original_title\) && m\.release_date\)/, 'movies filtered to only those with release_date');
 // Movie items are sorted chronologically
@@ -152,10 +152,11 @@ assert.doesNotMatch(upcomingSrc, /season: 1[,}]/, 'no hardcoded season: 1');
 assert.doesNotMatch(upcomingSrc, /episode: 1[,}]/, 'no hardcoded episode: 1');
 
 // --- Caching ---
-// Cache key includes month/year/type/region
-assert.match(upcomingSrc, /const key = `upcoming:movies:\$\{year\}:\$\{month\}:\$\{region\}`/, 'movie cache key includes year+month+region');
-assert.match(upcomingSrc, /const key = `upcoming:series:\$\{year\}:\$\{month\}:\$\{region\}`/, 'series cache key includes year+month+region');
-assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}`/, 'anime cache key includes year+month+region');
+// Cache key includes month/year/type/region + the adult-exclusion dimension
+// (Phase 6: provider-era and network-era result sets never share an entry).
+assert.match(upcomingSrc, /const key = `upcoming:movies:\$\{year\}:\$\{month\}:\$\{region\}:\$\{providerExclusion \?\? 'no-adult'\}`/, 'movie cache key includes year+month+region+adult-exclusion dimension');
+assert.match(upcomingSrc, /const key = `upcoming:series:\$\{year\}:\$\{month\}:\$\{region\}:\$\{networkExclusion \?\? 'no-nets'\}`/, 'series cache key includes year+month+region+network-exclusion dimension');
+assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}:\$\{networkExclusion \?\? 'no-nets'\}`/, 'anime cache key includes year+month+region+network-exclusion dimension');
 // TTL set
 assert.match(upcomingSrc, /upcomingPolicy = \{ ttlMs: 1000 \* 60 \* 10/, 'upcoming cache has 10-minute TTL');
 // Concurrency limit on season lookups

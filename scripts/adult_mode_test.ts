@@ -10,6 +10,11 @@ const adultCookie = await readFile(path.join(repoRoot, 'src/lib/server/content/a
 const adultProviders = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-providers.ts'), 'utf8');
 const tmdb = await readFile(path.join(repoRoot, 'src/lib/server/content/adapters/tmdb.ts'), 'utf8');
 const service = await readFile(path.join(repoRoot, 'src/lib/server/content/service.ts'), 'utf8');
+const searchClassify = await readFile(path.join(repoRoot, 'src/lib/server/content/search-classify.ts'), 'utf8');
+const listClassify = await readFile(path.join(repoRoot, 'src/lib/server/content/list-classify.ts'), 'utf8');
+const watchPageServer = await readFile(path.join(repoRoot, 'src/routes/watch/[type]/[id]/+page.server.ts'), 'utf8');
+const seasonEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/content/series/[id]/season/[season]/+server.ts'), 'utf8');
+const upcomingSource = await readFile(path.join(repoRoot, 'src/lib/server/content/upcoming.ts'), 'utf8');
 const railEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover/rail/+server.ts'), 'utf8');
 const searchEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/content/search/+server.ts'), 'utf8');
 const adultModeApi = await readFile(path.join(repoRoot, 'src/routes/api/settings/adult-mode/+server.ts'), 'utf8');
@@ -123,10 +128,16 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   // TMDB adapter uses getResolvedAdultProviderIds in all adult-sensitive functions.
   assert.match(tmdb, /async function getResolvedAdultProviderIds/, 'TMDB adapter has getResolvedAdultProviderIds helper');
   assert.match(tmdb, /await ensureAdultProvidersResolved\(\(\) => getTmdbIndiaProviders\(\)\)/, 'helper calls ensureAdultProvidersResolved');
-  // All adult-sensitive functions use the helper.
-  assert.match(tmdb, /getTmdbDiscover[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbDiscover uses resolved IDs');
+  // All adult-sensitive functions use the helper — EXCEPT the Phase 6
+  // classification-based rails: trending + legacy popular endpoints support
+  // no provider filters and classify candidates instead (see section S6).
+  const discoverFnD = tmdb.match(/export async function getTmdbDiscover[\s\S]*?^}/m)?.[0] ?? '';
+  assert.match(discoverFnD, /filterAdultFromListPage/, 'getTmdbDiscover classifies + filters candidates (Phase 6)');
+  assert.doesNotMatch(discoverFnD, /getResolvedAdultProviderIds/, 'getTmdbDiscover needs no provider resolution');
+  const popularFnD = tmdb.match(/export async function getTmdbPopular\([\s\S]*?^}/m)?.[0] ?? '';
+  assert.match(popularFnD, /filterAdultFromListPage/, 'getTmdbPopular classifies + filters candidates (Phase 6)');
+  assert.doesNotMatch(popularFnD, /getResolvedAdultProviderIds/, 'getTmdbPopular needs no provider resolution');
   assert.match(tmdb, /getTmdbCollection[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbCollection uses resolved IDs');
-  assert.match(tmdb, /getTmdbPopular\b[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbPopular uses resolved IDs');
   assert.match(tmdb, /getTmdbTrendingMoviesByLanguage[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbTrendingMoviesByLanguage uses resolved IDs');
   // service.search also ensures providers are resolved.
   assert.match(service, /await ensureAdultProvidersResolved\(\(\) => getTmdbIndiaProviders\(\)\)/, 'service.search ensures providers resolved');
@@ -353,7 +364,10 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(movieSsr, /tags\?\.includes\('Adult'\)/, 'movie SSR checks Adult tag');
   assert.match(seriesSsr, /tags\?\.includes\('Adult'\)/, 'series SSR checks Adult tag');
   assert.match(animeSsr, /tags\?\.includes\('Adult'\)/, 'anime SSR checks Adult tag');
-  assert.match(contentApi, /tags\?\.includes\('Adult'\)/, 'content API checks Adult tag');
+  // Phase 6: the content API reads the classification through the canonical
+  // central verdict reader (detailVerdict — the same central-classifier tag,
+  // behaviorally tested in the Phase 6 suite).
+  assert.match(contentApi, /detailVerdict\(result\.tags\) === 'adult'/, 'content API checks the central classifier verdict');
 }
 
 // ============================================================================
@@ -363,8 +377,11 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 {
   // searchTmdb cache key carries the authorization dimension — an authorized
   // (adult-allowed) response can never be served to an unauthorized context.
-  assert.match(tmdb, /const authDimension = canAccessAdult \? 'adult-allowed' : 'adult-excluded'/, 'search cache auth dimension computed from the server-side decision');
-  assert.match(tmdb, /searchTmdb[\s\S]*?key = `tmdb:search:.*:\$\{authDimension\}`/, 'search cache key includes the auth dimension');
+  // Phase 6: the key is built by the PURE buildSearchCacheKey (structural,
+  // behaviorally-tested isolation in scripts/adult_phase6_enforcement_test.ts).
+  assert.match(tmdb, /const key = buildSearchCacheKey\(\{ type, query: normalized, page, ott: filters\.ott, genre: filters\.genre, sort: filters\.sort, canAccessAdult \}\)/, 'search cache key built by the pure auth-dimension key builder');
+  assert.match(searchClassify, /export function buildSearchCacheKey/, 'buildSearchCacheKey exported from the pure classification module');
+  assert.match(searchClassify, /SEARCH_CACHE_AUTH_DIMENSIONS = \{[\s\S]*?allowed: 'adult-allowed',[\s\S]*?excluded: 'adult-excluded'/, 'auth dimension values are fixed structural literals');
   // searchTmdb receives the authorization decision (not a precomputed exclusion value).
   assert.match(tmdb, /export async function searchTmdb\(query: string, type: Exclude<ContentType, 'anime'>, page = 1, filters: SearchFilters = \{\}, canAccessAdult = false\)/, 'searchTmdb accepts the canAccessAdult decision');
   // The classification cache stays content-keyed: the detail path used by
@@ -377,15 +394,23 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 // S. BUG 3 — Generic catalog paths exclude adult content (Phase 3 shape).
 // ============================================================================
 {
-  // getTmdbDiscover (legacy trending): no-op post-filter + cache-key dim.
-  // Real trending enforcement is Phase 6 (endpoint supports no filters).
-  assert.match(tmdb, /getTmdbDiscover[\s\S]*?adultExclusion/, 'getTmdbDiscover computes adultExclusion');
-  assert.match(tmdb, /getTmdbDiscover[\s\S]*?key = `tmdb:discover:.*:\$\{adultExclusion \?\? 'no-adult'\}`/, 'getTmdbDiscover cache key includes adultExclusion');
+  // Phase 6: getTmdbDiscover (legacy trending) now CLASSIFIES every
+  // candidate (movies: flag path; TV: cached-detail path) and drops adult
+  // AND uncertain candidates unconditionally — the old provider-gated
+  // post-filter was a no-op. Endpoint supports no query filters.
+  const discoverFn = tmdb.match(/export async function getTmdbDiscover[\s\S]*?^}/m)?.[0] ?? '';
+  assert.ok(discoverFn, 'getTmdbDiscover function body found');
+  assert.match(discoverFn, /filterAdultFromListPage/, 'getTmdbDiscover runs the central classification filter');
+  assert.doesNotMatch(discoverFn, /adultExclusion/, 'getTmdbDiscover no longer keys on the obsolete provider dimension');
+  assert.match(discoverFn, /key = `tmdb:discover:\$\{type\}:\$\{page\}`/, 'getTmdbDiscover cache key is content-only (filter is a content fact)');
   // getTmdbCollection: TV via networks + transitional movie providers.
   assert.match(tmdb, /getTmdbCollection[\s\S]*?without_networks: networkExclusion/, 'getTmdbCollection TV excludes adult networks');
   assert.match(tmdb, /getTmdbCollection[\s\S]*?'without_watch_providers': providerExclusion/, 'getTmdbCollection movies keep transitional provider exclusion');
-  // getTmdbPopular (legacy list endpoints): unchanged no-op paths (Phase 6).
-  assert.match(tmdb, /getTmdbPopular\b[\s\S]*?adultExclusion/, 'getTmdbPopular computes adultExclusion');
+  // getTmdbPopular (legacy list endpoints): Phase 6 classification contract.
+  const popularFn = tmdb.match(/export async function getTmdbPopular\([\s\S]*?^}/m)?.[0] ?? '';
+  assert.ok(popularFn, 'getTmdbPopular function body found');
+  assert.match(popularFn, /filterAdultFromListPage/, 'getTmdbPopular runs the central classification filter');
+  assert.doesNotMatch(popularFn, /adultExclusion/, 'getTmdbPopular no longer keys on the obsolete provider dimension');
   // getTmdbTrendingMoviesByLanguage (movie-only): transitional providers.
   assert.match(tmdb, /getTmdbTrendingMoviesByLanguage[\s\S]*?adultExclusion/, 'getTmdbTrendingMoviesByLanguage computes adultExclusion');
 }
@@ -574,5 +599,78 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.doesNotMatch(adultAuthz, /new Map|cachedPolicy|POLICY_TTL/, 'no module-level authorization cache in the pure authz layer');
 }
 
+// ============================================================================
+// AA. Phase 6 — direct enforcement, unsupported catalog paths + cache
+//     isolation (static wiring assertions). Behavioral coverage for the
+//     pure contracts lives in scripts/adult_phase6_enforcement_test.ts.
+// ============================================================================
+{
+  // ---- Direct watch route guard ----
+  assert.match(watchPageServer, /import \{ canAccessAdultContent \} from '\$lib\/server\/content\/adult-policy'/, 'watch route uses the Phase 5 authorization function');
+  assert.match(watchPageServer, /detailVerdict\(item\.tags\) === 'adult'/, 'watch route classifies via the central classifier verdict');
+  assert.match(watchPageServer, /await canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'watch route evaluates authorization per request');
+  assert.match(watchPageServer, /throw error\(404, 'Title not found'\)/, 'unauthorized adult watch requests get the non-disclosing 404');
+  // Guard runs BEFORE episodes + streaming config are fetched.
+  const watchGuardIdx = watchPageServer.indexOf("detailVerdict(item.tags) === 'adult'");
+  const watchEpisodesIdx = watchPageServer.indexOf('let episodes');
+  assert.ok(watchGuardIdx > -1 && watchEpisodesIdx > watchGuardIdx, 'watch guard evaluates before episode/streaming data is fetched');
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z).');
+  // ---- Season endpoint guard ----
+  assert.match(seasonEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'season endpoint evaluates authorization per request');
+  assert.match(seasonEndpoint, /detailVerdict\(parent\.tags\) === 'adult'/, 'season endpoint classifies the PARENT title via the central classifier');
+  assert.match(seasonEndpoint, /status: 404/, 'season endpoint answers unauthorized adult requests with a non-disclosing 404');
+  // Fail-closed: classification failure -> 404 (never unclassified episode data).
+  assert.match(seasonEndpoint, /catch \{[\s\S]*?status: 404/, 'season endpoint fails CLOSED when the parent cannot be classified');
+
+  // ---- List-rail classification module (pure, single-classifier) ----
+  assert.match(listClassify, /import \{ movieRowVerdict, detailVerdict.* \} from '\.\/search-classify'/, 'list classification reuses the Phase 4 verdict helpers (no second classifier)');
+  assert.doesNotMatch(listClassify, /\$env|process\.env/, 'list classification is env-free (tsx-testable)');
+  assert.doesNotMatch(listClassify, /\b(2902|4573|7355)\b/, 'list classification contains no hardcoded network ids');
+  assert.doesNotMatch(listClassify, /from '\.\/adult-policy'|from '\.\/adult-authz'/, 'list classification imports NO authorization layer (normal rails are always adult-free)');
+  assert.match(listClassify, /export async function filterSafeRailItems/, 'bounded rail filter exists');
+  assert.match(listClassify, /export function shouldFilterDetailRecommendations/, 'recommendation-filter decision exists');
+  assert.match(listClassify, /mapWithConcurrency/, 'rail classification is bounded by the shared concurrency helper');
+
+  // ---- Adapter wiring: trending + legacy popular + theatre + genre ----
+  assert.match(tmdb, /const RAIL_CLASSIFY_CONCURRENCY = 4/, 'unsupported-rail classification is bounded at 4');
+  assert.match(tmdb, /const railDetailVerdictLoader: DetailVerdictLoader/, 'rail TV candidates classify through the cached detail path');
+  assert.match(tmdb, /getTmdbNowPlaying[\s\S]*?filterAdultFromListPage/, 'theatre rail classifies candidates (Phase 6)');
+  assert.match(tmdb, /getTmdbGenreByLanguage[\s\S]*?watch_region: 'IN'/, 'genre rail provider exclusion is region-corrected (Phase 6 bug fix)');
+  assert.match(tmdb, /getTmdbGenreByLanguage[\s\S]*?filterAdultFromListPage/, 'genre rail classifies candidates (Phase 6)');
+
+  // ---- Detail recommendations leak fix ----
+  assert.match(service, /export async function getDetailWithSafeRecommendations/, 'consumer detail path filters recommendations');
+  assert.match(service, /shouldFilterDetailRecommendations\(detail\.tags\)/, 'recommendation filtering is decided by the parent CLASSIFICATION (content fact)');
+  const detailPages = [
+    'src/routes/movie/[id]/+page.server.ts',
+    'src/routes/series/[id]/+page.server.ts',
+    'src/routes/anime/[id]/+page.server.ts',
+    'src/routes/api/content/[type]/[id]/+server.ts'
+  ];
+  for (const rel of detailPages) {
+    const src = await readFile(path.join(repoRoot, rel), 'utf8');
+    assert.match(src, /getDetailWithSafeRecommendations/, `${rel} uses the rec-safe consumer detail path`);
+  }
+  // Playback resolver keeps the raw path (protected area untouched).
+  const resolverService = await readFile(path.join(repoRoot, 'src/lib/server/resolver/service.ts'), 'utf8');
+  assert.match(resolverService, /await getDetail\(/, 'resolver keeps the raw getDetail path (no playback regression)');
+
+  // ---- Upcoming module enforcement ----
+  assert.match(upcomingSource, /loadUpcomingMovies[\s\S]*?include_adult: false/, 'upcoming movies send include_adult: false');
+  assert.match(upcomingSource, /loadUpcomingMovies[\s\S]*?'without_watch_providers': providerExclusion, watch_region: region/, 'upcoming movies apply the transitional provider exclusion WITH region');
+  assert.match(upcomingSource, /loadUpcomingSeries[\s\S]*?without_networks: networkExclusion/, 'upcoming series excludes verified adult networks (canonical)');
+  assert.match(upcomingSource, /loadUpcomingAnime[\s\S]*?without_networks: networkExclusion/, 'upcoming anime excludes verified adult networks (flag exemption preserved)');
+  assert.match(upcomingSource, /isAdultContent\(undefined, undefined, undefined, isAnimeCandidate, detail\.networks\)/, 'upcoming series classification uses the ONE central classifier over detail networks');
+  assert.match(upcomingSource, /movieRowVerdict\(\{[\s\S]*?adult: m\.adult/, 'upcoming movie rows classify through the central-classifier flag path');
+
+  // ---- Cache isolation (structural) ----
+  // Normal-rail caches and the adult-rail cache live in DISJOINT namespaces;
+  // the authorization decision is part of the search key (behavioral proof
+  // in the Phase 6 suite). The adult-shows cache key carries no consumer
+  // authorization dimension because NO unauthorized request can reach it.
+  assert.match(tmdb, /key = `tmdb:adult-shows:/, 'adult-rail responses live in their own cache namespace');
+  assert.match(listClassify, /NO authorization parameter in this module/, 'rail filtering keeps authorization out (documented structural contract)');
+}
+
+
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z); direct enforcement + unsupported paths + cache isolation (AA).');

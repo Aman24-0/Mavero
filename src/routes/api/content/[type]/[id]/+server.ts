@@ -1,8 +1,9 @@
 import { json } from '@sveltejs/kit';
-import { getDetail } from '$lib/server/content/service';
+import { getDetailWithSafeRecommendations } from '$lib/server/content/service';
 import { contentErrorResponse } from '$lib/server/content/response';
 import { isContentType, isValidContentId } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
+import { detailVerdict } from '$lib/server/content/search-classify';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params, locals, cookies }) => {
@@ -11,13 +12,16 @@ export const GET: RequestHandler = async ({ params, locals, cookies }) => {
   }
 
   try {
-    const result = await getDetail(params.type, params.id);
+    // Phase 6: consumer detail path — recommendations of non-adult parents
+    // are classified through the ONE central classifier and adult/uncertain
+    // recs are dropped before the response is built.
+    const result = await getDetailWithSafeRecommendations(params.type, params.id);
 
     // Phase 10: Direct content access guard. If the resolved item is
-    // classified as adult (tags include 'Adult'), enforce the centralized
-    // adult policy. The browser can NEVER bypass this — there is no
-    // client-side flag that grants access.
-    if (result.tags?.includes('Adult')) {
+    // classified as adult (central classifier verdict), enforce the
+    // centralized adult policy. The browser can NEVER bypass this — there
+    // is no client-side flag that grants access.
+    if (detailVerdict(result.tags) === 'adult') {
       const { user } = await locals.safeGetSession();
       const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
       if (!canAccess) {

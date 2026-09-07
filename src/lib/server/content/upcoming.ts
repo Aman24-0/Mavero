@@ -31,8 +31,11 @@
 // from upstream. If a field is missing it is omitted (undefined).
 
 import { getOrSet } from './cache';
-import { tmdbRequest } from './adapters/tmdb';
+import { tmdbRequest, getTmdbIndiaProviders } from './adapters/tmdb';
 import { ContentServiceError } from './types';
+import { isAdultContent, getAdultProviderIds, ensureAdultProvidersResolved } from './adult-providers';
+import { adultNetworkExclusionValue } from './adult-catalog';
+import { movieRowVerdict } from './search-classify';
 import type { UpcomingFilters, UpcomingItem, UpcomingProvider, UpcomingResult, UpcomingType } from './upcoming-types';
 
 const TMDB_IMAGE = 'https://image.tmdb.org/t/p';
@@ -115,7 +118,7 @@ function tmdbImage(path: string | null | undefined, size: 'w92' | 'w342' | 'w500
 
 // ---------- TMDB movies ----------
 
-type TmdbMovieList = { results?: Array<{ id: number; title?: string; original_title?: string; poster_path?: string | null; backdrop_path?: string | null; release_date?: string; vote_average?: number; genre_ids?: number[]; popularity?: number }> };
+type TmdbMovieList = { results?: Array<{ id: number; title?: string; original_title?: string; poster_path?: string | null; backdrop_path?: string | null; release_date?: string; vote_average?: number; genre_ids?: number[]; popularity?: number; original_language?: string; adult?: boolean }> };
 
 const genreNames: Record<number, string> = {
   28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
@@ -123,7 +126,16 @@ const genreNames: Record<number, string> = {
 
 async function loadUpcomingMovies(year: number, month: number, region: string): Promise<UpcomingItem[]> {
   const { gte, lte } = monthBounds(year, month);
-  const key = `upcoming:movies:${year}:${month}:${region}`;
+  // Phase 6: the Upcoming module previously sent NO adult filters at all.
+  // /discover/movie supports the TRANSITIONAL watch-provider exclusion
+  // (documented Phase 3 movie-side mechanism — same as every other movie
+  // rail) — now applied here with its region, plus include_adult=false.
+  // The exclusion value is embedded in the cache key so provider-era and
+  // no-provider result sets never share an entry.
+  await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
+  const adultIds = getAdultProviderIds();
+  const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `upcoming:movies:${year}:${month}:${region}:${providerExclusion ?? 'no-adult'}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     const result = await tmdbRequest<TmdbMovieList>('/discover/movie', {
       'primary_release_date.gte': gte,
@@ -132,10 +144,13 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
       'release_date.lte': lte,
       sort_by: 'popularity.desc',
       'vote_count.gte': 1,
+      include_adult: false,
       // Pass the actual region so TMDB applies region-aware release-date
       // context (e.g. IN theatrical/availability dates). Without this,
       // the region only lives in the cache key and has no upstream effect.
       region,
+      // Transitional movie-side adult exclusion (requires watch_region).
+      ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: region } : {}),
       page: 1
     });
     return result;
@@ -143,6 +158,14 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
   const movies = value.results ?? [];
   return movies
     .filter((m) => m.id && (m.title || m.original_title) && m.release_date)
+    // Phase 6 defense-in-depth: classify every row through the ONE central
+    // classifier (cheap flag path; anime exemption via genre 16 + ja) and
+    // drop adult candidates. Normal rail: filtered regardless of Adult Mode
+    // state.
+    .filter((m) => movieRowVerdict({
+      adult: m.adult,
+      isAnime: m.genre_ids?.includes(16) === true && m.original_language === 'ja'
+    }) !== 'adult')
     .map((m) => {
       const date = m.release_date ?? '';
       return {
@@ -165,7 +188,7 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
 // ---------- TMDB TV episodes ----------
 
 type TmdbTvList = { results?: Array<{ id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; first_air_date?: string; vote_average?: number; genre_ids?: number[]; popularity?: number; original_language?: string }> };
-type TmdbTvDetail = { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; number_of_seasons?: number; last_episode_to_air?: { season_number?: number; episode_number?: number; air_date?: string }; seasons?: Array<{ season_number?: number; air_date?: string; episode_count?: number; poster_path?: string | null }> };
+type TmdbTvDetail = { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; number_of_seasons?: number; last_episode_to_air?: { season_number?: number; episode_number?: number; air_date?: string }; seasons?: Array<{ season_number?: number; air_date?: string; episode_count?: number; poster_path?: string | null }>; networks?: Array<{ id?: number; name?: string | null }> };
 type TmdbSeason = { season_number?: number; episodes?: Array<{ id: number; episode_number?: number; season_number?: number; name?: string; air_date?: string; still_path?: string | null; overview?: string }> };
 type TmdbWatchProviders = { results?: Record<string, { flatrate?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }> }> };
 
@@ -226,11 +249,25 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 // the id prefix ('series-' or 'anime-'). Anime uses the same TMDB TV
 // path as Series — the difference is that anime candidates are
 // pre-filtered to genre 16 + original_language 'ja' in loadUpcomingAnime.
-async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[] }, year: number, month: number, region: string, itemType: 'series' | 'anime' = 'series'): Promise<UpcomingItem[]> {
+async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[]; original_language?: string }, year: number, month: number, region: string, itemType: 'series' | 'anime' = 'series'): Promise<UpcomingItem[]> {
   // Fetch series detail to find the most recent / current season.
   // NOT caught: a failed detail lookup propagates so loadUpcomingSeries can
-  // distinguish "no episodes this month" from "upstream failure".
+  // distinguish "no episodes this month" from "upstream failure" (which
+  // also makes classification uncertain -> the candidate is dropped —
+  // fail-closed for this adult-sensitive path).
   const detail = await tmdbRequest<TmdbTvDetail>(`/tv/${raw.id}`);
+  // Phase 6 — central Adult classification (defense-in-depth on top of the
+  // without_networks query filter). The detail response carries networks[];
+  // a VERIFIED adult network classifies the title as Adult even when TMDB's
+  // generic adult flag is false. The anime exemption lives inside the ONE
+  // central classifier (genre 16 + ja candidates keep their exemption — the
+  // flag signal never classifies anime alone, but an adult NETWORK signal
+  // still applies to any content). There is deliberately NO title blacklist
+  // and NO genre heuristic here.
+  const isAnimeCandidate = raw.genre_ids?.includes(16) === true && raw.original_language === 'ja';
+  if (isAdultContent(undefined, undefined, undefined, isAnimeCandidate, detail.networks)) {
+    return [];
+  }
   // Determine the season to inspect: prefer last_episode_to_air's season,
   // otherwise the latest season with a future air_date, otherwise the
   // highest season_number > 0.
@@ -305,7 +342,13 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
 
 async function loadUpcomingSeries(year: number, month: number, region: string): Promise<UpcomingItem[]> {
   const { gte, lte } = monthBounds(year, month);
-  const key = `upcoming:series:${year}:${month}:${region}`;
+  // Phase 6: the Upcoming series source previously sent NO adult filters.
+  // /discover/tv supports the canonical Phase 3 mechanism — exclude VERIFIED
+  // adult TV NETWORKS via without_networks (values from the central registry
+  // via adult-catalog.ts) — plus include_adult=false. The exclusion value is
+  // embedded in the cache key (no network-era/no-filter result sharing).
+  const networkExclusion = adultNetworkExclusionValue();
+  const key = `upcoming:series:${year}:${month}:${region}:${networkExclusion ?? 'no-nets'}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: discover TV series with episodes airing in the month.
     const result = await tmdbRequest<TmdbTvList>('/discover/tv', {
@@ -313,6 +356,8 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
       'air_date.lte': lte,
       sort_by: 'popularity.desc',
       'vote_count.gte': 1,
+      include_adult: false,
+      ...(networkExclusion ? { without_networks: networkExclusion } : {}),
       page: 1
     });
     const candidates = (result.results ?? []).filter((s) => s.id && (s.name || s.original_name)).slice(0, 20);
@@ -355,7 +400,13 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
 // AniList is no longer used — anime is now TMDB content only.
 export async function loadUpcomingAnime(year: number, month: number, region: string = DEFAULT_REGION): Promise<UpcomingItem[]> {
   const { gte, lte } = monthBounds(year, month);
-  const key = `upcoming:anime:${year}:${month}:${region}`;
+  // Phase 6: include_adult=false (consistent with the anime rails) + the
+  // canonical without_networks exclusion. The anime exemption is preserved:
+  // the ONE central classifier never classifies an anime title adult from
+  // the TMDB flag alone — but a VERIFIED adult-network signal still applies,
+  // so excluding adult networks here cannot suppress legitimate anime.
+  const networkExclusion = adultNetworkExclusionValue();
+  const key = `upcoming:anime:${year}:${month}:${region}:${networkExclusion ?? 'no-nets'}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: discover anime TV series with episodes airing in the month.
     // TMDB filters server-side by Animation genre (16) + ja language.
@@ -366,6 +417,8 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
       with_original_language: ANIME_ORIGINAL_LANGUAGE,
       sort_by: 'popularity.desc',
       'vote_count.gte': 1,
+      include_adult: false,
+      ...(networkExclusion ? { without_networks: networkExclusion } : {}),
       page: 1
     });
     const candidates = (result.results ?? [])

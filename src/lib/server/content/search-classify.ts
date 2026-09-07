@@ -61,6 +61,42 @@ export function searchFilterMode(canAccessAdult: boolean): 'authorized-passthrou
   return canAccessAdult ? 'authorized-passthrough' : 'classify-and-exclude';
 }
 
+/**
+ * Authorization-aware search response cache key (Phase 6: extracted as a
+ * PURE function so the structural cache isolation is behaviorally testable
+ * — the adapter cannot be imported under tsx, this can).
+ *
+ * STRUCTURAL ISOLATION CONTRACT: the adult-allowed and adult-excluded
+ * result sets are DIFFERENT cache entries. An authorized (adult-allowed)
+ * response can never be served to an unauthorized (adult-excluded) context
+ * or vice versa, because the authorization decision is PART OF THE KEY —
+ * not a comment, not a convention. The dimension values are fixed literals
+ * ('adult-allowed' / 'adult-excluded'); there is no input that can collapse
+ * the two namespaces into one entry.
+ *
+ * The format is byte-compatible with the pre-Phase-6 inline construction in
+ * searchTmdb (behavioral tests assert the exact key shape).
+ */
+export const SEARCH_CACHE_AUTH_DIMENSIONS = {
+  allowed: 'adult-allowed',
+  excluded: 'adult-excluded'
+} as const;
+
+export function buildSearchCacheKey(input: {
+  type: string;
+  query: string;
+  page: number;
+  ott?: string;
+  genre?: string;
+  sort?: string;
+  canAccessAdult: boolean;
+}): string {
+  const authDimension = input.canAccessAdult
+    ? SEARCH_CACHE_AUTH_DIMENSIONS.allowed
+    : SEARCH_CACHE_AUTH_DIMENSIONS.excluded;
+  return `tmdb:search:${input.type}:${input.query.toLowerCase()}:${input.page}:${input.ott ?? ''}:${input.genre ?? ''}:${input.sort ?? ''}:${authDimension}`;
+}
+
 export type UpstreamSearchPage<T> = { items: T[]; totalPages: number };
 
 export type SafeSearchPageResult<T> = {

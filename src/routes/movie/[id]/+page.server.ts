@@ -1,12 +1,17 @@
 import { error } from '@sveltejs/kit';
-import { getDetail } from '$lib/server/content/service';
+import { getDetailWithSafeRecommendations } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals, cookies }) => {
   try {
-    const detail = await getDetail('movie', params.id);
+    // Phase 6: consumer detail path — recommendations of non-adult parents
+    // are classified through the ONE central classifier and adult/uncertain
+    // recs are dropped (a normal surface stays adult-free regardless of
+    // Adult Mode state). Adult parents keep their recs (Adult-specific
+    // surface, reachable only after the guard below).
+    const detail = await getDetailWithSafeRecommendations('movie', params.id);
 
     // Phase 10: SSR adult content guard. If the resolved item is adult,
     // enforce the centralized policy before exposing it via SSR.

@@ -118,6 +118,8 @@ function filterAnimeSeries(items: NormalizedMediaItem[]): NormalizedMediaItem[] 
 // it falls back to checking tags + TMDB adult flag (non-anime only).
 import { isAdultContent, ensureAdultProvidersResolved } from './adult-providers';
 import { getTmdbIndiaProviders } from './adapters/tmdb';
+import { detailVerdict } from './search-classify';
+import { filterSafeRailItems, shouldFilterDetailRecommendations, type RailCandidateRow } from './list-classify';
 
 function isAdultItem(item: NormalizedMediaItem): boolean {
   // For list responses we don't have per-title provider IDs without N+1.
@@ -302,6 +304,75 @@ export async function getDetail(type: ContentType, id: string): Promise<ContentD
     if (fixture && (canFallback(error) || (error instanceof ContentServiceError && error.code === 'NOT_FOUND'))) return { ...fixture, source: { ...fixture.source, stale: true } };
     throw error;
   }
+}
+
+// Max simultaneous recommendation classifications per detail (bounded N+1;
+// recommendations are <= 6 per detail — matches the rail concurrency).
+const DETAIL_RECOMMENDATION_CONCURRENCY = 4;
+
+/**
+ * Phase 6 — detail recommendations leak fix.
+ *
+ * The TMDB detail response embeds `recommendations` (append_to_response).
+ * Those rows are LIST-shaped: TV rows carry no networks[] and no reliable
+ * adult flag, so an adult-network title can appear in a normal title's
+ * recommendation strip — a direct bypass of every rail filter.
+ *
+ * `getDetailWithSafeRecommendations` is the CONSUMER-facing detail path
+ * (detail pages + content API). It filters the recommendations of
+ * non-adult parents through the ONE central classifier:
+ *   - movie recs: cheap detail-path verdict (uniform; also picks up the
+ *     transitional provider signal from the rec's cached detail),
+ *   - TV recs: cached-detail verdict (network identity is authoritative).
+ *   - adult AND uncertain recs are dropped — a normal surface must stay
+ *     adult-free REGARDLESS of Adult Mode state (fail-closed).
+ * Adult parents keep their recommendations unfiltered: that page is an
+ * Adult-specific surface reachable only after the route-level authorization
+ * guard, so its (possibly adult) recommendations are legitimate there.
+ *
+ * The decision input is the parent's CLASSIFICATION (a content fact), never
+ * authorization — so the wrapper's output stays deterministic per content
+ * and classification work flows through the shared cached detail path.
+ *
+ * Playback/resolver callers keep using `getDetail` directly: they never
+ * surface recommendation strips, so no classification N+1 is added to the
+ * playback path (protected area — untouched semantics).
+ */
+export async function getDetailWithSafeRecommendations(type: ContentType, id: string): Promise<ContentDetail> {
+  const detail = await getDetail(type, id);
+  if (!shouldFilterDetailRecommendations(detail.tags)) {
+    // Adult parent -> Adult-specific surface (authorization enforced by the
+    // route guard before this data is reachable). Recommendations pass.
+    return detail;
+  }
+  const recommendations = detail.recommendations ?? [];
+  if (recommendations.length === 0) return detail;
+  // getTmdbDetail maps every recommendation with the PARENT's resolved type
+  // (movie details recommend movies; TV details recommend TV), so one type
+  // covers the whole strip.
+  const recType = detail.type === 'movie' ? 'movie' : 'series';
+  const rows: RailCandidateRow<NormalizedMediaItem>[] = recommendations.map((rec) => ({
+    item: rec,
+    mediaType: recType
+  }));
+  const result = await filterSafeRailItems(rows, {
+    concurrency: DETAIL_RECOMMENDATION_CONCURRENCY,
+    loadDetailVerdict: async (tmdbId) => {
+      try {
+        // Uniform detail-path verdict: reads the central classification
+        // (flag + transitional provider signal for movies; authoritative
+        // network signal for TV) from the shared, cached,
+        // in-flight-deduplicated detail path.
+        const recDetail = await getTmdbDetail(recType, tmdbId);
+        return detailVerdict(recDetail.tags);
+      } catch {
+        return 'uncertain';
+      }
+    },
+    tmdbIdOf: (item) => String(item.externalIds?.tmdb ?? item.id.replace(/^(movie|series)-/, '')),
+    identityOf: (item) => `${item.type}:${item.id}`
+  });
+  return { ...detail, recommendations: result.items };
 }
 
 export function getFixtureContent(type: ContentType) {

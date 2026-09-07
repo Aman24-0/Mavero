@@ -6,7 +6,8 @@ import { ottProviders } from '$lib/shared/ott';
 import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved } from '../adult-providers';
 import { adultNetworkExclusionValue, withAdultNetworksParams, getVerifiedAdultNetworkIdForKey } from '../adult-catalog';
 import { mapWithConcurrency } from '../concurrency';
-import { movieRowVerdict, detailVerdict, collectSafeSearchPage, searchFilterMode, type CandidateVerdict, type UpstreamSearchPage } from '../search-classify';
+import { movieRowVerdict, detailVerdict, collectSafeSearchPage, searchFilterMode, buildSearchCacheKey, type CandidateVerdict, type UpstreamSearchPage } from '../search-classify';
+import { filterSafeRailItems, type RailCandidateRow, type DetailVerdictLoader } from '../list-classify';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -255,6 +256,66 @@ const detailPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 
 const ottProviderPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 2 };
 const OTT_LOOKUP_CONCURRENCY = 4;
 
+// ============================================================
+// Phase 6 — unsupported catalog path enforcement.
+//
+// The trending (/trending/{movie,tv}/week), legacy popular
+// (/{movie,tv}/popular), theatre (/movie/now_playing) and detail
+// recommendations (append_to_response) endpoints support NEITHER
+// without_networks NOR without_watch_providers, and TV rows carry no
+// networks[] metadata (verified Indian adult OTT originals are TMDB
+// adult=false, so include_adult/flag checks alone CANNOT keep them out).
+// Every candidate on these rails is therefore classified server-side
+// through the ONE central classifier:
+//   - movie rows: cheap flag verdict (movieRowVerdict → isAdultContent,
+//     anime exemption included) — the Phase 4 movie-side contract;
+//   - TV rows: the authoritative network signal requires the detail
+//     response, so the (cached, in-flight-deduplicated) detail path is
+//     used and its central classification verdict is read. Failures are
+//     'uncertain' and fail CLOSED (excluded), never "not adult".
+// Bounded concurrency (4) — never unbounded Promise.all, never sequential.
+// These rails are NORMAL surfaces: they stay adult-free regardless of
+// Adult Mode state (Adult Mode ON never injects adult titles into normal
+// rails), so the filtering takes NO authorization input and its result is
+// a global-safe content fact.
+// ============================================================
+
+/** Max simultaneous detail classifications for unsupported-rail candidates (matches Search). */
+const RAIL_CLASSIFY_CONCURRENCY = 4;
+
+/**
+ * Detail-path verdict loader for TV rail candidates: reads the central
+ * classification from the cached detail (getTmdbDetail classifies via
+ * isAdultContent over networks[]/providers/adult/isAnime and is cached
+ * 30 min, in-flight deduplicated). Never throws — any failure is reported
+ * as 'uncertain' and handled fail-closed by the rail filter.
+ */
+const railDetailVerdictLoader: DetailVerdictLoader = async (tmdbId: string): Promise<CandidateVerdict> => {
+  try {
+    const detail = await getTmdbDetail('series', tmdbId);
+    return detailVerdict(detail.tags);
+  } catch {
+    return 'uncertain';
+  }
+};
+
+/**
+ * Classify + filter one unsupported-rail page of candidate rows down to
+ * its adult-free subset (shared by trending + legacy popular). Rows are
+ * built AT MAP TIME so the movie rows keep the raw TMDB adult flag (the
+ * cheap movie-side signal; normalized items do not carry it).
+ * TMDB order is preserved; duplicates are collected once.
+ */
+async function filterAdultFromListPage(rows: RailCandidateRow<NormalizedMediaItem>[]): Promise<NormalizedMediaItem[]> {
+  const result = await filterSafeRailItems(rows, {
+    concurrency: RAIL_CLASSIFY_CONCURRENCY,
+    loadDetailVerdict: railDetailVerdictLoader,
+    tmdbIdOf: (item) => String(item.externalIds?.tmdb ?? item.id.replace(/^(movie|series)-/, '')),
+    identityOf: (item) => `${item.type}:${item.id}`
+  });
+  return result.items;
+}
+
 // BUG 3 fix (Phase 3 architecture): generic catalog functions exclude adult
 // content at the TMDB query level. TV queries exclude VERIFIED adult TV
 // NETWORKS (`without_networks`, values from the central registry via
@@ -277,15 +338,27 @@ async function getResolvedAdultProviderIds(): Promise<number[]> {
 }
 
 export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
-  const adultIds = await getResolvedAdultProviderIds();
-  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  const key = `tmdb:discover:${type}:${page}:${adultExclusion ?? 'no-adult'}`;
+  // Phase 6: /trending/{movie,tv}/week supports NO network/provider filters
+  // and TV rows carry no networks[] (verified adult OTT originals are TMDB
+  // adult=false), so every candidate is classified server-side (movies via
+  // the cheap flag path, TV via the cached detail path) and adult AND
+  // uncertain candidates are excluded — ALWAYS, regardless of Adult Mode
+  // state (normal rails stay adult-free). The old provider-gated post-filter
+  // was a no-op (it passed `undefined` for the flag and TV rows have no
+  // networks) and is replaced by this classification step.
+  const key = `tmdb:discover:${type}:${page}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/trending/movie/week' : '/trending/tv/week';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
-    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Trending'));
-    // BUG 3: defense-in-depth — filter out any items classified as adult.
-    const filteredItems = adultExclusion ? items.filter((item) => !isAdultContent(item.tags, undefined, undefined, item.isAnime)) : items;
+    // Build candidate rows at map time so movie rows keep the raw adult flag.
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = (result.results ?? [])
+      .filter((item) => hasRequiredListMetadata(item, type))
+      .map((item) => ({
+        item: mapTmdb(item, type, 'Trending'),
+        mediaType: type,
+        rawAdult: (item as TmdbMovie).adult
+      }));
+    const filteredItems = await filterAdultFromListPage(rows);
     return { items: filteredItems, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -354,14 +427,22 @@ export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1
 }
 
 export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
-  const adultIds = await getResolvedAdultProviderIds();
-  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  const key = `tmdb:popular:${type}:${page}:${adultExclusion ?? 'no-adult'}`;
+  // Phase 6: /{movie,tv}/popular supports NO network/provider filters and
+  // TV rows carry no networks[] — same classification contract as trending
+  // above (movies: flag path; TV: cached-detail path; adult AND uncertain
+  // excluded unconditionally; the old provider-gated no-op filter replaced).
+  const key = `tmdb:popular:${type}:${page}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/movie/popular' : '/tv/popular';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
-    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Popular'));
-    const filteredItems = adultExclusion ? items.filter((item) => !isAdultContent(item.tags, undefined, undefined, item.isAnime)) : items;
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = (result.results ?? [])
+      .filter((item) => hasRequiredListMetadata(item, type))
+      .map((item) => ({
+        item: mapTmdb(item, type, 'Popular'),
+        mediaType: type,
+        rawAdult: (item as TmdbMovie).adult
+      }));
+    const filteredItems = await filterAdultFromListPage(rows);
     return { items: filteredItems, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -446,8 +527,10 @@ export async function searchTmdb(query: string, type: Exclude<ContentType, 'anim
   // entries. An authorized response can never be served to an unauthorized
   // context or vice versa. Classification itself is cached per CONTENT (the
   // detail cache) with no authorization dimension — see search-classify.ts.
-  const authDimension = canAccessAdult ? 'adult-allowed' : 'adult-excluded';
-  const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}:${filters.ott ?? ''}:${filters.genre ?? ''}:${filters.sort ?? ''}:${authDimension}`;
+  // Phase 6: the key is built by the PURE buildSearchCacheKey (structural,
+  // behaviorally-tested isolation — the authorization decision is part of
+  // the key, not a convention).
+  const key = buildSearchCacheKey({ type, query: normalized, page, ott: filters.ott, genre: filters.genre, sort: filters.sort, canAccessAdult });
   const { value, stale } = await getOrSet(key, { ttlMs: 1000 * 60 * 2, staleWhileRevalidateMs: 1000 * 60 * 5 }, async () => {
     const path = type === 'movie' ? '/search/movie' : '/search/tv';
     // NOTE: /search supports NO network/provider filter params — server-side
@@ -645,9 +728,19 @@ export async function getTmdbNowPlaying(language: DiscoverLanguage, page = 1): P
       // For "all" we only need the first upstream page (no filtering).
       if (language === 'all') break;
     }
-    const items = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, 'movie', 'In theatres'));
+    const items = collected.slice(0, DISCOVER_PAGE_SIZE);
+    // Phase 6: /movie/now_playing supports NO adult filters — classify the
+    // final page through the central classifier (cheap flag path for movie
+    // rows; anime exemption included) and drop adult candidates. Normal rail:
+    // filtered regardless of Adult Mode state. TMDB order preserved.
+    const candidateRows: RailCandidateRow<NormalizedMediaItem>[] = items.map((item) => ({
+      item: mapTmdb(item, 'movie', 'In theatres'),
+      mediaType: 'movie' as const,
+      rawAdult: item.adult
+    }));
+    const safeItems = await filterAdultFromListPage(candidateRows);
     const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
-    return { items, page, hasNextPage, source: tmdbSource() };
+    return { items: safeItems, page, hasNextPage, source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
 }
@@ -904,7 +997,11 @@ export async function getTmdbGenreByLanguage(genreId: number, language: Discover
         with_genres: genreId,
         ...(langParam ? { with_original_language: langParam } : {}),
         region: 'IN',
-        ...(adultExclusion ? { 'without_watch_providers': adultExclusion } : {}),
+        // Phase 6 BUG FIX: `without_watch_providers` is region-scoped by TMDB
+        // and is IGNORED without `watch_region` — the pre-Phase-6 query sent
+        // it without the region, so the transitional movie-side adult
+        // exclusion silently never applied on the genre rails.
+        ...(adultExclusion ? { 'without_watch_providers': adultExclusion, watch_region: 'IN' } : {}),
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
       const filtered = applyLanguageFilter(raw, language);
@@ -916,7 +1013,17 @@ export async function getTmdbGenreByLanguage(genreId: number, language: Discover
       pagesWalked += 1;
       if (language === 'all') break;
     }
-    const items = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, 'movie'));
+    // Phase 6: defense-in-depth on top of the (now region-corrected)
+    // provider exclusion — classify the final page through the central
+    // classifier (cheap flag path for movie rows; anime exemption included)
+    // and drop adult candidates. Normal rail: filtered regardless of Adult
+    // Mode state. TMDB order preserved.
+    const candidateRows: RailCandidateRow<NormalizedMediaItem>[] = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => ({
+      item: mapTmdb(item, 'movie'),
+      mediaType: 'movie' as const,
+      rawAdult: item.adult
+    }));
+    const items = await filterAdultFromListPage(candidateRows);
     const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
     return { items, page, hasNextPage, source: tmdbSource() };
   });
