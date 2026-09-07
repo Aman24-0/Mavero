@@ -326,7 +326,11 @@
 
   @media (max-width: 640px) {
     .adult-discover-section { margin-top: 28px; }
-    .section-head { gap: 8px; }
+    /* Phase 10 QA: on narrow viewports the nowrap section title could
+       visually collide with the non-shrinking filter pills (measured 14px
+       overlap at 390px). Wrapping moves the pills below the title instead
+       of letting them overlap the 18+ label. */
+    .section-head { gap: 8px; flex-wrap: wrap; }
     .section-title { font-size: 1.05rem; }
     .rail { grid-auto-columns: 40vw; gap: 10px; }
     .section-head-right { gap: 6px; }

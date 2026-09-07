@@ -457,4 +457,22 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   ok('extras. pagination clamp + closed unions + bounded Show-more contract');
 }
 
+// ============================================================================
+// Phase 10 QA regression — deployed mobile-width (390px) browser QA measured
+// a 14px overlap between the nowrap section title (the 18+ label) and the
+// non-shrinking filter pills. The fix wraps the section head on narrow
+// viewports. This wiring assertion keeps the wrap rule in place.
+// ============================================================================
+{
+  const section = await read('src/lib/components/AdultDiscoverSection.svelte');
+  const head = section.match(/@media \(max-width: 640px\) \{[\s\S]*?\n  \}/);
+  assert.ok(head, 'Phase 10: the mobile media query block exists');
+  assert.match(
+    head?.[0] ?? '',
+    /\.section-head \{[^}]*flex-wrap: wrap;/,
+    'Phase 10: the section head wraps below 640px (title/pill overlap regression)'
+  );
+  ok('phase10. adult section head wraps on mobile (18+ title vs filter-pill overlap regression)');
+}
+
 console.log(`\nAdult Phase 8 tests passed: ${passed} check groups (Popular TV genre exclusion; Adult Discover UI/API integration; SSR/hydration leak prevention; legacy rail migration + protection; search parity; cache isolation; Phase 6 regression; anime exemption).`);

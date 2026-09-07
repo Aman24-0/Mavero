@@ -1,6 +1,6 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 9 complete (final security regression + live TMDB network diagnostic — verification-only, zero production-source changes). Phase 8 was Popular TV generic-category cleanup + Adult Discover/Search UI integration; Phase 7 was the dedicated authorized Adult Discover backend/API; Phase 6 was direct server-side enforcement + unsupported catalog paths + cache isolation; Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
+> **Status:** Phase 10 complete (deployed browser QA + release validation on the live Netlify production environment — verdict: **READY WITH NON-BLOCKING NOTES**; one real mobile-width UI defect found and minimally fixed, zero security defects). Phase 9 was the final security regression + live TMDB network diagnostic (verification-only, zero production-source changes). Phase 8 was Popular TV generic-category cleanup + Adult Discover/Search UI integration; Phase 7 was the dedicated authorized Adult Discover backend/API; Phase 6 was direct server-side enforcement + unsupported catalog paths + cache isolation; Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
 > **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
@@ -82,8 +82,8 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 - [x] Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
 - [x] Phase 7 — Indian Adult Shows Discover backend/API (dedicated authorized Adult Discover catalog)
 - [x] Phase 8 — Popular TV cleanup + Adult Discover / Search UI integration
-- [ ] Phase 9 — Behavioral tests A-R + live TMDB diagnostic
-- [ ] Phase 10 — Final integration QA, regression audit & release validation
+- [x] Phase 9 — Behavioral tests A-R + live TMDB diagnostic
+- [x] Phase 10 — Final integration QA, regression audit & release validation
 
 ### Phase 1 — Repository audit, baseline & worklog
 
@@ -527,19 +527,76 @@ A direct-watch bypass NO (classify→authorize→404) | B season bypass NO (same
 
 ### Phase 10 — Final integration QA, regression audit & release validation
 
-**Status:** Not Started
+**Status:** Complete — **FINAL RELEASE VERDICT: READY WITH NON-BLOCKING NOTES**
 
-**Files changed:**
-- (planned) none (validation only) or fixes discovered by QA
+**Implemented:** 2026-09-07 against branch `main`, starting from commit `11b686e819ab956f219f2402f13b1f7639537f9e` (Phase 9 commit; HEAD == origin/main at start and end, clean tree).
 
-**Tests:**
-- (planned) full `pnpm test` / `pnpm check` / `pnpm build` + browser QA + playback/anime regression audit
+**Deployed environment tested:** `https://mavero1.netlify.app` — the production URL documented in the repository itself (`static/robots.txt` sitemap line + multiple `docs/*` verification reports + migration comments); not guessed. Platform: Netlify (`@sveltejs/adapter-netlify`, `netlify.toml` build command `pnpm run build`, publish `build`, production branch `main`). Live check: HTTP 200, `server: Netlify`, SvelteKit SSR (`x-sveltekit-page: true`). Deployed version evidence: the deployed API/SSR behavior carries the Phase 7/8/9 signatures (non-disclosing `NOT_FOUND` catalog body, `/api/settings/adult-mode` contract, Phase 8 Adult Discover UI chunk with the closed `type/language/page` param object and the `18+` badge); no version endpoint exists, so feature-signature matching is the available version evidence.
 
-**Notes:**
-- Must prove zero regressions in protected areas (playback, resolver, progress, navigation, My List, anime).
+**Environment configuration checks (no secret values read or recorded):**
+- Supabase: **WORKING** — production `/api/settings/adult-mode` reads `app_settings` per request and reports the live admin policy (`adminAllows: true` in production); auth/refresh surfaces respond; user-preference API paths validate and reject malformed input.
+- TMDB: **WORKING** — home rails, Popular TV/Movie, New OTT, Theatre, Top Rated, detail pages, season episodes and search all return live TMDB content in production.
+- `MAVERO_ADULT_COOKIE_SECRET`: **CONFIGURED** (behaviorally proven, value never exposed) — the production PUT issued a `value.signature` HMAC-format guest cookie, the legit cookie authorizes, and tampered/garbage/unsigned cookies all fail closed with the non-disclosing 404. Issuance of a verifiable signed cookie is impossible without the secret; fail-closed behavior on absence was separately proven by the Phase 5/9 behavioral suites.
+- Sandbox/CI environment: provisions **no** TMDB credential — the JSON-API diagnostic leg therefore reports NOT RUN (see below). This is an environment limitation, not a product defect; the production site's own TMDB integration is demonstrably working.
+
+**Live TMDB JSON API diagnostic:** `pnpm exec tsx scripts/adult_phase9_tmdb_diagnostic.ts` executed at Phase 10 — **PART A (JSON API): NOT RUN — credential unavailable in the run environment** (honest SKIP; the repository correctly contains no committed credentials). **PART B (live TMDB website, credential-free, same TMDB records, freshly executed): PASS** — Ullu `2902` → `2902-ullu`, Kooku `4573` → `4573-kooku`, Atrangii `7355` → `7355-atrangii`; positive control `network/213` → `213-netflix` PASS; negative control `network/999999999` → 404 PASS; near-miss control `network/2901` → `2901-spiegel-tv-wissen` PASS. **PART C (registry consistency): PASS** — 38 checks, 0 failures. The Phase 9 website diagnostic remains valid; the JSON-API re-run remains a single operator command wherever `TMDB_READ_ACCESS_TOKEN`/`TMDB_API_KEY` is provisioned.
+
+**Authorization matrix (production, actually observed):**
+
+| Scenario | Expected | Actual (observed) |
+| --- | --- | --- |
+| Admin OFF / user OFF | Adult OFF | Consistent with matrix (Phase 5/9 suites; admin policy is currently ON in production, so ON-rows were exercised live) |
+| Admin OFF / user ON | Adult OFF | Consistent (server-side admin-gate-first; behavioral suites) |
+| Admin ON / user OFF | Adult OFF | **PASS (live)** — production guest state before any preference: `canAccess: false`, Adult Discover 404 |
+| Admin ON / user ON | Adult ON | Consistent (Phase 4/7 suites; user rows need a login account not available to QA) |
+| Admin ON / guest OFF | Adult OFF | **PASS (live)** — default guest: 404, no rail, no SSR data |
+| Admin ON / guest ON | Adult ON | **PASS (live)** — signed cookie via settings UI: Adult rail renders, authorized search returns Adult results, detail/watch/season open |
+| Tampered/unsigned cookie | fail closed | **PASS (live)** — bit-flipped cookie and bare `mavero_adult_guest=1` both → non-disclosing 404 |
+| Admin-flip immediacy | no staleness | Covered by Phase 5/9 suites (per-request `app_settings` read, no process cache) |
+
+**Adult Discover browser QA (real browser, deployed site):** guest OFF → no rail, no `/api/content/adult-discover` request, only the settings flag GET. Authorized (settings-UI toggle → signed HttpOnly cookie) → "Indian Adult Shows" rail renders with `18+` badge, Type filter (TV Shows/Movies) and Language filter (All/Hindi/…) present. Type=TV+All → 10 cards; Show more → page 2 fetched, 20 unique cards, no duplicates; Type/TV+Hindi → 200 + Hindi catalog; Type=Movies → usable empty state (documented transitional movie-side under-fill). Client bundle audit: the Adult chunk calls ONLY `/api/content/adult-discover` (params `type/language/page` only), `/api/settings/adult-mode`, and normal discover endpoints — **zero** client-side TMDB refs, zero `with_networks`/`watch_region`/provider passthrough. Injected-param probe (authorized): `with_networks=213&watch_region=US&with_watch_providers=8&provider=netflix&networks=213&include_adult=true` → result byte-identical to the clean request (all injected params ignored server-side). Closed unions live: `type=bogus` → 400 INVALID_TYPE; `language=xx-XX` → 400; `page=-5` → resolves to page 1; `page=99999` → clamps to 20.
+
+**Search browser QA:** normal query (guest OFF) renders results; adult-title query (guest OFF) → clean "No matching stories." empty state, API returns 0 items; identical query with authorized guest cookie → Adult results appear (Phase 4 authorized passthrough). No request loops, no infinite pagination, loading/error states functional.
+
+**Normal Discover / rail isolation (live, authorized cookie active):** `popular-series`, `popular-movie`, `new-ott`, `theatre`, `top-rated-series` rails each returned 10 items with **zero** Adult markers, and **zero ID overlap** against the simultaneously-probed authorized Adult catalog (10 Adult series IDs ∩ 5×10 rail IDs = 0). Home and Discover SSR contain zero Adult markers in BOTH unauthorized and authorized states (byte-identical home HTML — the Adult surface is client-fetched only). Popular TV rail loads normally with the Soap/News/Talk exclusion in place (Phase 8 wiring re-verified by the suite) and Adult Mode ON does not change the rail's Adult-free rule.
+
+**Direct URL QA (unauthorized):** `/api/content/series/97072` → 404 "content could not be found"; `/api/content/series/97072/season/1` → 404 "season could not be found"; `/watch/series/series-97072` → HTTP 404 with zero Adult metadata in the error page; `/api/content/adult-discover` → 404 non-disclosing. Authorized: the same detail/season/watch surfaces open and function. (Adult IDs referenced here were encountered transiently during authorized QA; not catalogued further, per the no-unnecessary-documentation rule.)
+
+**SSR / hydration QA:** unauthorized page source contains no Adult catalog data; authorized SSR ALSO returns no Adult payload (visibility flag is a client-side settings fetch; Adult catalog is a client-side authorized fetch — nothing to hide in HTML because nothing is shipped). No `{#if}`-hidden Adult data anywhere.
+
+**Cookie metadata QA (production, value never recorded):** `mavero_adult_guest` issued with `Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000; Secure` — exactly the Phase 5 design. Turning the preference OFF via the settings UI clears/deactivates the cookie; malformed and tampered values fail closed.
+
+**Cache / browser storage QA:** localStorage — only `mavero-install-dismissed` (no Adult data). sessionStorage — only SvelteKit navigation snapshots: the unauthorized Adult query stored an EMPTY results array (query text only, zero Adult content); an authorized user's own search snapshot may hold results they were authorized to see, per-tab and session-scoped, equivalent to documented back-navigation state; any click/navigation re-runs the server load, which re-enforces authorization (404 after revocation). IndexedDB: no Adult catalog usage. Service worker: static-asset caching only. Adult/normal server response caches remain namespace-isolated (Phase 6/9 behavioral proofs re-run green).
+
+**Playback smoke test (minimal, per scope):** authorized Adult series → watch route opens, PlayerShell boots, provider embed iframe resolves, full control set renders (source switcher, episode list, details, sandbox), zero errors. Normal movie → same pipeline, provider embed resolves. Unauthorized Adult watch URL → blocked (404). No resolver/player code touched.
+
+**Navigation regression:** Back from watch → detail → home works; Discover/Search/My List/Profile/Settings all navigate correctly; the Adult surface did not break history (verified through repeated forward/back cycles).
+
+**Responsive UI QA (desktop 1440 / tablet 768 / mobile 390):** desktop and tablet clean (no overlap, no overflow, 18+ badge inline with title). **Mobile 390px: REAL DEFECT FOUND** — measured 14 px horizontal × 18 px vertical overlap between the nowrap "Indian Adult Shows" title (the `18+` label) and the non-shrinking filter pills. **Root cause:** `.section-head` is a non-wrapping flex row; `.section-head-right` is `flex-shrink:0`; the title is `white-space:nowrap` inside a shrinking `min-width:0` wrapper with no overflow clip → the title renders under the pills below ~640 px. **Fix (smallest safe change):** `flex-wrap: wrap` on `.section-head` inside the existing `@media (max-width: 640px)` block — pills wrap to their own row; no truncation of the 18+ label; >640 px unchanged. **Validated** by re-measuring the live deployed DOM with the rule applied (2D overlap → none; title row [220–239], pills row [247–277]) and confirming the rule in the production build CSS. **Regression test added** to `scripts/adult_phase8_ui_test.ts` (group 17: the mobile block must keep `flex-wrap: wrap`). No global styling touched.
+
+**Network / console QA:** zero console errors, zero unhandled page errors across the entire session (home, discover, search, settings, detail, watch — normal and Adult, authorized and unauthorized). No 401/403/404/500 loops; no repeated duplicate Adult Discover calls; no CORS errors; no failed hydration. The settings-flag GET fires once per relevant page load (2 on discover — flag + section mount — not a loop).
+
+**Automated tests (final state, after the fix):** `pnpm test` **PASS** (exit 0) — 64 scripts in the chain, including all 9 Adult suites (`adult_mode_test` A–AC, `adult_network_classifier_test`, `adult_catalog_network_test`, `adult_search_test`, `adult_authorization_test`, `adult_phase6_enforcement_test`, `adult_discover_test`, `adult_phase8_ui_test` now 17 groups incl. the Phase 10 regression, `adult_phase9_final_test` 15 groups) and the Phase 9 diagnostic (38 checks, 0 failures). `pnpm run check` **PASS** — 0 errors / 38 warnings (the exact pre-existing baseline, no new warnings). `pnpm run build` **PASS** (adapter-netlify); the built CSS contains the `flex-wrap:wrap` mobile rule.
+
+**Bugs found / fixed:**
+1. **Mobile-width Adult Discover header overlap (real, minor, UI-only).** Reproduced live at 390 px (14 px overlap), root-caused to the non-wrapping section-head flex row, fixed with the single-declaration mobile wrap rule, regression-tested, full validation re-run green. Security impact: none (layout only; the server-side boundary is unaffected) — but the overlap degraded the visibility of the 18+ indication at mobile width, which is why it was fixed rather than noted.
+2. No security defects found anywhere in the deployed environment.
+
+**Known non-blocking notes (unchanged, reviewed this phase):**
+1. Legacy `getTmdbAdultShows` merged rail retained for API compatibility — live-verified still gated (unauthorized → empty items; authorized → catalog; service+route double gate). Not a blocker.
+2. Transitional movie-side Adult source — authorized `type=movie` under-fills (usable empty state). Fail-safe direction (exclusion, never unsafe inclusion). Not a blocker.
+3. Stale pre-Phase-5 comment in `src/routes/api/admin/adult-mode/+server.ts` (describes the removed 60 s cache) — documentation-only; left unchanged per the no-meaningless-changes rule. Not a blocker.
+4. JSON-API diagnostic leg requires an operator-provisioned TMDB secret in the run environment — recorded NOT RUN this phase; the Phase 9 live-website evidence plus the fresh Phase 10 re-run (38/38) stand as the live verification. Environmental limitation, not a product defect.
+5. Search sessionStorage navigation snapshots hold a user's own authorized search results per-tab for back-navigation (query text + results); unauthorized snapshots are always Adult-empty; server re-enforces on every navigation. Equivalent to documented back-navigation behavior; noted for completeness, no change made (navigation/history is a protected area and the behavior is not a bypass).
+
+**Production security test matrix (summary — all observed live or by the executed suites):** unauthorized Adult Discover 404 ✅ | authorized discover 200 ✅ | tampered cookie fail-closed ✅ | unsigned cookie fail-closed ✅ | direct Adult detail/season/watch 404 ✅ | injected TMDB params ignored ✅ | closed-union/clamp validation ✅ | normal rails Adult-free under authorized Adult Mode ✅ (0 ID overlap) | SSR/hydration Adult-free both states ✅ | search exclusion unauthorized + availability authorized ✅ | cookie flags exact ✅ | browser storage clean ✅ | playback guards intact both directions ✅.
+
+**Scope check:** production source diff is exactly `src/lib/components/AdultDiscoverSection.svelte` (one mobile CSS declaration + explanatory comment). Test diff is exactly `scripts/adult_phase8_ui_test.ts` (one new regression group). Protected areas (playback, resolver, progress, navigation/history, My List, anime, MegaPlay/Tatakai/Anime World India) byte-untouched; AniList/MAL/Yenime remain absent. No credentials committed; no secret values in this worklog.
+
+**Commit SHA:** this commit — `test(adult): complete deployed release validation`.
 
 **Remaining work:**
-- Everything (Not Started).
+- None for Phase 10. The Adult Mode rebuild is release-validated on the deployed environment.
 
 ---
 
