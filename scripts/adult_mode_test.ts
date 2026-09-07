@@ -5,6 +5,8 @@ import path from 'node:path';
 const repoRoot = new URL('../', import.meta.url).pathname;
 
 const adultPolicy = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-policy.ts'), 'utf8');
+const adultAuthz = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-authz.ts'), 'utf8');
+const adultCookie = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-cookie.ts'), 'utf8');
 const adultProviders = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-providers.ts'), 'utf8');
 const tmdb = await readFile(path.join(repoRoot, 'src/lib/server/content/adapters/tmdb.ts'), 'utf8');
 const service = await readFile(path.join(repoRoot, 'src/lib/server/content/service.ts'), 'utf8');
@@ -49,13 +51,16 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(adultPolicy, /export async function canAccessAdultContent/, 'canAccessAdultContent exists');
   assert.match(adultPolicy, /export async function updateAdminAdultPolicy/, 'updateAdminAdultPolicy exists');
   assert.match(adultPolicy, /export async function updateUserAdultPreference/, 'updateUserAdultPreference exists');
-  // Admin policy is cached with TTL.
-  assert.match(adultPolicy, /POLICY_TTL_MS = 60_000/, 'admin policy cached 60s');
-  assert.match(adultPolicy, /export function invalidateAdultPolicyCache/, 'cache invalidation function exists');
-  // Default: OFF for everyone.
-  assert.match(adultPolicy, /allowLoggedIn: false, allowGuest: false/, 'default policy is OFF');
+  // Phase 5: NO process-local policy cache — Supabase app_settings is
+  // authoritative on every authorization evaluation (multi-instance safe).
+  assert.doesNotMatch(adultPolicy, /POLICY_TTL_MS|cachedPolicy|invalidateAdultPolicyCache/, 'no process-local admin policy cache (removed in Phase 5)');
+  assert.match(adultPolicy, /async function getAdminPolicy/, 'admin policy reader exists');
+  assert.match(adultPolicy, /return adminPolicyFromRead\(data, error\);/, 'admin policy is mapped fresh from the Supabase read (per request)');
+  // Default: OFF for everyone (fail-closed mapping lives in adult-authz.ts).
+  assert.match(adultAuthz, /allowLoggedIn: false, allowGuest: false/, 'default policy is OFF (fail-closed read mapping)');
   // Server-side enforcement: admin policy overrides user preference.
-  assert.match(adultPolicy, /if \(!adminAllows\)/, 'admin policy checked before user preference');
+  assert.match(adultPolicy, /if \(!adminGateAllows\)/, 'admin gate checked before user preference');
+  assert.match(adultAuthz, /if \(!adminAllows\)/, 'matrix denies inside the single evaluation function');
   // User preference is forced to false when admin disables.
   assert.match(adultPolicy, /enabled = false/, 'preference forced false when admin disallows');
 }
@@ -81,12 +86,16 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   // Guest preference is stored in a signed HttpOnly cookie.
   assert.match(adultModeApi, /if \(user\)/, 'PUT adult-mode handles authenticated users');
   assert.match(adultModeApi, /updateGuestAdultPreference/, 'PUT adult-mode supports guest via cookie');
-  // Guest cookie helpers exist.
-  assert.match(adultPolicy, /GUEST_COOKIE_NAME/, 'guest cookie name defined');
-  assert.match(adultPolicy, /function getGuestCookieHeader/, 'guest cookie header function exists');
-  assert.match(adultPolicy, /function parseGuestCookieValue/, 'guest cookie parser exists');
-  assert.match(adultPolicy, /HttpOnly/, 'guest cookie is HttpOnly');
-  assert.match(adultPolicy, /SameSite=Lax/, 'guest cookie is SameSite=Lax');
+  // Guest cookie helpers exist (Phase 5: HMAC-SHA256 construction lives in
+  // adult-cookie.ts; adult-policy.ts wires the private secret + Secure flag).
+  assert.match(adultCookie, /export const GUEST_COOKIE_NAME/, 'guest cookie name defined (adult-cookie.ts)');
+  assert.match(adultPolicy, /export function getGuestCookieHeader/, 'guest cookie header function exists');
+  assert.match(adultCookie, /export function verifyAdultCookieValue/, 'guest cookie HMAC verifier exists (adult-cookie.ts)');
+  assert.match(adultCookie, /createHmac\('sha256', secret\)/, 'guest cookie uses HMAC-SHA256');
+  assert.match(adultPolicy, /export function getGuestCookieHeader[\s\S]{0,200}?assertAdultCookieSecret/, 'cookie issuance requires the configured secret (fail-closed)');
+  assert.match(adultCookie, /'HttpOnly'/, 'guest cookie is HttpOnly');
+  assert.match(adultCookie, /'SameSite=Lax'/, 'guest cookie is SameSite=Lax');
+  assert.match(adultPolicy, /!dev/, 'guest cookie Secure flag is environment-aware (production only)');
   // getAdultAccessContext accepts cookies parameter.
   assert.match(adultPolicy, /cookies\?: \{ get: \(name: string\) => string \| undefined \}/, 'getAdultAccessContext accepts cookies');
   // Guest preference is read from cookie.
@@ -95,8 +104,10 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(adultPolicy, /export async function canAccessAdultContent\([\s\S]*?cookies\?/, 'canAccessAdultContent accepts cookies');
   // updateGuestAdultPreference enforces admin policy.
   assert.match(adultPolicy, /updateGuestAdultPreference[\s\S]*?if \(!policy\.allowGuest\)/, 'guest preference enforces admin allowGuest');
-  // Admin allows check for guest.
-  assert.match(adultPolicy, /adminAllows = isAuthenticated \? policy\.allowLoggedIn : policy\.allowGuest/, 'guest uses allowGuest');
+  // Admin allows check for guest (gate-first wiring; the matrix itself lives
+  // in evaluateAdultAccess — adult-authz.ts).
+  assert.match(adultPolicy, /adminGateAllows = isAuthenticated \? policy\.allowLoggedIn : policy\.allowGuest/, 'guest uses allowGuest');
+  assert.match(adultAuthz, /adminAllows = isAuthenticated \? policy\.allowLoggedIn : policy\.allowGuest/, 'matrix maps guests to allowGuest');
 }
 
 // ============================================================================
@@ -227,9 +238,10 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(tmdb, /adultExclusion \?\? 'no-adult'/, 'cache key includes adult exclusion');
   // Adult section has its own cache namespace.
   assert.match(tmdb, /key = `tmdb:adult-shows:/, 'adult shows has separate cache namespace');
-  // Admin policy is cached globally (not per-user) — but user preference is NOT cached.
-  assert.match(adultPolicy, /let cachedPolicy.*null/, 'admin policy cached globally');
-  assert.match(adultPolicy, /async function getUserPreference[\s\S]*?return data\.adult_mode_enabled/, 'user preference read fresh (not cached)');
+  // Phase 5: authorization is NEVER cached in process memory (globally or
+  // otherwise) — admin policy and user preference are both read fresh.
+  assert.doesNotMatch(adultPolicy, /cachedPolicy|POLICY_TTL/, 'no admin policy cached globally (Phase 5)');
+  assert.match(adultPolicy, /async function getUserPreference[\s\S]*?return userPreferenceFromRead\(data, error\);/, 'user preference read fresh (not cached)');
 }
 
 // ============================================================================
@@ -521,4 +533,46 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(classifyFn![0], /movieRowVerdict\(\{ adult: rawAdult, isAnime: item\.isAnime \}\)/, 'movie rows use the central-classifier cheap verdict');
 }
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y).');
+// ============================================================================
+// Z. Phase 5 — authorization security hardening (static wiring assertions).
+//    Behavioral coverage for the same contracts lives in
+//    scripts/adult_authorization_test.ts (real HMAC/timing-safe/matrix
+//    execution). Static checks here prove the WIRING cannot regress.
+// ============================================================================
+{
+  // Secret source: dedicated private server-only variable, never a public
+  // value, never a fallback literal.
+  assert.match(adultPolicy, /env\.MAVERO_ADULT_COOKIE_SECRET/, 'cookie secret comes from MAVERO_ADULT_COOKIE_SECRET');
+  assert.doesNotMatch(adultPolicy, /PUBLIC_SUPABASE_URL|fallback-secret|mavero-guest-fallback/, 'no public value / fallback literal used as cookie secret');
+  assert.doesNotMatch(adultCookie, /\$env|process\.env/, 'pure cookie module has NO env access (secret is an explicit parameter)');
+  // The old forgeable construction is gone (no XOR-rolled hash, no
+  // value-independent signature).
+  assert.doesNotMatch(adultCookie, /hash << 5/, 'old XOR-rolled signature construction removed');
+  assert.doesNotMatch(adultCookie, /charCodeAt/, 'no character-sum hash in the cookie module');
+  // Timing-safe verification: crypto.timingSafeEqual is the security
+  // decision; plain equality must not decide signature validity.
+  assert.match(adultCookie, /timingSafeEqual\(/, 'signature comparison uses crypto.timingSafeEqual');
+  const verifyFn = adultCookie.match(/export function verifyAdultCookieValue[\s\S]*?^}/m);
+  assert.ok(verifyFn, 'verifyAdultCookieValue found');
+  assert.match(verifyFn![0], /timingSafeStringEqual\(expected, sig\)/, 'signature verdict goes through the timing-safe comparison');
+  assert.doesNotMatch(verifyFn![0], /sig === expected|expected === sig/, 'no plain-equality signature decision');
+  // Fail-closed secret handling in the pure module.
+  assert.match(adultCookie, /export function assertAdultCookieSecret/, 'issuance-secret assertion exists');
+  const assertFn = adultCookie.match(/export function assertAdultCookieSecret[\s\S]*?^}/m);
+  assert.ok(assertFn, 'assertAdultCookieSecret found');
+  assert.match(assertFn![0], /throw new Error\(/, 'missing secret refuses ISSUANCE (fail-closed)');
+  assert.match(adultCookie, /if \(typeof secret !== 'string' \|\| secret\.length === 0\) return false; \/\/ fail closed/, 'missing secret fails VERIFICATION closed (guest OFF)');
+  // Canonical payload: only "1"/"0" are ever signed or accepted.
+  assert.match(adultCookie, /export function canonicalAdultCookieValue/, 'canonical payload mapper exists');
+  assert.match(adultCookie, /if \(value !== '1' && value !== '0'\) return false/, 'verification accepts canonical values only');
+  // Matrix single-source: adult-policy delegates to evaluateAdultAccess and
+  // keeps the verified admin-gate-first flow.
+  assert.match(adultPolicy, /import \{[^}]*evaluateAdultAccess[^}]*\} from '\.\/adult-authz'/, 'adult-policy delegates the matrix to the single evaluation function');
+  assert.match(adultPolicy, /getAdultAccessContext[\s\S]*?const adminGateAllows = isAuthenticated \? policy\.allowLoggedIn : policy\.allowGuest;/, 'admin gate-first flow preserved');
+  // Authorization results are never cached in module/global memory: the
+  // pure authz layer holds no mutable state and no cache structures.
+  assert.doesNotMatch(adultAuthz, /new Map|cachedPolicy|POLICY_TTL/, 'no module-level authorization cache in the pure authz layer');
+}
+
+
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z).');

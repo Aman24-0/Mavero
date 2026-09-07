@@ -1,11 +1,12 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 4 complete (adult-aware search with bounded N+1 classification). Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
+> **Status:** Phase 5 complete (authorization security hardening: per-request admin policy, HMAC-SHA256 guest cookie). Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
 > **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
 > **Phase 3 implemented:** 2026-09-07 against branch `main`, starting from commit `34a6469b1f4d39398f86b1d6d3dcc88e877ffca0` (Phase 2 commit).
 > **Phase 4 implemented:** 2026-09-07 against branch `main`, starting from commit `8c675679ad0ccc3add90bc336798b2b3ca9881eb` (Phase 3 commit).
+> **Phase 5 implemented:** 2026-09-07 against branch `main`, starting from commit `6cc45bf962f80845850f7b4146acea037392fca5` (Phase 4 commit).
 
 ---
 
@@ -75,7 +76,7 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 - [x] Phase 2 — Adult network registry, classifier & metadata foundation
 - [x] Phase 3 — TMDB adapter/network-based catalog migration
 - [x] Phase 4 — Adult-aware Search + bounded N+1 classification
-- [ ] Phase 5 — Authorization, Supabase policy & HMAC guest cookie
+- [x] Phase 5 — Authorization, Supabase policy & HMAC guest cookie
 - [ ] Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
 - [ ] Phase 7 — Indian Adult Shows Discover backend/API
 - [ ] Phase 8 — Popular TV + Discover/Search UI integration
@@ -243,19 +244,49 @@ Network-filter support re-confirmed against live TMDB in the Phase 9 diagnostic 
 
 ### Phase 5 — Authorization, Supabase policy & HMAC guest cookie
 
-**Status:** Not Started
+**Status:** Complete
 
 **Files changed:**
-- (planned) `adult-policy.ts` (cookie signing, policy resolution/caching), new migration (if schema changes), `.env.example` (document `MAVERO_ADULT_COOKIE_SECRET`)
+- `src/lib/server/content/adult-cookie.ts` (new) — pure, dependency-free HMAC-SHA256 guest-cookie module: `GUEST_COOKIE_NAME` / `GUEST_COOKIE_MAX_AGE_SECONDS`, `canonicalAdultCookieValue` (`"1"`/`"0"` only), `signAdultCookieValue` (`<canonical>.<hmac-hex>`; refuses non-canonical values and empty secrets), `verifyAdultCookieValue` (returns the AUTHENTICATED preference — true only for a verified `"1"`; fail-closed for missing secret/malformed input/any mismatch), `timingSafeStringEqual` (SHA-256-digest both inputs to fixed 32 bytes → `crypto.timingSafeEqual`, so attacker-controlled length differences can neither throw nor leak an early-exit branch), `assertAdultCookieSecret` (issuance fail-closed: throws when the secret is missing/empty — no fallback, no public value), `buildAdultGuestSetCookie` / `buildAdultGuestClearCookie` (HttpOnly, SameSite=Lax, Path=/, Max-Age, Secure only in production). Zero `$env` access — the secret is an explicit parameter, so the crypto layer is tsx-testable (same pattern as `search-classify.ts`) and a public/fallback secret is structurally impossible here.
+- `src/lib/server/content/adult-authz.ts` (new) — pure authorization layer: types `AdultModePolicy`/`AdultAccessContext` (moved here; re-exported from `adult-policy.ts` for API compatibility), `evaluateAdultAccess` (the SINGLE matrix function: `adminAllows = isAuthenticated ? allowLoggedIn : allowGuest`; admin deny → all-false context; admin allow → preference decides; holds NO state, so a fresh policy yields a fresh decision), `adminPolicyFromRead` (error/missing row → `{allowLoggedIn:false, allowGuest:false}` — fail closed, never cached), `userPreferenceFromRead` (error/missing row → `false`). No env, no I/O, no caches, no clocks; imports nothing from classification modules.
+- `src/lib/server/content/adult-policy.ts` — same public API (all function signatures unchanged; every consumer call site untouched), hardened internals: (1) the process-local policy cache is GONE — `cachedPolicy`, `cachedAt`, `POLICY_TTL_MS`, and `invalidateAdultPolicyCache()` are removed; `getAdminPolicy` now performs a fresh Supabase `app_settings` read mapped through `adminPolicyFromRead` on EVERY authorization evaluation, so an admin ON→OFF flip takes effect on the next request on every serverless instance; (2) guest cookie: `signGuestValue`'s forgeable XOR-rolled hash (which did not even depend on the cookie value and keyed on `PUBLIC_SUPABASE_URL` with a `'mavero-guest-fallback-secret'` fallback) is replaced by the adult-cookie.ts HMAC construction; the secret is exclusively `env.MAVERO_ADULT_COOKIE_SECRET` (no fallback); verification fail-closed (missing secret → guest OFF), issuance fail-closed (missing secret → throws, so `/api/settings/adult-mode` PUT answers 500 instead of minting an unsigned cookie); Secure flag wired to `!dev` (`$app/environment` — production HTTPS always Secure, `vite dev` HTTP localhost keeps working); the admin gate is still evaluated FIRST (denied requests never read `user_preferences` or the cookie); (3) `updateAdminAdultPolicy` no longer invalidates anything (nothing is cached); it maps its own updated row through `adminPolicyFromRead`.
+- `.env.example` — documents `MAVERO_ADULT_COOKIE_SECRET` as a PRIVATE server-only secret (never `PUBLIC_*`, never committed; strong random value e.g. `openssl rand -hex 32`; missing secret fails closed).
+- `scripts/adult_mode_test.ts` — sections B/D/J updated in lockstep with the architecture (cache assertions flipped to `doesNotMatch`, cookie assertions point at the HMAC module) and NEW section Z added (static wiring assertions: secret source is `env.MAVERO_ADULT_COOKIE_SECRET` only; no `PUBLIC_SUPABASE_URL`/fallback literal in the policy; pure cookie module has no `$env`/`process.env`; old XOR construction removed; `crypto.timingSafeEqual` is the verdict primitive and plain equality is not; canonical-value strictness; matrix delegation to `evaluateAdultAccess`; no module-level authorization cache). No pre-existing protection was weakened — every old assertion either still matches or was superseded by a stricter Phase 5 assertion.
+- `package.json` — test chain now includes `scripts/adult_authorization_test.ts` (60 scripts).
 
-**Tests:**
-- (planned) HMAC sign/verify, tamper rejection, timing-safe comparison, fail-closed missing-secret, admin-override matrix
+**Policy cache removal (F7 → fixed):** the 60 s process-local cache was the only cross-request authorization state; it is fully removed. `app_settings` is authoritative per authorization check. Request-scoped vs global (spec §14): NO cross-request dedup/cache exists in module or global memory; within a single request the call paths perform at most ONE policy read (GET settings: 1; PUT guest/user: 1; PUT admin: the update itself returns the row), so no request-scoped dedup infrastructure was needed. Authorization results are never stored anywhere.
 
-**Notes:**
-- Target: HMAC-SHA256 over `value` + dedicated `MAVERO_ADULT_COOKIE_SECRET` (private, never `PUBLIC_*`), `crypto.timingSafeEqual`, production **fails closed** if secret missing, cookie flags `HttpOnly; Secure; SameSite=Lax; Path=/`. Process-local 60 s policy cache must be replaced by a read-through-per-request evaluation or an explicitly justified shared/invalidation strategy (security-sensitive authorization must not depend on which serverless isolate handled the request).
+**HMAC design:** `signature = HMAC_SHA256(MAVERO_ADULT_COOKIE_SECRET, canonical)` where canonical is exactly `"1"` or `"0"`; cookie value = `"<canonical>.<64-hex-hex-digest>"`; verification re-derives the HMAC over the parsed canonical value and compares timing-safely; extra segments / non-canonical values / any length of garbage signature fail closed. The signature is VALUE-DEPENDENT (the old hash was not — one signature validated both `1` and `0`), so flipping the flag invalidates the cookie.
+
+**Secret configuration:** dedicated `MAVERO_ADULT_COOKIE_SECRET` (private, server-only, from `$env/dynamic/private`). Never `PUBLIC_SUPABASE_URL`, never a `PUBLIC_*` value, never the TMDB/Supabase keys, never a hardcoded literal, never exposed to the client bundle, never logged, never committed, never written into tests (tests inject an explicit fake test secret through the harness — the production path only ever reads the env variable). Missing/empty secret: verification → guest preference OFF; issuance → throws (fail closed), documented in `.env.example`.
+
+**Cookie format & security flags:** `mavero_adult_guest=<canonical>.<hmac>; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000[; Secure]` — HttpOnly always (never exposed to JavaScript), Secure in production only (`!dev`; HTTP localhost dev stays usable without weakening production), SameSite=Lax preserved, Path=/, 1-year Max-Age, no Domain relaxation. Clear header mirrors the attributes with `Max-Age=0` and never requires the secret.
+
+**Migration:** cookies from the old scheme (`value.<xor-hash>`), unsigned values, and malformed values fail HMAC verification → treated as guest preference OFF. Guests simply re-enable Adult Mode. No unsafe state is possible — the cookie is a preference, not the authorization boundary (admin policy still overrides everything).
+
+**Failure behavior (fail-closed matrix):** app_settings read failure or missing row → policy OFF for everyone; user_preferences read failure or missing row → preference OFF; guest cookie missing/invalid/unverifiable → preference OFF; secret missing → verification OFF + issuance refuses. The admin-gate-first flow is preserved: when admin denies, the preference is not even read (cookie untouched, no `user_preferences` query).
+
+**Authorization matrix (preserved exactly, Phase 1 F13):** admin OFF → logged-in/guest OFF regardless of preference; admin ON + user/guest OFF → OFF; admin ON + user/guest ON → ON. Admin policy always overrides the individual preference. Now behaviorally proven (13-A..F).
+
+**Classification vs authorization separation (spec §16):** `isAdultContent()` (content classification, `adult-providers.ts`) and `canAccessAdultContent()`/`evaluateAdultAccess()` (user authorization) remain separate; the authorization layer imports nothing from classification modules and holds no cache; no `adultAllowed`-style cached decision exists. Phase 4's content-keyed classification cache and the explicit `adult-allowed`/`adult-excluded` search-response cache dimension are untouched.
+
+**Search regression (spec §15):** Search consumes `canAccessAdultContent` exactly as before — zero Search/architecture changes (`tmdb.ts`, `search-classify.ts`, `adult-providers.ts` byte-identical). The hardened authorization boolean drives the unchanged `searchFilterMode` branch; behaviorally bound both directions (admin OFF + user ON → `classify-and-exclude`; admin ON + user ON → `authorized-passthrough`).
+
+**Guest persistence (spec §19):** behaviorally proven round-trip — guest enables (signed ON cookie issued) → subsequent request verifies and remains enabled → admin disables guests (same cookie can no longer grant access) → admin re-enables (the guest's persisted local preference is recognized again). No UX change.
+
+**Tests:** new `scripts/adult_authorization_test.ts` — 29 REAL behavioral checks (deterministic, credential-free, mock-free — the real crypto and real matrix functions execute): §12 forgery suite (valid ON/OFF; value-flip with old signature rejected — the direct disproof of the old value-independent hash; every single-character signature tamper across all 64 positions rejected; random/garbage signatures rejected; wrong secret rejected both directions; missing-secret fail-closed on BOTH verification and issuance paths; timing-safe comparison with arbitrary length differences + 200-case fuzz never throwing; secret channel rejects empty/missing; Secure/HttpOnly/SameSite=Lax/Path/Max-Age flags incl. clear header; canonical strictness with segment tricks), §13 authorization matrix (all six combinations), fail-closed read mappings (policy + preference, error and missing-row), admin ON→OFF and OFF→ON flip immediacy (the anti-60-second-cache proof), guest persistence cycle, legacy-cookie migration, search regression binding, classification/authorization separation. `adult_mode_test.ts` extended with section Z (static wiring assertions listed above).
+
+**Explicitly NOT implemented (later phases):** direct `watch/[type]/[id]` guard (Phase 6); unsupported-endpoint enforcement for trending/theatre/upcoming/genre/related + structural cache-boundary isolation (Phase 6); Adult Discover rail/dropdown redesign (Phase 7); Popular TV `without_genres=10764|10766|10767` (Phase 8); full A–R behavioral suite + live TMDB diagnostic (Phase 9); any UI, admin-UI, playback, resolver, progress, navigation, My List, or anime change (none); no schema migration (none required).
+
+**Test result:** `pnpm test` **PASS** (exit 0) — 60 scripts incl. new `adult_authorization_test.ts` (29 checks) and `adult_mode_test.ts` A–Z.
+**Check result:** `pnpm run check` **PASS** (exit 0) — 0 errors / 38 warnings (unchanged pre-existing warnings).
+**Build result:** `pnpm run build` **PASS** (exit 0) — `@sveltejs/adapter-netlify` build completed.
+
+**Commit SHA:** this commit — `fix(adult): harden authorization and guest cookie security` (exact SHA in `git log -1`; the worklog cannot contain its own commit's hash).
 
 **Remaining work:**
-- Everything (Not Started).
+- Phase 6: direct watch-route guard; trending/theatre/upcoming/genre/related enforcement (server-side classification where endpoints support no filters); structural (non-convention-based) adult/non-adult cache-boundary isolation.
+- Phases 7–10 as planned.
 
 ### Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
 
