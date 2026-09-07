@@ -5,6 +5,19 @@ import { ContentServiceError, type CollectionFilters, type ContentList, type Con
 import { ottProviders } from '$lib/shared/ott';
 import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved } from '../adult-providers';
 import { adultNetworkExclusionValue, withAdultNetworksParams, getVerifiedAdultNetworkIdForKey } from '../adult-catalog';
+import {
+  ADULT_DISCOVER_PAGE_SIZE,
+  ADULT_DISCOVER_MAX_UPSTREAM_PAGES,
+  ADULT_DISCOVER_CLASSIFY_CONCURRENCY,
+  buildAdultDiscoverCacheKey,
+  emptyAdultDiscoverResult,
+  adultDiscoverSortBy,
+  classifyAdultDiscoverRow,
+  collectConfirmedAdultPage,
+  type AdultDiscoverFilters,
+  type AdultDiscoverCandidateRow,
+  type AdultDiscoverDetailVerdictLoader
+} from '../adult-discover';
 import { mapWithConcurrency } from '../concurrency';
 import { movieRowVerdict, detailVerdict, collectSafeSearchPage, searchFilterMode, buildSearchCacheKey, type CandidateVerdict, type UpstreamSearchPage } from '../search-classify';
 import { filterSafeRailItems, type RailCandidateRow, type DetailVerdictLoader } from '../list-classify';
@@ -1264,4 +1277,151 @@ export async function getTmdbAdultShows(providerKey: string | undefined, page = 
 export async function getVerifiedAdultProviders() {
   await getTmdbIndiaProviders();
   return getCachedAdultProviders() ?? [];
+}
+
+// ============================================================
+// Phase 7 — dedicated Adult Discover catalog (TMDB adapter).
+//
+// The backend source of the authorized Adult Discover surface. Per-type
+// catalogs (series | movie) with language + sort + bounded pagination —
+// NOT a merged rail. The source boundary is SERVER-CONTROLLED:
+//
+//   TV:    /discover/tv  + with_networks=<verified adult network ids>
+//          (adult-catalog.ts -> adult-networks.ts; the client can neither
+//          supply nor alter the network set). NO JustWatch prerequisites:
+//          no watch_region / with_watch_monetization_types /
+//          with_watch_providers — a verified adult network title belongs
+//          in the Adult catalog even when TMDB adult=false and even when
+//          JustWatch has no India entry for it.
+//
+//   Movie: /discover/movie has NO network filter in TMDB. The movie side
+//          keeps the documented TRANSITIONAL watch-provider inclusion
+//          (with_watch_providers=<resolved adult provider ids> +
+//          watch_region=IN + flatrate) — the same movie-side architecture
+//          the central classifier already considers valid (Signal 3).
+//          Nothing is invented: an empty resolved provider set means the
+//          movie catalog is EMPTY (safe TV-first under-fill).
+//
+// CLASSIFIER DEFENSE-IN-DEPTH: every candidate from either half is
+// classified through the ONE central classifier (cached detail path,
+// bounded concurrency) and ONLY confirmed-adult candidates are returned —
+// 'safe' anomalies and 'uncertain' classifications fail CLOSED (see
+// adult-discover.ts).
+//
+// CACHE ISOLATION: responses live in the dedicated `tmdb:adult-discover:*`
+// namespace (buildAdultDiscoverCacheKey), structurally disjoint from every
+// normal Discover/search namespace and from `tmdb:adult-shows:*`. NO
+// authorization dimension: only authorized requests can reach this loader
+// (the endpoint 404s and the service returns empty BEFORE any cache
+// access), so there is no second cache context to isolate against — the
+// same precedent as `tmdb:adult-shows:` (worklog section AA). The applied
+// network/provider inclusion values ARE part of the key, so a registry
+// change re-keys instead of serving stale-era entries.
+//
+// FALLBACK SAFETY: upstream failures PROPAGATE — no fixture data, no
+// normal-catalog fallback, no silent empty-on-error swallowing here (the
+// route renders an error; the Adult catalog never degrades into normal
+// content).
+// ============================================================
+
+/**
+ * Cached-detail verdict loader for Adult Discover candidates (both media
+ * types): reads the central classification from the shared, in-flight-
+ * deduplicated detail path. Throws on failure — classifyAdultDiscoverRow
+ * maps any failure to 'uncertain' (fail-closed).
+ */
+const adultDiscoverDetailVerdictLoader: AdultDiscoverDetailVerdictLoader = async (mediaType, tmdbId) => {
+  const detail = await getTmdbDetail(mediaType, tmdbId);
+  return detailVerdict(detail.tags);
+};
+
+export async function getTmdbAdultDiscover(filters: AdultDiscoverFilters): Promise<ContentList> {
+  const { type, language, sort, page } = filters;
+  // ---- Server-controlled source boundary (no client input involved). ----
+  const networkInclusion = type === 'series' ? withAdultNetworksParams() : {};
+  let providerInclusion: string | undefined;
+  if (type === 'movie') {
+    // Resolve the transitional movie-side source against the live TMDB
+    // India provider list (5-min cache). An empty resolved set -> empty
+    // catalog (never a fabricated or widened query).
+    await getTmdbIndiaProviders();
+    const adultIds = getAdultProviderIds();
+    providerInclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  }
+  const hasSource = type === 'series' ? 'with_networks' in networkInclusion : Boolean(providerInclusion);
+  if (!hasSource) {
+    // Nothing verified to query in the relevant ID space — return the
+    // empty non-disclosing result rather than fabricating filters.
+    return emptyAdultDiscoverResult(page);
+  }
+  const key = buildAdultDiscoverCacheKey({
+    type,
+    language,
+    sort,
+    page,
+    networkInclusion: networkInclusion.with_networks,
+    providerInclusion
+  });
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const sortBy = adultDiscoverSortBy(sort, type);
+    const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    const fetchUpstreamPage = async (upstreamPage: number): Promise<UpstreamSearchPage<AdultDiscoverCandidateRow<NormalizedMediaItem>>> => {
+      const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
+      const params: Record<string, string | number | boolean | undefined> = {
+        page: upstreamPage,
+        // This IS the authorized Adult surface, so include_adult is true —
+        // the classifier below still re-verifies every candidate.
+        include_adult: true,
+        sort_by: sortBy,
+        // Mandatory Adult source constraint (server-controlled):
+        ...(type === 'movie'
+          ? { watch_region: 'IN', with_watch_monetization_types: 'flatrate', with_watch_providers: providerInclusion }
+          : { ...networkInclusion }),
+        // Language narrows the Adult catalog (Adult AND language — the
+        // Adult constraint is never removed or OR-ed away).
+        ...(langParam ? { with_original_language: langParam } : {}),
+        // Sort refinements (matching the repo's rail conventions).
+        ...(sort === 'newest'
+          ? type === 'movie'
+            ? { 'release_date.lte': new Date().toISOString().slice(0, 10) }
+            : { 'first_air_date.lte': new Date().toISOString().slice(0, 10) }
+          : {}),
+        ...(sort === 'top-rated' ? { 'vote_count.gte': 5 } : {})
+      };
+      const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
+      // Language post-filter (required for 'other'; a harmless double-check
+      // for specific languages). Runs BEFORE classification so uncertain
+      // classification work is never spent on rows the filter removes.
+      const raw = applyLanguageFilter((result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)), language);
+      const rows = raw.map((item) => {
+        const mapped = mapTmdb(item, type, 'Adult');
+        return {
+          item: mapped,
+          mediaType: type,
+          rawAdult: (item as TmdbMovie).adult,
+          isAnime: mapped.isAnime
+        };
+      });
+      return { items: rows, totalPages: result.total_pages ?? upstreamPage };
+    };
+
+    // Bounded page continuation + fail-closed classification defense
+    // (collects ONLY classifier-confirmed adult candidates).
+    const outcome = await collectConfirmedAdultPage<NormalizedMediaItem>({
+      startPage: page,
+      pageSize: ADULT_DISCOVER_PAGE_SIZE,
+      maxUpstreamPages: ADULT_DISCOVER_MAX_UPSTREAM_PAGES,
+      concurrency: ADULT_DISCOVER_CLASSIFY_CONCURRENCY,
+      fetchUpstreamPage,
+      classifyCandidate: (row) => classifyAdultDiscoverRow(row, adultDiscoverDetailVerdictLoader, (item) => String(item.externalIds?.tmdb ?? item.id.replace(/^(movie|series)-/, ''))),
+      identityOf: (row) => `${row.item.type}:${row.item.id}`
+    });
+    return {
+      items: outcome.items.map((row) => row.item),
+      page,
+      hasNextPage: !outcome.upstreamExhausted,
+      source: tmdbSource()
+    };
+  });
+  return { ...value, source: { ...value.source, stale } };
 }

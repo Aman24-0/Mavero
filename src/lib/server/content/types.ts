@@ -152,6 +152,16 @@ export type DiscoverLanguage =
   | 'kn'    // Kannada
   | 'other'; // every TMDB original_language NOT in the above 6
 
+// Single source of truth for the language union guard (Phase 7): both the
+// normal Discover rail surface (service.isDiscoverLanguage) and the Adult
+// Discover contract (adult-discover.ts) validate against THIS list, so the
+// two surfaces can never drift apart.
+export const DISCOVER_LANGUAGES: readonly DiscoverLanguage[] = ['all', 'hi', 'en', 'ta', 'te', 'ml', 'kn', 'other'];
+
+export function isDiscoverLanguageValue(value: string | null | undefined): value is DiscoverLanguage {
+  return typeof value === 'string' && (DISCOVER_LANGUAGES as readonly string[]).includes(value);
+}
+
 export type DiscoverSectionKey =
   | 'theatre'
   | 'new-ott'

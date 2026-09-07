@@ -1,12 +1,13 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 6 complete (direct server-side enforcement + unsupported catalog paths + cache isolation). Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
+> **Status:** Phase 7 complete (dedicated authorized Adult Discover backend/API). Phase 6 was direct server-side enforcement + unsupported catalog paths + cache isolation; Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
 > **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
 > **Phase 3 implemented:** 2026-09-07 against branch `main`, starting from commit `34a6469b1f4d39398f86b1d6d3dcc88e877ffca0` (Phase 2 commit).
 > **Phase 4 implemented:** 2026-09-07 against branch `main`, starting from commit `8c675679ad0ccc3add90bc336798b2b3ca9881eb` (Phase 3 commit).
 > **Phase 5 implemented:** 2026-09-07 against branch `main`, starting from commit `6cc45bf962f80845850f7b4146acea037392fca5` (Phase 4 commit).
+> **Phase 7 implemented:** 2026-09-07 against branch `main`, starting from commit `b951e3e9129bf13918b9fd77abebdf92b8194940` (Phase 6 commit; Phase 6 completed in a prior session — its section below documents the delivered state).
 
 ---
 
@@ -77,8 +78,8 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 - [x] Phase 3 — TMDB adapter/network-based catalog migration
 - [x] Phase 4 — Adult-aware Search + bounded N+1 classification
 - [x] Phase 5 — Authorization, Supabase policy & HMAC guest cookie
-- [ ] Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
-- [ ] Phase 7 — Indian Adult Shows Discover backend/API
+- [x] Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
+- [x] Phase 7 — Indian Adult Shows Discover backend/API (dedicated authorized Adult Discover catalog)
 - [ ] Phase 8 — Popular TV + Discover/Search UI integration
 - [ ] Phase 9 — Behavioral tests A-R + live TMDB diagnostic
 - [ ] Phase 10 — Final integration QA, regression audit & release validation
@@ -341,21 +342,69 @@ Network-filter support re-confirmed against live TMDB in the Phase 9 diagnostic 
 - Phase 7: Adult Discover backend/API redesign (network-based adult rail UI + movie-side query decision).
 - Phases 8–10 as planned.
 
-### Phase 7 — Indian Adult Shows Discover backend/API
+### Phase 7 — Dedicated Adult Discover catalog backend/API
 
-**Status:** Not Started
+**Status:** Complete
+
+**Implemented:** 2026-09-07 against branch `main`, starting from commit `b951e3e9129bf13918b9fd77abebdf92b8194940` (Phase 6 commit).
+
+**Objective:** a dedicated, authorization-gated Adult Discover catalog backend — a separate Adult surface with its own contract, NOT an `includeAdult` flag threaded through generic Discover code. The core invariant is unchanged and re-proven: ADULT CONTENT MUST NEVER BE INJECTED INTO NORMAL DISCOVER/HOME RAILS; Adult content belongs only to an explicitly authorized Adult surface.
+
+**Initial audit (documented before implementation; no code edited until complete):**
+1. Normal Discover loads three ways: SSR hero via `loadDiscoverData()` (trending only), sections client-side via `/api/discover/rail` (typed closed-union section keys → `discoverRail()`), collections via `loadCollectionData()` → `collection()`.
+2. TMDB endpoints in use: `/trending/{movie,tv}/week`, `/discover/{movie,tv}`, `/movie/now_playing`, `/{movie,tv}/popular`, `/search/{movie,tv}`, detail/season/watch-providers.
+3. An API boundary already exists: closed section/language unions + clamped pages; the browser never sends raw TMDB paths or arbitrary filter values.
+4. Movie and TV catalogs are handled per-type everywhere; only `getTmdbNewOnOtt` and `getTmdbAdultShows` merge two halves.
+5. Pagination conventions: page clamp 1..20, `DISCOVER_PAGE_SIZE = 10`, `MAX_OTHER_LANGUAGE_PAGES = 6` bounded language walk, Search continuation capped at 3 upstream pages.
+6. Language/region: closed `DiscoverLanguage` union; `with_original_language` for specific languages; 'other' via bounded server-side exclusion; India-first `region=IN` / `watch_region=IN`.
+7. Caching: process-local `getOrSet`; content-keyed classification via `tmdb:detail:*` (30 min, in-flight dedup); response caches embed their content dimensions; authorization is never cached; the adult rail owns the separate `tmdb:adult-shows:` namespace.
+8. Fallbacks: fixtures fallback for discover/collection/popular/search (contains zero adult titles — behaviorally asserted since Phase 6); `discoverRail` has NO fixture fallback (empty rail on failure).
+9. Reusability verdict: the existing 'adult-shows' rail is NOT a safe Adult Discover foundation — it has no classifier defense-in-depth, no language filter, no sort options, no per-type catalogs, no bounded continuation, and the shared rail endpoint answers unauthorized requests with an empty result rather than the dedicated surface's non-disclosing 404. Decision: build a dedicated contract; leave the existing rail untouched (UI scope belongs to a later phase).
 
 **Files changed:**
-- (planned) `getTmdbAdultShows`, rail API surface
+- `src/lib/server/content/adult-discover.ts` (new) — the PURE Adult Discover contract module (env-free, authorization-free, tsx-testable, zero literal network IDs): closed filter types (`AdultDiscoverType` = movie | series; `AdultDiscoverSort` = popularity | newest | top-rated; language = the shared `DiscoverLanguage` union), strict guards (`isAdultDiscoverType`/`isAdultDiscoverSort`/`isAdultDiscoverLanguage`), `parseAdultDiscoverPage` (clamp 1..20), `adultDiscoverSortBy`, `buildAdultDiscoverCacheKey` (dedicated `tmdb:adult-discover:` namespace with the applied inclusion values embedded), `emptyAdultDiscoverResult` (empty non-disclosing result — never fixtures), `classifyAdultDiscoverRow` (the asymmetric defense: movie rows use the cheap confirm-first path through `movieRowVerdict` — the flag can CONFIRM adult but can never DENY, so non-confirming rows escalate to the detail path; TV rows always use the detail path; any failure → 'uncertain'), and `collectConfirmedAdultPage` (bounded page continuation — pageSize 10, hard cap 3 upstream pages, never past TMDB `total_pages`, dedup by canonical identity, `mapWithConcurrency` bound 4 — that collects ONLY classifier-confirmed 'adult' candidates and drops 'safe' anomalies AND 'uncertain' failures fail-closed in both directions).
+- `src/routes/api/content/adult-discover/+server.ts` (new) — the dedicated endpoint: per-request Phase 5 authorization FIRST (`canAccessAdultContent(locals.supabase, user, cookies)`) → unauthorized = non-disclosing 404 (identical to a missing route; no hint the surface exists) → strict closed-union validation (type defaults to 'series' TV-first; language; sort) → clamped page → the dedicated service call → normalized media items + pagination metadata. NO network/provider parameter exists; NO client `adult`/`include_adult` flag is ever read; upstream failures surface through `contentErrorResponse` (never a normal-catalog fallback).
+- `src/lib/server/content/service.ts` — `adultDiscover(filters, canAccessAdult = false)` (new): the authorization-aware wrapper. Defense-in-depth: without a per-request authorized decision it returns the empty non-disclosing result BEFORE any cache access. NO fixture/normal-catalog fallback by construction — upstream errors propagate. Also: `isDiscoverLanguage` now delegates to the shared `isDiscoverLanguageValue` guard in `types.ts` (single source so both Discover surfaces can never drift; API unchanged for all consumers).
+- `src/lib/server/content/adapters/tmdb.ts` — `getTmdbAdultDiscover(filters)` (new): per-type catalogs. TV: `/discover/tv` + `with_networks` from `withAdultNetworksParams()` (verified registry; NO JustWatch prerequisites — no region/flatrate/watch-provider params). Movie: `/discover/movie` keeps the documented TRANSITIONAL watch-provider inclusion (`with_watch_providers` + `watch_region=IN` + flatrate over resolved adult provider names — the classifier's valid Signal 3 architecture); an empty resolved set → empty catalog (TV-first under-fill, nothing fabricated). Both halves: `include_adult: true` (this IS the authorized adult surface; the classifier still re-verifies every candidate), `with_original_language` (Adult AND language — the Adult constraint is never OR-ed away), sort refinements per repo conventions (`release_date.lte`/`first_air_date.lte` for newest, `vote_count.gte: 5` floor for top-rated — adult catalogs have small vote pools). Classification defense wired through `adultDiscoverDetailVerdictLoader` (shared cached `tmdb:detail:*` path, in-flight deduplicated) + `collectConfirmedAdultPage`. Responses cached under `tmdb:adult-discover:*` with the applied inclusion values in the key.
+- `src/lib/server/content/types.ts` — added `DISCOVER_LANGUAGES` + `isDiscoverLanguageValue` (pure shared guard; additive).
+- `scripts/adult_discover_test.ts` (new) — REAL behavioral suite (see Tests).
+- `scripts/adult_mode_test.ts` — new section **AB** (static wiring assertions for the contract module, endpoint, service wrapper, adapter; no pre-existing protection weakened) + summary line extended.
+- `package.json` — test chain includes `scripts/adult_discover_test.ts` (62 scripts).
 
-**Tests:**
-- (planned) authorization re-check, multi-network support, provider selection, pagination
+**Source/network selection:** verified registry ONLY — Ullu 2902, Kooku 4573, Atrangii 7355 via `getAdultNetworkIds()`/`withAdultNetworksParams()` through `adult-catalog.ts`. The 12 unverified services can never activate (structurally excluded by every production accessor; behaviorally proven). No second network list exists anywhere; the contract module and adapter contain zero literal IDs (statically asserted).
 
-**Notes:**
-- Keep server-side re-check + defense-in-depth (both exist today and are correct). Replace watch-provider query with network-based query; keep "no verified providers → empty result (no fabrication)" behavior.
+**Authorization integration:** the endpoint evaluates the EXISTING Phase 5 policy per request (fresh `app_settings` read + verified preference/cookie; admin OFF hard-overrides; guest cookie read only after the admin gate). Nothing was duplicated: no new policy/matrix/cookie code. The service wrapper re-enforces the decision (defense-in-depth). The authorization decision is evaluated per request and NEVER cached; the Adult Discover cache key carries NO authorization dimension because NO unauthorized request can reach the loader (404 at the endpoint, empty result at the service — both run BEFORE any cache access; the same documented precedent as the `tmdb:adult-shows:` namespace from Phase 3/AA). Matrix re-proven behaviorally: Admin OFF + user ON → OFF; Admin ON + user OFF → OFF; Admin ON + user ON → ON; Admin ON + guest OFF → OFF; Admin ON + guest ON → ON.
+
+**API contract:** `GET /api/content/adult-discover?type=movie|series&language=<DiscoverLanguage>&sort=popularity|newest|top-rated&page=<n>`. Authorized → `{ ok, items (normalized media), page, hasNextPage, type, language, sort }`. Unauthorized → non-disclosing 404. Invalid type/language/sort → 400. Malformed page → clamped. The verified network set is server-controlled and invisible to the client (no network IDs in responses).
+
+**Pagination:** page clamped to 1..20 (repo convention); visible page size 10 (Discover convention); page continuation bounded at 3 upstream pages, stops at `total_pages`/empty pages; dedup across/within pages; a persistently underfilled page stays underfilled (fail-closed, never fabricated); `hasNextPage` reports upstream exhaustion conservatively. No unbounded walking, no recursion, no page=999999999 reach-through (behaviorally proven with fetch counters).
+
+**Filters:** type (movie/series), language (closed union — narrows via `with_original_language` AND-composed with the mandatory network constraint, 'other' via the existing bounded post-filter), sort (closed union), page. NO arbitrary TMDB passthrough; NO network/provider parameter; NO genre filter (a genre constraint could only ever narrow, but is deferred until the UI phase needs it — minimal surface first).
+
+**Classification (defense-in-depth):** the `with_networks` boundary is strong but not blindly trusted. Every candidate is classified through the ONE central classifier (`isAdultContent` via the cached detail pipeline — networks/providers/adult/isAnime, anime exemption intact). Adult Discover contract: confirmed 'adult' → return; 'safe' (an upstream/data anomaly vs the adult query) → dropped, never silently presented as Adult content; 'uncertain' (classification failure) → fail CLOSED. No second classifier; no title blacklists; no romance/drama/mature/horror heuristics.
+
+**Cache isolation:** dedicated `tmdb:adult-discover:` namespace — structurally disjoint (by key prefix) from `tmdb:discover:*`, `tmdb:popular-v2:*`, `tmdb:top-rated-v2:*`, `tmdb:new-ott:*`, `tmdb:theatre:*`, `tmdb:adult-shows:*`, `tmdb:search:*`, `tmdb:collection:*`, `tmdb:genre-v2:*`. Behavioral tests with the real process cache prove neither namespace can satisfy the other in either direction. Content-fact classification caches (`tmdb:detail:*`) remain shared by design (content facts, not authorization). No `cache[page] = authorized response` shape exists.
+
+**Fallback behavior:** Adult Discover has NO fallback to the normal catalog and NO fixtures — upstream failures propagate to the route and surface as error responses. The service wrapper's only non-catalog output is the EMPTY non-disclosing result. Normal Discover's own fallback (fixtures) remains adult-free (re-asserted behaviorally over every fixture item with the real classifier).
+
+**Detail/watch integration:** Adult Discover returns only normalized catalog metadata (poster/title/year/rating/overview) — no streaming, resolver, episode, or season data — so it creates no new bypass. Items carry canonical `series-{id}`/`movie-{id}` identities and reach detail/watch exclusively through the Phase 6 guarded routes (`detailVerdict` + per-request `canAccessAdultContent` → non-disclosing 404). Those routes, playback, resolver, and PlayerShell are byte-untouched.
+
+**Tests:** new `scripts/adult_discover_test.ts` — 22 behavioral check groups covering all 31 spec-mandated scenarios plus extras (35 scenarios total): the 5 authorization-matrix decisions (real `evaluateAdultAccess`), verified network inclusion (2902/4573/7355), unverified/arbitrary client network ID rejection (incl. no-network-parameter structural proof), verified network + adult=false accepted (classifier + collector level), non-adult anomaly exclusion, no-JustWatch-dependence, normal Discover isolation with Adult Mode OFF and ON (real `filterSafeRailItems`, no authorization input), authorized/unauthorized Adult Discover outcomes, real-process-cache isolation in both directions + namespace prefix disjointness, per-request authorization freshness (policy flip visible on the next evaluation; no auth dimension in cache keys), page=1/invalid/huge clamping, hard-capped page walking (measured fetch count), deduplication, uncertain fail-closed, anime adult=true exclusion (real classifier with the exemption), upstream-failure propagation (no normal fallback), zero-adult fixtures, detail/watch authorization composition, strict closed unions, Adult-AND-language key semantics, measured bounded concurrency (≤4, proven parallel), and empty-registry → empty-catalog. Static lockstep: `adult_mode_test.ts` section AB. **Test result: `pnpm test` PASS (exit 0) — 62 scripts.** `pnpm run check` PASS (0 errors / 38 pre-existing warnings). `pnpm run build` PASS (adapter-netlify).
+
+**Bugs found during the phase:** none in shipped code — the audit confirmed the Phase 1–6 surfaces behave as their worklog entries claim (existing adult-shows rail gating, Phase 6 rail classification, per-request policy reads). The one pre-existing documentation inconsistency fixed: the phase checklist still showed Phase 6 unchecked although its section reads Complete (checkbox corrected; no historical text altered).
+
+**Explicitly NOT implemented (later phases / protected):** Adult Discover UI/navigation (later phase — the existing 'adult-shows' rail and DiscoverPage are untouched); Phase 8 Popular TV `without_genres=10764|10766|10767` (documented only, NOT done here); any playback/resolver/progress/navigation/My List/PlayerShell/anime/MegaPlay/Tatakai/Anime World India change (none); Phase 5 authorization and Phase 6 enforcement untouched (no byte changes to `adult-policy.ts`/`adult-authz.ts`/`adult-cookie.ts`, the watch route, or the season endpoint); no AniList/MAL/Yenime reintroduction; no process-local authorization cache; no genre filters on Adult Discover yet.
+
+**Known residual risks (documented, accepted):**
+- The movie side remains the TRANSITIONAL watch-provider source (documented since Phase 3): an adult-provider movie with adult=false that lost JustWatch availability would not appear; with no verified movie-side identity, under-fill is the safe behavior by design.
+- Classification-confirmed-only collection can underfill pages when upstream anomalies or detail-lookup failures cluster (fail-closed by design; bounded continuation mitigates).
+- The existing 'adult-shows' rail still serves its legacy merged-rail shape from `tmdb:adult-shows:*` (correct and gated, but without the new per-type/catalog features) until the UI phase migrates it to the new endpoint.
+
+**Commit SHA:** this commit — `feat(adult): add authorized adult discover catalog` (exact SHA in `git log -1`; the worklog cannot contain its own commit's hash).
 
 **Remaining work:**
-- Everything (Not Started).
+- Phase 8: Popular TV `without_genres` cleanup + Discover/Search UI integration (may migrate the adult rail UI to the new endpoint).
+- Phases 9–10 as planned. Phase 9 live diagnostic re-confirms network IDs + separator semantics.
 
 ### Phase 8 — Popular TV + Discover/Search UI integration
 

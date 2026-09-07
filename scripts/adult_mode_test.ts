@@ -20,6 +20,8 @@ const searchEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/conten
 const adultModeApi = await readFile(path.join(repoRoot, 'src/routes/api/settings/adult-mode/+server.ts'), 'utf8');
 const adultProvidersApi = await readFile(path.join(repoRoot, 'src/routes/api/discover/adult-providers/+server.ts'), 'utf8');
 const adminAdultApi = await readFile(path.join(repoRoot, 'src/routes/api/admin/adult-mode/+server.ts'), 'utf8');
+const adultDiscoverModule = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-discover.ts'), 'utf8');
+const adultDiscoverEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/content/adult-discover/+server.ts'), 'utf8');
 const migration = await readFile(path.join(repoRoot, 'supabase/migrations/20260913000000_adult_mode.sql'), 'utf8');
 const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
 const adminDefaults = await readFile(path.join(repoRoot, 'src/routes/admin/defaults/+page.svelte'), 'utf8');
@@ -673,4 +675,87 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z); direct enforcement + unsupported paths + cache isolation (AA).');
+// ============================================================================
+// AB. Phase 7 — dedicated Adult Discover catalog (static wiring assertions).
+//     Behavioral coverage for the pure contracts lives in
+//     scripts/adult_discover_test.ts.
+// ============================================================================
+{
+  // ---- Pure contract module (adult-discover.ts) ----
+  assert.match(adultDiscoverModule, /export async function collectConfirmedAdultPage/, 'the fail-closed page collector exists');
+  assert.match(adultDiscoverModule, /export async function classifyAdultDiscoverRow/, 'the candidate classifier exists');
+  assert.match(adultDiscoverModule, /export function buildAdultDiscoverCacheKey/, 'the isolated cache-key builder exists');
+  assert.match(adultDiscoverModule, /export function emptyAdultDiscoverResult/, 'the empty non-disclosing result exists');
+  assert.match(adultDiscoverModule, /export function parseAdultDiscoverPage/, 'page clamping exists');
+  assert.match(adultDiscoverModule, /export const ADULT_DISCOVER_CACHE_NAMESPACE = 'tmdb:adult-discover'/, 'the Adult Discover cache namespace is its own prefix');
+  assert.match(adultDiscoverModule, /export const ADULT_DISCOVER_MAX_UPSTREAM_PAGES = 3/, 'page walking is hard-capped at 3 upstream pages');
+  assert.match(adultDiscoverModule, /export const ADULT_DISCOVER_CLASSIFY_CONCURRENCY = 4/, 'classification concurrency is bounded at 4');
+  assert.match(adultDiscoverModule, /export const ADULT_DISCOVER_PAGE_SIZE = 10/, 'the visible page size matches the Discover convention');
+  // Single classifier: the module reuses the Phase 4 verdict helpers and
+  // imports NO authorization layer and NO env (pure, tsx-testable).
+  assert.match(adultDiscoverModule, /import \{ movieRowVerdict, type CandidateVerdict, type UpstreamSearchPage \} from '\.\/search-classify'/, 'the contract reuses the ONE central classifier verdict helpers');
+  assert.doesNotMatch(adultDiscoverModule, /from '\.\/adult-policy'|from '\.\/adult-authz'/, 'the Adult Discover contract imports NO authorization layer (the decision is injected per request)');
+  assert.doesNotMatch(adultDiscoverModule, /\$env|process\.env/, 'the Adult Discover contract is env-free');
+  assert.doesNotMatch(adultDiscoverModule, /\b(2902|4573|7355)\b/, 'the Adult Discover contract contains no hardcoded network ids');
+  assert.doesNotMatch(adultDiscoverModule, /fixturesFor|\$data\/content/, 'the Adult Discover contract has NO fixture/normal-catalog fallback');
+  // Fail-closed semantics are structural: only 'adult' verdicts are
+  // collected; 'safe' anomalies and 'uncertain' failures are dropped.
+  assert.match(adultDiscoverModule, /if \(verdict === 'adult'\)/, 'the collector collects ONLY confirmed Adult candidates');
+  assert.match(adultDiscoverModule, /if \(verdict === 'uncertain'\)[\s\S]*?continue/, 'uncertain candidates fail CLOSED (dropped, never mapped to adult)');
+  assert.match(adultDiscoverModule, /excludedNotAdult \+= 1/, 'non-adult anomalies are dropped (never silently presented as Adult)');
+  assert.match(adultDiscoverModule, /catch \{[\s\S]*?return 'uncertain';/, 'a failed classification maps to uncertain (never adult)');
+  assert.match(adultDiscoverModule, /mapWithConcurrency/, 'classification runs through the shared bounded-concurrency helper');
+
+  // ---- Endpoint (authorization-first, strict validation, no client flags) ----
+  assert.match(adultDiscoverEndpoint, /import \{ canAccessAdultContent \} from '\$lib\/server\/content\/adult-policy'/, 'the endpoint uses the Phase 5 authorization function');
+  assert.match(adultDiscoverEndpoint, /await canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'authorization is evaluated per request');
+  const authIdx = adultDiscoverEndpoint.indexOf('await canAccessAdultContent');
+  const validationIdx = adultDiscoverEndpoint.indexOf('isAdultDiscoverType(typeParam)');
+  const serviceIdx = adultDiscoverEndpoint.indexOf('await adultDiscover(');
+  assert.ok(authIdx > -1 && validationIdx > authIdx && serviceIdx > validationIdx, 'authorization runs FIRST, before validation and before the catalog service');
+  assert.match(adultDiscoverEndpoint, /status: 404/, 'unauthorized requests get the non-disclosing 404');
+  assert.match(adultDiscoverEndpoint, /isAdultDiscoverType/, 'type is validated against the closed union');
+  assert.match(adultDiscoverEndpoint, /isAdultDiscoverLanguage/, 'language is validated against the closed union');
+  assert.match(adultDiscoverEndpoint, /isAdultDiscoverSort/, 'sort is validated against the closed union');
+  assert.match(adultDiscoverEndpoint, /parseAdultDiscoverPage/, 'pagination is clamped');
+  // No client-supplied adult flag can act as authorization (no adult /
+  // include_adult query parameter is ever read).
+  assert.doesNotMatch(adultDiscoverEndpoint, /searchParams\.get\(['"](include_)?adult['"]\)/, 'no client adult flag is read as authorization');
+  assert.doesNotMatch(adultDiscoverEndpoint, /with_networks/, 'no network filter is client-controllable');
+  assert.match(adultDiscoverEndpoint, /contentErrorResponse/, 'upstream failures surface as errors (never a normal-catalog fallback)');
+
+  // ---- Service wrapper (defense-in-depth, no fixture fallback) ----
+  assert.match(service, /export async function adultDiscover\(filters: AdultDiscoverFilters, canAccessAdult = false\)/, 'the dedicated Adult Discover service entry exists');
+  const adultDiscoverFn = service.match(/export async function adultDiscover\([\s\S]*?^}/m);
+  assert.ok(adultDiscoverFn, 'adultDiscover function found');
+  assert.match(adultDiscoverFn![0], /if \(!canAccessAdult\)[\s\S]*?return emptyAdultDiscoverResult/, 'the service re-checks authorization (defense-in-depth empty result)');
+  assert.doesNotMatch(adultDiscoverFn![0], /fixturesFor/, 'the Adult Discover service NEVER falls back to fixtures/normal content');
+  assert.match(service, /getTmdbAdultDiscover \} from '\.\/adapters\/tmdb'/, 'the service delegates to the dedicated adapter function');
+
+  // ---- Adapter (server-controlled source + isolated cache + classifier) ----
+  assert.match(tmdb, /export async function getTmdbAdultDiscover/, 'the dedicated Adult Discover adapter function exists');
+  const adultDiscoverAdapter = tmdb.match(/export async function getTmdbAdultDiscover[\s\S]*?^}/m);
+  assert.ok(adultDiscoverAdapter, 'getTmdbAdultDiscover found');
+  assert.match(adultDiscoverAdapter![0], /withAdultNetworksParams\(\)/, 'the TV source is the VERIFIED adult network registry');
+  assert.match(adultDiscoverAdapter![0], /getAdultProviderIds\(\)/, 'the movie source is the resolved transitional provider set');
+  assert.match(adultDiscoverAdapter![0], /include_adult: true/, 'the Adult surface queries with include_adult: true');
+  assert.match(adultDiscoverAdapter![0], /buildAdultDiscoverCacheKey/, 'responses cache under the isolated adult-discover namespace');
+  assert.match(adultDiscoverAdapter![0], /collectConfirmedAdultPage/, 'candidates pass the fail-closed classification defense');
+  assert.match(adultDiscoverAdapter![0], /emptyAdultDiscoverResult/, 'a missing verified source yields the empty result (no fabricated ids)');
+  // Classification flows through the shared cached detail path (content facts only).
+  assert.match(tmdb, /const adultDiscoverDetailVerdictLoader: AdultDiscoverDetailVerdictLoader = async \(mediaType, tmdbId\) => \{[\s\S]*?await getTmdbDetail\(mediaType, tmdbId\)/, 'the verdict loader reads the central classification from the cached detail path');
+  assert.match(adultDiscoverAdapter![0], /adultDiscoverDetailVerdictLoader/, 'Adult Discover candidates classify through the cached-detail verdict loader');
+  // The TV half must carry NO JustWatch prerequisites (region/flatrate/providers):
+  // the movie branch is the region-scoped transitional provider query, and the
+  // TV branch spreads ONLY the network inclusion.
+  assert.match(adultDiscoverAdapter![0], /\? \{ watch_region: 'IN', with_watch_monetization_types: 'flatrate', with_watch_providers: providerInclusion \}/, 'the movie source is the transitional provider query (region-scoped)');
+  assert.match(adultDiscoverAdapter![0], /: \{ \.\.\.networkInclusion \}/, 'the TV params spread ONLY the network inclusion (no JustWatch prerequisites)');
+
+  // ---- Normal Discover isolation: the shared rail path is untouched ----
+  assert.match(railEndpoint, /sectionParam === 'adult-shows'/, 'the normal rail endpoint still gates its adult-shows section separately');
+  assert.doesNotMatch(adultDiscoverEndpoint, /discoverRail/, 'the Adult Discover endpoint does NOT reuse the shared rail path (dedicated contract)');
+  assert.match(service, /import \{ isDiscoverLanguageValue \} from '\.\/types'/, 'the language guard has a single shared source (no drift between surfaces)');
+}
+
+
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z); direct enforcement + unsupported paths + cache isolation (AA); dedicated Adult Discover catalog (AB).');

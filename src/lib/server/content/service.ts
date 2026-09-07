@@ -1,4 +1,5 @@
-import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbAnimeMerged, getTmdbAdultShows } from './adapters/tmdb';
+import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbAnimeMerged, getTmdbAdultShows, getTmdbAdultDiscover } from './adapters/tmdb';
+import { emptyAdultDiscoverResult, type AdultDiscoverFilters } from './adult-discover';
 import { media } from '$data/content';
 import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, DiscoverLanguage, DiscoverRailFilters, DiscoverSectionKey, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
@@ -120,6 +121,7 @@ import { isAdultContent, ensureAdultProvidersResolved } from './adult-providers'
 import { getTmdbIndiaProviders } from './adapters/tmdb';
 import { detailVerdict } from './search-classify';
 import { filterSafeRailItems, shouldFilterDetailRecommendations, type RailCandidateRow } from './list-classify';
+import { isDiscoverLanguageValue } from './types';
 
 function isAdultItem(item: NormalizedMediaItem): boolean {
   // For list responses we don't have per-title provider IDs without N+1.
@@ -416,7 +418,10 @@ export function isDiscoverSectionKey(value: string): value is DiscoverSectionKey
 }
 
 export function isDiscoverLanguage(value: string): value is DiscoverLanguage {
-  return value === 'all' || value === 'hi' || value === 'en' || value === 'ta' || value === 'te' || value === 'ml' || value === 'kn' || value === 'other';
+  // Phase 7: the union guard moved to types.ts (single source shared with
+  // the Adult Discover contract); this delegation keeps the service API
+  // byte-compatible for every existing consumer.
+  return isDiscoverLanguageValue(value);
 }
 
 export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult = false): Promise<ContentList> {
@@ -482,6 +487,33 @@ export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult 
  */
 export async function discoverAnime(sort: 'popularity' | 'top-rated', page = 1): Promise<ContentList> {
   return discoverRail({ section: sort === 'top-rated' ? 'top-rated-anime' : 'popular-anime', language: 'all', page });
+}
+
+// ============================================================
+// Phase 7 — dedicated Adult Discover catalog (service entry point).
+//
+// The AUTHORIZATION-AWARE wrapper the Adult Discover API route calls.
+// Authorization is evaluated PER REQUEST by the route with the Phase 5
+// policy function (canAccessAdultContent — fresh admin policy + verified
+// preference; never cached, never client-controlled) and passed in as the
+// `canAccessAdult` decision. This wrapper enforces the decision a SECOND
+// time (defense-in-depth): an unauthorized call — including an internal
+// caller that forgot the authorization step — gets the empty,
+// non-disclosing Adult Discover result, never the catalog.
+//
+// NO fallback by construction: Adult Discover never degrades into the
+// normal catalog or fixtures. Upstream failures propagate to the route's
+// error handling (an error/empty response — never normal content in the
+// Adult surface, never adult content in a normal surface).
+// ============================================================
+export async function adultDiscover(filters: AdultDiscoverFilters, canAccessAdult = false): Promise<ContentList> {
+  // Defense-in-depth gate: without a per-request authorized decision the
+  // Adult catalog is unavailable. The result is empty and non-disclosing —
+  // identical for "admin OFF", "preference OFF" and any other deny reason.
+  if (!canAccessAdult) {
+    return emptyAdultDiscoverResult(filters.page);
+  }
+  return getTmdbAdultDiscover(filters);
 }
 
 export const contentServiceInternals = { fixturesFor, fixtureDetail, canFallback, audienceConfidence, rankForExposure, isUsableItem, uniqueUsableItems, selectFeatured };
