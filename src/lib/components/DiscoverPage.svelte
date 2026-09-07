@@ -9,6 +9,7 @@
   import type { MediaItem } from '$lib/data/content';
   import ContentRail from '$components/ContentRail.svelte';
   import DiscoverSection from '$components/DiscoverSection.svelte';
+  import AdultDiscoverSection from '$components/AdultDiscoverSection.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import AppFooter from '$components/AppFooter.svelte';
@@ -103,8 +104,14 @@
 
   // Adult mode state — fetched client-side from /api/settings/adult-mode.
   // The server is the authority; the client only reflects server state.
+  // Phase 8: the "Indian Adult Shows" rail no longer uses the legacy
+  // watch-provider dropdown endpoint — the Phase 7 Adult Discover contract
+  // has NO provider parameter (the verified Adult network set is
+  // server-controlled and invisible to the client). The dedicated
+  // AdultDiscoverSection component fetches the authorized,
+  // classifier-confirmed catalog from the dedicated adult-discover API,
+  // which independently re-evaluates authorization on every request.
   let adultCanAccess = $state(false);
-  let adultProviders = $state<{ value: string; label: string; logoUrl?: string }[]>([]);
 
   async function loadAdultModeSettings() {
     try {
@@ -113,19 +120,6 @@
       const payload = await response.json();
       if (!payload.ok) return;
       adultCanAccess = Boolean(payload.canAccess);
-      if (adultCanAccess) {
-        // Load verified adult providers for the dropdown.
-        const providerResponse = await fetch('/api/discover/adult-providers');
-        if (!providerResponse.ok) return;
-        const providerPayload = await providerResponse.json();
-        if (providerPayload.ok && Array.isArray(providerPayload.providers)) {
-          adultProviders = providerPayload.providers.map((p: { key: string; name: string; logoUrl: string }) => ({
-            value: p.key,
-            label: p.name,
-            logoUrl: p.logoUrl,
-          }));
-        }
-      }
     } catch {
       // Silent fail — adult section stays hidden.
     }
@@ -513,20 +507,16 @@
           viewAllHref={sectionDef.viewAllHref ?? ''}
         />
       {/each}
-      <!-- Phase 7: Indian Adult Shows — the LAST content rail before the
-           footer. Only rendered when the server says adult access is allowed.
-           The server enforces this independently — this client-side check
-           is purely for rendering; the /api/discover/rail endpoint returns
-           an empty result if adult access is denied (defense in depth). -->
-      {#if adultCanAccess && adultProviders.length > 0}
-        <DiscoverSection
-          section="adult-shows"
-          title="Indian Adult Shows"
-          languageFilter={false}
-          providerFilter={true}
-          providers={adultProviders}
-          viewAllHref=""
-        />
+      <!-- Phase 8: Indian Adult Shows — the LAST content rail before the
+           footer, now backed by the Phase 7 dedicated Adult Discover API.
+           Only rendered when the server says adult access is allowed (the
+           /api/settings/adult-mode state fetched above). The server enforces
+           this independently — the /api/content/adult-discover endpoint
+           re-evaluates the Phase 5 policy on EVERY request and answers
+           unauthorized calls with the non-disclosing 404, so this
+           client-side check is purely for rendering convenience. -->
+      {#if adultCanAccess}
+        <AdultDiscoverSection title="Indian Adult Shows" />
       {/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />

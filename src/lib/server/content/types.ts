@@ -162,6 +162,38 @@ export function isDiscoverLanguageValue(value: string | null | undefined): value
   return typeof value === 'string' && (DISCOVER_LANGUAGES as readonly string[]).includes(value);
 }
 
+// ============================================================
+// Phase 8 — Popular TV generic-category cleanup.
+//
+// Normal Popular TV (the `popular-series` Discover rail, backed by
+// /discover/tv) additionally excludes the generic TV categories that
+// dominate India popularity rankings and are the channel through which
+// general-entertainment/linear-TV programming leaks into the rail:
+//
+//   10764 = Soap
+//   10766 = News
+//   10767 = Talk
+//
+// IMPORTANT — what this filter is NOT:
+//   - It is NOT an Adult classifier. Soap/News/Talk titles are NOT
+//     classified as Adult by this; a title is Adult only according to the
+//     ONE central classifier (adult-providers.isAdultContent over
+//     networks/providers/adult flag/isAnime). This is a curation filter
+//     that runs ALONGSIDE the unconditional adult exclusion
+//     (`without_networks` for TV, the transitional provider exclusion for
+//     movies) and never replaces or weakens it.
+//   - It is NOT conditional on Adult Mode. Normal Popular TV is
+//     Adult-excluded regardless of Adult Mode state (the Phase 6
+//     invariant); this genre exclusion is equally unconditional.
+//
+// The IDs are TMDB's public TV genre IDs (pure data, no env) so both the
+// adapter query and the behavioral tests assert the exact same value.
+// /discover/movie has no such genre dimension in this phase's scope
+// (10764/10766/10767 are TV genres) — the movie half of Popular TV is
+// unchanged.
+// ============================================================
+export const POPULAR_TV_WITHOUT_GENRES = '10764|10766|10767';
+
 export type DiscoverSectionKey =
   | 'theatre'
   | 'new-ott'

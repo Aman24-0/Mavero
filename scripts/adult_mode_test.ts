@@ -23,6 +23,7 @@ const adminAdultApi = await readFile(path.join(repoRoot, 'src/routes/api/admin/a
 const adultDiscoverModule = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-discover.ts'), 'utf8');
 const adultDiscoverEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/content/adult-discover/+server.ts'), 'utf8');
 const migration = await readFile(path.join(repoRoot, 'supabase/migrations/20260913000000_adult_mode.sql'), 'utf8');
+const types = await readFile(path.join(repoRoot, 'src/lib/server/content/types.ts'), 'utf8');
 const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
 const adminDefaults = await readFile(path.join(repoRoot, 'src/routes/admin/defaults/+page.svelte'), 'utf8');
 const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+page.svelte'), 'utf8');
@@ -263,7 +264,14 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 {
   // DiscoverPage fetches adult settings client-side (not SSR).
   assert.match(discoverPage, /loadAdultModeSettings/, 'DiscoverPage fetches adult settings client-side');
-  assert.match(discoverPage, /\{#if adultCanAccess && adultProviders\.length > 0\}/, 'adult section conditionally rendered');
+  // Phase 8 lockstep: the Adult surface is now the dedicated
+  // AdultDiscoverSection component (Phase 7 API-backed), still rendered
+  // ONLY on the server-reported authorization state — the condition stays
+  // server-driven (equal strength: the state comes from
+  // /api/settings/adult-mode, and the component itself is asserted in
+  // section AC + the Phase 8 suite).
+  assert.match(discoverPage, /\{#if adultCanAccess\}/, 'adult section conditionally rendered on the server-reported state');
+  assert.match(discoverPage, /<AdultDiscoverSection/, 'the Adult surface is the dedicated Phase 7-backed component');
   // The server load (discover-load.ts) does NOT load adult data.
   const discoverLoad = await readFile(path.join(repoRoot, 'src/lib/server/content/discover-load.ts'), 'utf8');
   assert.doesNotMatch(discoverLoad, /adult/, 'SSR load does NOT fetch adult data');
@@ -758,4 +766,53 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z); direct enforcement + unsupported paths + cache isolation (AA); dedicated Adult Discover catalog (AB).');
+// ============================================================================
+// AC. Phase 8 — Popular TV cleanup + Adult Discover UI integration (static
+//     wiring assertions). Behavioral coverage lives in
+//     scripts/adult_phase8_ui_test.ts.
+// ============================================================================
+{
+  // ---- Popular TV: the unconditional generic-genre exclusion ----
+  assert.match(types, /export const POPULAR_TV_WITHOUT_GENRES = '10764\|10766\|10767'/, 'the Popular TV genre exclusion constant is the exact Soap/News/Talk id set');
+  const popularByLang = tmdb.match(/export async function getTmdbPopularByLanguage[\s\S]*?^}/m);
+  assert.ok(popularByLang, 'getTmdbPopularByLanguage found');
+  assert.match(popularByLang![0], /without_genres: genreExclusion/, 'Popular TV TV-half sends without_genres');
+  assert.match(popularByLang![0], /const genreExclusion = type === 'series' \? POPULAR_TV_WITHOUT_GENRES : undefined/, 'the genre exclusion applies ONLY to the TV half (movies untouched)');
+  assert.match(popularByLang![0], /\$\{genreExclusion \?\? 'no-genre-exclusion'\}/, 'the popular cache key embeds the genre-exclusion dimension');
+  // The exclusion is UNCONDITIONAL: no Adult Mode branch can remove it.
+  assert.doesNotMatch(popularByLang![0], /if \(adult|canAccessAdult/, 'no Adult Mode conditional around the normal Popular TV query');
+  // The genre filter is additional — the adult exclusion and classifier stay.
+  assert.match(popularByLang![0], /without_networks: networkExclusion/, 'verified adult network exclusion retained on Popular TV');
+  assert.match(popularByLang![0], /include_adult: false/, 'include_adult=false retained on Popular TV');
+
+  // ---- Adult Discover UI: the dedicated, endpoint-only rail component ----
+  const adultSection = await readFile(path.join(repoRoot, 'src/lib/components/AdultDiscoverSection.svelte'), 'utf8');
+  assert.match(adultSection, /\/api\/content\/adult-discover/, 'the Adult rail component calls ONLY the Phase 7 endpoint');
+  // Every fetch in the component routes through the dedicated URL builder —
+  // the legacy rail endpoint can never be called (code-shape assertion; the
+  // module doc comment may reference the old endpoint as documentation).
+  const acFetches = [...adultSection.matchAll(/fetch\((.{0,40})/g)];
+  assert.ok(acFetches.length >= 2, 'the Adult rail has first-load and show-more fetches');
+  for (const call of acFetches) {
+    assert.match(call[1], /discoverUrl\(/, 'every Adult rail fetch routes through discoverUrl (the Phase 7 endpoint builder)');
+  }
+  assert.doesNotMatch(adultSection, /with_networks|watch_providers|include_adult/, 'the Adult rail sends no source/authorization parameters');
+  assert.match(adultSection, /import MediaCard from '\$components\/MediaCard\.svelte'/, 'the Adult rail reuses the existing card component (no duplication)');
+  assert.match(adultSection, /status === 404/, 'the Adult rail treats the non-disclosing 404 as section-hidden (never as data)');
+  assert.match(adultSection, /import type \{ DiscoverLanguage \} from '\$lib\/server\/content\/types'/, 'the Adult rail shares the closed language union');
+
+  // ---- DiscoverPage migration: legacy dropdown gone, server-driven visibility ----
+  assert.doesNotMatch(discoverPage, /section="adult-shows"/, 'DiscoverPage no longer renders the legacy adult-shows rail');
+  assert.doesNotMatch(discoverPage, /adult-providers/, 'DiscoverPage no longer fetches the legacy provider dropdown');
+  assert.match(discoverPage, /\{#if adultCanAccess\}/, 'the Adult surface renders only on the server-reported state');
+  assert.match(discoverPage, /<AdultDiscoverSection/, 'DiscoverPage mounts the dedicated Adult Discover component');
+
+  // ---- Legacy endpoints retained but still protected ----
+  assert.match(railEndpoint, /sectionParam === 'adult-shows'/, 'the legacy rail endpoint remains special-cased');
+  assert.match(railEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'the legacy rail endpoint still evaluates the policy per request');
+  assert.match(adultProvidersApi, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'the legacy provider dropdown endpoint still evaluates the policy per request');
+  assert.match(adultProvidersApi, /providers: \[\]/, 'the legacy dropdown endpoint still answers unauthorized requests with an empty list');
+}
+
+
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z); direct enforcement + unsupported paths + cache isolation (AA); dedicated Adult Discover catalog (AB); popular TV cleanup + Adult Discover UI integration (AC).');

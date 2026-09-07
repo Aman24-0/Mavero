@@ -1,6 +1,6 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 7 complete (dedicated authorized Adult Discover backend/API). Phase 6 was direct server-side enforcement + unsupported catalog paths + cache isolation; Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
+> **Status:** Phase 8 complete (Popular TV generic-category cleanup + Adult Discover/Search UI integration). Phase 7 was the dedicated authorized Adult Discover backend/API; Phase 6 was direct server-side enforcement + unsupported catalog paths + cache isolation; Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
 > **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
@@ -8,6 +8,7 @@
 > **Phase 4 implemented:** 2026-09-07 against branch `main`, starting from commit `8c675679ad0ccc3add90bc336798b2b3ca9881eb` (Phase 3 commit).
 > **Phase 5 implemented:** 2026-09-07 against branch `main`, starting from commit `6cc45bf962f80845850f7b4146acea037392fca5` (Phase 4 commit).
 > **Phase 7 implemented:** 2026-09-07 against branch `main`, starting from commit `b951e3e9129bf13918b9fd77abebdf92b8194940` (Phase 6 commit; Phase 6 completed in a prior session — its section below documents the delivered state).
+> **Phase 8 implemented:** 2026-09-07 against branch `main`, starting from commit `95234da58bd8c15c68f94c79efc0550708c023bc` (Phase 7 commit).
 
 ---
 
@@ -80,7 +81,7 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 - [x] Phase 5 — Authorization, Supabase policy & HMAC guest cookie
 - [x] Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
 - [x] Phase 7 — Indian Adult Shows Discover backend/API (dedicated authorized Adult Discover catalog)
-- [ ] Phase 8 — Popular TV + Discover/Search UI integration
+- [x] Phase 8 — Popular TV cleanup + Adult Discover / Search UI integration
 - [ ] Phase 9 — Behavioral tests A-R + live TMDB diagnostic
 - [ ] Phase 10 — Final integration QA, regression audit & release validation
 
@@ -406,21 +407,58 @@ Network-filter support re-confirmed against live TMDB in the Phase 9 diagnostic 
 - Phase 8: Popular TV `without_genres` cleanup + Discover/Search UI integration (may migrate the adult rail UI to the new endpoint).
 - Phases 9–10 as planned. Phase 9 live diagnostic re-confirms network IDs + separator semantics.
 
-### Phase 8 — Popular TV + Discover/Search UI integration
+### Phase 8 — Popular TV cleanup + Adult Discover / Search UI integration
 
-**Status:** Not Started
+**Status:** Complete
+
+**Implemented:** 2026-09-07 against branch `main`, starting from commit `95234da58bd8c15c68f94c79efc0550708c023bc` (Phase 7 commit).
+
+**Objective:** two tightly related goals. (1) Make normal Popular TV explicitly exclude the generic TV categories Soap/News/Talk (`without_genres=10764|10766|10767`) so linear-TV programming stops dominating the rail. (2) Integrate the Phase 7 authorized Adult Discover backend into the actual Mavero UI — migrating the existing "Indian Adult Shows" rail onto the dedicated `/api/content/adult-discover` endpoint — while preserving every existing Adult security boundary. The critical invariant is unchanged: **Adult Mode ON does NOT make normal rails Adult-inclusive**; only the dedicated, explicitly authorized Adult surface exposes Adult catalog content, and the server remains the security boundary.
+
+**Initial audit (documented before implementation; no code edited until complete):**
+1. Phase 7 backend verified intact (contract module, dedicated endpoint with per-request authorization + non-disclosing 404, service defense-in-depth wrapper, verified-network TV source + transitional movie source, fail-closed classifier defense, isolated `tmdb:adult-discover:*` cache). Not replaced.
+2. Existing Adult UI: `DiscoverPage.svelte` fetched `/api/settings/adult-mode` client-side (server-authoritative `canAccess`), then — when authorized — fetched the legacy `/api/discover/adult-providers` watch-provider dropdown and rendered `<DiscoverSection section="adult-shows">`, which called `/api/discover/rail` → the LEGACY merged movie+TV rail (`getTmdbAdultShows`, `tmdb:adult-shows:*` cache, no list-level classifier defense, no language/type filters).
+3. Popular TV: `getTmdbPopularByLanguage('series')` used `/discover/tv` with `include_adult=false` + `without_networks` + `watch_region=IN` + flatrate + `with_original_language`, but NO genre exclusion (the documented Soap/News/Talk leak). `getTmdbPopular('series')` uses `/{tv}/popular`, which supports NO genre filters at the endpoint level — its Adult-free guarantee is the Phase 6 central-classifier pass (`filterAdultFromListPage`); documented, nothing to change there.
+4. Search: Phase 4 contract intact end-to-end. SSR `/search` page and `/api/content/search` BOTH evaluate `canAccessAdultContent` per request; the UI sends no adult flag and holds no authorization logic; no changes required (verified, not rewritten).
+5. SSR leak check: `loadDiscoverData` (Home + /discover SSR) fetches trending rails only — zero adult data in SSR or hydration; the Adult visibility flag itself is a client-side settings fetch, not an SSR payload; sections (including the Adult rail) load exclusively client-side. Confirmed clean before and after the migration.
+6. Static lockstep impact: `adult_mode_test.ts` section K asserted the legacy render condition (`adultCanAccess && adultProviders.length > 0`) — updated in lockstep (equal strength, see Tests).
 
 **Files changed:**
-- (planned) `getTmdbPopularByLanguage` (add `without_genres=10764|10766|10767`), `DiscoverPage.svelte` / search UI wiring
+- `src/lib/server/content/types.ts` — added `POPULAR_TV_WITHOUT_GENRES = '10764|10766|10767'` (pure constant + documentation of exactly what the filter is and is NOT: a curation filter that never classifies Soap/News/Talk as Adult, is unconditional across Adult Mode states, and never replaces the central classifier or the adult exclusion).
+- `src/lib/server/content/adapters/tmdb.ts` — `getTmdbPopularByLanguage`: the TV half now sends `without_genres=10764|10766|10767` alongside (never instead of) the retained `include_adult=false`, verified `without_networks` exclusion, `watch_region=IN` + flatrate and `with_original_language`. The applied exclusion is embedded in the `tmdb:popular-v2:*` cache key (`:${genreExclusion ?? 'no-genre-exclusion'}`) so the key always reflects the query shape. The movie half is untouched (10764/10766/10767 are TV genres). No Adult Mode conditional exists anywhere near the query (unconditional by construction).
+- `src/lib/components/AdultDiscoverSection.svelte` (new) — the dedicated Adult Discover rail: fetches ONLY `/api/content/adult-discover` with EXACTLY `type` (series|movie dropdown, TV-first default) + `language` (the shared closed `DiscoverLanguage` union) + `page`; "Show more" pagination bounded by the API's `hasNextPage` (no infinite scroll); the standard loading/error/empty states; reuses `MediaCard` + `DiscoverDropdown` (no duplicated card components); a small "18+" badge distinguishes the Adult surface; a non-disclosing 404 (e.g. mid-session authorization revocation) hides the section — a 404 body carries no titles, so the rail can never leak data; no localStorage/sessionStorage persistence; no network/provider parameters exist in the component.
+- `src/lib/components/DiscoverPage.svelte` — the legacy provider-dropdown fetch (`/api/discover/adult-providers`) removed (the Phase 7 contract has no provider dimension); the legacy `<DiscoverSection section="adult-shows">` replaced by `<AdultDiscoverSection>` rendered ONLY under `{#if adultCanAccess}` (the server-reported state from `/api/settings/adult-mode`); position preserved (last rail before the footer).
+- `scripts/adult_phase8_ui_test.ts` (new) — behavioral + wiring suite (see Tests).
+- `scripts/adult_mode_test.ts` — lockstep: section K updated to the new render condition (equal strength: server-driven state + dedicated component); new section AC (Popular TV exclusion wiring incl. cache-key dimension + no Adult Mode conditional; Adult rail endpoint-only wiring; DiscoverPage migration; legacy endpoint retention protection); summary line extended. No security assertion weakened or removed.
+- `package.json` — test chain includes `scripts/adult_phase8_ui_test.ts` (63 scripts).
 
-**Tests:**
-- (planned) Popular TV query shape; UI conditional rendering; search parity between SSR page and API
+**Popular TV changes:** exactly the documented desired query shape — `discover/tv`, `sort_by=popularity.desc`, `watch_region=IN`, `with_watch_monetization_types=flatrate`, `include_adult=false`, `without_networks=<verified adult networks>`, `with_original_language=<filter>`, PLUS `without_genres=10764|10766|10767`. The genre filter is ADDITIONAL: it does not replace the central Adult classifier (which still runs on every normal rail), does not classify Soap/News/Talk as Adult, and is NOT conditional on Adult Mode (Adult ON never removes it — behavioral + wiring asserted).
 
-**Notes:**
-- Desired Popular TV: `discover/tv`, `sort_by=popularity.desc`, `watch_region=IN`, `with_watch_monetization_types=flatrate`, `include_adult=false`, `without_genres=10764|10766|10767`, plus the normal adult exclusion architecture. Today there is **no** genre exclusion, which is why Indian Idol, The Kapil Sharma Show, and daily soaps appear.
+**Adult Discover UI integration (Indian Adult Shows migration):** the rail now rides the preferred flow — Adult UI → `/api/content/adult-discover` → per-request server authorization → verified Adult networks → central classifier → Adult results. The UI is NOT the security boundary: hiding the rail when unauthorized is convenience; the endpoint independently re-evaluates the Phase 5 policy on every request and answers unauthorized calls with the non-disclosing 404. No client flag (`adult`/`enabled`/`showAdult`) is ever sent or trusted; no secret or policy internals reach the client; the verified network set stays server-controlled and invisible.
 
-**Remaining work:**
-- Everything (Not Started).
+**Legacy rail disposition:** the legacy `/api/discover/rail?section=adult-shows` path (and the `/api/discover/adult-providers` dropdown endpoint) are RETAINED for API compatibility but are no longer called by any UI. Both remain fully protected — per-request `canAccessAdultContent` with the empty non-disclosing denial at the endpoint AND the service-level defense-in-depth gate — so neither can become a bypass (behaviorally + wiring asserted). No unrelated callers existed (verified by audit).
+
+**Search UI integration:** audit found Phase 4 complete and correct on both paths (SSR page and API evaluate the same server-side policy; authorized users see Adult search results; unauthorized results are classified-and-excluded server-side). Minimal integration = zero changes; the suite asserts the parity contract so regressions surface.
+
+**SSR leak prevention:** unchanged server loads (`loadDiscoverData` / home) remain adult-free (no Adult fetch, no Adult titles, no authorization payload in SSR/hydration); the Adult surface fetches client-side only; unauthorized users never receive Adult titles in HTML, page data, preload data, serialized props, or hydration payload. The bad pattern (server fetches Adult catalog → client hides) does not exist anywhere.
+
+**Cache behavior:** Phase 7 isolation untouched — `tmdb:adult-discover:*` remains structurally disjoint from every normal namespace (re-proven with the real process cache in both directions); the Popular TV cache key now embeds the genre-exclusion dimension; authorization decisions are still never cached; the UI introduces NO browser-side persistent Adult caching (no localStorage/sessionStorage), only request-scoped API loading.
+
+**Authorization behavior:** the existing settings flow is reused unchanged — `/api/settings/adult-mode` GET reflects the server-computed `canAccess` (admin policy AND user/guest preference, evaluated fresh per request); the settings toggle PUT keeps the server-enforced write path and reloads Discover. The UI never interprets user preference alone as authorization (it renders only `canAccess`, and the data endpoint re-checks regardless).
+
+**Tests:** new `scripts/adult_phase8_ui_test.ts` — 16 behavioral/wiring check groups covering all 25 spec-mandated scenarios plus extras: (1) exact `10764|10766|10767` constant; (2) Popular TV retains India/OTT/language/adult constraints alongside the genre exclusion; (3+4) normal rail stays Adult-free with Adult Mode OFF and ON (real `filterSafeRailItems` + central classifier; authorization-blind by signature); (5) the genre filter adds no classification weight (real `isAdultContent`; genre IDs ∩ network IDs = ∅); (6+7+8) authorization matrix via real `evaluateAdultAccess` + non-disclosing empty result; (9) verified registry is the only source (registry-swap probe; no second list); (10) UI cannot bypass API authorization (every fetch routes through the dedicated URL builder; exactly type/language/page; no direct TMDB; no persistent browser cache); (11+12) SSR/hydration leak prevention (all server loads adult-free; visibility state is client-fetched); (13) authorized SSR search parity; (14+15) legacy rail retired from the UI + retained endpoint still gated (endpoint gate BEFORE service + service defense-in-depth); (16+17+18) search filter modes + structural cache dimensions + classifier paths (real contracts); (19) Search UI holds no security mechanism; (20+21+22) cache isolation both directions with the real process cache + namespace disjointness; (23+24) Phase 6 watch/season guards intact; (25) anime adult=true exemption intact; extras (pagination clamp contract, closed unions, bounded Show-more). Static lockstep: `adult_mode_test.ts` sections K (updated, equal strength) + AC (new). **Test result: `pnpm test` PASS (exit 0) — 63 scripts.** `pnpm run check` PASS (0 errors / 38 pre-existing warnings). `pnpm run build` PASS (adapter-netlify).
+
+**Bugs found during the phase:** none in shipped code. The audit confirmed the legacy rail's protection claims (endpoint gate + service defense-in-depth) were accurate — the migration was an architecture upgrade (classifier defense + per-type catalogs + language filters), not a vulnerability fix. Two test-first iterations hardened the new suite itself (comment-vs-code assertion collisions; a missing 18+ badge caught by svelte-check as an unused selector — badge added, restoring the pre-phase warning count).
+
+**Validation:** `pnpm test` (63 scripts, exit 0); `pnpm run check` (0 errors / 38 warnings — baseline); `pnpm run build` (netlify adapter, success); `git diff --check` clean; full diff reviewed — protected areas (playback, resolver, progress, navigation, My List, PlayerShell, anime, MegaPlay, Tatakai, Anime World India, playback worklog) byte-untouched.
+
+**Commit SHA:** this commit — `feat(adult): integrate discover UI and harden popular tv` (exact SHA in `git log -1`).
+
+**Remaining work / known issues:**
+- The legacy `getTmdbAdultShows` merged rail remains server-side (retained for API compatibility, fully gated) — candidate for removal in a future cleanup phase once no external consumers exist.
+- The movie half of Adult Discover remains the documented TRANSITIONAL watch-provider source (Phase 7 residual, unchanged).
+- Phase 9: behavioral suite A–R completion + live TMDB network-ID diagnostic (Ullu/Kooku/Atrangii re-confirmation) — NOT started here.
+
 
 ### Phase 9 — Behavioral tests A-R + live TMDB diagnostic
 

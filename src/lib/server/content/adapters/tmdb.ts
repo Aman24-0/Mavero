@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider } from '../types';
+import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider, POPULAR_TV_WITHOUT_GENRES } from '../types';
 import { ottProviders } from '$lib/shared/ott';
 import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved } from '../adult-providers';
 import { adultNetworkExclusionValue, withAdultNetworksParams, getVerifiedAdultNetworkIdForKey } from '../adult-catalog';
@@ -887,6 +887,17 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
  * keeps the transitional `without_watch_providers` exclusion because
  * /discover/movie has no network filter. Adult Mode ON never injects
  * adult titles into these rails — the exclusion is unconditional.
+ *
+ * GENERIC TV CATEGORY EXCLUSION (Phase 8):
+ * The TV query ALSO excludes the generic TV genres Soap/News/Talk
+ * (POPULAR_TV_WITHOUT_GENRES in types.ts) via `without_genres`. This is
+ * an ADDITIONAL curation filter — it does NOT classify those genres as
+ * Adult and never replaces the central classifier or the network
+ * exclusion; it only stops generic linear-TV categories from dominating
+ * the rail. It is UNCONDITIONAL: Adult Mode ON never removes it (the
+ * normal Popular TV contract stays Adult-excluded and genre-clean in
+ * both states). 10764/10766/10767 are TV genres — the movie half is
+ * untouched.
  */
 export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
   // Phase 3: TV excludes verified adult NETWORKS; movies keep the
@@ -895,7 +906,11 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
   const adultIds = type === 'movie' ? await getResolvedAdultProviderIds() : [];
   const providerExclusion = type === 'movie' && adultIds.length > 0 ? adultIds.join('|') : undefined;
   const adultExclusion = networkExclusion ?? providerExclusion;
-  const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
+  // Phase 8: the applied generic-genre exclusion is part of the cache key
+  // (a constant dimension, like the adult-exclusion value above) so the key
+  // always reflects the query shape that produced the response.
+  const genreExclusion = type === 'series' ? POPULAR_TV_WITHOUT_GENRES : undefined;
+  const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}:${genreExclusion ?? 'no-genre-exclusion'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
@@ -919,6 +934,10 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
         // watch_region to be set.
         ...(networkExclusion ? { without_networks: networkExclusion } : {}),
         ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: 'IN' } : {}),
+        // Phase 8: exclude the generic TV categories (Soap/News/Talk) from
+        // normal Popular TV — unconditionally, in addition to (never instead
+        // of) the adult exclusion and the central classifier.
+        ...(genreExclusion ? { without_genres: genreExclusion } : {}),
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
