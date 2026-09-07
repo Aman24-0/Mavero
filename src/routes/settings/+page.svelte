@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ArrowLeft, Check, LockKeyhole, Mail, Play, RotateCcw, Settings2, Trash2, UserRound, Sparkles, Info } from 'lucide-svelte';
+  import { ArrowLeft, Check, LockKeyhole, Mail, Play, RotateCcw, Settings2, Trash2, UserRound, Sparkles, Info, ShieldCheck } from 'lucide-svelte';
   import type { PageData } from './$types';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
+  import AppFooter from '$components/AppFooter.svelte';
   import { clearLocalData } from '$lib/client/progress/database';
   import { haptic } from '$lib/client/haptics';
 
@@ -14,6 +15,47 @@
   let deleteBusy = $state(false);
   let deleteError = $state('');
   let deleteSuccess = $state(false);
+
+  // Adult Mode state — server-authoritative. The client fetches the
+  // current settings from /api/settings/adult-mode on mount, and the
+  // server determines whether adult mode is available + enabled.
+  // The client NEVER trusts a localStorage flag for adult authorization.
+  let adultAvailable = $state(false);
+  let adultEnabled = $state(false);
+  let adultLoading = $state(false);
+
+  async function loadAdultMode() {
+    try {
+      const response = await fetch('/api/settings/adult-mode');
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!payload.ok) return;
+      adultAvailable = Boolean(payload.adminAllows);
+      adultEnabled = Boolean(payload.userEnabled);
+    } catch { /* ignore */ }
+  }
+
+  async function toggleAdultMode() {
+    if (!adultAvailable || adultLoading) return;
+    adultLoading = true;
+    try {
+      const response = await fetch('/api/settings/adult-mode', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: !adultEnabled }),
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (payload.ok) {
+        adultEnabled = Boolean(payload.enabled);
+        haptic('light');
+        // Reload Discover so the adult section appears/disappears.
+        // The server is the authority — the client only reflects state.
+        window.location.reload();
+      }
+    } catch { /* ignore */ }
+    adultLoading = false;
+  }
 
   function persistSettings() {
     localStorage.setItem('mavero.settings', JSON.stringify(settings));
@@ -31,6 +73,7 @@
     } catch {
       // Keep the safe defaults if local storage is unavailable or malformed.
     }
+    void loadAdultMode();
   });
 
   const displayName = $derived(typeof data.user?.user_metadata?.display_name === 'string' ? data.user.user_metadata.display_name : '');
@@ -219,6 +262,34 @@
       </div>
     </section>
 
+    <!-- Adult Mode — only rendered when the server says it's available.
+         The server is authoritative; this toggle calls /api/settings/adult-mode
+         which enforces admin policy server-side. A stale local preference
+         cannot bypass admin OFF. -->
+    {#if adultAvailable}
+      <section class="settings-section" aria-labelledby="adult-mode-title">
+        <div class="section-head">
+          <div class="section-icon"><ShieldCheck size={16} /></div>
+          <div>
+            <div class="section-eyebrow">Content</div>
+            <h2 id="adult-mode-title">Adult Mode</h2>
+          </div>
+        </div>
+        <div class="settings-body">
+          <label class="toggle-row">
+            <span class="toggle-copy">
+              <strong>Enable Adult Mode</strong>
+              <small>Show the Indian Adult Shows section and adult content in search results.</small>
+            </span>
+            <span class="toggle-switch">
+              <input type="checkbox" checked={adultEnabled} disabled={adultLoading} onchange={toggleAdultMode} />
+              <i aria-hidden="true"></i>
+            </span>
+          </label>
+        </div>
+      </section>
+    {/if}
+
     <!-- About -->
     <section class="settings-section about-section" aria-labelledby="about-title">
       <div class="section-head">
@@ -272,6 +343,7 @@
 </div>
 
 <ScrollToTop />
+<AppFooter />
 
 <style>
   .settings-page {

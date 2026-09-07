@@ -158,7 +158,8 @@ export type DiscoverSectionKey =
   | 'genre-scifi'
   | 'genre-drama'
   | 'genre-horror'
-  | 'genre-romance';
+  | 'genre-romance'
+  | 'adult-shows';
 
 export type DiscoverRailFilters = {
   section: DiscoverSectionKey;

@@ -2,9 +2,10 @@ import { json } from '@sveltejs/kit';
 import { search } from '$lib/server/content/service';
 import { contentErrorResponse } from '$lib/server/content/response';
 import { isContentType, type SearchFilters, type SearchSort } from '$lib/server/content/types';
+import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
   const query = url.searchParams.get('q')?.trim() ?? '';
   const typeParam = url.searchParams.get('type');
   const type = isContentType(typeParam) ? typeParam : undefined;
@@ -20,8 +21,13 @@ export const GET: RequestHandler = async ({ url }) => {
     return json({ ok: false, error: { code: 'INVALID_QUERY', message: 'Search query is too long.' } }, { status: 400 });
   }
 
+  // Phase 9: Evaluate adult access server-side. The browser can NEVER
+  // bypass this — there is no ?adult=true query parameter.
+  const { user } = await locals.safeGetSession();
+  const canAccessAdult = await canAccessAdultContent(locals.supabase, user);
+
   try {
-    const result = await search(query, type, page, filters);
+    const result = await search(query, type, page, filters, canAccessAdult);
     return json({ ok: true, ...result });
   } catch (error) {
     return contentErrorResponse(error);

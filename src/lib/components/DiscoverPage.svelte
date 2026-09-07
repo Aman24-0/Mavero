@@ -101,6 +101,36 @@
     { key: 'genre-romance', title: 'Romance', languageFilter: true, providerFilter: false },
   ];
 
+  // Adult mode state — fetched client-side from /api/settings/adult-mode.
+  // The server is the authority; the client only reflects server state.
+  let adultCanAccess = $state(false);
+  let adultProviders = $state<{ value: string; label: string; logoUrl?: string }[]>([]);
+
+  async function loadAdultModeSettings() {
+    try {
+      const response = await fetch('/api/settings/adult-mode');
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!payload.ok) return;
+      adultCanAccess = Boolean(payload.canAccess);
+      if (adultCanAccess) {
+        // Load verified adult providers for the dropdown.
+        const providerResponse = await fetch('/api/discover/adult-providers');
+        if (!providerResponse.ok) return;
+        const providerPayload = await providerResponse.json();
+        if (providerPayload.ok && Array.isArray(providerPayload.providers)) {
+          adultProviders = providerPayload.providers.map((p: { key: string; name: string; logoUrl: string }) => ({
+            value: p.key,
+            label: p.name,
+            logoUrl: p.logoUrl,
+          }));
+        }
+      }
+    } catch {
+      // Silent fail — adult section stays hidden.
+    }
+  }
+
   // OTT provider list (loaded client-side from /api/discover/providers).
   // Built from real TMDB India provider metadata — never random favicons.
   let ottProviders = $state<{ value: string; label: string; logoUrl?: string }[]>([]);
@@ -347,6 +377,7 @@
     let cancelled = false;
     void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
     void loadOttProviders();
+    void loadAdultModeSettings();
     queueGalleryRotation();
 
     return () => {
@@ -482,6 +513,21 @@
           viewAllHref={sectionDef.viewAllHref ?? ''}
         />
       {/each}
+      <!-- Phase 7: Indian Adult Shows — the LAST content rail before the
+           footer. Only rendered when the server says adult access is allowed.
+           The server enforces this independently — this client-side check
+           is purely for rendering; the /api/discover/rail endpoint returns
+           an empty result if adult access is denied (defense in depth). -->
+      {#if adultCanAccess && adultProviders.length > 0}
+        <DiscoverSection
+          section="adult-shows"
+          title="Indian Adult Shows"
+          languageFilter={false}
+          providerFilter={true}
+          providers={adultProviders}
+          viewAllHref=""
+        />
+      {/if}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}

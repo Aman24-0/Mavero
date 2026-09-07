@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { Check, AlertTriangle, Star } from 'lucide-svelte';
+  import { onMount } from 'svelte';
+  import { Check, AlertTriangle, Star, ShieldCheck } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import type { ActionData, PageData } from './$types';
 
-  export let data: PageData;
-  export let form: ActionData;
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const contentTypes = [
     { key: 'movie', label: 'Movie', description: 'Default source for movies (single video, no season/episode).' },
@@ -32,6 +32,44 @@
     if (source.status !== 'active' && source.status !== 'experimental') return source.status;
     return 'Eligible';
   };
+
+  // Adult Mode admin policy state (API-driven, not form-action).
+  let adultPolicy = $state<{ allowLoggedIn: boolean; allowGuest: boolean }>({ allowLoggedIn: false, allowGuest: false });
+  let adultPolicyLoading = $state(false);
+  let adultPolicySaved = $state(false);
+
+  async function loadAdultPolicy() {
+    try {
+      const response = await fetch('/api/admin/adult-mode');
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (payload.ok && payload.policy) {
+        adultPolicy = { ...payload.policy };
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function toggleAdultPolicy(field: 'allowLoggedIn' | 'allowGuest') {
+    adultPolicyLoading = true;
+    adultPolicySaved = false;
+    try {
+      const response = await fetch('/api/admin/adult-mode', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ [field]: !adultPolicy[field] }),
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (payload.ok && payload.policy) {
+        adultPolicy = { ...payload.policy };
+        adultPolicySaved = true;
+        setTimeout(() => { adultPolicySaved = false; }, 2500);
+      }
+    } catch { /* ignore */ }
+    adultPolicyLoading = false;
+  }
+
+  onMount(() => { void loadAdultPolicy(); });
 </script>
 
 <svelte:head><title>Default Sources — Mavero</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
@@ -92,6 +130,29 @@
       </div>
     {/each}
   </div>
+
+  <!-- Adult Mode admin controls -->
+  <div class="adult-section">
+    <div class="eyebrow"><ShieldCheck size={13} /> MAVERO / Adult Mode</div>
+    <div class="heading-row"><div><h2>Adult Mode <em>policy.</em></h2><p class="intro">Control whether Adult Mode is available for logged-in users and guests. When disabled for a user type, the setting disappears from their UI and adult content is blocked server-side.</p></div></div>
+    {#if adultPolicySaved}<div class="notice" role="status"><Check size={15} /> Adult mode policy updated.</div>{/if}
+    <div class="adult-toggles">
+      <label class="adult-toggle-row">
+        <span class="toggle-copy"><strong>Allow for logged-in users</strong><small>Authenticated users can enable Adult Mode in their settings.</small></span>
+        <span class="toggle-switch">
+          <input type="checkbox" checked={adultPolicy.allowLoggedIn} disabled={adultPolicyLoading} onchange={() => toggleAdultPolicy('allowLoggedIn')} />
+          <i aria-hidden="true"></i>
+        </span>
+      </label>
+      <label class="adult-toggle-row">
+        <span class="toggle-copy"><strong>Allow for users without login</strong><small>Guest users can access Adult Mode. Requires server-side guest preference if no auth session exists.</small></span>
+        <span class="toggle-switch">
+          <input type="checkbox" checked={adultPolicy.allowGuest} disabled={adultPolicyLoading} onchange={() => toggleAdultPolicy('allowGuest')} />
+          <i aria-hidden="true"></i>
+        </span>
+      </label>
+    </div>
+  </div>
 </AdminShell>
 
 <style>
@@ -130,6 +191,19 @@
   .btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; cursor: pointer; color: var(--ink); background: transparent; font: inherit; font-size: .66rem; }
   .btn-primary { border-color: transparent; color: #12121a; background: var(--ink); }
   .btn-danger { color: #ff8a8a; }
+
+  .adult-section { margin-top: 40px; padding-top: 28px; border-top: 1px solid var(--line); }
+  .adult-toggles { display: grid; gap: 14px; margin-top: 16px; }
+  .adult-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); cursor: pointer; }
+  .adult-toggle-row .toggle-copy { display: grid; gap: 3px; }
+  .adult-toggle-row .toggle-copy strong { color: var(--ink); font-size: .76rem; }
+  .adult-toggle-row .toggle-copy small { color: var(--muted); font-size: .58rem; line-height: 1.4; }
+  .toggle-switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+  .toggle-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .toggle-switch i { display: block; width: 100%; height: 100%; border-radius: 999px; background: rgba(255,255,255,.12); transition: background 200ms ease; position: relative; }
+  .toggle-switch i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #f5f5f5; transition: transform 200ms ease; }
+  .toggle-switch input:checked ~ i { background: var(--accent); }
+  .toggle-switch input:checked ~ i::after { transform: translateX(18px); }
 
   @media (max-width: 700px) { .heading-row { align-items: start; flex-direction: column; } .defaults-grid { grid-template-columns: 1fr; } }
 </style>

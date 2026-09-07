@@ -3,6 +3,7 @@ import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
 import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider } from '../types';
 import { ottProviders } from '$lib/shared/ott';
+import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders } from '../adult-providers';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -509,7 +510,10 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
   // If the key doesn't resolve (unknown provider), treat as "All OTT"
   // rather than sending a bad ID to TMDB.
   const providerId = providerKey ? await resolveProviderIdByKey(providerKey) : undefined;
-  const key = `tmdb:new-ott:${providerKey ?? 'all'}:${language}:${page}`;
+  // Phase 8: Exclude known adult-provider content from New on OTT.
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:new-ott:${providerKey ?? 'all'}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     // TMDB returns 20 items per page. We need 10 per Discover page.
     // Since we merge movie + TV (up to 40 items per upstream page pair),
@@ -525,7 +529,8 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
       with_watch_monetization_types: 'flatrate',
       'release_date.lte': new Date().toISOString().slice(0, 10),
       ...(providerId ? { with_watch_providers: providerId } : {}),
-      ...(langParam ? { with_original_language: langParam } : {})
+      ...(langParam ? { with_original_language: langParam } : {}),
+      ...(adultExclusion ? { 'without_watch_providers': adultExclusion } : {}),
     };
     const tvParams: Record<string, string | number | boolean | undefined> = {
       page,
@@ -535,7 +540,8 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
       with_watch_monetization_types: 'flatrate',
       'first_air_date.lte': new Date().toISOString().slice(0, 10),
       ...(providerId ? { with_watch_providers: providerId } : {}),
-      ...(langParam ? { with_original_language: langParam } : {})
+      ...(langParam ? { with_original_language: langParam } : {}),
+      ...(adultExclusion ? { 'without_watch_providers': adultExclusion } : {}),
     };
     // Fetch both in parallel. Don't silently swallow errors — let them
     // propagate so the rail shows an error state rather than empty.
@@ -586,9 +592,27 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
  * it and also support `sort_by=popularity.desc`, so we get the same
  * popularity ordering with the language filter applied at the TMDB
  * catalog level — no client-side filtering of a pre-fetched result set.
+ *
+ * OTT-ORIENTED TV (Phase 1 fix):
+ * For type='series', we add `watch_region=IN` +
+ * `with_watch_monetization_types=flatrate` to bias results toward
+ * streaming-available titles rather than linear-TV-only serials. This
+ * surfaces OTT catalog shows (Netflix India, Prime India, etc.) and
+ * excludes broadcast-only daily soaps that are not available on any
+ * streaming platform. The watch_provider filter is server-side — no N+1.
+ *
+ * ADULT EXCLUSION (Phase 8):
+ * All normal catalog queries (including popular) exclude adult-provider
+ * content. The TMDB `with_watch_providers` + `without_companies` approach
+ * doesn't work cleanly here; instead, we pass `without_watch_providers`
+ * with the pipe-separated list of known adult provider IDs. This is a
+ * TMDB-supported filter parameter that excludes titles available on
+ * those providers.
  */
 export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
-  const key = `tmdb:popular-v2:${type}:${language}:${page}`;
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
@@ -602,7 +626,14 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
         include_adult: false,
         sort_by: 'popularity.desc',
         ...(langParam ? { with_original_language: langParam } : {}),
-        ...(type === 'movie' ? { region: 'IN' } : {})
+        ...(type === 'movie' ? { region: 'IN' } : {}),
+        // Phase 1: OTT-oriented TV — bias toward streaming-available titles.
+        // For TV, add watch_region=IN + flatrate so we get OTT catalog
+        // content rather than linear-TV-only serials.
+        ...(type === 'series' ? { watch_region: 'IN', with_watch_monetization_types: 'flatrate' } : {}),
+        // Phase 8: Exclude known adult-provider content from normal rails.
+        // without_watch_providers requires watch_region to be set.
+        ...(adultExclusion ? { 'without_watch_providers': adultExclusion, watch_region: 'IN' } : {}),
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
@@ -624,9 +655,12 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
 /**
  * Section: top-rated-{movie,series} — TMDB vote_average.desc with a
  * sensible vote_count floor (200) so one-vote titles don't dominate.
+ * Excludes adult-provider content (Phase 8).
  */
 export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
-  const key = `tmdb:top-rated-v2:${type}:${language}:${page}`;
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:top-rated-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
@@ -641,7 +675,8 @@ export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, langu
         sort_by: 'vote_average.desc',
         'vote_count.gte': 200,
         ...(langParam ? { with_original_language: langParam } : {}),
-        ...(type === 'movie' ? { region: 'IN' } : {})
+        ...(type === 'movie' ? { region: 'IN' } : {}),
+        ...(adultExclusion ? { 'without_watch_providers': adultExclusion, watch_region: 'IN' } : {}),
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
@@ -664,9 +699,12 @@ export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, langu
  * Section: genre-* — TMDB genre + popularity ranking with optional
  * original_language filter. Movie-only (per the existing Discover
  * contract: genre rails are movie rails; anime has its own section).
+ * Excludes adult-provider content (Phase 8).
  */
 export async function getTmdbGenreByLanguage(genreId: number, language: DiscoverLanguage, page = 1): Promise<ContentList> {
-  const key = `tmdb:genre-v2:${genreId}:${language}:${page}`;
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:genre-v2:${genreId}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
     const collected: TmdbMovie[] = [];
@@ -680,7 +718,8 @@ export async function getTmdbGenreByLanguage(genreId: number, language: Discover
         sort_by: 'popularity.desc',
         with_genres: genreId,
         ...(langParam ? { with_original_language: langParam } : {}),
-        region: 'IN'
+        region: 'IN',
+        ...(adultExclusion ? { 'without_watch_providers': adultExclusion } : {}),
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
       const filtered = applyLanguageFilter(raw, language);
@@ -800,9 +839,13 @@ export async function getTmdbIndiaProviders(): Promise<DiscoverProvider[]> {
         key: providerKeyFromName(row.provider_name)
       });
     }
-    // Return all providers TMDB reports for India, sorted by display_priority
-    // (lower = more prominent) then name. The client curates which to show.
-    return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const providers = [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
+    // Phase 6: resolve adult providers against the live TMDB India list.
+    // This verifies that adult provider NAMES actually exist in TMDB's
+    // India catalog before using their IDs for filtering. Providers not
+    // found in TMDB are silently omitted — we never invent IDs.
+    resolveAdultProviders(providers);
+    return providers;
   });
   return value;
 }
@@ -821,4 +864,85 @@ export async function resolveProviderIdByKey(providerKey: string): Promise<numbe
   const providers = await getTmdbIndiaProviders();
   const match = providers.find((p) => p.key === providerKey);
   return match?.providerId;
+}
+
+// ============================================================
+// Phase 7-9: Indian Adult Shows section query.
+//
+// Queries titles available on known adult OTT providers in India.
+// Uses `with_watch_providers` (pipe-separated adult provider IDs) +
+// `watch_region=IN` + `with_watch_monetization_types=flatrate` to
+// get titles that are actually available on at least one adult
+// streaming service in India.
+//
+// For "All Adult OTT": one mixed query with all verified adult
+// provider IDs pipe-joined. NOT per-provider bucket concatenation.
+// For a specific provider: `with_watch_providers=<single ID>`.
+//
+// Merges movie + TV (both /discover/movie and /discover/tv) since
+// adult content exists in both formats. Dedupes by type+id.
+// No N+1 per-title provider calls — the filter is server-side.
+// ============================================================
+
+export async function getTmdbAdultShows(providerKey: string | undefined, page = 1): Promise<ContentList> {
+  // Resolve the adult provider list (this also resolves individual provider
+  // keys → TMDB provider IDs via the cached India provider list).
+  await getTmdbIndiaProviders();
+  const adultProviders = getCachedAdultProviders();
+  if (!adultProviders || adultProviders.length === 0) {
+    // No adult providers verified in the current TMDB India catalog.
+    return { items: [], page, hasNextPage: false, source: tmdbSource() };
+  }
+  // For a specific provider, resolve its key → ID.
+  const providerId = providerKey
+    ? adultProviders.find((p) => p.key === providerKey)?.tmdbProviderId
+    : undefined;
+  // For "All Adult OTT", join all verified adult provider IDs.
+  const allAdultIds = adultProviders.map((p) => p.tmdbProviderId).filter((id) => id > 0).join('|');
+  const watchProviders = providerId ?? allAdultIds;
+  if (!watchProviders) {
+    return { items: [], page, hasNextPage: false, source: tmdbSource() };
+  }
+
+  const key = `tmdb:adult-shows:${providerKey ?? 'all'}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const baseParams: Record<string, string | number | boolean | undefined> = {
+      page,
+      include_adult: true, // Adult content IS requested here — this is the adult section.
+      sort_by: 'popularity.desc',
+      watch_region: 'IN',
+      with_watch_monetization_types: 'flatrate',
+      with_watch_providers: watchProviders,
+    };
+    const movieParams = { ...baseParams, sort_by: 'release_date.desc' as const, 'release_date.lte': new Date().toISOString().slice(0, 10) };
+    const tvParams = { ...baseParams, sort_by: 'first_air_date.desc' as const, 'first_air_date.lte': new Date().toISOString().slice(0, 10) };
+    const [movieResult, tvResult] = await Promise.all([
+      tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', movieParams),
+      tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', tvParams),
+    ]);
+    const movieItems = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'Adult'));
+    const tvItems = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series')).map((item) => mapTmdb(item, 'series', 'Adult'));
+    let merged = [...movieItems, ...tvItems];
+    merged.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
+    const seen = new Set<string>();
+    merged = merged.filter((item) => {
+      const k = `${item.type}:${item.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const items = merged.slice(0, DISCOVER_PAGE_SIZE);
+    const hasNextPage = (movieResult.page ?? page) < (movieResult.total_pages ?? page) || (tvResult.page ?? page) < (tvResult.total_pages ?? page) || merged.length > DISCOVER_PAGE_SIZE;
+    return { items, page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Get the verified adult OTT provider list (for the dropdown).
+ * Returns providers that were verified against the live TMDB India catalog.
+ */
+export async function getVerifiedAdultProviders() {
+  await getTmdbIndiaProviders();
+  return getCachedAdultProviders() ?? [];
 }

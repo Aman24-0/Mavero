@@ -3,6 +3,7 @@ import { discoverRail } from '$lib/server/content/service';
 import { isDiscoverLanguage, isDiscoverSectionKey } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { contentErrorResponse } from '$lib/server/content/response';
+import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { RequestHandler } from './$types';
 
 // Discover V2 rail endpoint.
@@ -14,16 +15,21 @@ import type { RequestHandler } from './$types';
 // validated against a closed union, so this endpoint cannot be tricked
 // into hitting an arbitrary TMDB URL.
 //
-// Cache: the underlying TMDB adapter caches each (section, language,
-// provider, page) tuple via getOrSet with a 4 min TTL + 10 min SWR.
-// The browser-side DiscoverSection component also memoizes in-flight
-// requests to avoid duplicate calls during rapid dropdown switches.
+// ADULT ENFORCEMENT: For the 'adult-shows' section, the server evaluates
+// the central adult policy BEFORE calling discoverRail. If the user is
+// not authorized for adult content, the endpoint returns an empty
+// non-disclosing result (not a 403 — the frontend treats it as "section
+// unavailable" and hides the rail). This is consistent with the existing
+// API convention where unavailable sections return empty items.
 //
-// Auth: public (TMDB data is not user-scoped). No Supabase session is
-// required — the endpoint never reads the user's library, progress, or
-// history.
+// Cache: the underlying TMDB adapter caches each (section, language,
+// provider, page) tuple via getOrSet. Adult section cache keys include
+// the provider dimension so responses don't leak between providers.
+// Normal rail cache keys include the adult-exclusion dimension so
+// adult-excluded results don't leak into a context where adult content
+// is expected.
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
   const sectionParam = url.searchParams.get('section') ?? '';
   const languageParam = url.searchParams.get('language') ?? 'all';
   const provider = url.searchParams.get('provider') ?? undefined;
@@ -35,10 +41,20 @@ export const GET: RequestHandler = async ({ url }) => {
   if (!isDiscoverLanguage(languageParam)) {
     return json({ ok: false, error: { code: 'INVALID_LANGUAGE', message: 'Unknown language filter.' } }, { status: 400 });
   }
-  // Provider is optional; if present it must be a non-empty bounded string.
-  // The server resolves the provider key to a TMDB provider_id via the
-  // cached India provider list — an unknown key is treated as "All OTT".
   const safeProvider = provider && provider.trim() && provider.length <= 80 ? provider.trim() : undefined;
+
+  // Phase 8: For the adult-shows section, evaluate adult access policy
+  // server-side BEFORE calling discoverRail. This is the single
+  // authorization checkpoint — the browser can NEVER bypass it.
+  let canAccessAdult = false;
+  if (sectionParam === 'adult-shows') {
+    const { user } = await locals.safeGetSession();
+    canAccessAdult = await canAccessAdultContent(locals.supabase, user);
+    if (!canAccessAdult) {
+      // Non-disclosing empty response — the frontend hides the section.
+      return json({ ok: true, items: [], page, hasNextPage: false, section: sectionParam, language: languageParam, provider: safeProvider ?? null });
+    }
+  }
 
   try {
     const result = await discoverRail({
@@ -46,7 +62,7 @@ export const GET: RequestHandler = async ({ url }) => {
       language: languageParam,
       provider: safeProvider,
       page
-    });
+    }, canAccessAdult);
     return json({
       ok: true,
       items: result.items.map(toMediaItem),

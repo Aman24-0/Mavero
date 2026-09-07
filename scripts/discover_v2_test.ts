@@ -352,9 +352,9 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   // Each TMDB query function must include language + page in its cache key.
   assert.match(tmdb, /key = `tmdb:theatre:\$\{language\}:\$\{page\}`/, 'theatre cache key includes language + page');
   assert.match(tmdb, /key = `tmdb:new-ott:\$\{providerKey/, 'OTT cache key includes provider');
-  assert.match(tmdb, /key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}`/, 'popular cache key includes type + language + page');
-  assert.match(tmdb, /key = `tmdb:top-rated-v2:\$\{type\}:\$\{language\}:\$\{page\}`/, 'top-rated cache key includes type + language + page');
-  assert.match(tmdb, /key = `tmdb:genre-v2:\$\{genreId\}:\$\{language\}:\$\{page\}`/, 'genre cache key includes genreId + language + page');
+  assert.match(tmdb, /key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}:[^`]+`/, 'popular cache key includes type + language + page + adult exclusion');
+  assert.match(tmdb, /key = `tmdb:top-rated-v2:\$\{type\}:\$\{language\}:\$\{page\}:[^`]+`/, 'top-rated cache key includes type + language + page + adult exclusion');
+  assert.match(tmdb, /key = `tmdb:genre-v2:\$\{genreId\}:\$\{language\}:\$\{page\}:[^`]+`/, 'genre cache key includes genreId + language + page + adult exclusion');
   assert.match(tmdb, /key = `tmdb:anime-merged:\$\{sort\}:\$\{page\}`/, 'anime-merged cache key includes sort + page');
 }
 

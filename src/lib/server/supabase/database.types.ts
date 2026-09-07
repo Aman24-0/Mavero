@@ -14,6 +14,53 @@ export type Database = {
   }
   public: {
     Tables: {
+      app_settings: {
+        Row: {
+          id: number
+          adult_mode_allow_logged_in: boolean
+          adult_mode_allow_guest: boolean
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          adult_mode_allow_logged_in?: boolean
+          adult_mode_allow_guest?: boolean
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          adult_mode_allow_logged_in?: boolean
+          adult_mode_allow_guest?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      user_preferences: {
+        Row: {
+          user_id: string
+          adult_mode_enabled: boolean
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          adult_mode_enabled?: boolean
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          adult_mode_enabled?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_preferences_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       favorite_deletions: {
         Row: {
           content_id: string

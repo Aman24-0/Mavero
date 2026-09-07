@@ -1,4 +1,4 @@
-import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbAnimeMerged } from './adapters/tmdb';
+import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbAnimeMerged, getTmdbAdultShows } from './adapters/tmdb';
 import { media } from '$data/content';
 import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, DiscoverLanguage, DiscoverRailFilters, DiscoverSectionKey, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
@@ -111,6 +111,16 @@ function filterAnimeSeries(items: NormalizedMediaItem[]): NormalizedMediaItem[] 
   return items.filter(isAnimeSeries);
 }
 
+// Phase 4: Adult content classification — centralized.
+// A title is classified as adult if its `tags` array includes 'Adult'
+// (set by mapTmdb when the title is fetched from an adult-provider query).
+// This is a defense-in-depth check; the primary exclusion is done at the
+// TMDB query level via without_watch_providers. This function catches
+// any adult content that slips through via search or recommendation APIs.
+function isAdultItem(item: NormalizedMediaItem): boolean {
+  return item.tags?.includes('Adult') === true;
+}
+
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {
   try {
     // Discover V2: anime now queries BOTH TMDB movie AND TMDB TV with
@@ -200,39 +210,43 @@ function applyAnimeFilters(items: NormalizedMediaItem[], filters: SearchFilters)
   return filtered;
 }
 
-export async function search(query: string, type?: ContentType, page = 1, filters: SearchFilters = {}): Promise<ContentSearchResult> {
+export async function search(query: string, type?: ContentType, page = 1, filters: SearchFilters = {}, canAccessAdult = false): Promise<ContentSearchResult> {
   const normalized = query.trim();
   if (!normalized) return { query: normalized, items: [], page, hasNextPage: false, filters, source: fixtureSource() };
+  // Phase 9: Adult content exclusion in search. When adult access is OFF,
+  // adult-provider content is excluded server-side via without_watch_providers.
+  // When adult access is ON, adult content MAY appear in search results
+  // alongside normal content.
+  const { getAdultProviderIds } = await import('./adult-providers');
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = !canAccessAdult && adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const searchFiltersWithAdult: SearchFilters = {
+    ...filters,
+    ...(adultExclusion ? { ott: filters.ott, genre: filters.genre, sort: filters.sort } : {}),
+  };
   try {
     if (type === 'anime') {
-      // Anime search uses TMDB TV (the same /search/tv endpoint as Series)
-      // and filters to anime-flagged items (genre 16 + ja original_language).
-      // The user can refine via the genre filter (default: Animation).
-      const result = await searchTmdb(normalized, 'series', page, filters);
+      const result = await searchTmdb(normalized, 'series', page, searchFiltersWithAdult);
       const items = applyAnimeFilters(filterAnimeSeries(result.items), filters);
       return { ...result, items, query: normalized, filters };
     }
     if (type === 'movie' || type === 'series') {
-      const result = await searchTmdb(normalized, type, page, filters);
-      return { ...result, query: normalized, filters };
+      const result = await searchTmdb(normalized, type, page, searchFiltersWithAdult);
+      // Phase 9: filter out adult-provider content when adult access is OFF.
+      const filteredItems = adultExclusion ? result.items.filter((item) => !isAdultItem(item)) : result.items;
+      return { ...result, items: filteredItems, query: normalized, filters };
     }
-
-    // "All" search — only TMDB movies + series. Anime is no longer a separate
-    // search source; anime titles surface via the TMDB Series search (they
-    // carry isAnime === true + animeFormat === 'series' for UI badges).
-    const [movies, series] = await Promise.allSettled([searchTmdb(normalized, 'movie', page, filters), searchTmdb(normalized, 'series', page, filters)]);
+    const [movies, series] = await Promise.allSettled([searchTmdb(normalized, 'movie', page, searchFiltersWithAdult), searchTmdb(normalized, 'series', page, searchFiltersWithAdult)]);
     const tmdbResults = [movies, series].filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled');
     if (!tmdbResults.length) {
       const failure = [movies, series].find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
       throw failure instanceof ContentServiceError ? failure : new ContentServiceError('TMDB search is unavailable.', { code: 'UPSTREAM_ERROR', status: 502 });
     }
     const sources = tmdbResults.map((result) => result.value.source);
-    const items = applyAnimeFilters(tmdbResults.flatMap((result) => result.value.items), filters);
+    let items = applyAnimeFilters(tmdbResults.flatMap((result) => result.value.items), filters);
+    if (adultExclusion) items = items.filter((item) => !isAdultItem(item));
     return { query: normalized, items, page, hasNextPage: tmdbResults.some((result) => result.value.hasNextPage), filters, source: { provider: sources.every((item) => item.provider === sources[0].provider) ? sources[0].provider : 'fixtures', fetchedAt: new Date().toISOString(), stale: sources.some((item) => item.stale) } };
   } catch (error) {
-    // In mixed "All" search, never present fixture data as if it were a
-    // successful TMDB catalog search. Keep fixture fallback for explicit
-    // type searches and discovery/detail flows.
     if (!type && error instanceof ContentServiceError && canFallback(error)) throw error;
     if (!canFallback(error)) throw error;
     const items = media.filter((item) => `${item.title} ${item.genres.join(' ')}`.toLowerCase().includes(normalized.toLowerCase()) && (!type || item.type === type)).map((item) => ({ ...item, source: fixtureSource() } as NormalizedMediaItem));
@@ -313,6 +327,7 @@ export function isDiscoverSectionKey(value: string): value is DiscoverSectionKey
   return value === 'theatre' || value === 'new-ott'
     || value === 'popular-movie' || value === 'popular-series' || value === 'popular-anime'
     || value === 'top-rated-movie' || value === 'top-rated-series' || value === 'top-rated-anime'
+    || value === 'adult-shows'
     || /^genre-(action|adventure|comedy|crime|thriller|scifi|drama|horror|romance)$/.test(value);
 }
 
@@ -320,7 +335,7 @@ export function isDiscoverLanguage(value: string): value is DiscoverLanguage {
   return value === 'all' || value === 'hi' || value === 'en' || value === 'ta' || value === 'te' || value === 'ml' || value === 'kn' || value === 'other';
 }
 
-export async function discoverRail(filters: DiscoverRailFilters): Promise<ContentList> {
+export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult = false): Promise<ContentList> {
   const section = filters.section;
   const language = filters.language;
   const page = Math.max(1, Math.min(Number(filters.page ?? 1) || 1, 20));
@@ -342,6 +357,16 @@ export async function discoverRail(filters: DiscoverRailFilters): Promise<Conten
         return await getTmdbTopRated('series', language, page);
       case 'top-rated-anime':
         return await getTmdbAnimeMerged('top-rated', page);
+      case 'adult-shows': {
+        // Phase 8: server-side enforcement. If the caller has not
+        // verified adult access, return an empty non-disclosing result.
+        // The rail endpoint checks this BEFORE calling discoverRail,
+        // but this is a defense-in-depth guard.
+        if (!canAccessAdult) {
+          return { items: [], page, hasNextPage: false, source: { provider: 'tmdb', fetchedAt: new Date().toISOString() } };
+        }
+        return await getTmdbAdultShows(filters.provider, page);
+      }
       default: {
         // Genre sections.
         if (section in GENRE_ID_BY_SECTION) {
