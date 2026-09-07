@@ -1,25 +1,29 @@
 // Adult OTT provider registry for the Indian Adult Shows Discover section.
 //
-// ARCHITECTURE STATUS (Adult Mode rebuild, Phase 2):
-// TRANSITIONAL / COMPATIBILITY MODULE.
+// ARCHITECTURE STATUS (Adult Mode rebuild, Phase 3):
+// TRANSITIONAL — MOVIE-SIDE + DROPDOWN COMPATIBILITY ONLY.
 //
-// The canonical adult identity is now the TMDB TV NETWORK registry in
-// `adult-networks.ts` (Ullu=2902, Kooku=4573, Atrangii=7355, verified against
-// live TMDB). Indian adult OTT services are TV NETWORKS in TMDB's data model,
-// not JustWatch watch providers — the watch-provider model below cannot
-// represent them (worklog findings F1/F2).
+// The canonical adult identity is the TMDB TV NETWORK registry in
+// `adult-networks.ts` (Ullu=2902, Kooku=4573, Atrangii=7355, verified
+// against live TMDB), consumed through `adult-catalog.ts` for catalog
+// queries. Since Phase 3, NO TV catalog query depends on this module:
+//   - normal TV rails exclude via `without_networks` (verified networks),
+//   - the adult TV rail queries `with_networks`,
+//   - TV detail classification uses the network signal first.
 //
-// This module remains ACTIVE because existing catalog queries still use the
-// watch-provider model until the Phase 3 migration:
-//   - normal rails exclude via `without_watch_providers`,
-//   - the adult rail queries `with_watch_providers`,
-//   - the provider dropdown API serves the resolved provider list.
-// The central classifier `isAdultContent` below keeps the watch-provider
-// signal as a RETAINED SECONDARY signal during the transition; the
-// authoritative signal is the verified adult NETWORK signal (Signal 2).
-// Removal plan: Phase 3 migrates catalog queries to with/without_networks;
-// after Phase 3 no query depends on the provider registry and this module's
-// watch-provider resolution is deleted (classifier and tag signals remain).
+// THIS MODULE REMAINS because three surfaces still legitimately use the
+// watch-provider model (all documented in the worklog Phase 3 section):
+//   1. MOVIE catalog exclusion/inclusion — /discover/movie has NO network
+//      filter in TMDB (movies carry companies, not networks), so the
+//      movie halves of the normal rails and the adult rail keep the
+//      watch-provider mechanism as a documented TRANSITIONAL defense.
+//      Removed in Phase 7 (rail redesign) or when TMDB grows a
+//      movie-side network/company equivalent.
+//   2. The provider dropdown API (/api/discover/adult-providers) —
+//      serves the verified provider list (with logos) for the existing
+//      Adult section UI. UI/API redesign is Phase 7/8 scope.
+//   3. MOVIE detail classification — the classifier's Signal 3 (below)
+//      is the only non-flag adult signal available for movies.
 //
 // IMPORTANT (legacy behaviour, still true for provider IDs): we do NOT
 // hardcode TMDB provider IDs. This registry stores provider NAMES that are
@@ -27,11 +31,9 @@
 // (getTmdbIndiaProviders()); names not found in the current TMDB India
 // catalog are omitted from the dropdown and from classification.
 //
-// Adult content classification: titles on ANY verified adult provider are
-// classified as adult and excluded from normal catalog rails (Popular, Top
-// Rated, New on OTT, genre rails, search) regardless of Adult Mode setting.
-// When Adult Mode is ON, these titles appear ONLY in the "Indian Adult Shows"
-// section.
+// This module can never become the canonical adult identity again: TV
+// catalog paths no longer call into it, and the network registry +
+// adult-catalog.ts are the only sources of TV adult filtering.
 
 import { isKnownAdultNetwork } from './adult-networks';
 
@@ -200,9 +202,12 @@ export function invalidateAdultProviderCache(): void {
 //      adult network classifies the title as adult EVEN WHEN TMDB's generic
 //      `adult` boolean is false, which is the normal case for Indian adult
 //      OTT originals.
-//   3. TRANSITIONAL: its India watch providers include a known adult
-//      provider ID (watch-provider model — retained until the Phase 3
-//      catalog migration removes it; see header note).
+//   3. TRANSITIONAL (movie-side): its India watch providers include a
+//      known adult provider ID. Since the Phase 3 catalog migration this
+//      signal matters only for MOVIES (TV identity is the network signal
+//      above; /discover/movie has no network filter and movie details
+//      carry no networks). Retained until the Phase 7 movie-side
+//      redesign; see the module header.
 //   4. TMDB's `adult` boolean is true AND it's not anime.
 //
 // This function does NOT classify:

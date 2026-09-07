@@ -124,8 +124,9 @@ function isAdultItem(item: NormalizedMediaItem): boolean {
   // The isAdultContent classifier checks tags, TMDB adult flag (non-anime)
   // and the title's TV networks (verified adult network registry) —
   // networks are present on detail-shaped items; list items simply pass
-  // undefined. Provider-based exclusion is done at the TMDB query level
-  // (without_watch_providers) until the Phase 3 network migration.
+  // undefined. Since the Phase 3 catalog migration, network-based
+  // exclusion is done at the TMDB query level (without_networks) for TV;
+  // movies keep the transitional watch-provider query exclusion.
   return isAdultContent(item.tags, undefined, undefined, item.isAnime, item.networks);
 }
 
@@ -224,7 +225,8 @@ export async function search(query: string, type?: ContentType, page = 1, filter
   // BUG 2 fix: Adult content exclusion in search. When adult access is OFF,
   // the adultExclusion parameter is passed to searchTmdb so the cache key
   // distinguishes adult-available from adult-unavailable search results.
-  // TMDB's /search endpoint does NOT support without_watch_providers,
+  // TMDB's /search endpoint supports NEITHER without_watch_providers NOR
+  // without_networks (and search results carry no networks metadata),
   // so we rely on include_adult=false + the isAdultContent classifier
   // (which checks TMDB's adult flag for non-anime content).
   // BUG A fix: ensure providers are resolved before getting IDs.

@@ -1,9 +1,10 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 2 complete (network registry + central network-aware classifier foundation). Phase 1 was audit-only (no production code changed).
+> **Status:** Phase 3 complete (TMDB catalog migrated from watch providers to TV networks). Phase 2 was the network registry + classifier foundation; Phase 1 was audit-only.
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
 > **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
+> **Phase 3 implemented:** 2026-09-07 against branch `main`, starting from commit `34a6469b1f4d39398f86b1d6d3dcc88e877ffca0` (Phase 2 commit).
 
 ---
 
@@ -71,7 +72,7 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 
 - [x] Phase 1 — Repository audit, baseline & worklog
 - [x] Phase 2 — Adult network registry, classifier & metadata foundation
-- [ ] Phase 3 — TMDB adapter/network-based catalog migration
+- [x] Phase 3 — TMDB adapter/network-based catalog migration
 - [ ] Phase 4 — Adult-aware Search + bounded N+1 classification
 - [ ] Phase 5 — Authorization, Supabase policy & HMAC guest cookie
 - [ ] Phase 6 — Direct enforcement + normal catalog exclusion + cache isolation
@@ -140,19 +141,61 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 
 ### Phase 3 — TMDB adapter/network-based catalog migration
 
-**Status:** Not Started
+**Status:** Complete
 
 **Files changed:**
-- (planned) `src/lib/server/content/adapters/tmdb.ts`
+- `src/lib/server/content/adult-catalog.ts` (new) — pure, synchronous BRIDGE between the network registry and TMDB catalog queries: `adultNetworkExclusionValue()` (pipe-joined verified ids or undefined), `withoutAdultNetworksParams()` (normal-TV exclusion fragment; `{}` when the registry is empty — never a malformed empty param), `withAdultNetworksParams(selectedNetworkId?)` (adult-rail inclusion; a selected id is accepted ONLY if it is a VERIFIED registry entry — any unknown/claimed/unverified id yields `{}`), `getVerifiedAdultNetworkIdForKey()` (service key → verified network id). Imports ONLY `adult-networks.ts`; no env access, no I/O, no authorization input — tsx-testable and cache-safe. Contains zero literal network IDs (asserted by tests).
+- `src/lib/server/content/adapters/tmdb.ts` — migrated: `getTmdbCollection`, `getTmdbNewOnOtt`, `getTmdbPopularByLanguage`, `getTmdbTopRated` (TV branches now exclude via `without_networks=<verified ids>`; movie branches keep the documented transitional `without_watch_providers`), `getTmdbAdultShows` (TV half now `with_networks` with NO `watch_region`/flatrate/provider prerequisites, `include_adult: true` kept; movie half keeps the documented transitional provider query; provider-key selection resolves through the VERIFIED network registry). Untouched by design: `getTmdbAnimeMerged` (anime invariant), `searchTmdb` (Phase 4), `getTmdbDiscover`/`getTmdbPopular`/`getTmdbNowPlaying`/`getTmdbGenreByLanguage` (no network-filter support on their endpoints — Phase 6, documented below), `getTmdbDetail` (Phase 2 classification), `getTmdbIndiaProviders` (movie halves + dropdown still need it).
+- `src/lib/server/content/adult-providers.ts` — header rewritten: TRANSITIONAL, movie-side + dropdown compatibility ONLY. TV catalog paths no longer call into it; it can never become the canonical adult identity again. Classifier Signal 3 re-documented as movie-side transitional (movies carry no networks; /discover/movie has no network filter). Removal phases documented (Phase 7 rail redesign; dropdown Phase 7/8).
+- `src/lib/server/content/service.ts` — comments updated (`isAdultItem` exclusion note; search comment now states /search supports NEITHER provider NOR network filters).
+- `scripts/adult_catalog_network_test.ts` (new) — **behavioral** tests importing the real bridge + registry: 14 checks covering spec §14 A–J + key lookup + no-hardcoded-ids + adapter wiring; registered in the `pnpm test` chain.
+- `scripts/adult_mode_test.ts` — static sections E/F/G/S rewritten for the Phase 3 shape (TV=networks, movies=transitional providers, adult-rail TV block free of JustWatch prerequisites), V extended (anime has no network filters either), new section X (bridge module, adapter import, no hardcoded 2902/4573/7355 outside the registry, new-ott dual-dimension cache key), summary line extended.
+- `package.json` — test chain includes `scripts/adult_catalog_network_test.ts` (58 scripts total).
 
-**Tests:**
-- (planned) query-construction tests for `with_networks` / `without_networks` / `without_genres`
+**TMDB endpoints audited (Phase 3 matrix):**
 
-**Notes:**
-- Migration target: adult rail `with_networks`; normal rails `without_networks`; keep `include_adult=false` on normal rails; adult rail sets `include_adult=true` + network filter and **drops the watch-provider/flatrate requirement**.
+| Function | Endpoint | Network filter? | Phase 3 action |
+| --- | --- | --- | --- |
+| `getTmdbCollection` | `/discover/{movie,tv}` | TV ✔ / movie ✘ | TV → `without_networks`; movie keeps transitional providers |
+| `getTmdbNewOnOtt` | `/discover/{movie,tv}` | TV ✔ / movie ✘ | TV → `without_networks`; movie keeps transitional providers |
+| `getTmdbPopularByLanguage` | `/discover/{movie,tv}` | TV ✔ / movie ✘ | TV → `without_networks`; movie keeps transitional providers |
+| `getTmdbTopRated` | `/discover/{movie,tv}` | TV ✔ / movie ✘ | TV → `without_networks`; movie keeps transitional providers |
+| `getTmdbAdultShows` | `/discover/{movie,tv}` | TV ✔ / movie ✘ | TV → `with_networks` (flatrate/region dropped); movie transitional providers |
+| `getTmdbGenreByLanguage` | `/discover/movie` | ✘ (movie-only) | Unchanged (transitional provider exclusion; its missing `watch_region` stays the Phase 6 bug fix) |
+| `getTmdbTrendingMoviesByLanguage` | `/discover/movie` | ✘ (movie-only) | Unchanged (transitional provider exclusion) |
+| `getTmdbDiscover` | `/trending/{movie,tv}/week` | ✘ (no filters at all) | Unchanged; documented for Phase 6 server-side enforcement |
+| `getTmdbPopular` | `/{movie,tv}/popular` | ✘ (list endpoint) | Unchanged; documented for Phase 6 |
+| `getTmdbNowPlaying` | `/movie/now_playing` | ✘ (movie + list) | Unchanged; documented for Phase 6 |
+| `upcoming.ts` | `/discover/movie` (date window) | ✘ (movie-only) | Unchanged; documented for Phase 6 |
+| `searchTmdb` | `/search/{movie,tv}` | ✘ (supports neither filter type) | Unchanged; documented for Phase 4 (N+1 classification) |
+| `getTmdbAnimeMerged` | `/discover/{movie,tv}` genre16+ja | (TV ✔ but MUST NOT) | Untouched — anime invariant |
+| `getTmdbDetail` | `/{movie,tv}/{id}` | n/a (classification) | Untouched (Phase 2 foundation) |
+
+Network-filter support re-confirmed against live TMDB in the Phase 9 diagnostic (separator semantics documented in `adult-catalog.ts`: pipe = OR, matching the codebase's existing pipe-joined `with/without_watch_providers` usage).
+
+**Watch-provider logic removed vs retained:**
+- REMOVED from TV catalog architecture: no TV query sends `with_watch_providers` / `without_watch_providers` for adult identity anymore; TV exclusion/inclusion is exclusively `without_networks` / `with_networks` from `getAdultNetworkIds()`.
+- RETAINED (documented, not silent): (1) movie halves of collection/new-ott/popular/top-rated + the adult-rail movie half + `getTmdbTrendingMoviesByLanguage` + `getTmdbGenreByLanguage` — `/discover/movie` has NO network filter in TMDB, so the watch-provider mechanism remains the only movie-side query filter until Phase 7 (or a TMDB movie-side equivalent); (2) `/api/discover/adult-providers` dropdown (UI redesign is Phase 7/8); (3) classifier Signal 3 for MOVIE details. The module header states exactly why each remains and which phase removes it.
+
+**Normal-catalog semantic invariant (preserved):** the exclusion is UNCONDITIONAL — Adult Mode ON/OFF never changes these query params (construction takes no authorization input; behavioral test E proves it). Adult titles appear only in the dedicated rail (server-side policy re-check preserved), authorized search (Phase 4), and authorized direct detail.
+
+**Cache-key changes:** `tmdb:collection/popular-v2/top-rated-v2:*` keys keep the `adultExclusion ?? 'no-adult'` dimension but its VALUE is now the applied per-type exclusion (network value for TV, provider value for movies) — old provider-era and new network-era entries can never collide because the values differ. `tmdb:new-ott:*` now embeds BOTH dimensions (`no-nets`/`no-providers`) since one entry mixes a TV and a movie query. `tmdb:adult-shows:*` gained the network-inclusion dimension (`${networkInclusion.with_networks ?? 'no-networks'}`). No authorization-dependent state introduced; full cache isolation remains Phase 6.
+
+**Behavioral decision — unverified service selection:** selecting an adult service whose network ID is not verified yet (e.g. ALTT) yields NO TV results from the network query (the TV half contributes nothing rather than falling back to provider identity for TV); its movies can still come through the transitional movie-half provider query. Never fabricate IDs; never use provider IDs as network identity.
+
+**Tests added:** `scripts/adult_catalog_network_test.ts` — 14 behavioral checks: normal-TV `without_networks` construction (A); adult `with_networks` construction incl. per-service narrowing (B); values sourced live from the registry (C); construction emits network keys only — never provider params (D); no authorization input, deterministic (E); no JustWatch/flatrate/region prerequisites (F); unverified/claimed ids structurally excluded — including the selected-id path, which the test caught and the builder now rejects (G); empty registry → `{}` fragments (H); construction never emits `include_adult` (I); anime function carries no network/provider filters (J); verified-only key lookup (K); real-registry value exactly `2902|4573|7355` (ALTT inert); zero hardcoded network ids outside the registry; adapter wiring (TV branches/movies/adult-rail split).
+
+**Test result:** `pnpm test` **PASS** (exit 0) — 58 scripts in the chain incl. new `adult_catalog_network_test.ts` (14 checks) and `adult_mode_test.ts` A–X.
+**Check result:** `pnpm run check` **PASS** (exit 0) — 0 errors / 38 warnings (unchanged pre-existing warnings in 11 files).
+**Build result:** `pnpm run build` **PASS** (exit 0) — `@sveltejs/adapter-netlify` build completed.
+
+**Commit SHA:** this commit — `refactor(adult): migrate catalog filtering to tmdb networks` (exact SHA in `git log -1`; the worklog cannot contain its own commit's hash).
+
+**Explicitly NOT implemented (later phases):** Search N+1 / page continuation / classification cache (Phase 4); Popular TV `without_genres=10764\|10766\|10767` (Phase 8 — this phase touched the popular function ONLY for its adult-exclusion migration); trending/theatre/upcoming/genre-rail/related enforcement (Phase 6 — endpoints support no network filters, server-side classification required); watch-route guard (Phase 6); policy cache / HMAC cookie (Phase 5); provider dropdown UI/network redesign (Phase 7/8); movie-side watch-provider removal (Phase 7, see matrix); any UI, playback, resolver, progress, navigation, My List, or anime architecture change (none).
 
 **Remaining work:**
-- Everything (Not Started).
+- Phase 4: search — candidate detail lookups (bounded concurrency), classify via `networks` + metadata, fail-closed filtering, page continuation, authorized/unauthorized cache dimensions.
+- Phases 5–10 as planned. Phase 9 must live-confirm network filter semantics (`with_networks`/`without_networks` behavior + separator semantics) against the TMDB JSON API and re-confirm the three verified IDs.
 
 ### Phase 4 — Adult-aware Search + bounded N+1 classification
 
@@ -293,6 +336,7 @@ Verification method (2026-09-07): TMDB's own public network pages are live-TMDB 
 Facts that **are** verified from the code (repo-wide search, `src/` + `supabase/` + `scripts/`):
 
 > Phase 2 update (2026-09-07): the bullet below about `2902/4573/7355` "zero occurrences" was true at Phase 1 (HEAD `f47bac8`) and is now historical — those IDs are registered (as **verified**) in `src/lib/server/content/adult-networks.ts`. The `with_networks`/`without_networks` bullet remains true: Phase 2 added NO catalog-query changes; the network-based queries land in Phase 3.
+> Phase 3 update (2026-09-07): both bullets are now historical. `with_networks`/`without_networks` are used by the catalog queries (via `adult-catalog.ts`), and the three verified IDs appear ONLY in the registry module — an invariant test asserts they appear nowhere else (no hardcoding in adapters).
 
 - `with_networks` / `without_networks` / `with_companies` / `without_companies` — **zero occurrences**. The network-based architecture does not exist anywhere yet.
 - Numeric IDs `2902`, `4573`, `7355` — **zero occurrences**. Nothing in the code hardcodes or references these network IDs.

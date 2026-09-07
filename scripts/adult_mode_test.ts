@@ -122,17 +122,21 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 // ============================================================================
-// E. Normal rails — adult excluded.
+// E. Normal rails — adult excluded (Phase 3: TV via networks, movies transitional).
 // ============================================================================
 {
-  // Popular: without_watch_providers exclusion.
-  assert.match(tmdb, /getTmdbPopularByLanguage[\s\S]*?without_watch_providers.*adultExclusion/, 'popular excludes adult providers');
-  // Top rated: without_watch_providers exclusion.
-  assert.match(tmdb, /getTmdbTopRated[\s\S]*?without_watch_providers.*adultExclusion/, 'top-rated excludes adult providers');
-  // Genre: without_watch_providers exclusion.
-  assert.match(tmdb, /getTmdbGenreByLanguage[\s\S]*?without_watch_providers.*adultExclusion/, 'genre excludes adult providers');
-  // New on OTT: without_watch_providers exclusion.
-  assert.match(tmdb, /getTmdbNewOnOtt[\s\S]*?without_watch_providers.*adultExclusion/, 'new-ott excludes adult providers');
+  // Phase 3: TV rails exclude VERIFIED adult NETWORKS (canonical identity).
+  assert.match(tmdb, /getTmdbPopularByLanguage[\s\S]*?without_networks: networkExclusion/, 'popular TV excludes adult networks');
+  assert.match(tmdb, /getTmdbTopRated[\s\S]*?without_networks: networkExclusion/, 'top-rated TV excludes adult networks');
+  assert.match(tmdb, /getTmdbNewOnOtt[\s\S]*?without_networks: networkExclusion/, 'new-ott TV excludes adult networks');
+  // Movie halves keep the documented TRANSITIONAL watch-provider exclusion
+  // (/discover/movie has no network filter — worklog Phase 3 endpoint matrix).
+  assert.match(tmdb, /getTmdbPopularByLanguage[\s\S]*?'without_watch_providers': providerExclusion/, 'popular movies keep transitional provider exclusion');
+  assert.match(tmdb, /getTmdbTopRated[\s\S]*?'without_watch_providers': providerExclusion/, 'top-rated movies keep transitional provider exclusion');
+  assert.match(tmdb, /getTmdbNewOnOtt[\s\S]*?'without_watch_providers': providerExclusion/, 'new-ott movies keep transitional provider exclusion');
+  // Genre rail is movie-only — transitional provider exclusion (its
+  // missing watch_region is a known bug fixed in Phase 6, not here).
+  assert.match(tmdb, /getTmdbGenreByLanguage[\s\S]*?without_watch_providers.*adultExclusion/, 'genre (movie) keeps transitional provider exclusion');
   // Cache keys include the adult exclusion dimension.
   assert.match(tmdb, /adultExclusion \?\? 'no-adult'/, 'cache key includes adult exclusion dimension');
 }
@@ -149,31 +153,37 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(popularFn![0], /type === 'series' \? \{ watch_region: 'IN', with_watch_monetization_types: 'flatrate' \}/, 'series has OTT filter');
   // No adult injection (include_adult: false).
   assert.match(popularFn![0], /include_adult: false/, 'popular uses include_adult: false');
-  // Adult exclusion is present.
-  assert.match(popularFn![0], /without_watch_providers/, 'popular excludes adult providers');
+  // Phase 3: TV excludes adult NETWORKS; movies keep transitional providers.
+  assert.match(popularFn![0], /without_networks: networkExclusion/, 'popular TV excludes adult networks');
+  assert.match(popularFn![0], /'without_watch_providers': providerExclusion/, 'popular movies keep transitional provider exclusion');
 }
 
 // ============================================================================
-// G. Adult rail — provider filtering, 10 items, pagination, dedupe, verified.
+// G. Adult rail — Phase 3: TV by with_networks (no JustWatch prerequisites),
+//    movies transitional by providers; 10 items, dedupe, verified-only.
 // ============================================================================
 {
   assert.match(tmdb, /export async function getTmdbAdultShows/, 'adult shows query function exists');
-  // watch_region=IN.
-  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?watch_region: 'IN'/, 'adult shows uses watch_region=IN');
-  // flatrate.
-  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?with_watch_monetization_types: 'flatrate'/, 'adult shows uses flatrate');
-  // with_watch_providers (verified IDs only).
-  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?with_watch_providers: watchProviders/, 'adult shows uses with_watch_providers');
-  // include_adult: true (this IS the adult section).
-  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?include_adult: true/, 'adult shows uses include_adult: true');
-  // 10 items per page.
-  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?DISCOVER_PAGE_SIZE/, 'adult shows slices to 10');
-  // Dedupes by type+id.
-  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?seen = new Set/, 'adult shows dedupes');
-  // Only verified providers (getCachedAdultProviders).
-  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?getCachedAdultProviders/, 'adult shows uses verified providers only');
-  // No providers = empty result (no fabrication).
-  assert.match(tmdb, /if \(!adultProviders \|\| adultProviders\.length === 0\)/, 'adult shows returns empty if no verified providers');
+  // TV half: with_networks from the registry via adult-catalog.ts.
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?getVerifiedAdultNetworkIdForKey\(providerKey\)/, 'adult TV narrows via the VERIFIED network key lookup');
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?withAdultNetworksParams\(selectedNetworkId\)/, 'adult TV uses the verified network inclusion builder');
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?\.\.\.networkInclusion/, 'adult TV params include with_networks');
+  // TV params block has NO watch-provider prerequisites.
+  const adultFnBody = tmdb.match(/export async function getTmdbAdultShows[\s\S]*?^}/m)?.[0] ?? '';
+  const adultTvParams = adultFnBody.match(/const tvParams[\s\S]*?};/m)?.[0] ?? '';
+  assert.ok(adultTvParams, 'adult shows tvParams block found');
+  assert.doesNotMatch(adultTvParams, /with_watch_providers|watch_region|with_watch_monetization_types/, 'adult TV query drops JustWatch/flatrate/region prerequisites');
+  assert.match(adultTvParams, /include_adult: true/, 'adult TV keeps include_adult: true');
+  // Movie half: documented TRANSITIONAL provider query (unchanged semantics).
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?with_watch_providers: watchProviders/, 'adult movies keep transitional with_watch_providers');
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?watch_region: 'IN'/, 'adult movie query uses watch_region=IN');
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?with_watch_monetization_types: 'flatrate'/, 'adult movie query uses flatrate');
+  // Verified providers only (movie half).
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?getCachedAdultProviders/, 'adult shows uses verified providers only (movie half)');
+  // Nothing verified in either id space -> empty result (no fabrication).
+  assert.match(tmdb, /getTmdbAdultShows[\s\S]*?if \(!hasTvQuery && !hasMovieQuery\)/, 'adult shows returns empty when nothing is verified in either id space');
+  // Cache key embeds the network inclusion dimension.
+  assert.match(tmdb, /key = `tmdb:adult-shows:.*:\$\{networkInclusion\.with_networks \?\? 'no-networks'\}`/, 'adult shows cache key embeds the network dimension');
   // Rail endpoint enforces adult access.
   assert.match(railEndpoint, /sectionParam === 'adult-shows'/, 'rail endpoint checks for adult-shows section');
   assert.match(railEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'rail endpoint evaluates adult policy with cookies');
@@ -343,18 +353,19 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 // ============================================================================
-// S. BUG 3 — Generic catalog paths exclude adult content.
+// S. BUG 3 — Generic catalog paths exclude adult content (Phase 3 shape).
 // ============================================================================
 {
-  // getTmdbDiscover: adult exclusion in cache key + defense-in-depth filter.
+  // getTmdbDiscover (legacy trending): no-op post-filter + cache-key dim.
+  // Real trending enforcement is Phase 6 (endpoint supports no filters).
   assert.match(tmdb, /getTmdbDiscover[\s\S]*?adultExclusion/, 'getTmdbDiscover computes adultExclusion');
   assert.match(tmdb, /getTmdbDiscover[\s\S]*?key = `tmdb:discover:.*:\$\{adultExclusion \?\? 'no-adult'\}`/, 'getTmdbDiscover cache key includes adultExclusion');
-  // getTmdbCollection: adult exclusion in cache key + without_watch_providers.
-  assert.match(tmdb, /getTmdbCollection[\s\S]*?adultExclusion/, 'getTmdbCollection computes adultExclusion');
-  assert.match(tmdb, /getTmdbCollection[\s\S]*?without_watch_providers/, 'getTmdbCollection excludes adult providers');
-  // getTmdbPopular: adult exclusion.
+  // getTmdbCollection: TV via networks + transitional movie providers.
+  assert.match(tmdb, /getTmdbCollection[\s\S]*?without_networks: networkExclusion/, 'getTmdbCollection TV excludes adult networks');
+  assert.match(tmdb, /getTmdbCollection[\s\S]*?'without_watch_providers': providerExclusion/, 'getTmdbCollection movies keep transitional provider exclusion');
+  // getTmdbPopular (legacy list endpoints): unchanged no-op paths (Phase 6).
   assert.match(tmdb, /getTmdbPopular\b[\s\S]*?adultExclusion/, 'getTmdbPopular computes adultExclusion');
-  // getTmdbTrendingMoviesByLanguage: adult exclusion.
+  // getTmdbTrendingMoviesByLanguage (movie-only): transitional providers.
   assert.match(tmdb, /getTmdbTrendingMoviesByLanguage[\s\S]*?adultExclusion/, 'getTmdbTrendingMoviesByLanguage computes adultExclusion');
 }
 
@@ -442,6 +453,26 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   const animeFn = tmdb.match(/export async function getTmdbAnimeMerged[\s\S]*?^}/m);
   assert.ok(animeFn, 'getTmdbAnimeMerged found');
   assert.doesNotMatch(animeFn![0], /without_watch_providers/, 'anime section does NOT exclude adult providers');
+  assert.doesNotMatch(animeFn![0], /without_networks|with_networks/, 'anime section does NOT use network filters (Phase 3 invariant)');
 }
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W).');
+// ============================================================================
+// X. Phase 3 — network-based TMDB catalog migration (Adult Mode rebuild).
+// ============================================================================
+{
+  // adult-catalog.ts bridge module exists and is registry-driven only.
+  const adultCatalog = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-catalog.ts'), 'utf8');
+  assert.match(adultCatalog, /export function adultNetworkExclusionValue/, 'exclusion value builder exists');
+  assert.match(adultCatalog, /export function withoutAdultNetworksParams/, 'without_networks builder exists');
+  assert.match(adultCatalog, /export function withAdultNetworksParams/, 'with_networks builder exists');
+  assert.match(adultCatalog, /export function getVerifiedAdultNetworkIdForKey/, 'verified key lookup exists');
+  assert.match(adultCatalog, /import \{ getAdultNetworkIds, getVerifiedAdultNetworks \} from '\.\/adult-networks'/, 'bridge imports ONLY the registry (single source of truth)');
+  assert.doesNotMatch(adultCatalog, /\b(2902|4573|7355)\b/, 'bridge contains no hardcoded network ids');
+  // Adapter consumes the bridge; no network ids hardcoded in the adapter.
+  assert.match(tmdb, /import \{ adultNetworkExclusionValue, withAdultNetworksParams, getVerifiedAdultNetworkIdForKey \} from '\.\.\/adult-catalog'/, 'adapter imports the adult-catalog bridge');
+  assert.doesNotMatch(tmdb, /\b(2902|4573|7355)\b/, 'adapter contains no hardcoded network ids');
+  // New-ott cache key embeds BOTH exclusion dimensions (TV networks + movie providers).
+  assert.match(tmdb, /key = `tmdb:new-ott:.*:\$\{networkExclusion \?\? 'no-nets'\}:\$\{providerExclusion \?\? 'no-providers'\}`/, 'new-ott cache key embeds both exclusion dimensions');
+}
+
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X).');
