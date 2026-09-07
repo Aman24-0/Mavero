@@ -113,14 +113,37 @@ export function getCachedAdultProviders(): AdultOttProvider[] | null {
 
 /**
  * Returns the list of verified adult provider IDs.
- * Must be called after resolveAdultProviders() has been called at
- * least once with the live TMDB India provider list.
- * Returns an empty array if no providers have been resolved yet.
+ * If the cache is stale or empty, this returns [] — the caller should
+ * call ensureAdultProvidersResolved() first to guarantee the cache is
+ * populated. This function is synchronous and never triggers a fetch.
  */
 export function getAdultProviderIds(): number[] {
   const cached = getCachedAdultProviders();
   if (!cached) return [];
   return cached.map((p) => p.tmdbProviderId).filter((id) => id > 0);
+}
+
+/**
+ * Ensure adult providers are resolved against the live TMDB India
+ * provider list. If the cache is fresh, this is a no-op. If stale or
+ * empty, it fetches the live TMDB India provider list (via the callback)
+ * and resolves adult providers against it.
+ *
+ * This is the safe entry point that all adult-sensitive paths should
+ * call before using getAdultProviderIds() or isAdultProvider().
+ *
+ * @param fetchIndiaProviders - A function that returns the live TMDB
+ *   India provider list. This is passed as a callback to avoid a circular
+ *   import dependency between adult-providers.ts and tmdb.ts.
+ */
+export async function ensureAdultProvidersResolved(
+  fetchIndiaProviders: () => Promise<{ providerId: number; name: string; logoPath: string | null; key: string }[]>
+): Promise<void> {
+  const cached = getCachedAdultProviders();
+  if (cached) return; // Cache is fresh.
+  // Fetch the live TMDB India provider list and resolve adult providers.
+  const indiaProviders = await fetchIndiaProviders();
+  resolveAdultProviders(indiaProviders);
 }
 
 /**

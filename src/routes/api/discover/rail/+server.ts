@@ -29,7 +29,7 @@ import type { RequestHandler } from './$types';
 // adult-excluded results don't leak into a context where adult content
 // is expected.
 
-export const GET: RequestHandler = async ({ url, locals }) => {
+export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   const sectionParam = url.searchParams.get('section') ?? '';
   const languageParam = url.searchParams.get('language') ?? 'all';
   const provider = url.searchParams.get('provider') ?? undefined;
@@ -43,15 +43,11 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   }
   const safeProvider = provider && provider.trim() && provider.length <= 80 ? provider.trim() : undefined;
 
-  // Phase 8: For the adult-shows section, evaluate adult access policy
-  // server-side BEFORE calling discoverRail. This is the single
-  // authorization checkpoint — the browser can NEVER bypass it.
   let canAccessAdult = false;
   if (sectionParam === 'adult-shows') {
     const { user } = await locals.safeGetSession();
-    canAccessAdult = await canAccessAdultContent(locals.supabase, user);
+    canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
     if (!canAccessAdult) {
-      // Non-disclosing empty response — the frontend hides the section.
       return json({ ok: true, items: [], page, hasNextPage: false, section: sectionParam, language: languageParam, provider: safeProvider ?? null });
     }
   }

@@ -74,17 +74,51 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 // ============================================================================
-// D. Guest — cannot access adult content.
+// D. Guest — can access adult content via signed cookie when admin allows.
 // ============================================================================
 {
-  // The adult mode API requires authentication for PUT.
-  assert.match(adultModeApi, /if \(!user\)/, 'PUT adult-mode requires auth');
-  assert.match(adultModeApi, /status: 401/, 'PUT adult-mode returns 401 for unauthenticated');
-  // The adult access context returns false for unauthenticated users.
-  assert.match(adultPolicy, /const isAuthenticated = Boolean\(user\?\.id\)/, 'checks authentication');
+  // The adult mode API PUT now supports both authenticated and guest.
+  // Guest preference is stored in a signed HttpOnly cookie.
+  assert.match(adultModeApi, /if \(user\)/, 'PUT adult-mode handles authenticated users');
+  assert.match(adultModeApi, /updateGuestAdultPreference/, 'PUT adult-mode supports guest via cookie');
+  // Guest cookie helpers exist.
+  assert.match(adultPolicy, /GUEST_COOKIE_NAME/, 'guest cookie name defined');
+  assert.match(adultPolicy, /function getGuestCookieHeader/, 'guest cookie header function exists');
+  assert.match(adultPolicy, /function parseGuestCookieValue/, 'guest cookie parser exists');
+  assert.match(adultPolicy, /HttpOnly/, 'guest cookie is HttpOnly');
+  assert.match(adultPolicy, /SameSite=Lax/, 'guest cookie is SameSite=Lax');
+  // getAdultAccessContext accepts cookies parameter.
+  assert.match(adultPolicy, /cookies\?: \{ get: \(name: string\) => string \| undefined \}/, 'getAdultAccessContext accepts cookies');
+  // Guest preference is read from cookie.
+  assert.match(adultPolicy, /getGuestPreferenceFromCookies\(cookies\)/, 'guest preference read from cookie');
+  // canAccessAdultContent accepts cookies.
+  assert.match(adultPolicy, /export async function canAccessAdultContent\([\s\S]*?cookies\?/, 'canAccessAdultContent accepts cookies');
+  // updateGuestAdultPreference enforces admin policy.
+  assert.match(adultPolicy, /updateGuestAdultPreference[\s\S]*?if \(!policy\.allowGuest\)/, 'guest preference enforces admin allowGuest');
+  // Admin allows check for guest.
   assert.match(adultPolicy, /adminAllows = isAuthenticated \? policy\.allowLoggedIn : policy\.allowGuest/, 'guest uses allowGuest');
-  // Guest preference is never read (getUserPreference returns false for no userId).
-  assert.match(adultPolicy, /if \(!userId\) return false/, 'no user preference for guests');
+}
+
+// ============================================================================
+// D2. Provider resolution — ensureAdultProvidersResolved.
+// ============================================================================
+{
+  assert.match(adultProviders, /export async function ensureAdultProvidersResolved/, 'ensureAdultProvidersResolved exists');
+  assert.match(adultProviders, /fetchIndiaProviders: \(\) => Promise/, 'accepts fetchIndiaProviders callback');
+  assert.match(adultProviders, /const cached = getCachedAdultProviders\(\)/, 'checks cache first');
+  assert.match(adultProviders, /if \(cached\) return/, 'returns early if cache is fresh');
+  assert.match(adultProviders, /const indiaProviders = await fetchIndiaProviders\(\)/, 'fetches live providers if cache stale');
+  assert.match(adultProviders, /resolveAdultProviders\(indiaProviders\)/, 'resolves adult providers against live list');
+  // TMDB adapter uses getResolvedAdultProviderIds in all adult-sensitive functions.
+  assert.match(tmdb, /async function getResolvedAdultProviderIds/, 'TMDB adapter has getResolvedAdultProviderIds helper');
+  assert.match(tmdb, /await ensureAdultProvidersResolved\(\(\) => getTmdbIndiaProviders\(\)\)/, 'helper calls ensureAdultProvidersResolved');
+  // All adult-sensitive functions use the helper.
+  assert.match(tmdb, /getTmdbDiscover[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbDiscover uses resolved IDs');
+  assert.match(tmdb, /getTmdbCollection[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbCollection uses resolved IDs');
+  assert.match(tmdb, /getTmdbPopular\b[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbPopular uses resolved IDs');
+  assert.match(tmdb, /getTmdbTrendingMoviesByLanguage[\s\S]*?await getResolvedAdultProviderIds/, 'getTmdbTrendingMoviesByLanguage uses resolved IDs');
+  // service.search also ensures providers are resolved.
+  assert.match(service, /await ensureAdultProvidersResolved\(\(\) => getTmdbIndiaProviders\(\)\)/, 'service.search ensures providers resolved');
 }
 
 // ============================================================================
@@ -142,7 +176,7 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(tmdb, /if \(!adultProviders \|\| adultProviders\.length === 0\)/, 'adult shows returns empty if no verified providers');
   // Rail endpoint enforces adult access.
   assert.match(railEndpoint, /sectionParam === 'adult-shows'/, 'rail endpoint checks for adult-shows section');
-  assert.match(railEndpoint, /canAccessAdultContent\(locals\.supabase, user\)/, 'rail endpoint evaluates adult policy');
+  assert.match(railEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'rail endpoint evaluates adult policy with cookies');
   // Defense in depth: discoverRail also checks canAccessAdult.
   assert.match(service, /case 'adult-shows'[\s\S]*?if \(!canAccessAdult\)/, 'discoverRail defense-in-depth check');
 }
@@ -151,7 +185,7 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 // H. Search — adult excluded when unavailable.
 // ============================================================================
 {
-  assert.match(searchEndpoint, /canAccessAdultContent\(locals\.supabase, user\)/, 'search endpoint evaluates adult policy');
+  assert.match(searchEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'search endpoint evaluates adult policy with cookies');
   assert.match(service, /export async function search\(query.*canAccessAdult = false/, 'search accepts canAccessAdult parameter');
   // Adult exclusion: searchTmdb cache key includes adultExclusion dimension.
   assert.match(tmdb, /searchTmdb[\s\S]*?adultExclusion/, 'searchTmdb uses adultExclusion');
@@ -203,7 +237,7 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(tmdb, /isAnime = genreIds\.includes\(16\) && originalLanguage === 'ja'/, 'anime detection unchanged');
   // Adult classification is based on the central isAdultContent classifier
   // (which checks tags + provider IDs + TMDB adult flag), not on isAnime.
-  assert.match(service, /import \{ isAdultContent \} from '\.\/adult-providers'/, 'service imports isAdultContent');
+  assert.match(service, /import \{ isAdultContent.*\} from '\.\/adult-providers'/, 'service imports isAdultContent from adult-providers');
   assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime\)/, 'isAdultItem delegates to isAdultContent');
   // Anime sections do NOT use adult exclusion (anime is separate from adult).
   const animeFn = tmdb.match(/export async function getTmdbAnimeMerged[\s\S]*?^}/m);
@@ -337,7 +371,7 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   // Checks TMDB adult flag (non-anime only).
   assert.match(adultProviders, /tmdbAdult === true && isAnime !== true/, 'isAdultContent checks TMDB adult flag for non-anime');
   // service.ts delegates to isAdultContent.
-  assert.match(service, /import \{ isAdultContent \} from '\.\/adult-providers'/, 'service imports isAdultContent');
+  assert.match(service, /import \{ isAdultContent.*\} from '\.\/adult-providers'/, 'service imports isAdultContent from adult-providers');
   assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime\)/, 'service isAdultItem delegates to isAdultContent');
 }
 
@@ -365,4 +399,4 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.doesNotMatch(animeFn![0], /without_watch_providers/, 'anime section does NOT exclude adult providers');
 }
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest access (D); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V).');
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V).');

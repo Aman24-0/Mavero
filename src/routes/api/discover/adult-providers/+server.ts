@@ -12,9 +12,9 @@ import type { RequestHandler } from './$types';
 // returning provider data. If the user is not authorized for adult content,
 // it returns an empty list (non-disclosing).
 
-export const GET: RequestHandler = async ({ locals }) => {
+export const GET: RequestHandler = async ({ locals, cookies }) => {
   const { user } = await locals.safeGetSession();
-  const canAccess = await canAccessAdultContent(locals.supabase, user);
+  const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
   if (!canAccess) {
     return json({ ok: true, providers: [] });
   }

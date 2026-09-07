@@ -116,7 +116,8 @@ function filterAnimeSeries(items: NormalizedMediaItem[]): NormalizedMediaItem[] 
 // adult-providers.ts, which checks: tags, provider IDs, and TMDB adult flag.
 // For catalog items that don't have provider IDs available (list responses),
 // it falls back to checking tags + TMDB adult flag (non-anime only).
-import { isAdultContent } from './adult-providers';
+import { isAdultContent, ensureAdultProvidersResolved } from './adult-providers';
+import { getTmdbIndiaProviders } from './adapters/tmdb';
 
 function isAdultItem(item: NormalizedMediaItem): boolean {
   // For list responses we don't have per-title provider IDs without N+1.
@@ -223,6 +224,8 @@ export async function search(query: string, type?: ContentType, page = 1, filter
   // TMDB's /search endpoint does NOT support without_watch_providers,
   // so we rely on include_adult=false + the isAdultContent classifier
   // (which checks TMDB's adult flag for non-anime content).
+  // BUG A fix: ensure providers are resolved before getting IDs.
+  await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
   const { getAdultProviderIds } = await import('./adult-providers');
   const adultIds = getAdultProviderIds();
   const adultExclusion = !canAccessAdult && adultIds.length > 0 ? adultIds.join('|') : undefined;

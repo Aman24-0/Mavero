@@ -5,7 +5,7 @@ import { isContentType, type SearchFilters, type SearchSort } from '$lib/server/
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ url, locals }) => {
+export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   const query = url.searchParams.get('q')?.trim() ?? '';
   const typeParam = url.searchParams.get('type');
   const type = isContentType(typeParam) ? typeParam : undefined;
@@ -24,7 +24,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   // Phase 9: Evaluate adult access server-side. The browser can NEVER
   // bypass this — there is no ?adult=true query parameter.
   const { user } = await locals.safeGetSession();
-  const canAccessAdult = await canAccessAdultContent(locals.supabase, user);
+  const canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
 
   try {
     const result = await search(query, type, page, filters, canAccessAdult);

@@ -5,7 +5,7 @@ import { isContentType, isValidContentId } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params, locals }) => {
+export const GET: RequestHandler = async ({ params, locals, cookies }) => {
   if (!isContentType(params.type) || !isValidContentId(params.id)) {
     return json({ ok: false, error: { code: 'INVALID_ID', message: 'Unsupported content identifier.' } }, { status: 400 });
   }
@@ -19,7 +19,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     // client-side flag that grants access.
     if (result.tags?.includes('Adult')) {
       const { user } = await locals.safeGetSession();
-      const canAccess = await canAccessAdultContent(locals.supabase, user);
+      const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
       if (!canAccess) {
         // Non-disclosing: return NOT_FOUND rather than 403 so the caller
         // cannot distinguish "adult content exists but forbidden" from

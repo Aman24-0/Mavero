@@ -4,14 +4,14 @@ import { toMediaItem } from '$lib/server/content/presenter';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, cookies }) => {
   try {
     const detail = await getDetail('anime', params.id);
 
     // Phase 10: SSR adult content guard.
     if (detail.tags?.includes('Adult')) {
       const { user } = await locals.safeGetSession();
-      const canAccess = await canAccessAdultContent(locals.supabase, user);
+      const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
       if (!canAccess) {
         throw error(404, 'Anime not found');
       }

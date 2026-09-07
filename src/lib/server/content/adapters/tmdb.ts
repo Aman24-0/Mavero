@@ -3,7 +3,7 @@ import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
 import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider } from '../types';
 import { ottProviders } from '$lib/shared/ott';
-import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent } from '../adult-providers';
+import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved } from '../adult-providers';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -233,8 +233,19 @@ const OTT_LOOKUP_CONCURRENCY = 4;
 // cache key so responses don't leak between adult-available and
 // adult-unavailable contexts.
 
+/**
+ * Ensure adult providers are resolved, then return the adult provider IDs
+ * for exclusion. This is the safe entry point that all adult-sensitive
+ * TMDB adapter functions should call before computing adultExclusion.
+ * If the provider cache is fresh, this is a fast no-op.
+ */
+async function getResolvedAdultProviderIds(): Promise<number[]> {
+  await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
+  return getAdultProviderIds();
+}
+
 export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:discover:${type}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
@@ -252,7 +263,7 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
   const genreId = filters.genre ? Object.entries(genreNames).find(([, label]) => label.toLowerCase() === filters.genre?.toLowerCase())?.[0] ?? (/^\d+$/.test(filters.genre) ? filters.genre : undefined) : undefined;
   const year = filters.year && /^\d{4}$/.test(filters.year) ? Number(filters.year) : undefined;
   const sortBy = filters.sort === 'Top rated' ? 'vote_average.desc' : filters.sort === 'Newest' ? type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc' : 'popularity.desc';
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
@@ -283,7 +294,7 @@ export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1
   if (!/^[a-z]{2}$/.test(normalized)) {
     throw new ContentServiceError('The requested movie language filter is invalid.', { code: 'NOT_FOUND', status: 404 });
   }
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:lang-movies:movie:${normalized}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
@@ -302,7 +313,7 @@ export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1
 }
 
 export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:popular:${type}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
@@ -552,7 +563,7 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
   // rather than sending a bad ID to TMDB.
   const providerId = providerKey ? await resolveProviderIdByKey(providerKey) : undefined;
   // Phase 8: Exclude known adult-provider content from New on OTT.
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:new-ott:${providerKey ?? 'all'}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
@@ -651,7 +662,7 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
  * those providers.
  */
 export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
@@ -699,7 +710,7 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
  * Excludes adult-provider content (Phase 8).
  */
 export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:top-rated-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
@@ -743,7 +754,7 @@ export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, langu
  * Excludes adult-provider content (Phase 8).
  */
 export async function getTmdbGenreByLanguage(genreId: number, language: DiscoverLanguage, page = 1): Promise<ContentList> {
-  const adultIds = getAdultProviderIds();
+  const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const key = `tmdb:genre-v2:${genreId}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
