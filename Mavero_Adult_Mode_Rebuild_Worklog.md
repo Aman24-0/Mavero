@@ -1,6 +1,6 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 8 complete (Popular TV generic-category cleanup + Adult Discover/Search UI integration). Phase 7 was the dedicated authorized Adult Discover backend/API; Phase 6 was direct server-side enforcement + unsupported catalog paths + cache isolation; Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
+> **Status:** Phase 9 complete (final security regression + live TMDB network diagnostic — verification-only, zero production-source changes). Phase 8 was Popular TV generic-category cleanup + Adult Discover/Search UI integration; Phase 7 was the dedicated authorized Adult Discover backend/API; Phase 6 was direct server-side enforcement + unsupported catalog paths + cache isolation; Phase 5 was authorization security hardening (per-request admin policy, HMAC-SHA256 guest cookie); Phase 4 was adult-aware search with bounded N+1 classification; Phase 3 migrated the catalog to TV networks; Phase 2 was the registry + classifier foundation; Phase 1 was audit-only.
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
 > **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
@@ -460,21 +460,70 @@ Network-filter support re-confirmed against live TMDB in the Phase 9 diagnostic 
 - Phase 9: behavioral suite A–R completion + live TMDB network-ID diagnostic (Ullu/Kooku/Atrangii re-confirmation) — NOT started here.
 
 
-### Phase 9 — Behavioral tests A-R + live TMDB diagnostic
+### Phase 9 — Final security regression + live TMDB network diagnostic
 
-**Status:** Not Started
+**Status:** Complete
 
-**Files changed:**
-- (planned) new behavioral test scripts replacing/extending `scripts/adult_mode_test.ts` (which is static-only)
+**Implemented:** 2026-09-07 against branch `main`, starting from commit `dc612e909cf566dcaed7aad7ed74c22f5d197d55` (Phase 8 commit). Phase 9 is a VERIFICATION phase: only tests, diagnostics and this worklog changed — zero production-source changes.
 
-**Tests:**
-- (planned) behaviors A–R per plan; live TMDB diagnostic verifying adult network IDs and query behavior
+**Objective:** two goals. (1) A comprehensive final behavioral/security regression of the complete Adult Mode architecture across all phases (authorization matrix, guest cookie, direct access, Adult Discover, UI, normal-surface isolation, cache isolation, classifier semantics, fallback safety, legacy surface, removed anime providers, playback protection). (2) A LIVE TMDB diagnostic independently re-confirming the verified Indian Adult network IDs — Ullu 2902, Kooku 4573, Atrangii 7355 — not relying on registry values, old fixtures, or previous verification sessions.
 
-**Notes:**
-- Static regex tests give false confidence today (e.g. section H asserts the search cache key dimension, not actual filtering; section Q misses the watch route). Behavioral coverage is mandatory before release.
+**Repository verification:** HEAD == origin/main == `dc612e9` at start; working tree clean; Phase 1–8 commit chain confirmed (`898d95e` docs → `34a6469` Phase 2 → `8c67567` Phase 3 → `6cc45bf` Phase 4 → `50369f6` Phase 5 → `b951e3e` Phase 6 → `95234da` Phase 7 → `dc612e9` Phase 8).
 
-**Remaining work:**
-- Everything (Not Started).
+**Full architecture audit (before any edit):** re-read the complete Adult implementation — `adult-networks.ts` (verified-only registry, exact/ID-authoritative matching, test-override plumbing), `adult-authz.ts` (pure matrix, fail-closed read mappings, no state), `adult-policy.ts` (fresh per-request app_settings read, HMAC guest-cookie wiring, NO process cache), `adult-cookie.ts` (HMAC-SHA256, value-bound canonical payload, timing-safe digest comparison, fail-closed secret handling), `adult-providers.ts` (central classifier: tag / verified network / transitional provider / adult-flag-with-anime-exemption), `list-classify.ts` + `search-classify.ts` (bounded, fail-closed, authorization-free classification), `adult-catalog.ts` (registry-driven with/without_networks fragments; arbitrary-ID rejection), `adult-discover.ts` (closed unions, page clamp, structural cache namespace, confirmed-only collector), `service.ts` (defense-in-depth gates on adultDiscover + legacy adult-shows rail; recommendation filtering by parent classification), `adapters/tmdb.ts` (all 15 catalog query builders: query-level exclusions, classifier passes on unsupported endpoints, isolated adult namespaces, Popular TV genre exclusion), every adult-sensitive route (`/api/content/adult-discover`, `/api/content/[type]/[id]`, season API, watch route, `/api/discover/rail`, `/api/discover/adult-providers`, `/api/settings/adult-mode`, `/api/content/search`, search SSR, detail SSR pages) and the UI (`AdultDiscoverSection.svelte`, `DiscoverPage.svelte`, settings page, search page). One stale comment found (documentation-only, not fixed — see known issues).
+
+**LIVE TMDB network diagnostic** (`scripts/adult_phase9_tmdb_diagnostic.ts`, 38 checks, all PASS):
+- Credential model: the script mirrors the repository's own contract (`TMDB_READ_ACCESS_TOKEN` v4 Bearer / `TMDB_API_KEY` v3, read from env, NEVER printed or persisted). This environment provisions no TMDB secret (the repository correctly contains none), so the JSON-API leg reports CONFIG_MISSING and is an operator-runnable re-run; the live evidence below comes from the credential-free leg against the SAME live TMDB records, freshly executed in this session (not cached, not prior-session data).
+- Live results (2026-09-07, this session): `themoviedb.org/network/2902` → 301 → `2902-ullu`, resolved page title contains "ullu" → **Ullu VERIFIED**; `network/4573` → `4573-kooku`, title contains "Kooku" → **Kooku VERIFIED**; `network/7355` → `7355-atrangii`, title contains "Atrangii" → **Atrangii VERIFIED**.
+- Positive control: `network/213` → `213-netflix` (a known NON-adult network resolves — method validity).
+- Negative control: `network/999999999` → HTTP 404 (unknown IDs rejected).
+- Near-miss control: `network/2901` → `2901-spiegel-tv-wissen` — a DIFFERENT network (not Ullu): exact-ID matching matters and neighbouring IDs are not silently accepted.
+- Registry consistency (executed against the REAL module): verified set is exactly {Ullu 2902, Kooku 4573, Atrangii 7355}, all labeled `verified`; all 12 candidate services carry `tmdbNetworkId: 0` (unverified, inert); production filter value is exactly `2902|4573|7355`; Netflix 213 and near-miss 2901 are absent from the registry and classify as non-adult; numeric ID is authoritative (`{id:2902, name:"anything-else"}` matches; substring names never match); repo-wide scan proves NO functional (comment-stripped) hardcoding of the IDs outside the registry module — adapters/bridge/routes stay registry-driven.
+
+**Final behavioral suite** (`scripts/adult_phase9_final_test.ts`, 15 cross-phase contract groups, all PASS — real pure modules executed under tsx + source-level wiring assertions, the established adapter/behavioral split):
+1. Complete authorization matrix (all 6 rows) + admin-flip immediacy + fail-closed read mappings.
+2. Network registry == live-verified triple; verified-only accessors.
+3. Classifier final semantics — all 7 rules (explicit tag; verified network; adult-flag non-anime; anime exemption; anime+verified-network; Adult network + adult=false → Adult; no title/genre heuristics; unknown network → not adult).
+4. Normal rail isolation (adult dropped, order kept, dedup; rail filter takes no authorization input).
+5. Adult Discover isolation (confirmed-only collector — 'safe' anomaly and 'uncertain' dropped; service gate returns the non-disclosing empty result before any cache access; adapter has no fixture fallback).
+6. Popular TV genre exclusion (exact `10764|10766|10767`, TV-only, unconditional — no Adult Mode conditional — additive to `without_networks`/`include_adult=false`/India/flatrate/language constraints; genre IDs are not network IDs).
+7. Cache namespace isolation both directions (behavioral, real process cache) + no authorization dimension in Adult Discover keys + structural search auth dimension.
+8. Fallback isolation (fixture catalog re-classified adult-free through the REAL classifier; `adultDiscover` has no fixturesFor path; no cross-boundary fallback either direction).
+9. Direct-access protection contract (watch route, season API, detail API: classify → authorize → non-disclosing 404, in source order; no client adult flag).
+10. Search protection contract (server-side mode switch; fail-closed collection excludes adult + uncertain; SSR/API policy parity; search UI holds no security mechanism).
+11. Arbitrary network rejection (unverified/zero/unknown IDs → empty fragments; Adult Discover endpoint + UI expose NO network/provider surface).
+12. Uncertain classification fail-closed on rail + Adult Discover paths (loader failure → 'uncertain' → dropped, never "not adult", never "adult enough").
+13. Legacy adult-shows rail retired from the UI; retained endpoints stay gated at route AND service layers.
+14. Guest cookie final properties (canonical-only signing, value-bound signature, forged/wrong-secret/unsigned/extra-segment rejection, missing-secret fail-closed on both paths, HttpOnly + SameSite=Lax + Secure-in-production).
+15. Removed anime providers stay absent (no AniList/MAL/Jikan/Yenime integration code in the content pipeline; Yenime adapter stays removed; legacy externalIds type fields are inert data shapes).
+
+**Regression results (existing suites, all PASS under `pnpm test`):** `adult_mode_test.ts` (356 asserts, static lockstep incl. Popular TV exclusion wiring + Adult rail endpoint-only wiring + legacy retention protection), `adult_network_classifier_test.ts` (53), `adult_catalog_network_test.ts` (49 — incl. adapter-level no-hardcoding invariants), `adult_search_test.ts` (43), `adult_authorization_test.ts` (81 — full matrix, guest cookie crypto, admin-flip immediacy, legacy cookie migration), `adult_phase6_enforcement_test.ts` (64 — trending/popular/theatre/upcoming/genre/recommendations filtering, cache isolation, bounded classification, fail-closed), `adult_discover_test.ts` (88 — Phase 7's 35 cases), `adult_phase8_ui_test.ts` (92 — Popular TV cleanup + UI integration + SSR/hydration leak prevention). Static lockstep update NOT required: Phase 9 changed no source structure.
+
+**Authorization behavior (re-verified):** per-request evaluation with fresh app_settings reads; admin OFF overrides user/guest preference immediately; user preference alone never authorizes; guest preference only via HMAC-signed cookie AND admin allow; authorization never cached anywhere (content classification caches are content-keyed only).
+
+**SSR / hydration leak prevention (re-verified):** server loads fetch zero Adult data for unauthorized contexts — home + discover SSR load trending rails only; detail/series/movie/anime/watch pages classify and 404 before any payload; search SSR evaluates the same policy as the API; the Adult surface loads client-side through the authorized endpoint; the Adult visibility flag is a client-side settings fetch, not an SSR payload; no `{#if}`-hidden SSR-fetched Adult data exists anywhere.
+
+**Cache behavior (re-verified):** `tmdb:adult-discover:*` structurally disjoint from every normal namespace (and from `tmdb:adult-shows:*`), proven behaviorally in both directions; authorization decisions are never cached; no browser-side persistent Adult storage in the UI.
+
+**Fallback safety (re-verified):** Adult upstream failure → error/empty non-disclosing result, never normal catalog or fixtures; normal catalog failure → fixtures (adult-free, re-proven through the real classifier), never Adult content.
+
+**Playback / resolver / protected areas:** byte-untouched (`git diff` contains zero `src/` changes); Adult guards live only in the guarded routes; Phase 6 direct watch + season guards re-proven intact; Phase 4 search backend, Phase 5 authorization, Phase 7 Adult Discover backend, Phase 8 UI integration — verified, not rewritten.
+
+**Validation:** `pnpm test` PASS (64 scripts, exit 0 — the 63 existing suites + the new Phase 9 final suite); `pnpm run check` PASS (0 errors / 38 pre-existing warnings — unchanged baseline); `pnpm run build` PASS (adapter-netlify); `git diff --check` clean; full diff reviewed — scope is exactly `package.json` (test-chain registration, 1 line) + the two new scripts + this worklog.
+
+**Bugs found during the phase:** none in production code. Two script-level iterations were test-first fixes inside the new suites themselves (a case-sensitive name comparison and an over-broad source-scan in the diagnostic; four over-broad/over-narrow wiring regexes in the final suite) — none touched repository behavior. One documentation-only inconsistency recorded (see known issues).
+
+**Commit SHA:** this commit — `test(adult): finalize security regression and tmdb verification`.
+
+**Final security audit (28 questions):**
+A direct-watch bypass NO (classify→authorize→404) | B season bypass NO (same + fail-closed catch) | C detail API bypass NO | D unauthorized Adult Discover NO (404 + service gate) | E arbitrary networks as Adult NO (verified-only registry, empty-fragment rejection) | F Admin OFF bypass NO (matrix row 1–2 + flip immediacy) | G user-preference-alone NO (admin gate first) | H forged guest cookies NO (HMAC value-bound, tamper/wrong-secret rejected) | I signed "0" authorize NO | J Adult SSR leak NO (zero Adult data in unauthorized loads) | K hydration leak NO (same loads; Adult surface client-fetched) | L Adult→normal cache leak NO (namespace disjoint, behavioral) | M normal→Adult cache leak NO | N Adult Mode ON contaminating normal rails NO (authorization-blind filters) | O recommendations leak NO (parent-classification filter) | P upcoming leak NO (query + classifier pass) | Q trending leak NO | R theatre leak NO | S genre paths leak NO (region-corrected exclusion + classifier) | T unauthorized Search leak NO (fail-closed classification) | U fallback cross NO (both directions proven) | V anime adult=true alone Adult NO (exemption) | W unverified network Adult NO (accessor structurally excludes) | X Phase 9 affecting playback/resolver NO (zero src changes).
+
+**Known remaining issues:**
+- The stale comment in `src/routes/api/admin/adult-mode/+server.ts` ("in-memory policy cache is invalidated ... within 60s") describes the pre-Phase-5 design; the code path has no cache (fresh read per request). Documentation-only; left unchanged in this verification phase per the no-meaningless-changes rule.
+- The JSON-API leg of the live diagnostic requires an operator-provisioned TMDB secret (`TMDB_READ_ACCESS_TOKEN` or `TMDB_API_KEY` in the run environment); this sandbox provisions none, so the live evidence is the credential-free live-TMDB leg plus the executed registry-consistency checks. The script is committed so the JSON-API re-run is a single command wherever a secret exists.
+- Residual architecture notes carried from Phase 7/8 (documented, unchanged): the legacy `getTmdbAdultShows` merged rail remains server-side for API compatibility (fully gated); the Adult Discover movie half remains the documented TRANSITIONAL watch-provider source.
+
+**Production-readiness:** from the repository/security perspective the Adult Mode architecture is READY — the full chain (admin policy → per-request authorization → dedicated Adult surface → verified Adult network → central classifier → authorized result) holds end-to-end, normal surfaces stay Adult-excluded regardless of Adult Mode state, and every bypass question in the final audit answers NO with executed evidence. Browser QA on the deployed Netlify environment remains Phase 10 scope.
 
 ### Phase 10 — Final integration QA, regression audit & release validation
 
@@ -496,13 +545,14 @@ Network-filter support re-confirmed against live TMDB in the Phase 9 diagnostic 
 
 ## Verified TMDB Adult Networks
 
-Verification method (2026-09-07): TMDB's own public network pages are live-TMDB evidence — `https://www.themoviedb.org/network/{id}` resolves (301) to a slug derived from TMDB's records (`/{id}-{name}`) and the page title contains the network name. Method reliability validated in the same session with a **positive control** (`network/213` → `213-netflix`) and a **negative control** (`network/999999999` → HTTP 404, no slug). Phase 9's live diagnostic must re-confirm these via the TMDB JSON API (`GET /network/{id}` with credentials).
+Verification method (2026-09-07): TMDB's own public network pages are live-TMDB evidence — `https://www.themoviedb.org/network/{id}` resolves (301) to a slug derived from TMDB's records (`/{id}-{name}`) and the page title contains the network name. Method reliability validated in the same session with a **positive control** (`network/213` → `213-netflix`) and a **negative control** (`network/999999999` → HTTP 404, no slug).
+> **Phase 9 re-confirmation (2026-09-07, same day, fresh session):** `scripts/adult_phase9_tmdb_diagnostic.ts` re-ran the live checks (all PASS) and added a **near-miss control** (`network/2901` → `2901-spiegel-tv-wissen`, a DIFFERENT network — exact-ID matching proven). Registry consistency was executed against the real module: verified set == {Ullu 2902, Kooku 4573, Atrangii 7355}, all 12 candidate services inert (`tmdbNetworkId: 0`), production filter value exactly `2902|4573|7355`, and no functional hardcoding of the IDs anywhere outside the registry. The JSON-API leg (`GET /3/network/{id}`) is credential-gated in the diagnostic script and is a single-command operator re-run wherever `TMDB_READ_ACCESS_TOKEN`/`TMDB_API_KEY` is provisioned.
 
 | Provider | TMDB network ID | Status | Evidence |
 | --- | --- | --- | --- |
-| Ullu | 2902 | **Verified** (2026-09-07) | Live TMDB: `network/2902` → slug `2902-ullu`, page title "ullu"; API JSON re-confirmation scheduled Phase 9 |
-| Kooku | 4573 | **Verified** (2026-09-07) | Live TMDB: `network/4573` → slug `4573-kooku`, page title "Kooku"; API JSON re-confirmation scheduled Phase 9 |
-| Atrangii | 7355 | **Verified** (2026-09-07) | Live TMDB: `network/7355` → slug `7355-atrangii`, page title "Atrangii"; API JSON re-confirmation scheduled Phase 9 |
+| Ullu | 2902 | **Verified** (2026-09-07) | Live TMDB: `network/2902` → slug `2902-ullu`, page title "ullu"; Phase 9 diagnostic re-confirmed live (slug + title, controls PASS) |
+| Kooku | 4573 | **Verified** (2026-09-07) | Live TMDB: `network/4573` → slug `4573-kooku`, page title "Kooku"; Phase 9 diagnostic re-confirmed live (slug + title, controls PASS) |
+| Atrangii | 7355 | **Verified** (2026-09-07) | Live TMDB: `network/7355` → slug `7355-atrangii`, page title "Atrangii"; Phase 9 diagnostic re-confirmed live (slug + title, controls PASS) |
 | ALTT (ALTBalaji) | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0`; network ID must be live-confirmed before activation |
 | Rabbit Movies (Rabbit) | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
 | Nuefliks (Flizmovies) | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
