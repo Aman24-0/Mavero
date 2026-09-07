@@ -1,6 +1,6 @@
-import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason } from './adapters/tmdb';
+import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbAnimeMerged } from './adapters/tmdb';
 import { media } from '$data/content';
-import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, NormalizedMediaItem, SearchFilters } from './types';
+import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, DiscoverLanguage, DiscoverRailFilters, DiscoverSectionKey, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
 
 function fixtureSource(): NormalizedMediaItem['source'] {
@@ -113,12 +113,15 @@ function filterAnimeSeries(items: NormalizedMediaItem[]): NormalizedMediaItem[] 
 
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {
   try {
-    // Anime maps to the TMDB TV path. The TMDB adapter marks anime-flagged
-    // items via genre 16 + original_language 'ja'; we filter client-side.
-    const tmdbType: Exclude<ContentType, 'anime'> = type === 'anime' ? 'series' : type;
-    const result = await getTmdbDiscover(tmdbType, page);
-    const items = type === 'anime' ? filterAnimeSeries(result.items) : result.items;
-    return { ...result, items: rankForExposure(items) };
+    // Discover V2: anime now queries BOTH TMDB movie AND TMDB TV with
+    // `with_genres=16` + `with_original_language='ja'`, filters to
+    // isAnime === true, and merges. Anime movies keep type='movie';
+    // anime series keep type='series'. This preserves the canonical
+    // identity so cards / detail routes / resolver / playback all
+    // continue to work unchanged.
+    if (type === 'anime') return await getTmdbAnimeMerged('popularity', page);
+    const result = await getTmdbDiscover(type, page);
+    return { ...result, items: rankForExposure(result.items) };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -127,10 +130,10 @@ export async function discover(type: ContentType, page = 1): Promise<ContentList
 
 export async function collection(type: ContentType, page = 1, filters: CollectionFilters = {}): Promise<ContentList> {
   try {
-    const tmdbType: Exclude<ContentType, 'anime'> = type === 'anime' ? 'series' : type;
-    const result = await getTmdbCollection(tmdbType, page, filters);
-    const items = type === 'anime' ? filterAnimeSeries(result.items) : result.items;
-    return { ...result, items: rankForExposure(items, filters.sort === 'Top rated' ? 'top-rated' : filters.sort === 'Newest' ? 'newest' : 'for-you') };
+    // Discover V2: anime collection now merges movie + TV anime.
+    if (type === 'anime') return await getTmdbAnimeMerged(filters.sort === 'Top rated' ? 'top-rated' : 'popularity', page);
+    const result = await getTmdbCollection(type, page, filters);
+    return { ...result, items: rankForExposure(result.items, filters.sort === 'Top rated' ? 'top-rated' : filters.sort === 'Newest' ? 'newest' : 'for-you') };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type).slice(0, 20), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -139,10 +142,10 @@ export async function collection(type: ContentType, page = 1, filters: Collectio
 
 export async function popular(type: ContentType, page = 1): Promise<ContentList> {
   try {
-    const tmdbType: Exclude<ContentType, 'anime'> = type === 'anime' ? 'series' : type;
-    const result = await getTmdbPopular(tmdbType, page);
-    const items = type === 'anime' ? filterAnimeSeries(result.items) : result.items;
-    return { ...result, items: rankForExposure(items) };
+    // Discover V2: anime popular now merges movie + TV anime.
+    if (type === 'anime') return await getTmdbAnimeMerged('popularity', page);
+    const result = await getTmdbPopular(type, page);
+    return { ...result, items: rankForExposure(result.items) };
   } catch (error) {
     if (!canFallback(error)) throw error;
     return { items: fixturesFor(type), page, hasNextPage: false, source: { provider: 'fixtures', fetchedAt: new Date().toISOString(), stale: true } };
@@ -276,6 +279,100 @@ export async function getDetail(type: ContentType, id: string): Promise<ContentD
 
 export function getFixtureContent(type: ContentType) {
   return fixturesFor(type);
+}
+
+// ============================================================
+// Discover V2 — typed rail query builder.
+//
+// `discoverRail` is the single server-side entry point for the new
+// data-driven Discover page. The browser sends a `DiscoverRailFilters`
+// (section key + language + optional provider + page); the server maps
+// the section key to the right TMDB endpoint + filters and returns a
+// `ContentList`. The browser never sends raw TMDB paths or arbitrary
+// filter values.
+//
+// CRITICAL: there is NO fixture fallback here. If the upstream TMDB
+// query fails, the rail returns an empty list with `hasNextPage: false`
+// so the page renders the section as unavailable rather than filling
+// it with fake content. This is the contract the spec requires.
+// ============================================================
+
+const GENRE_ID_BY_SECTION: Record<Extract<DiscoverSectionKey, `genre-${string}`>, number> = {
+  'genre-action': 28,
+  'genre-adventure': 12,
+  'genre-comedy': 35,
+  'genre-crime': 80,
+  'genre-thriller': 53,
+  'genre-scifi': 878,
+  'genre-drama': 18,
+  'genre-horror': 27,
+  'genre-romance': 10749,
+};
+
+export function isDiscoverSectionKey(value: string): value is DiscoverSectionKey {
+  return value === 'theatre' || value === 'new-ott'
+    || value === 'popular-movie' || value === 'popular-series' || value === 'popular-anime'
+    || value === 'top-rated-movie' || value === 'top-rated-series' || value === 'top-rated-anime'
+    || /^genre-(action|adventure|comedy|crime|thriller|scifi|drama|horror|romance)$/.test(value);
+}
+
+export function isDiscoverLanguage(value: string): value is DiscoverLanguage {
+  return value === 'all' || value === 'hi' || value === 'en' || value === 'ta' || value === 'te' || value === 'ml' || value === 'kn' || value === 'other';
+}
+
+export async function discoverRail(filters: DiscoverRailFilters): Promise<ContentList> {
+  const section = filters.section;
+  const language = filters.language;
+  const page = Math.max(1, Math.min(Number(filters.page ?? 1) || 1, 20));
+  try {
+    switch (section) {
+      case 'theatre':
+        return await getTmdbNowPlaying(language, page);
+      case 'new-ott':
+        return await getTmdbNewOnOtt(filters.provider, language, page);
+      case 'popular-movie':
+        return await getTmdbPopularByLanguage('movie', language, page);
+      case 'popular-series':
+        return await getTmdbPopularByLanguage('series', language, page);
+      case 'popular-anime':
+        return await getTmdbAnimeMerged('popularity', page);
+      case 'top-rated-movie':
+        return await getTmdbTopRated('movie', language, page);
+      case 'top-rated-series':
+        return await getTmdbTopRated('series', language, page);
+      case 'top-rated-anime':
+        return await getTmdbAnimeMerged('top-rated', page);
+      default: {
+        // Genre sections.
+        if (section in GENRE_ID_BY_SECTION) {
+          const genreId = GENRE_ID_BY_SECTION[section as Extract<DiscoverSectionKey, `genre-${string}`>];
+          return await getTmdbGenreByLanguage(genreId, language, page);
+        }
+        throw new ContentServiceError('Unknown Discover section.', { code: 'NOT_FOUND', status: 404 });
+      }
+    }
+  } catch (error) {
+    // NO fixture fallback — empty rail on failure, per the spec.
+    if (error instanceof ContentServiceError && (error.code === 'CONFIG_MISSING' || error.code === 'NOT_FOUND')) throw error;
+    return { items: [], page, hasNextPage: false, source: { provider: 'tmdb', fetchedAt: new Date().toISOString(), stale: true } };
+  }
+}
+
+/**
+ * Merged anime collection — used by the /discover/anime Explore page.
+ *
+ * Queries BOTH TMDB movie AND TMDB TV with `with_genres=16` +
+ * `with_original_language=ja`, filters to isAnime === true, merges,
+ * and dedupes by canonical type+id. Anime movies keep type='movie';
+ * anime series keep type='series'. This preserves the canonical
+ * identity so cards / detail routes / resolver / playback / My List
+ * / progress / deletion all continue to work unchanged.
+ *
+ * `sort` selects between popularity and top-rated ranking.
+ * `page` is 1-indexed; each page returns 10 unique anime titles.
+ */
+export async function discoverAnime(sort: 'popularity' | 'top-rated', page = 1): Promise<ContentList> {
+  return discoverRail({ section: sort === 'top-rated' ? 'top-rated-anime' : 'popular-anime', language: 'all', page });
 }
 
 export const contentServiceInternals = { fixturesFor, fixtureDetail, canFallback, audienceConfidence, rankForExposure, isUsableItem, uniqueUsableItems, selectFeatured };

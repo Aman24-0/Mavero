@@ -115,6 +115,69 @@ export type SearchFilters = {
   sort?: SearchSort;
 };
 
+// ============================================================
+// Discover V2 — India-first catalog dimensions.
+//
+// The Discover page is now data-driven: each section has a stable
+// `DiscoverSectionKey` and (for language-filterable sections) a
+// `DiscoverLanguage` filter. The server's `discoverRail()` builder
+// is the single source of truth for which TMDB endpoint + filters
+// correspond to each section key — the browser never sends raw TMDB
+// paths or arbitrary filter values.
+//
+// "All" is genuinely mixed: it issues ONE unfiltered catalog query
+// (no language-bucket concatenation). India-first prioritization
+// comes from `region=IN` / `watch_region=IN` / theatre availability,
+// NOT from artificially reordering the All result.
+// ============================================================
+
+export type DiscoverLanguage =
+  | 'all'
+  | 'hi'    // Hindi
+  | 'en'    // English
+  | 'ta'    // Tamil
+  | 'te'    // Telugu
+  | 'ml'    // Malayalam
+  | 'kn'    // Kannada
+  | 'other'; // every TMDB original_language NOT in the above 6
+
+export type DiscoverSectionKey =
+  | 'theatre'
+  | 'new-ott'
+  | 'popular-movie'
+  | 'popular-series'
+  | 'popular-anime'
+  | 'top-rated-movie'
+  | 'top-rated-series'
+  | 'top-rated-anime'
+  | 'genre-action'
+  | 'genre-adventure'
+  | 'genre-comedy'
+  | 'genre-crime'
+  | 'genre-thriller'
+  | 'genre-scifi'
+  | 'genre-drama'
+  | 'genre-horror'
+  | 'genre-romance';
+
+export type DiscoverRailFilters = {
+  section: DiscoverSectionKey;
+  language: DiscoverLanguage;
+  // OTT provider id (TMDB provider_id) — only meaningful for section='new-ott'.
+  // Empty string means "All OTT" (mixed across all India providers).
+  provider?: string;
+  page?: number;
+};
+
+export type DiscoverProvider = {
+  providerId: number;
+  name: string;
+  logoPath: string | null;
+  // Stable URL-safe key derived from the provider name, used as the
+  // `provider` query param so the client never sends raw ids.
+  key: string;
+};
+
 export type ContentSearchResult = ContentList & {
   query: string;
   filters?: SearchFilters;

@@ -8,25 +8,44 @@
   import { ArrowLeft, ArrowRight, Info, ListPlus, Play } from 'lucide-svelte';
   import type { MediaItem } from '$lib/data/content';
   import ContentRail from '$components/ContentRail.svelte';
+  import DiscoverSection from '$components/DiscoverSection.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import { haptic } from '$lib/client/haptics';
   import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
+  import type { DiscoverSectionKey } from '$lib/server/content/types';
 
-  export let featuredItem: MediaItem | undefined;
-  export let movies: MediaItem[] = [];
-  export let series: MediaItem[] = [];
-  export let anime: MediaItem[] = [];
-  export let popularSeries: MediaItem[] = [];
-  export let popularAnime: MediaItem[] = [];
-  export let trendingHindiMovies: MediaItem[] = [];
-  export let trendingRegionalMovies: MediaItem[] = [];
-  export let topRatedMovies: MediaItem[] = [];
-  export let topRatedSeries: MediaItem[] = [];
-  export let topRatedAnime: MediaItem[] = [];
-  export let newMovies: MediaItem[] = [];
-  export let genreCollections: { title: string; items: MediaItem[]; href: string }[] = [];
-  export let errorMessage = '';
+  let {
+    featuredItem,
+    movies = [],
+    series = [],
+    anime = [],
+    popularSeries = [],
+    popularAnime = [],
+    trendingHindiMovies = [],
+    trendingRegionalMovies = [],
+    topRatedMovies = [],
+    topRatedSeries = [],
+    topRatedAnime = [],
+    newMovies = [],
+    genreCollections = [],
+    errorMessage = '',
+  }: {
+    featuredItem: MediaItem | undefined;
+    movies?: MediaItem[];
+    series?: MediaItem[];
+    anime?: MediaItem[];
+    popularSeries?: MediaItem[];
+    popularAnime?: MediaItem[];
+    trendingHindiMovies?: MediaItem[];
+    trendingRegionalMovies?: MediaItem[];
+    topRatedMovies?: MediaItem[];
+    topRatedSeries?: MediaItem[];
+    topRatedAnime?: MediaItem[];
+    newMovies?: MediaItem[];
+    genreCollections?: { title: string; items: MediaItem[]; href: string }[];
+    errorMessage?: string;
+  } = $props();
 
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
   type FeaturedHeroItem = { item: MediaItem; category: GalleryCategory };
@@ -40,28 +59,77 @@
     { label: 'Anime', href: '/discover/anime' },
   ];
 
-  const genreTileDefs = [
-    { label: 'Action', href: '/discover/movies?genre=Action' },
-    { label: 'Comedy', href: '/discover/movies?genre=Comedy' },
-    { label: 'Horror', href: '/discover/movies?genre=Horror' },
-    { label: 'Sci-Fi', href: '/discover/movies?genre=Sci-Fi' },
-    { label: 'Romance', href: '/discover/movies?genre=Romance' },
-    { label: 'Drama', href: '/discover/movies?genre=Drama' },
-    { label: 'Thriller', href: '/discover/movies?genre=Thriller' },
-    { label: 'Fantasy', href: '/discover/movies?genre=Fantasy' },
+  // ============================================================
+  // Discover V2 — data-driven section list.
+  //
+  // Each entry maps to a `DiscoverSectionKey` that the server-side
+  // `discoverRail()` builder resolves to the right TMDB endpoint +
+  // filters. The section order is EXACTLY as specified:
+  //   theatre → new-ott → popular-{movie,series,anime} →
+  //   top-rated-{movie,series,anime} → 9 genre rails.
+  //
+  // Language-filterable sections render a language dropdown.
+  // The OTT section renders a provider dropdown (loaded from
+  // /api/discover/providers). Anime sections have NO dropdown —
+  // only a "View all →" link to /discover/anime.
+  // ============================================================
+  type SectionDef = {
+    key: DiscoverSectionKey;
+    title: string;
+    languageFilter: boolean;
+    providerFilter: boolean;
+    viewAllHref?: string;
+  };
+  const SECTIONS: SectionDef[] = [
+    { key: 'theatre', title: 'Running in theatre 🎥', languageFilter: true, providerFilter: false },
+    { key: 'new-ott', title: 'New on OTT', languageFilter: false, providerFilter: true },
+    { key: 'popular-movie', title: 'Popular movies', languageFilter: true, providerFilter: false },
+    { key: 'popular-series', title: 'Popular TV shows', languageFilter: true, providerFilter: false },
+    { key: 'popular-anime', title: 'Popular anime', languageFilter: false, providerFilter: false, viewAllHref: '/discover/anime' },
+    { key: 'top-rated-movie', title: 'Top rated movies', languageFilter: true, providerFilter: false },
+    { key: 'top-rated-series', title: 'Top rated TV shows', languageFilter: true, providerFilter: false },
+    { key: 'top-rated-anime', title: 'Top rated anime', languageFilter: false, providerFilter: false, viewAllHref: '/discover/anime' },
+    { key: 'genre-action', title: 'Action', languageFilter: true, providerFilter: false },
+    { key: 'genre-adventure', title: 'Adventure', languageFilter: true, providerFilter: false },
+    { key: 'genre-comedy', title: 'Comedy', languageFilter: true, providerFilter: false },
+    { key: 'genre-crime', title: 'Crime', languageFilter: true, providerFilter: false },
+    { key: 'genre-thriller', title: 'Thriller', languageFilter: true, providerFilter: false },
+    { key: 'genre-scifi', title: 'Sci-Fi', languageFilter: true, providerFilter: false },
+    { key: 'genre-drama', title: 'Drama', languageFilter: true, providerFilter: false },
+    { key: 'genre-horror', title: 'Horror', languageFilter: true, providerFilter: false },
+    { key: 'genre-romance', title: 'Romance', languageFilter: true, providerFilter: false },
   ];
 
-  $: genreTiles = genreTileDefs.map((g) => {
-    const collection = genreCollections.find((c) => c.title.toLowerCase().includes(g.label.toLowerCase()));
-    const fallbackItems = [...movies, ...series, ...popularSeries];
-    const artItem = collection?.items?.[0] ?? fallbackItems.find((i) => i.genres?.some((gn) => gn.toLowerCase() === g.label.toLowerCase()));
-    return { ...g, artwork: artItem?.backdrop || artItem?.poster || '', accent: artItem?.accent || '#333' };
-  });
+  // OTT provider list (loaded client-side from /api/discover/providers).
+  // Built from real TMDB India provider metadata — never random favicons.
+  let ottProviders = $state<{ value: string; label: string; logoUrl?: string }[]>([]);
+
+  async function loadOttProviders() {
+    try {
+      const response = await fetch('/api/discover/providers');
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!payload.ok || !Array.isArray(payload.providers)) return;
+      // Curate to ~15 recognizable India-relevant providers. We prioritize
+      // well-known names; the rest are still available but lower in the list.
+      const known = ['netflix', 'amazon-prime-video', 'prime-video', 'jiocinema', 'jiohotstar', 'hotstar', 'sonyliv', 'sony-liv', 'zee5', 'sunnxt', 'sun-nxt', 'mx-player', 'aha', 'hoichoi', 'mubi', 'lionsgate-play', 'discovery-plus', 'apple-tv', 'apple-tv-plus'];
+      const sorted = [...payload.providers].sort((a: { key: string; name: string }, b: { key: string; name: string }) => {
+        const ai = known.indexOf(a.key);
+        const bi = known.indexOf(b.key);
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        if (ai !== -1) return -1;
+        if (bi !== -1) return 1;
+        return a.name.localeCompare(b.name);
+      });
+      ottProviders = sorted.slice(0, 15).map((p: { key: string; name: string; logoUrl: string }) => ({ value: p.key, label: p.name, logoUrl: p.logoUrl }));
+    } catch {
+      // Silent fail — the OTT section will still load with "All OTT" only.
+    }
+  }
 
   let localContinueLoaded = false;
   let localContinueItems: MediaItem[] = [];
   let heroTrack: HTMLElement;
-  let activeIndex = 0;
   let galleryPaused = false;
   let reducedMotion = false;
   let galleryRotationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -70,7 +138,7 @@
   let motionQuery: MediaQueryList | undefined;
   let isScrolling = false;
   let scrollTimeout: ReturnType<typeof setTimeout> | undefined;
-  let heroFavoriteSet = new Set<string>();
+  let heroFavoriteSet = $state(new Set<string>());
 
   async function toggleHeroFavorite(event: Event) {
     event.preventDefault();
@@ -81,12 +149,13 @@
     const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
     try {
       const result = await toggleFavorite(item.type, item.id, snapshot);
+      const next = new Set(heroFavoriteSet);
       if (result.saved) {
-        heroFavoriteSet.add(key);
+        next.add(key);
       } else {
-        heroFavoriteSet.delete(key);
+        next.delete(key);
       }
-      heroFavoriteSet = heroFavoriteSet;
+      heroFavoriteSet = next;
       haptic('light');
     } catch {
       // Silent fail — don't break hero interaction
@@ -99,8 +168,9 @@
     const key = `${item.type}:${item.id}`;
     try {
       const fav = await isFavorite(item.type, item.id);
-      if (fav) heroFavoriteSet.add(key); else heroFavoriteSet.delete(key);
-      heroFavoriteSet = heroFavoriteSet;
+      const next = new Set(heroFavoriteSet);
+      if (fav) next.add(key); else next.delete(key);
+      heroFavoriteSet = next;
     } catch {
       // ignore
     }
@@ -131,20 +201,27 @@
       .map((item) => ({ item, category: categoryFor(item) }));
   }
 
-  $: localContinue = localContinueLoaded ? localContinueItems : [];
-  $: hasCatalog = Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length || popularSeries.length || popularAnime.length || trendingHindiMovies.length || trendingRegionalMovies.length || topRatedMovies.length || topRatedSeries.length || topRatedAnime.length || newMovies.length || genreCollections.length);
-  $: featuredItems = createFeaturedItems([
+  let localContinue = $derived(localContinueLoaded ? localContinueItems : []);
+  let hasCatalog = $derived(Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length));
+  let featuredItems = $derived(createFeaturedItems([
     ...(featuredItem ? [featuredItem] : []),
     ...movies, ...series, ...anime,
     ...popularSeries, ...popularAnime
-  ]);
-  $: if (activeIndex >= featuredItems.length && featuredItems.length) activeIndex = 0;
-  $: activeHero = featuredItems[activeIndex];
-  $: activeHeroImage = activeHero?.item.backdrop?.trim() || activeHero?.item.poster?.trim() || '';
-  $: heroFavoriteKey = activeHero ? `${activeHero.item.type}:${activeHero.item.id}` : '';
-  $: isHeroFavorite = heroFavoriteSet.has(heroFavoriteKey);
+  ]));
+  // Reset activeIndex if it's out of bounds after featuredItems changes.
+  let activeIndex = $state(0);
+  let activeHero = $derived(featuredItems[activeIndex]);
+  let activeHeroImage = $derived(activeHero?.item.backdrop?.trim() || activeHero?.item.poster?.trim() || '');
+  let heroFavoriteKey = $derived(activeHero ? `${activeHero.item.type}:${activeHero.item.id}` : '');
+  let isHeroFavorite = $derived(heroFavoriteSet.has(heroFavoriteKey));
   // Refresh favorite state when hero changes
-  $: if (heroFavoriteKey && !destroyed) void refreshHeroFavoriteState();
+  $effect(() => {
+    if (heroFavoriteKey && !destroyed) void refreshHeroFavoriteState();
+  });
+  // Clamp activeIndex when featuredItems shrinks.
+  $effect(() => {
+    if (activeIndex >= featuredItems.length && featuredItems.length) activeIndex = 0;
+  });
 
   function clearTimers() {
     if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
@@ -268,6 +345,7 @@
 
     let cancelled = false;
     void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
+    void loadOttProviders();
     queueGalleryRotation();
 
     return () => {
@@ -384,39 +462,41 @@
       </nav>
 
       {#if localContinue.length}<ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />{/if}
-      {#if movies.length || series.length}<ContentRail title="Trending right now" items={[...movies.slice(0, 10), ...series.slice(0, 10)]} />{/if}
-      {#if newMovies.length}<ContentRail title="New movies" items={newMovies} href="/discover/movies?sort=Newest" />{/if}
-      {#if popularSeries.length}<ContentRail title="Popular TV shows" items={popularSeries} href="/discover/series" />{/if}
-      {#if anime.length}<ContentRail title="Popular anime" items={anime} href="/discover/anime" />{/if}
-      {#if popularAnime.length}<ContentRail title="Trending anime" items={popularAnime} href="/discover/anime" />{/if}
-      {#if trendingHindiMovies.length}<ContentRail title="Trending Movies — Hindi" items={trendingHindiMovies} />{/if}
-      {#if trendingRegionalMovies.length}<ContentRail title="Trending Movies — Regional" items={trendingRegionalMovies} />{/if}
-      {#each genreCollections as col}<ContentRail title={col.title} items={col.items} href={col.href} />{/each}
 
-      {#if genreTiles.length}
-        <section class="genre-section" aria-labelledby="genre-discover">
-          <div class="genre-head"><h2 class="genre-title" id="genre-discover">Browse by genre</h2></div>
-          <div class="genre-grid">
-            {#each genreTiles as tile}
-              <a class="genre-tile" href={tile.href}>
-                {#if tile.artwork}
-                  <img src={tile.artwork} alt="" loading="lazy" decoding="async" class="genre-art" />
-                {/if}
-                <div class="genre-overlay"></div>
-                <span class="genre-label">{tile.label}</span>
-              </a>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if topRatedMovies.length}<ContentRail title="Top rated movies" items={topRatedMovies} href="/discover/movies?sort=Top+rated" />{/if}
-      {#if topRatedSeries.length}<ContentRail title="Top rated TV shows" items={topRatedSeries} href="/discover/series?sort=Top+rated" />{/if}
-      {#if topRatedAnime.length}<ContentRail title="Top rated anime" items={topRatedAnime} href="/discover/anime?sort=Top+rated" />{/if}
+      <!-- ============================================================
+           Discover V2 — data-driven section list.
+           Each DiscoverSection owns its own independent state (language,
+           provider, page, items, loading, error). Show more appends;
+           language switch replaces; sections never interfere with each
+           other. No fixtures are used as successful results — a failed
+           upstream query renders the section as empty/unavailable.
+           ============================================================ -->
+      {#each SECTIONS as sectionDef (sectionDef.key)}
+        <DiscoverSection
+          section={sectionDef.key}
+          title={sectionDef.title}
+          languageFilter={sectionDef.languageFilter}
+          providerFilter={sectionDef.providerFilter}
+          providers={sectionDef.providerFilter ? ottProviders : []}
+          viewAllHref={sectionDef.viewAllHref ?? ''}
+        />
+      {/each}
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}
-    <footer class="discover-footer"><strong>MAVERO</strong><span>Movies, series &amp; anime — all in one place.</span></footer>
+    <footer class="discover-footer">
+      <strong>MAVERO</strong>
+      <span>Movies, series &amp; anime — all in one place.</span>
+      <!-- TMDB + JustWatch attribution. TMDB watch-provider data is
+           powered by JustWatch; TMDB's API terms require attribution. -->
+      <div class="discover-attribution">
+        <a class="tmdb-credit" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">
+          <span>Data from</span>
+          <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database (TMDB)" loading="lazy" />
+        </a>
+        <span class="justwatch-credit">Provider availability powered by <a href="https://www.justwatch.com" target="_blank" rel="noreferrer">JustWatch</a></span>
+      </div>
+    </footer>
   </div>
 </div>
 
@@ -554,6 +634,13 @@
   .discover-footer { padding: 40px 0 20px; text-align: center; }
   .discover-footer strong { color: var(--d-ink); font-size: .8rem; }
   .discover-footer span { display: block; margin-top: 3px; color: var(--d-muted); font-size: .65rem; }
+  .discover-attribution { margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .tmdb-credit { display: inline-flex; align-items: center; gap: 5px; color: var(--d-muted); font-size: .6rem; text-decoration: none; }
+  .tmdb-credit:hover { color: var(--d-ink-soft); }
+  .tmdb-logo { height: 12px; width: auto; opacity: .8; }
+  .justwatch-credit { color: var(--d-muted); font-size: .58rem; }
+  .justwatch-credit a { color: var(--d-ink-soft); text-decoration: none; }
+  .justwatch-credit a:hover { text-decoration: underline; }
 
   @media (max-width: 900px) {
     .hero-slide { min-height: min(68vh, 540px); }

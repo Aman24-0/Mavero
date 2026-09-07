@@ -96,57 +96,38 @@ export async function loadCollectionData(type: ContentType, url: URL) {
 type GenreCollection = { title: string; items: MediaItem[]; href: string };
 
 export async function loadDiscoverData() {
+  // Discover V2: the page is now data-driven — each content section
+  // loads its own data client-side via /api/discover/rail. The server
+  // load only needs to fetch enough for the hero gallery's featured
+  // item (trending movie + series + anime). This keeps SSR fast and
+  // avoids N parallel server-side TMDB calls.
   const [
-    trendingMovies, trendingSeries, trendingAnime,
-    popularSeries, popularAnime,
-    trendingHindiMovies, trendingRegionalMovies,
-    topRatedMovies, topRatedSeries, topRatedAnime,
-    newMovies,
-    actionMovies, comedyMovies, horrorMovies, sciFiMovies, romanceMovies
+    trendingMovies, trendingSeries, trendingAnime
   ] = await Promise.all([
     loadRail('movie', 'trending'),
     loadRail('series', 'trending'),
-    loadRail('anime', 'trending'),
-    loadRail('series', 'popular'),
-    loadRail('anime', 'popular'),
-    loadTrendingMoviesByLanguages(HINDI_MOVIE_LANGUAGES),
-    loadTrendingMoviesByLanguages(REGIONAL_INDIAN_MOVIE_LANGUAGES),
-    loadTopRated('movie'),
-    loadTopRated('series'),
-    loadTopRated('anime'),
-    loadNewest('movie'),
-    loadGenreCollection('movie', 'Action'),
-    loadGenreCollection('movie', 'Comedy'),
-    loadGenreCollection('movie', 'Horror'),
-    loadGenreCollection('movie', 'Sci-Fi'),
-    loadGenreCollection('movie', 'Romance'),
+    loadRail('anime', 'trending')
   ]);
 
-  const errors = [trendingMovies, trendingSeries, trendingAnime, popularSeries, popularAnime]
+  const errors = [trendingMovies, trendingSeries, trendingAnime]
     .flatMap((rail) => rail.error ? [rail.error] : []);
-
-  // Build genre collections with non-empty items only
-  const genreCollections: GenreCollection[] = [
-    { title: 'Blockbuster Action', items: actionMovies.items, href: '/discover/movies?genre=Action' },
-    { title: 'Comedy Night', items: comedyMovies.items, href: '/discover/movies?genre=Comedy' },
-    { title: 'Spine-Chilling Horror', items: horrorMovies.items, href: '/discover/movies?genre=Horror' },
-    { title: 'Mind-Bending Sci-Fi', items: sciFiMovies.items, href: '/discover/movies?genre=Sci-Fi' },
-    { title: 'Heartwarming Romance', items: romanceMovies.items, href: '/discover/movies?genre=Romance' },
-  ].filter((col) => col.items.length > 0);
 
   return {
     movies: trendingMovies.items,
     series: trendingSeries.items,
     anime: trendingAnime.items,
-    popularSeries: popularSeries.items,
-    popularAnime: popularAnime.items,
-    trendingHindiMovies: trendingHindiMovies.items,
-    trendingRegionalMovies: trendingRegionalMovies.items,
-    topRatedMovies: topRatedMovies.items,
-    topRatedSeries: topRatedSeries.items,
-    topRatedAnime: topRatedAnime.items,
-    newMovies: newMovies.items,
-    genreCollections,
+    // The following fields are kept for backward compatibility with
+    // any code that still references them, but are now empty — the
+    // new DiscoverSection components fetch their own data.
+    popularSeries: [],
+    popularAnime: [],
+    trendingHindiMovies: [],
+    trendingRegionalMovies: [],
+    topRatedMovies: [],
+    topRatedSeries: [],
+    topRatedAnime: [],
+    newMovies: [],
+    genreCollections: [],
     featured: selectFeatured([...trendingMovies.items, ...trendingSeries.items, ...trendingAnime.items]),
     errorMessage: errors.length ? `${[...new Set(errors)].join(' ')} Check the server catalog configuration and try again.` : undefined
   };

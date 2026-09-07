@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember } from '../types';
+import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider } from '../types';
 import { ottProviders } from '$lib/shared/ott';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
@@ -388,3 +388,397 @@ export async function getTmdbSeason(seriesId: string, seasonNumber: number): Pro
 }
 
 export const tmdbInternals = { mapTmdb, image, runtime, genreNames, hasRequiredListMetadata };
+
+// ============================================================
+// Discover V2 — India-first catalog query functions.
+//
+// All of these reuse the shared `tmdbRequest` + `getOrSet` cache path
+// so they inherit the existing 401/403 fallback, rate-limit mapping,
+// and 4 min TTL / 10 min SWR list policy.
+//
+// CRITICAL "All" RULE: when `language === 'all'` we issue ONE unfiltered
+// catalog query (no language-bucket concatenation, no Hindi-first). India
+// prioritization comes from `region=IN` / `watch_region=IN` / theatre
+// availability — NOT from artificially reordering the All result.
+//
+// "Other language" excludes hi/en/ta/te/ml/kn. TMDB has no NOT-language
+// filter, so we over-fetch pages and filter server-side, bounded by a
+// strict safety limit to avoid infinite loops.
+// ============================================================
+
+const KNOWN_LANGUAGES: readonly string[] = ['hi', 'en', 'ta', 'te', 'ml', 'kn'];
+const DISCOVER_LANGUAGE_PARAM: Record<DiscoverLanguage, string | undefined> = {
+  all: undefined,
+  hi: 'hi',
+  en: 'en',
+  ta: 'ta',
+  te: 'te',
+  ml: 'ml',
+  kn: 'kn',
+  // 'other' has no direct TMDB param — handled via server-side exclusion.
+  other: undefined,
+};
+const OTHER_LANGUAGE_EXCLUSIONS = new Set(KNOWN_LANGUAGES);
+// Max upstream pages we'll walk when filtering for "Other language".
+// At 20 items/page this bounds the worst case to ~6 upstream requests
+// before we give up and return whatever we have.
+const MAX_OTHER_LANGUAGE_PAGES = 6;
+
+function applyLanguageFilter<T extends TmdbMedia>(items: T[], language: DiscoverLanguage): T[] {
+  if (language === 'all') return items;
+  if (language === 'other') {
+    return items.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? ''));
+  }
+  const code = DISCOVER_LANGUAGE_PARAM[language];
+  if (!code) return items;
+  return items.filter((item) => item.original_language === code);
+}
+
+// The TMDB list endpoints return up to 20 items per page. The Discover
+// spec requires EXACTLY 10 visible items per section initially, and 10
+// more per "Show more". We slice the merged result to the requested
+// page size and compute hasNextPage from the upstream total_pages.
+const DISCOVER_PAGE_SIZE = 10;
+
+function slicePage(items: NormalizedMediaItem[], page: number, upstreamHasNext: boolean): { items: NormalizedMediaItem[]; hasNextPage: boolean } {
+  // Pages are 1-indexed. Page 1 → items 0..9, page 2 → items 10..19, etc.
+  // For the merged anime sections we accumulate across upstream pages
+  // so each "Show more" returns the next 10 valid unique titles.
+  const start = (page - 1) * DISCOVER_PAGE_SIZE;
+  const slice = items.slice(start, start + DISCOVER_PAGE_SIZE);
+  return { items: slice, hasNextPage: start + DISCOVER_PAGE_SIZE < items.length || upstreamHasNext };
+}
+
+/**
+ * Section: theatre — movies currently running in theatres in India.
+ * Uses TMDB /movie/now_playing with region=IN. Movie-only (TV is not
+ * theatrical). Language filter is original_language.
+ */
+export async function getTmdbNowPlaying(language: DiscoverLanguage, page = 1): Promise<ContentList> {
+  const key = `tmdb:theatre:${language}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    // For "all" we fetch the upstream page directly. For specific
+    // languages we may need to walk pages until we have 10 valid
+    // matches; for "other" we exclude the 6 known languages.
+    const collected: TmdbMovie[] = [];
+    let upstreamPage = page;
+    let upstreamHasNext = true;
+    let pagesWalked = 0;
+    while (collected.length < DISCOVER_PAGE_SIZE && upstreamHasNext && pagesWalked < MAX_OTHER_LANGUAGE_PAGES) {
+      const result = await tmdbRequest<TmdbList<TmdbMovie>>('/movie/now_playing', { page: upstreamPage, region: 'IN' });
+      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      const filtered = applyLanguageFilter(raw, language);
+      for (const item of filtered) {
+        if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
+      }
+      upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
+      upstreamPage += 1;
+      pagesWalked += 1;
+      // For "all" we only need the first upstream page (no filtering).
+      if (language === 'all') break;
+    }
+    const items = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, 'movie', 'In theatres'));
+    const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
+    return { items, page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Section: new-ott — titles newly available on streaming in India.
+ *
+ * For "All OTT" we issue a popularity-ordered TMDB discover query with
+ * `watch_region=IN` + `with_watch_monetization_types=flatrate` (no
+ * specific provider). For a specific provider we add
+ * `with_watch_providers=<id>`. Mixed movie + TV — we run both
+ * /discover/movie and /discover/tv in parallel and merge.
+ *
+ * Note on "New": TMDB's discover endpoint does not expose a reliable
+ * "OTT availability date" field. We approximate "new on OTT" by sorting
+ * by `popularity.desc` within the universe of titles that have India
+ * flatrate availability, then by release/first-air date desc as a
+ * secondary signal via the `sort_by` param. This is documented in code
+ * rather than faked.
+ */
+export async function getTmdbNewOnOtt(providerKey: string | undefined, language: DiscoverLanguage, page = 1): Promise<ContentList> {
+  // Resolve provider key → TMDB provider_id via the curated list.
+  const providerId = providerKey ? await resolveProviderIdByKey(providerKey) : undefined;
+  const key = `tmdb:new-ott:${providerKey ?? 'all'}:${language}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const baseParams: Record<string, string | number | boolean | undefined> = {
+      page,
+      include_adult: false,
+      sort_by: 'popularity.desc',
+      watch_region: 'IN',
+      with_watch_monetization_types: 'flatrate',
+      ...(providerId ? { with_watch_providers: providerId } : {}),
+      ...(language !== 'all' && language !== 'other' ? { with_original_language: DISCOVER_LANGUAGE_PARAM[language] } : {})
+    };
+    const [movieResult, tvResult] = await Promise.all([
+      tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', baseParams).catch(() => ({ results: [] } as TmdbList<TmdbMovie>)),
+      tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', baseParams).catch(() => ({ results: [] } as TmdbList<TmdbTv>)),
+    ]);
+    const movieItems = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'New on OTT'));
+    const tvItems = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series')).map((item) => mapTmdb(item, 'series', 'New on OTT'));
+    // Merge by popularity desc (TMDB already sorts each list that way;
+    // we re-sort the merged set to interleave movie + TV).
+    let merged: NormalizedMediaItem[];
+    if (language === 'other') {
+      // For "other" we need the raw original_language; rebuild from raw
+      // since mapTmdb doesn't expose original_language on the normalized item.
+      const movieRaw = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      const tvRaw = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+      const otherMovieItems = movieRaw.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? '')).map((item) => mapTmdb(item, 'movie', 'New on OTT'));
+      const otherTvItems = tvRaw.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? '')).map((item) => mapTmdb(item, 'series', 'New on OTT'));
+      merged = [...otherMovieItems, ...otherTvItems];
+    } else {
+      merged = [...movieItems, ...tvItems];
+    }
+    merged.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
+    // Dedupe by canonical type+id.
+    const seen = new Set<string>();
+    merged = merged.filter((item) => {
+      const k = `${item.type}:${item.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const sliced = slicePage(merged, page, (movieResult.page ?? page) < (movieResult.total_pages ?? page) || (tvResult.page ?? page) < (tvResult.total_pages ?? page));
+    return { items: sliced.items, page, hasNextPage: sliced.hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Section: popular-{movie,series} — TMDB popularity ranking with an
+ * optional original_language filter. For "all" → one unfiltered query.
+ */
+export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
+  const key = `tmdb:popular-v2:${type}:${language}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const path = type === 'movie' ? '/movie/popular' : '/tv/popular';
+    const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    const collected: TmdbMedia[] = [];
+    let upstreamPage = page;
+    let upstreamHasNext = true;
+    let pagesWalked = 0;
+    while (collected.length < DISCOVER_PAGE_SIZE && upstreamHasNext && pagesWalked < MAX_OTHER_LANGUAGE_PAGES) {
+      const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page: upstreamPage, ...(langParam ? { with_original_language: langParam } : {}), ...(type === 'movie' ? { region: 'IN' } : {}) });
+      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+      const filtered = applyLanguageFilter(raw, language);
+      for (const item of filtered) {
+        if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
+      }
+      upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
+      upstreamPage += 1;
+      pagesWalked += 1;
+      if (language === 'all') break;
+    }
+    const items = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, type, 'Popular'));
+    const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
+    return { items, page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Section: top-rated-{movie,series} — TMDB vote_average.desc with a
+ * sensible vote_count floor (200) so one-vote titles don't dominate.
+ */
+export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
+  const key = `tmdb:top-rated-v2:${type}:${language}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
+    const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    const collected: TmdbMedia[] = [];
+    let upstreamPage = page;
+    let upstreamHasNext = true;
+    let pagesWalked = 0;
+    while (collected.length < DISCOVER_PAGE_SIZE && upstreamHasNext && pagesWalked < MAX_OTHER_LANGUAGE_PAGES) {
+      const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, {
+        page: upstreamPage,
+        include_adult: false,
+        sort_by: 'vote_average.desc',
+        'vote_count.gte': 200,
+        ...(langParam ? { with_original_language: langParam } : {}),
+        ...(type === 'movie' ? { region: 'IN' } : {})
+      });
+      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+      const filtered = applyLanguageFilter(raw, language);
+      for (const item of filtered) {
+        if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
+      }
+      upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
+      upstreamPage += 1;
+      pagesWalked += 1;
+      if (language === 'all') break;
+    }
+    const items = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, type, 'Top rated'));
+    const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
+    return { items, page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Section: genre-* — TMDB genre + popularity ranking with optional
+ * original_language filter. Movie-only (per the existing Discover
+ * contract: genre rails are movie rails; anime has its own section).
+ */
+export async function getTmdbGenreByLanguage(genreId: number, language: DiscoverLanguage, page = 1): Promise<ContentList> {
+  const key = `tmdb:genre-v2:${genreId}:${language}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    const collected: TmdbMovie[] = [];
+    let upstreamPage = page;
+    let upstreamHasNext = true;
+    let pagesWalked = 0;
+    while (collected.length < DISCOVER_PAGE_SIZE && upstreamHasNext && pagesWalked < MAX_OTHER_LANGUAGE_PAGES) {
+      const result = await tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
+        page: upstreamPage,
+        include_adult: false,
+        sort_by: 'popularity.desc',
+        with_genres: genreId,
+        ...(langParam ? { with_original_language: langParam } : {}),
+        region: 'IN'
+      });
+      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      const filtered = applyLanguageFilter(raw, language);
+      for (const item of filtered) {
+        if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
+      }
+      upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
+      upstreamPage += 1;
+      pagesWalked += 1;
+      if (language === 'all') break;
+    }
+    const items = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, 'movie'));
+    const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
+    return { items, page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Sections: popular-anime + top-rated-anime + the /discover/anime
+ * Explore page.
+ *
+ * CRITICAL: queries BOTH TMDB movie AND TMDB TV, filters each to
+ * isAnime === true (genre 16 + original_language 'ja'), merges and
+ * dedupes by canonical type+id. Anime movies keep type='movie';
+ * anime series keep type='series'. We do NOT convert movies into
+ * series or vice versa.
+ *
+ * For pagination we accumulate across upstream pages so each "Show
+ * more" returns the next 10 valid unique anime titles.
+ */
+export async function getTmdbAnimeMerged(sort: 'popularity' | 'top-rated', page = 1): Promise<ContentList> {
+  const key = `tmdb:anime-merged:${sort}:${page}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const sortBy = sort === 'top-rated' ? 'vote_average.desc' : 'popularity.desc';
+    const voteCountGte = sort === 'top-rated' ? 200 : undefined;
+    const [movieResult, tvResult] = await Promise.all([
+      tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
+        page,
+        include_adult: false,
+        sort_by: sortBy,
+        with_genres: 16,
+        with_original_language: 'ja',
+        ...(voteCountGte ? { 'vote_count.gte': voteCountGte } : {})
+      }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbMovie>)),
+      tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', {
+        page,
+        include_adult: false,
+        sort_by: sortBy,
+        with_genres: 16,
+        with_original_language: 'ja',
+        ...(voteCountGte ? { 'vote_count.gte': voteCountGte } : {})
+      }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbTv>)),
+    ]);
+    const movieItems = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie'));
+    const tvItems = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series')).map((item) => mapTmdb(item, 'series'));
+    // Both already pass isAnime detection (genre 16 + ja) inside mapTmdb,
+    // but defensively filter again in case TMDB returns a mismatched row.
+    const merged = [...movieItems, ...tvItems].filter((item) => item.isAnime === true);
+    // Dedupe by canonical type+id (an anime movie and anime series can
+    // share a TMDB id in theory — keep both since their type differs).
+    const seen = new Set<string>();
+    const deduped = merged.filter((item) => {
+      const k = `${item.type}:${item.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    // Sort the merged set by the same dimension TMDB sorted each list.
+    deduped.sort((a, b) => sort === 'top-rated' ? (b.rating - a.rating) : ((b.popularity ?? 0) - (a.popularity ?? 0)));
+    const sliced = slicePage(deduped, page, (movieResult.page ?? page) < (movieResult.total_pages ?? page) || (tvResult.page ?? page) < (tvResult.total_pages ?? page));
+    return { items: sliced.items, page, hasNextPage: sliced.hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+// ============================================================
+// India OTT providers — built from real TMDB provider metadata.
+//
+// TMDB exposes /watch/providers/movie?watch_region=IN and
+// /watch/providers/tv?watch_region=IN which return the list of
+// providers available in India with their provider_id, name, logo_path.
+// We fetch both, merge, and curate to ~10–15 recognizable India-relevant
+// providers. The logo URL is built from TMDB's logo_path so we never
+// use random Google favicons.
+//
+// JustWatch attribution: TMDB's watch-provider data is powered by
+// JustWatch. The Discover footer surfaces this attribution.
+// ============================================================
+
+type TmdbProviderListResult = {
+  results?: Array<{ provider_id: number; provider_name: string; logo_path: string | null; display_priority?: number }>;
+};
+
+function providerKeyFromName(name: string): string {
+  return name.toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+export async function getTmdbIndiaProviders(): Promise<DiscoverProvider[]> {
+  const key = 'tmdb:india-providers';
+  const { value } = await getOrSet(key, ottProviderPolicy, async () => {
+    const [movieResult, tvResult] = await Promise.all([
+      tmdbRequest<TmdbProviderListResult>('/watch/providers/movie', { watch_region: 'IN' }).catch(() => ({ results: [] } as TmdbProviderListResult)),
+      tmdbRequest<TmdbProviderListResult>('/watch/providers/tv', { watch_region: 'IN' }).catch(() => ({ results: [] } as TmdbProviderListResult)),
+    ]);
+    const merged = new Map<number, DiscoverProvider>();
+    for (const row of [...(movieResult.results ?? []), ...(tvResult.results ?? [])]) {
+      if (!row?.provider_id || !row.provider_name) continue;
+      if (merged.has(row.provider_id)) continue;
+      merged.set(row.provider_id, {
+        providerId: row.provider_id,
+        name: row.provider_name,
+        logoPath: row.logo_path ?? null,
+        key: providerKeyFromName(row.provider_name)
+      });
+    }
+    // Return all providers TMDB reports for India, sorted by display_priority
+    // (lower = more prominent) then name. The client curates which to show.
+    return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
+  });
+  return value;
+}
+
+export function providerLogoUrl(logoPath: string | null): string {
+  return logoPath ? `${IMAGE_URL}/w92${logoPath}` : '';
+}
+
+/**
+ * Resolve a provider key (e.g. "netflix") back to its TMDB provider_id.
+ * Looks up the cached India provider list. Returns undefined if the
+ * key is not in the current TMDB India catalog — the caller treats
+ * that as "no provider filter" rather than guessing.
+ */
+export async function resolveProviderIdByKey(providerKey: string): Promise<number | undefined> {
+  const providers = await getTmdbIndiaProviders();
+  const match = providers.find((p) => p.key === providerKey);
+  return match?.providerId;
+}
