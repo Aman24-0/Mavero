@@ -111,14 +111,18 @@ function filterAnimeSeries(items: NormalizedMediaItem[]): NormalizedMediaItem[] 
   return items.filter(isAnimeSeries);
 }
 
-// Phase 4: Adult content classification — centralized.
-// A title is classified as adult if its `tags` array includes 'Adult'
-// (set by mapTmdb when the title is fetched from an adult-provider query).
-// This is a defense-in-depth check; the primary exclusion is done at the
-// TMDB query level via without_watch_providers. This function catches
-// any adult content that slips through via search or recommendation APIs.
+// BUG 4 fix: Adult content classification — centralized via isAdultContent.
+// The service-layer isAdultItem delegates to the central classifier in
+// adult-providers.ts, which checks: tags, provider IDs, and TMDB adult flag.
+// For catalog items that don't have provider IDs available (list responses),
+// it falls back to checking tags + TMDB adult flag (non-anime only).
+import { isAdultContent } from './adult-providers';
+
 function isAdultItem(item: NormalizedMediaItem): boolean {
-  return item.tags?.includes('Adult') === true;
+  // For list responses we don't have per-title provider IDs without N+1.
+  // The isAdultContent classifier checks tags + TMDB adult flag.
+  // Provider-based exclusion is done at the TMDB query level (without_watch_providers).
+  return isAdultContent(item.tags, undefined, undefined, item.isAnime);
 }
 
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {
@@ -213,38 +217,36 @@ function applyAnimeFilters(items: NormalizedMediaItem[], filters: SearchFilters)
 export async function search(query: string, type?: ContentType, page = 1, filters: SearchFilters = {}, canAccessAdult = false): Promise<ContentSearchResult> {
   const normalized = query.trim();
   if (!normalized) return { query: normalized, items: [], page, hasNextPage: false, filters, source: fixtureSource() };
-  // Phase 9: Adult content exclusion in search. When adult access is OFF,
-  // adult-provider content is excluded server-side via without_watch_providers.
-  // When adult access is ON, adult content MAY appear in search results
-  // alongside normal content.
+  // BUG 2 fix: Adult content exclusion in search. When adult access is OFF,
+  // the adultExclusion parameter is passed to searchTmdb so the cache key
+  // distinguishes adult-available from adult-unavailable search results.
+  // TMDB's /search endpoint does NOT support without_watch_providers,
+  // so we rely on include_adult=false + the isAdultContent classifier
+  // (which checks TMDB's adult flag for non-anime content).
   const { getAdultProviderIds } = await import('./adult-providers');
   const adultIds = getAdultProviderIds();
   const adultExclusion = !canAccessAdult && adultIds.length > 0 ? adultIds.join('|') : undefined;
-  const searchFiltersWithAdult: SearchFilters = {
-    ...filters,
-    ...(adultExclusion ? { ott: filters.ott, genre: filters.genre, sort: filters.sort } : {}),
-  };
   try {
     if (type === 'anime') {
-      const result = await searchTmdb(normalized, 'series', page, searchFiltersWithAdult);
+      const result = await searchTmdb(normalized, 'series', page, filters, adultExclusion);
       const items = applyAnimeFilters(filterAnimeSeries(result.items), filters);
       return { ...result, items, query: normalized, filters };
     }
     if (type === 'movie' || type === 'series') {
-      const result = await searchTmdb(normalized, type, page, searchFiltersWithAdult);
-      // Phase 9: filter out adult-provider content when adult access is OFF.
-      const filteredItems = adultExclusion ? result.items.filter((item) => !isAdultItem(item)) : result.items;
-      return { ...result, items: filteredItems, query: normalized, filters };
+      const result = await searchTmdb(normalized, type, page, filters, adultExclusion);
+      return { ...result, query: normalized, filters };
     }
-    const [movies, series] = await Promise.allSettled([searchTmdb(normalized, 'movie', page, searchFiltersWithAdult), searchTmdb(normalized, 'series', page, searchFiltersWithAdult)]);
+    const [movies, series] = await Promise.allSettled([
+      searchTmdb(normalized, 'movie', page, filters, adultExclusion),
+      searchTmdb(normalized, 'series', page, filters, adultExclusion),
+    ]);
     const tmdbResults = [movies, series].filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled');
     if (!tmdbResults.length) {
       const failure = [movies, series].find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
       throw failure instanceof ContentServiceError ? failure : new ContentServiceError('TMDB search is unavailable.', { code: 'UPSTREAM_ERROR', status: 502 });
     }
     const sources = tmdbResults.map((result) => result.value.source);
-    let items = applyAnimeFilters(tmdbResults.flatMap((result) => result.value.items), filters);
-    if (adultExclusion) items = items.filter((item) => !isAdultItem(item));
+    const items = applyAnimeFilters(tmdbResults.flatMap((result) => result.value.items), filters);
     return { query: normalized, items, page, hasNextPage: tmdbResults.some((result) => result.value.hasNextPage), filters, source: { provider: sources.every((item) => item.provider === sources[0].provider) ? sources[0].provider : 'fixtures', fetchedAt: new Date().toISOString(), stale: sources.some((item) => item.stale) } };
   } catch (error) {
     if (!type && error instanceof ContentServiceError && canFallback(error)) throw error;

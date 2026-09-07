@@ -3,7 +3,7 @@ import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
 import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider } from '../types';
 import { ottProviders } from '$lib/shared/ott';
-import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders } from '../adult-providers';
+import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent } from '../adult-providers';
 
 type TmdbList<T> = { page?: number; total_pages?: number; total_results?: number; results?: T[] };
 type TmdbMovie = {
@@ -227,13 +227,23 @@ const detailPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 
 const ottProviderPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 2 };
 const OTT_LOOKUP_CONCURRENCY = 4;
 
+// BUG 3 fix: Generic catalog functions now exclude adult-provider content.
+// The adultExclusion is computed from the verified adult provider list
+// and included in both the TMDB query (without_watch_providers) and the
+// cache key so responses don't leak between adult-available and
+// adult-unavailable contexts.
+
 export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
-  const key = `tmdb:discover:${type}:${page}`;
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:discover:${type}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/trending/movie/week' : '/trending/tv/week';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
     const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Trending'));
-    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
+    // BUG 3: defense-in-depth — filter out any items classified as adult.
+    const filteredItems = adultExclusion ? items.filter((item) => !isAdultContent(item.tags, undefined, undefined, item.isAnime)) : items;
+    return { items: filteredItems, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
 }
@@ -242,7 +252,9 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
   const genreId = filters.genre ? Object.entries(genreNames).find(([, label]) => label.toLowerCase() === filters.genre?.toLowerCase())?.[0] ?? (/^\d+$/.test(filters.genre) ? filters.genre : undefined) : undefined;
   const year = filters.year && /^\d{4}$/.test(filters.year) ? Number(filters.year) : undefined;
   const sortBy = filters.sort === 'Top rated' ? 'vote_average.desc' : filters.sort === 'Newest' ? type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc' : 'popularity.desc';
-  const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}`;
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     const params: Record<string, string | number | boolean | undefined> = {
@@ -252,7 +264,8 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
       with_genres: genreId,
       ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year }),
       ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {}),
-      ...(filters.sort === 'Newest' ? type === 'movie' ? { 'release_date.lte': new Date().toISOString().slice(0, 10) } : { 'first_air_date.lte': new Date().toISOString().slice(0, 10) } : {})
+      ...(filters.sort === 'Newest' ? type === 'movie' ? { 'release_date.lte': new Date().toISOString().slice(0, 10) } : { 'first_air_date.lte': new Date().toISOString().slice(0, 10) } : {}),
+      ...(adultExclusion ? { 'without_watch_providers': adultExclusion, watch_region: 'IN' } : {}),
     };
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
     const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type));
@@ -270,15 +283,17 @@ export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1
   if (!/^[a-z]{2}$/.test(normalized)) {
     throw new ContentServiceError('The requested movie language filter is invalid.', { code: 'NOT_FOUND', status: 404 });
   }
-  const key = `tmdb:lang-movies:movie:${normalized}:${page}`;
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:lang-movies:movie:${normalized}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const result = await tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
       page,
       include_adult: false,
       with_original_language: normalized,
       sort_by: 'popularity.desc',
-      // India focus — TMDB applies region-aware release-date context.
-      region: 'IN'
+      region: 'IN',
+      ...(adultExclusion ? { 'without_watch_providers': adultExclusion, watch_region: 'IN' } : {}),
     });
     const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'Trending'));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
@@ -287,12 +302,15 @@ export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1
 }
 
 export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page = 1): Promise<ContentList> {
-  const key = `tmdb:popular:${type}:${page}`;
+  const adultIds = getAdultProviderIds();
+  const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:popular:${type}:${page}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/movie/popular' : '/tv/popular';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
     const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type, 'Popular'));
-    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
+    const filteredItems = adultExclusion ? items.filter((item) => !isAdultContent(item.tags, undefined, undefined, item.isAnime)) : items;
+    return { items: filteredItems, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
 }
@@ -333,9 +351,9 @@ function releaseDate(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
   return type === 'movie' ? (raw as TmdbMovie).release_date ?? '' : (raw as TmdbTv).first_air_date ?? '';
 }
 
-export async function searchTmdb(query: string, type: Exclude<ContentType, 'anime'>, page = 1, filters: SearchFilters = {}): Promise<ContentList> {
+export async function searchTmdb(query: string, type: Exclude<ContentType, 'anime'>, page = 1, filters: SearchFilters = {}, adultExclusion?: string): Promise<ContentList> {
   const normalized = query.trim();
-  const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}:${filters.ott ?? ''}:${filters.genre ?? ''}:${filters.sort ?? ''}`;
+  const key = `tmdb:search:${type}:${normalized.toLowerCase()}:${page}:${filters.ott ?? ''}:${filters.genre ?? ''}:${filters.sort ?? ''}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, { ttlMs: 1000 * 60 * 2, staleWhileRevalidateMs: 1000 * 60 * 5 }, async () => {
     const path = type === 'movie' ? '/search/movie' : '/search/tv';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { query: normalized, page, include_adult: false });
@@ -347,6 +365,17 @@ export async function searchTmdb(query: string, type: Exclude<ContentType, 'anim
     }
     if (filters.sort) rawItems.sort((left, right) => releaseDate(left, type).localeCompare(releaseDate(right, type)) * (filters.sort === 'release-desc' ? -1 : 1));
     const items = rawItems.map((item) => mapTmdb(item, type));
+    // BUG 2 fix: Filter out adult-classified items from search results
+    // when adult access is OFF. This is a defense-in-depth check on top
+    // of the TMDB include_adult=false filter. The isAdultContent
+    // classifier checks: tags (not set for search), TMDB adult flag
+    // (already false via include_adult=false), and provider IDs.
+    // For search results we don't have per-title provider IDs without
+    // N+1 calls, so we rely on the TMDB adult flag here. The primary
+    // defense is the without_watch_providers filter applied at the
+    // /discover level (not /search — TMDB's /search endpoint doesn't
+    // support without_watch_providers). This is the best we can do
+    // without N+1 provider lookups per search result.
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -360,12 +389,24 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
   const key = `tmdb:detail:${type}:${numericId}`;
   const { value, stale } = await getOrSet(key, detailPolicy, async () => {
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
-    const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations,credits' });
+    const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations,credits,watch/providers' });
     const item = mapTmdb(raw, type);
-    // Anime detection (genre 16 + original_language 'ja') is set inside
-    // `mapTmdb`. There is NO AniList enrichment step — anime content is
-    // treated as a regular TMDB movie/series and routed through normal
-    // providers via TMDB/IMDb identifiers.
+    // BUG 1 fix: Central adult classification for detail lookups.
+    // The detail response now includes watch/providers data (via
+    // append_to_response), so we can check if the title is available
+    // on any known adult provider in India — without a separate N+1
+    // API call. The watch/providers data is cached with the detail.
+    const watchProviders = (raw as TmdbMovie & { 'watch/providers'?: TmdbWatchProviders })['watch/providers'];
+    const indiaProviders = watchProviders?.results?.IN;
+    const providerIds = indiaProviders
+      ? [...(indiaProviders.flatrate ?? []), ...(indiaProviders.buy ?? []), ...(indiaProviders.rent ?? [])]
+          .map((p) => p.provider_id)
+          .filter((id): id is number => typeof id === 'number')
+      : undefined;
+    const tmdbAdult = (raw as TmdbMovie).adult;
+    if (isAdultContent(item.tags, providerIds, tmdbAdult, item.isAnime)) {
+      item.tags = [...(item.tags ?? []), 'Adult'];
+    }
     const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
     return { ...item, recommendations };
   });

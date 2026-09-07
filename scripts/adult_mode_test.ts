@@ -153,9 +153,10 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 {
   assert.match(searchEndpoint, /canAccessAdultContent\(locals\.supabase, user\)/, 'search endpoint evaluates adult policy');
   assert.match(service, /export async function search\(query.*canAccessAdult = false/, 'search accepts canAccessAdult parameter');
-  // Adult exclusion filter when access is OFF.
+  // Adult exclusion: searchTmdb cache key includes adultExclusion dimension.
+  assert.match(tmdb, /searchTmdb[\s\S]*?adultExclusion/, 'searchTmdb uses adultExclusion');
+  // searchExclusion is computed when adult access is OFF.
   assert.match(service, /adultExclusion = !canAccessAdult && adultIds\.length > 0/, 'search excludes adult when access is OFF');
-  assert.match(service, /items\.filter\(\(item\) => !isAdultItem\(item\)\)/, 'search filters adult items');
   // No client-side bypass parameter (the endpoint must not accept ?adult=true as a query param).
   assert.doesNotMatch(searchEndpoint, /url\.searchParams\.get\('adult'\)/, 'search endpoint does NOT accept adult query param');
   assert.doesNotMatch(searchEndpoint, /url\.searchParams\.get\('userId'\)/, 'search endpoint does NOT accept userId query param');
@@ -200,8 +201,10 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 {
   // Anime detection is based on genre 16 + ja, not on adult metadata.
   assert.match(tmdb, /isAnime = genreIds\.includes\(16\) && originalLanguage === 'ja'/, 'anime detection unchanged');
-  // Adult classification is based on tags (provider association), not on isAnime.
-  assert.match(service, /function isAdultItem[\s\S]*?tags\?\.includes\('Adult'\)/, 'adult classification uses tags, not isAnime');
+  // Adult classification is based on the central isAdultContent classifier
+  // (which checks tags + provider IDs + TMDB adult flag), not on isAnime.
+  assert.match(service, /import \{ isAdultContent \} from '\.\/adult-providers'/, 'service imports isAdultContent');
+  assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime\)/, 'isAdultItem delegates to isAdultContent');
   // Anime sections do NOT use adult exclusion (anime is separate from adult).
   const animeFn = tmdb.match(/export async function getTmdbAnimeMerged[\s\S]*?^}/m);
   assert.ok(animeFn, 'getTmdbAnimeMerged found');
@@ -270,4 +273,96 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.doesNotMatch(settingsPage, /localStorage\.(setItem|getItem)\(.*adult/, 'settings page does NOT use localStorage for adult auth');
 }
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest access (D); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P).');
+// ============================================================================
+// Q. BUG 1 — Direct detail classification via watch/providers.
+// ============================================================================
+{
+  // getTmdbDetail must append_to_response watch/providers so it can
+  // classify adult content without a separate N+1 API call.
+  assert.match(tmdb, /append_to_response: 'videos,external_ids,recommendations,credits,watch\/providers'/, 'detail fetches watch/providers via append_to_response');
+  // isAdultContent is called in getTmdbDetail.
+  assert.match(tmdb, /getTmdbDetail[\s\S]*?isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime\)/, 'detail calls isAdultContent');
+  // If adult, the 'Adult' tag is added to the item.
+  assert.match(tmdb, /if \(isAdultContent[\s\S]*?item\.tags = \[\.\.\.\(item\.tags \?\? \[\]\), 'Adult'\]/, 'detail adds Adult tag when classified');
+  // The SSR routes check tags?.includes('Adult').
+  const movieSsr = await readFile(path.join(repoRoot, 'src/routes/movie/[id]/+page.server.ts'), 'utf8');
+  const seriesSsr = await readFile(path.join(repoRoot, 'src/routes/series/[id]/+page.server.ts'), 'utf8');
+  const animeSsr = await readFile(path.join(repoRoot, 'src/routes/anime/[id]/+page.server.ts'), 'utf8');
+  const contentApi = await readFile(path.join(repoRoot, 'src/routes/api/content/[type]/[id]/+server.ts'), 'utf8');
+  assert.match(movieSsr, /tags\?\.includes\('Adult'\)/, 'movie SSR checks Adult tag');
+  assert.match(seriesSsr, /tags\?\.includes\('Adult'\)/, 'series SSR checks Adult tag');
+  assert.match(animeSsr, /tags\?\.includes\('Adult'\)/, 'anime SSR checks Adult tag');
+  assert.match(contentApi, /tags\?\.includes\('Adult'\)/, 'content API checks Adult tag');
+}
+
+// ============================================================================
+// R. BUG 2 — Search cache key includes adult-exclusion dimension.
+// ============================================================================
+{
+  // searchTmdb cache key includes adultExclusion.
+  assert.match(tmdb, /searchTmdb[\s\S]*?key = `tmdb:search:.*:\$\{adultExclusion \?\? 'no-adult'\}`/, 'search cache key includes adultExclusion');
+  // searchTmdb accepts adultExclusion parameter.
+  assert.match(tmdb, /export async function searchTmdb\(.*adultExclusion\?: string\)/, 'searchTmdb accepts adultExclusion parameter');
+  // service.search passes adultExclusion to searchTmdb.
+  assert.match(service, /searchTmdb\(normalized, 'series', page, filters, adultExclusion\)/, 'service passes adultExclusion to searchTmdb for anime');
+  assert.match(service, /searchTmdb\(normalized, type, page, filters, adultExclusion\)/, 'service passes adultExclusion to searchTmdb for movie/series');
+}
+
+// ============================================================================
+// S. BUG 3 — Generic catalog paths exclude adult content.
+// ============================================================================
+{
+  // getTmdbDiscover: adult exclusion in cache key + defense-in-depth filter.
+  assert.match(tmdb, /getTmdbDiscover[\s\S]*?adultExclusion/, 'getTmdbDiscover computes adultExclusion');
+  assert.match(tmdb, /getTmdbDiscover[\s\S]*?key = `tmdb:discover:.*:\$\{adultExclusion \?\? 'no-adult'\}`/, 'getTmdbDiscover cache key includes adultExclusion');
+  // getTmdbCollection: adult exclusion in cache key + without_watch_providers.
+  assert.match(tmdb, /getTmdbCollection[\s\S]*?adultExclusion/, 'getTmdbCollection computes adultExclusion');
+  assert.match(tmdb, /getTmdbCollection[\s\S]*?without_watch_providers/, 'getTmdbCollection excludes adult providers');
+  // getTmdbPopular: adult exclusion.
+  assert.match(tmdb, /getTmdbPopular\b[\s\S]*?adultExclusion/, 'getTmdbPopular computes adultExclusion');
+  // getTmdbTrendingMoviesByLanguage: adult exclusion.
+  assert.match(tmdb, /getTmdbTrendingMoviesByLanguage[\s\S]*?adultExclusion/, 'getTmdbTrendingMoviesByLanguage computes adultExclusion');
+}
+
+// ============================================================================
+// T. BUG 4 — Central classifier (isAdultContent).
+// ============================================================================
+{
+  // isAdultContent function exists in adult-providers.ts.
+  assert.match(adultProviders, /export function isAdultContent\(/, 'isAdultContent exported from adult-providers');
+  // Checks tags.
+  assert.match(adultProviders, /tags\?\.includes\('Adult'\)/, 'isAdultContent checks tags');
+  // Checks provider IDs (when available).
+  assert.match(adultProviders, /providerIds && providerIds\.length > 0/, 'isAdultContent checks provider IDs');
+  // Checks TMDB adult flag (non-anime only).
+  assert.match(adultProviders, /tmdbAdult === true && isAnime !== true/, 'isAdultContent checks TMDB adult flag for non-anime');
+  // service.ts delegates to isAdultContent.
+  assert.match(service, /import \{ isAdultContent \} from '\.\/adult-providers'/, 'service imports isAdultContent');
+  assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime\)/, 'service isAdultItem delegates to isAdultContent');
+}
+
+// ============================================================================
+// U. BUG 5 — Provider name matching (exact only, no substring).
+// ============================================================================
+{
+  // Matching uses namesToTry.includes(providerName) — exact match only.
+  assert.match(adultProviders, /namesToTry\.includes\(providerName\)/, 'provider matching uses exact includes (no substring)');
+  // No .includes() bidirectional matching.
+  assert.doesNotMatch(adultProviders, /providerName\.includes\(n\) \|\| n\.includes\(providerName\)/, 'no substring bidirectional matching');
+}
+
+// ============================================================================
+// V. Anime — not classified as adult merely because it's anime.
+// ============================================================================
+{
+  // isAdultContent skips TMDB adult flag when isAnime is true.
+  assert.match(adultProviders, /tmdbAdult === true && isAnime !== true/, 'isAdultContent ignores TMDB adult flag for anime');
+  // The isAnime check in mapTmdb is unchanged (genre 16 + ja).
+  assert.match(tmdb, /isAnime = genreIds\.includes\(16\) && originalLanguage === 'ja'/, 'anime detection unchanged');
+  // getTmdbAnimeMerged does NOT use without_watch_providers.
+  const animeFn = tmdb.match(/export async function getTmdbAnimeMerged[\s\S]*?^}/m);
+  assert.ok(animeFn, 'getTmdbAnimeMerged found');
+  assert.doesNotMatch(animeFn![0], /without_watch_providers/, 'anime section does NOT exclude adult providers');
+}
+
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest access (D); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V).');

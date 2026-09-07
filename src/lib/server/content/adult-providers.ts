@@ -78,12 +78,12 @@ export function resolveAdultProviders(
 ): AdultOttProvider[] {
   const result: AdultOttProvider[] = [];
   for (const entry of ADULT_PROVIDER_REGISTRY) {
-    // Try primary name + aliases against the TMDB India provider list.
-    // Match case-insensitively, trimming whitespace.
+    // Match ONLY by exact name or explicitly configured alias.
+    // No substring matching — "Rabbit" must NOT match "Rabbit Hole Studios".
     const namesToTry = [entry.name, ...(entry.aliases ?? [])].map((n) => n.toLowerCase().trim());
     const match = indiaProviders.find((p) => {
       const providerName = p.name.toLowerCase().trim();
-      return namesToTry.some((n) => providerName === n || providerName.includes(n) || n.includes(providerName));
+      return namesToTry.includes(providerName);
     });
     if (match) {
       result.push({
@@ -150,4 +150,64 @@ export function getAdultOttProviders(): AdultOttProvider[] {
 export function invalidateAdultProviderCache(): void {
   resolvedProviders = null;
   resolvedAt = 0;
+}
+
+// ============================================================
+// BUG 4: Central adult content classifier.
+//
+// A title is classified as adult if ANY of:
+//   1. Its `tags` array includes 'Adult' (set by getTmdbAdultShows).
+//   2. Its India watch providers include a known adult provider ID.
+//   3. TMDB's `adult` boolean is true AND it's not anime.
+//
+// This function does NOT classify:
+//   - anime (genre 16 + ja) as adult
+//   - mature-rated content as adult
+//   - romance/violence as adult
+//
+// The function accepts the item's `tags` (from NormalizedMediaItem)
+// and an optional set of provider IDs available for the title in India.
+// The caller is responsible for fetching provider IDs if needed
+// (via the TMDB /watch/providers endpoint, cached).
+// ============================================================
+
+/**
+ * Classify whether a content item is adult.
+ *
+ * @param tags - The item's tags array (from NormalizedMediaItem.tags).
+ * @param providerIds - Optional: the set of TMDB provider IDs available
+ *   for this title in India. If provided, the function checks whether
+ *   any of them are known adult providers.
+ * @param tmdbAdult - Optional: TMDB's `adult` boolean flag. Only used
+ *   as a secondary signal — never the sole classifier.
+ * @param isAnime - Optional: if true, TMDB adult flag is ignored
+ *   (anime should not be classified as adult based on TMDB's flag).
+ * @returns true if the item is classified as adult.
+ */
+export function isAdultContent(
+  tags: string[] | undefined,
+  providerIds: number[] | undefined,
+  tmdbAdult: boolean | undefined,
+  isAnime: boolean | undefined
+): boolean {
+  // Signal 1: explicit Adult tag (set by the adult section query).
+  if (tags?.includes('Adult') === true) return true;
+
+  // Signal 2: title is available on a known adult provider in India.
+  if (providerIds && providerIds.length > 0) {
+    const cached = getCachedAdultProviders();
+    if (cached && cached.length > 0) {
+      for (const pid of providerIds) {
+        if (cached.some((p) => p.tmdbProviderId === pid)) return true;
+      }
+    }
+  }
+
+  // Signal 3: TMDB's adult boolean — ONLY for non-anime content.
+  // Anime can have adult=true in TMDB but should not be classified
+  // as adult merely because of that flag (it may be mature anime
+  // like Attack on Titan, which is not adult-provider content).
+  if (tmdbAdult === true && isAnime !== true) return true;
+
+  return false;
 }

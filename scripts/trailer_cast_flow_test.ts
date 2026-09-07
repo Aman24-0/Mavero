@@ -26,7 +26,7 @@ console.log('Trailer + cast data-flow contract tests');
 
 // --- 1. TMDB adapter extracts trailerKey from YouTube Trailer video ---
 assert.match(tmdbSrc, /trailerKey:\s*raw\.videos\?\.results\?\.find\(\(video\)\s*=>\s*video\.site\s*===\s*'YouTube'\s*&&\s*video\.type\s*===\s*'Trailer'\)\?\.key/, 'TMDB adapter extracts YouTube Trailer key');
-assert.match(tmdbSrc, /append_to_response:\s*'videos,external_ids,recommendations,credits'/, 'TMDB adapter appends credits to detail request');
+assert.match(tmdbSrc, /append_to_response:\s*'videos,external_ids,recommendations,credits,watch\/providers'/, 'TMDB adapter appends credits + watch/providers to detail request');
 
 // --- 2. TMDB adapter extracts cast from credits ---
 assert.match(tmdbSrc, /function extractCast/, 'TMDB adapter defines extractCast helper');
