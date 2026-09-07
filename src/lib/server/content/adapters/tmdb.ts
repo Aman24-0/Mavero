@@ -27,6 +27,7 @@ type TmdbMovie = {
   recommendations?: TmdbList<TmdbMovie>;
   credits?: TmdbCredits;
 };
+type TmdbNetwork = { id?: number; name?: string | null; logo_path?: string | null; origin_country?: string[] };
 type TmdbTv = {
   id: number;
   name?: string;
@@ -46,6 +47,12 @@ type TmdbTv = {
   episode_run_time?: number[];
   in_production?: boolean;
   status?: string;
+  /**
+   * TV networks (production/broadcast). Present in the /tv/{id} detail
+   * response; list endpoints do not return it. Consumed by the adult
+   * classifier via the VERIFIED adult network registry (adult-networks.ts).
+   */
+  networks?: TmdbNetwork[];
   external_ids?: { imdb_id?: string | null };
   videos?: { results?: { key?: string; site?: string; type?: string }[] };
   recommendations?: TmdbList<TmdbTv>;
@@ -106,6 +113,23 @@ function runtime(minutes: number | null | undefined, fallback = 'Feature length'
 function dateYear(value?: string) {
   const year = Number(value?.slice(0, 4));
   return Number.isFinite(year) && year > 1800 ? year : new Date().getFullYear();
+}
+
+/**
+ * Extract the TV networks of a TMDB TV detail response as the minimal
+ * classifier-facing shape ({ id, name }). Returns undefined for movies, for
+ * list-shaped results (no networks field), and when nothing usable remains
+ * after dropping malformed entries — the classifier treats absent metadata
+ * as "no network signal", and future authorization paths apply fail-closed
+ * semantics on FAILED fetches (see isAdultContent contract).
+ */
+function extractTvNetworks(raw: TmdbTv): Array<{ id: number; name: string }> | undefined {
+  if (!Array.isArray(raw.networks) || raw.networks.length === 0) return undefined;
+  const mapped = raw.networks
+    .filter((network) => network && Number.isInteger(network.id) && (network.id as number) > 0)
+    .map((network) => ({ id: network.id as number, name: typeof network.name === 'string' ? network.name.trim() : '' }))
+    .filter((network) => network.name.length > 0);
+  return mapped.length > 0 ? mapped : undefined;
 }
 
 function hasRequiredListMetadata(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
@@ -172,6 +196,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     status: isMovie ? undefined : asString(tv.status),
     episodes,
     seasons,
+    networks: isMovie ? undefined : extractTvNetworks(tv),
     tags: tag ? [tag] : undefined,
     source: tmdbSource(String(raw.id)),
     externalIds,
@@ -415,7 +440,13 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
           .filter((id): id is number => typeof id === 'number')
       : undefined;
     const tmdbAdult = (raw as TmdbMovie).adult;
-    if (isAdultContent(item.tags, providerIds, tmdbAdult, item.isAnime)) {
+    // TV detail responses carry networks[] — the authoritative adult-network
+    // identity signal (verified adult network registry, adult-networks.ts).
+    // Wired into the central classifier alongside the transitional
+    // watch-provider signal so a verified adult network classifies the title
+    // as Adult even when TMDB's generic adult flag is false.
+    const networks = type === 'series' ? extractTvNetworks(raw as TmdbTv) : undefined;
+    if (isAdultContent(item.tags, providerIds, tmdbAdult, item.isAnime, networks)) {
       item.tags = [...(item.tags ?? []), 'Adult'];
     }
     const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));

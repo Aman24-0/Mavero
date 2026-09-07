@@ -238,7 +238,7 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   // Adult classification is based on the central isAdultContent classifier
   // (which checks tags + provider IDs + TMDB adult flag), not on isAnime.
   assert.match(service, /import \{ isAdultContent.*\} from '\.\/adult-providers'/, 'service imports isAdultContent from adult-providers');
-  assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime\)/, 'isAdultItem delegates to isAdultContent');
+  assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime, item\.networks\)/, 'isAdultItem delegates to isAdultContent');
   // Anime sections do NOT use adult exclusion (anime is separate from adult).
   const animeFn = tmdb.match(/export async function getTmdbAnimeMerged[\s\S]*?^}/m);
   assert.ok(animeFn, 'getTmdbAnimeMerged found');
@@ -315,7 +315,7 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   // classify adult content without a separate N+1 API call.
   assert.match(tmdb, /append_to_response: 'videos,external_ids,recommendations,credits,watch\/providers'/, 'detail fetches watch/providers via append_to_response');
   // isAdultContent is called in getTmdbDetail.
-  assert.match(tmdb, /getTmdbDetail[\s\S]*?isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime\)/, 'detail calls isAdultContent');
+  assert.match(tmdb, /getTmdbDetail[\s\S]*?isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime, networks\)/, 'detail calls isAdultContent');
   // If adult, the 'Adult' tag is added to the item.
   assert.match(tmdb, /if \(isAdultContent[\s\S]*?item\.tags = \[\.\.\.\(item\.tags \?\? \[\]\), 'Adult'\]/, 'detail adds Adult tag when classified');
   // The SSR routes check tags?.includes('Adult').
@@ -372,7 +372,52 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(adultProviders, /tmdbAdult === true && isAnime !== true/, 'isAdultContent checks TMDB adult flag for non-anime');
   // service.ts delegates to isAdultContent.
   assert.match(service, /import \{ isAdultContent.*\} from '\.\/adult-providers'/, 'service imports isAdultContent from adult-providers');
-  assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime\)/, 'service isAdultItem delegates to isAdultContent');
+  assert.match(service, /return isAdultContent\(item\.tags, undefined, undefined, item\.isAnime, item\.networks\)/, 'service isAdultItem delegates to isAdultContent');
+}
+
+// ============================================================================
+// W. Phase 2 — network-aware classifier foundation (Adult Mode rebuild).
+// ============================================================================
+{
+  // Registry module exists with the verified/unverified verification model.
+  const adultNetworks = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-networks.ts'), 'utf8');
+  assert.match(adultNetworks, /export type AdultNetwork/, 'AdultNetwork type exported');
+  assert.match(adultNetworks, /'verified' \| 'unverified'/, 'verification label model exists');
+  assert.match(adultNetworks, /export function getAdultNetworks/, 'getAdultNetworks exists');
+  assert.match(adultNetworks, /export function getVerifiedAdultNetworks/, 'getVerifiedAdultNetworks exists');
+  assert.match(adultNetworks, /export function getAdultNetworkIds/, 'getAdultNetworkIds exists');
+  assert.match(adultNetworks, /export function isKnownAdultNetwork/, 'isKnownAdultNetwork exists');
+  assert.match(adultNetworks, /export function getAdultNetworkById/, 'getAdultNetworkById exists');
+  // Verified entries carry live-confirmed network IDs (2026-09-07 live TMDB check).
+  assert.match(adultNetworks, /tmdbNetworkId: 2902/, 'Ullu network ID 2902 registered');
+  assert.match(adultNetworks, /tmdbNetworkId: 4573/, 'Kooku network ID 4573 registered');
+  assert.match(adultNetworks, /tmdbNetworkId: 7355/, 'Atrangii network ID 7355 registered');
+  // Unverified entries must keep tmdbNetworkId 0 (no guessed IDs). Checked
+  // per entry line (comments excluded) so the check cannot span boundaries.
+  const unverifiedLines = adultNetworks
+    .split('\n')
+    .filter((line) => line.includes("verification: 'unverified'") && !line.trim().startsWith('//') && !line.trim().startsWith('*'));
+  assert.ok(unverifiedLines.length >= 10, `unverified entries present in registry (${unverifiedLines.length})`);
+  for (const line of unverifiedLines) {
+    assert.match(line, /tmdbNetworkId: 0/, `unverified entry pairs label with id 0: ${line.trim()}`);
+    assert.doesNotMatch(line, /tmdbNetworkId: [1-9]/, `unverified entry carries no nonzero id: ${line.trim()}`);
+  }
+  // Verified-only gating: the verified accessor filters by verification label.
+  assert.match(adultNetworks, /entry\.verification === 'verified'/, 'verified accessor checks verification label');
+  // Classifier imports the network registry (single central classifier).
+  assert.match(adultProviders, /import \{ isKnownAdultNetwork \} from '\.\/adult-networks'/, 'classifier imports network registry');
+  assert.match(adultProviders, /isKnownAdultNetwork\(network\)/, 'classifier consults isKnownAdultNetwork');
+  assert.match(adultProviders, /networks\?: Array<\{ id\?: number \| null; name\?: string \| null \}> \| undefined/, 'isAdultContent accepts TV networks');
+  // TMDB adapter carries TV networks through the detail path.
+  assert.match(tmdb, /networks\?: TmdbNetwork\[\]/, 'TmdbTv type declares networks');
+  assert.match(tmdb, /function extractTvNetworks/, 'extractTvNetworks helper exists');
+  assert.match(tmdb, /networks: isMovie \? undefined : extractTvNetworks\(tv\)/, 'mapTmdb maps TV networks');
+  assert.match(tmdb, /const networks = type === 'series' \? extractTvNetworks\(raw as TmdbTv\) : undefined/, 'detail extracts TV networks');
+  // NormalizedMediaItem gains the additive networks metadata.
+  const contentTypes = await readFile(path.join(repoRoot, 'src/lib/server/content/types.ts'), 'utf8');
+  assert.match(contentTypes, /networks\?: Array<\{ id: number; name: string \}>/, 'NormalizedMediaItem has additive networks metadata');
+  // Anime invariant is intact: anime detection unchanged and the TMDB adult
+  // flag exemption still gates signal 4 only (asserted in L/T/V above).
 }
 
 // ============================================================================
@@ -399,4 +444,4 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.doesNotMatch(animeFn![0], /without_watch_providers/, 'anime section does NOT exclude adult providers');
 }
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V).');
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W).');

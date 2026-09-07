@@ -85,6 +85,17 @@ export type NormalizedMediaItem = {
   };
   seasonsData?: Season[];
   nativeTitle?: string;
+  /**
+   * TMDB TV networks for this title (Adult Mode rebuild, Phase 2 — additive).
+   * Populated from the TV detail response (`/tv/{id}` returns `networks[]`);
+   * list-shaped endpoints (discover/trending/search) do not include networks,
+   * so the field stays undefined there. Movies never carry networks.
+   * Consumed by the central adult classifier: a title whose network is a
+   * VERIFIED adult network (adult-networks.ts) is classified adult even when
+   * TMDB's generic `adult` flag is false. Pure content metadata — never
+   * carries authorization state.
+   */
+  networks?: Array<{ id: number; name: string }>;
   trailerKey?: string;
   cast?: CastMember[];
 };

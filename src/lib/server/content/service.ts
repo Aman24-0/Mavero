@@ -121,9 +121,12 @@ import { getTmdbIndiaProviders } from './adapters/tmdb';
 
 function isAdultItem(item: NormalizedMediaItem): boolean {
   // For list responses we don't have per-title provider IDs without N+1.
-  // The isAdultContent classifier checks tags + TMDB adult flag.
-  // Provider-based exclusion is done at the TMDB query level (without_watch_providers).
-  return isAdultContent(item.tags, undefined, undefined, item.isAnime);
+  // The isAdultContent classifier checks tags, TMDB adult flag (non-anime)
+  // and the title's TV networks (verified adult network registry) —
+  // networks are present on detail-shaped items; list items simply pass
+  // undefined. Provider-based exclusion is done at the TMDB query level
+  // (without_watch_providers) until the Phase 3 network migration.
+  return isAdultContent(item.tags, undefined, undefined, item.isAnime, item.networks);
 }
 
 export async function discover(type: ContentType, page = 1): Promise<ContentList> {

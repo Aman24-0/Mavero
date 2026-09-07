@@ -1,8 +1,9 @@
 # Mavero Adult Mode Architecture Rebuild
 
-> **Status:** Phase 1 complete (audit only — no production code changed).
+> **Status:** Phase 2 complete (network registry + central network-aware classifier foundation). Phase 1 was audit-only (no production code changed).
 > **Worklog rule:** Every phase MUST update this file before committing. This is the single persistent source of truth for the Adult Mode rebuild. The playback worklog (`Mavero_Player_Playback_Implementation_Plan.md`) remains a separate, protected document — do not merge or overwrite it.
 > **Phase 1 audit performed:** 2026-09-07 against repository HEAD `f47bac8109f92fefff45a9bae4998ad2384d33f4` (branch `main`).
+> **Phase 2 implemented:** 2026-09-07 against branch `main`, starting from commit `898d95ec3ea26dc920962b510fc17c0f0d168ed6` (Phase 1 worklog commit).
 
 ---
 
@@ -69,7 +70,7 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 ## Phase Checklist
 
 - [x] Phase 1 — Repository audit, baseline & worklog
-- [ ] Phase 2 — Adult network registry, classifier & metadata foundation
+- [x] Phase 2 — Adult network registry, classifier & metadata foundation
 - [ ] Phase 3 — TMDB adapter/network-based catalog migration
 - [ ] Phase 4 — Adult-aware Search + bounded N+1 classification
 - [ ] Phase 5 — Authorization, Supabase policy & HMAC guest cookie
@@ -98,19 +99,44 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 
 ### Phase 2 — Adult network registry, classifier & metadata foundation
 
-**Status:** Not Started
+**Status:** Complete
 
 **Files changed:**
-- (planned) new `adult-networks` registry module; `adult-providers.ts` classifier extension or successor; `NormalizedMediaItem` metadata additions
+- `src/lib/server/content/adult-networks.ts` (new) — central TMDB TV **network** registry (`AdultNetwork`: key/name/aliases/tmdbNetworkId/verification) with typed accessors: `getAdultNetworks()`, `getVerifiedAdultNetworks()`, `getAdultNetworkIds()` (verified-only production accessor), `getAdultNetworkById()`, `isKnownAdultNetwork()` (verified-id-first + conservative exact-name secondary signal). Includes a clearly namespaced `__setAdultNetworkRegistryForTest()` / `__resetAdultNetworkRegistryForTest()` pair for deterministic behavioral tests (never for production). Zero imports — no cycles, tsx-testable.
+- `src/lib/server/content/adult-providers.ts` — header documents the transition (module is TRANSITIONAL until Phase 3; canonical adult identity = TMDB TV network). Central classifier `isAdultContent` (still the ONE classifier) gained the 5th parameter `networks?: Array<{ id?: number | null; name?: string | null }>` and the authoritative network signal. Signal order: (1) `'Adult'` tag → (2) **verified adult TV network** (via `isKnownAdultNetwork`) → (3) TRANSITIONAL watch-provider match (retained until Phase 3) → (4) TMDB `adult === true && isAnime !== true`. Added the classification-vs-authorization contract and the fail-closed contract for future metadata-fetch callers (JSDoc).
+- `src/lib/server/content/types.ts` — additive `NormalizedMediaItem.networks?: Array<{ id: number; name: string }>` (content metadata only; no type redesigned).
+- `src/lib/server/content/adapters/tmdb.ts` — `TmdbTv` type declares `networks?: TmdbNetwork[]`; new `extractTvNetworks()` helper (drops malformed entries; id>0 + non-empty name); `mapTmdb` maps `networks` for TV only (movies and list-shaped results stay undefined); `getTmdbDetail` extracts networks from the existing `/tv/{id}` response (no new request, no append change) and passes them to `isAdultContent`.
+- `src/lib/server/content/service.ts` — `isAdultItem` forwards `item.networks` to the classifier.
+- `scripts/adult_network_classifier_test.ts` (new) — **behavioral** tests (imports the real registry/classifier, mock TMDB-detail-shaped data, 16 checks); registered in the `pnpm test` chain after `adult_mode_test.ts`.
+- `scripts/adult_mode_test.ts` — updated 3 existing regexes for the extended signatures (Q detail call, L/T `isAdultItem` call) and added section **W** (network-aware foundation static assertions incl. verified IDs + unverified-entries-carry-id-0 per-line check); final summary line extended.
+- `package.json` — `test` chain includes `scripts/adult_network_classifier_test.ts`.
 
-**Tests:**
-- (planned) registry resolution + classifier unit tests; anime exemption tests
+**Architecture decisions:**
+- ONE central classifier (`isAdultContent` in `adult-providers.ts`); the network registry is a separate data module consumed by the classifier — no classification logic duplicated anywhere.
+- Registry distinguishes `verified` from `unverified`; **every** production accessor (`getVerifiedAdultNetworks`, `getAdultNetworkIds`, `isKnownAdultNetwork`) filters to verified entries with `tmdbNetworkId > 0`, so an unverified entry can never become an active filter (proven by tests).
+- Verified network signal OVERRIDES `tmdbAdult === false` (worklog invariant); the anime exemption applies to the TMDB-adult-flag signal ONLY — explicit reliable signals (tag, verified network, verified provider) still apply to any content. Anime detection itself untouched (`genre 16 + 'ja'`).
+- Network metadata flows through the EXISTING `/tv/{id}` detail response (TMDB returns `networks[]` by default) — no `append_to_response` change, no duplicate request pipeline, no Search/Discover/query changes (Phases 3/4/7/8 scope).
+- Classification is pure/global content metadata; no authorization input, no I/O; safe to cache independently (cache-safety note: no `adultAllowed`-style authorization-dependent cache entries exist or were added).
+- Compatibility: Option B — `adult-providers.ts` watch-provider machinery kept ACTIVE (still powers existing `without_watch_providers` rails, `with_watch_providers` adult rail, provider dropdown) and marked TRANSITIONAL; removal planned with Phase 3 (after the catalog migration no query depends on it). Watch-provider IDs are NOT the canonical identity anymore — the classifier treats the provider signal as secondary/retained.
+- Fail-closed contract documented for Phase 4+: callers that fetch adult-sensitive metadata must treat failed/incomplete fetches as classification-uncertain and EXCLUDE; absence of signals in successfully fetched metadata is a legitimate "not adult".
 
-**Notes:**
-- Must verify Ullu/Kooku/Atrangii network IDs against the live TMDB API before hardcoding anything (Phase 9 diagnostic may be pulled forward if credentials become available). Never invent IDs (the current registry's "resolve at runtime, omit if not found" principle is correct and must be preserved for networks).
+**Verified network IDs (live TMDB, 2026-09-07):** Ullu `2902`, Kooku `4573`, Atrangii `7355` — see *Verified TMDB Adult Networks*. Remaining 12 registry services (ALTT, Rabbit Movies, Nuefliks, PrimePlay, Hunters, Voovi, Big Movie Zoo, Cinemadhamaka, TV Valentine, HotMasti, Mohan Studios, Fuego) are registered as **unverified** with `tmdbNetworkId: 0` — they can never activate until live-confirmed (Phase 9 diagnostic may pull their verification forward).
+
+**Anime invariant:** preserved and regression-tested (behavioral checks 5/16 + static L/T/V/W): TMDB `adult=true` + recognized anime + no verified-network signal → NOT adult; `getTmdbAnimeMerged` untouched; no AniList/MAL/Yenime/Anime World India/Tatakai/MegaPlay reintroduction.
+
+**Tests added:** `scripts/adult_network_classifier_test.ts` — 16 behavioral checks covering the 12 required scenarios (verified network + adult=false → Adult; normal-looking metadata; non-adult networks; adult=true + non-anime; adult=true + anime → NOT; adult tags; ordinary romance/drama; unverified registry id → NOT adult; conservative exact-only name matching incl. alias + case/trim normalization and substring rejection; missing/empty/malformed metadata → no crash; verified id overrides name and adult=false; authorization independence) plus real-registry invariants (verified ids exactly `[2902,4573,7355]`, unverified entries carry id 0, Ullu end-to-end, ALTT inert) and the transitional watch-provider signal.
+
+**Test result:** `pnpm test` **PASS** (exit 0) — 57 scripts in the chain incl. new `adult_network_classifier_test.ts` (16 checks) and `adult_mode_test.ts` A–W.
+**Check result:** `pnpm run check` **PASS** (exit 0) — 0 errors / 38 warnings (unchanged pre-existing warnings in 11 files).
+**Build result:** `pnpm run build` **PASS** (exit 0) — `@sveltejs/adapter-netlify` build completed.
+
+**Commit SHA:** this commit — `feat(adult): add network-based adult classification foundation` (exact SHA recorded in `git log -1` / the phase report; the worklog cannot contain its own commit's hash).
+
+**Explicitly NOT implemented (belongs to later phases):** search N+1 filtering / pagination continuation (Phase 4), Popular TV `without_genres` fix (Phase 8), Indian Adult Shows Discover rail + provider dropdown migration (Phases 7/8), admin policy rewrite + HMAC guest cookie + policy-cache removal (Phase 5), direct watch-route guard (Phase 6), cache isolation redesign (Phase 6), broad normal-catalog `without_networks` migration (Phase 3), Discover/Search UI changes, playback/resolver/progress/navigation/My List changes, anime architecture changes (none). The watch-provider model remains active for existing catalog queries until Phase 3 — this is a documented transition, not a completed migration.
 
 **Remaining work:**
-- Everything (Not Started).
+- Phase 3: migrate catalog queries to `with_networks`/`without_networks` using `getAdultNetworkIds()`; retire the watch-provider query usage + transitional classifier signal; update static sections E/F/G accordingly (same phase as the code change).
+- Phases 4–10 as planned in the checklist below. Phase 9 must re-confirm the three verified network IDs via the TMDB JSON API (`/network/{id}`) and may live-verify the 12 unverified services.
 
 ### Phase 3 — TMDB adapter/network-based catalog migration
 
@@ -244,15 +270,29 @@ No baseline failures exist; there are no unrelated broken tests to carve out.
 
 ## Verified TMDB Adult Networks
 
-**Nothing is verified yet.** Phase 1 is a code audit; no live TMDB verification was performed (no TMDB credentials are available in the audit environment, and the live TMDB diagnostic is scheduled for Phase 9).
+Verification method (2026-09-07): TMDB's own public network pages are live-TMDB evidence — `https://www.themoviedb.org/network/{id}` resolves (301) to a slug derived from TMDB's records (`/{id}-{name}`) and the page title contains the network name. Method reliability validated in the same session with a **positive control** (`network/213` → `213-netflix`) and a **negative control** (`network/999999999` → HTTP 404, no slug). Phase 9's live diagnostic must re-confirm these via the TMDB JSON API (`GET /network/{id}` with credentials).
 
-| Provider | Claimed TMDB network ID | Status | Evidence |
+| Provider | TMDB network ID | Status | Evidence |
 | --- | --- | --- | --- |
-| Ullu | 2902 | **Not yet verified** | ID absent from codebase; requires live `GET /network/2902` confirmation |
-| Kooku | 4573 | **Not yet verified** | ID absent from codebase; requires live `GET /network/4573` confirmation |
-| Atrangii | 7355 | **Not yet verified** | ID absent from codebase; requires live `GET /network/7355` confirmation |
+| Ullu | 2902 | **Verified** (2026-09-07) | Live TMDB: `network/2902` → slug `2902-ullu`, page title "ullu"; API JSON re-confirmation scheduled Phase 9 |
+| Kooku | 4573 | **Verified** (2026-09-07) | Live TMDB: `network/4573` → slug `4573-kooku`, page title "Kooku"; API JSON re-confirmation scheduled Phase 9 |
+| Atrangii | 7355 | **Verified** (2026-09-07) | Live TMDB: `network/7355` → slug `7355-atrangii`, page title "Atrangii"; API JSON re-confirmation scheduled Phase 9 |
+| ALTT (ALTBalaji) | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0`; network ID must be live-confirmed before activation |
+| Rabbit Movies (Rabbit) | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| Nuefliks (Flizmovies) | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| PrimePlay (Prime Play) | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| Hunters | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| Voovi | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| Big Movie Zoo | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| Cinemadhamaka | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| TV Valentine | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| HotMasti | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| Mohan Studios | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
+| Fuego | — | **Not yet verified** | Candidate service registered with `tmdbNetworkId: 0` |
 
 Facts that **are** verified from the code (repo-wide search, `src/` + `supabase/` + `scripts/`):
+
+> Phase 2 update (2026-09-07): the bullet below about `2902/4573/7355` "zero occurrences" was true at Phase 1 (HEAD `f47bac8`) and is now historical — those IDs are registered (as **verified**) in `src/lib/server/content/adult-networks.ts`. The `with_networks`/`without_networks` bullet remains true: Phase 2 added NO catalog-query changes; the network-based queries land in Phase 3.
 
 - `with_networks` / `without_networks` / `with_companies` / `without_companies` — **zero occurrences**. The network-based architecture does not exist anywhere yet.
 - Numeric IDs `2902`, `4573`, `7355` — **zero occurrences**. Nothing in the code hardcodes or references these network IDs.

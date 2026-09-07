@@ -1,25 +1,39 @@
 // Adult OTT provider registry for the Indian Adult Shows Discover section.
 //
-// IMPORTANT: We do NOT hardcode TMDB provider IDs. TMDB IDs can change
-// and we cannot verify them without a live API call. Instead, this
-// registry stores provider NAMES that are known to be adult-oriented
-// Indian streaming services. At runtime, the TMDB adapter's
-// getTmdbIndiaProviders() is queried for the live India provider list;
-// each adult provider name is matched against that list to resolve
-// its real TMDB provider_id. If a provider is not found in the current
-// TMDB India catalog, it is omitted from the dropdown and from the
-// adult-content classification.
+// ARCHITECTURE STATUS (Adult Mode rebuild, Phase 2):
+// TRANSITIONAL / COMPATIBILITY MODULE.
 //
-// Adult content classification: titles available on ANY verified adult
-// provider are classified as adult and excluded from normal catalog rails
-// (Popular, Top Rated, New on OTT, genre rails, search) regardless of
-// Adult Mode setting. When Adult Mode is ON, these titles appear ONLY
-// in the "Indian Adult Shows" section.
+// The canonical adult identity is now the TMDB TV NETWORK registry in
+// `adult-networks.ts` (Ullu=2902, Kooku=4573, Atrangii=7355, verified against
+// live TMDB). Indian adult OTT services are TV NETWORKS in TMDB's data model,
+// not JustWatch watch providers — the watch-provider model below cannot
+// represent them (worklog findings F1/F2).
 //
-// The classification uses the provider-availability heuristic:
-// if a title's watch providers include a known adult provider, it is
-// treated as adult. This is more robust than TMDB's `adult` boolean
-// (which is inconsistently set for Indian content).
+// This module remains ACTIVE because existing catalog queries still use the
+// watch-provider model until the Phase 3 migration:
+//   - normal rails exclude via `without_watch_providers`,
+//   - the adult rail queries `with_watch_providers`,
+//   - the provider dropdown API serves the resolved provider list.
+// The central classifier `isAdultContent` below keeps the watch-provider
+// signal as a RETAINED SECONDARY signal during the transition; the
+// authoritative signal is the verified adult NETWORK signal (Signal 2).
+// Removal plan: Phase 3 migrates catalog queries to with/without_networks;
+// after Phase 3 no query depends on the provider registry and this module's
+// watch-provider resolution is deleted (classifier and tag signals remain).
+//
+// IMPORTANT (legacy behaviour, still true for provider IDs): we do NOT
+// hardcode TMDB provider IDs. This registry stores provider NAMES that are
+// matched at runtime against the live TMDB India provider list
+// (getTmdbIndiaProviders()); names not found in the current TMDB India
+// catalog are omitted from the dropdown and from classification.
+//
+// Adult content classification: titles on ANY verified adult provider are
+// classified as adult and excluded from normal catalog rails (Popular, Top
+// Rated, New on OTT, genre rails, search) regardless of Adult Mode setting.
+// When Adult Mode is ON, these titles appear ONLY in the "Indian Adult Shows"
+// section.
+
+import { isKnownAdultNetwork } from './adult-networks';
 
 export type AdultOttProvider = {
   /** URL-safe key. */
@@ -176,22 +190,42 @@ export function invalidateAdultProviderCache(): void {
 }
 
 // ============================================================
-// BUG 4: Central adult content classifier.
+// Central adult content classifier (SINGLE server-side classifier).
 //
 // A title is classified as adult if ANY of:
-//   1. Its `tags` array includes 'Adult' (set by getTmdbAdultShows).
-//   2. Its India watch providers include a known adult provider ID.
-//   3. TMDB's `adult` boolean is true AND it's not anime.
+//   1. Its `tags` array includes 'Adult' (set by getTmdbAdultShows and the
+//      detail classification below).
+//   2. Its TV `networks[]` include a VERIFIED adult network
+//      (adult-networks.ts — the authoritative identity signal). A verified
+//      adult network classifies the title as adult EVEN WHEN TMDB's generic
+//      `adult` boolean is false, which is the normal case for Indian adult
+//      OTT originals.
+//   3. TRANSITIONAL: its India watch providers include a known adult
+//      provider ID (watch-provider model — retained until the Phase 3
+//      catalog migration removes it; see header note).
+//   4. TMDB's `adult` boolean is true AND it's not anime.
 //
 // This function does NOT classify:
-//   - anime (genre 16 + ja) as adult
+//   - anime (genre 16 + ja) as adult MERELY BECAUSE of TMDB's adult flag
+//     (the anime exemption applies to signal 4 ONLY — explicit reliable
+//     signals such as tags or a verified adult network still apply to any
+//     content, anime included)
 //   - mature-rated content as adult
 //   - romance/violence as adult
 //
-// The function accepts the item's `tags` (from NormalizedMediaItem)
-// and an optional set of provider IDs available for the title in India.
-// The caller is responsible for fetching provider IDs if needed
-// (via the TMDB /watch/providers endpoint, cached).
+// CLASSIFICATION vs AUTHORIZATION: this is a pure content-classification
+// function. It takes NO user/authorization input, performs no I/O, and its
+// result is global content metadata (safe to cache independently).
+// Authorization (adult policy + user preference) is evaluated separately in
+// adult-policy.ts and must NEVER be embedded into cached classification
+// results.
+//
+// FAIL-CLOSED CONTRACT for future authorization paths (Phase 4+): a `false`
+// return means "no positive adult signal in the provided metadata". Callers
+// that fetch adult-sensitive metadata (e.g. search detail lookups) MUST
+// treat a failed/incomplete metadata fetch as classification-uncertain and
+// fail CLOSED (exclude the item), never silently allow it. Absence of
+// signals in SUCCESSFULLY fetched metadata is a legitimate "not adult".
 // ============================================================
 
 /**
@@ -200,23 +234,39 @@ export function invalidateAdultProviderCache(): void {
  * @param tags - The item's tags array (from NormalizedMediaItem.tags).
  * @param providerIds - Optional: the set of TMDB provider IDs available
  *   for this title in India. If provided, the function checks whether
- *   any of them are known adult providers.
+ *   any of them are known adult providers (transitional signal).
  * @param tmdbAdult - Optional: TMDB's `adult` boolean flag. Only used
  *   as a secondary signal — never the sole classifier.
  * @param isAnime - Optional: if true, TMDB adult flag is ignored
  *   (anime should not be classified as adult based on TMDB's flag).
+ * @param networks - Optional: the title's TMDB TV networks
+ *   (NormalizedMediaItem.networks, from the TV detail response). A network
+ *   matching a VERIFIED adult network classifies the title as adult even
+ *   when tmdbAdult is false. Absent for movies and list-shaped results.
  * @returns true if the item is classified as adult.
  */
 export function isAdultContent(
   tags: string[] | undefined,
   providerIds: number[] | undefined,
   tmdbAdult: boolean | undefined,
-  isAnime: boolean | undefined
+  isAnime: boolean | undefined,
+  networks?: Array<{ id?: number | null; name?: string | null }> | undefined
 ): boolean {
-  // Signal 1: explicit Adult tag (set by the adult section query).
+  // Signal 1: explicit Adult tag (set by the adult section query and the
+  // detail classification path).
   if (tags?.includes('Adult') === true) return true;
 
-  // Signal 2: title is available on a known adult provider in India.
+  // Signal 2 (authoritative): title belongs to a VERIFIED adult TV network.
+  // Unverified registry entries cannot match — isKnownAdultNetwork only
+  // consults the verified set (adult-networks.ts).
+  if (networks && networks.length > 0) {
+    for (const network of networks) {
+      if (isKnownAdultNetwork(network)) return true;
+    }
+  }
+
+  // Signal 3 (transitional): title is available on a known adult provider
+  // in India. Retained until the Phase 3 network-based catalog migration.
   if (providerIds && providerIds.length > 0) {
     const cached = getCachedAdultProviders();
     if (cached && cached.length > 0) {
@@ -226,7 +276,7 @@ export function isAdultContent(
     }
   }
 
-  // Signal 3: TMDB's adult boolean — ONLY for non-anime content.
+  // Signal 4: TMDB's adult boolean — ONLY for non-anime content.
   // Anime can have adult=true in TMDB but should not be classified
   // as adult merely because of that flag (it may be mature anime
   // like Attack on Titan, which is not adult-provider content).
