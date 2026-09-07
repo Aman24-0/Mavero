@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { Search, LoaderCircle, X, Compass } from 'lucide-svelte';
@@ -31,36 +31,51 @@
   let routeActive = true;
   let searchInputEl: HTMLInputElement | undefined;
 
-  // Re-sync local state from `data` whenever navigation changes it.
+  // Page snapshot — preserves the user's in-progress search across
+  // back/forward navigation. When the user opens a result card and then
+  // presses Back (browser Back OR DetailPage back-arrow icon, which now
+  // uses `history.back()`), SvelteKit captures this snapshot before
+  // navigating away and restores it when the user returns — so the
+  // search query, selected type, complete result list, and any error
+  // message are all preserved without re-typing.
   //
-  // `let query = $state(data.query)` only captures the initial value of
-  // `data.query` at first mount. When the user opens a result card and then
-  // presses Back, SvelteKit may reuse the component instance AND re-run the
-  // load — `data` updates with the fresh server result, but the local
-  // `$state` would still hold the old (or empty) value because `$state` only
-  // seeds once.
+  // Only JSON-serializable, user-visible state is snapshotted. The
+  // request/race-protection primitives (requestController, requestSequence,
+  // routeActive, timer) are intentionally NOT snapshotted — they are
+  // runtime-only and would either fail to serialize or recreate stale
+  // fetch handles. `loading` is also intentionally omitted: a snapshot
+  // restore never happens mid-flight, and forcing `loading=true` on
+  // restore would leave the UI stuck on the spinner if the restored
+  // results are already present.
   //
-  // This effect re-syncs `query`/`type`/`results`/`errorMessage` from
-  // `data` whenever `data` identity changes. The local state is updated
-  // inside `untrack` so the effect doesn't take a reactive dependency on
-  // the state variables it's writing — otherwise typing into the search
-  // input would feed back into the effect and re-trigger it.
-  //
-  // When the user types, `query` changes locally but `data` does NOT
-  // change (because the page uses `replaceState`, which doesn't trigger
-  // the load). So this effect does not fight user input.
-  $effect(() => {
-    const nextQuery = data.query;
-    const nextType: TypeFilter = data.type === 'movie' ? 'Movie' : data.type === 'series' ? 'TV Show' : 'All';
-    const nextItems = data.items;
-    const nextError = data.errorMessage ?? '';
-    untrack(() => {
-      if (query !== nextQuery) query = nextQuery;
-      if (type !== nextType) type = nextType;
-      if (results !== nextItems) results = nextItems;
-      if (errorMessage !== nextError) errorMessage = nextError;
-    });
-  });
+  // The X clear button (clearQuery) resets query/results/errorMessage
+  // and updates the URL — after a clear, a fresh search starts cleanly
+  // because the next navigation captures an empty snapshot.
+  export const snapshot = {
+    capture: (): {
+      query: string;
+      type: TypeFilter;
+      results: MediaItem[];
+      errorMessage: string;
+    } => ({
+      query,
+      type,
+      results,
+      errorMessage
+    }),
+    restore: (value: {
+      query: string;
+      type: TypeFilter;
+      results: MediaItem[];
+      errorMessage: string;
+    }) => {
+      if (!value || typeof value !== 'object') return;
+      query = typeof value.query === 'string' ? value.query : '';
+      type = value.type === 'Movie' || value.type === 'TV Show' ? value.type : 'All';
+      results = Array.isArray(value.results) ? value.results : [];
+      errorMessage = typeof value.errorMessage === 'string' ? value.errorMessage : '';
+    }
+  };
 
   const typeOptions: { value: TypeFilter; label: string }[] = [
     { value: 'All', label: 'All' },

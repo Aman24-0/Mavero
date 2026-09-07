@@ -106,7 +106,36 @@
     event.preventDefault();
     haptic('light');
     const returnTo = page.url.searchParams.get('from');
-    if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) { void goto(returnTo, { replaceState: true, keepFocus: true }); return; }
+    // When the user arrived at this detail page from an internal
+    // listing (Search / Discover / My List / Upcoming / collection),
+    // MediaCard's `appendReturnTo` injected the originating URL into
+    // the `from` query parameter. We use `history.back()` so the
+    // browser/SvelteKit performs a real popstate navigation back to
+    // the original history entry — this is what allows SvelteKit's
+    // snapshot/scroll restoration to fire and bring the user back to
+    // the exact state (query, filter, results, scroll position) they
+    // left.
+    //
+    // Using `goto(returnTo, { replaceState: true })` here would NOT
+    // trigger popstate — it would replace the current history entry
+    // with the listing URL and skip SvelteKit's snapshot/scroll
+    // restoration entirely, leaving the user at the top of an empty
+    // listing.
+    //
+    // The fallback (`goto('/discover', ...)`) is preserved for the
+    // direct-detail-page case (e.g. shared link, deep link from
+    // outside the app) where there is no valid internal `from` to
+    // go back to.
+    if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) {
+      if (typeof window !== 'undefined' && typeof window.history.back === 'function') {
+        window.history.back();
+        return;
+      }
+      // Defensive fallback (very old browsers, JSdom) — preserve the
+      // pre-fix behavior so the button still works.
+      void goto(returnTo, { replaceState: true, keepFocus: true });
+      return;
+    }
     void goto('/discover', { replaceState: true, keepFocus: true });
   }
 

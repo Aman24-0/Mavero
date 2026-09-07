@@ -3,9 +3,12 @@ import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/routes/search/+page.svelte', import.meta.url), 'utf8');
 
-// The import may also pull in `untrack` (used to sync local state from
-// `data` on navigation without creating a reactive feedback loop).
-assert.match(source, /import \{ onDestroy(?:, \w+)* \} from 'svelte'/);
+// The Search page imports `onDestroy` from svelte for the request/race
+// cleanup. The previous $effect/untrack workaround was removed in favor
+// of a SvelteKit `export const snapshot` — the import must NOT include
+// `untrack` anymore.
+assert.match(source, /import \{ onDestroy \} from 'svelte'/);
+assert.doesNotMatch(source, /import \{[^}]*\buntrack\b/);
 assert.match(source, /import \{ replaceState \} from '\$app\/navigation'/);
 assert.match(source, /replaceState\(`/);
 assert.doesNotMatch(source, /\bgoto\(/);
