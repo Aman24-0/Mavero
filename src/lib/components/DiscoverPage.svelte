@@ -152,8 +152,14 @@
     }
   }
 
-  let localContinueLoaded = false;
-  let localContinueItems: MediaItem[] = [];
+  // PHASE E fix: these MUST be $state. In Svelte 5 runes mode a plain `let`
+  // is NOT reactive — the $derived below reads these values, so assignments
+  // made after the async loadContinue() resolve (onMount, visibilitychange,
+  // pageshow/BFCache reload) never invalidated the derived and the
+  // "Continue watching" rail stayed hidden even when records existed.
+  // My List avoids the same trap by declaring its records with $state.
+  let localContinueLoaded = $state(false);
+  let localContinueItems = $state<MediaItem[]>([]);
   let heroTrack: HTMLElement;
   let galleryPaused = false;
   let reducedMotion = false;
