@@ -407,7 +407,7 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
     };
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
     const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type));
-    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
+    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), totalPages: result.total_pages, source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
 }

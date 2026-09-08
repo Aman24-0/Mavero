@@ -9,6 +9,11 @@
   export let value = '';
   export let options: Option[] = [];
   export let onChange: (next: string) => void = () => undefined;
+  /** Visually hide the small uppercase label while keeping it in the
+   *  accessibility tree (aria-labelledby still points at it). Used on
+   *  compact mobile rows where the vertical label strip is dropped but
+   *  the control must keep an accessible name. */
+  export let hideLabel = false;
 
   let open = false;
   let triggerEl: HTMLButtonElement | undefined;
@@ -100,7 +105,7 @@
 
 <div class="dropdown" bind:this={containerEl}>
   {#if label}
-    <span class="dropdown-label" id={`${id}-label`}>{label}</span>
+    <span class="dropdown-label" class:sr-only={hideLabel} id={`${id}-label`}>{label}</span>
   {/if}
   <button
     type="button"
@@ -155,6 +160,12 @@
     color: #77777f; font-size: .55rem; font-weight: 700;
     text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap;
     letter-spacing: .04em;
+  }
+  /* Visually hidden but still exposed to assistive technology, so a
+     label-less compact trigger keeps its accessible name. */
+  .dropdown-label.sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    padding: 0; border: 0; clip: rect(0 0 0 0); overflow: hidden; white-space: nowrap;
   }
   .dropdown-trigger {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;

@@ -6,6 +6,10 @@
   export let actionLabel = 'Back to Discover';
   export let actionHref = '/discover';
   export let search = false;
+  // Optional in-place action. When provided, the CTA renders as a button
+  // that invokes it (e.g. CollectionPage "Clear filters") instead of
+  // navigating via `actionHref`. Existing href-based usages are unchanged.
+  export let onAction: (() => void) | undefined = undefined;
 </script>
 
 <section class="empty-state" aria-live="polite">
@@ -13,7 +17,11 @@
   <div class="eyebrow">{eyebrow}</div>
   <h2>{title}</h2>
   <p>{message}</p>
-  <a class="btn btn-secondary" href={actionHref}>{actionLabel} <ArrowUpRight size={15} /></a>
+  {#if onAction}
+    <button class="btn btn-secondary" type="button" onclick={onAction}>{actionLabel} <ArrowUpRight size={15} /></button>
+  {:else}
+    <a class="btn btn-secondary" href={actionHref}>{actionLabel} <ArrowUpRight size={15} /></a>
+  {/if}
 </section>
 
 <style>

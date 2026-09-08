@@ -108,6 +108,13 @@ export type ContentList = {
   items: NormalizedMediaItem[];
   page: number;
   hasNextPage: boolean;
+  /**
+   * Total pages reported by the upstream source, when it can be
+   * determined safely. Optional: the anime merged path (movie + TV
+   * slice/merge) cannot produce a reliable total, so it stays unset
+   * there and consumers must fall back to showing the page number alone.
+   */
+  totalPages?: number;
   source: ContentSource;
 };
 

@@ -5,4 +5,4 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<CollectionPage type="anime" contentItems={data.items} currentPage={data.page} hasNextPage={data.hasNextPage} collectionFilters={data.filters} errorMessage={data.errorMessage} />
+<CollectionPage type="anime" contentItems={data.items} currentPage={data.page} hasNextPage={data.hasNextPage} totalPages={data.totalPages} collectionFilters={data.filters} errorMessage={data.errorMessage} />

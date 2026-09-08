@@ -65,9 +65,28 @@ async function loadTrendingMoviesByLanguages(languages: string[]): Promise<RailR
 
 const validCollectionSorts: CollectionSort[] = ['For you', 'Top rated', 'Newest'];
 
+// The collection routes serve pages 1..20 — deeper pages are clamped back
+// to 1 by parseCollectionPage. This constant is the single source of truth
+// for that contract, so the pagination UI can disable "Next" exactly where
+// the server stops serving pages (instead of wrapping page 21 → page 1).
+export const MAX_COLLECTION_PAGE = 20;
+
 function parseCollectionPage(value: string | null) {
   const page = Number(value);
-  return Number.isInteger(page) && page >= 1 && page <= 20 ? page : 1;
+  return Number.isInteger(page) && page >= 1 && page <= MAX_COLLECTION_PAGE ? page : 1;
+}
+
+/**
+ * Safe "Page X of Y" total: only reported when the upstream contract
+ * actually provides one (TMDB discover returns total_pages; the anime
+ * merged path does not), clamped to the server's 1..MAX_COLLECTION_PAGE
+ * serving window and never below the current page.
+ */
+function clampTotalPages(value: unknown, page: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const total = Math.trunc(value);
+  if (total < 1) return undefined;
+  return Math.min(Math.max(total, page), MAX_COLLECTION_PAGE);
 }
 
 function parseCollectionFilters(url: URL): CollectionFilters {
@@ -85,11 +104,19 @@ export async function loadCollectionData(type: ContentType, url: URL) {
   try {
     const result = await collection(type, page, filters);
     if (result.source.provider === 'fixtures') {
-      return { items: [], type, page: result.page, hasNextPage: false, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
+      return { items: [], type, page: result.page, hasNextPage: false, totalPages: undefined as number | undefined, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
     }
-    return { items: result.items.map(toMediaItem), type, page: result.page, hasNextPage: result.hasNextPage, filters, errorMessage: undefined };
+    return {
+      items: result.items.map(toMediaItem),
+      type,
+      page: result.page,
+      hasNextPage: result.hasNextPage,
+      totalPages: clampTotalPages(result.totalPages, result.page ?? page),
+      filters,
+      errorMessage: undefined
+    };
   } catch {
-    return { items: [], type, page, hasNextPage: false, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
+    return { items: [], type, page, hasNextPage: false, totalPages: undefined as number | undefined, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
   }
 }
 
