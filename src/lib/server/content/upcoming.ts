@@ -1,29 +1,31 @@
 // Upcoming releases server module.
 //
-// Sources (Phase F.2 — broadened future-month discovery):
-//   - TMDB Discover Movie x1 as the CANDIDATE discovery mechanism for
-//     upcoming movies in INDIA (Phase F.2 REVISION):
-//       · region=IN + release_date month window — NO with_release_type.
-//     TMDB's official documentation states that with the region
-//     parameter the regional release date is used instead of the
-//     primary release date, and that with_release_type is an OPTIONAL
-//     refinement ("the date returned will be the first date based on
-//     your query (ie. if a with_release_type is specified)"). The old
-//     per-kind discovery (with_release_type=2|3 and =4) starved future
-//     months (October 2026+ returned no candidates) because TMDB's
-//     per-region release-type tagging lags badly for unreleased titles.
-//     Candidates are deduped by canonical movie ID and walked beyond
-//     upstream page 1 while real results remain, under a hard
-//     page-safety cap. primary_release_date is deliberately NOT used at
-//     all. With_release_type is deliberately NOT sent AT ALL.
+// Sources (Phase F.3 — root-cause fix for future-release starvation):
+//   - TMDB Discover Movie as the CANDIDATE discovery mechanism for
+//     upcoming movies (Phase F.3 UNION of two documented sources):
+//       · Source A: region=IN + release_date month window (F.2 stream).
+//       · Source B: primary_release_date month window, NO region param.
+//     WHY A ALONE STILL STARVED (F.3 diagnosis): with `region`, TMDB
+//     filters movies by their INDIA release dates, and for unreleased
+//     titles the India regional release-date data is frequently not
+//     indexed yet — a movie with no indexed IN release date can never
+//     match a region-aware date window, so October 2026+ stayed empty
+//     even though the official OpenAPI lists both query families.
+//     Source B matches on the PRIMARY release date (the origin-country
+//     date, which IS indexed at announcement time), so Indian films and
+//     same-window worldwide releases become candidates without requiring
+//     India regional metadata to exist yet. Both sources keep the
+//     language filter, the adult exclusions and bounded pagination, and
+//     their union is deduped by canonical movie ID. with_release_type is
+//     deliberately NOT sent AT ALL.
 //
-//     IMPORTANT (kept from Phase F.1): discover/movie is only a
-//     CANDIDATE mechanism. TMDB's region handling can fall back to the
-//     primary release date when a country-specific date is missing, so
-//     the row's `release_date` is NOT trusted as the card date. For
-//     EVERY candidate movie the pipeline fetches
-//     GET /movie/{id}/release_dates and treats country `IN` + release
-//     types 2|3|4 as the FINAL India release truth:
+//     IMPORTANT (kept from Phase F.1 — the FINAL TRUTH IS UNWEAKENED):
+//     discover/movie is only a CANDIDATE mechanism. TMDB's region
+//     handling can fall back to the primary release date when a
+//     country-specific date is missing, so the row's `release_date` is
+//     NOT trusted as the card date. For EVERY candidate movie the
+//     pipeline fetches GET /movie/{id}/release_dates and treats country
+//     `IN` + release types 2|3|4 as the FINAL India release truth:
 //       · only movies with a real IN release event INSIDE the selected
 //         month/year survive (stale/foreign dates — August on a
 //         September page, a 2022 date, a 1999 date — can never render);
@@ -35,23 +37,42 @@
 //     OTT logos when the movie's India releaseKinds include 'digital',
 //     and for series OTT logos.
 //   - TMDB Discover TV (air_date.gte/lte) for series with episodes
-//     airing in the selected month — Phase F.2 SEPARATES DISCOVERY
-//     from ELIGIBILITY:
+//     airing in the selected month — Phase F.3 MAKES DISCOVERY PURELY
+//     SCHEDULE + LANGUAGE:
 //       · DISCOVERY (candidate stage): air_date month window + optional
-//         with_original_language + the generic linear-TV genre
-//         exclusion (Soap/News/Talk). watch_region and
-//         with_watch_monetization_types are deliberately NOT sent at
-//         the candidate stage — TMDB's Discover layer often lacks India
-//         OTT monetization data for unaired foreign-language seasons,
-//         which starved future months of Tamil/Telugu/Hindi/etc. shows.
-//       · ELIGIBILITY (final gate): after a candidate's REAL target-
-//         month episodes are confirmed, GET /tv/{id}/watch/providers
-//         must contain at least one valid flatrate provider in
-//         results.IN. No India flatrate -> dropped (buy/rent-only and
-//         non-India providers are NOT accepted). A provider LOOKUP
-//         FAILURE is treated as a failed candidate — availability is
-//         never fabricated. Anime is exempt: it never requires India
-//         flatrate availability.
+//         with_original_language ONLY. The F.2-era `without_genres`
+//         blacklist (Reality 10764 / Soap 10766 / Talk 10767) is
+//         REMOVED — it was a candidate STARVATION filter: legitimate
+//         Indian OTT series are frequently tagged Drama + Soap by TMDB,
+//         so they were deleted BEFORE any detail metadata, episode
+//         lookup or OTT eligibility check could speak. That is exactly
+//         why Hindi/Tamil/Telugu/Kannada future months stayed empty
+//         while English survived. There is deliberately NO replacement
+//         genre blacklist and NO title blacklist.
+//       · ELIGIBILITY (final gate, SEASON-level, Phase F.3): after a
+//         candidate's REAL target-month episodes are confirmed, every
+//         relevant target season is checked through the official
+//         GET /tv/{series_id}/season/{season_number}/watch/providers
+//         endpoint (same results.{CC}.flatrate shape as the series
+//         endpoint). The series is kept when at least one relevant
+//         target season has a valid India flatrate provider. Documented
+//         FALLBACK: only when a season endpoint returned NO provider
+//         data at all (empty results — no data for ANY region), the
+//         parent GET /tv/{id}/watch/providers results.IN.flatrate may
+//         vouch for it. A season that HAS provider data without India
+//         flatrate (US-only, buy/rent-only, IN present but empty) is
+//         affirmative absence — it never qualifies and never falls
+//         back. A provider LOOKUP FAILURE is treated as a failed
+//         candidate — availability is never fabricated. Anime is
+//         exempt: it never requires India flatrate availability.
+//       · Detail-level curation (upcomingTvCurationVerdict) is the
+//         AUTHORITATIVE Upcoming Series curation: News/Talk dropped by
+//         detail metadata, serial-scale released-episode counts dropped
+//         (>100 released episodes), Soap-tagged legitimate OTT dramas
+//         KEPT. Reality shows are NOT blindly excluded — any future
+//         category suppression must be justified by detail metadata and
+//         product semantics, never by a broad candidate starvation
+//         filter.
 //     ANIME CANDIDATES (TMDB TV genre 16 + original_language ja —
 //     Mavero's existing anime definition) are REJECTED from the Series
 //     pipeline before any expensive processing: anime has its own
@@ -104,7 +125,6 @@ import { isAdultContent, getAdultProviderIds, ensureAdultProvidersResolved } fro
 import { adultNetworkExclusionValue } from './adult-catalog';
 import { movieRowVerdict } from './search-classify';
 import {
-  UPCOMING_TV_WITHOUT_GENRES,
   UPCOMING_TV_SERIAL_POLICY_KEY,
   UPCOMING_TV_DISCOVERY_KEY,
   UPCOMING_TV_ELIGIBILITY_KEY,
@@ -112,6 +132,7 @@ import {
   UPCOMING_MOVIE_RELEASE_TRUTH_KEY,
   UPCOMING_PROVIDER_MODEL_KEY,
   UPCOMING_MOVIE_MAX_UPSTREAM_PAGES,
+  UPCOMING_MOVIE_MAX_CANDIDATES,
   UPCOMING_TV_MAX_CANDIDATE_PAGES,
   UPCOMING_TV_MAX_CANDIDATES,
   UPCOMING_MAX_SEASON_INSPECTIONS,
@@ -122,6 +143,9 @@ import {
   parseUpcomingLanguage,
   isAnimeCandidate,
   isIndiaFlatrateEligible,
+  seasonIndiaProviderOutcome,
+  seasonProviderVerdict,
+  dedupeProvidersById,
   extractIndiaMovieReleaseEvents,
   deriveMovieReleaseKinds,
   earliestIndiaReleaseDate,
@@ -129,7 +153,7 @@ import {
   normalizeRegionFlatrateProviders
 } from '../../shared/upcoming-policy';
 import type { UpcomingFilters, UpcomingItem, UpcomingProvider, UpcomingReleaseKind, UpcomingResult, UpcomingType } from './upcoming-types';
-import type { IndiaReleaseDatesPayload } from '../../shared/upcoming-policy';
+import type { IndiaReleaseDatesPayload, SeasonWatchProvidersPayload } from '../../shared/upcoming-policy';
 
 const TMDB_IMAGE = 'https://image.tmdb.org/t/p';
 const DEFAULT_REGION = 'IN';
@@ -224,77 +248,105 @@ const genreNames: Record<number, string> = {
   28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
 };
 
-// Phase F.2 — India movie CANDIDATE discovery (ONE broad stream).
+// Phase F.3 — India movie CANDIDATE discovery (DEDUPED UNION of two
+// documented sources).
 //
-// TMDB's official Discover Movie documentation:
-//   "If you specify the region parameter, the regional release date will
-//    be used instead of the primary release date. The date returned will
-//    be the first date based on your query (ie. if a with_release_type
-//    is specified)."
-// with_release_type is an OPTIONAL refinement. The Phase F.1 per-kind
-// discovery (with_release_type='2|3' theatrical + '4' digital as two
-// separate queries) starved future months (October 2026+ returned no
-// candidates) because TMDB's per-region release-type tagging lags for
-// unreleased titles. Discovery is therefore ONE stream:
-//   - region=IN so release_date.gte/lte filter INDIAN release dates
-//     (regional dates instead of primary dates)
-//   - release_date month window ONLY — no primary_release_date, no
-//     with_release_type, no other date filter
-//   - optional with_original_language when a language filter is active
-//   - include_adult=false + the transitional adult watch-provider
-//     exclusion (requires watch_region — kept from Phase 6)
-//   - bounded upstream pagination: pages are walked while TMDB reports
-//     more pages (until page >= real total_pages or the hard cap), so a
-//     pathological query can never loop unbounded; total_pages is read
-//     from the real upstream response, never fabricated; rows are
-//     deduped by canonical movie ID across pages.
+// Official TMDB OpenAPI (developer.themoviedb.org/openapi/tmdb-api.json)
+// lists BOTH date-query families on /discover/movie: `region` +
+// `release_date.gte/lte` AND `primary_release_date.gte/lte` (plus the
+// OPTIONAL `with_release_type` refinement — never used here).
+//
+// WHY THE F.2 SINGLE REGION-AWARE STREAM STILL STARVED: with `region`,
+// TMDB filters movies by their INDIA release dates. For unreleased
+// titles the India regional release-date data is frequently not indexed
+// yet — a movie with no indexed IN release date can never match a
+// region-aware date window, so it never even reached the
+// /movie/{id}/release_dates truth stage (October 2026+ returned nothing).
+//
+// The union covers both documented realities:
+//   Source A (region-aware): region=IN + release_date month window —
+//     matches movies whose India release data IS indexed.
+//   Source B (primary): primary_release_date month window with NO region
+//     parameter — matches on the movie's PRIMARY release date (the
+//     origin-country date, indexed at announcement time) without
+//     requiring India regional metadata to exist yet.
+//
+// Both sources share: optional with_original_language (TMDB ORIGINAL
+// language only, omitted when 'all'), sort_by popularity, vote_count
+// floor, include_adult=false, the transitional adult watch-provider
+// exclusion (requires watch_region — kept from Phase 6, and watch_region
+// does NOT change release-date semantics — that is `region`'s role), and
+// bounded pagination (pages walked while TMDB reports more, until
+// page >= real total_pages or the hard cap; total_pages is read from the
+// real upstream response, never fabricated; rows are deduped by
+// canonical movie ID across BOTH sources via the shared seen set).
 //
 // The discovered rows are CANDIDATES ONLY: their `release_date` is NOT
 // trusted as the card date (TMDB region handling can fall back to the
 // primary release date). Final India release truth (country IN, release
 // types 2/3/4, selected month) comes from /movie/{id}/release_dates in
 // loadUpcomingMovies.
+type TmdbDiscoverMovieParams = Record<string, string | number | boolean | undefined>;
+
+// Shared bounded page-walker for both candidate sources: accumulates
+// unique canonical IDs into `seen`/`collected` so the union dedupes
+// across sources AND pages, and never walks past the real total_pages
+// or the hard page cap.
+async function collectMovieDiscoverPages(baseParams: TmdbDiscoverMovieParams, collected: TmdbMovieRow[], seen: Set<number>): Promise<void> {
+  let page = 1;
+  let totalPages = 1;
+  while (page <= Math.min(totalPages, UPCOMING_MOVIE_MAX_UPSTREAM_PAGES)) {
+    const result = await tmdbRequest<TmdbMovieList>('/discover/movie', { ...baseParams, page });
+    for (const row of result.results ?? []) {
+      if (row.id && !seen.has(row.id)) {
+        seen.add(row.id);
+        collected.push(row);
+      }
+    }
+    totalPages = result.total_pages ?? page;
+    if ((result.page ?? page) >= totalPages) break;
+    page += 1;
+  }
+}
+
 async function discoverIndiaMovieCandidates(year: number, month: number, region: string, language: string, providerExclusion: string | undefined): Promise<TmdbMovieRow[]> {
   const { gte, lte } = monthBounds(year, month);
   // The cache key embeds every query dimension: year, month, region,
   // language filter, adult exclusion and the movie release-model version
   // (a model bump re-keys instead of serving stale-era rows — including
-  // every entry created under the pre-F.2 per-kind discovery).
+  // every entry created under the pre-F.3 single-stream discovery and
+  // the pre-F.2 per-kind discovery).
   const key = `upcoming:movies:${year}:${month}:${region}:${language}:${providerExclusion ?? 'no-adult'}:${UPCOMING_MOVIE_RELEASE_TRUTH_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     const collected: TmdbMovieRow[] = [];
     const seen = new Set<number>();
-    let page = 1;
-    let totalPages = 1;
-    while (page <= Math.min(totalPages, UPCOMING_MOVIE_MAX_UPSTREAM_PAGES)) {
-      const result = await tmdbRequest<TmdbMovieList>('/discover/movie', {
-        // Pass the actual region so TMDB applies region-aware
-        // release-date context (India release dates).
-        region,
-        'release_date.gte': gte,
-        'release_date.lte': lte,
-        // Phase F.2: with_release_type is deliberately NOT sent — the
-        // release TYPE is decided ONLY by /movie/{id}/release_dates.
-        // Language filter (Phase F.1): TMDB ORIGINAL language only —
-        // omitted entirely when the filter is 'all'.
-        ...(language !== 'all' ? { with_original_language: language } : {}),
-        sort_by: 'popularity.desc',
-        'vote_count.gte': 1,
-        include_adult: false,
-        // Transitional movie-side adult exclusion (requires watch_region).
-        ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: region } : {}),
-        page
-      });
-      for (const row of result.results ?? []) {
-        if (row.id && !seen.has(row.id)) {
-          seen.add(row.id);
-          collected.push(row);
-        }
-      }
-      totalPages = result.total_pages ?? page;
-      if ((result.page ?? page) >= totalPages) break;
-      page += 1;
-    }
+    // Shared query dimensions across both sources. Language filter
+    // (Phase F.1): TMDB ORIGINAL language only — omitted entirely when
+    // the filter is 'all'. The transitional movie-side adult exclusion
+    // requires watch_region (which does NOT affect release-date
+    // semantics — that is `region`'s role).
+    const shared: TmdbDiscoverMovieParams = {
+      // Phase F.3: with_release_type is deliberately NOT sent — the
+      // release TYPE is decided ONLY by /movie/{id}/release_dates.
+      ...(language !== 'all' ? { with_original_language: language } : {}),
+      sort_by: 'popularity.desc',
+      'vote_count.gte': 1,
+      include_adult: false,
+      ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: region } : {})
+    };
+    // Source A: region-aware India release-date window (the F.2 stream).
+    await collectMovieDiscoverPages({
+      ...shared,
+      region,
+      'release_date.gte': gte,
+      'release_date.lte': lte
+    }, collected, seen);
+    // Source B: primary release-date window (NO region parameter).
+    await collectMovieDiscoverPages({
+      ...shared,
+      'primary_release_date.gte': gte,
+      'primary_release_date.lte': lte
+    }, collected, seen);
     return collected;
   });
   return value;
@@ -348,16 +400,20 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
   await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
   const adultIds = getAdultProviderIds();
   const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  // Phase F.2 — ONE broad candidate stream (no with_release_type, no
-  // per-kind duplication). Rows are deduped by canonical movie ID inside
-  // the discovery (bounded pagination + seen set).
+  // Phase F.3 — ONE broad candidate UNION (region-aware source A +
+  // primary source B, no with_release_type, no per-kind duplication).
+  // Rows are deduped by canonical movie ID inside the discovery (shared
+  // seen set across both sources + bounded pagination) and re-deduped
+  // defensively below.
   const candidateRows = await discoverIndiaMovieCandidates(year, month, region, language, providerExclusion);
   // Metadata lookup map (one entry per unique candidate — the same
   // dedupe guarantee, re-established defensively before the N+1 stage).
   const rowsById = new Map<number, TmdbMovieRow>();
   for (const row of candidateRows) if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
-  // Release-truth N+1 runs over the DEDUPED candidates only.
-  const candidates = [...rowsById.values()];
+  // Phase F.3 — hard cap on the deduped union entering the truth N+1
+  // (bounded N+1 invariant; popularity-desc ordering means the dropped
+  // tail is the least popular).
+  const candidates = [...rowsById.values()].slice(0, UPCOMING_MOVIE_MAX_CANDIDATES);
   const { startMs, endMs } = monthBounds(year, month);
 
   // Phase F.1 — FINAL INDIA RELEASE TRUTH (unchanged in F.2). For every
@@ -472,6 +528,25 @@ async function getTvWatchProviders(seriesId: number, region: string): Promise<Up
     // drop the series) from "the lookup itself failed" (failed
     // candidate — never fabricated as "no OTT").
     return normalizeRegionFlatrateProviders(result.results, region, (path) => tmdbImage(path, 'w92'));
+  });
+  return value;
+}
+
+// Phase F.3 — SEASON-LEVEL watch providers (official TMDB endpoint
+// GET /tv/{series_id}/season/{season_number}/watch/providers; the
+// official OpenAPI shows the same results.{CC}.flatrate response shape
+// as the series-level endpoint). The cache key distinguishes the
+// SEASON provider lookup from the series-parent one (separate path
+// segment + series ID + season number + region + model version).
+// Failures are deliberately NOT caught: a failed season-provider lookup
+// must propagate so the eligibility gate can treat it as a FAILED
+// candidate — availability is never fabricated, and an all-candidates
+// outage surfaces as a real upstream error instead of a silent empty
+// month.
+async function getTvSeasonWatchProviders(seriesId: number, seasonNumber: number, region: string): Promise<SeasonWatchProvidersPayload> {
+  const key = `upcoming:providers:tvseason:${seriesId}:${seasonNumber}:${region}:${UPCOMING_PROVIDER_MODEL_KEY}`;
+  const { value } = await getOrSet(key, providerPolicy, async () => {
+    return tmdbRequest<SeasonWatchProvidersPayload>(`/tv/${seriesId}/season/${seasonNumber}/watch/providers`);
   });
   return value;
 }
@@ -629,27 +704,59 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
   // has real target-month episodes (Phase F.2 performance rule — the
   // eligibility lookup is the most expensive per-candidate call).
   //
-  // Phase F.2 — INDIA OTT ELIGIBILITY (series only). Upcoming Series is
-  // web/OTT series available on Indian subscription platforms, so a
-  // candidate qualifies ONLY when /tv/{id}/watch/providers has at least
-  // one valid flatrate provider in results.IN:
-  //   - empty India flatrate list (TMDB answered) -> DROP the series;
-  //   - provider LOOKUP FAILURE -> failed candidate (rethrown so the
-  //     caller's all-fail detection can surface a real upstream outage
-  //     instead of a silently empty month — availability is never
-  //     fabricated as "no OTT");
+  // Phase F.3 — SEASON-LEVEL INDIA OTT ELIGIBILITY (series only).
+  // Upcoming Series is web/OTT series available on Indian subscription
+  // platforms, so eligibility is evaluated at the SEASON level through
+  // the official /tv/{id}/season/{n}/watch/providers endpoint for every
+  // relevant target season that was just inspected for episodes:
+  //   - a season WITH its own results.IN.flatrate provider qualifies the
+  //     series; icons are the provider_id-deduped union of the
+  //     qualifying seasons' own providers;
+  //   - a season endpoint that returned NO provider data at all (empty
+  //     results — no data for ANY region) may be vouched for by the
+  //     parent /tv/{id}/watch/providers results.IN.flatrate (documented
+  //     fallback; parent icons used; parent lookup is LAZY — only paid
+  //     when a season actually needs it);
+  //   - a season that HAS provider data without India flatrate
+  //     (US-only, buy/rent-only, IN present but empty flatrate) is
+  //     affirmative absence — it never qualifies and never falls back;
+  //   - a season-provider LOOKUP FAILURE propagates -> failed candidate
+  //     (never fabricated as "no OTT"; all candidates failing surfaces
+  //     a real upstream error);
   //   - US/other-region or buy/rent-only data never passes (the
   //     normalizer reads results.IN.flatrate only).
   // ANIME is exempt: the anime pipeline never requires India flatrate
   // availability — a failed lookup just means no icons on the cards.
   let providers: UpcomingProvider[];
-  try {
-    providers = await getTvWatchProviders(raw.id, region);
-  } catch (err) {
-    if (itemType === 'series') throw err;
-    providers = [];
+  if (itemType === 'series') {
+    const seasonOutcomes = await mapWithConcurrency(loadedSeasons, async (loaded) => {
+      // NOT caught: a failed season-provider lookup propagates as a
+      // failed candidate (availability is never fabricated).
+      const payload = await getTvSeasonWatchProviders(raw.id, loaded.seasonNumber, region);
+      return seasonIndiaProviderOutcome(payload, loaded.seasonNumber, region, (path) => tmdbImage(path, 'w92'));
+    }, LOOKUP_CONCURRENCY);
+    const verdict = seasonProviderVerdict(seasonOutcomes);
+    if (verdict.outcome === 'qualified') {
+      providers = verdict.providers;
+    } else if (verdict.outcome === 'needs-parent') {
+      // Documented fallback: the season endpoint(s) had NO provider data
+      // at all — the parent series-level IN.flatrate may vouch. NOT
+      // caught: a parent lookup failure is a failed candidate.
+      const parent = await getTvWatchProviders(raw.id, region);
+      providers = isIndiaFlatrateEligible(parent) ? dedupeProvidersById(parent) : [];
+    } else {
+      providers = [];
+    }
+    if (!isIndiaFlatrateEligible(providers)) return [];
+  } else {
+    // Anime: best-effort parent icons only — no eligibility gate
+    // (anime never requires India flatrate availability).
+    try {
+      providers = await getTvWatchProviders(raw.id, region);
+    } catch {
+      providers = [];
+    }
   }
-  if (itemType === 'series' && !isIndiaFlatrateEligible(providers)) return [];
 
   const title = detail.name || detail.original_name || raw.name || raw.original_name || 'Untitled';
   const poster = tmdbImage(detail.poster_path ?? raw.poster_path, 'w500');
@@ -705,20 +812,32 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
   const key = `upcoming:series:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_TV_ELIGIBILITY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: DISCOVER candidate series with episodes airing in the
-    // month (Phase F.2 — DISCOVERY, deliberately BROAD):
-    // air_date.gte/lte month window + the generic linear-TV genre
-    // exclusion (Soap/News/Talk) +, when selected, the TMDB
-    // original-language constraint.
+    // month (Phase F.3 — DISCOVERY IS PURELY SCHEDULE + LANGUAGE):
+    // air_date.gte/lte month window +, when selected, the TMDB
+    // original-language constraint. NOTHING ELSE filters candidates
+    // here.
     //
-    // watch_region / with_watch_monetization_types are deliberately NOT
-    // sent at the candidate stage: TMDB's Discover layer often lacks
-    // India OTT monetization data for unaired foreign-language seasons,
-    // which starved future months of Tamil/Telugu/Hindi/etc. candidates.
-    // INDIA OTT ELIGIBILITY is verified per-series in buildSeriesItems
-    // through /tv/{id}/watch/providers (results.IN.flatrate) AFTER real
-    // target-month episodes are confirmed.
+    // The F.2-era `without_genres` blacklist (Reality 10764 / Soap
+    // 10766 / Talk 10767) is REMOVED: it was a candidate STARVATION
+    // filter — legitimate Indian OTT series are frequently tagged
+    // Drama + Soap by TMDB, so they were deleted BEFORE any detail
+    // metadata, episode lookup or OTT eligibility check could speak
+    // (exactly why Hindi/Tamil/Telugu/Kannada future months stayed
+    // empty while English survived). The AUTHORITATIVE Upcoming Series
+    // curation is the detail-level verdict (upcomingTvCurationVerdict
+    // in buildSeriesItems: News/Talk by detail type, serial-scale
+    // episode counts) plus the SEASON-level India-OTT eligibility gate.
+    // There is deliberately NO replacement genre blacklist and NO title
+    // blacklist.
+    //
+    // watch_region / with_watch_monetization_types remain deliberately
+    // ABSENT at the candidate stage: TMDB's Discover layer often lacks
+    // India OTT monetization data for unaired foreign-language seasons.
+    // INDIA OTT ELIGIBILITY is verified per-season in buildSeriesItems
+    // through /tv/{id}/season/{n}/watch/providers (with the documented
+    // parent fallback) AFTER real target-month episodes are confirmed.
     // Bounded pagination: walk upstream pages while TMDB reports more,
-    // capped at UPCOMING_TV_MAX_CANDIDATE_PAGES and never past real
+    // capped at UPCOMING_TV_MAX_CANDIDATE_PAGES (5) and never past real
     // total_pages (never fabricated).
     const candidates: Array<{ id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; first_air_date?: string; vote_average?: number; genre_ids?: number[]; popularity?: number; original_language?: string }> = [];
     const seenCandidates = new Set<number>();
@@ -728,10 +847,10 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
       const result = await tmdbRequest<TmdbTvList>('/discover/tv', {
         'air_date.gte': gte,
         'air_date.lte': lte,
-        without_genres: UPCOMING_TV_WITHOUT_GENRES,
-        // Language filter (Phase F.1): TMDB ORIGINAL language only —
-        // omitted entirely when the filter is 'all'. The anime
-        // exclusion below stays independent of the language filter.
+        // Phase F.3: NO without_genres, NO watch_region, NO
+        // with_watch_monetization_types — discovery is schedule +
+        // language only. The anime exclusion below stays independent
+        // of the language filter.
         ...(language !== 'all' ? { with_original_language: language } : {}),
         sort_by: 'popularity.desc',
         'vote_count.gte': 1,
@@ -926,6 +1045,7 @@ export const upcomingInternals = {
   loadUpcomingSeries,
   loadUpcomingAnime,
   getTvWatchProviders,
+  getTvSeasonWatchProviders,
   getMovieIndiaReleaseDates,
   getMovieWatchProviders,
   buildSeriesItems,

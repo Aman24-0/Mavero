@@ -17,7 +17,8 @@ import { existsSync, readFileSync } from 'node:fs';
 //                                legacy routes (load or client goto).
 //   5.  CANONICAL              — legacy UI components are deleted; nothing
 //                                renders the old Profile/Settings pages.
-//   6.  UPCOMING               — back-pill targets /account, labeled Account.
+//   6.  UPCOMING               — legacy back-pill REMOVED (Phase F.3: main
+//                                navigation page); no /profile legacy link.
 //   7.  PRIMARY NAV            — Discover, Upcoming, Search, My List, Account.
 //   8.  NO DEAD LINKS          — no intentional internal navigation to
 //                                /profile or /settings anywhere in src/
@@ -91,17 +92,20 @@ assert.match(accountPage, /Guest profile · Local library/, 'guest identity stat
 ok('5. /account remains the canonical, fully-featured account destination');
 
 // ============================================================
-// 6. UPCOMING — back link targets Account
+// 6. UPCOMING — legacy back link REMOVED (Phase F.3)
 // ============================================================
-assert.match(upcomingPage, /class="back-pill" href="\/account"/, 'Upcoming back-pill navigates to /account');
-assert.match(upcomingPage, /<span>Account<\/span>/, 'Upcoming back-pill is labeled Account');
+// Upcoming is now a MAIN NAVIGATION page: the "Account" back-pill was
+// removed together with its icon import and CSS. No legacy /profile link
+// exists, and all Upcoming functionality is untouched.
+assert.doesNotMatch(upcomingPage, /back-pill/, 'Upcoming back-pill is REMOVED (main navigation page)');
+assert.doesNotMatch(upcomingPage, /<span>Account<\/span>/, 'Upcoming Account back-pill label is removed');
 assert.doesNotMatch(upcomingPage, /href="\/profile"/, 'Upcoming has no legacy back link to /profile');
 // Upcoming functionality untouched — filters, grouping, pagination markers.
 assert.match(upcomingPage, /parseUpcomingMonth|selectedMonth/, 'month filter intact');
 assert.match(upcomingPage, /selectedYear/, 'year filter intact');
 assert.match(upcomingPage, /selectedType/, 'type filter intact');
 assert.match(upcomingPage, /dayGroups/, 'release day grouping intact');
-ok('6. Upcoming back link is Account; Upcoming functionality untouched');
+ok('6. Upcoming back-pill removed (main navigation page); Upcoming functionality untouched');
 
 // ============================================================
 // 7. PRIMARY NAV — the five-destination contract holds

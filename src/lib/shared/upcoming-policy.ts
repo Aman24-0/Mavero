@@ -15,27 +15,42 @@
 //     explicitly exempts anime, see below)
 //
 // WHY (problems being fixed):
-//   1. (Phase F.2 REVISION — DISCOVERY vs ELIGIBILITY) Upcoming Series
-//      candidate discovery previously REQUIRED India OTT availability at
-//      the TMDB Discover layer (`watch_region=IN` +
-//      `with_watch_monetization_types=flatrate` on /discover/tv). That
-//      collapsed two different concerns into one query and starved
-//      future months — especially non-English languages — because TMDB's
-//      Discover layer often lacks/prefers-not India OTT monetization data
-//      for unaired foreign-language seasons even when the dedicated
-//      per-series watch/providers endpoint DOES list them. The fix is the
-//      F.2 separation, enforced in upcoming.ts:
+//   1. (Phase F.3 REVISION — DISCOVERY is genre-free) The F.2 discovery
+//      still carried a broad genre blacklist (`without_genres` for
+//      Reality 10764, Soap 10766, Talk 10767). That was a candidate
+//      STARVATION filter: many legitimate Indian OTT series are tagged
+//      Drama + Soap by TMDB, so they were removed at the Discover layer
+//      BEFORE any detail metadata, episode lookup or OTT eligibility
+//      check could speak — which is exactly why Hindi/Tamil/Telugu/
+//      Kannada future months stayed empty while English survived.
+//      Discovery is now PURELY schedule + language (air_date month
+//      window + optional with_original_language). The authoritative
+//      Upcoming Series curation is the DETAIL-level verdict
+//      (`upcomingTvCurationVerdict`): News/Talk dropped by detail
+//      metadata, serial-scale released-episode counts dropped, and a
+//      Soap-tagged legitimate OTT drama is KEPT when it has real
+//      target-month episodes and India OTT eligibility. There is
+//      deliberately NO title blacklist and NO broad genre blacklist.
 //        a) DISCOVERY (cheap, broad): /discover/tv with ONLY the episode
-//           schedule window (air_date.gte/lte) + language + the generic
-//           linear-TV category exclusion (`without_genres` for Soap
-//           10764, News 10766, Talk 10767).
-//        b) ELIGIBILITY (expensive, precise): per surviving candidate —
-//           AFTER real target-month episodes are confirmed —
-//           GET /tv/{id}/watch/providers must contain at least one valid
-//           flatrate provider in results.IN (`isIndiaFlatrateEligible`).
-//           No IN.flatrate -> dropped. US/other-region or buy/rent-only
-//           -> dropped. Provider lookup FAILURE -> failed candidate
-//           (never fabricated as "no OTT").
+//           schedule window (air_date.gte/lte) + language. NO
+//           without_genres, NO watch_region, NO monetization filter.
+//        b) ELIGIBILITY (expensive, precise, SEASON-level): per
+//           surviving candidate — AFTER real target-month episodes are
+//           confirmed — every relevant target season is checked through
+//           GET /tv/{series_id}/season/{season_number}/watch/providers
+//           (official TMDB endpoint; same results.{CC}.flatrate shape
+//           as the series-level endpoint). The series is kept when at
+//           least one relevant target season has a valid India flatrate
+//           provider. Documented FALLBACK: only when a season endpoint
+//           returned NO provider data at all (empty results — no data
+//           for ANY region), the parent GET /tv/{id}/watch/providers
+//           results.IN.flatrate may vouch for that season. A season
+//           that HAS provider data without India flatrate (US-only,
+//           buy/rent-only, IN present but empty flatrate) is affirmative
+//           absence — it never qualifies and never falls back.
+//           Provider lookup FAILURE -> failed candidate (never
+//           fabricated as "no OTT"); all candidates failing surfaces a
+//           real upstream error.
 //   1b. SERIAL CURATION (detail level): a conservative serial-structure
 //       policy — Indian daily/weekly serials are serials by
 //       production model (hundreds of released episodes), the same
@@ -59,19 +74,31 @@
 //      one. `selectUpcomingSeasonCandidates` derives the seasons
 //      relevant to the target month from the season air-date windows,
 //      next_episode_to_air and last_episode_to_air instead.
-//   3. (Phase F.2 REVISION — MOVIE CANDIDATE DISCOVERY) movies were
-//      discovered through TWO /discover/movie queries restricted by
-//      `with_release_type` (2|3 theatrical, 4 digital). TMDB documents
-//      that `with_release_type` is an OPTIONAL refinement — with only
-//      `region` + a `release_date` window, Discover matches movies with
-//      ANY matching regional release-date information for that region.
-//      The release-type restriction starved future months (October 2026+
-//      returned nothing) because TMDB's per-region release-type tagging
-//      lags for unreleased titles. Discovery is now ONE broad stream
-//      (region=IN + release_date month window, NO with_release_type, NO
-//      primary_release_date); release TYPES are decided ONLY by the
-//      per-movie /movie/{id}/release_dates truth (IN, types 2/3/4),
-//      which stays the FINAL India release truth.
+//   3. (Phase F.3 REVISION — MOVIE CANDIDATE DISCOVERY UNION) The F.2
+//      single region-aware stream (region=IN + release_date window) still
+//      starved October 2026+ of movie candidates: with `region`, TMDB
+//      filters movies by their INDIA release dates, and for unreleased
+//      titles the India regional release-date data is frequently not
+//      indexed yet — a movie with no indexed IN release date can never
+//      match a region-aware date window, so it never even reached the
+//      release_dates truth stage. Candidate discovery is now a DEDUPED
+//      UNION of two documented Discover sources (official OpenAPI —
+//      developer.themoviedb.org/openapi/tmdb-api.json — lists both
+//      `region`+`release_date.*` and `primary_release_date.*` on
+//      /discover/movie):
+//        Source A (region-aware): region=IN + release_date month window —
+//        matches movies whose INDIA release data IS indexed.
+//        Source B (primary): primary_release_date month window with NO
+//        region parameter — matches on the movie's PRIMARY release date
+//        (the origin-country date, indexed at announcement time), which
+//        does not require India regional metadata to exist yet.
+//      Both sources keep the language filter, the adult exclusions and
+//      bounded pagination; results are deduped by canonical TMDB movie
+//      ID. `with_release_type` is still NEVER sent. The FINAL India
+//      release truth is UNCHANGED and UNWEAKENED:
+//      /movie/{id}/release_dates -> country IN -> types 2|3|4 -> only
+//      events inside the selected month; the card date IS that real
+//      India event date.
 //   4. Upcoming event IDs are episode-unique
 //      (`series-123-s58e294`), but the detail routes need the parent
 //      TMDB ID. `upcomingDetailPath` extracts the canonical numeric ID
@@ -102,8 +129,11 @@
 // instead of serving stale-era entries.
 // ============================================================
 
-/** TV genres treated as generic linear-TV categories for Upcoming Series: Soap, News, Talk. */
-export const UPCOMING_TV_WITHOUT_GENRES = '10764|10766|10767';
+// NOTE (Phase F.3): the old UPCOMING_TV_WITHOUT_GENRES constant
+// ('10764|10766|10767') is deliberately GONE. A broad genre blacklist at
+// the Discover layer starved candidates — Indian OTT dramas tagged
+// Drama+Soap never reached detail-level curation. Upcoming Series
+// curation is detail-metadata-only (upcomingTvCurationVerdict below).
 
 /**
  * A scripted series with MORE released episodes than this is treated as a
@@ -119,19 +149,24 @@ export const UPCOMING_TV_SERIAL_POLICY_KEY = 'daily-serial-gt100';
 
 /**
  * Cache-key dimension for the Upcoming Series CANDIDATE DISCOVERY query
- * shape (Phase F.2: air_date month window + language + genre exclusion;
- * NO watch-region/monetization constraint at discovery). Bumped from the
- * old 'in-flatrate-v1' discovery semantics so pre-F.2 cached candidate
- * sets can never be served.
+ * shape (Phase F.3: air_date month window + language ONLY — the genre
+ * blacklist is REMOVED; still no watch-region/monetization constraint).
+ * Bumped from 'airdate-discovery-v2' so every pre-F.3 cached candidate
+ * set (which excluded Soap-tagged shows) can never be served.
  */
-export const UPCOMING_TV_DISCOVERY_KEY = 'airdate-discovery-v2';
+export const UPCOMING_TV_DISCOVERY_KEY = 'airdate-discovery-v3';
 
 /**
- * Cache-key dimension for the India OTT ELIGIBILITY model (Phase F.2):
- * per-series /tv/{id}/watch/providers -> results.IN.flatrate gate
- * applied after real target-month episodes are confirmed.
+ * Cache-key dimension for the India OTT ELIGIBILITY model (Phase F.3):
+ * SEASON-level gate — every relevant target season is checked through
+ * /tv/{series_id}/season/{season_number}/watch/providers
+ * (results.IN.flatrate), with the parent /tv/{id}/watch/providers
+ * IN.flatrate as the documented fallback ONLY when a season endpoint
+ * returned no provider data at all. Bumped from
+ * 'in-flatrate-eligibility-v1' (series-level-only gate) so pre-F.3
+ * eligibility-era result sets are never served.
  */
-export const UPCOMING_TV_ELIGIBILITY_KEY = 'in-flatrate-eligibility-v1';
+export const UPCOMING_TV_ELIGIBILITY_KEY = 'season-flatrate-eligibility-v2';
 
 /**
  * Cache-key dimension for the month-window season resolution model.
@@ -149,34 +184,68 @@ export const UPCOMING_SEASON_MODEL_KEY = 'month-window-v1';
  * stale/foreign dates (e.g. an August date or a 1999 date) render on the
  * September 2026 page. Phase F.1 made
  * `GET /movie/{id}/release_dates` -> country `IN` -> release types 2|3|4
- * the FINAL India release truth. Phase F.2 broadened the CANDIDATE
- * discovery to ONE stream WITHOUT `with_release_type` (the release-type
- * restriction starved October 2026+ of candidates).
+ * the FINAL India release truth. Phase F.3 broadens the CANDIDATE
+ * discovery to a deduped UNION of the region-aware stream AND the
+ * primary-release-date stream (both WITHOUT `with_release_type` — the
+ * release-type restriction starved October 2026+, and the region-only
+ * stream still required India regional dates to be indexed).
  *
- * Version 'in-release-discovery-v2' re-keys EVERY cache entry created
- * under the pre-F.2 per-kind (`with_release_type=2|3` / `=4`)
- * candidate-discovery semantics — both the month candidate sets and the
- * per-movie release_dates payloads — so old-era result sets can never be
- * served under the new discovery model.
+ * Version 'in-release-discovery-v3' re-keys EVERY cache entry created
+ * under the pre-F.3 single region-aware stream ('in-release-discovery-v2')
+ * AND the pre-F.2 per-kind (`with_release_type=2|3` / `=4`) candidate
+ * discovery — month candidate sets and per-movie release_dates payloads
+ * alike — so old-era result sets can never be served under the new
+ * candidate-union model.
  */
-export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-discovery-v2';
+export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-discovery-v3';
 
-/** Cache-key dimension for the India watch-provider model (flatrate only, per-region). */
-export const UPCOMING_PROVIDER_MODEL_KEY = 'tmdb-flatrate-v1';
+/**
+ * Cache-key dimension for the India watch-provider model (flatrate only,
+ * per-region). Phase F.3 adds SEASON-level provider lookups
+ * (/tv/{id}/season/{n}/watch/providers) and provider dedupe, so the
+ * model is bumped from 'tmdb-flatrate-v1' — series-parent and
+ * season-provider cache entries from the old model are never reused.
+ */
+export const UPCOMING_PROVIDER_MODEL_KEY = 'tmdb-flatrate-v2';
 
 // NOTE (Phase F.2): TMDB release-type VALUES (1 Premiere, 2 Theatrical
 // limited, 3 Theatrical, 4 Digital, 5 Physical, 6 TV) are used ONLY by
 // `extractIndiaMovieReleaseEvents` below — the final per-movie truth —
 // and deliberately NOT as a candidate-discovery filter.
 
-/** HARD cap on upstream /discover/movie pages walked per release kind (bounded pagination — a pathological query cannot loop unbounded). */
+/** HARD cap on upstream /discover/movie pages walked per candidate source (bounded pagination — a pathological query cannot loop unbounded). */
 export const UPCOMING_MOVIE_MAX_UPSTREAM_PAGES = 10;
 
-/** HARD cap on upstream /discover/tv pages walked for series candidates (bounded pagination). */
-export const UPCOMING_TV_MAX_CANDIDATE_PAGES = 2;
+/**
+ * HARD cap on upstream /discover/tv pages walked for series candidates
+ * (bounded pagination). Phase F.3 raises this from 2: a production
+ * upcoming calendar must walk the real upstream result set (now that the
+ * incorrect genre exclusion no longer artificially shrinks it), while
+ * real `total_pages` + this cap keep the query bounded.
+ */
+export const UPCOMING_TV_MAX_CANDIDATE_PAGES = 5;
 
-/** HARD cap on candidate TV series processed per month (bounded N+1: each candidate costs detail + season + provider lookups). */
-export const UPCOMING_TV_MAX_CANDIDATES = 40;
+/**
+ * HARD cap on candidate TV series processed per month (bounded N+1).
+ * Phase F.3 raises this from 40: with up to 5 pages x 20 rows and no
+ * genre starvation, 80 candidates at concurrency 4 costs at most
+ * detail (1) + seasons (<=3) + parent provider (1, fallback-only) +
+ * season providers (<=3) calls per candidate that reaches the season
+ * stage — candidates dropped by adult/curation metadata stop after the
+ * single detail call. Season and provider lookups are cached
+ * month-independently, so repeat visits are amortized.
+ */
+export const UPCOMING_TV_MAX_CANDIDATES = 80;
+
+/**
+ * HARD cap on deduped movie candidates entering the release-truth N+1
+ * (Phase F.3 — the candidate UNION of two bounded Discover streams can
+ * otherwise reach 2x10 pages of rows; the union cap keeps the
+ * per-movie /movie/{id}/release_dates walk deterministically bounded
+ * while the popularity-desc sort ensures the dropped tail is the least
+ * popular. Candidates are deduped BEFORE this cap is applied.
+ */
+export const UPCOMING_MOVIE_MAX_CANDIDATES = 300;
 
 /** HARD cap on seasons inspected per series (bounded — target months normally resolve within 1-2 seasons). */
 export const UPCOMING_MAX_SEASON_INSPECTIONS = 3;
@@ -549,4 +618,111 @@ export function normalizeRegionFlatrateProviders(
  */
 export function isIndiaFlatrateEligible(providers: NormalizedUpcomingProvider[] | null | undefined): boolean {
   return Array.isArray(providers) && providers.length > 0;
+}
+
+// ---------- season-level provider eligibility (Phase F.3) ----------
+
+/**
+ * Structural shape of the TMDB season-level watch/providers response
+ * (GET /tv/{series_id}/season/{season_number}/watch/providers). The
+ * official OpenAPI shows the SAME results.{CC}.{flatrate,...} shape as
+ * the series-level endpoint, so one normalizer serves both.
+ */
+export type SeasonWatchProvidersPayload = {
+  results?: Record<string, { flatrate?: FlatrateProviderRow[] }>;
+};
+
+/**
+ * The India provider picture of ONE relevant target season, distilled
+ * from a season watch/providers payload.
+ *
+ *   - `providers` = the season's own results.{region}.flatrate rows,
+ *     normalized (empty when the season has none).
+ *   - `providerDataAbsent` = the payload carried NO provider data for
+ *     ANY region (missing/empty `results`). ONLY this state may fall
+ *     back to the parent series-level providers: a season that HAS
+ *     provider data without India flatrate (US-only, buy/rent-only, an
+ *     IN entry with empty flatrate) is AFFIRMATIVE absence — it never
+ *     qualifies and never falls back, so richer upstream data can never
+ *     produce MORE availability than the data states.
+ */
+export type SeasonIndiaProviderOutcome = {
+  seasonNumber: number;
+  providers: NormalizedUpcomingProvider[];
+  providerDataAbsent: boolean;
+};
+
+/**
+ * Distill one season watch/providers payload into its India outcome.
+ * `region` is the requested region (IN for the Upcoming product);
+ * `logoUrl` is injected so this pure module stays independent of
+ * image-size policy. A missing/failed payload is defensively treated as
+ * "no provider data at all" — the caller separately treats LOOKUP
+ * failures as failed candidates, so this only shapes successful answers.
+ */
+export function seasonIndiaProviderOutcome(
+  payload: SeasonWatchProvidersPayload | null | undefined,
+  seasonNumber: number,
+  region: string,
+  logoUrl: (path: string) => string
+): SeasonIndiaProviderOutcome {
+  const results = payload?.results;
+  const providerDataAbsent = !results || Object.keys(results).length === 0;
+  return {
+    seasonNumber,
+    providers: providerDataAbsent ? [] : normalizeRegionFlatrateProviders(results, region, logoUrl),
+    providerDataAbsent
+  };
+}
+
+/**
+ * Deduplicate normalized providers by TMDB provider_id, keeping the
+ * first occurrence (season provider results and parent fallback data
+ * can overlap — identical providers must not render twice).
+ */
+export function dedupeProvidersById(providers: NormalizedUpcomingProvider[]): NormalizedUpcomingProvider[] {
+  const seen = new Set<number>();
+  const out: NormalizedUpcomingProvider[] = [];
+  for (const provider of providers) {
+    if (seen.has(provider.id)) continue;
+    seen.add(provider.id);
+    out.push(provider);
+  }
+  return out;
+}
+
+/**
+ * The Phase F.3 SEASON-LEVEL India OTT eligibility verdict for a series
+ * whose real target-month episodes are already confirmed.
+ *
+ * Binding rule (documented product semantics):
+ *   - ANY relevant target season with its own India flatrate provider
+ *     qualifies the series; icons are the provider_id-deduped union of
+ *     the qualifying seasons' own providers.
+ *   - otherwise, when at least one season endpoint returned NO provider
+ *     data at all (providerDataAbsent), the verdict is 'needs-parent':
+ *     the caller may consult the parent /tv/{id}/watch/providers and
+ *     qualifies the series through results.IN.flatrate (parent icons).
+ *   - when every season carried provider data but NONE had India
+ *     flatrate (US-only / buy-rent-only / IN-with-empty-flatrate), the
+ *     verdict is 'ineligible' — affirmative absence, NO parent fallback.
+ *
+ * The parent lookup is deliberately LAZY (only 'needs-parent' triggers
+ * it): a series whose seasons already speak for India never pays for a
+ * parent call, and a parent outage can only affect candidates that
+ * actually need the fallback.
+ */
+export type SeasonProviderVerdict =
+  | { outcome: 'qualified'; providers: NormalizedUpcomingProvider[] }
+  | { outcome: 'needs-parent' }
+  | { outcome: 'ineligible' };
+
+export function seasonProviderVerdict(seasons: SeasonIndiaProviderOutcome[]): SeasonProviderVerdict {
+  if (seasons.length === 0) return { outcome: 'ineligible' };
+  const ownQualified = seasons.filter((season) => season.providers.length > 0);
+  if (ownQualified.length > 0) {
+    return { outcome: 'qualified', providers: dedupeProvidersById(ownQualified.flatMap((season) => season.providers)) };
+  }
+  if (seasons.some((season) => season.providerDataAbsent)) return { outcome: 'needs-parent' };
+  return { outcome: 'ineligible' };
 }

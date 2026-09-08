@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { ArrowLeft, Calendar, Film, Tv, Sparkles, Star, ArrowUpRight } from 'lucide-svelte';
+  import { Calendar, Film, Tv, Sparkles, Star, ArrowUpRight } from 'lucide-svelte';
   import Dropdown from '$components/Dropdown.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import AppFooter from '$components/AppFooter.svelte';
@@ -147,7 +147,6 @@
 <div class="upcoming-page">
   <header class="upcoming-header">
     <div class="header-inner">
-      <a class="back-pill" href="/account"><ArrowLeft size={15} /> <span>Account</span></a>
       <div class="header-eyebrow"><Calendar size={13} /> MAVERO / Upcoming</div>
       <h1>Upcoming</h1>
       <p>What's coming next — movies, series episodes, and anime releases.</p>
@@ -275,25 +274,8 @@
       #000;
   }
   .header-inner { width: min(1100px, 100%); margin-inline: auto; }
-  .back-pill {
-    display: inline-flex; align-items: center; gap: 7px;
-    min-height: 42px;
-    padding: 0 16px;
-    border: 1px solid rgba(255, 255, 255, .12);
-    border-radius: 999px;
-    color: #f5f5f5;
-    background: rgba(10, 10, 10, .6);
-    backdrop-filter: blur(8px);
-    font-size: .74rem; font-weight: 700;
-    text-decoration: none;
-    transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
-  }
-  .back-pill:hover { background: rgba(20, 20, 20, .8); border-color: rgba(255, 255, 255, .24); transform: translateX(-2px); }
-  .back-pill:active { transform: translateX(-2px) scale(.97); }
-  .back-pill:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
   .header-eyebrow {
     display: inline-flex; align-items: center; gap: 6px;
-    margin-top: 22px;
     color: #77777f;
     font-size: .6rem; font-weight: 700;
     letter-spacing: .14em; text-transform: uppercase;
@@ -548,6 +530,6 @@
     .day-cards { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .back-pill, .release-card { transition: none; }
+    .release-card { transition: none; }
   }
 </style>
