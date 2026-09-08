@@ -15,24 +15,36 @@
 //     explicitly exempts anime, see below)
 //
 // WHY (problems being fixed):
-//   1. Upcoming Series surfaced Indian daily-soap / linear-TV serials
-//      because the TV discover query had NO India OTT availability
-//      constraint and NO generic linear-TV category exclusion. The fix
-//      is layered:
-//        a) QUERY LEVEL (server-side, in upcoming.ts): require
-//           `watch_region=IN` + `with_watch_monetization_types=flatrate`
-//           so only titles with India OTT (subscription) availability
-//           are candidates, plus `without_genres` for Soap (10764),
-//           News (10766) and Talk (10767).
-//        b) DETAIL LEVEL (this module): a conservative serial-structure
-//           policy — Indian daily/weekly serials are serials by
-//           production model (hundreds of released episodes), the same
-//           reliable signal measured for the Popular TV rail
-//           (measured 2026-09-08: contaminating serials 198-957
-//           released episodes vs must-keep OTT shows 10-32). A title
-//           with MORE released episodes than the threshold is a serial
-//           and is dropped from Upcoming Series. This is deterministic
-//           metadata — there is deliberately NO title blacklist.
+//   1. (Phase F.2 REVISION — DISCOVERY vs ELIGIBILITY) Upcoming Series
+//      candidate discovery previously REQUIRED India OTT availability at
+//      the TMDB Discover layer (`watch_region=IN` +
+//      `with_watch_monetization_types=flatrate` on /discover/tv). That
+//      collapsed two different concerns into one query and starved
+//      future months — especially non-English languages — because TMDB's
+//      Discover layer often lacks/prefers-not India OTT monetization data
+//      for unaired foreign-language seasons even when the dedicated
+//      per-series watch/providers endpoint DOES list them. The fix is the
+//      F.2 separation, enforced in upcoming.ts:
+//        a) DISCOVERY (cheap, broad): /discover/tv with ONLY the episode
+//           schedule window (air_date.gte/lte) + language + the generic
+//           linear-TV category exclusion (`without_genres` for Soap
+//           10764, News 10766, Talk 10767).
+//        b) ELIGIBILITY (expensive, precise): per surviving candidate —
+//           AFTER real target-month episodes are confirmed —
+//           GET /tv/{id}/watch/providers must contain at least one valid
+//           flatrate provider in results.IN (`isIndiaFlatrateEligible`).
+//           No IN.flatrate -> dropped. US/other-region or buy/rent-only
+//           -> dropped. Provider lookup FAILURE -> failed candidate
+//           (never fabricated as "no OTT").
+//   1b. SERIAL CURATION (detail level): a conservative serial-structure
+//       policy — Indian daily/weekly serials are serials by
+//       production model (hundreds of released episodes), the same
+//       reliable signal measured for the Popular TV rail
+//       (measured 2026-09-08: contaminating serials 198-957
+//       released episodes vs must-keep OTT shows 10-32). A title
+//       with MORE released episodes than the threshold is a serial
+//       and is dropped from Upcoming Series. This is deterministic
+//       metadata — there is deliberately NO title blacklist.
 //      NOTE on TMDB `with_type`: TMDB does not expose a universal
 //      "web series" flag and the numeric type enum is NOT reliable
 //      enough to treat as a web-series filter (type 4 = Scripted can
@@ -47,7 +59,20 @@
 //      one. `selectUpcomingSeasonCandidates` derives the seasons
 //      relevant to the target month from the season air-date windows,
 //      next_episode_to_air and last_episode_to_air instead.
-//   3. Upcoming event IDs are episode-unique
+//   3. (Phase F.2 REVISION — MOVIE CANDIDATE DISCOVERY) movies were
+//      discovered through TWO /discover/movie queries restricted by
+//      `with_release_type` (2|3 theatrical, 4 digital). TMDB documents
+//      that `with_release_type` is an OPTIONAL refinement — with only
+//      `region` + a `release_date` window, Discover matches movies with
+//      ANY matching regional release-date information for that region.
+//      The release-type restriction starved future months (October 2026+
+//      returned nothing) because TMDB's per-region release-type tagging
+//      lags for unreleased titles. Discovery is now ONE broad stream
+//      (region=IN + release_date month window, NO with_release_type, NO
+//      primary_release_date); release TYPES are decided ONLY by the
+//      per-movie /movie/{id}/release_dates truth (IN, types 2/3/4),
+//      which stays the FINAL India release truth.
+//   4. Upcoming event IDs are episode-unique
 //      (`series-123-s58e294`), but the detail routes need the parent
 //      TMDB ID. `upcomingDetailPath` extracts the canonical numeric ID
 //      with a strict parser (no blind prefix-stripping) and fails safe
@@ -62,12 +87,15 @@
 // empty the section).
 //
 // MOVIE RELEASE MODEL (used by upcoming.ts, constants live here):
-//   India theatrical (TMDB release types 2|3) and India digital/OTT
-//   (release type 4) are discovered by two separate /discover/movie
-//   queries (region=IN + release_date month window + with_release_type)
-//   and merged by `mergeMovieReleaseEvents` (dedupe by canonical movie
-//   ID, earliest India release date preserved, normalized releaseKinds
-//   field — duplicate cards are never rendered).
+//   candidates come from ONE broad /discover/movie stream (region=IN +
+//   release_date month window + language + adult exclusions — NO
+//   with_release_type, NO primary_release_date), deduped by canonical
+//   movie ID. The FINAL India release truth stays
+//   /movie/{id}/release_dates -> results.IN -> types 2|3 (theatrical)
+//   and 4 (digital): only events inside the selected month survive, the
+//   card date IS the real India event date, and releaseKinds derive from
+//   those ACTUAL events — a movie with both an India theatrical and an
+//   India digital event in the month renders exactly ONE card.
 //
 // CACHE KEYS: the constants exported here are embedded in the
 // upcoming.ts cache keys, so bumping a policy/query version re-keys
@@ -89,8 +117,21 @@ export const UPCOMING_TV_DAILY_SERIAL_MAX_EPISODES = 100;
 /** Cache-key dimension for the serial policy. Bump when the rule changes. */
 export const UPCOMING_TV_SERIAL_POLICY_KEY = 'daily-serial-gt100';
 
-/** Cache-key dimension for the India-OTT query shape (flatrate + genre exclusion). */
-export const UPCOMING_TV_OTT_QUERY_KEY = 'in-flatrate-v1';
+/**
+ * Cache-key dimension for the Upcoming Series CANDIDATE DISCOVERY query
+ * shape (Phase F.2: air_date month window + language + genre exclusion;
+ * NO watch-region/monetization constraint at discovery). Bumped from the
+ * old 'in-flatrate-v1' discovery semantics so pre-F.2 cached candidate
+ * sets can never be served.
+ */
+export const UPCOMING_TV_DISCOVERY_KEY = 'airdate-discovery-v2';
+
+/**
+ * Cache-key dimension for the India OTT ELIGIBILITY model (Phase F.2):
+ * per-series /tv/{id}/watch/providers -> results.IN.flatrate gate
+ * applied after real target-month episodes are confirmed.
+ */
+export const UPCOMING_TV_ELIGIBILITY_KEY = 'in-flatrate-eligibility-v1';
 
 /**
  * Cache-key dimension for the month-window season resolution model.
@@ -100,27 +141,33 @@ export const UPCOMING_TV_OTT_QUERY_KEY = 'in-flatrate-v1';
 export const UPCOMING_SEASON_MODEL_KEY = 'month-window-v1';
 
 /**
- * Cache-key dimension for the India movie release-truth model (Phase F.1).
+ * Cache-key dimension for the India movie release model (Phase F.2).
  *
  * Phase F trusted the /discover/movie row's `release_date` as the card
  * date, but TMDB's region handling can fall back to the primary (origin)
  * release date when a country-specific date is missing — which let
  * stale/foreign dates (e.g. an August date or a 1999 date) render on the
- * September 2026 page. Phase F.1 makes
+ * September 2026 page. Phase F.1 made
  * `GET /movie/{id}/release_dates` -> country `IN` -> release types 2|3|4
- * the FINAL India release truth; this version constant re-keys every
- * pre-truth cached entry so stale-date result sets can never be served.
+ * the FINAL India release truth. Phase F.2 broadened the CANDIDATE
+ * discovery to ONE stream WITHOUT `with_release_type` (the release-type
+ * restriction starved October 2026+ of candidates).
+ *
+ * Version 'in-release-discovery-v2' re-keys EVERY cache entry created
+ * under the pre-F.2 per-kind (`with_release_type=2|3` / `=4`)
+ * candidate-discovery semantics — both the month candidate sets and the
+ * per-movie release_dates payloads — so old-era result sets can never be
+ * served under the new discovery model.
  */
-export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-dates-v1';
+export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-discovery-v2';
 
 /** Cache-key dimension for the India watch-provider model (flatrate only, per-region). */
 export const UPCOMING_PROVIDER_MODEL_KEY = 'tmdb-flatrate-v1';
 
-/** TMDB release-type values for the two India movie queries (official TMDB release types: 1 Premiere, 2 Theatrical (limited), 3 Theatrical, 4 Digital, 5 Physical, 6 TV). */
-export const UPCOMING_MOVIE_RELEASE_TYPES = {
-  theatrical: '2|3',
-  digital: '4'
-} as const;
+// NOTE (Phase F.2): TMDB release-type VALUES (1 Premiere, 2 Theatrical
+// limited, 3 Theatrical, 4 Digital, 5 Physical, 6 TV) are used ONLY by
+// `extractIndiaMovieReleaseEvents` below — the final per-movie truth —
+// and deliberately NOT as a candidate-discovery filter.
 
 /** HARD cap on upstream /discover/movie pages walked per release kind (bounded pagination — a pathological query cannot loop unbounded). */
 export const UPCOMING_MOVIE_MAX_UPSTREAM_PAGES = 10;
@@ -134,17 +181,8 @@ export const UPCOMING_TV_MAX_CANDIDATES = 40;
 /** HARD cap on seasons inspected per series (bounded — target months normally resolve within 1-2 seasons). */
 export const UPCOMING_MAX_SEASON_INSPECTIONS = 3;
 
-/** Release channel of an India movie release event. */
+/** Release channel of an India movie release event (decided ONLY by the per-movie release_dates truth, never by discovery). */
 export type UpcomingMovieReleaseKind = 'theatrical' | 'digital';
-
-/** One deduped movie release event after merging the theatrical + digital result sets. */
-export type MovieReleaseEvent = {
-  tmdbId: number;
-  /** Earliest India release date (YYYY-MM-DD) across the qualifying release kinds. */
-  date: string;
-  /** Canonical kind order: theatrical before digital. */
-  releaseKinds: UpcomingMovieReleaseKind[];
-};
 
 /**
  * Is this total released-episode count the signature of a daily/weekly
@@ -291,54 +329,18 @@ export function upcomingDetailPath(eventId: string): string | null {
   return `/${type}/${id}`;
 }
 
-/**
- * Merge the India theatrical + digital discover result sets into deduped
- * release events. Pure and synchronous:
- *   - dedupe by canonical TMDB movie ID (a movie qualifying for BOTH
- *     theatrical and digital in the month renders ONE card, never two)
- *   - preserve the EARLIEST valid India release date of the two events
- *   - releaseKinds in canonical order (theatrical first)
- * The returned events are sorted by (date, tmdbId) ascending so the
- * caller gets a chronologically stable stream.
- */
-export function mergeMovieReleaseEvents(
-  theatrical: Array<{ tmdbId: number; date: string }>,
-  digital: Array<{ tmdbId: number; date: string }>
-): MovieReleaseEvent[] {
-  const byId = new Map<number, MovieReleaseEvent>();
-  const absorb = (tmdbId: number, date: string, kind: UpcomingMovieReleaseKind) => {
-    if (!Number.isInteger(tmdbId) || tmdbId <= 0) return;
-    const existing = byId.get(tmdbId);
-    if (!existing) {
-      byId.set(tmdbId, { tmdbId, date, releaseKinds: [kind] });
-      return;
-    }
-    if (!existing.releaseKinds.includes(kind)) {
-      existing.releaseKinds = kind === 'theatrical' ? ['theatrical', ...existing.releaseKinds] : [...existing.releaseKinds, 'digital'];
-    }
-    // Keep the earliest valid India release date. An invalid/missing date
-    // never wins over a valid one.
-    const existingMs = Date.parse(existing.date);
-    const incomingMs = Date.parse(date);
-    if (!Number.isFinite(existingMs) || (Number.isFinite(incomingMs) && incomingMs < existingMs)) {
-      existing.date = date;
-    }
-  };
-  for (const row of theatrical) absorb(row.tmdbId, row.date, 'theatrical');
-  for (const row of digital) absorb(row.tmdbId, row.date, 'digital');
-  return [...byId.values()].sort((a, b) => {
-    const aMs = Date.parse(a.date);
-    const bMs = Date.parse(b.date);
-    const aKey = Number.isFinite(aMs) ? aMs : Number.MAX_SAFE_INTEGER;
-    const bKey = Number.isFinite(bMs) ? bMs : Number.MAX_SAFE_INTEGER;
-    return aKey - bKey || a.tmdbId - b.tmdbId;
-  });
-}
-
 // ============================================================
 // PHASE F.1 — language filter, anime identity, India release
 // truth, provider normalization. All pure and synchronous; this
 // module stays import-free (client-safe, directly unit-testable).
+//
+// PHASE F.2 note: the old `mergeMovieReleaseEvents` (theatrical +
+// digital two-stream candidate merge) was removed together with the
+// release-type-restricted two-query discovery it served. Candidate
+// movies now arrive from ONE deduped /discover/movie stream (dedupe
+// by canonical TMDB ID happens in upcoming.ts); releaseKinds derive
+// exclusively from the /movie/{id}/release_dates truth via
+// `deriveMovieReleaseKinds` below.
 // ============================================================
 
 // ---------- language filter ----------
@@ -521,4 +523,30 @@ export function normalizeRegionFlatrateProviders(
     out.push({ id: row.provider_id, name: row.provider_name, logo: logoUrl(row.logo_path) });
   }
   return out;
+}
+
+/**
+ * India OTT ELIGIBILITY (Phase F.2) — the Upcoming SERIES gate.
+ *
+ * A candidate series qualifies for Upcoming Series ONLY when its
+ * normalized India flatrate provider list contains at least one valid
+ * provider (`/tv/{id}/watch/providers` -> results.IN.flatrate, already
+ * normalized by `normalizeRegionFlatrateProviders`).
+ *
+ * Binding rules:
+ *   - `null`/`undefined` input means the provider LOOKUP FAILED (a
+ *     transient upstream error). It is NOT eligibility data — the
+ *     upcoming.ts pipeline treats that case as a FAILED candidate
+ *     explicitly; this helper returns false for it so the default is
+ *     always the safe drop.
+ *   - an empty array means TMDB answered and India has NO flatrate
+ *     provider -> NOT eligible -> the series is dropped.
+ *   - US/other-region-only or buy/rent-only availability never reaches
+ *     this helper (the normalizer reads results.IN.flatrate only).
+ *
+ * ANIME is exempt by architecture: the anime pipeline never requires
+ * India flatrate availability (most airing anime have no IN data).
+ */
+export function isIndiaFlatrateEligible(providers: NormalizedUpcomingProvider[] | null | undefined): boolean {
+  return Array.isArray(providers) && providers.length > 0;
 }
