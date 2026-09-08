@@ -132,10 +132,10 @@ ok('8. desktop rail keeps brand/spacing/active language with the five destinatio
 // ============================================================
 // 9. ACCOUNT ROUTE — intentional minimal placeholder, normal AppShell page
 // ============================================================
-assert.match(accountPage, /Phase B/, 'account page documents that Phase B replaces it');
-assert.match(accountPage, /<h1[^>]*>Account<\/h1>/, 'account page renders an Account heading');
 assert.match(accountPage, /<title>Account — Mavero<\/title>/, 'account page sets its title');
-assert.doesNotMatch(accountPage, /href="\/(profile|settings)"/, 'account placeholder carries no Profile/Settings functionality links');
+assert.doesNotMatch(accountPage, /PHASE A PLACEHOLDER/, 'Phase A placeholder fully replaced by the Phase B account experience');
+assert.match(accountPage, /action="\?\/profile"/, 'account page hosts the real profile form (Phase B)');
+assert.doesNotMatch(accountPage, /href="\/(profile|settings)"/, 'account page carries no Profile/Settings fallback links');
 // /account must NOT match the bare-render exclusion regex (Discover sub-pages) —
 // it renders inside AppShell like every other top-level consumer page.
 const literalMatch = rootLayout.match(/\/\^\\\/discover\\\/\(movies\|series\|anime\)\\\/\?\$\//);
