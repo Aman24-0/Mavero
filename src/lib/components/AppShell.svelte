@@ -1,16 +1,24 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { Bookmark, Compass, Search, UserRound, Settings2, Clapperboard } from 'lucide-svelte';
+  import { Bookmark, CalendarClock, Compass, Search, UserRound, Clapperboard } from 'lucide-svelte';
   import { haptic } from '$lib/client/haptics';
 
   let { children, currentPath = '/', showMobileNav = true }: { children: Snippet; currentPath?: string; showMobileNav?: boolean } = $props();
   let shell: HTMLElement;
 
+  // Single source of truth for primary navigation — consumed by BOTH the
+  // desktop side rail (.rail-nav) and the mobile floating pill (.mobile-nav).
+  // Order is the product contract: Discover, Upcoming, Search, My List, Account.
+  // Profile and Settings are intentionally NOT primary destinations anymore:
+  // /profile and /settings routes remain reachable for now (Phase C will
+  // fold them into the new Account experience). /account itself is a
+  // placeholder until Phase B ships the real Account page.
   const primaryLinks = [
     { label: 'Discover', href: '/discover', key: '/discover', icon: Compass },
+    { label: 'Upcoming', href: '/upcoming', key: '/upcoming', icon: CalendarClock },
     { label: 'Search', href: '/search', key: '/search', icon: Search },
     { label: 'My List', href: '/my-list', key: '/my-list', icon: Bookmark },
-    { label: 'Profile', href: '/profile', key: '/profile', icon: UserRound }
+    { label: 'Account', href: '/account', key: '/account', icon: UserRound }
   ];
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
@@ -42,7 +50,6 @@
       {/each}
     </nav>
     <div class="rail-bottom">
-      <a class="rail-link" href="/settings"><Settings2 size={18} strokeWidth={1.8} /><span>Settings</span></a>
       <div class="rail-rule"></div>
       <span class="rail-caption">Your screen. Your story.</span>
     </div>
@@ -61,7 +68,9 @@
 
   <!-- Mobile floating pill bottom navigation (centered, with side margins,
        sits above page content with safe-area aware offset).
-       Hidden on pages that opt out via showMobileNav={false} (e.g. Settings). -->
+       Hidden on pages that opt out via showMobileNav={false} (e.g. Settings).
+       Five equal columns; the pill spans the viewport with fixed side margins
+       so every label keeps its column at 360-420px widths. -->
   {#if showMobileNav}
     <nav class="mobile-nav" aria-label="Mobile navigation">
       <div class="mobile-nav-inner">
@@ -151,7 +160,7 @@
       width: min(calc(100% - 24px), 420px);
     }
     .mobile-nav-inner {
-      display: grid; grid-template-columns: repeat(4, 1fr);
+      display: grid; grid-template-columns: repeat(5, 1fr);
       align-items: center; gap: 2px;
       padding: 6px;
       border: 1px solid rgba(255, 255, 255, .1);
@@ -162,8 +171,8 @@
     }
     .mobile-nav a {
       display: grid; place-items: center; gap: 2px;
-      min-height: 44px;
-      padding: 6px 4px;
+      min-width: 0; min-height: 44px;
+      padding: 6px 2px;
       border-radius: 999px;
       color: #6f7078;
       font-size: .54rem; font-weight: 700; letter-spacing: .02em;
@@ -171,7 +180,7 @@
       transition: color 180ms ease, background 180ms ease;
     }
     .mobile-nav .nav-icon { display: grid; place-items: center; }
-    .mobile-nav .nav-label { opacity: .9; }
+    .mobile-nav .nav-label { white-space: nowrap; opacity: .9; }
     .mobile-nav a:hover { color: #c7c7cc; }
     .mobile-nav a.active {
       color: #f5f5f5;

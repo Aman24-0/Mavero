@@ -98,7 +98,7 @@
        administrative layout with its OWN navigation. The consumer
        AppShell (side rail + mobile bottom nav) must not render there at
        all — not hidden, not covered — so admin never shows the normal
-       Discover/Search/My List/Profile navigation. -->
+       Discover/Upcoming/Search/My List/Account navigation. -->
   <!-- /discover/movies|series|anime render bare as well: they are CHILD
        pages of Discover (each provides its own "← Discover" back link),
        not top-level consumer destinations. The consumer AppShell —

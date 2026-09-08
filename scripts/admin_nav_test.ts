@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 //
 // The root layout wrapped EVERY page (except watch/detail/auth) in
 // AppShell, which renders the consumer side rail + the mobile bottom nav
-// (Discover / Search / My List / Profile). Admin pages therefore showed
+// (Discover / Upcoming / Search / My List / Account). Admin pages therefore showed
 // the normal consumer navigation — inappropriate for an administrative
 // surface. The fix renders /admin/* BARE (exactly like /watch/*): the
 // consumer AppShell is never mounted there — not hidden, not covered —
@@ -61,7 +61,7 @@ ok('2. all admin pages keep the dedicated AdminShell navigation');
 // ============================================================
 // 3. AppShell untouched — consumer navigation intact elsewhere
 // ============================================================
-assert.match(appShell, /Discover[\s\S]*Search[\s\S]*My List[\s\S]*Profile/, 'consumer primary links unchanged');
+assert.match(appShell, /Discover[\s\S]*Upcoming[\s\S]*Search[\s\S]*My List[\s\S]*Account/, 'consumer primary links unchanged (Discover/Upcoming/Search/My List/Account)');
 assert.match(appShell, /class="mobile-nav"/, 'mobile bottom nav unchanged for consumer pages');
 assert.doesNotMatch(appShell, /\/admin/, 'AppShell has no admin special case (the exclusion lives in the layout branch)');
 ok('3. consumer navigation untouched (mobile + desktop consumers unaffected)');

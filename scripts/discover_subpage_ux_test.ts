@@ -8,8 +8,8 @@ import { readFileSync } from 'node:fs';
 //
 //   NAV        — the three sub-pages render BARE (no consumer AppShell /
 //                bottom nav — never hidden, never covered); /discover,
-//                /search, /my-list, /profile keep AppShell; admin bare
-//                behavior unchanged.
+//                /search, /my-list, /profile, /account keep AppShell;
+//                admin bare behavior unchanged.
 //   FILTER     — genre/year/sort changes reset to page 1, build canonical
 //                shareable URLs, invalid values fail server-side-safe.
 //   PAGINATION — previous/next + disabled state + query preservation +
@@ -65,6 +65,7 @@ assert.ok(!shippedRegex.test('/discover'), '/discover itself KEEPS the consumer 
 assert.ok(!shippedRegex.test('/search'), '/search unaffected');
 assert.ok(!shippedRegex.test('/my-list'), '/my-list unaffected');
 assert.ok(!shippedRegex.test('/profile'), '/profile unaffected');
+assert.ok(!shippedRegex.test('/account'), '/account unaffected (normal AppShell page during Phase A)');
 assert.ok(!shippedRegexSource('/discover/movies/extra'), 'no nested discover paths are captured');
 
 function shippedRegexSource(path: string) {
@@ -82,7 +83,7 @@ ok('1. /discover/{movies,series,anime} render bare; /discover + all other consum
 // ============================================================
 // 2. NAV — AppShell untouched (no per-page special cases added)
 // ============================================================
-assert.match(appShell, /Discover[\s\S]*Search[\s\S]*My List[\s\S]*Profile/, 'consumer primary links unchanged');
+assert.match(appShell, /Discover[\s\S]*Upcoming[\s\S]*Search[\s\S]*My List[\s\S]*Account/, 'consumer primary links unchanged (Discover/Upcoming/Search/My List/Account)');
 assert.match(appShell, /class="mobile-nav"/, 'mobile bottom nav still defined for consumer pages');
 assert.doesNotMatch(appShell, /\/admin|\/discover\/movies/, 'AppShell gains no route special cases (exclusion lives in the layout)');
 ok('2. AppShell untouched — consumer navigation intact everywhere it belongs');
