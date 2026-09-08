@@ -173,7 +173,7 @@ assert.doesNotMatch(accountPage, /href="\/upcoming"/, 'no Upcoming quick action 
 assert.doesNotMatch(accountPage, /href="\/settings"/, 'no Settings quick action or fallback link');
 assert.doesNotMatch(accountPage, /Quick actions/, 'no quick-actions section');
 assert.doesNotMatch(accountPage, /1200px/, 'no giant hero/container widths');
-assert.match(accountPage, /min\(920px/, 'desktop content capped at a compact 920px');
+assert.match(accountPage, /min\(800px/, 'desktop content capped at a compact 800px column');
 assert.match(accountPage, /padding-bottom: calc\(110px \+ env\(safe-area-inset-bottom, 0px\)\)/, 'bottom padding reserved for the 5-item mobile nav');
 assert.doesNotMatch(accountPage, /back-pill/, 'no giant back-to-Profile button');
 ok('12. compact structure: no duplicated quick actions, mobile-nav safe padding');
@@ -218,4 +218,25 @@ assert.ok(!existsSync(new URL('../src/routes/profile/+page.svelte', import.meta.
 assert.ok(!existsSync(new URL('../src/routes/settings/+page.svelte', import.meta.url)), 'legacy Settings UI component retired');
 ok('15. legacy /profile and /settings are redirect-only compatibility routes (UI retired)');
 
+// ============================================================
+// 16. COMPACT REFINEMENT (Phase D) — density + a11y structure
+// ============================================================
+// Every conceptual section keeps a real labelled heading target.
+for (const id of ['profile-security-title', 'experience-title', 'adult-title', 'library-title', 'about-title', 'session-title', 'danger-title']) {
+  assert.match(accountPage, new RegExp(`id="${id}"`), `section heading #${id} exists`);
+}
+// Section glyphs are decorative inline icons, not boxed chips (7 sections).
+const decorativeIcons = (accountPage.match(/class="section-icon[^"]*" aria-hidden="true"/g) ?? []).length;
+assert.ok(decorativeIcons >= 7, 'all section icons are decorative inline glyphs (aria-hidden)');
+// Library stats stay flat — no nested bordered container inside the section card.
+const statBlock = accountPage.match(/\.stat-strip \{([\s\S]*?)\}/);
+assert.ok(statBlock, '.stat-strip styles exist');
+assert.doesNotMatch(statBlock![1], /border:|background:/, 'library stat strip is flat (no nested card)');
+// Touch targets preserved: inputs ≥44px, form CTAs ≥40px, switch keeps its target.
+assert.match(accountPage, /min-height: 44px/, 'inputs keep a 44px touch target');
+assert.match(accountPage, /min-height: 40px/, 'buttons keep ≥40px touch targets');
+assert.match(accountPage, /width: 42px; height: 24px/, 'toggle switch keeps its 42×24 target');
+ok('16. compact refinement: labelled sections, flat stat strip, preserved touch targets');
+
 console.log(`\nAccount page (Phase B) tests passed (${passed} check groups).`);
+

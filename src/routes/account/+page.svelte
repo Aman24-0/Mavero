@@ -272,7 +272,7 @@
       <!-- ACCOUNT — profile & security -->
       <section class="account-section" aria-labelledby="profile-security-title">
         <div class="section-title-row">
-          <div class="section-icon"><UserRound size={15} /></div>
+          <span class="section-icon" aria-hidden="true"><UserRound size={14} /></span>
           <h2 id="profile-security-title">Profile &amp; security</h2>
         </div>
 
@@ -333,7 +333,7 @@
     <!-- EXPERIENCE — playback & interface -->
     <section class="account-section" aria-labelledby="experience-title">
       <div class="section-title-row">
-        <div class="section-icon"><Sparkles size={15} /></div>
+        <span class="section-icon" aria-hidden="true"><Sparkles size={14} /></span>
         <h2 id="experience-title">Playback &amp; interface</h2>
       </div>
       <div class="toggle-list">
@@ -375,7 +375,7 @@
     {#if adultAvailable}
       <section class="account-section" aria-labelledby="adult-title">
         <div class="section-title-row">
-          <div class="section-icon"><ShieldCheck size={15} /></div>
+          <span class="section-icon" aria-hidden="true"><ShieldCheck size={14} /></span>
           <h2 id="adult-title">Adult Mode</h2>
         </div>
         <div class="toggle-list">
@@ -396,7 +396,7 @@
     <!-- LIBRARY — real summary values -->
     <section class="account-section" aria-labelledby="library-title">
       <div class="section-title-row">
-        <div class="section-icon"><Cloud size={15} /></div>
+        <span class="section-icon" aria-hidden="true"><Cloud size={14} /></span>
         <h2 id="library-title">Your library</h2>
       </div>
       <div class="stat-strip">
@@ -419,7 +419,7 @@
     <!-- ABOUT — compact -->
     <section class="account-section" aria-labelledby="about-title">
       <div class="section-title-row">
-        <div class="section-icon"><Info size={15} /></div>
+        <span class="section-icon" aria-hidden="true"><Info size={14} /></span>
         <h2 id="about-title">About</h2>
       </div>
       <div class="about-list">
@@ -448,7 +448,7 @@
       <!-- ACCOUNT — session -->
       <section class="account-section session-section" aria-labelledby="session-title">
         <div class="section-title-row">
-          <div class="section-icon"><LogOut size={15} /></div>
+          <span class="section-icon" aria-hidden="true"><LogOut size={14} /></span>
           <h2 id="session-title">Session</h2>
         </div>
         <button type="button" class="signout-btn" onclick={openSignout}>
@@ -459,7 +459,7 @@
       <!-- DANGER ZONE -->
       <section class="danger-zone" aria-labelledby="danger-title">
         <div class="section-title-row">
-          <div class="section-icon danger-icon"><Trash2 size={15} /></div>
+          <span class="section-icon danger-icon" aria-hidden="true"><Trash2 size={14} /></span>
           <h2 id="danger-title">Delete account</h2>
         </div>
         <p class="danger-copy">Permanently delete your account and personal data. This cannot be undone.</p>
@@ -501,13 +501,13 @@
 
   /* ── Compact identity header ── */
   .account-top {
-    padding: 22px var(--a-gutter) 18px;
+    padding: 18px var(--a-gutter) 16px;
     border-bottom: 1px solid rgba(255,255,255,.05);
     background:
       radial-gradient(circle at 88% -40%, rgba(255,255,255,.045), transparent 46%),
       #000;
   }
-  .top-inner { width: min(920px, 100%); margin-inline: auto; }
+  .top-inner { width: min(800px, 100%); margin-inline: auto; }
   .page-eyebrow {
     display: inline-flex; align-items: center; gap: 6px;
     color: #77777f;
@@ -518,12 +518,12 @@
     display: grid;
     grid-template-columns: auto 1fr;
     align-items: center;
-    gap: 14px;
-    margin-top: 12px;
+    gap: 12px;
+    margin-top: 10px;
   }
   .avatar {
     display: grid; place-items: center;
-    width: 48px; height: 48px;
+    width: 44px; height: 44px;
     border-radius: 50%;
     border: 1px solid rgba(255,255,255,.12);
     color: #f5f5f5;
@@ -550,7 +550,7 @@
   }
   .identity-meta {
     display: inline-flex; align-items: center; gap: 6px;
-    margin: 7px 0 0;
+    margin: 6px 0 0;
     color: #77777f;
     font-size: .58rem; font-weight: 700;
     letter-spacing: .08em; text-transform: uppercase;
@@ -579,12 +579,18 @@
   }
   .sign-in-cta:hover { transform: translateY(-1px); }
   .sign-in-cta:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
+  /* From 560px the sign-in CTA joins the identity row instead of
+     spending a full extra header row below it. */
+  @media (min-width: 560px) {
+    .identity-row { grid-template-columns: auto 1fr auto; }
+    .sign-in-cta { grid-column: auto; justify-self: end; }
+  }
 
   /* ── Body ── */
   .account-body {
-    width: min(920px, calc(100% - 2 * var(--a-gutter)));
+    width: min(800px, calc(100% - 2 * var(--a-gutter)));
     margin-inline: auto;
-    padding-top: 14px;
+    padding-top: 12px;
   }
 
   .error-banner {
@@ -593,7 +599,7 @@
     gap: 6px 12px;
     align-items: center;
     padding: 12px 14px;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
     border: 1px solid rgba(255,176,32,.22);
     border-radius: 12px;
     background: rgba(255,176,32,.04);
@@ -614,31 +620,28 @@
   }
   .error-banner button:hover { background: rgba(255,255,255,.12); }
 
-  /* ── Sections: single-level, compact ── */
+  /* ── Sections: single-level, compact outlined groups ── */
   .account-section {
-    margin-top: 14px;
-    padding: 16px 16px 18px;
+    margin-top: 12px;
+    padding: 13px 14px 15px;
     border: 1px solid rgba(255,255,255,.06);
     border-radius: 12px;
-    background: rgba(255,255,255,.012);
   }
   .section-title-row {
-    display: flex; align-items: center; gap: 9px;
-    margin-bottom: 4px;
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 2px;
   }
+  /* Plain inline glyph — the boxed chip read as decorative bulk. */
   .section-icon {
-    display: grid; place-items: center;
-    width: 28px; height: 28px;
-    border-radius: 8px;
-    color: #f5f5f5;
-    background: rgba(255,255,255,.05);
-    border: 1px solid rgba(255,255,255,.06);
+    display: inline-flex; align-items: center;
+    color: #8a8a92;
     flex: 0 0 auto;
   }
+  .section-icon :global(svg) { display: block; }
   .section-title-row h2 {
     margin: 0;
     color: #f5f5f5;
-    font-size: .92rem; font-weight: 800;
+    font-size: .9rem; font-weight: 800;
     letter-spacing: -.01em;
   }
 
@@ -647,12 +650,12 @@
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: end;
-    gap: 10px;
-    padding: 12px 0 4px;
+    gap: 8px;
+    padding: 10px 0 2px;
     border-top: 1px solid rgba(255,255,255,.05);
   }
   .account-section .inline-form:first-of-type { border-top: 0; }
-  .field { display: grid; gap: 6px; min-width: 0; }
+  .field { display: grid; gap: 5px; min-width: 0; }
   .field-label {
     color: #77777f;
     font-size: .56rem; font-weight: 700;
@@ -661,7 +664,7 @@
   .inline-form input {
     width: 100%; box-sizing: border-box;
     min-height: 44px;
-    padding: 0 13px;
+    padding: 0 12px;
     border: 1px solid rgba(255,255,255,.1);
     border-radius: 10px;
     color: #f5f5f5;
@@ -683,7 +686,7 @@
   .form-note.ok { color: #35d68f; }
 
   /* Password disclosure */
-  .password-block { border-top: 1px solid rgba(255,255,255,.05); margin-top: 4px; padding-top: 12px; }
+  .password-block { border-top: 1px solid rgba(255,255,255,.05); margin-top: 2px; padding-top: 10px; }
   .password-summary {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
   }
@@ -693,16 +696,16 @@
   .password-fields {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 8px;
   }
-  #password-form { border-top: 0; padding-top: 12px; }
+  #password-form { border-top: 0; padding-top: 10px; }
 
   /* ── Buttons ── */
   .secondary-cta {
     display: inline-flex; align-items: center; gap: 6px;
     justify-self: end;
-    min-height: 42px;
-    padding: 0 16px;
+    min-height: 40px;
+    padding: 0 15px;
     border-radius: 999px;
     color: #f5f5f5;
     background: rgba(255,255,255,.05);
@@ -721,16 +724,16 @@
   .toggle-list { display: grid; margin-top: 2px; }
   .toggle-row {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
-    padding: 12px 0;
+    padding: 10px 0;
     border-top: 1px solid rgba(255,255,255,.05);
     cursor: pointer;
   }
-  .toggle-row:first-child { border-top: 0; padding-top: 8px; }
+  .toggle-row:first-child { border-top: 0; padding-top: 4px; }
   .toggle-copy { display: grid; gap: 3px; min-width: 0; }
   .toggle-copy strong { color: #f5f5f5; font-size: .8rem; font-weight: 700; }
   .toggle-copy small { color: #77777f; font-size: .7rem; line-height: 1.45; }
   .group-label {
-    padding: 12px 0 2px;
+    padding: 10px 0 2px;
     color: #c7c7cc;
     font-size: .56rem; font-weight: 700;
     letter-spacing: .1em; text-transform: uppercase;
@@ -757,23 +760,19 @@
   .toggle-switch input:checked + i::after { transform: translateX(18px); background: #000; }
   .toggle-switch input:focus-visible + i { outline: 2px solid #f5f5f5; outline-offset: 2px; }
 
-  /* ── Library stat strip ── */
+  /* ── Library stat strip — flat columns, no nested card ── */
   .stat-strip {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    margin-top: 12px;
-    border: 1px solid rgba(255,255,255,.06);
-    border-radius: 10px;
-    background: rgba(255,255,255,.015);
-    overflow: hidden;
+    margin-top: 8px;
   }
   .stat-cell {
     display: grid; gap: 3px;
-    padding: 12px 14px;
+    padding: 8px 12px;
     border-left: 1px solid rgba(255,255,255,.05);
     min-width: 0;
   }
-  .stat-cell:first-child { border-left: 0; }
+  .stat-cell:first-child { border-left: 0; padding-left: 0; }
   .stat-label {
     color: #77777f;
     font-size: .56rem; font-weight: 700;
@@ -782,7 +781,7 @@
   }
   .stat-cell strong {
     color: #f5f5f5;
-    font-size: 1.02rem; font-weight: 800;
+    font-size: .95rem; font-weight: 800;
     letter-spacing: -.01em;
     line-height: 1;
     white-space: nowrap;
@@ -793,7 +792,7 @@
   .about-list { margin-top: 2px; }
   .about-row {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 9px 0;
+    padding: 8px 0;
     border-top: 1px solid rgba(255,255,255,.05);
     font-size: .78rem;
   }
@@ -806,8 +805,8 @@
   /* ── CineLog compact strip ── */
   .cinelog-strip {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    margin-top: 14px;
-    padding: 13px 16px;
+    margin-top: 12px;
+    padding: 12px 14px;
     border: 1px solid rgba(255,255,255,.07);
     border-radius: 12px;
     background:
@@ -844,9 +843,9 @@
   /* ── Session + danger ── */
   .signout-btn {
     display: inline-flex; align-items: center; gap: 7px;
-    margin-top: 10px;
-    min-height: 42px;
-    padding: 0 18px;
+    margin-top: 8px;
+    min-height: 40px;
+    padding: 0 16px;
     border: 1px solid rgba(255,176,32,.28);
     border-radius: 999px;
     color: #ffb020;
@@ -861,23 +860,23 @@
   .signout-btn:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
 
   .danger-zone {
-    margin-top: 14px;
-    padding: 16px;
+    margin-top: 12px;
+    padding: 13px 14px 15px;
     border: 1px solid rgba(255,176,32,.22);
     border-radius: 12px;
     background: rgba(255,176,32,.025);
   }
-  .danger-icon { color: #ffb020; background: rgba(255,176,32,.08); border-color: rgba(255,176,32,.18); }
+  .danger-icon { color: #ffb020; }
   .danger-copy {
-    margin: 8px 0 0;
+    margin: 6px 0 0;
     color: #77777f;
     font-size: .7rem; line-height: 1.5;
   }
   .delete-account-btn {
-    margin-top: 12px;
+    margin-top: 10px;
     display: inline-flex; align-items: center; gap: 6px;
     min-height: 40px;
-    padding: 0 15px;
+    padding: 0 14px;
     border: 1px solid rgba(255,176,32,.35);
     border-radius: 999px;
     color: #ffb020;
@@ -929,14 +928,15 @@
   /* ── Responsive ── */
   @media (max-width: 560px) {
     .password-fields { grid-template-columns: 1fr; }
-    .stat-cell { padding: 10px 10px; }
+    .stat-cell { padding: 8px 10px; }
+    .stat-cell:first-child { padding-left: 0; }
     .stat-cell strong { font-size: .9rem; }
   }
   @media (min-width: 900px) {
-    .account-top { padding-top: 30px; }
-    .avatar { width: 56px; height: 56px; font-size: 1.05rem; }
-    .identity-copy h1 { font-size: 1.3rem; }
-    .account-section { padding: 18px 20px 20px; }
+    .account-top { padding-top: 26px; }
+    .avatar { width: 52px; height: 52px; font-size: 1.02rem; }
+    .identity-copy h1 { font-size: 1.26rem; }
+    .account-section { padding: 15px 18px 17px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .sign-in-cta, .secondary-cta, .toggle-switch i, .toggle-switch i::after, .signout-btn, .delete-account-btn, .cinelog-cta, .identity-meta > span.syncing { transition: none; animation: none; }
