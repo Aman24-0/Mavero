@@ -4,7 +4,7 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
   const code = url.searchParams.get('code');
-  const next = safeRedirectPath(url.searchParams.get('next'), '/profile');
+  const next = safeRedirectPath(url.searchParams.get('next'), '/account');
 
   if (code) {
     const { error } = await locals.supabase.auth.exchangeCodeForSession(code);

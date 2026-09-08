@@ -21,8 +21,8 @@
   title="Your next story"
   titleAccent="travels with you."
   subtitle="Create an account to keep your progress, watchlist, and history synced across devices."
-  backHref="/profile"
-  backLabel="Back to Profile"
+  backHref="/account"
+  backLabel="Back to Account"
 >
   {#if form?.message}
     <div class:success={form.success} class="auth-message" role="status">
@@ -33,7 +33,7 @@
 
   {#if !form?.success}
     <form method="POST" action="?/signUp" class="auth-form">
-      <input type="hidden" name="next" value="/profile" />
+      <input type="hidden" name="next" value="/account" />
 
       <label class="field">
         <span class="field-label">Name</span>

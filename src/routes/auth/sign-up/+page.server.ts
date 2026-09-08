@@ -19,7 +19,7 @@ export const actions: Actions = {
     const displayName = String(formData.get('name') ?? '').trim().slice(0, 80);
     const email = String(formData.get('email') ?? '').trim().toLowerCase();
     const password = String(formData.get('password') ?? '');
-    const next = safeRedirectPath(String(formData.get('next') ?? url.searchParams.get('next') ?? '/profile'));
+    const next = safeRedirectPath(String(formData.get('next') ?? url.searchParams.get('next') ?? '/account'));
 
     if (!displayName || !isValidEmail(email) || password.length < MIN_PASSWORD_LENGTH) {
       return fail(400, { message: `Enter your name, a valid email, and a password with at least ${MIN_PASSWORD_LENGTH} characters.`, displayName, email });

@@ -1,6 +1,6 @@
 export const MIN_PASSWORD_LENGTH = 8;
 
-export function safeRedirectPath(value: string | null | undefined, fallback = '/profile') {
+export function safeRedirectPath(value: string | null | undefined, fallback = '/account') {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('://')) return fallback;
   return value;
 }

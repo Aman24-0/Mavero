@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 // MAVERO — Compact Account page (Phase B).
 //
@@ -22,7 +22,8 @@ import { readFileSync } from 'node:fs';
 //   GUEST      — authenticated controls live behind {#if data.user};
 //                guests get a sign-in CTA instead.
 //   SHARED     — ONE server implementation in $lib/server/account/actions;
-//                the legacy /settings fallback delegates to it unchanged.
+//                since Phase C the legacy /profile and /settings routes are
+//                permanent redirect-only compatibility routes to /account.
 //   COMPACT    — no Upcoming/Settings quick-action duplication, no giant
 //                hero, bottom padding reserved for the 5-item mobile nav.
 
@@ -38,6 +39,7 @@ const accountPage = read('../src/routes/account/+page.svelte');
 const accountServer = read('../src/routes/account/+page.server.ts');
 const sharedActions = read('../src/lib/server/account/actions.ts');
 const settingsServer = read('../src/routes/settings/+page.server.ts');
+const profileServer = read('../src/routes/profile/+page.server.ts');
 
 // ============================================================
 // 1. ROUTE — /account exists (page + server actions)
@@ -187,9 +189,9 @@ assert.match(sharedActions, /\.upsert\(\{ id: user\.id, display_name: displayNam
 assert.match(sharedActions, /rollbackError/, 'auth-metadata rollback preserved on profiles failure');
 assert.match(sharedActions, /friendlyAuthMessage/, 'friendly auth errors preserved');
 assert.match(sharedActions, /'Check your inbox to confirm the new email address\.'/, 'email confirmation messaging preserved');
-assert.match(settingsServer, /import \{ saveProfile, updateEmail, updatePassword \} from '\$lib\/server\/account\/actions';/, 'legacy /settings delegates to the shared module');
-assert.match(settingsServer, /profile: \(event\) => saveProfile\(event\)/, 'legacy ?/profile delegates unchanged');
 assert.match(accountServer, /import \{ saveProfile, updateEmail, updatePassword \} from '\$lib\/server\/account\/actions';/, '/account delegates to the shared module');
+assert.doesNotMatch(settingsServer, /export const actions/, 'legacy /settings no longer exposes actions — redirect only');
+assert.doesNotMatch(profileServer, /export const actions/, 'legacy /profile exports no actions');
 assert.equal(
   (sharedActions.match(/\.upsert\(/g) ?? []).length, 1,
   'exactly ONE upsert implementation exists (no duplicated security logic)'
@@ -208,14 +210,12 @@ assert.match(accountPage, /<AppFooter \/>/, 'AppFooter preserved');
 ok('14. accessible feedback, dialogs, and shared components preserved');
 
 // ============================================================
-// 15. LEGACY ROUTES — /profile and /settings remain untouched fallbacks
+// 15. LEGACY ROUTES — permanent redirect-only compatibility routes
 // ============================================================
-const profilePage = read('../src/routes/profile/+page.svelte');
-const settingsPage = read('../src/routes/settings/+page.svelte');
-assert.ok(profilePage.length > 0, '/profile route still present');
-assert.ok(settingsPage.length > 0, '/settings route still present');
-assert.match(profilePage, /action-card" href="\/settings"/, 'legacy Profile page unchanged (still links to Settings)');
-assert.match(settingsPage, /action="\?\/profile"/, 'legacy Settings forms unchanged');
-ok('15. legacy /profile and /settings remain as untouched fallbacks');
+assert.match(profileServer, /redirect\(308, '\/account'\)/, '/profile permanently redirects to /account server-side');
+assert.match(settingsServer, /redirect\(308, '\/account'\)/, '/settings permanently redirects to /account server-side');
+assert.ok(!existsSync(new URL('../src/routes/profile/+page.svelte', import.meta.url)), 'legacy Profile UI component retired');
+assert.ok(!existsSync(new URL('../src/routes/settings/+page.svelte', import.meta.url)), 'legacy Settings UI component retired');
+ok('15. legacy /profile and /settings are redirect-only compatibility routes (UI retired)');
 
 console.log(`\nAccount page (Phase B) tests passed (${passed} check groups).`);

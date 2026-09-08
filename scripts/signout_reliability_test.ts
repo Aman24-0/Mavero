@@ -12,16 +12,17 @@
 //   2. The catch path returns a controlled JSON error (503), not a
 //      re-throw or an unhandled rejection.
 //   3. Success still throws a redirect to /discover.
-//   4. The Profile client correctly handles a redirect response
-//      without trying to parse HTML as JSON.
+//   4. The Account client (canonical sign-out surface since Phase C)
+//      correctly handles a redirect response without trying to parse
+//      HTML as JSON.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 
-const [signOutSrc, profileSrc, hooksSrc] = await Promise.all([
+const [signOutSrc, accountSrc, hooksSrc] = await Promise.all([
   readFile(new URL('src/routes/auth/sign-out/+server.ts', root), 'utf8'),
-  readFile(new URL('src/routes/profile/+page.svelte', root), 'utf8'),
+  readFile(new URL('src/routes/account/+page.svelte', root), 'utf8'),
   readFile(new URL('src/hooks.server.ts', root), 'utf8')
 ]);
 
@@ -50,15 +51,16 @@ assert.doesNotMatch(signOutSrc, /console\.(log|error)\([^)]*authorization/i, 'no
 assert.match(signOutSrc, /name:\s*detail\.name/, 'safeLog logs only safe name field');
 assert.match(signOutSrc, /code:\s*detail\.code/, 'safeLog logs only safe code field');
 
-// --- 5. Profile client handles redirect without parsing HTML as JSON ---
+// --- 5. Account client handles redirect without parsing HTML as JSON ---
 // The client must check response.redirected / response.ok before
 // attempting any JSON parse, and must never call response.json() on
-// a successful (redirected-to-HTML) response.
-assert.match(profileSrc, /response\.redirected/, 'Profile client checks response.redirected');
-assert.match(profileSrc, /window\.location\.replace\(/, 'Profile client navigates via window.location.replace');
+// a successful (redirected-to-HTML) response. Since Phase C the
+// canonical sign-out surface is /account (legacy /profile is a redirect).
+assert.match(accountSrc, /response\.redirected/, 'Account client checks response.redirected');
+assert.match(accountSrc, /window\.location\.replace\(/, 'Account client navigates via window.location.replace');
 // JSON parse must be gated behind a content-type check so HTML is
 // never parsed as JSON.
-assert.match(profileSrc, /content-type[^]*application\/json/, 'Profile client gates JSON parse behind content-type check');
+assert.match(accountSrc, /content-type[^]*application\/json/, 'Account client gates JSON parse behind content-type check');
 
 // --- 6. hooks.server.ts does not throw unhandled on missing env ---
 // The original `throw new Error('MAVERO Supabase public configuration is missing.')`

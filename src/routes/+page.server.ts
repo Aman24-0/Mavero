@@ -7,7 +7,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const code = url.searchParams.get('code');
   if (code) {
     const { error } = await locals.supabase.auth.exchangeCodeForSession(code);
-    throw redirect(303, error ? `/auth/sign-in?error=confirmation` : safeRedirectPath(url.searchParams.get('next'), '/profile'));
+    throw redirect(303, error ? `/auth/sign-in?error=confirmation` : safeRedirectPath(url.searchParams.get('next'), '/account'));
   }
   return loadDiscoverData();
 };

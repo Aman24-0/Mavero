@@ -26,7 +26,9 @@ const migration = await readFile(path.join(repoRoot, 'supabase/migrations/202609
 const types = await readFile(path.join(repoRoot, 'src/lib/server/content/types.ts'), 'utf8');
 const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
 const adminDefaults = await readFile(path.join(repoRoot, 'src/routes/admin/defaults/+page.svelte'), 'utf8');
-const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+page.svelte'), 'utf8');
+// Since Phase C the canonical Adult Mode toggle surface is /account; the
+// legacy /settings page is a redirect-only compatibility route.
+const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page.svelte'), 'utf8');
 
 // ============================================================================
 // A. Provider registry — no fabricated IDs, runtime verification, aliases.
@@ -298,7 +300,7 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 // ============================================================================
 {
   // No changes to player files.
-  const changedFiles = ['src/lib/server/content/adult-policy.ts', 'src/lib/server/content/adult-providers.ts', 'src/lib/server/content/adapters/tmdb.ts', 'src/lib/server/content/service.ts', 'src/lib/server/content/types.ts', 'src/routes/api/discover/rail/+server.ts', 'src/routes/api/settings/adult-mode/+server.ts', 'src/routes/api/discover/adult-providers/+server.ts', 'src/routes/api/admin/adult-mode/+server.ts', 'src/routes/api/content/search/+server.ts', 'src/lib/components/DiscoverPage.svelte', 'src/routes/admin/defaults/+page.svelte', 'src/routes/settings/+page.svelte', 'src/lib/server/supabase/database.types.ts', 'supabase/migrations/20260913000000_adult_mode.sql'];
+  const changedFiles = ['src/lib/server/content/adult-policy.ts', 'src/lib/server/content/adult-providers.ts', 'src/lib/server/content/adapters/tmdb.ts', 'src/lib/server/content/service.ts', 'src/lib/server/content/types.ts', 'src/routes/api/discover/rail/+server.ts', 'src/routes/api/settings/adult-mode/+server.ts', 'src/routes/api/discover/adult-providers/+server.ts', 'src/routes/api/admin/adult-mode/+server.ts', 'src/routes/api/content/search/+server.ts', 'src/lib/components/DiscoverPage.svelte', 'src/routes/admin/defaults/+page.svelte', 'src/routes/account/+page.svelte', 'src/lib/server/supabase/database.types.ts', 'supabase/migrations/20260913000000_adult_mode.sql'];
   // Verify the test does NOT import from player/resolver/watch.
   assert.doesNotMatch(adultPolicy, /from.*player/, 'adult policy does not import player');
   assert.doesNotMatch(adultPolicy, /from.*resolver/, 'adult policy does not import resolver');
@@ -343,16 +345,16 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 // ============================================================================
-// P. Profile/Settings UI — adult mode toggle.
+// P. Account UI — adult mode toggle (canonical surface since Phase B/C).
 // ============================================================================
 {
-  assert.match(settingsPage, /loadAdultMode/, 'settings page loads adult mode');
-  assert.match(settingsPage, /toggleAdultMode/, 'settings page can toggle adult mode');
-  assert.match(settingsPage, /adultAvailable/, 'settings page has adultAvailable state');
-  assert.match(settingsPage, /\{#if adultAvailable\}/, 'settings page conditionally renders adult toggle');
-  assert.match(settingsPage, /api\/settings\/adult-mode/, 'settings page calls adult mode API');
+  assert.match(accountPage, /loadAdultMode/, 'account page loads adult mode');
+  assert.match(accountPage, /toggleAdultMode/, 'account page can toggle adult mode');
+  assert.match(accountPage, /adultAvailable/, 'account page has adultAvailable state');
+  assert.match(accountPage, /\{#if adultAvailable\}/, 'account page conditionally renders adult toggle');
+  assert.match(accountPage, /api\/settings\/adult-mode/, 'account page calls adult mode API');
   // No localStorage trust for adult authorization (no localStorage.setItem/getItem for adult).
-  assert.doesNotMatch(settingsPage, /localStorage\.(setItem|getItem)\(.*adult/, 'settings page does NOT use localStorage for adult auth');
+  assert.doesNotMatch(accountPage, /localStorage\.(setItem|getItem)\(.*adult/, 'account page does NOT use localStorage for adult auth');
 }
 
 // ============================================================================
@@ -826,4 +828,4 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
 }
 
 
-console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); profile/settings UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z); direct enforcement + unsupported paths + cache isolation (AA); dedicated Adult Discover catalog (AB); popular TV cleanup + Adult Discover UI integration (AC).');
+console.log('Adult mode tests passed: provider registry (A); admin policy (B); user preference (C); guest cookie (D); provider resolution (D2); normal rail exclusion (E); popular TV OTT (F); adult rail (G); search filtering (H); direct access (I); cache isolation (J); SSR/hydration (K); anime safety (L); scope regression (M); migration (N); admin UI (O); account UI (P); direct detail classification (Q); search cache key (R); generic catalog exclusion (S); central classifier (T); provider matching (U); anime safety detailed (V); network-aware classifier foundation (W); network-based catalog migration (X); adult-aware search classification (Y); authorization hardening wiring (Z); direct enforcement + unsupported paths + cache isolation (AA); dedicated Adult Discover catalog (AB); popular TV cleanup + Adult Discover UI integration (AC).');

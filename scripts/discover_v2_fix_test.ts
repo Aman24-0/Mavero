@@ -6,7 +6,9 @@ const repoRoot = new URL('../', import.meta.url).pathname;
 
 const tmdb = await readFile(path.join(repoRoot, 'src/lib/server/content/adapters/tmdb.ts'), 'utf8');
 const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
-const profilePage = await readFile(path.join(repoRoot, 'src/routes/profile/+page.svelte'), 'utf8');
+// Since Phase C the legacy Profile page is a redirect-only route; the shared
+// AppFooter contract is asserted on the canonical Account page instead.
+const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page.svelte'), 'utf8');
 const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFooter.svelte'), 'utf8');
 const railEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover/rail/+server.ts'), 'utf8');
 
@@ -137,14 +139,14 @@ const railEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover
   assert.doesNotMatch(discoverPage, /class="discover-footer"/, 'DiscoverPage no longer has inline discover-footer');
   assert.doesNotMatch(discoverPage, /class="discover-attribution"/, 'DiscoverPage no longer has inline attribution');
 
-  // Profile uses AppFooter.
-  assert.match(profilePage, /import AppFooter from '\$components\/AppFooter\.svelte'/, 'Profile imports AppFooter');
-  assert.match(profilePage, /<AppFooter/, 'Profile renders AppFooter');
-  // Profile no longer has its own inline footer.
-  assert.doesNotMatch(profilePage, /class="profile-footer"/, 'Profile no longer has inline profile-footer');
+  // Account uses AppFooter (canonical user surface since Phase C).
+  assert.match(accountPage, /import AppFooter from '\$components\/AppFooter\.svelte'/, 'Account imports AppFooter');
+  assert.match(accountPage, /<AppFooter/, 'Account renders AppFooter');
+  // Account carries no inline legacy profile footer.
+  assert.doesNotMatch(accountPage, /class="profile-footer"/, 'Account has no inline profile-footer');
 
   // Bottom nav unaffected — AppFooter doesn't import or modify navigation.
   assert.doesNotMatch(appFooter, /mobile-nav|bottom-nav|AppShell/, 'AppFooter does not touch bottom navigation');
 }
 
-console.log('Discover V2 targeted fix tests passed: OTT provider/region/flatrate/merge/no-N+1/no-catch/release-date-sort (A); popular /discover endpoint + with_original_language + no /popular endpoint + All mixed + Other excluded (B); shared AppFooter + disclaimer + TMDB/JustWatch attribution + Discover + Profile consistent + bottom nav untouched (C).');
+console.log('Discover V2 targeted fix tests passed: OTT provider/region/flatrate/merge/no-N+1/no-catch/release-date-sort (A); popular /discover endpoint + with_original_language + no /popular endpoint + All mixed + Other excluded (B); shared AppFooter + disclaimer + TMDB/JustWatch attribution + Discover + Account consistent + bottom nav untouched (C).');

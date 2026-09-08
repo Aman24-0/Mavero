@@ -10,7 +10,7 @@
     : page.url.searchParams.get('error') === 'missing_confirmation'
       ? 'That confirmation link is incomplete. Please request a new one.'
       : '';
-  const nextPath = page.url.searchParams.get('next') ?? '/profile';
+  const nextPath = page.url.searchParams.get('next') ?? '/account';
 
   let showPassword = $state(false);
   let emailValue = $state(form?.email ?? '');
@@ -29,8 +29,8 @@
   title="Welcome back to"
   titleAccent="Mavero."
   subtitle="Sign in to sync Continue Watching, favorites, and history across your devices. You can keep exploring without an account."
-  backHref="/profile"
-  backLabel="Back to Profile"
+  backHref="/account"
+  backLabel="Back to Account"
 >
   {#if form?.message || queryMessage}
     <div class:success={form?.success} class="auth-message" role="alert">

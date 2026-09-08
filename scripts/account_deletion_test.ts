@@ -78,18 +78,19 @@ await assert.rejects(
 assert.deepEqual(authFailure.deletedUserIds, ['test-user-id'], 'auth deletion failures must normalize to a safe server error');
 
 const endpoint = await readFile(new URL('../src/routes/api/account/delete/+server.ts', import.meta.url), 'utf8');
-const settings = await readFile(new URL('../src/routes/settings/+page.svelte', import.meta.url), 'utf8');
-const profile = await readFile(new URL('../src/routes/profile/+page.svelte', import.meta.url), 'utf8');
+// Since Phase C the canonical delete + sign-out surface is /account; the
+// legacy /profile and /settings pages are redirect-only compatibility routes.
+const account = await readFile(new URL('../src/routes/account/+page.svelte', import.meta.url), 'utf8');
 const dialog = await readFile(new URL('../src/lib/components/ConfirmDialog.svelte', import.meta.url), 'utf8');
 assert.match(endpoint, /safeGetSession/);
 assert.match(endpoint, /confirmation !== 'DELETE'/);
 assert.match(endpoint, /deletionInFlight/);
 assert.doesNotMatch(endpoint, /user_id\s*:/);
-assert.match(settings, /Danger zone/);
-assert.match(settings, /deleteConfirmation !== 'DELETE'/);
-assert.match(settings, /clearLocalData/);
-assert.match(profile, /title="Sign out\?"/);
-assert.match(profile, /fetch\('\/auth\/sign-out'/);
+assert.match(account, /Danger zone/);
+assert.match(account, /deleteConfirmation !== 'DELETE'/);
+assert.match(account, /clearLocalData/);
+assert.match(account, /title="Sign out\?"/);
+assert.match(account, /fetch\('\/auth\/sign-out'/);
 assert.match(dialog, /role="alertdialog"/);
 assert.match(dialog, /aria-modal="true"/);
 assert.match(dialog, /event\.key === 'Escape'/);

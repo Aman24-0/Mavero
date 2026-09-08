@@ -8,7 +8,8 @@ import { readFileSync } from 'node:fs';
 //
 //   NAV        — the three sub-pages render BARE (no consumer AppShell /
 //                bottom nav — never hidden, never covered); /discover,
-//                /search, /my-list, /profile, /account keep AppShell;
+//                /search, /my-list, /account keep AppShell (since Phase C
+//                /profile and /settings are redirect-only compat routes);
 //                admin bare behavior unchanged.
 //   FILTER     — genre/year/sort changes reset to page 1, build canonical
 //                shareable URLs, invalid values fail server-side-safe.
@@ -64,8 +65,7 @@ assert.ok(shippedRegex.test('/discover/anime'), '/discover/anime renders bare (n
 assert.ok(!shippedRegex.test('/discover'), '/discover itself KEEPS the consumer AppShell');
 assert.ok(!shippedRegex.test('/search'), '/search unaffected');
 assert.ok(!shippedRegex.test('/my-list'), '/my-list unaffected');
-assert.ok(!shippedRegex.test('/profile'), '/profile unaffected');
-assert.ok(!shippedRegex.test('/account'), '/account unaffected (normal AppShell page during Phase A)');
+assert.ok(!shippedRegex.test('/account'), '/account unaffected (normal AppShell page)');
 assert.ok(!shippedRegexSource('/discover/movies/extra'), 'no nested discover paths are captured');
 
 function shippedRegexSource(path: string) {

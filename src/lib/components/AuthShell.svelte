@@ -10,7 +10,7 @@
   // cinematic detail-page eyebrow/title rhythm).
   export let titleAccent = '';
   export let subtitle = '';
-  export let backHref = '/profile';
+  export let backHref = '/account';
   export let backLabel = 'Back';
   export let children: Snippet;
 </script>

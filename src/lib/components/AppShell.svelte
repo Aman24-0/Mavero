@@ -9,10 +9,10 @@
   // Single source of truth for primary navigation — consumed by BOTH the
   // desktop side rail (.rail-nav) and the mobile floating pill (.mobile-nav).
   // Order is the product contract: Discover, Upcoming, Search, My List, Account.
-  // Profile and Settings are intentionally NOT primary destinations anymore:
-  // /profile and /settings routes remain reachable for now (Phase C will
-  // fold them into the new Account experience). /account itself is a
-  // placeholder until Phase B ships the real Account page.
+  // Profile and Settings are NOT primary destinations: /account is the single
+  // canonical account destination (Profile + Settings merged there in Phase B),
+  // and since Phase C /profile and /settings are retained only as permanent
+  // server-side compatibility redirects to /account.
   const primaryLinks = [
     { label: 'Discover', href: '/discover', key: '/discover', icon: Compass },
     { label: 'Upcoming', href: '/upcoming', key: '/upcoming', icon: CalendarClock },
@@ -68,7 +68,7 @@
 
   <!-- Mobile floating pill bottom navigation (centered, with side margins,
        sits above page content with safe-area aware offset).
-       Hidden on pages that opt out via showMobileNav={false} (e.g. Settings).
+       Hidden on pages that opt out via showMobileNav={false}.
        Five equal columns; the pill spans the viewport with fixed side margins
        so every label keeps its column at 360-420px widths. -->
   {#if showMobileNav}

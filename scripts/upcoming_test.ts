@@ -24,7 +24,7 @@ const root = new URL('../', import.meta.url);
 
 const upcomingSrc = await readFile(new URL('src/lib/server/content/upcoming.ts', root), 'utf8');
 const upcomingPageSrc = await readFile(new URL('src/routes/upcoming/+page.svelte', root), 'utf8');
-const profileSrc = await readFile(new URL('src/routes/profile/+page.svelte', root), 'utf8');
+const profileServerSrc = await readFile(new URL('src/routes/profile/+page.server.ts', root), 'utf8');
 const authShellSrc = await readFile(new URL('src/lib/components/AuthShell.svelte', root), 'utf8');
 
 console.log('Upcoming releases contract tests');
@@ -192,15 +192,12 @@ assert.match(upcomingPageSrc, /Episode \{item\.episode\}/, 'anime card shows Epi
 assert.match(upcomingPageSrc, /provider-logo/, 'page renders provider logos');
 assert.match(upcomingPageSrc, /item\.providers\.slice\(0, 3\)/, 'page renders max 3 provider logos');
 
-// --- Profile: Upcoming action card before Settings ---
-assert.match(profileSrc, /href="\/upcoming"/, 'Profile has Upcoming action card');
-assert.match(profileSrc, /href="\/settings"/, 'Profile still has Settings action card');
-// Upcoming appears before Settings in the source
-const upcomingIdx = profileSrc.indexOf('href="/upcoming"');
-const settingsIdx = profileSrc.indexOf('href="/settings"');
-assert.ok(upcomingIdx > -1 && settingsIdx > -1 && upcomingIdx < settingsIdx, 'Upcoming action card appears BEFORE Settings action card');
-// CalendarClock icon used for Upcoming
-assert.match(profileSrc, /CalendarClock/, 'Profile imports CalendarClock icon for Upcoming');
+// --- Upcoming back link targets Account (Phase C route migration) ---
+assert.match(upcomingPageSrc, /class="back-pill" href="\/account"/, 'Upcoming back-pill navigates to /account');
+assert.match(upcomingPageSrc, /<span>Account<\/span>/, 'Upcoming back-pill label reads Account');
+assert.doesNotMatch(upcomingPageSrc, /href="\/profile"/, 'no legacy back link to /profile on Upcoming');
+// /profile remains reachable only as a permanent redirect-only compatibility route
+assert.match(profileServerSrc, /redirect\(308, '\/account'\)/, '/profile is a permanent server-side redirect to /account');
 
 // --- Auth spacing fix: back-pill is in flow, not absolute ---
 assert.match(authShellSrc, /auth-top-bar/, 'AuthShell has auth-top-bar wrapper for back-pill');

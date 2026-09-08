@@ -24,6 +24,6 @@ export const actions: Actions = {
     if (!session) return fail(401, { message: 'This reset link is no longer active. Request a new one.' });
     const { error } = await locals.supabase.auth.updateUser({ password });
     if (error) return fail(400, { message: friendlyAuthMessage(error.message, 'sign-up') });
-    throw redirect(303, '/profile');
+    throw redirect(303, '/account');
   },
 };

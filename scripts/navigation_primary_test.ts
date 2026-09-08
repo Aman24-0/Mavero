@@ -13,12 +13,15 @@ import { readFileSync } from 'node:fs';
 //                (lucide-svelte only).
 //   REMOVALS   — Profile and Settings are NOT primary destinations
 //                anymore; the desktop rail no longer carries a Settings
-//                link. The /profile and /settings ROUTES still exist
-//                (Phase C will fold them into Account).
+//                link. Since Phase C, /profile and /settings survive only
+//                as permanent redirect-only compatibility routes to
+//                /account — the legacy UI components are retired.
+//   MIGRATION  — Account (/account) is the single canonical account
+//                destination; the old Profile/Settings pages never render.
 //   ACTIVE     — one isActive() semantics (exact match or nested path).
 //   MOBILE     — five equal grid columns, floating pill + glass/blur +
 //                haptics preserved.
-//   ACCOUNT    — /account exists as an intentional Phase A placeholder
+//   ACCOUNT    — /account is the real merged Account experience (Phase B)
 //                and behaves like a normal AppShell page.
 
 let passed = 0;
@@ -32,8 +35,8 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 const appShell = read('../src/lib/components/AppShell.svelte');
 const rootLayout = read('../src/routes/+layout.svelte');
 const accountPage = read('../src/routes/account/+page.svelte');
-const profilePage = read('../src/routes/profile/+page.svelte');
-const settingsPage = read('../src/routes/settings/+page.svelte');
+const profileServer = read('../src/routes/profile/+page.server.ts');
+const settingsServer = read('../src/routes/settings/+page.server.ts');
 
 // ============================================================
 // 1. SOURCE — a single primaryLinks definition feeds both rails
@@ -92,13 +95,13 @@ assert.doesNotMatch(appShell, /Settings2/, 'Settings2 icon no longer referenced 
 ok('4. Profile + Settings removed from primary navigation (routes untouched)');
 
 // ============================================================
-// 5. ROUTES PRESERVED — /profile and /settings still exist, no redirects
+// 5. ROUTE MIGRATION — /profile and /settings are redirect-only (Phase C)
 // ============================================================
-assert.ok(profilePage.length > 0, '/profile route still present');
-assert.ok(settingsPage.length > 0, '/settings route still present');
-assert.doesNotMatch(profilePage, /['"]\/account['"]/, 'Phase A adds no /profile → /account redirect');
-assert.doesNotMatch(settingsPage, /['"]\/account['"]/, 'Phase A adds no /settings → /account redirect');
-ok('5. /profile and /settings remain directly accessible with no Phase-A redirects');
+assert.match(profileServer, /redirect\(308, '\/account'\)/, '/profile is a permanent server-side redirect to /account');
+assert.match(settingsServer, /redirect\(308, '\/account'\)/, '/settings is a permanent server-side redirect to /account');
+assert.doesNotMatch(profileServer, /export const actions/, '/profile exports no form actions');
+assert.doesNotMatch(settingsServer, /export const actions/, '/settings exports no form actions (mutations live on /account)');
+ok('5. /profile and /settings are permanent redirect-only compatibility routes (no legacy UI)');
 
 // ============================================================
 // 6. ACTIVE STATE — one isActive() semantics, wired to both rails
@@ -141,7 +144,7 @@ assert.doesNotMatch(accountPage, /href="\/(profile|settings)"/, 'account page ca
 const literalMatch = rootLayout.match(/\/\^\\\/discover\\\/\(movies\|series\|anime\)\\\/\?\$\//);
 assert.ok(literalMatch, 'layout still ships the discover sub-page bare regex');
 assert.ok(!new RegExp(literalMatch![0].slice(1, -1)).test('/account'), '/account renders inside AppShell (not bare)');
-ok('9. /account is a minimal Phase A placeholder rendered inside the normal AppShell');
+ok('9. /account is the real Account experience rendered inside the normal AppShell');
 
 // ============================================================
 // 10. LAYOUT — existing opt-out + bare-render contracts untouched

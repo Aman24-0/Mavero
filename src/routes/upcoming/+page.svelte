@@ -103,7 +103,7 @@
 <div class="upcoming-page">
   <header class="upcoming-header">
     <div class="header-inner">
-      <a class="back-pill" href="/profile"><ArrowLeft size={15} /> <span>Profile</span></a>
+      <a class="back-pill" href="/account"><ArrowLeft size={15} /> <span>Account</span></a>
       <div class="header-eyebrow"><Calendar size={13} /> MAVERO / Upcoming</div>
       <h1>Upcoming</h1>
       <p>What's coming next — movies, series episodes, and anime releases.</p>
