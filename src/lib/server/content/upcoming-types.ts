@@ -12,10 +12,12 @@
 
 export type UpcomingType = 'movie' | 'series' | 'anime';
 
-// India movie release channel (Phase F): a movie discovered through the
-// theatrical (TMDB release types 2|3) and/or digital (release type 4)
-// India query. Movies qualifying for BOTH render ONE card carrying both
-// kinds — duplicates are merged by canonical TMDB ID.
+// India movie release channel (release-kind ENRICHMENT): derived from
+// the OPTIONAL /movie/{id}/release_dates lookup — country IN events of
+// release types 2|3 (theatrical) and/or 4 (digital) inside the selected
+// month. Discovery (region=IN + with_release_country=IN + release_date
+// window) is what qualifies a movie; this enrichment only labels the
+// card. Movies qualifying for BOTH kinds render ONE card carrying both.
 export type UpcomingReleaseKind = 'theatrical' | 'digital';
 
 export type UpcomingProvider = {
@@ -37,17 +39,21 @@ export type UpcomingItem = {
   episodeTitle?: string; // series/anime only
   // India flatrate (subscription) providers, region IN only:
   //   - series: TMDB /tv/{id}/watch/providers -> results.IN.flatrate
-  //   - movie:  TMDB /movie/{id}/watch/providers -> results.IN.flatrate,
-  //             present ONLY when the movie's selected-month India
-  //             releaseKinds include 'digital' (an OTT release)
+  //   - movie:  TMDB /movie/{id}/watch/providers -> results.IN.flatrate
+  // Provider data is its own truth source (its own lookup, never a
+  // gating signal): icons render whenever India flatrate availability
+  // exists, and a provider lookup failure hides the icons but never
+  // removes the item.
   providers?: UpcomingProvider[];
   year?: number;
   rating?: number;
   genres?: string[];
-  // movies only: the ACTUAL India release channels for the selected
-  // month, derived from /movie/{id}/release_dates country IN events
-  // (release types 2|3 -> theatrical, 4 -> digital). Present for every
-  // movie item that survived validation.
+  // movies only: the release-kind ENRICHMENT for the selected month,
+  // derived from the OPTIONAL /movie/{id}/release_dates country IN
+  // events (release types 2|3 -> theatrical, 4 -> digital). Present
+  // ONLY when the enrichment confirmed in-month India events — a
+  // missing/failed/event-less enrichment is omitted (undefined) and the
+  // movie still renders (discovery is what qualifies a movie).
   releaseKinds?: UpcomingReleaseKind[];
   source: 'tmdb';
 };

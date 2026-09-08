@@ -1,31 +1,39 @@
-// Upcoming releases contract tests (expanded for Phase F.3).
+// Upcoming releases contract tests (CineLog-proven date-range discovery).
 //
 // Verifies:
 //   1. Month/year parsing (valid + invalid + fallback to current date)
 //   2. Type parsing (valid + invalid fallback to 'all')
 //   3. Year options are dynamic around current year
-//   4. monthBounds produces correct first/last day strings
-//   5. MOVIE CANDIDATE DISCOVERY (Phase F.2): ONE broad stream — region=IN
-//      + release_date month window, NO with_release_type, NO
-//      primary_release_date, bounded pagination past page 1, real
-//      total_pages respected, canonical-ID dedupe, single versioned cache key
+//   4. monthBounds produces correct first/last day strings (FROM/LTO
+//      passed DIRECTLY into both discover queries — no hidden windows)
+//   5. MOVIE DISCOVERY (CineLog model): ONE direct date-range query —
+//      region=IN + with_release_country=IN + release_date month window +
+//      include_adult=false + sort_by=release_date.asc; NO vote_count
+//      floor (zero-vote future titles must survive), NO
+//      primary_release_date, NO with_release_type, NO fallback query,
+//      bounded pagination past page 1, real total_pages respected,
+//      canonical-ID dedupe, single versioned cache key
 //   6. Movie candidate dedupe contracts (canonical TMDB ID; one
-//      release_dates lookup per unique candidate)
-//  6b. MOVIE RELEASE TRUTH (Phase F.1, pure unit tests): extract India
+//      enrichment lookup per unique candidate)
+//  6b. MOVIE RELEASE-KIND ENRICHMENT (pure unit tests): extract India
 //      events from /movie/{id}/release_dates (IN only, types 2/3/4,
-//      month-window membership), derive releaseKinds, earliest date,
-//      defensive month invariant — September rejects August/2022/1999
-//      events; October/November/December events survive their own windows
-//  6c. MOVIE RELEASE TRUTH pipeline (source contracts): release_dates
-//      fetched per unique candidate, all-fail -> error, no-qualifying ->
-//      dropped, card date = real India event date, final month invariant
-//  6d. MOVIE OTT PROVIDERS (Phase F.1): India flatrate only (unit tests
-//      + source contracts), digital releases only, provider failure does
-//      not remove the movie, cached per movie
-//   7. SERIES DISCOVERY vs ELIGIBILITY (Phase F.2): candidate discovery
-//      uses ONLY air_date month window + language + genre exclusion (NO
-//      watch_region, NO with_watch_monetization_types at the Discover
-//      stage); eligibility via /tv/{id}/watch/providers results.IN.flatrate
+//      month-window membership), derive releaseKinds, defensive month
+//      invariant — September rejects August/2022/1999 events;
+//      October/November/December events badge their own windows
+//  6c. MOVIE ENRICHMENT pipeline (source contracts): the discover row's
+//      India release_date IS the card date; release_dates is OPTIONAL
+//      enrichment (releaseKinds only) — a missing/failed/event-less
+//      lookup can NEVER remove a discover-qualified movie; final month
+//      invariant; adult classifier; title contract
+//  6d. MOVIE OTT PROVIDERS: India flatrate only (unit tests + source
+//      contracts), provider data is its own truth source (fetched for
+//      every candidate), provider failure does not remove the movie,
+//      cached per movie
+//   7. SERIES DISCOVERY vs ELIGIBILITY: candidate discovery uses ONLY
+//      air_date month window + language + popularity (NO vote_count
+//      floor, NO watch_region, NO with_watch_monetization_types, NO
+//      genre blacklist at the Discover stage); eligibility via the
+//      SEASON-level /tv/{id}/season/{n}/watch/providers results.IN.flatrate
 //      AFTER real target-month episodes (drop on empty IN.flatrate,
 //      failed candidate on lookup failure, no US/buy/rent fallback)
 //   8. TV EPISODE DATE FILTERING — ALL in-month episodes across the
@@ -54,16 +62,17 @@
 //  17. UI: kind badge, JustWatch attribution footer, strict detailHref
 //  18. Protected architecture: DetailPage history.back()/`from` contract,
 //      MediaCard appendReturnTo contract, navigation helpers unchanged
-//  19. PHASE F.2 MOCKED PIPELINE TESTS: the REAL loadUpcoming executed
-//      against a deterministic in-process TMDB mock (module-hook env
-//      shim + global fetch interception) proving the actual failure
-//      modes are FIXED: October 2026+ movies discovered without
-//      with_release_type (India truth dates win over global dates;
-//      type 5/6 never render; Nov/Dec/Jan/Feb independent), series
-//      future-month discovery for Tamil/Hindi/Telugu WITHOUT flatrate
-//      constraints at Discover (IN.flatrate gate drops US-only/buy-rent/
-//      empty/no-IN candidates), language cache isolation, and anime
-//      exempt from the eligibility gate.
+//  19. MOCKED PIPELINE TESTS: the REAL loadUpcoming executed against a
+//      deterministic in-process TMDB mock (module-hook env shim + global
+//      fetch interception) proving the CineLog date-range model: movies
+//      discovered for Sep/Oct/Nov/Dec 2026 + Jan/Feb 2027 through ONE
+//      region+country-locked date-range query (zero-vote and
+//      enrichment-less movies still render; discover date IS the card
+//      date; India flatrate icons from watch/providers), series
+//      future-month discovery for Tamil/Hindi/Telugu WITHOUT vote/
+//      flatrate/genre constraints at Discover (season-level IN.flatrate
+//      gate drops US-only/buy-rent/empty/no-IN candidates), language
+//      cache isolation, and anime exempt from the eligibility gate.
 //
 // Pure helpers are unit-tested DIRECTLY (imported from the import-free
 // shared module); data-flow contracts are verified via source inspection
@@ -98,7 +107,6 @@ import {
   dedupeProvidersById,
   extractIndiaMovieReleaseEvents,
   deriveMovieReleaseKinds,
-  earliestIndiaReleaseDate,
   isDateInMonth,
   normalizeRegionFlatrateProviders
 } from '../src/lib/shared/upcoming-policy.ts';
@@ -154,66 +162,62 @@ assert.match(upcomingSrc, /getUTCFullYear\(\)/, 'monthBounds uses getUTCFullYear
 assert.match(upcomingSrc, /getUTCMonth\(\) \+ 1/, 'monthBounds uses getUTCMonth + 1 (1-indexed)');
 assert.match(upcomingSrc, /getUTCDate\(\)/, 'monthBounds uses getUTCDate');
 
-// --- 5. MOVIE CANDIDATE DISCOVERY (Phase F.3 — DEDUPED UNION) ---
-// with_release_type is deliberately NOT sent to /discover/movie at all:
-// TMDB documents it as an OPTIONAL refinement, and the old per-kind
-// restriction starved future months of candidates. The release TYPE is
-// decided ONLY by /movie/{id}/release_dates (asserted in 6b/6c).
-// Candidate discovery is a DEDUPED UNION of two documented sources:
-//   Source A (region-aware): region=IN + release_date month window.
-//   Source B (primary): primary_release_date month window, NO region —
-//   matches on the origin-country primary date, which IS indexed at
-//   announcement time, so titles with no India regional data yet are
-//   still candidates (the F.2 region-only stream starved Oct 2026+).
-assert.match(upcomingSrc, /'release_date\.gte': gte/, 'source A filters by release_date.gte (region-aware India dates)');
-assert.match(upcomingSrc, /'release_date\.lte': lte/, 'source A filters by release_date.lte');
-assert.match(upcomingSrc, /'primary_release_date\.gte': gte/, 'source B filters by primary_release_date.gte (no region required)');
-assert.match(upcomingSrc, /'primary_release_date\.lte': lte/, 'source B filters by primary_release_date.lte');
-assert.doesNotMatch(upcomingCode, /with_release_type/, 'with_release_type is NOT sent to Discover at all (release types come only from release_dates truth)');
-assert.match(upcomingSrc, /async function discoverIndiaMovieCandidates\(year: number, month: number, region: string, language: string, providerExclusion: string \| undefined\)/, 'ONE candidate-discovery function produces the deduped source union');
-assert.equal((upcomingSrc.match(/discoverIndiaMovieCandidates\(/g) ?? []).length, 2, 'movie candidate discovery referenced exactly twice (definition + the ONE loadUpcomingMovies call — no per-kind duplication)');
-// Source A pins region=IN; source B is deliberately region-free.
-{
-  const discoverFn = upcomingSrc.slice(upcomingSrc.indexOf('async function discoverIndiaMovieCandidates'), upcomingSrc.indexOf('// Phase F.1 — per-movie India release TRUTH'));
-  assert.match(discoverFn, /region,\n\s*'release_date\.gte': gte,/, 'source A sends region with the release_date window (region-aware India discovery)');
-  assert.match(discoverFn, /'primary_release_date\.gte': gte,\n\s*'primary_release_date\.lte': lte\n\s*\}, collected, seen\);/, 'source B sends the primary window with NO region parameter');
-  assert.match(discoverFn, /await collectMovieDiscoverPages\([\s\S]*?\}, collected, seen\);\n\s*\/\/ Source B/, 'source A pages are collected BEFORE source B (stable union order)');
-  assert.match(discoverFn, /const shared: TmdbDiscoverMovieParams = \{[\s\S]*?include_adult: false,/, 'both sources share sort/vote_count floor/include_adult via the shared param block');
-}
-assert.match(upcomingSrc, /region,\n/, 'region passed to TMDB /discover/movie params');
-assert.match(upcomingSrc, /sort_by: 'popularity\.desc',/, 'discovery streams sort by popularity with a vote_count floor and no adult');
-// The final India release truth stage (6b/6c) is what decides IN + types + month.
-assert.match(upcomingSrc, /\/movie\/\$\{movieId\}\/release_dates/, 'release_dates truth endpoint unchanged');
+// --- 5. MOVIE DISCOVERY (CineLog-proven date-range model) ---
+// ONE direct /discover/movie query. with_release_type is deliberately
+// NOT sent to /discover/movie at all: the release TYPE is enrichment
+// metadata (releaseKinds), never a discovery filter. The F.3 candidate
+// union (primary_release_date source B) is REMOVED — with_release_
+// country=IN already constrains discovery to movies that HAVE an India
+// release, and the vote_count floor is REMOVED because upcoming titles
+// commonly have ZERO votes.
+assert.match(upcomingSrc, /'release_date\.gte': gte/, 'movie discovery filters by release_date.gte (the selected month start)');
+assert.match(upcomingSrc, /'release_date\.lte': lte/, 'movie discovery filters by release_date.lte (the selected month end)');
+assert.match(upcomingSrc, /with_release_country: region/, 'movie discovery pins with_release_country (only movies with an India release entry)');
+assert.doesNotMatch(upcomingCode, /primary_release_date/, 'primary_release_date is NOT used anywhere in the pipeline (the F.3 union is REMOVED)');
+assert.doesNotMatch(upcomingCode, /with_release_type/, 'with_release_type is NOT sent to Discover at all (release kinds come only from the optional enrichment)');
+assert.doesNotMatch(upcomingCode, /vote_count/, 'NO vote_count floor anywhere in Upcoming discovery (zero-vote future titles must survive)');
+assert.match(upcomingSrc, /async function discoverIndiaMovieCandidates\(year: number, month: number, region: string, language: string, providerExclusion: string \| undefined\)/, 'ONE candidate-discovery function produces the single CineLog stream');
+assert.equal((upcomingSrc.match(/discoverIndiaMovieCandidates\(/g) ?? []).length, 2, 'movie candidate discovery referenced exactly twice (definition + the ONE loadUpcomingMovies call — no fallback query duplication)');
+assert.match(upcomingSrc, /sort_by: 'release_date\.asc',/, 'movie discovery sorts by release date ascending (CineLog model — earliest releases first)');
+assert.match(upcomingSrc, /include_adult: false,/, 'discovery sends include_adult=false');
+// The final India release-kind ENRICHMENT (6b/6c) is what badges kinds.
+assert.match(upcomingSrc, /\/movie\/\$\{movieId\}\/release_dates/, 'release_dates enrichment endpoint unchanged');
 
-// --- 5b. MOVIE BOUNDED PAGINATION (shared by BOTH candidate sources) ---
-assert.match(upcomingSrc, /while \(page <= Math\.min\(totalPages, UPCOMING_MOVIE_MAX_UPSTREAM_PAGES\)\)/, 'movie pagination walks pages under a hard safety cap (collectMovieDiscoverPages)');
+// --- 5b. MOVIE BOUNDED PAGINATION (the single CineLog stream) ---
+// CineLog practical approach: request page 1, continue to additional
+// pages while TMDB reports more pages, enforce a hard cap. The walk
+// NEVER stops because page 1 contains fewer locally useful titles (no
+// vote floor, no local truncation before the candidate cap).
+assert.match(upcomingSrc, /while \(page <= Math\.min\(totalPages, UPCOMING_MOVIE_MAX_UPSTREAM_PAGES\)\)/, 'movie pagination walks pages under a hard safety cap (continue while TMDB reports more pages)');
 assert.match(upcomingSrc, /totalPages = result\.total_pages \?\? page;/, 'movie pagination follows the REAL upstream total_pages (never fabricated)');
 assert.match(upcomingSrc, /page \+= 1;/, 'movie pagination advances the upstream page');
 assert.match(upcomingSrc, /const collected: TmdbMovieRow\[\] = \[\];/, 'movie pagination accumulates rows across pages');
 assert.equal(UPCOMING_MOVIE_MAX_UPSTREAM_PAGES >= 2, true, 'movie page cap actually allows walking BEYOND page 1');
-// Phase F.3: the deduped UNION is hard-capped before the release-truth N+1.
-assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, UPCOMING_MOVIE_MAX_CANDIDATES\);/, 'deduped candidate union hard-capped before the truth N+1 (bounded N+1)');
-assert.equal(UPCOMING_MOVIE_MAX_CANDIDATES >= UPCOMING_TV_MAX_CANDIDATES, true, 'movie candidate cap is proportionate to the union depth');
+// Phase cap: the deduped candidates are hard-capped before the N+1.
+assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, UPCOMING_MOVIE_MAX_CANDIDATES\);/, 'deduped candidates hard-capped before the enrichment N+1 (bounded N+1)');
+assert.equal(UPCOMING_MOVIE_MAX_CANDIDATES >= UPCOMING_TV_MAX_CANDIDATES, true, 'movie candidate cap is proportionate to the discovery depth');
 
-// --- 6. MOVIE CANDIDATE DEDUPE (Phase F.3 — union of canonical IDs) ---
-// Candidate rows are deduped by canonical TMDB movie ID across BOTH
-// sources and ALL pages (the shared seen set inside
-// collectMovieDiscoverPages) and re-deduped defensively through
-// rowsById before the release-truth N+1 stage. The discover row's
-// release_date is candidate-only metadata — the card date comes
-// exclusively from the release_dates truth (asserted in 6b/6c).
+// --- 6. MOVIE CANDIDATE DEDUPE (canonical IDs across pages) ---
+// Candidate rows are deduped by canonical TMDB movie ID across ALL
+// pages (the seen set inside discoverIndiaMovieCandidates) and
+// re-deduped defensively through rowsById before the enrichment N+1
+// stage. The discover row's release_date IS the card date (CineLog
+// model — asserted in 6c).
 {
-  const discoverFn = upcomingSrc.slice(upcomingSrc.indexOf('async function discoverIndiaMovieCandidates'), upcomingSrc.indexOf('// Phase F.1 — per-movie India release TRUTH'));
-  assert.match(discoverFn, /const collected: TmdbMovieRow\[\] = \[\];\n\s*const seen = new Set<number>\(\);/, 'the union accumulates into ONE shared collected/seen pair (dedupe across sources + pages)');
-  const walkerFn = upcomingSrc.slice(upcomingSrc.indexOf('async function collectMovieDiscoverPages'), upcomingSrc.indexOf('async function discoverIndiaMovieCandidates'));
-  assert.match(walkerFn, /seen\.add\(row\.id\);\n\s*collected\.push\(row\);/, 'unique canonical IDs collected exactly once');
-  assert.ok(walkerFn.indexOf('async function collectMovieDiscoverPages') !== -1, 'the shared page walker exists ahead of the discovery function');
+  const discoverFn = upcomingSrc.slice(upcomingSrc.indexOf('async function discoverIndiaMovieCandidates'), upcomingSrc.indexOf('// OPTIONAL per-movie release-kind ENRICHMENT'));
+  assert.match(discoverFn, /const collected: TmdbMovieRow\[\] = \[\];\n\s*const seen = new Set<number>\(\);/, 'the stream accumulates into ONE collected/seen pair (dedupe across pages)');
+  assert.match(discoverFn, /seen\.add\(row\.id\);\n\s*collected\.push\(row\);/, 'unique canonical IDs collected exactly once');
+  assert.match(discoverFn, /region,\n\s*'release_date\.gte': gte,/, 'the query pins region alongside the release_date window');
+  assert.match(discoverFn, /with_release_country: region,/, 'the query carries with_release_country=region (India-only releases)');
+  assert.match(discoverFn, /\.\.\.\(language !== 'all' \? \{ with_original_language: language \} : \{\}\),/, 'with_original_language is added ONLY when a language is selected');
+  assert.match(discoverFn, /'without_watch_providers': providerExclusion, watch_region: region/, 'the transitional adult provider exclusion rides on the same query WITH region');
+  assert.ok(!discoverFn.includes('primary_release_date'), 'the discovery function body carries NO primary_release_date fallback');
 }
-assert.match(upcomingSrc, /const candidateRows = await discoverIndiaMovieCandidates\(year, month, region, language, providerExclusion\);/, 'loadUpcomingMovies consumes the ONE candidate union');
+assert.match(upcomingSrc, /const candidateRows = await discoverIndiaMovieCandidates\(year, month, region, language, providerExclusion\);/, 'loadUpcomingMovies consumes the ONE candidate stream');
 assert.match(upcomingSrc, /for \(const row of candidateRows\) if \(row\.id && !rowsById\.has\(row\.id\)\) rowsById\.set\(row\.id, row\);/, 'candidate rows re-deduped into the metadata map by canonical TMDB ID');
-assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, UPCOMING_MOVIE_MAX_CANDIDATES\);/, 'release-truth N+1 runs over the DEDUPED + CAPPED candidates only');
+assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, UPCOMING_MOVIE_MAX_CANDIDATES\);/, 'enrichment N+1 runs over the DEDUPED + CAPPED candidates only');
 
-// --- 6b. MOVIE RELEASE TRUTH (Phase F.1 — pure unit tests) ---
+// --- 6b. MOVIE RELEASE-KIND ENRICHMENT (pure unit tests) ---
 // September 2026 month window.
 const SEP_2026_START = Date.parse('2026-09-01');
 const SEP_2026_END = Date.parse('2026-09-30T23:59:59.999Z');
@@ -263,7 +267,7 @@ const SEP_2026_END = Date.parse('2026-09-30T23:59:59.999Z');
       { release_date: '1999-01-29T00:00:00.000Z', type: 4 }
     ] }]
   };
-  assert.equal(extractIndiaMovieReleaseEvents(noSeptemberEvent, SEP_2026_START, SEP_2026_END).length, 0, 'movie with no qualifying September India release yields zero events (caller drops it)');
+  assert.equal(extractIndiaMovieReleaseEvents(noSeptemberEvent, SEP_2026_START, SEP_2026_END).length, 0, 'movie with no qualifying September India release yields zero events (enrichment carries no kind badges — the discover-qualified movie itself stays)');
 
   // No India country entry at all -> dropped.
   const indiaMissing: Parameters<typeof extractIndiaMovieReleaseEvents>[0] = {
@@ -292,19 +296,17 @@ const SEP_2026_END = Date.parse('2026-09-30T23:59:59.999Z');
   assert.deepEqual(kindsFromTypes.map((e) => e.kind), ['theatrical', 'theatrical', 'digital'], 'type 2 and 3 map to theatrical, type 4 maps to digital');
 }
 
-// deriveMovieReleaseKinds + earliestIndiaReleaseDate (card date + dual release)
+// deriveMovieReleaseKinds (release-kind badges; the card date is the
+// discover row's India release_date — CineLog model)
 {
   const both = [
     { date: '2026-09-24', kind: 'digital' as const },
     { date: '2026-09-20', kind: 'theatrical' as const }
   ];
   assert.deepEqual(deriveMovieReleaseKinds(both), ['theatrical', 'digital'], 'dual release: theatrical + digital in canonical order');
-  assert.equal(earliestIndiaReleaseDate(both), '2026-09-20', 'dual release: EARLIEST valid India event date is the card date');
   assert.deepEqual(deriveMovieReleaseKinds([{ date: '2026-09-05', kind: 'theatrical' as const }]), ['theatrical'], 'theatrical-only event set');
   assert.deepEqual(deriveMovieReleaseKinds([{ date: '2026-09-05', kind: 'digital' as const }]), ['digital'], 'digital-only event set');
-  assert.deepEqual(deriveMovieReleaseKinds([]), [], 'empty event set derives no kinds');
-  assert.equal(earliestIndiaReleaseDate([]), undefined, 'empty event set has no card date');
-  assert.equal(earliestIndiaReleaseDate([{ date: 'garbage', kind: 'digital' }, { date: '2026-09-08', kind: 'digital' }]), '2026-09-08', 'invalid dates never win over valid India event dates');
+  assert.deepEqual(deriveMovieReleaseKinds([]), [], 'empty event set derives no kinds (badges omitted, movie stays)');
 }
 
 // Defensive month invariant (final guard on movie cards)
@@ -317,22 +319,22 @@ assert.equal(isDateInMonth('2026-09-18', 2025, 9), false, 'wrong year fails the 
 assert.equal(isDateInMonth(undefined, 2026, 9), false, 'missing date fails the invariant');
 assert.equal(isDateInMonth('garbage', 2026, 9), false, 'unparseable date fails the invariant');
 
-// --- 6c. MOVIE RELEASE TRUTH pipeline (source contracts) ---
-assert.match(upcomingSrc, /\/movie\/\$\{movieId\}\/release_dates/, 'movie India truth fetched from GET /movie/{id}/release_dates');
+// --- 6c. MOVIE ENRICHMENT pipeline (source contracts) ---
+assert.match(upcomingSrc, /\/movie\/\$\{movieId\}\/release_dates/, 'movie release-kind enrichment fetched from GET /movie/{id}/release_dates');
 assert.match(upcomingSrc, /const events = extractIndiaMovieReleaseEvents\(payload, startMs, endMs\);/, 'release_dates payload validated against the selected month window');
-assert.match(upcomingSrc, /if \(!events\.length\) return null;/, 'candidate with no qualifying India release is DROPPED');
-assert.match(upcomingSrc, /const releaseKinds = deriveMovieReleaseKinds\(events\);/, 'releaseKinds derive from the ACTUAL India events');
-assert.match(upcomingSrc, /const date = earliestIndiaReleaseDate\(events\);/, 'card date IS the earliest real India event date');
+assert.match(upcomingSrc, /releaseKinds = deriveMovieReleaseKinds\(events\);/, 'releaseKinds derive from the ACTUAL India events');
+// CineLog model: the discover row's India release_date IS the card date.
+assert.match(upcomingSrc, /const date = m\.release_date \?\? '';/, 'card date IS the discover row release_date (region=IN + with_release_country=IN + month window)');
+assert.doesNotMatch(upcomingCode, /if \(!events\.length\) return null;/, 'NO mandatory enrichment gate: an event-less release_dates response can never drop a discover-qualified movie');
+assert.match(upcomingCode, /catch \{\n\s*releaseKinds = \[\];\n\s*\}/, 'a FAILED release_dates lookup is absorbed — the movie STAYS without kind badges');
 assert.match(upcomingSrc, /\.filter\(\(item\) => isDateInMonth\(item\.date, year, month\)\)/, 'final invariant: every movie card date belongs to the selected month/year');
-// Bounded N+1: one truth lookup per UNIQUE candidate, concurrency-limited,
-// all-fail surfaces an error (never a silently empty month).
-assert.match(upcomingSrc, /const validated = await mapWithConcurrency\(candidates, async \(candidate\)/, 'release_dates lookups run concurrency-limited over DEDUPED candidates (no repeated movie IDs)');
-assert.match(upcomingSrc, /mapWithConcurrency\(candidates, [\s\S]*?LOOKUP_CONCURRENCY\)/, 'movie truth lookups are concurrency-capped');
-assert.match(upcomingSrc, /if \(candidates\.length > 0 && truthFailures === candidates\.length\) \{/, 'ALL release_dates lookups failing surfaces an upstream error');
-assert.match(upcomingSrc, /throw new ContentServiceError\('The content provider returned an upstream error\.', \{ code: 'UPSTREAM_ERROR', status: 502 \}\);/, 'movie truth outage throws the standard upstream error');
-// The discover row release_date is candidate-only metadata (never the card date).
-assert.match(upcomingSrc, /const date = earliestIndiaReleaseDate\(events\);\n\s*if \(!date \|\| !releaseKinds\.length\) return null;/, 'candidate without a valid India event date or kind set is dropped before any card is built');
-assert.match(upcomingSrc, /releaseKinds: \[\.\.\.v\.releaseKinds\],\n\s*source: 'tmdb' as const/, 'movie UpcomingItems carry the truth-derived releaseKinds metadata');
+// Bounded enrichment: one optional lookup per UNIQUE candidate,
+// concurrency-limited. Enrichment failures can never empty the section
+// (the discover call is the real outage signal).
+assert.match(upcomingSrc, /const enriched = await mapWithConcurrency\(candidates, async \(candidate\)/, 'enrichment lookups run concurrency-limited over DEDUPED candidates (no repeated movie IDs)');
+assert.match(upcomingSrc, /mapWithConcurrency\(candidates, [\s\S]*?LOOKUP_CONCURRENCY\)/, 'movie enrichment lookups are concurrency-capped');
+assert.doesNotMatch(upcomingCode, /truthFailures/, 'NO all-enrichment-failed error path (enrichment is optional — it cannot fail the section)');
+assert.match(upcomingSrc, /releaseKinds: releaseKinds\.length \? \[\.\.\.releaseKinds\] : undefined,/, 'movie UpcomingItems carry releaseKinds ONLY when the enrichment confirmed in-month India events');
 // Movies keep the title/classifier metadata contract
 assert.match(upcomingSrc, /if \(!m \|\| \(!m\.title && !m\.original_title\)\) return null;/, 'movies without a real title are dropped');
 assert.match(upcomingSrc, /if \(!date \|\| !Number\.isFinite\(Date\.parse\(date\)\)\) return null;/, 'movies without a parseable India release date are dropped');
@@ -369,8 +371,12 @@ assert.match(upcomingSrc, /\.sort\(\(a, b\) => a\.timestamp - b\.timestamp\)/, '
 assert.match(upcomingSrc, /\/movie\/\$\{movieId\}\/watch\/providers/, 'movie providers fetched from TMDB watch/providers endpoint');
 assert.match(upcomingSrc, /normalizeRegionFlatrateProviders\(result\.results, region, \(path\) => tmdbImage\(path, 'w92'\)\)/, 'movie + series providers normalize through the shared region-locked helper');
 assert.doesNotMatch(upcomingSrc, /result\.results\?\.US/, 'NO US fallback anywhere in provider lookup');
-assert.match(upcomingSrc, /const providers = releaseKinds\.includes\('digital'\) \? await getMovieWatchProviders\(candidate\.id, region\) : \[\];/, 'provider icons fetched ONLY for digital (OTT) releases — never purely theatrical movies');
-assert.match(upcomingSrc, /providers: v\.providers\.length \? v\.providers\.slice\(0, 3\) : undefined/, 'movie providers compact: max 3, omitted when empty');
+// Provider data is its own truth source: fetched for EVERY discover-
+// qualified candidate (never gated on the optional releaseKinds
+// enrichment — a missing enrichment must not hide real India flatrate
+// availability either).
+assert.match(upcomingSrc, /const providers = await getMovieWatchProviders\(candidate\.id, region\);/, 'provider icons fetched for EVERY discover-qualified candidate (non-gating enrichment, never digital-only)');
+assert.match(upcomingSrc, /providers: providers\.length \? providers\.slice\(0, 3\) : undefined/, 'movie providers compact: max 3, omitted when empty');
 // Provider failure must NOT remove the movie (caught inside the loader).
 assert.match(upcomingSrc, /return null; \/\/ transient failure — caller treats null as "no provider data"/, 'provider lookup failure degrades to no icons, not a dropped movie');
 assert.match(upcomingSrc, /const key = `upcoming:providers:movie:\$\{movieId\}:\$\{region\}:\$\{UPCOMING_PROVIDER_MODEL_KEY\}`/, 'movie provider responses are cached per movie with a version dimension');
@@ -393,6 +399,9 @@ assert.doesNotMatch(policyCode, /10764|10766|10767/, 'policy module carries no R
   assert.doesNotMatch(seriesCode, /without_genres/, 'series candidate discovery sends NO genre blacklist (the F.2 starvation filter is REMOVED)');
   assert.doesNotMatch(seriesCode, /watch_region/, 'series DISCOVERY does NOT constrain by watch_region (eligibility is per-season)');
   assert.doesNotMatch(seriesCode, /with_watch_monetization_types/, 'series DISCOVERY does NOT require flatrate monetization (eligibility is per-season)');
+  assert.doesNotMatch(seriesCode, /vote_count/, 'series DISCOVERY sends NO vote_count floor (zero-vote future episodes must survive — CineLog lesson)');
+  assert.doesNotMatch(seriesCode, /first_air_date\.gte|first_air_date\.lte/, 'series DISCOVERY uses air_date (NOT first_air_date) for the month window');
+  assert.doesNotMatch(seriesCode, /with_origin_country/, 'series DISCOVERY sends NO with_origin_country (CineLog v4 lesson — it drops distributed worldwide shows)');
 }
 // The eligibility gate lives in buildSeriesItems AFTER real target-month
 // episodes are confirmed (the expensive provider calls are never wasted
@@ -752,21 +761,21 @@ assert.match(upcomingPageSrc, /languageLabel/, 'language label participates in t
 
 // --- 16. Caching ---
 // Cache keys include month/year/type/region/language + adult-exclusion + ALL
-// query/policy dimensions (Phase F.2): single-stream movie key with the
-// release-model version, discovery + eligibility keys for series, serial
-// policy key, season-model key, provider model key.
+// query/policy dimensions: single-stream movie key with the
+// discovery/enrichment model version, discovery + eligibility keys for
+// series, serial policy key, season-model key, provider model key.
 assert.match(upcomingSrc, /const key = `upcoming:movies:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{providerExclusion \?\? 'no-adult'\}:\$\{UPCOMING_MOVIE_RELEASE_TRUTH_KEY\}`/, 'movie candidate cache key includes year+month+region+language+adult-exclusion+release-model version (ONE stream — no per-kind split)');
 assert.match(upcomingSrc, /const key = `upcoming:movierd:\$\{movieId\}:\$\{UPCOMING_MOVIE_RELEASE_TRUTH_KEY\}`/, 'per-movie release_dates cache is versioned by the release model');
 assert.match(upcomingSrc, /const key = `upcoming:series:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_TV_ELIGIBILITY_KEY\}:\$\{UPCOMING_TV_SERIAL_POLICY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}`/, 'series cache key includes year+month+region+language+network-exclusion+discovery+eligibility+serial-policy+season-model dimensions');
-assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_SEASON_MODEL_KEY\}`/, 'anime cache key includes year+month+region+language+network-exclusion+season-model version');
+assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}`/, 'anime cache key includes year+month+region+language+network-exclusion+DISCOVERY version+season-model version');
 assert.match(upcomingSrc, /const key = `upcoming:providers:tv:\$\{seriesId\}:\$\{region\}:\$\{UPCOMING_PROVIDER_MODEL_KEY\}`/, 'series parent provider cache is versioned by the provider model');
 assert.match(upcomingSrc, /const key = `upcoming:providers:tvseason:\$\{seriesId\}:\$\{seasonNumber\}:\$\{region\}:\$\{UPCOMING_PROVIDER_MODEL_KEY\}`/, 'SEASON provider cache is a distinct namespace carrying series ID + season number + region + model version');
-// The F.2 version dimensions are distinct constants (no key collisions).
-assert.ok(UPCOMING_MOVIE_RELEASE_TRUTH_KEY !== UPCOMING_TV_DISCOVERY_KEY, 'movie release-model and series discovery versions are distinct constants');
+// The version dimensions are distinct constants (no key collisions).
+assert.ok(UPCOMING_MOVIE_RELEASE_TRUTH_KEY !== UPCOMING_TV_DISCOVERY_KEY, 'movie discovery and series discovery versions are distinct constants');
 assert.ok(UPCOMING_TV_DISCOVERY_KEY !== UPCOMING_TV_ELIGIBILITY_KEY, 'series discovery and eligibility versions are distinct constants');
 assert.ok(UPCOMING_MOVIE_RELEASE_TRUTH_KEY !== UPCOMING_PROVIDER_MODEL_KEY, 'release-model and provider versions are distinct constants');
-assert.equal(UPCOMING_MOVIE_RELEASE_TRUTH_KEY, 'in-release-discovery-v3', 'movie release-model version re-keys EVERY pre-F.3 single-stream AND pre-F.2 per-kind discovery entry (candidates + release_dates payloads)');
-assert.equal(UPCOMING_TV_DISCOVERY_KEY, 'airdate-discovery-v3', 'series discovery version re-keys every pre-F.3 genre-blacklisted candidate set');
+assert.equal(UPCOMING_MOVIE_RELEASE_TRUTH_KEY, 'in-release-discovery-v4', 'movie discovery version re-keys EVERY pre-v4 F.3 union-era entry (candidates + release_dates payloads) under the CineLog single-query semantics');
+assert.equal(UPCOMING_TV_DISCOVERY_KEY, 'airdate-discovery-v4', 'series discovery version re-keys every pre-v4 vote-floored candidate set (zero-vote future titles now discoverable)');
 assert.equal(UPCOMING_TV_ELIGIBILITY_KEY, 'season-flatrate-eligibility-v2', 'series eligibility model version re-keys the F.2 series-level gate era (now season-level + parent fallback)');
 assert.equal(UPCOMING_PROVIDER_MODEL_KEY, 'tmdb-flatrate-v2', 'provider model version bumped for the season-provider + dedupe era (no stale provider entries)');
 // TTL set
@@ -863,58 +872,49 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   const tmdbCalls: RecordedCall[] = [];
 
   // ---- deterministic TMDB fixture registry ----
-  // MOVIE SOURCE A — region-aware India discovery (region=IN +
-  // release_date window): candidates whose India regional release data
-  // IS indexed upstream.
-  const movieSourceAWindows: Record<string, { results: unknown[] }> = {
-    '2026-10-01': {
+  // MOVIE DISCOVERY — the ONE CineLog date-range stream (region=IN +
+  // with_release_country=IN + release_date month window). Candidates are
+  // keyed by `${release_date.gte}|${with_original_language}`: a language
+  // constraint filters server-side (TMDB semantics), so only that
+  // language's rows can come back, never the unfiltered window.
+  // THE REGRESSION FIXTURES for the CineLog model:
+  //   · 105 "Zero Vote October Movie" has ZERO votes — the removed
+  //     vote_count.gte floor would have starved it (upcoming titles
+  //     commonly have zero votes);
+  //   · 160 "Enrichment Outage Movie" gets a 500 from
+  //     /movie/{id}/release_dates — under the old F.3 mandatory truth
+  //     gate it would have DISAPPEARED; the CineLog model keeps it with
+  //     its discover date and no kind badges;
+  //   · 104 has ONLY India release types 1/5/6 in the truth data — the
+  //     old truth gate dropped it; discovery already qualified it, so it
+  //     stays (kind badges simply stay off);
+  //   · 162 "Discover Date Wins" has an EARLIER IN truth event
+  //     (2026-10-05) than its discover release_date (2026-10-30) — the
+  //     card date must be the DISCOVER date (discovery is the truth).
+  const movieDiscoverWindows: Record<string, { results: unknown[] }> = {
+    '2026-10-01|': {
       results: [
-        { id: 101, title: 'Diwali Theatrical', release_date: '2026-09-25', genre_ids: [28, 12], vote_average: 7.4, original_language: 'en', popularity: 90 },
-        { id: 102, title: 'October Digital Only', release_date: '2026-10-16', genre_ids: [53], vote_average: 6.5, original_language: 'en', popularity: 70 },
-        { id: 103, title: 'Dual Release Movie', release_date: '2026-10-02', genre_ids: [28], vote_average: 7.0, original_language: 'en', popularity: 60 },
-        { id: 104, title: 'Physical And Premiere Only', release_date: '2026-10-10', genre_ids: [18], vote_average: 6.0, original_language: 'en', popularity: 40 }
+        { id: 101, title: 'Diwali Theatrical', release_date: '2026-10-09', genre_ids: [28, 12], vote_average: 7.4, vote_count: 0, original_language: 'en', popularity: 90 },
+        { id: 102, title: 'October Digital Only', release_date: '2026-10-16', genre_ids: [53], vote_average: 6.5, vote_count: 0, original_language: 'en', popularity: 70 },
+        { id: 160, title: 'Enrichment Outage Movie', release_date: '2026-10-16', genre_ids: [18], vote_average: 6.2, vote_count: 0, original_language: 'en', popularity: 66 },
+        { id: 103, title: 'Dual Release Movie', release_date: '2026-10-02', genre_ids: [28], vote_average: 7.0, vote_count: 0, original_language: 'en', popularity: 60 },
+        { id: 104, title: 'Physical And Premiere Only', release_date: '2026-10-10', genre_ids: [18], vote_average: 6.0, vote_count: 0, original_language: 'en', popularity: 40 },
+        { id: 105, title: 'Zero Vote October Movie', release_date: '2026-10-24', genre_ids: [35], vote_average: 0, vote_count: 0, original_language: 'en', popularity: 20 },
+        { id: 162, title: 'Discover Date Wins', release_date: '2026-10-30', genre_ids: [28], vote_average: 7.1, vote_count: 0, original_language: 'en', popularity: 55 }
       ]
     },
-    '2026-11-01': { results: [{ id: 111, title: 'November Theatrical', release_date: '2026-11-13', genre_ids: [28], vote_average: 7.1, original_language: 'en', popularity: 80 }] },
-    '2026-12-01': { results: [{ id: 121, title: 'December Digital', release_date: '2026-12-18', genre_ids: [878], vote_average: 6.9, original_language: 'en', popularity: 75 }] },
-    '2027-01-01': { results: [{ id: 131, title: 'January 2027 Theatrical', release_date: '2027-01-09', genre_ids: [28], vote_average: 7.0, original_language: 'en', popularity: 65 }] },
-    '2027-02-01': { results: [{ id: 141, title: 'February 2027 Theatrical', release_date: '2027-02-20', genre_ids: [27], vote_average: 6.8, original_language: 'en', popularity: 55 }] }
+    '2026-11-01|': { results: [{ id: 111, title: 'November Theatrical', release_date: '2026-11-13', genre_ids: [28], vote_average: 7.1, vote_count: 0, original_language: 'en', popularity: 80 }] },
+    '2026-12-01|': { results: [{ id: 121, title: 'December Digital', release_date: '2026-12-18', genre_ids: [878], vote_average: 6.9, vote_count: 0, original_language: 'en', popularity: 75 }] },
+    '2027-01-01|': { results: [{ id: 131, title: 'January 2027 Theatrical', release_date: '2027-01-09', genre_ids: [28], vote_average: 7.0, vote_count: 0, original_language: 'en', popularity: 65 }] },
+    '2027-02-01|': { results: [{ id: 141, title: 'February 2027 Theatrical', release_date: '2027-02-20', genre_ids: [27], vote_average: 6.8, vote_count: 0, original_language: 'en', popularity: 55 }] },
+    '2026-10-01|ta': { results: [{ id: 150, title: 'Tamil October Movie', release_date: '2026-10-21', genre_ids: [28], vote_average: 7.3, vote_count: 0, original_language: 'ta', popularity: 85 }] }
   };
-  const movieSourceALanguageRows: Record<string, { results: unknown[] }> = {
-    ta: { results: [{ id: 150, title: 'Tamil October Movie', release_date: '2026-10-21', genre_ids: [28], vote_average: 7.3, original_language: 'ta', popularity: 85 }] }
-  };
-  // MOVIE SOURCE B — primary-release-date discovery (primary_release_date
-  // window, NO region parameter): candidates matched on their PRIMARY
-  // (origin-country) release date, which is indexed at announcement time
-  // even when India regional data is not. THE REGRESSION FIXTURE for the
-  // actual diagnosed failure:
-  //   · 160 "Regional Starvation Movie" (ta) has NO India regional
-  //     discover row (absent from every source-A window) but a real
-  //     India theatrical release in the release_dates truth — exactly
-  //     the October 2026 production failure shape;
-  //   · 161 "Global Date Trap" reaches the truth stage through source B
-  //     but has NO qualifying IN type 2/3/4 event (physical/TV/US only)
-  //     — the truth stage must still drop it;
-  //   · 101 repeats from source A — the union must dedupe it.
-  const movieSourceBWindows: Record<string, { results: unknown[] }> = {
-    '2026-10-01': {
-      results: [
-        { id: 101, title: 'Diwali Theatrical', release_date: '2026-09-25', genre_ids: [28, 12], vote_average: 7.4, original_language: 'en', popularity: 90 },
-        { id: 160, title: 'Regional Starvation Movie', release_date: '2026-10-16', genre_ids: [28], vote_average: 7.2, original_language: 'ta', popularity: 88 },
-        { id: 161, title: 'Global Date Trap', release_date: '2026-10-10', genre_ids: [18], vote_average: 5.9, original_language: 'en', popularity: 30 }
-      ]
-    }
-  };
-  const movieSourceBLanguageRows: Record<string, { results: unknown[] }> = {};
-  // Final India release truth per movie (realistic release_dates payloads).
+  // Optional release-kind ENRICHMENT payloads (realistic release_dates
+  // responses). Absent IDs fall through to an honest empty payload.
   const movieReleaseDates: Record<number, unknown> = {
     101: { results: [
       { iso_3166_1: 'US', release_dates: [{ release_date: '2026-09-25T00:00:00.000Z', type: 3 }] },
-      { iso_3166_1: 'IN', release_dates: [
-        { release_date: '2026-10-09T00:00:00.000Z', type: 3 },
-        { release_date: '2026-10-08T00:00:00.000Z', type: 1 },
-        { release_date: '2026-11-20T00:00:00.000Z', type: 4 }
-      ] }
+      { iso_3166_1: 'IN', release_dates: [{ release_date: '2026-10-09T00:00:00.000Z', type: 3 }] }
     ] },
     102: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2026-10-16T00:00:00.000Z', type: 4 }] }] },
     103: { results: [{ iso_3166_1: 'IN', release_dates: [
@@ -926,24 +926,19 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
       { release_date: '2026-10-10T00:00:00.000Z', type: 5 },
       { release_date: '2026-10-11T00:00:00.000Z', type: 6 }
     ] }] },
-    // THE diagnosed failure regression: real India theatrical event, but
-    // the movie is invisible to the region-aware discover stream.
-    160: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2026-10-16T00:00:00.000Z', type: 3 }] }] },
-    // Truth-stage trap: source-B candidate whose India data has NO
-    // type 2/3/4 event in the month (physical/TV only) + a US theatrical.
-    161: { results: [
-      { iso_3166_1: 'US', release_dates: [{ release_date: '2026-10-10T00:00:00.000Z', type: 3 }] },
-      { iso_3166_1: 'IN', release_dates: [
-        { release_date: '2026-10-10T00:00:00.000Z', type: 5 },
-        { release_date: '2026-10-11T00:00:00.000Z', type: 6 }
-      ] }
-    ] },
+    // Discovery-date primacy: the IN truth event is EARLIER than the
+    // discover release_date — the card must carry 2026-10-30 anyway.
+    162: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2026-10-05T00:00:00.000Z', type: 3 }] }] },
     111: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2026-11-13T00:00:00.000Z', type: 3 }] }] },
     121: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2026-12-18T00:00:00.000Z', type: 4 }] }] },
     131: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2027-01-09T00:00:00.000Z', type: 3 }] }] },
     141: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2027-02-20T00:00:00.000Z', type: 3 }] }] },
     150: { results: [{ iso_3166_1: 'IN', release_dates: [{ release_date: '2026-10-21T00:00:00.000Z', type: 3 }] }] }
   };
+  // THE enrichment-outage regression: 160's release_dates endpoint FAILS.
+  const movieReleaseDatesFailures = new Set<number>([160]);
+  // India flatrate provider payloads (movies). Provider data is its own
+  // truth source — fetched for EVERY candidate, never gated on kinds.
   const movieIndiaFlatrate: Record<number, Array<{ provider_id: number; provider_name: string; logo_path: string }>> = {
     102: [{ provider_id: 8, provider_name: 'Netflix', logo_path: '/netflix.jpg' }],
     103: [{ provider_id: 119, provider_name: 'Amazon Prime Video', logo_path: '/prime.jpg' }],
@@ -1107,21 +1102,10 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
     tmdbCalls.push({ path, params });
     const idMatch = path.match(/^\/(movie|tv)\/(\d+)(\/.*)?$/);
     if (path === '/discover/movie') {
+      // THE CineLog date-range stream — candidates keyed by the month
+      // window + the language constraint (server-side TMDB semantics).
       const lang = params.with_original_language ?? '';
-      let rows: { results: unknown[] };
-      if (params.region !== undefined) {
-        // SOURCE A — region-aware India release-date discovery. A language
-        // constraint filters server-side (TMDB semantics): only that
-        // language's rows can come back, never the unfiltered window.
-        rows = lang
-          ? (movieSourceALanguageRows[lang] ?? { results: [] })
-          : (movieSourceAWindows[params['release_date.gte']] ?? { results: [] });
-      } else {
-        // SOURCE B — primary release-date discovery (NO region param).
-        rows = lang
-          ? (movieSourceBLanguageRows[lang] ?? { results: [] })
-          : (movieSourceBWindows[params['primary_release_date.gte']] ?? { results: [] });
-      }
+      const rows = movieDiscoverWindows[`${params['release_date.gte']}|${lang}`] ?? { results: [] };
       return jsonResponse({ page: 1, total_pages: 1, total_results: rows.results.length, ...rows });
     }
     if (path === '/discover/tv') {
@@ -1132,7 +1116,12 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
       const kind = idMatch[1] as 'movie' | 'tv';
       const numericId = Number(idMatch[2]);
       const sub = idMatch[3] ?? '';
-      if (kind === 'movie' && sub === '/release_dates') return jsonResponse(movieReleaseDates[numericId] ?? { results: [] });
+      if (kind === 'movie' && sub === '/release_dates') {
+        // OPTIONAL ENRICHMENT outage regression: 160 fails — the movie
+        // must STILL render (discovery already qualified it).
+        if (movieReleaseDatesFailures.has(numericId)) return jsonResponse({ status_message: 'release_dates outage' }, 500);
+        return jsonResponse(movieReleaseDates[numericId] ?? { results: [] });
+      }
       if (kind === 'movie' && sub === '/watch/providers') {
         const flatrate = movieIndiaFlatrate[numericId];
         return jsonResponse({ id: numericId, results: flatrate ? { IN: { flatrate } } : {} });
@@ -1162,71 +1151,83 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   const tvDiscoverCalls = () => tmdbCalls.filter((c) => c.path === '/discover/tv');
   const callsFor = (frag: string) => tmdbCalls.filter((c) => c.path.includes(frag));
 
-  // ---- 19a. MOVIES: October 2026 discovered through the deduped UNION ----
+  // ---- 19a. MOVIES: October 2026 through the ONE CineLog date-range query ----
   clearCache();
   const october = await loadUpcoming({ month: 10, year: 2026, type: 'movie', language: 'all' });
   assert.deepEqual(october.errors, [], 'October movie pipeline completes without section errors');
-  // THE F.3 REGRESSION: 160 "Regional Starvation Movie" has NO India
-  // regional discover row (invisible to source A) but a real India
-  // theatrical event — source B (primary_release_date) recovers it.
-  // 161 reaches the truth stage but has NO qualifying IN type 2/3/4
-  // event and is dropped. 104 (physical/premiere-only) is still dropped.
-  assert.deepEqual(october.items.map((i) => i.id), ['movie-103', 'movie-101', 'movie-102', 'movie-160'], 'October 2026 discovers movies from the deduped source UNION, chronologically sorted (source-B-only 160 recovered; truth traps 104/161 dropped)');
+  // THE CINELOG REGRESSIONS, all in one month:
+  //   · 105 "Zero Vote October Movie" (vote_count 0) SURVIVES — the
+  //     removed vote_count.gte floor can no longer starve it;
+  //   · 160 "Enrichment Outage Movie" (release_dates 500) SURVIVES — the
+  //     removed mandatory truth gate can no longer drop it;
+  //   · 104 (IN truth = types 1/5/6 only) SURVIVES — discovery is the
+  //     truth, kind badges simply stay off;
+  //   · 162 carries its DISCOVER date (2026-10-30), not the earlier
+  //     truth event (2026-10-05) — discovery is the card-date authority.
+  assert.deepEqual(october.items.map((i) => i.id), ['movie-103', 'movie-101', 'movie-104', 'movie-102', 'movie-160', 'movie-105', 'movie-162'], 'October 2026 discovers every discover-qualified movie chronologically (zero-vote 105, enrichment-outage 160, truth-types-1/5/6 104 all SURVIVE)');
   const m101 = october.items.find((i) => i.id === 'movie-101')!;
-  assert.equal(m101.date, '2026-10-09', 'card date is the REAL India release date (type 3) — the discover row global date 2026-09-25 is ignored');
+  assert.equal(m101.date, '2026-10-09', 'card date is the discover row India release_date (region=IN + with_release_country=IN month window)');
   assert.equal(m101.date.slice(0, 7), '2026-10', 'October invariant: card date belongs to the selected month');
-  assert.deepEqual(m101.releaseKinds, ['theatrical'], 'type 3 -> theatrical');
-  assert.equal(m101.providers, undefined, 'theatrical-only movie shows no OTT provider icons');
+  assert.deepEqual(m101.releaseKinds, ['theatrical'], 'IN truth type 3 -> theatrical badge (optional enrichment)');
+  assert.equal(m101.providers, undefined, 'a movie without India flatrate data shows no OTT provider icons');
   const m102 = october.items.find((i) => i.id === 'movie-102')!;
-  assert.deepEqual(m102.releaseKinds, ['digital'], 'type 4 -> digital');
-  assert.deepEqual(m102.providers?.map((p) => p.name), ['Netflix'], 'digital movie shows India flatrate providers');
+  assert.deepEqual(m102.releaseKinds, ['digital'], 'IN truth type 4 -> digital badge');
+  assert.deepEqual(m102.providers?.map((p) => p.name), ['Netflix'], 'India flatrate data on watch/providers -> Netflix icon (provider data is its own truth source)');
   const m103 = october.items.find((i) => i.id === 'movie-103')!;
-  assert.deepEqual(m103.releaseKinds, ['theatrical', 'digital'], 'dual India release renders ONE card with BOTH kinds');
-  assert.equal(m103.date, '2026-10-02', 'dual-kind card carries the EARLIEST real India event date');
+  assert.deepEqual(m103.releaseKinds, ['theatrical', 'digital'], 'dual India release renders ONE card with BOTH kind badges');
+  assert.equal(m103.date, '2026-10-02', 'dual-kind card carries its discover release_date');
+  const m104 = october.items.find((i) => i.id === 'movie-104')!;
+  assert.ok(m104, 'CineLog trust: a discover-qualified movie whose IN truth is only types 1/5/6 still RENDERS (no post-discovery starvation gate)');
+  assert.equal(m104.date, '2026-10-10', 'the 1/5/6-truth movie keeps its discover release_date');
+  assert.equal(m104.releaseKinds, undefined, 'no in-month IN type 2/3/4 events -> kind badges omitted (nothing fabricated)');
   const m160 = october.items.find((i) => i.id === 'movie-160')!;
-  assert.ok(m160, 'THE diagnosed failure regression: the movie with NO India regional discover data is recovered by source B');
-  assert.equal(m160.date, '2026-10-16', 'the recovered movie carries its REAL India event date from the release_dates truth');
-  assert.equal(m160.title, 'Regional Starvation Movie', 'the recovered movie renders with its real upstream title');
+  assert.ok(m160, 'THE enrichment-outage regression: a FAILED /movie/{id}/release_dates lookup does NOT remove a discover-qualified movie');
+  assert.equal(m160.date, '2026-10-16', 'the enrichment-outage movie keeps its discover release_date');
+  assert.equal(m160.releaseKinds, undefined, 'the enrichment-outage movie renders without kind badges');
+  assert.equal(callsFor('/movie/160/release_dates').length, 1, 'the failed enrichment lookup was a real upstream call (absorbed, never fabricated)');
+  const m105 = october.items.find((i) => i.id === 'movie-105')!;
+  assert.ok(m105, 'THE zero-vote regression: a movie with vote_count 0 is NOT removed (no vote_count.gte floor exists)');
+  assert.equal(m105.date, '2026-10-24', 'the zero-vote movie keeps its discover release_date');
+  assert.equal(m105.releaseKinds, undefined, 'the zero-vote movie with empty truth data renders without kind badges');
+  const m162 = october.items.find((i) => i.id === 'movie-162')!;
+  assert.ok(m162, 'the discover-date-primacy fixture rendered');
+  assert.equal(m162.date, '2026-10-30', 'DISCOVER DATE PRIMACY: the card date is the discover release_date even when the truth event is earlier (2026-10-05)');
+  assert.deepEqual(m162.releaseKinds, ['theatrical'], 'the enrichment still badges the kind from the real IN event');
   assert.ok(october.items.every((i) => i.date.slice(0, 7) === '2026-10'), 'EVERY October movie date belongs to October 2026 (no stale/foreign leakage)');
-  // Discovery query contract: the mocked upstream saw the exact F.3 shape.
-  const octSourceACalls = movieDiscoverCalls().filter((c) => c.params['release_date.gte'] === '2026-10-01');
-  const octSourceBCalls = movieDiscoverCalls().filter((c) => c.params['primary_release_date.gte'] === '2026-10-01');
-  assert.ok(octSourceACalls.length >= 1, 'October movie discovery queried source A (region-aware)');
-  assert.ok(octSourceBCalls.length >= 1, 'October movie discovery queried source B (primary)');
+  // Discovery query contract: the mocked upstream saw the exact CineLog shape.
+  const octoberDiscoverCalls = movieDiscoverCalls().filter((c) => c.params['release_date.gte'] === '2026-10-01');
+  assert.equal(octoberDiscoverCalls.length, 1, 'October movie discovery issued EXACTLY ONE discover call (no fallback/union queries)');
   for (const call of movieDiscoverCalls()) {
-    assert.ok(!('with_release_type' in call.params), 'NO with_release_type parameter is ever sent to /discover/movie');
+    assert.equal(call.params.region, 'IN', 'movie discovery pins region=IN');
+    assert.equal(call.params.with_release_country, 'IN', 'movie discovery pins with_release_country=IN');
+    assert.ok('release_date.gte' in call.params && 'release_date.lte' in call.params, 'movie discovery carries the release_date month window');
     assert.equal(call.params.include_adult, 'false', 'movie discovery sends include_adult=false');
-    assert.equal(call.params['vote_count.gte'], '1', 'movie discovery sends vote_count.gte=1');
-    assert.equal(call.params.sort_by, 'popularity.desc', 'movie discovery sorts by popularity');
-    if ('region' in call.params) {
-      assert.equal(call.params.region, 'IN', 'source A pins region=IN');
-      assert.ok('release_date.gte' in call.params && 'release_date.lte' in call.params, 'source A carries the release_date window');
-      assert.ok(!('primary_release_date.gte' in call.params), 'source A does NOT mix in a primary window');
-    } else {
-      assert.ok('primary_release_date.gte' in call.params && 'primary_release_date.lte' in call.params, 'source B carries the primary_release_date window');
-      assert.ok(!('release_date.gte' in call.params), 'source B does NOT mix in a regional window');
-    }
+    assert.equal(call.params.sort_by, 'release_date.asc', 'movie discovery sorts by release_date.asc (CineLog model)');
+    assert.ok(!('vote_count.gte' in call.params), 'NO vote_count.gte parameter is ever sent (zero-vote future titles must survive)');
+    assert.ok(!('primary_release_date.gte' in call.params) && !('primary_release_date.lte' in call.params), 'NO primary_release_date parameter is ever sent (the F.3 union is REMOVED)');
+    assert.ok(!('with_release_type' in call.params), 'NO with_release_type parameter is ever sent to /discover/movie');
   }
-  assert.equal(octSourceACalls[0].params['release_date.lte'], '2026-10-31', 'source A window covers the FULL selected month');
-  assert.equal(octSourceBCalls[0].params['primary_release_date.lte'], '2026-10-31', 'source B window covers the FULL selected month');
-  // Truth lookups: exactly once per unique candidate ID — even though 101
-  // came from BOTH sources, the union deduped it before the N+1 stage.
-  assert.equal(callsFor('/movie/103/release_dates').length, 1, 'release_dates fetched EXACTLY ONCE per unique candidate (no N+1 duplication)');
-  assert.equal(callsFor('/movie/101/release_dates').length, 1, 'the cross-source duplicate (101 in BOTH sources) is deduped to ONE truth lookup');
-  assert.equal(callsFor('/movie/161/release_dates').length, 1, 'source-B-only candidates still reach the truth stage (and are dropped by the truth, not by discovery)');
-  // Movie OTT provider failures would not drop movies; here the digital ones succeeded.
-  assert.ok(callsFor('/movie/101/watch/providers').length === 0, 'theatrical-only movie never triggers a provider lookup');
+  assert.equal(octoberDiscoverCalls[0].params['release_date.lte'], '2026-10-31', 'the month window covers the FULL selected month (2026-10-01 .. 2026-10-31)');
+  // Enrichment + provider lookups: exactly once per unique candidate ID.
+  assert.equal(callsFor('/movie/103/release_dates').length, 1, 'release_dates enrichment fetched EXACTLY ONCE per unique candidate (cached)');
+  assert.equal(callsFor('/movie/162/release_dates').length, 1, 'every candidate gets its own enrichment lookup (once)');
+  assert.equal(callsFor('/movie/101/watch/providers').length, 1, 'provider lookup happens for EVERY candidate (provider data is its own truth source, never digital-gated)');
+  assert.equal(callsFor('/movie/104/watch/providers').length, 1, 'even badge-less candidates get their provider lookup (icons render whenever IN.flatrate exists)');
+  assert.equal(callsFor('/movie/105/watch/providers').length, 1, 'the zero-vote candidate gets its provider lookup too');
 
-  // ---- 19b. MOVIES: November/December/January/February independent ----
+  // ---- 19b. MOVIES: September/November/December/January/February independent ----
+  clearCache();
+  const september = await loadUpcoming({ month: 9, year: 2026, type: 'movie', language: 'all' });
+  assert.deepEqual(september.items, [], 'September 2026 honestly returns its own (fixture-empty) month — no October leakage, no fake data');
   clearCache();
   const november = await loadUpcoming({ month: 11, year: 2026, type: 'movie', language: 'all' });
   assert.deepEqual(november.items.map((i) => i.id), ['movie-111'], 'November 2026 has its OWN candidates (no October leakage)');
-  assert.equal(november.items[0].date, '2026-11-13', 'November card date is the real India event');
+  assert.equal(november.items[0].date, '2026-11-13', 'November card date is the discover row India release_date');
   clearCache();
   const december = await loadUpcoming({ month: 12, year: 2026, type: 'movie', language: 'all' });
   assert.deepEqual(december.items.map((i) => i.id), ['movie-121'], 'December 2026 discovers its own digital release');
-  assert.deepEqual(december.items[0].releaseKinds, ['digital'], 'December digital kind from release_dates truth');
-  assert.deepEqual(december.items[0].providers?.map((p) => p.name), ['Netflix'], 'December digital release carries India flatrate icon');
+  assert.deepEqual(december.items[0].releaseKinds, ['digital'], 'December digital kind from the optional enrichment');
+  assert.deepEqual(december.items[0].providers?.map((p) => p.name), ['Netflix'], 'December release carries India flatrate icon from watch/providers');
   clearCache();
   const january = await loadUpcoming({ month: 1, year: 2027, type: 'movie', language: 'all' });
   assert.deepEqual(january.items.map((i) => i.id), ['movie-131'], 'January 2027 works (cross-year month window)');
@@ -1235,19 +1236,21 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   const february = await loadUpcoming({ month: 2, year: 2027, type: 'movie', language: 'all' });
   assert.deepEqual(february.items.map((i) => i.id), ['movie-141'], 'February 2027 works');
   assert.equal(february.items[0].date, '2027-02-20', 'February 2027 card date real');
+  const febCall = movieDiscoverCalls().find((c) => c.params['release_date.gte'] === '2027-02-01');
+  assert.equal(febCall!.params['release_date.lte'], '2027-02-28', 'February window ends on the 28th (monthBounds last-day semantics)');
 
   // ---- 19c. MOVIES: language filter + cache isolation ----
   clearCache();
   const tamilMovies = await loadUpcoming({ month: 10, year: 2026, type: 'movie', language: 'ta' });
   assert.deepEqual(tamilMovies.items.map((i) => i.id), ['movie-150'], 'October + Tamil returns the Tamil candidate (not the English cached set)');
-  const tamilMovieACall = movieDiscoverCalls().filter((c) => c.params['release_date.gte'] === '2026-10-01' && c.params.with_original_language === 'ta');
-  assert.equal(tamilMovieACall.length, 1, 'October+Tamil issued its OWN source-A discover call (language cache isolation)');
-  assert.equal(tamilMovieACall[0].params.with_original_language, 'ta', 'with_original_language=ta reaches TMDB on source A');
-  const tamilMovieBCall = movieDiscoverCalls().filter((c) => c.params['primary_release_date.gte'] === '2026-10-01' && c.params.with_original_language === 'ta');
-  assert.equal(tamilMovieBCall.length, 1, 'October+Tamil ALSO issued its own source-B call (the union is per-language)');
-  assert.ok(!('region' in tamilMovieBCall[0].params), 'the Tamil source-B call stays region-free');
+  const tamilMovieCalls = movieDiscoverCalls().filter((c) => c.params['release_date.gte'] === '2026-10-01' && c.params.with_original_language === 'ta');
+  assert.equal(tamilMovieCalls.length, 1, 'October+Tamil issued its OWN discover call (language cache isolation)');
+  assert.equal(tamilMovieCalls[0].params.with_original_language, 'ta', 'with_original_language=ta reaches TMDB');
+  assert.equal(tamilMovieCalls[0].params.region, 'IN', 'the Tamil call keeps region=IN');
+  assert.equal(tamilMovieCalls[0].params.with_release_country, 'IN', 'the Tamil call keeps with_release_country=IN');
+  assert.equal(movieDiscoverCalls().filter((c) => c.params['release_date.gte'] === '2026-10-01' && !('with_original_language' in c.params) && !Object.is(c, octoberDiscoverCalls[0])).length, 0, 'no unfiltered re-query beyond the cached English stream');
 
-  console.log('Phase F.3 mocked pipeline: MOVIES passed (union discovery, truth dates, dedupe, providers, language)');
+  console.log('CineLog-model mocked pipeline: MOVIES passed (single date-range query, discover-date primacy, optional enrichment, zero-vote survival, providers, language)');
 
   // ---- 19d. SERIES: Soap-tagged future-month shows SURVIVE discovery ----
   // (the removed without_genres starvation filter) + season-level gate.
@@ -1367,14 +1370,18 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   const animeTamil = await loadUpcoming({ month: 10, year: 2026, type: 'anime', language: 'ta' });
   assert.deepEqual(animeTamil.items, [], 'anime + non-ja language returns an empty section deterministically');
 
-  // Global request-shape sweep across EVERY recorded series discovery call.
+  // Global request-shape sweep across EVERY recorded discover call.
+  for (const call of [...tvDiscoverCalls(), ...movieDiscoverCalls()]) {
+    assert.ok(!('vote_count.gte' in call.params), 'NO discovery call (movie or series/anime) ever sends a vote_count floor (zero-vote future titles must survive)');
+  }
   for (const call of tvDiscoverCalls()) {
     assert.ok(!('watch_region' in call.params) && !('with_watch_monetization_types' in call.params), 'NO series/anime discovery call ever sends watch_region or with_watch_monetization_types');
     assert.ok(!('without_genres' in call.params), 'NO series/anime discovery call ever sends a genre blacklist (F.3 starvation fix)');
+    assert.ok(!('first_air_date.gte' in call.params) && !('with_origin_country' in call.params), 'NO series discovery call uses first_air_date windows or origin-country filters (CineLog TV model)');
   }
 
   globalThis.fetch = realFetch;
-  console.log('Phase F.3 mocked pipeline: SERIES + ANIME passed (Soap-tagged discovery, season-level gate, parent fallback, drops, exemption)');
+  console.log('CineLog-model mocked pipeline: SERIES + ANIME passed (air-date discovery, season-level gate, parent fallback, drops, exemption)');
 }
 
 console.log('\nAll upcoming releases contract tests passed');

@@ -1,30 +1,33 @@
-// PHASE F.3 — Upcoming TMDB live diagnostic (OPTIONAL, NOT part of the
-// test suite — never registered in the package.json test chain).
+// Upcoming TMDB live diagnostic (OPTIONAL, NOT part of the test suite —
+// never registered in the package.json test chain).
 //
-// Purpose: prove on the REAL TMDB API exactly where October 2026+ movie
-// candidates are lost, using control titles resolved through TMDB search
-// (NEVER hardcoded TMDB IDs), and print a concise rejection table.
+// Purpose: verify on the REAL TMDB API that the CineLog-proven
+// date-range discovery model behaves as expected for a selected month,
+// using control titles resolved through TMDB search (NEVER hardcoded
+// TMDB IDs), and print a concise verification table.
 //
 // Stages probed per control title:
-//   A) the CURRENT F.3 candidate-source-A shape:
-//      /discover/movie { region: 'IN', release_date.gte/lte, vote_count.gte=1,
-//      include_adult=false, sort_by=popularity.desc } (no with_release_type)
-//   A2) A + the transitional adult provider exclusion (without_watch_providers
-//       + watch_region=IN, values resolved live from the India provider list)
-//   B) A minus the region parameter (is the regional index the blocker?)
-//   C) the F.3 candidate-source-B shape:
-//      /discover/movie { primary_release_date.gte/lte, ... } (NO region)
-//   D) /movie/{id}/release_dates — every India release event (type + date)
-//   E) /movie/upcoming?region=IN — the documented list endpoint as an
-//      alternative candidate source
+//   A) the CURRENT CineLog discovery shape (the ONE production query):
+//      /discover/movie { region: 'IN', with_release_country: 'IN',
+//      release_date.gte/lte, include_adult=false,
+//      sort_by='release_date.asc' } — NO vote_count floor, NO
+//      with_release_type, NO primary_release_date union
+//   A2) A + the live-resolved adult provider exclusion
+//       (without_watch_providers + watch_region=IN)
+//   D) /movie/{id}/release_dates — every India release event (type +
+//      date); this is the OPTIONAL releaseKinds enrichment, never a
+//      candidate gate: a title missing here still renders from A
+//   E) /movie/{id}/watch/providers results.IN.flatrate — the OTT icon
+//      source (also never a gate)
+//   F) /movie/upcoming?region=IN — context only (not used by Mavero)
 //
-// Rejection-stage classification (the seven stages a candidate can die at):
-//   1 discover candidate   2 adult provider exclusion   3 release_dates lookup
-//   4 IN country extraction   5 release type 2/3/4      6 month filter
-//   7 adult classifier
+// Verification stages:
+//   1 discover candidate (the ONLY gate)   2 adult provider exclusion
+//   3 enrichment lookup                    4 IN events (badge source)
+//   5 India flatrate icons
 //
 // Usage:  npx tsx --tsconfig ./jsconfig.json scripts/upcoming_tmdb_diagnostic.ts
-//         (optional env: DIAGNOSTIC_YEAR / DIAGNOSTIC_MONTH, default 2026-10)
+//         (optional env: DIAGNOSTIC_YEAR / DIAGNOSTIC_MONTH, default next month)
 //
 // Requirements: TMDB_READ_ACCESS_TOKEN (v4) or TMDB_API_KEY (v3) in the
 // environment. Credentials are NEVER printed. Without credentials this
@@ -43,6 +46,7 @@ register(new URL('./upcoming_test_hooks.mjs', import.meta.url));
 type TmdbMovieRow = { id: number; title?: string; original_title?: string; release_date?: string; original_language?: string; popularity?: number };
 type TmdbList = { page?: number; total_pages?: number; total_results?: number; results?: TmdbMovieRow[] };
 type ReleaseDates = { results?: Array<{ iso_3166_1?: string; release_dates?: Array<{ release_date?: string; type?: number }> }> };
+type WatchProviders = { results?: Record<string, { flatrate?: Array<{ provider_id?: number; provider_name?: string }> }> };
 
 const { tmdbRequest, getTmdbIndiaProviders, getAdultProviderIds } = await import('../src/lib/server/content/adapters/tmdb.ts');
 
@@ -88,32 +92,44 @@ function typeLabel(type: number | undefined): string {
   return ({ 1: 'Premiere', 2: 'Theatrical (limited)', 3: 'Theatrical', 4: 'Digital', 5: 'Physical', 6: 'TV' } as Record<number, string>)[type ?? 0] ?? `Type ${type}`;
 }
 
-console.log(`\nTMDB Upcoming diagnostic — window ${gte} .. ${lte}`);
+console.log(`\nTMDB Upcoming diagnostic — CineLog date-range model — window ${gte} .. ${lte}`);
 console.log('Control titles resolved via /search/movie (no hardcoded IDs):');
 
 const adultIds = getAdultProviderIds();
 const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
 
-const table: Array<{ title: string; id: number; inA: string; inA2: string; inB: string; inC: string; inUpcoming: string; inEvents: string; reason: string }> = [];
+const table: Array<{ title: string; id: number; inA: string; inA2: string; inUpcoming: string; inEvents: string; flatrate: string; reason: string }> = [];
 
 for (const control of CONTROL_TITLES) {
   const row = await searchControl(control.query, control.yearHint);
   if (!row) {
-    table.push({ title: control.query, id: 0, inA: '-', inA2: '-', inB: '-', inC: '-', inUpcoming: '-', inEvents: 'search: no result', reason: 'unresolved control title' });
+    table.push({ title: control.query, id: 0, inA: '-', inA2: '-', inUpcoming: '-', inEvents: 'search: no result', flatrate: '-', reason: 'unresolved control title' });
     continue;
   }
   const id = row.id;
-  // A) current source-A shape (region-aware, no with_release_type).
-  const a = await discover({ region: 'IN', 'release_date.gte': gte, 'release_date.lte': lte, sort_by: 'popularity.desc', 'vote_count.gte': 1, include_adult: false });
+  // A) the CURRENT production discovery shape (the ONE CineLog query).
+  const a = await discover({
+    region: 'IN',
+    with_release_country: 'IN',
+    'release_date.gte': gte,
+    'release_date.lte': lte,
+    include_adult: false,
+    sort_by: 'release_date.asc'
+  });
   // A2) A + the live-resolved adult provider exclusion.
   const a2 = providerExclusion
-    ? await discover({ region: 'IN', 'release_date.gte': gte, 'release_date.lte': lte, sort_by: 'popularity.desc', 'vote_count.gte': 1, include_adult: false, without_watch_providers: providerExclusion, watch_region: 'IN' })
+    ? await discover({
+        region: 'IN',
+        with_release_country: 'IN',
+        'release_date.gte': gte,
+        'release_date.lte': lte,
+        include_adult: false,
+        sort_by: 'release_date.asc',
+        without_watch_providers: providerExclusion,
+        watch_region: 'IN'
+      })
     : a;
-  // B) A minus region — isolates the regional release-date index.
-  const b = await discover({ 'release_date.gte': gte, 'release_date.lte': lte, sort_by: 'popularity.desc', 'vote_count.gte': 1, include_adult: false });
-  // C) source-B shape — primary release-date window (no region).
-  const c = await discover({ 'primary_release_date.gte': gte, 'primary_release_date.lte': lte, sort_by: 'popularity.desc', 'vote_count.gte': 1, include_adult: false });
-  // D) release_dates truth — every India event.
+  // D) release_dates — the OPTIONAL releaseKinds enrichment (never a gate).
   let inEvents = 'lookup failed';
   let releaseDatesOk = false;
   const inEventList: Array<{ date: string; type: number }> = [];
@@ -129,7 +145,16 @@ for (const control of CONTROL_TITLES) {
   } catch {
     releaseDatesOk = false;
   }
-  // E) documented list endpoint as an alternative candidate source.
+  // E) India flatrate providers — the OTT icon source (never a gate).
+  let flatrate = 'lookup failed';
+  try {
+    const wp = await tmdbRequest<WatchProviders>(`/movie/${id}/watch/providers`);
+    const names = (wp.results?.IN?.flatrate ?? []).map((p) => p.provider_name).filter(Boolean);
+    flatrate = names.length ? names.slice(0, 4).join(', ') : 'no IN flatrate';
+  } catch {
+    flatrate = 'lookup failed';
+  }
+  // F) documented list endpoint — context only (not used by Mavero).
   let inUpcoming = 'not probed';
   try {
     const upcoming = await tmdbRequest<TmdbList>('/movie/upcoming', { region: 'IN', page: 1 });
@@ -138,37 +163,29 @@ for (const control of CONTROL_TITLES) {
   } catch {
     inUpcoming = 'lookup failed';
   }
-  // Rejection-stage classification.
+  // Verification-stage classification.
   const inA = a.ids.has(id) ? `yes (${a.list.total_results ?? '?'} results, ${(a.rows.get(id)?.release_date ?? '?')})` : `no (${a.list.total_results ?? '?'} results)`;
   const inA2 = providerExclusion ? (a2.ids.has(id) ? 'yes' : 'NO — adult exclusion drops it') : 'n/a';
-  const inB = b.ids.has(id) ? `yes (${b.list.total_results ?? '?'} results)` : `no (${b.list.total_results ?? '?'} results)`;
-  const inC = c.ids.has(id) ? `yes (${c.list.total_results ?? '?'} results)` : `no (${c.list.total_results ?? '?'} results)`;
   let reason: string;
-  if (!a.ids.has(id) && !b.ids.has(id) && !c.ids.has(id)) {
-    reason = '1. lost at Discover candidate stage in EVERY documented shape (check window/title)';
-  } else if (a.ids.has(id) && !a2.ids.has(id)) {
-    reason = '2. dropped by the adult provider exclusion';
-  } else if (!a.ids.has(id) && (b.ids.has(id) || c.ids.has(id))) {
-    reason = '1. region-aware Discover starvation (IN regional date not indexed) — source B recovers it';
+  if (!a.ids.has(id)) {
+    reason = '1. not returned by the CineLog date-range query (no India release entry inside the window — check window/title)';
+  } else if (!a2.ids.has(id)) {
+    reason = '2. dropped by the adult provider exclusion (expected only for adult-rail titles)';
   } else if (!releaseDatesOk) {
-    reason = '3. release_dates lookup failed';
+    reason = 'renders WITHOUT kind badges (3. enrichment lookup failed — movie still qualifies: enrichment is optional)';
   } else if (inEvents === 'no IN entry') {
-    reason = '4. no IN country entry in release_dates';
-  } else if (inEventList.length > 0 && !inEventList.some((e) => [2, 3, 4].includes(e.type))) {
-    reason = `5. IN events exist but none of type 2/3/4 (${inEventList.map((e) => typeLabel(e.type)).join(', ')})`;
-  } else if (inEventList.length > 0 && !inEventList.some((e) => [2, 3, 4].includes(e.type) && e.date >= gte && e.date <= lte)) {
-    reason = `6. qualifying IN type 2/3/4 events exist but OUTSIDE ${gte}..${lte} (${inEventList.filter((e) => [2, 3, 4].includes(e.type)).map((e) => `${e.date} ${typeLabel(e.type)}`).join('; ') || 'none'})`;
+    reason = 'renders WITHOUT kind badges (4. no IN events in enrichment — movie still qualifies: enrichment is optional)';
   } else {
-    reason = 'survives every stage — should render (verify classifier/adult flag if missing in UI)';
+    reason = 'survives every stage — card date = discover release_date; badges derive from the IN events below';
   }
   const eventsText = inEventList.length > 0 ? inEventList.map((e) => `${e.date} T${e.type}`).join(' | ') : inEvents;
-  table.push({ title: row.title ?? row.original_title ?? control.query, id, inA, inA2, inB, inC, inUpcoming, inEvents: eventsText, reason });
+  table.push({ title: row.title ?? row.original_title ?? control.query, id, inA, inA2, inUpcoming, inEvents: eventsText, flatrate, reason });
 }
 
-console.log('\nDisplays: A = F.3 source A (region=IN + release_date window), A2 = A + adult provider exclusion,');
-console.log('B = A minus region, C = source B (primary_release_date window, no region), D = IN release events (T2 theatrical-limited / T3 theatrical / T4 digital).\n');
-const header = ['title', 'tmdbId', 'discover-current(A)', 'A2 adult-excl', 'discover-noRegion(B)', 'discover-broader(C)', '/movie/upcoming', 'IN release events', 'final reason'];
-const rowsOut = table.map((r) => [r.title, String(r.id), r.inA, r.inA2, r.inB, r.inC, r.inUpcoming, r.inEvents, r.reason]);
+console.log('\nDisplays: A = CineLog discovery (region=IN + with_release_country=IN + release_date window, release_date.asc, no vote floor),');
+console.log('A2 = A + adult provider exclusion, D = IN release events (T2 theatrical-limited / T3 theatrical / T4 digital), E = India flatrate.\n');
+const header = ['title', 'tmdbId', 'discover(A)', 'A2 adult-excl', '/movie/upcoming', 'IN release events', 'IN flatrate', 'final reason'];
+const rowsOut = table.map((r) => [r.title, String(r.id), r.inA, r.inA2, r.inUpcoming, r.inEvents, r.flatrate, r.reason]);
 const widths = header.map((h, i) => Math.max(h.length, ...rowsOut.map((r) => r[i].length)));
 const line = (cells: string[]) => cells.map((c, i) => c.padEnd(widths[i])).join(' | ');
 console.log(line(header));

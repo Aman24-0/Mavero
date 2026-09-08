@@ -1,54 +1,50 @@
 // Upcoming releases server module.
 //
-// Sources (Phase F.3 — root-cause fix for future-release starvation):
-//   - TMDB Discover Movie as the CANDIDATE discovery mechanism for
-//     upcoming movies (Phase F.3 UNION of two documented sources):
-//       · Source A: region=IN + release_date month window (F.2 stream).
-//       · Source B: primary_release_date month window, NO region param.
-//     WHY A ALONE STILL STARVED (F.3 diagnosis): with `region`, TMDB
-//     filters movies by their INDIA release dates, and for unreleased
-//     titles the India regional release-date data is frequently not
-//     indexed yet — a movie with no indexed IN release date can never
-//     match a region-aware date window, so October 2026+ stayed empty
-//     even though the official OpenAPI lists both query families.
-//     Source B matches on the PRIMARY release date (the origin-country
-//     date, which IS indexed at announcement time), so Indian films and
-//     same-window worldwide releases become candidates without requiring
-//     India regional metadata to exist yet. Both sources keep the
-//     language filter, the adult exclusions and bounded pagination, and
-//     their union is deduped by canonical movie ID. with_release_type is
-//     deliberately NOT sent AT ALL.
+// Sources (CineLog-proven date-range discovery model):
+//   - TMDB Discover Movie as the ONE direct India date-range discovery
+//     query for upcoming movies (the architecture already proven in
+//     production by CineLog's Upcoming implementation):
+//       /discover/movie { region: 'IN', with_release_country: 'IN',
+//         release_date.gte/lte = monthBounds(year, month),
+//         include_adult: false, sort_by: 'release_date.asc' }
+//     The selected Mavero Month + Year becomes FROM = YYYY-MM-01 and
+//     TO = YYYY-MM-last-day, passed DIRECTLY into the query — no hidden
+//     "next 30 days" behavior, no per-kind duplication, no candidate
+//     union, no vote_count floor (upcoming titles commonly have ZERO
+//     votes — a floor starves future months), no with_release_type.
 //
-//     IMPORTANT (kept from Phase F.1 — the FINAL TRUTH IS UNWEAKENED):
-//     discover/movie is only a CANDIDATE mechanism. TMDB's region
-//     handling can fall back to the primary release date when a
-//     country-specific date is missing, so the row's `release_date` is
-//     NOT trusted as the card date. For EVERY candidate movie the
-//     pipeline fetches GET /movie/{id}/release_dates and treats country
-//     `IN` + release types 2|3|4 as the FINAL India release truth:
-//       · only movies with a real IN release event INSIDE the selected
-//         month/year survive (stale/foreign dates — August on a
-//         September page, a 2022 date, a 1999 date — can never render);
-//       · the card date IS that real India event date (earliest valid);
-//       · releaseKinds derive from the ACTUAL India events (a movie with
-//         both an India theatrical and an India digital event in the
-//         month renders exactly ONE card).
+//     IMPORTANT (CineLog lesson — DISCOVERY IS THE TRUTH):
+//     with region + with_release_country=IN, a movie returned by this
+//     query HAS an India release entry inside the window, and the row's
+//     `release_date` IS that India release date — it is the primary
+//     Upcoming card date. GET /movie/{id}/release_dates is therefore
+//     DEMOTED to OPTIONAL ENRICHMENT: it contributes ONLY the
+//     releaseKinds badges (IN types 2|3 -> theatrical, 4 -> digital) —
+//       · a missing/failed release_dates response can NEVER remove a
+//         movie that discover already qualified (no post-discovery
+//         starvation gate — the card renders without kind badges);
+//       · an empty enrichment result renders the same way;
+//       · the final month invariant is still enforced on the CARD DATE
+//         itself (isDateInMonth): a card can never display a date
+//         outside the selected month/year.
 //   - TMDB watch providers (flatrate only, results.IN only) for movie
-//     OTT logos when the movie's India releaseKinds include 'digital',
-//     and for series OTT logos.
+//     OTT logos (no US/cross-region fallback; a provider lookup failure
+//     hides the icons but never removes the movie) and for series OTT
+//     logos.
 //   - TMDB Discover TV (air_date.gte/lte) for series with episodes
-//     airing in the selected month — Phase F.3 MAKES DISCOVERY PURELY
-//     SCHEDULE + LANGUAGE:
+//     airing in the selected month — DISCOVERY IS PURELY SCHEDULE +
+//     LANGUAGE + POPULARITY (the CineLog TV model):
 //       · DISCOVERY (candidate stage): air_date month window + optional
-//         with_original_language ONLY. The F.2-era `without_genres`
-//         blacklist (Reality 10764 / Soap 10766 / Talk 10767) is
-//         REMOVED — it was a candidate STARVATION filter: legitimate
-//         Indian OTT series are frequently tagged Drama + Soap by TMDB,
-//         so they were deleted BEFORE any detail metadata, episode
-//         lookup or OTT eligibility check could speak. That is exactly
-//         why Hindi/Tamil/Telugu/Kannada future months stayed empty
-//         while English survived. There is deliberately NO replacement
-//         genre blacklist and NO title blacklist.
+//         with_original_language ONLY, sorted popularity.desc. NO vote
+//         count floor (future episodes commonly carry zero votes), no
+//         genre blacklist (the removed without_genres Reality/Soap/Talk
+//         filter was a candidate starvation mechanism — legitimate
+//         Indian OTT series are frequently tagged Drama + Soap by TMDB),
+//         NO watch_region / with_watch_monetization_types (TMDB's
+//         Discover layer often lacks India OTT monetization data for
+//         unaired seasons), no title blacklist. air_date.gte/lte (NOT
+//         first_air_date) discovers BOTH brand-new premieres AND future
+//         episodes of already-running series.
 //       · ELIGIBILITY (final gate, SEASON-level, Phase F.3): after a
 //         candidate's REAL target-month episodes are confirmed, every
 //         relevant target season is checked through the official
@@ -148,7 +144,6 @@ import {
   dedupeProvidersById,
   extractIndiaMovieReleaseEvents,
   deriveMovieReleaseKinds,
-  earliestIndiaReleaseDate,
   isDateInMonth,
   normalizeRegionFlatrateProviders
 } from '../../shared/upcoming-policy';
@@ -248,118 +243,103 @@ const genreNames: Record<number, string> = {
   28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
 };
 
-// Phase F.3 — India movie CANDIDATE discovery (DEDUPED UNION of two
-// documented sources).
+// CineLog-proven India movie DISCOVERY — ONE direct date-range query.
 //
-// Official TMDB OpenAPI (developer.themoviedb.org/openapi/tmdb-api.json)
-// lists BOTH date-query families on /discover/movie: `region` +
-// `release_date.gte/lte` AND `primary_release_date.gte/lte` (plus the
-// OPTIONAL `with_release_type` refinement — never used here).
+// The selected Mavero Month + Year becomes FROM = YYYY-MM-01 and
+// TO = YYYY-MM-last-day (monthBounds), passed DIRECTLY into
+// /discover/movie:
+//   region=IN                 — the date window applies to INDIA release
+//                               dates (TMDB regional semantics);
+//   with_release_country=IN   — only movies that HAVE a release entry in
+//                               India are returned (banned/unreleased-in-
+//                               India titles never become candidates);
+//   release_date.gte/lte      — the exact month bounds (no hidden
+//                               "next 30 days" behavior);
+//   include_adult=false       — Adult Mode exclusion at the source;
+//   sort_by=release_date.asc  — earliest releases first (CineLog model);
+//   with_original_language    — ONLY when a language is selected (TMDB
+//                               ORIGINAL language, never dubbed audio);
+//   without_watch_providers + watch_region — the transitional movie-side
+//                               adult exclusion (kept from Phase 6; it
+//                               requires watch_region, which does NOT
+//                               change release-date semantics — that is
+//                               `region`'s role).
 //
-// WHY THE F.2 SINGLE REGION-AWARE STREAM STILL STARVED: with `region`,
-// TMDB filters movies by their INDIA release dates. For unreleased
-// titles the India regional release-date data is frequently not indexed
-// yet — a movie with no indexed IN release date can never match a
-// region-aware date window, so it never even reached the
-// /movie/{id}/release_dates truth stage (October 2026+ returned nothing).
+// Deliberately NOT sent (starvation guards, learned the hard way):
+//   - vote_count.gte: upcoming titles commonly have ZERO votes — a vote
+//     floor filtered out 99% of future releases in CineLog's history;
+//   - primary_release_date.*: the F.3 union is REMOVED — with_release_
+//     country=IN already constrains discovery to India releases;
+//   - with_release_type: the release TYPE is enrichment metadata
+//     (releaseKinds), never a discovery filter.
 //
-// The union covers both documented realities:
-//   Source A (region-aware): region=IN + release_date month window —
-//     matches movies whose India release data IS indexed.
-//   Source B (primary): primary_release_date month window with NO region
-//     parameter — matches on the movie's PRIMARY release date (the
-//     origin-country date, indexed at announcement time) without
-//     requiring India regional metadata to exist yet.
+// Bounded pagination: the walk continues while TMDB reports more pages
+// (real total_pages from the upstream response, never fabricated) and
+// never past UPCOMING_MOVIE_MAX_UPSTREAM_PAGES. Rows dedupe by canonical
+// movie ID across pages.
 //
-// Both sources share: optional with_original_language (TMDB ORIGINAL
-// language only, omitted when 'all'), sort_by popularity, vote_count
-// floor, include_adult=false, the transitional adult watch-provider
-// exclusion (requires watch_region — kept from Phase 6, and watch_region
-// does NOT change release-date semantics — that is `region`'s role), and
-// bounded pagination (pages walked while TMDB reports more, until
-// page >= real total_pages or the hard cap; total_pages is read from the
-// real upstream response, never fabricated; rows are deduped by
-// canonical movie ID across BOTH sources via the shared seen set).
-//
-// The discovered rows are CANDIDATES ONLY: their `release_date` is NOT
-// trusted as the card date (TMDB region handling can fall back to the
-// primary release date). Final India release truth (country IN, release
-// types 2/3/4, selected month) comes from /movie/{id}/release_dates in
-// loadUpcomingMovies.
+// DISCOVERY IS THE TRUTH (CineLog model): every returned row IS an India
+// release in the selected window, and its `release_date` is the primary
+// card date. No mandatory post-discovery gate can starve it (release_dates
+// is optional enrichment — see loadUpcomingMovies).
 type TmdbDiscoverMovieParams = Record<string, string | number | boolean | undefined>;
-
-// Shared bounded page-walker for both candidate sources: accumulates
-// unique canonical IDs into `seen`/`collected` so the union dedupes
-// across sources AND pages, and never walks past the real total_pages
-// or the hard page cap.
-async function collectMovieDiscoverPages(baseParams: TmdbDiscoverMovieParams, collected: TmdbMovieRow[], seen: Set<number>): Promise<void> {
-  let page = 1;
-  let totalPages = 1;
-  while (page <= Math.min(totalPages, UPCOMING_MOVIE_MAX_UPSTREAM_PAGES)) {
-    const result = await tmdbRequest<TmdbMovieList>('/discover/movie', { ...baseParams, page });
-    for (const row of result.results ?? []) {
-      if (row.id && !seen.has(row.id)) {
-        seen.add(row.id);
-        collected.push(row);
-      }
-    }
-    totalPages = result.total_pages ?? page;
-    if ((result.page ?? page) >= totalPages) break;
-    page += 1;
-  }
-}
 
 async function discoverIndiaMovieCandidates(year: number, month: number, region: string, language: string, providerExclusion: string | undefined): Promise<TmdbMovieRow[]> {
   const { gte, lte } = monthBounds(year, month);
   // The cache key embeds every query dimension: year, month, region,
-  // language filter, adult exclusion and the movie release-model version
-  // (a model bump re-keys instead of serving stale-era rows — including
-  // every entry created under the pre-F.3 single-stream discovery and
-  // the pre-F.2 per-kind discovery).
+  // language filter, adult exclusion and the movie discovery/enrichment
+  // model version (a model bump re-keys instead of serving stale-era
+  // rows — including every entry created under the pre-v4 F.3 source
+  // union, the pre-F.3 single-stream discovery and the pre-F.2 per-kind
+  // discovery).
   const key = `upcoming:movies:${year}:${month}:${region}:${language}:${providerExclusion ?? 'no-adult'}:${UPCOMING_MOVIE_RELEASE_TRUTH_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     const collected: TmdbMovieRow[] = [];
     const seen = new Set<number>();
-    // Shared query dimensions across both sources. Language filter
-    // (Phase F.1): TMDB ORIGINAL language only — omitted entirely when
-    // the filter is 'all'. The transitional movie-side adult exclusion
-    // requires watch_region (which does NOT affect release-date
-    // semantics — that is `region`'s role).
-    const shared: TmdbDiscoverMovieParams = {
-      // Phase F.3: with_release_type is deliberately NOT sent — the
-      // release TYPE is decided ONLY by /movie/{id}/release_dates.
-      ...(language !== 'all' ? { with_original_language: language } : {}),
-      sort_by: 'popularity.desc',
-      'vote_count.gte': 1,
-      include_adult: false,
-      ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: region } : {})
-    };
-    // Source A: region-aware India release-date window (the F.2 stream).
-    await collectMovieDiscoverPages({
-      ...shared,
+    // ONE CineLog-shaped date-range query. Language filter (Phase F.1):
+    // TMDB ORIGINAL language only — omitted entirely when the filter is
+    // 'all'. The transitional movie-side adult exclusion requires
+    // watch_region (which does NOT affect release-date semantics — that
+    // is `region`'s role).
+    const params: TmdbDiscoverMovieParams = {
       region,
       'release_date.gte': gte,
-      'release_date.lte': lte
-    }, collected, seen);
-    // Source B: primary release-date window (NO region parameter).
-    await collectMovieDiscoverPages({
-      ...shared,
-      'primary_release_date.gte': gte,
-      'primary_release_date.lte': lte
-    }, collected, seen);
+      'release_date.lte': lte,
+      with_release_country: region,
+      include_adult: false,
+      sort_by: 'release_date.asc',
+      ...(language !== 'all' ? { with_original_language: language } : {}),
+      ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: region } : {})
+    };
+    let page = 1;
+    let totalPages = 1;
+    while (page <= Math.min(totalPages, UPCOMING_MOVIE_MAX_UPSTREAM_PAGES)) {
+      const result = await tmdbRequest<TmdbMovieList>('/discover/movie', { ...params, page });
+      for (const row of result.results ?? []) {
+        if (row.id && !seen.has(row.id)) {
+          seen.add(row.id);
+          collected.push(row);
+        }
+      }
+      totalPages = result.total_pages ?? page;
+      if ((result.page ?? page) >= totalPages) break;
+      page += 1;
+    }
     return collected;
   });
   return value;
 }
 
-// Phase F.1 — per-movie India release TRUTH + OTT providers.
+// OPTIONAL per-movie release-kind ENRICHMENT (releaseKinds only).
 //
 // The RAW /movie/{id}/release_dates response is month-independent (the
 // month-window filtering happens per request on the cached payload), so
-// one cached entry serves every month for a movie. Failures propagate
-// (nothing is cached) so a transient upstream error can never be
-// mistaken for "no India release" — the caller counts failures and
-// distinguishes a real empty month from an upstream outage.
+// one cached entry serves every month for a movie. This lookup is NOT a
+// candidate gate anymore (CineLog model): a missing/failed response
+// merely means no releaseKinds badges — the movie itself stays because
+// discovery already qualified it. Failures propagate from the lookup
+// (nothing is cached) and are absorbed by the CALLER, which keeps the
+// movie with unknown kinds.
 async function getMovieIndiaReleaseDates(movieId: number): Promise<IndiaReleaseDatesPayload> {
   const key = `upcoming:movierd:${movieId}:${UPCOMING_MOVIE_RELEASE_TRUTH_KEY}`;
   const { value } = await getOrSet(key, releaseDatesPolicy, async () => {
@@ -400,76 +380,63 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
   await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
   const adultIds = getAdultProviderIds();
   const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  // Phase F.3 — ONE broad candidate UNION (region-aware source A +
-  // primary source B, no with_release_type, no per-kind duplication).
-  // Rows are deduped by canonical movie ID inside the discovery (shared
-  // seen set across both sources + bounded pagination) and re-deduped
-  // defensively below.
+  // CineLog model — ONE direct India date-range discovery query (region
+  // + with_release_country + release_date month window, release_date.asc
+  // sort, NO vote_count floor, NO with_release_type, no candidate
+  // union). Rows are deduped by canonical movie ID inside the discovery
+  // and re-deduped defensively below.
   const candidateRows = await discoverIndiaMovieCandidates(year, month, region, language, providerExclusion);
   // Metadata lookup map (one entry per unique candidate — the same
   // dedupe guarantee, re-established defensively before the N+1 stage).
   const rowsById = new Map<number, TmdbMovieRow>();
   for (const row of candidateRows) if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
-  // Phase F.3 — hard cap on the deduped union entering the truth N+1
-  // (bounded N+1 invariant; popularity-desc ordering means the dropped
-  // tail is the least popular).
+  // Hard cap on the deduped candidates entering the per-movie enrichment
+  // N+1 (bounded N+1 invariant; see UPCOMING_MOVIE_MAX_CANDIDATES — the
+  // cap covers the whole bounded page walk and never truncates it).
   const candidates = [...rowsById.values()].slice(0, UPCOMING_MOVIE_MAX_CANDIDATES);
   const { startMs, endMs } = monthBounds(year, month);
 
-  // Phase F.1 — FINAL INDIA RELEASE TRUTH (unchanged in F.2). For every
-  // unique candidate fetch the REAL India release events through the
-  // cached /movie/{id}/release_dates lookup, concurrency-limited like
-  // every other bounded N+1 lookup here:
-  //   - only IN-country events of release type 2|3 (theatrical) and 4
-  //     (digital) count, and only when their actual India release date
-  //     falls INSIDE the selected month/year;
-  //   - a candidate with no qualifying India release is DROPPED (this is
-  //     what kills stale dates like an August event on the September page
-  //     or a 1999 date leaking through TMDB's region-date fallback);
-  //   - the card date IS the earliest real India event date;
-  //   - releaseKinds derive from the ACTUAL India events (a movie
-  //     discovered as theatrical-only can still end up theatrical+digital
-  //     if the truth data says both released in India this month);
-  //   - movies with a digital event get their India flatrate OTT
-  //     providers (Netflix / Prime Video / JioHotstar / ...) for the
-  //     card icons.
-  type ValidatedMovie = { tmdbId: number; date: string; releaseKinds: UpcomingReleaseKind[]; providers: UpcomingProvider[] };
-  let truthFailures = 0;
-  // `candidates` are the deduped TmdbMovieRow rows — one truth lookup per
-  // unique canonical movie ID (row.id).
-  const validated = await mapWithConcurrency(candidates, async (candidate): Promise<ValidatedMovie | null> => {
+  // CineLog model — DISCOVERY IS THE TRUTH for existence + date. Every
+  // candidate row was returned by region=IN + with_release_country=IN +
+  // release_date month window, so it HAS an India release inside the
+  // selected month and its `release_date` IS the primary card date.
+  // No mandatory post-discovery gate may starve it:
+  //   - GET /movie/{id}/release_dates is OPTIONAL ENRICHMENT: it
+  //     contributes ONLY the releaseKinds badges (IN events of type 2|3
+  //     -> theatrical, 4 -> digital, inside the selected month). A
+  //     missing/failed response — or one without any in-month IN type
+  //     2/3/4 event — leaves the kinds UNKNOWN (no badges) and the
+  //     movie STAYS. Availability is never fabricated either way.
+  //   - OTT provider icons come from /movie/{id}/watch/providers
+  //     (results.IN.flatrate ONLY, no US/cross-region fallback). The
+  //     provider data is its own truth source — icons render whenever
+  //     India flatrate availability exists, independent of the kind
+  //     enrichment. A provider lookup failure hides the icons but never
+  //     removes the movie (caught inside the provider lookup).
+  type EnrichedMovie = { row: TmdbMovieRow; releaseKinds: UpcomingReleaseKind[]; providers: UpcomingProvider[] };
+  const enriched = await mapWithConcurrency(candidates, async (candidate): Promise<EnrichedMovie> => {
+    let releaseKinds: UpcomingReleaseKind[] = [];
     try {
       const payload = await getMovieIndiaReleaseDates(candidate.id);
       const events = extractIndiaMovieReleaseEvents(payload, startMs, endMs);
-      if (!events.length) return null; // no real India release of type 2/3/4 inside the month -> drop
-      const releaseKinds = deriveMovieReleaseKinds(events);
-      const date = earliestIndiaReleaseDate(events);
-      if (!date || !releaseKinds.length) return null;
-      // OTT provider icons ONLY for digital releases. A provider failure
-      // must NOT remove the movie (caught inside the provider lookup).
-      const providers = releaseKinds.includes('digital') ? await getMovieWatchProviders(candidate.id, region) : [];
-      return { tmdbId: candidate.id, date, releaseKinds, providers };
+      releaseKinds = deriveMovieReleaseKinds(events);
     } catch {
-      truthFailures += 1;
-      return null;
+      // Enrichment is optional: a failed release_dates lookup must NOT
+      // remove a discover-qualified movie — kinds stay unknown.
+      releaseKinds = [];
     }
+    const providers = await getMovieWatchProviders(candidate.id, region);
+    return { row: candidate, releaseKinds, providers };
   }, LOOKUP_CONCURRENCY);
-  // If EVERY candidate's release_dates lookup failed, the movie source is
-  // effectively down — surface an error, never a silently empty month.
-  if (candidates.length > 0 && truthFailures === candidates.length) {
-    throw new ContentServiceError('The content provider returned an upstream error.', { code: 'UPSTREAM_ERROR', status: 502 });
-  }
-  return validated
-    .filter((v): v is ValidatedMovie => v !== null)
-    .map((v): UpcomingItem | null => {
-      const m = rowsById.get(v.tmdbId);
-      // Same metadata contract as before Phase F: a row without a real
-      // title or without a parseable India release date is not a card.
+  return enriched
+    .map(({ row: m, releaseKinds, providers }): UpcomingItem | null => {
+      // Metadata contract: a row without a real title or without a
+      // parseable India release date is not a card.
       if (!m || (!m.title && !m.original_title)) return null;
-      const date = v.date;
+      const date = m.release_date ?? '';
       if (!date || !Number.isFinite(Date.parse(date))) return null;
       return {
-        id: `movie-${v.tmdbId}`,
+        id: `movie-${m.id}`,
         type: 'movie' as const,
         title: m.title || m.original_title || 'Untitled',
         poster: tmdbImage(m.poster_path, 'w500'),
@@ -479,8 +446,8 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
         year: Number(date.slice(0, 4)) || undefined,
         rating: m.vote_average ? Math.round(m.vote_average * 10) / 10 : undefined,
         genres: m.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3),
-        providers: v.providers.length ? v.providers.slice(0, 3) : undefined,
-        releaseKinds: [...v.releaseKinds],
+        providers: providers.length ? providers.slice(0, 3) : undefined,
+        releaseKinds: releaseKinds.length ? [...releaseKinds] : undefined,
         source: 'tmdb' as const
       } satisfies UpcomingItem;
     })
@@ -496,9 +463,13 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
         isAnime: isAnimeCandidate(m?.genre_ids, m?.original_language)
       }) !== 'adult';
     })
-    // Phase F.1 final invariant: a month-filtered Upcoming page must
-    // NEVER display a movie whose date is outside the selected month —
-    // every surviving card's date belongs to the selected YYYY-MM.
+    // Final month invariant (kept from Phase F.1): a month-filtered
+    // Upcoming page must NEVER display a movie whose date is outside the
+    // selected month — every surviving card's date belongs to the
+    // selected YYYY-MM. With with_release_country=IN + the release_date
+    // window this holds by construction; the guard is the defensive
+    // backstop (no post-filter starvation — discover results cannot be
+    // dropped for lacking enrichment, only for an out-of-window date).
     .filter((item) => isDateInMonth(item.date, year, month))
     .sort((a, b) => a.timestamp - b.timestamp);
 }
@@ -805,17 +776,20 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
   // changes the query/result shape: year, month, region (used by the
   // eligibility provider lookups), LANGUAGE filter, adult-network
   // exclusion, the candidate DISCOVERY query version (bumped from the
-  // old flatrate-at-discovery semantics), the India-OTT ELIGIBILITY
-  // model version, the serial curation policy version and the
-  // season-resolution model version — so a policy or semantics bump
-  // re-keys instead of serving stale-era entries.
+  // old flatrate-at-discovery semantics AND from the vote-floored
+  // pre-v4 discovery), the India-OTT ELIGIBILITY model version, the
+  // serial curation policy version and the season-resolution model
+  // version — so a policy or semantics bump re-keys instead of serving
+  // stale-era entries.
   const key = `upcoming:series:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_TV_ELIGIBILITY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: DISCOVER candidate series with episodes airing in the
-    // month (Phase F.3 — DISCOVERY IS PURELY SCHEDULE + LANGUAGE):
-    // air_date.gte/lte month window +, when selected, the TMDB
-    // original-language constraint. NOTHING ELSE filters candidates
-    // here.
+    // month (CineLog TV model — DISCOVERY IS PURELY SCHEDULE + LANGUAGE
+    // + POPULARITY): air_date.gte/lte month window +, when selected, the
+    // TMDB original-language constraint, sorted popularity.desc.
+    // NOTHING ELSE filters candidates here. Deliberately NO vote_count
+    // floor: future episodes commonly carry ZERO votes, and a vote floor
+    // starves exactly the upcoming window this page exists to show.
     //
     // The F.2-era `without_genres` blacklist (Reality 10764 / Soap
     // 10766 / Talk 10767) is REMOVED: it was a candidate STARVATION
@@ -847,13 +821,13 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
       const result = await tmdbRequest<TmdbTvList>('/discover/tv', {
         'air_date.gte': gte,
         'air_date.lte': lte,
-        // Phase F.3: NO without_genres, NO watch_region, NO
-        // with_watch_monetization_types — discovery is schedule +
-        // language only. The anime exclusion below stays independent
-        // of the language filter.
+        // CineLog TV model: NO without_genres, NO watch_region, NO
+        // with_watch_monetization_types, NO vote_count floor —
+        // discovery is schedule + language + popularity only. The
+        // anime exclusion below stays independent of the language
+        // filter.
         ...(language !== 'all' ? { with_original_language: language } : {}),
         sort_by: 'popularity.desc',
-        'vote_count.gte': 1,
         include_adult: false,
         ...(networkExclusion ? { without_networks: networkExclusion } : {}),
         page
@@ -930,22 +904,26 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
   // Phase F: anime deliberately does NOT require India flatrate OTT
   // availability and is exempt from the Series serial curation policy —
   // anime keeps its own TMDB-only semantics (genre 16 + ja). The cache
-  // key embeds the season-resolution model version because the shared
-  // season/episode discovery path changed (re-key, never serve stale-era
-  // item sets under new semantics) and the language filter dimension
-  // (Phase F.1) so language-era result sets never share entries.
+  // key embeds the TV DISCOVERY query version (the anime discover query
+  // is a /discover/tv query shape — a discovery-semantics bump must
+  // re-key anime too) and the season-resolution model version because
+  // the shared season/episode discovery path (re-key, never serve
+  // stale-era item sets under new semantics) plus the language filter
+  // dimension (Phase F.1) so language-era result sets never share
+  // entries.
   const networkExclusion = adultNetworkExclusionValue();
-  const key = `upcoming:anime:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_SEASON_MODEL_KEY}`;
+  const key = `upcoming:anime:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_SEASON_MODEL_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: discover anime TV series with episodes airing in the month.
     // TMDB filters server-side by Animation genre (16) + ja language.
+    // NO vote_count floor: future anime episodes commonly carry zero
+    // votes (same CineLog lesson as every other Upcoming discovery).
     const result = await tmdbRequest<TmdbTvList>('/discover/tv', {
       'air_date.gte': gte,
       'air_date.lte': lte,
       with_genres: ANIME_GENRE_ID,
       with_original_language: ANIME_ORIGINAL_LANGUAGE,
       sort_by: 'popularity.desc',
-      'vote_count.gte': 1,
       include_adult: false,
       ...(networkExclusion ? { without_networks: networkExclusion } : {}),
       page: 1

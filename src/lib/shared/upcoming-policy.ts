@@ -74,31 +74,21 @@
 //      one. `selectUpcomingSeasonCandidates` derives the seasons
 //      relevant to the target month from the season air-date windows,
 //      next_episode_to_air and last_episode_to_air instead.
-//   3. (Phase F.3 REVISION — MOVIE CANDIDATE DISCOVERY UNION) The F.2
-//      single region-aware stream (region=IN + release_date window) still
-//      starved October 2026+ of movie candidates: with `region`, TMDB
-//      filters movies by their INDIA release dates, and for unreleased
-//      titles the India regional release-date data is frequently not
-//      indexed yet — a movie with no indexed IN release date can never
-//      match a region-aware date window, so it never even reached the
-//      release_dates truth stage. Candidate discovery is now a DEDUPED
-//      UNION of two documented Discover sources (official OpenAPI —
-//      developer.themoviedb.org/openapi/tmdb-api.json — lists both
-//      `region`+`release_date.*` and `primary_release_date.*` on
-//      /discover/movie):
-//        Source A (region-aware): region=IN + release_date month window —
-//        matches movies whose INDIA release data IS indexed.
-//        Source B (primary): primary_release_date month window with NO
-//        region parameter — matches on the movie's PRIMARY release date
-//        (the origin-country date, indexed at announcement time), which
-//        does not require India regional metadata to exist yet.
-//      Both sources keep the language filter, the adult exclusions and
-//      bounded pagination; results are deduped by canonical TMDB movie
-//      ID. `with_release_type` is still NEVER sent. The FINAL India
-//      release truth is UNCHANGED and UNWEAKENED:
-//      /movie/{id}/release_dates -> country IN -> types 2|3|4 -> only
-//      events inside the selected month; the card date IS that real
-//      India event date.
+//   3. (CineLog-proven REVISION — MOVIE DISCOVERY IS ONE DATE-RANGE
+//      QUERY) The earlier F.3 candidate UNION (region-aware Source A +
+//      primary-release-date Source B) and its mandatory per-movie
+//      /movie/{id}/release_dates truth gate are both REMOVED. Discovery
+//      now follows the model already proven in production by CineLog's
+//      Upcoming implementation — ONE direct /discover/movie query with
+//      region=IN + with_release_country=IN + release_date.gte/lte (the
+//      selected month bounds) + include_adult=false +
+//      sort_by=release_date.asc, and NO vote_count floor (upcoming
+//      titles commonly have ZERO votes). A row returned by that query
+//      HAS an India release inside the window and its `release_date` IS
+//      the primary card date. `GET /movie/{id}/release_dates` is
+//      DEMOTED to OPTIONAL enrichment (releaseKinds badges only): a
+//      missing/failed/event-less response can never remove a
+//      discover-qualified movie.
 //   4. Upcoming event IDs are episode-unique
 //      (`series-123-s58e294`), but the detail routes need the parent
 //      TMDB ID. `upcomingDetailPath` extracts the canonical numeric ID
@@ -113,16 +103,18 @@
 // Japanese anime have no India flatrate data and requiring it would
 // empty the section).
 //
-// MOVIE RELEASE MODEL (used by upcoming.ts, constants live here):
-//   candidates come from ONE broad /discover/movie stream (region=IN +
-//   release_date month window + language + adult exclusions — NO
-//   with_release_type, NO primary_release_date), deduped by canonical
-//   movie ID. The FINAL India release truth stays
-//   /movie/{id}/release_dates -> results.IN -> types 2|3 (theatrical)
-//   and 4 (digital): only events inside the selected month survive, the
-//   card date IS the real India event date, and releaseKinds derive from
-//   those ACTUAL events — a movie with both an India theatrical and an
-//   India digital event in the month renders exactly ONE card.
+// MOVIE DISCOVERY + ENRICHMENT MODEL (used by upcoming.ts, constants
+// live here):
+//   candidates come from ONE CineLog-proven /discover/movie date-range
+//   query (region=IN + with_release_country=IN + release_date month
+//   window + language + adult exclusions — NO with_release_type, NO
+//   primary_release_date, NO vote_count floor), deduped by canonical
+//   movie ID. The discover row's India release_date IS the primary card
+//   date. /movie/{id}/release_dates is OPTIONAL ENRICHMENT: results.IN
+//   events of types 2|3 (theatrical) and 4 (digital) inside the selected
+//   month derive the releaseKinds badges — a missing/failed/event-less
+//   enrichment leaves the badges off and the movie ON the page.
+//   releaseKinds never remove or re-date a discovered movie.
 //
 // CACHE KEYS: the constants exported here are embedded in the
 // upcoming.ts cache keys, so bumping a policy/query version re-keys
@@ -149,12 +141,15 @@ export const UPCOMING_TV_SERIAL_POLICY_KEY = 'daily-serial-gt100';
 
 /**
  * Cache-key dimension for the Upcoming Series CANDIDATE DISCOVERY query
- * shape (Phase F.3: air_date month window + language ONLY — the genre
- * blacklist is REMOVED; still no watch-region/monetization constraint).
- * Bumped from 'airdate-discovery-v2' so every pre-F.3 cached candidate
- * set (which excluded Soap-tagged shows) can never be served.
+ * shape. CineLog-proven model: air_date month window + language ONLY,
+ * popularity-sorted, NO genre blacklist, NO watch-region/monetization
+ * constraint, and NO vote_count floor (future titles commonly have zero
+ * votes — a floor starves them before any detail metadata can speak).
+ * Bumped from 'airdate-discovery-v3' so every pre-v4 cached candidate
+ * set (which still carried the vote_count.gte=1 starvation floor) can
+ * never be served under the new semantics.
  */
-export const UPCOMING_TV_DISCOVERY_KEY = 'airdate-discovery-v3';
+export const UPCOMING_TV_DISCOVERY_KEY = 'airdate-discovery-v4';
 
 /**
  * Cache-key dimension for the India OTT ELIGIBILITY model (Phase F.3):
@@ -176,28 +171,25 @@ export const UPCOMING_TV_ELIGIBILITY_KEY = 'season-flatrate-eligibility-v2';
 export const UPCOMING_SEASON_MODEL_KEY = 'month-window-v1';
 
 /**
- * Cache-key dimension for the India movie release model (Phase F.2).
+ * Cache-key dimension for the India movie discovery + enrichment model.
  *
- * Phase F trusted the /discover/movie row's `release_date` as the card
- * date, but TMDB's region handling can fall back to the primary (origin)
- * release date when a country-specific date is missing — which let
- * stale/foreign dates (e.g. an August date or a 1999 date) render on the
- * September 2026 page. Phase F.1 made
- * `GET /movie/{id}/release_dates` -> country `IN` -> release types 2|3|4
- * the FINAL India release truth. Phase F.3 broadens the CANDIDATE
- * discovery to a deduped UNION of the region-aware stream AND the
- * primary-release-date stream (both WITHOUT `with_release_type` — the
- * release-type restriction starved October 2026+, and the region-only
- * stream still required India regional dates to be indexed).
+ * CineLog-proven model (v4): movie discovery is ONE direct date-range
+ * query — /discover/movie with region=IN + with_release_country=IN +
+ * release_date.gte/lte (the selected month bounds) + include_adult=false
+ * + sort_by=release_date.asc. The discover row's India release_date IS
+ * the primary Upcoming card date. `GET /movie/{id}/release_dates` is
+ * DEMOTED to OPTIONAL enrichment (releaseKinds theatrical/digital badges
+ * only): a missing or event-less release_dates response can no longer
+ * remove a discover-qualified movie, so the F.3 mandatory truth gate and
+ * the F.3 Source A/Source B candidate union are both GONE.
  *
- * Version 'in-release-discovery-v3' re-keys EVERY cache entry created
- * under the pre-F.3 single region-aware stream ('in-release-discovery-v2')
- * AND the pre-F.2 per-kind (`with_release_type=2|3` / `=4`) candidate
- * discovery — month candidate sets and per-movie release_dates payloads
- * alike — so old-era result sets can never be served under the new
- * candidate-union model.
+ * Version 'in-release-discovery-v4' re-keys EVERY cache entry created
+ * under the pre-v4 union model ('in-release-discovery-v3'), the pre-F.3
+ * single region-aware stream ('v2') and the pre-F.2 per-kind discovery —
+ * month candidate sets and per-movie release_dates payloads alike — so
+ * old-era result sets can never be served under the new query semantics.
  */
-export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-discovery-v3';
+export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-discovery-v4';
 
 /**
  * Cache-key dimension for the India watch-provider model (flatrate only,
@@ -208,12 +200,13 @@ export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-discovery-v3';
  */
 export const UPCOMING_PROVIDER_MODEL_KEY = 'tmdb-flatrate-v2';
 
-// NOTE (Phase F.2): TMDB release-type VALUES (1 Premiere, 2 Theatrical
-// limited, 3 Theatrical, 4 Digital, 5 Physical, 6 TV) are used ONLY by
-// `extractIndiaMovieReleaseEvents` below — the final per-movie truth —
-// and deliberately NOT as a candidate-discovery filter.
+// NOTE: TMDB release-type VALUES (1 Premiere, 2 Theatrical limited,
+// 3 Theatrical, 4 Digital, 5 Physical, 6 TV) are used ONLY by
+// `extractIndiaMovieReleaseEvents` below — the OPTIONAL release-kind
+// enrichment — and deliberately NOT as a candidate-discovery filter
+// (with_release_type is never sent to /discover/movie).
 
-/** HARD cap on upstream /discover/movie pages walked per candidate source (bounded pagination — a pathological query cannot loop unbounded). */
+/** HARD cap on upstream /discover/movie pages walked (bounded pagination — the walk continues while TMDB reports more pages and never past the real total_pages or this cap). */
 export const UPCOMING_MOVIE_MAX_UPSTREAM_PAGES = 10;
 
 /**
@@ -238,14 +231,15 @@ export const UPCOMING_TV_MAX_CANDIDATE_PAGES = 5;
 export const UPCOMING_TV_MAX_CANDIDATES = 80;
 
 /**
- * HARD cap on deduped movie candidates entering the release-truth N+1
- * (Phase F.3 — the candidate UNION of two bounded Discover streams can
- * otherwise reach 2x10 pages of rows; the union cap keeps the
- * per-movie /movie/{id}/release_dates walk deterministically bounded
- * while the popularity-desc sort ensures the dropped tail is the least
- * popular. Candidates are deduped BEFORE this cap is applied.
+ * HARD cap on deduped movie candidates entering the per-movie enrichment
+ * N+1 (optional release_dates + watch/providers lookups). The single
+ * CineLog discovery stream walks at most UPCOMING_MOVIE_MAX_UPSTREAM_PAGES
+ * (10) pages x 20 rows = 200 rows, so this cap covers the complete walk
+ * and never truncates in practice — it is the defensive bound that keeps
+ * the per-candidate enrichment deterministically bounded even if the
+ * page cap is ever raised. Candidates are deduped BEFORE this cap.
  */
-export const UPCOMING_MOVIE_MAX_CANDIDATES = 300;
+export const UPCOMING_MOVIE_MAX_CANDIDATES = 200;
 
 /** HARD cap on seasons inspected per series (bounded — target months normally resolve within 1-2 seasons). */
 export const UPCOMING_MAX_SEASON_INSPECTIONS = 3;
@@ -499,12 +493,17 @@ export type IndiaReleaseDatesPayload = {
  *   - ONLY release types 2, 3 and 4 are accepted; types 1 (Premiere),
  *     5 (Physical) and 6 (TV) never create Upcoming movie events.
  *   - The event's own release_date (the India one) must fall inside the
- *     month window — a movie whose actual India release is outside the
- *     selected month/year is dropped by the caller (this kills the
- *     August-2026 / January-2022 / January-1999 class of stale card).
+ *     month window — events outside the window are ignored by the
+ *     enrichment (they cannot badge a card for a month they do not
+ *     belong to; the August-2026 / January-1999 stale-card class is
+ *     additionally killed by the final isDateInMonth invariant on the
+ *     card date itself).
  *   - Dates normalize to the YYYY-MM-DD part of TMDB's ISO datetime.
  *
- * Pure: the caller decides what an empty result means (drop the movie).
+ * Pure: the caller decides what an empty result means. Since the
+ * CineLog-model revision an empty result means NO releaseKinds badges —
+ * the discover-qualified movie itself stays on the page (this function
+ * is enrichment, never a candidate gate).
  */
 export function extractIndiaMovieReleaseEvents(payload: IndiaReleaseDatesPayload | null | undefined, startMs: number, endMs: number): IndiaMovieReleaseEvent[] {
   const country = (payload?.results ?? []).find((entry) => entry?.iso_3166_1 === 'IN');
@@ -533,19 +532,6 @@ export function deriveMovieReleaseKinds(events: IndiaMovieReleaseEvent[]): Upcom
   if (hasTheatrical) return ['theatrical'];
   if (hasDigital) return ['digital'];
   return [];
-}
-
-/**
- * The earliest VALID India release event date — the card date. Invalid
- * dates never win; undefined when no valid event exists.
- */
-export function earliestIndiaReleaseDate(events: IndiaMovieReleaseEvent[]): string | undefined {
-  let best: string | undefined;
-  for (const event of events) {
-    if (!event.date || !Number.isFinite(Date.parse(event.date))) continue;
-    if (best === undefined || Date.parse(event.date) < Date.parse(best)) best = event.date;
-  }
-  return best;
 }
 
 /**
