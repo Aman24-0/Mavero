@@ -5,26 +5,31 @@
   import Dropdown from '$components/Dropdown.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import AppFooter from '$components/AppFooter.svelte';
-  import { upcomingDetailPath } from '$lib/shared/upcoming-policy';
+  import { appendReturnTo } from '$lib/shared/navigation';
+  import { upcomingDetailPath, UPCOMING_LANGUAGE_OPTIONS } from '$lib/shared/upcoming-policy';
   import type { PageData } from './$types';
   import type { UpcomingItem, UpcomingType } from '$lib/server/content/upcoming-types';
 
   let { data }: { data: PageData } = $props();
 
+  // Phase F.1 — COMPACT month labels keep all four filters on ONE row on
+  // small mobile screens (the dropdown trigger shows the selected value).
   const monthOptions = [
-    { value: '1', label: 'January' },
-    { value: '2', label: 'February' },
-    { value: '3', label: 'March' },
-    { value: '4', label: 'April' },
+    { value: '1', label: 'Jan' },
+    { value: '2', label: 'Feb' },
+    { value: '3', label: 'Mar' },
+    { value: '4', label: 'Apr' },
     { value: '5', label: 'May' },
-    { value: '6', label: 'June' },
-    { value: '7', label: 'July' },
-    { value: '8', label: 'August' },
-    { value: '9', label: 'September' },
-    { value: '10', label: 'October' },
-    { value: '11', label: 'November' },
-    { value: '12', label: 'December' }
+    { value: '6', label: 'Jun' },
+    { value: '7', label: 'Jul' },
+    { value: '8', label: 'Aug' },
+    { value: '9', label: 'Sep' },
+    { value: '10', label: 'Oct' },
+    { value: '11', label: 'Nov' },
+    { value: '12', label: 'Dec' }
   ];
+  // Full month names for the page heading + empty state ("September 2026").
+  const monthFullNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
   const typeOptions = [
     { value: 'all', label: 'All' },
@@ -32,6 +37,12 @@
     { value: 'series', label: 'Series' },
     { value: 'anime', label: 'Anime' }
   ];
+
+  // Phase F.1 — language filter (Month | Year | Type | Language, one row).
+  // Options come from the shared pure policy module so the page and the
+  // server parser share ONE canonical list. The filter means TMDB ORIGINAL
+  // language — never dubbed-audio availability.
+  const languageOptions = UPCOMING_LANGUAGE_OPTIONS.map((option) => ({ value: option.code, label: option.label }));
 
   // Build year options from the server-provided list.
   let yearOptions = $derived(
@@ -41,18 +52,22 @@
   let selectedMonth = $state(String(data.filters.month));
   let selectedYear = $state(String(data.filters.year));
   let selectedType = $state<'all' | UpcomingType>(data.filters.type);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
+  let selectedLanguage = $state(String(data.filters.language ?? 'all'));
 
-  function updateFilter(next: { month?: string; year?: string; type?: string }) {
+  function updateFilter(next: { month?: string; year?: string; type?: string; language?: string }) {
     const params = new URLSearchParams(page.url.searchParams);
     if (next.month !== undefined) params.set('month', next.month);
     if (next.year !== undefined) params.set('year', next.year);
     if (next.type !== undefined) params.set('type', next.type);
+    if (next.language !== undefined) params.set('language', next.language);
     void goto(`${page.url.pathname}?${params.toString()}`, { keepFocus: true, noScroll: true });
   }
 
   function setMonth(value: string) { selectedMonth = value; updateFilter({ month: value }); }
   function setYear(value: string) { selectedYear = value; updateFilter({ year: value }); }
   function setType(value: string) { selectedType = value as 'all' | UpcomingType; updateFilter({ type: value }); }
+  function setLanguage(value: string) { selectedLanguage = value; updateFilter({ language: value }); }
 
   // Group items by date for the calendar feel.
   type DayGroup = { date: string; label: string; items: UpcomingItem[] };
@@ -78,8 +93,11 @@
   });
 
   let hasResults = $derived(data.items.length > 0);
-  let monthLabel = $derived(monthOptions.find((m) => m.value === selectedMonth)?.label ?? '');
+  // Page heading keeps the FULL month name ("September 2026") while the
+  // dropdown triggers use the compact labels.
+  let monthLabel = $derived(monthFullNames[Number(selectedMonth) - 1] ?? '');
   let yearLabel = $derived(selectedYear);
+  let languageLabel = $derived(UPCOMING_LANGUAGE_OPTIONS.find((option) => option.code === selectedLanguage)?.label ?? 'All');
 
   function typeIcon(type: UpcomingType) {
     return type === 'movie' ? Film : type === 'series' ? Tv : Sparkles;
@@ -97,8 +115,21 @@
   // upcoming-policy module so it is directly unit-testable; malformed IDs
   // yield null and the card renders WITHOUT a link instead of routing to
   // a guaranteed 404 ("Series not found" / "Anime not found").
+  //
+  // Phase F.1 — EXACT RETURN STATE: the detail link carries the FULL
+  // current Upcoming URL (pathname + search + hash) in the `from`
+  // parameter via the shared appendReturnTo helper — the SAME
+  // architecture MediaCard uses for Discover/Search/My List. DetailPage's
+  // existing `history.back()` then performs a real popstate navigation
+  // back to this exact history entry, so month/year/type/language, the
+  // result set and SvelteKit's snapshot/scroll restoration all survive
+  // the round-trip. No plain-goto replacement of the listing route, no
+  // fallback hardcoding.
+  let currentReturnTo = $derived(`${page.url.pathname}${page.url.search}${page.url.hash}`);
   function detailHref(item: UpcomingItem) {
-    return upcomingDetailPath(item.id);
+    const path = upcomingDetailPath(item.id);
+    if (!path) return null;
+    return appendReturnTo(path, currentReturnTo);
   }
   // Phase F — movie release channel label: THEATRICAL / OTT (or both).
   function releaseKindLabel(item: UpcomingItem) {
@@ -134,6 +165,9 @@
       <div class="filter-wrap">
         <Dropdown id="upcoming-type" label="Type" value={selectedType} options={typeOptions} onChange={setType} />
       </div>
+      <div class="filter-wrap">
+        <Dropdown id="upcoming-language" label="Language" value={selectedLanguage} options={languageOptions} onChange={setLanguage} />
+      </div>
     </div>
   </div>
 
@@ -149,7 +183,7 @@
       <section class="empty-state" aria-live="polite">
         <div class="empty-mark" aria-hidden="true"><Calendar size={24} /></div>
         <h2>No releases found</h2>
-        <p>No Movies, Series, or Anime matching {monthLabel} {yearLabel} with the {typeOptions.find((t) => t.value === selectedType)?.label} filter.</p>
+        <p>No Movies, Series, or Anime matching {monthLabel} {yearLabel} with the {typeOptions.find((t) => t.value === selectedType)?.label}{#if selectedLanguage !== 'all'} · {languageLabel}{/if} filter.</p>
         <button class="empty-action" type="button" onclick={() => setType('all')}>Change filters</button>
       </section>
     {:else}
@@ -291,10 +325,11 @@
   }
   .filter-wrap { min-width: 130px; flex: 1 1 130px; }
 
-  /* Month / Year / Type share ONE horizontal row on every viewport.
-     The micro labels stay in the DOM for aria-labelledby but are visually
-     hidden — the selected values (month name, year, type) are
-     self-descriptive, so labels would only burn a vertical row. */
+  /* Month / Year / Type / Language share ONE horizontal row on every
+     viewport. The micro labels stay in the DOM for aria-labelledby but
+     are visually hidden — the selected values (compact month name, year,
+     type, language) are self-descriptive, so labels would only burn a
+     vertical row. */
   .filters-inner :global(.dropdown-label) {
     position: absolute;
     width: 1px; height: 1px;
@@ -497,9 +532,10 @@
   @media (max-width: 640px) {
     .upcoming-header { padding-top: 22px; padding-bottom: 18px; }
     .upcoming-header h1 { font-size: clamp(1.5rem, 6vw, 2rem); }
-    /* One row: three equal-width dropdowns. min-width: 0 lets each
-       control shrink and ellipsize instead of pushing the row wider
-       than the viewport (verified at 360/390/430px). */
+    /* One row: four equal-width dropdowns (Month | Year | Type | Language).
+       min-width: 0 lets each control shrink and ellipsize instead of
+       pushing the row wider than the viewport (compact month labels keep
+       the values readable at 360px). */
     .filters-inner { flex-wrap: nowrap; gap: 8px; }
     .filter-wrap { min-width: 0; flex: 1 1 0; }
     .day-cards { grid-template-columns: 1fr; }

@@ -1,27 +1,44 @@
 // Upcoming releases server module.
 //
-// Sources (Phase F — India release model):
-//   - TMDB Discover Movie x2 for upcoming movies in INDIA:
+// Sources (Phase F.1 — India release TRUTH model):
+//   - TMDB Discover Movie x2 as the CANDIDATE discovery mechanism for
+//     upcoming movies in INDIA:
 //       · India THEATRICAL: region=IN + release_date month window +
 //         with_release_type=2|3 (theatrical limited + theatrical)
 //       · India DIGITAL/OTT: region=IN + release_date month window +
 //         with_release_type=4
-//     The two result sets are merged + deduped by canonical movie ID
-//     (one card per movie, earliest India release date, releaseKinds
-//     metadata) and walked beyond upstream page 1 while real results
-//     remain, under a hard page-safety cap. primary_release_date is
-//     deliberately NOT required together with release_date — that
-//     dual-filter excluded movies whose primary (origin-country)
-//     release fell outside the month even though their INDIA
-//     theatrical/digital release was inside it (the old
-//     "only ~10 titles / empty later months" regression).
+//     Candidates are merged + deduped by canonical movie ID and walked
+//     beyond upstream page 1 while real results remain, under a hard
+//     page-safety cap. primary_release_date is deliberately NOT required
+//     together with release_date — that dual-filter excluded movies whose
+//     primary (origin-country) release fell outside the month even though
+//     their INDIA theatrical/digital release was inside it.
+//
+//     IMPORTANT (Phase F.1): discover/movie is only a CANDIDATE
+//     mechanism. TMDB's region handling can fall back to the primary
+//     release date when a country-specific date is missing, so the row's
+//     `release_date` is NOT trusted as the card date. For EVERY candidate
+//     movie the pipeline fetches GET /movie/{id}/release_dates and treats
+//     country `IN` + release types 2|3|4 as the FINAL India release
+//     truth:
+//       · only movies with a real IN release event INSIDE the selected
+//         month/year survive (stale/foreign dates — August on a September
+//         page, a 2022 date, a 1999 date — can never render again);
+//       · the card date IS that real India event date (earliest valid);
+//       · releaseKinds derive from the ACTUAL India events.
+//   - TMDB watch providers (flatrate only, results.IN only) for movie
+//     OTT logos when the movie's India releaseKinds include 'digital',
+//     and for series OTT logos.
 //   - TMDB Discover TV (air_date.gte/lte) for series with episodes
 //     airing in the selected month — REQUIRED to be India OTT oriented:
 //     watch_region=IN + with_watch_monetization_types=flatrate
 //     (subscription availability in India, server-side) + the generic
 //     linear-TV genre exclusion (Soap/News/Talk) + the Upcoming-only
 //     serial curation policy (upcoming-policy.ts). Buy/rent-only and
-//     non-India providers are NOT accepted.
+//     non-India providers are NOT accepted. ANIME CANDIDATES (TMDB TV
+//     genre 16 + original_language ja — Mavero's existing anime
+//     definition) are REJECTED from the Series pipeline before any
+//     expensive processing: anime has its own independent section.
 //   - TMDB TV season endpoint for the actual Sxx/Exx episode metadata,
 //     resolved through MONTH-WINDOW season candidates
 //     (selectUpcomingSeasonCandidates) instead of the unsafe
@@ -29,12 +46,18 @@
 //     season airing new episodes is frequently a NEWER season than the
 //     last-aired one. ALL real in-month episodes across the relevant
 //     seasons are returned.
-//   - TMDB watch providers (flatrate only, IN region) for series OTT logos
 //   - TMDB Discover TV (air_date.gte/lte + with_genres=16 +
 //     with_original_language=ja) for anime episodes airing in the month —
 //     anime is sourced from TMDB TV (Animation genre + Japanese
 //     original_language) and shares the season/episode-fetch path as
 //     Series (with the anime curation exemption). No AniList/Yenime.
+//   - LANGUAGE FILTER (Phase F.1): every discover query accepts an
+//     optional `with_original_language` constraint parsed from the URL.
+//     THIS FILTER MEANS TMDB ORIGINAL LANGUAGE (the language the title
+//     was produced in), NOT dubbed-audio availability. 'all' omits the
+//     constraint. Anime is intrinsically original_language=ja: a non-ja
+//     language filter returns an empty anime section (correctly, without
+//     querying upstream).
 //
 // Reliability:
 //   - Each source is loaded independently. A failure in one source
@@ -68,17 +91,28 @@ import {
   UPCOMING_TV_SERIAL_POLICY_KEY,
   UPCOMING_TV_OTT_QUERY_KEY,
   UPCOMING_SEASON_MODEL_KEY,
-  UPCOMING_MOVIE_RELEASE_MODEL_KEY,
+  UPCOMING_MOVIE_RELEASE_TRUTH_KEY,
+  UPCOMING_PROVIDER_MODEL_KEY,
   UPCOMING_MOVIE_RELEASE_TYPES,
   UPCOMING_MOVIE_MAX_UPSTREAM_PAGES,
   UPCOMING_TV_MAX_CANDIDATE_PAGES,
   UPCOMING_TV_MAX_CANDIDATES,
   UPCOMING_MAX_SEASON_INSPECTIONS,
+  UPCOMING_ANIME_GENRE_ID,
+  UPCOMING_ANIME_ORIGINAL_LANGUAGE,
   upcomingTvCurationVerdict,
   selectUpcomingSeasonCandidates,
-  mergeMovieReleaseEvents
+  mergeMovieReleaseEvents,
+  parseUpcomingLanguage,
+  isAnimeCandidate,
+  extractIndiaMovieReleaseEvents,
+  deriveMovieReleaseKinds,
+  earliestIndiaReleaseDate,
+  isDateInMonth,
+  normalizeRegionFlatrateProviders
 } from '../../shared/upcoming-policy';
 import type { UpcomingFilters, UpcomingItem, UpcomingProvider, UpcomingReleaseKind, UpcomingResult, UpcomingType } from './upcoming-types';
+import type { IndiaReleaseDatesPayload } from '../../shared/upcoming-policy';
 
 const TMDB_IMAGE = 'https://image.tmdb.org/t/p';
 const DEFAULT_REGION = 'IN';
@@ -92,15 +126,20 @@ const upcomingPolicy = { ttlMs: 1000 * 60 * 10, staleWhileRevalidateMs: 1000 * 6
 const seasonPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 4 };
 // Per-series provider lookup cache.
 const providerPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 2 };
+// Per-movie India release_dates cache (Phase F.1 — the FINAL release
+// truth). The RAW response is month-independent (filtering happens per
+// request), so one cached entry serves every month window for the movie.
+const releaseDatesPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 4 };
 
 // Concurrency limit for season + provider lookups (matches existing
 // Mavero OTT_LOOKUP_CONCURRENCY pattern).
 const LOOKUP_CONCURRENCY = 4;
 
 // TMDB genre id 16 = Animation. Anime is identified as TMDB TV with
-// genre 16 AND with_original_language='ja'.
-const ANIME_GENRE_ID = 16;
-const ANIME_ORIGINAL_LANGUAGE = 'ja';
+// genre 16 AND with_original_language='ja' — Mavero's existing anime
+// definition, shared with the pure policy module (isAnimeCandidate).
+const ANIME_GENRE_ID = UPCOMING_ANIME_GENRE_ID;
+const ANIME_ORIGINAL_LANGUAGE = UPCOMING_ANIME_ORIGINAL_LANGUAGE;
 
 // ---------- filter parsing & validation ----------
 
@@ -168,12 +207,12 @@ const genreNames: Record<number, string> = {
   28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
 };
 
-// Phase F — India movie release model.
+// Phase F.1 — India movie CANDIDATE discovery.
 //
-// ONE movie card per canonical TMDB movie, discovered through TWO
-// separate logical TMDB discover queries (kept explicit because TMDB
-// documents release-type ordering behavior — '2|3|4' in one query is
-// NOT treated as equivalent):
+// ONE deduped candidate stream per canonical TMDB movie, discovered
+// through TWO separate logical TMDB discover queries (kept explicit
+// because TMDB documents release-type ordering behavior — '2|3|4' in
+// one query is NOT treated as equivalent):
 //   A) INDIA THEATRICAL  — with_release_type='2|3'
 //   B) INDIA DIGITAL/OTT — with_release_type='4'
 // Both queries:
@@ -182,6 +221,7 @@ const genreNames: Record<number, string> = {
 //     deliberately NOT required together with release_date (the old
 //     dual-filter suppressed real India releases whose primary release
 //     fell in another country/month)
+//   - optional with_original_language when a language filter is active
 //   - include_adult=false + the transitional adult watch-provider
 //     exclusion (requires watch_region — kept from Phase 6)
 //   - bounded upstream pagination: pages are walked while TMDB reports
@@ -189,17 +229,18 @@ const genreNames: Record<number, string> = {
 //     pathological query can never loop unbounded; total_pages is read
 //     from the real upstream response, never fabricated.
 //
-// Upstream ordering is popularity (a documented, anchor-free sort);
-// the merged result is ordered chronologically by the real India
-// release date at merge time — the user-visible order stays
-// deterministic and date-true even when page-walking truncates the
-// long tail (most relevant titles survive the cap).
-async function discoverIndiaMovieRows(kind: 'theatrical' | 'digital', year: number, month: number, region: string, providerExclusion: string | undefined): Promise<TmdbMovieRow[]> {
+// The discovered rows are CANDIDATES ONLY: their `release_date` is NOT
+// trusted as the card date (TMDB region handling can fall back to the
+// primary release date). Final India release truth comes from
+// /movie/{id}/release_dates in loadUpcomingMovies.
+async function discoverIndiaMovieRows(kind: 'theatrical' | 'digital', year: number, month: number, region: string, language: string, providerExclusion: string | undefined): Promise<TmdbMovieRow[]> {
   const { gte, lte } = monthBounds(year, month);
   // Cache keys are per-kind (theatrical and digital result sets can
   // never collide) and embed every query dimension: kind, year, month,
-  // region, adult exclusion and the release-model version.
-  const key = `upcoming:movies:${kind}:${year}:${month}:${region}:${providerExclusion ?? 'no-adult'}:${UPCOMING_MOVIE_RELEASE_MODEL_KEY}`;
+  // region, language filter, adult exclusion and the release-truth
+  // model version (a model bump re-keys instead of serving stale-era
+  // rows).
+  const key = `upcoming:movies:${kind}:${year}:${month}:${region}:${language}:${providerExclusion ?? 'no-adult'}:${UPCOMING_MOVIE_RELEASE_TRUTH_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     const collected: TmdbMovieRow[] = [];
     const seen = new Set<number>();
@@ -213,6 +254,9 @@ async function discoverIndiaMovieRows(kind: 'theatrical' | 'digital', year: numb
         'release_date.gte': gte,
         'release_date.lte': lte,
         with_release_type: UPCOMING_MOVIE_RELEASE_TYPES[kind],
+        // Language filter (Phase F.1): TMDB ORIGINAL language only —
+        // omitted entirely when the filter is 'all'.
+        ...(language !== 'all' ? { with_original_language: language } : {}),
         sort_by: 'popularity.desc',
         'vote_count.gte': 1,
         include_adult: false,
@@ -235,7 +279,45 @@ async function discoverIndiaMovieRows(kind: 'theatrical' | 'digital', year: numb
   return value;
 }
 
-async function loadUpcomingMovies(year: number, month: number, region: string): Promise<UpcomingItem[]> {
+// Phase F.1 — per-movie India release TRUTH + OTT providers.
+//
+// The RAW /movie/{id}/release_dates response is month-independent (the
+// month-window filtering happens per request on the cached payload), so
+// one cached entry serves every month for a movie. Failures propagate
+// (nothing is cached) so a transient upstream error can never be
+// mistaken for "no India release" — the caller counts failures and
+// distinguishes a real empty month from an upstream outage.
+async function getMovieIndiaReleaseDates(movieId: number): Promise<IndiaReleaseDatesPayload> {
+  const key = `upcoming:movierd:${movieId}:${UPCOMING_MOVIE_RELEASE_TRUTH_KEY}`;
+  const { value } = await getOrSet(key, releaseDatesPolicy, async () => {
+    return tmdbRequest<IndiaReleaseDatesPayload>(`/movie/${movieId}/release_dates`);
+  });
+  return value;
+}
+
+// India OTT providers for a MOVIE (Phase F.1). Same binding rules as the
+// series path: ONLY results.IN, ONLY flatrate — never buy/rent, never a
+// US or cross-region fallback. A provider lookup failure must NOT remove
+// the movie: the card renders with its OTT badge but without icons.
+async function getMovieWatchProviders(movieId: number, region: string): Promise<UpcomingProvider[]> {
+  const key = `upcoming:providers:movie:${movieId}:${region}:${UPCOMING_PROVIDER_MODEL_KEY}`;
+  const { value } = await getOrSet(key, providerPolicy, async () => {
+    try {
+      const result = await tmdbRequest<TmdbWatchProviders>(`/movie/${movieId}/watch/providers`);
+      // Only use the requested region's flatrate data. Do NOT fall back
+      // to US or any other region — if the requested region (e.g. IN)
+      // has no flatrate data, the provider row is hidden cleanly. The UI
+      // does not label the provider region, so showing cross-region
+      // providers would be misleading.
+      return normalizeRegionFlatrateProviders(result.results, region, (path) => tmdbImage(path, 'w92'));
+    } catch {
+      return null; // transient failure — caller treats null as "no provider data"
+    }
+  });
+  return value ?? [];
+}
+
+async function loadUpcomingMovies(year: number, month: number, region: string, language: string = 'all'): Promise<UpcomingItem[]> {
   // Phase 6: the Upcoming module previously sent NO adult filters at all.
   // /discover/movie supports the TRANSITIONAL watch-provider exclusion
   // (documented Phase 3 movie-side mechanism — same as every other movie
@@ -246,29 +328,73 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
   const adultIds = getAdultProviderIds();
   const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   const [theatricalRows, digitalRows] = await Promise.all([
-    discoverIndiaMovieRows('theatrical', year, month, region, providerExclusion),
-    discoverIndiaMovieRows('digital', year, month, region, providerExclusion)
+    discoverIndiaMovieRows('theatrical', year, month, region, language, providerExclusion),
+    discoverIndiaMovieRows('digital', year, month, region, language, providerExclusion)
   ]);
-  // Merge + dedupe (one card per movie, earliest India release date,
-  // canonical releaseKinds order) then map to UpcomingItems with the
-  // releaseKinds metadata preserved for the UI.
-  const events = mergeMovieReleaseEvents(
+  // Dedupe the CANDIDATE stream by canonical movie ID (a movie found by
+  // both the theatrical and the digital query becomes ONE candidate).
+  // The discover rows' release_date is deliberately NOT used as the card
+  // date — see the release-truth validation below.
+  const candidates = mergeMovieReleaseEvents(
     theatricalRows.map((m) => ({ tmdbId: m.id, date: m.release_date ?? '' })),
     digitalRows.map((m) => ({ tmdbId: m.id, date: m.release_date ?? '' }))
   );
   const rowsById = new Map<number, TmdbMovieRow>();
   for (const row of [...theatricalRows, ...digitalRows]) if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
-  return events
-    .map((event): UpcomingItem | null => {
-      const m = rowsById.get(event.tmdbId);
+  const { startMs, endMs } = monthBounds(year, month);
+
+  // Phase F.1 — FINAL INDIA RELEASE TRUTH. For every unique candidate
+  // (already deduped — no repeated movie IDs), fetch the REAL India
+  // release events through the cached /movie/{id}/release_dates lookup,
+  // concurrency-limited like every other bounded N+1 lookup here:
+  //   - only IN-country events of release type 2|3 (theatrical) and 4
+  //     (digital) count, and only when their actual India release date
+  //     falls INSIDE the selected month/year;
+  //   - a candidate with no qualifying India release is DROPPED (this is
+  //     what kills stale dates like an August event on the September page
+  //     or a 1999 date leaking through TMDB's region-date fallback);
+  //   - the card date IS the earliest real India event date;
+  //   - releaseKinds derive from the ACTUAL India events (a movie
+  //     discovered as theatrical-only can still end up theatrical+digital
+  //     if the truth data says both released in India this month);
+  //   - movies with a digital event get their India flatrate OTT
+  //     providers (Netflix / Prime Video / JioHotstar / ...) for the
+  //     card icons.
+  type ValidatedMovie = { tmdbId: number; date: string; releaseKinds: UpcomingReleaseKind[]; providers: UpcomingProvider[] };
+  let truthFailures = 0;
+  const validated = await mapWithConcurrency(candidates, async (candidate): Promise<ValidatedMovie | null> => {
+    try {
+      const payload = await getMovieIndiaReleaseDates(candidate.tmdbId);
+      const events = extractIndiaMovieReleaseEvents(payload, startMs, endMs);
+      if (!events.length) return null; // no real India release of type 2/3/4 inside the month -> drop
+      const releaseKinds = deriveMovieReleaseKinds(events);
+      const date = earliestIndiaReleaseDate(events);
+      if (!date || !releaseKinds.length) return null;
+      // OTT provider icons ONLY for digital releases. A provider failure
+      // must NOT remove the movie (caught inside the provider lookup).
+      const providers = releaseKinds.includes('digital') ? await getMovieWatchProviders(candidate.tmdbId, region) : [];
+      return { tmdbId: candidate.tmdbId, date, releaseKinds, providers };
+    } catch {
+      truthFailures += 1;
+      return null;
+    }
+  }, LOOKUP_CONCURRENCY);
+  // If EVERY candidate's release_dates lookup failed, the movie source is
+  // effectively down — surface an error, never a silently empty month.
+  if (candidates.length > 0 && truthFailures === candidates.length) {
+    throw new ContentServiceError('The content provider returned an upstream error.', { code: 'UPSTREAM_ERROR', status: 502 });
+  }
+  return validated
+    .filter((v): v is ValidatedMovie => v !== null)
+    .map((v): UpcomingItem | null => {
+      const m = rowsById.get(v.tmdbId);
       // Same metadata contract as before Phase F: a row without a real
       // title or without a parseable India release date is not a card.
       if (!m || (!m.title && !m.original_title)) return null;
-      const date = event.date;
+      const date = v.date;
       if (!date || !Number.isFinite(Date.parse(date))) return null;
-      const releaseKinds: UpcomingReleaseKind[] = [...event.releaseKinds];
       return {
-        id: `movie-${event.tmdbId}`,
+        id: `movie-${v.tmdbId}`,
         type: 'movie' as const,
         title: m.title || m.original_title || 'Untitled',
         poster: tmdbImage(m.poster_path, 'w500'),
@@ -278,7 +404,8 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
         year: Number(date.slice(0, 4)) || undefined,
         rating: m.vote_average ? Math.round(m.vote_average * 10) / 10 : undefined,
         genres: m.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3),
-        releaseKinds,
+        providers: v.providers.length ? v.providers.slice(0, 3) : undefined,
+        releaseKinds: [...v.releaseKinds],
         source: 'tmdb' as const
       } satisfies UpcomingItem;
     })
@@ -291,9 +418,13 @@ async function loadUpcomingMovies(year: number, month: number, region: string): 
       const m = rowsById.get(Number(item.id.slice('movie-'.length)));
       return movieRowVerdict({
         adult: m?.adult,
-        isAnime: m?.genre_ids?.includes(16) === true && m?.original_language === 'ja'
+        isAnime: isAnimeCandidate(m?.genre_ids, m?.original_language)
       }) !== 'adult';
     })
+    // Phase F.1 final invariant: a month-filtered Upcoming page must
+    // NEVER display a movie whose date is outside the selected month —
+    // every surviving card's date belongs to the selected YYYY-MM.
+    .filter((item) => isDateInMonth(item.date, year, month))
     .sort((a, b) => a.timestamp - b.timestamp);
 }
 
@@ -306,7 +437,7 @@ type TmdbSeasonEpisodeRow = { id: number; episode_number?: number; season_number
 type TmdbWatchProviders = { results?: Record<string, { flatrate?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }> }> };
 
 async function getTvWatchProviders(seriesId: number, region: string): Promise<UpcomingProvider[]> {
-  const key = `upcoming:providers:tv:${seriesId}:${region}`;
+  const key = `upcoming:providers:tv:${seriesId}:${region}:${UPCOMING_PROVIDER_MODEL_KEY}`;
   const { value } = await getOrSet(key, providerPolicy, async () => {
     try {
       const result = await tmdbRequest<TmdbWatchProviders>(`/tv/${seriesId}/watch/providers`);
@@ -315,11 +446,7 @@ async function getTvWatchProviders(seriesId: number, region: string): Promise<Up
       // has no flatrate data, the provider row is hidden cleanly. The UI
       // does not label the provider region, so showing cross-region
       // providers would be misleading.
-      const regionData = result.results?.[region];
-      const flatrate = regionData?.flatrate ?? [];
-      return flatrate
-        .filter((p): p is { provider_id: number; provider_name: string; logo_path: string } => typeof p.provider_id === 'number' && typeof p.provider_name === 'string' && typeof p.logo_path === 'string')
-        .map((p) => ({ id: p.provider_id, name: p.provider_name, logo: tmdbImage(p.logo_path, 'w92') }));
+      return normalizeRegionFlatrateProviders(result.results, region, (path) => tmdbImage(path, 'w92'));
     } catch {
       return null; // transient failure — caller treats null as "no provider data"
     }
@@ -375,6 +502,16 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 // are long-running by design; the serial rule is a Series-only curation
 // signal, never an anime signal).
 async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[]; original_language?: string }, year: number, month: number, region: string, itemType: 'series' | 'anime' = 'series'): Promise<UpcomingItem[]> {
+  // Phase F.1 — SERIES MUST NOT MIX ANIME. Mavero's anime definition is
+  // TMDB TV genre 16 (Animation) + original_language 'ja'; a candidate
+  // matching that identity is REJECTED from the Series pipeline before
+  // ANY expensive work (detail/season/provider lookups). Non-Japanese
+  // animation (genre 16 + another original language) is NOT anime in
+  // Mavero and stays in Series. Anime keeps its own independent pipeline
+  // (loadUpcomingAnime) — no AniList/Yenime reintroduction.
+  if (itemType === 'series' && isAnimeCandidate(raw.genre_ids, raw.original_language)) {
+    return [];
+  }
   // Fetch series detail (season windows + episode pointers + networks +
   // the curation metadata). NOT caught: a failed detail lookup propagates
   // so loadUpcomingSeries can distinguish "no episodes this month" from
@@ -389,8 +526,8 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
   // flag signal never classifies anime alone, but an adult NETWORK signal
   // still applies to any content). There is deliberately NO title blacklist
   // and NO genre heuristic here.
-  const isAnimeCandidate = raw.genre_ids?.includes(16) === true && raw.original_language === 'ja';
-  if (isAdultContent(undefined, undefined, undefined, isAnimeCandidate, detail.networks)) {
+  const rawIsAnime = isAnimeCandidate(raw.genre_ids, raw.original_language);
+  if (isAdultContent(undefined, undefined, undefined, rawIsAnime, detail.networks)) {
     return [];
   }
   // Phase F — Upcoming Series OTT curation verdict (upcoming-policy.ts,
@@ -504,7 +641,7 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
   });
 }
 
-async function loadUpcomingSeries(year: number, month: number, region: string): Promise<UpcomingItem[]> {
+async function loadUpcomingSeries(year: number, month: number, region: string, language: string = 'all'): Promise<UpcomingItem[]> {
   const { gte, lte } = monthBounds(year, month);
   // Phase 6: the Upcoming series source previously sent NO adult filters.
   // /discover/tv supports the canonical Phase 3 mechanism — exclude VERIFIED
@@ -512,18 +649,20 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
   // via adult-catalog.ts) — plus include_adult=false. The exclusion value is
   // embedded in the cache key (no network-era/no-filter result sharing).
   const networkExclusion = adultNetworkExclusionValue();
-  // Phase F — India OTT-oriented Upcoming Series. The cache key embeds EVERY
+  // Phase F.1 — India OTT-oriented Upcoming Series. The cache key embeds EVERY
   // dimension that materially changes the query/result shape: year, month,
-  // region, adult-network exclusion, the India-OTT query version, the serial
-  // curation policy version and the season-resolution model version — so a
-  // policy or semantics bump re-keys instead of serving stale-era entries.
-  const key = `upcoming:series:${year}:${month}:${region}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_OTT_QUERY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}`;
+  // region, LANGUAGE filter, adult-network exclusion, the India-OTT query
+  // version, the serial curation policy version and the season-resolution
+  // model version — so a policy or semantics bump re-keys instead of serving
+  // stale-era entries.
+  const key = `upcoming:series:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_OTT_QUERY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: discover TV series with episodes airing in the month —
     // India OTT availability is a SERVER-SIDE query constraint (not a
     // client-side filter): watch_region=IN + flatrate monetization only
     // (buy/rent-only and broadcast-only titles are never candidates),
-    // plus the generic linear-TV genre exclusion (Soap/News/Talk).
+    // plus the generic linear-TV genre exclusion (Soap/News/Talk) and,
+    // when selected, the TMDB original-language constraint.
     // Bounded pagination: walk upstream pages while TMDB reports more,
     // capped at UPCOMING_TV_MAX_CANDIDATE_PAGES and never past real
     // total_pages (never fabricated).
@@ -538,6 +677,10 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
         watch_region: region,
         with_watch_monetization_types: 'flatrate',
         without_genres: UPCOMING_TV_WITHOUT_GENRES,
+        // Language filter (Phase F.1): TMDB ORIGINAL language only —
+        // omitted entirely when the filter is 'all'. The anime
+        // exclusion below stays independent of the language filter.
+        ...(language !== 'all' ? { with_original_language: language } : {}),
         sort_by: 'popularity.desc',
         'vote_count.gte': 1,
         include_adult: false,
@@ -555,8 +698,13 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
       page += 1;
     }
     // HARD cap on processed candidates (bounded N+1 — each candidate
-    // costs a detail + season + provider lookup).
-    const scopedCandidates = candidates.filter((s) => s.id && (s.name || s.original_name)).slice(0, UPCOMING_TV_MAX_CANDIDATES);
+    // costs a detail + season + provider lookup). ANIME CANDIDATES
+    // (genre 16 + ja) are rejected BEFORE the cap so anime never
+    // consumes Series slots and never reaches expensive processing.
+    const scopedCandidates = candidates
+      .filter((s) => s.id && (s.name || s.original_name))
+      .filter((s) => !isAnimeCandidate(s.genre_ids, s.original_language))
+      .slice(0, UPCOMING_TV_MAX_CANDIDATES);
     // Step 2: for each candidate, fetch detail + season + episodes to
     // find ALL episodes airing in the month (one UpcomingItem per
     // episode). Concurrency-limited to avoid N+1 request explosions.
@@ -594,7 +742,13 @@ async function loadUpcomingSeries(year: number, month: number, region: string): 
 //
 // IMPORTANT: this replaces the previous AniList AiringSchedule source.
 // AniList is no longer used — anime is now TMDB content only.
-export async function loadUpcomingAnime(year: number, month: number, region: string = DEFAULT_REGION): Promise<UpcomingItem[]> {
+export async function loadUpcomingAnime(year: number, month: number, region: string = DEFAULT_REGION, language: string = 'all'): Promise<UpcomingItem[]> {
+  // Phase F.1 — anime language semantics: anime is intrinsically
+  // original_language='ja' (Mavero's TMDB-only anime definition). When a
+  // language OTHER than ja is selected, no anime can match — return an
+  // EMPTY section deterministically (correct result, no upstream query,
+  // no error). language='all' and language='ja' both query normally.
+  if (language !== 'all' && language !== ANIME_ORIGINAL_LANGUAGE) return [];
   const { gte, lte } = monthBounds(year, month);
   // Phase 6: include_adult=false (consistent with the anime rails) + the
   // canonical without_networks exclusion. The anime exemption is preserved:
@@ -607,9 +761,10 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
   // anime keeps its own TMDB-only semantics (genre 16 + ja). The cache
   // key embeds the season-resolution model version because the shared
   // season/episode discovery path changed (re-key, never serve stale-era
-  // item sets under new semantics).
+  // item sets under new semantics) and the language filter dimension
+  // (Phase F.1) so language-era result sets never share entries.
   const networkExclusion = adultNetworkExclusionValue();
-  const key = `upcoming:anime:${year}:${month}:${region}:${networkExclusion ?? 'no-nets'}:${UPCOMING_SEASON_MODEL_KEY}`;
+  const key = `upcoming:anime:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_SEASON_MODEL_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: discover anime TV series with episodes airing in the month.
     // TMDB filters server-side by Animation genre (16) + ja language.
@@ -654,6 +809,10 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
 
 export async function loadUpcoming(filters: UpcomingFilters): Promise<UpcomingResult> {
   const region = DEFAULT_REGION;
+  // Phase F.1 — language filter. 'all' (or a missing/legacy field) means
+  // no language constraint; anything else must already be a canonical
+  // code from UPCOMING_LANGUAGE_OPTIONS (parsed strictly server-side).
+  const language = parseUpcomingLanguage(filters.language ?? 'all');
   const errors: string[] = [];
   const items: UpcomingItem[] = [];
 
@@ -665,21 +824,21 @@ export async function loadUpcoming(filters: UpcomingFilters): Promise<UpcomingRe
 
   if (wantMovies) {
     tasks.push(
-      loadUpcomingMovies(filters.year, filters.month, region)
+      loadUpcomingMovies(filters.year, filters.month, region, language)
         .then((m) => { items.push(...m); })
         .catch((err) => { errors.push(`Movies: ${safeMessage(err)}`); })
     );
   }
   if (wantSeries) {
     tasks.push(
-      loadUpcomingSeries(filters.year, filters.month, region)
+      loadUpcomingSeries(filters.year, filters.month, region, language)
         .then((s) => { items.push(...s); })
         .catch((err) => { errors.push(`Series: ${safeMessage(err)}`); })
     );
   }
   if (wantAnime) {
     tasks.push(
-      loadUpcomingAnime(filters.year, filters.month, region)
+      loadUpcomingAnime(filters.year, filters.month, region, language)
         .then((a) => { items.push(...a); })
         .catch((err) => { errors.push(`Anime: ${safeMessage(err)}`); })
     );
@@ -715,6 +874,8 @@ export const upcomingInternals = {
   loadUpcomingSeries,
   loadUpcomingAnime,
   getTvWatchProviders,
+  getMovieIndiaReleaseDates,
+  getMovieWatchProviders,
   buildSeriesItems,
   discoverIndiaMovieRows,
   DEFAULT_REGION,

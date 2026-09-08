@@ -99,8 +99,22 @@ export const UPCOMING_TV_OTT_QUERY_KEY = 'in-flatrate-v1';
  */
 export const UPCOMING_SEASON_MODEL_KEY = 'month-window-v1';
 
-/** Cache-key dimension for the India movie release-type model (theatrical 2|3 + digital 4). */
-export const UPCOMING_MOVIE_RELEASE_MODEL_KEY = 'in-release-types-v1';
+/**
+ * Cache-key dimension for the India movie release-truth model (Phase F.1).
+ *
+ * Phase F trusted the /discover/movie row's `release_date` as the card
+ * date, but TMDB's region handling can fall back to the primary (origin)
+ * release date when a country-specific date is missing — which let
+ * stale/foreign dates (e.g. an August date or a 1999 date) render on the
+ * September 2026 page. Phase F.1 makes
+ * `GET /movie/{id}/release_dates` -> country `IN` -> release types 2|3|4
+ * the FINAL India release truth; this version constant re-keys every
+ * pre-truth cached entry so stale-date result sets can never be served.
+ */
+export const UPCOMING_MOVIE_RELEASE_TRUTH_KEY = 'in-release-dates-v1';
+
+/** Cache-key dimension for the India watch-provider model (flatrate only, per-region). */
+export const UPCOMING_PROVIDER_MODEL_KEY = 'tmdb-flatrate-v1';
 
 /** TMDB release-type values for the two India movie queries (official TMDB release types: 1 Premiere, 2 Theatrical (limited), 3 Theatrical, 4 Digital, 5 Physical, 6 TV). */
 export const UPCOMING_MOVIE_RELEASE_TYPES = {
@@ -319,4 +333,192 @@ export function mergeMovieReleaseEvents(
     const bKey = Number.isFinite(bMs) ? bMs : Number.MAX_SAFE_INTEGER;
     return aKey - bKey || a.tmdbId - b.tmdbId;
   });
+}
+
+// ============================================================
+// PHASE F.1 — language filter, anime identity, India release
+// truth, provider normalization. All pure and synchronous; this
+// module stays import-free (client-safe, directly unit-testable).
+// ============================================================
+
+// ---------- language filter ----------
+
+/**
+ * Canonical Upcoming language filter options. THIS FILTER MEANS TMDB
+ * `original_language` — the language a title was ORIGINALLY PRODUCED in.
+ * It deliberately does NOT mean dubbed-audio availability (TMDB has no
+ * reliable per-region dub metadata for discover filtering).
+ */
+export type UpcomingLanguageOption = { code: string; label: string };
+
+export const UPCOMING_LANGUAGE_OPTIONS: UpcomingLanguageOption[] = [
+  { code: 'all', label: 'All' },
+  { code: 'en', label: 'English' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'ta', label: 'Tamil' },
+  { code: 'te', label: 'Telugu' },
+  { code: 'ml', label: 'Malayalam' },
+  { code: 'kn', label: 'Kannada' },
+  { code: 'bn', label: 'Bengali' },
+  { code: 'mr', label: 'Marathi' },
+  { code: 'pa', label: 'Punjabi' },
+  { code: 'gu', label: 'Gujarati' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' }
+];
+
+/**
+ * Strict language filter parsing. Valid codes (including 'all') pass
+ * through unchanged; EVERYTHING else (missing, empty, unknown, wrong
+ * case, injection attempts) fails SAFE to 'all'.
+ */
+export function parseUpcomingLanguage(value: string | null | undefined): string {
+  if (typeof value !== 'string' || value.length === 0) return 'all';
+  return UPCOMING_LANGUAGE_OPTIONS.some((option) => option.code === value) ? value : 'all';
+}
+
+// ---------- anime identity (Series must never mix anime) ----------
+
+/** TMDB genre id 16 = Animation — half of Mavero's anime definition. */
+export const UPCOMING_ANIME_GENRE_ID = 16;
+
+/** Japanese original language — the other half of Mavero's anime definition. */
+export const UPCOMING_ANIME_ORIGINAL_LANGUAGE = 'ja';
+
+/**
+ * Mavero's EXISTING anime identity, unchanged: TMDB TV with genre 16
+ * (Animation) AND original_language 'ja'. Non-Japanese animation
+ * (genre 16 + any other original language) is NOT anime in Mavero —
+ * it belongs to the Series pipeline.
+ *
+ * Used by the Upcoming Series pipeline to REJECT anime candidates
+ * before any expensive detail/season/provider work, and by the adult
+ * classifier exemption path.
+ */
+export function isAnimeCandidate(genreIds: number[] | undefined | null, originalLanguage: string | undefined | null): boolean {
+  return Array.isArray(genreIds) && genreIds.includes(UPCOMING_ANIME_GENRE_ID) && originalLanguage === UPCOMING_ANIME_ORIGINAL_LANGUAGE;
+}
+
+// ---------- India movie release truth (Phase F.1) ----------
+
+/** One real India release event for a movie, extracted from /movie/{id}/release_dates. */
+export type IndiaMovieReleaseEvent = {
+  /** Normalized India release date (YYYY-MM-DD). */
+  date: string;
+  kind: UpcomingMovieReleaseKind;
+};
+
+/** Structural shape of the TMDB /movie/{id}/release_dates response. */
+export type IndiaReleaseDatesPayload = {
+  results?: Array<{
+    iso_3166_1?: string;
+    release_dates?: Array<{ release_date?: string; type?: number }>;
+  }>;
+};
+
+/**
+ * Extract the REAL India release events (types 2 theatrical-limited,
+ * 3 theatrical, 4 digital) whose ACTUAL India release date falls inside
+ * the selected month window, from a /movie/{id}/release_dates payload.
+ *
+ * Binding rules (Phase F.1 movie release truth):
+ *   - ONLY country code `IN` is read — every other country is ignored.
+ *   - ONLY release types 2, 3 and 4 are accepted; types 1 (Premiere),
+ *     5 (Physical) and 6 (TV) never create Upcoming movie events.
+ *   - The event's own release_date (the India one) must fall inside the
+ *     month window — a movie whose actual India release is outside the
+ *     selected month/year is dropped by the caller (this kills the
+ *     August-2026 / January-2022 / January-1999 class of stale card).
+ *   - Dates normalize to the YYYY-MM-DD part of TMDB's ISO datetime.
+ *
+ * Pure: the caller decides what an empty result means (drop the movie).
+ */
+export function extractIndiaMovieReleaseEvents(payload: IndiaReleaseDatesPayload | null | undefined, startMs: number, endMs: number): IndiaMovieReleaseEvent[] {
+  const country = (payload?.results ?? []).find((entry) => entry?.iso_3166_1 === 'IN');
+  if (!country) return [];
+  const events: IndiaMovieReleaseEvent[] = [];
+  for (const rd of country.release_dates ?? []) {
+    const type = rd?.type;
+    if (type !== 2 && type !== 3 && type !== 4) continue;
+    const raw = rd?.release_date;
+    if (typeof raw !== 'string' || raw.length < 10) continue;
+    const ms = Date.parse(raw);
+    if (!Number.isFinite(ms) || ms < startMs || ms > endMs) continue;
+    events.push({ date: raw.slice(0, 10), kind: type === 4 ? 'digital' : 'theatrical' });
+  }
+  return events.sort((a, b) => Date.parse(a.date) - Date.parse(b.date) || (a.kind === 'theatrical' ? -1 : 1) - (b.kind === 'theatrical' ? -1 : 1));
+}
+
+/**
+ * Derive the release channels from ACTUAL India release events.
+ * Canonical order: theatrical first, then digital.
+ */
+export function deriveMovieReleaseKinds(events: IndiaMovieReleaseEvent[]): UpcomingMovieReleaseKind[] {
+  const hasTheatrical = events.some((e) => e.kind === 'theatrical');
+  const hasDigital = events.some((e) => e.kind === 'digital');
+  if (hasTheatrical && hasDigital) return ['theatrical', 'digital'];
+  if (hasTheatrical) return ['theatrical'];
+  if (hasDigital) return ['digital'];
+  return [];
+}
+
+/**
+ * The earliest VALID India release event date — the card date. Invalid
+ * dates never win; undefined when no valid event exists.
+ */
+export function earliestIndiaReleaseDate(events: IndiaMovieReleaseEvent[]): string | undefined {
+  let best: string | undefined;
+  for (const event of events) {
+    if (!event.date || !Number.isFinite(Date.parse(event.date))) continue;
+    if (best === undefined || Date.parse(event.date) < Date.parse(best)) best = event.date;
+  }
+  return best;
+}
+
+/**
+ * Defensive month-membership guard for a YYYY-MM-DD date. Used as the
+ * final invariant check on movie cards: item.date MUST belong to the
+ * selected month/year or the card is dropped.
+ */
+export function isDateInMonth(date: string | undefined | null, year: number, month: number): boolean {
+  if (typeof date !== 'string' || date.length === 0) return false;
+  const ms = Date.parse(date);
+  if (!Number.isFinite(ms)) return false;
+  const d = new Date(ms);
+  return d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month;
+}
+
+// ---------- watch-provider normalization (Phase F.1: movies too) ----------
+
+/** Structural shape of one TMDB watch-provider row. */
+export type FlatrateProviderRow = { provider_id?: number; provider_name?: string; logo_path?: string | null };
+
+/** Normalized provider card shape (same for series and movies). */
+export type NormalizedUpcomingProvider = { id: number; name: string; logo: string };
+
+/**
+ * Normalize ONE region's flatrate provider rows. Binding rules:
+ *   - the caller selects the region entry from the watch/providers
+ *     `results` record — ONLY that region is read; there is NO US or
+ *     cross-region fallback anywhere;
+ *   - ONLY flatrate rows are accepted (buy/rent are not OTT streaming);
+ *   - malformed rows (missing id/name/logo) are skipped;
+ *   - `logoUrl` builds the image URL from TMDB logo_path (injected so
+ *     this pure module stays independent of image-size policy).
+ */
+export function normalizeRegionFlatrateProviders(
+  results: Record<string, { flatrate?: FlatrateProviderRow[] }> | undefined,
+  region: string,
+  logoUrl: (path: string) => string
+): NormalizedUpcomingProvider[] {
+  const regionData = results?.[region];
+  const flatrate = regionData?.flatrate ?? [];
+  const out: NormalizedUpcomingProvider[] = [];
+  for (const row of flatrate) {
+    if (typeof row?.provider_id !== 'number' || typeof row?.provider_name !== 'string' || typeof row?.logo_path !== 'string') continue;
+    out.push({ id: row.provider_id, name: row.provider_name, logo: logoUrl(row.logo_path) });
+  }
+  return out;
 }

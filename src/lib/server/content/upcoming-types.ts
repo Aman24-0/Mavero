@@ -35,12 +35,19 @@ export type UpcomingItem = {
   season?: number;     // series/anime only
   episode?: number;    // series/anime only
   episodeTitle?: string; // series/anime only
-  providers?: UpcomingProvider[]; // series only (TMDB flatrate, IN region)
+  // India flatrate (subscription) providers, region IN only:
+  //   - series: TMDB /tv/{id}/watch/providers -> results.IN.flatrate
+  //   - movie:  TMDB /movie/{id}/watch/providers -> results.IN.flatrate,
+  //             present ONLY when the movie's selected-month India
+  //             releaseKinds include 'digital' (an OTT release)
+  providers?: UpcomingProvider[];
   year?: number;
   rating?: number;
   genres?: string[];
-  // movies only: India release channels this title qualified through
-  // ('theatrical' and/or 'digital'). Present for every movie item.
+  // movies only: the ACTUAL India release channels for the selected
+  // month, derived from /movie/{id}/release_dates country IN events
+  // (release types 2|3 -> theatrical, 4 -> digital). Present for every
+  // movie item that survived validation.
   releaseKinds?: UpcomingReleaseKind[];
   source: 'tmdb';
 };
@@ -49,6 +56,11 @@ export type UpcomingFilters = {
   month: number;   // 1-12
   year: number;    // e.g. 2026
   type: 'all' | UpcomingType;
+  // TMDB ORIGINAL language filter (NOT dubbed-audio language).
+  // 'all' = no language constraint; otherwise a canonical ISO-639-1
+  // code from UPCOMING_LANGUAGE_OPTIONS (en/hi/ta/.../fr). Parsed
+  // strictly server-side; invalid values fail safe to 'all'.
+  language: string;
 };
 
 export type UpcomingResult = {
