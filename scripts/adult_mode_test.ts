@@ -668,12 +668,16 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page
   assert.match(resolverService, /await getDetail\(/, 'resolver keeps the raw getDetail path (no playback regression)');
 
   // ---- Upcoming module enforcement ----
-  assert.match(upcomingSource, /loadUpcomingMovies[\s\S]*?include_adult: false/, 'upcoming movies send include_adult: false');
-  assert.match(upcomingSource, /loadUpcomingMovies[\s\S]*?'without_watch_providers': providerExclusion, watch_region: region/, 'upcoming movies apply the transitional provider exclusion WITH region');
+  // Phase F: the movie adult exclusion moved into discoverIndiaMovieRows
+  // (shared by BOTH India release-kind queries — theatrical + digital);
+  // loadUpcomingMovies wires both queries. Semantics unchanged.
+  assert.match(upcomingSource, /loadUpcomingMovies[\s\S]*?discoverIndiaMovieRows\('theatrical'[\s\S]*?discoverIndiaMovieRows\('digital'/, 'upcoming movies flow through the India release-kind queries');
+  assert.match(upcomingSource, /async function discoverIndiaMovieRows[\s\S]*?include_adult: false/, 'upcoming movies send include_adult: false');
+  assert.match(upcomingSource, /async function discoverIndiaMovieRows[\s\S]*?'without_watch_providers': providerExclusion, watch_region: region/, 'upcoming movies apply the transitional provider exclusion WITH region');
   assert.match(upcomingSource, /loadUpcomingSeries[\s\S]*?without_networks: networkExclusion/, 'upcoming series excludes verified adult networks (canonical)');
   assert.match(upcomingSource, /loadUpcomingAnime[\s\S]*?without_networks: networkExclusion/, 'upcoming anime excludes verified adult networks (flag exemption preserved)');
   assert.match(upcomingSource, /isAdultContent\(undefined, undefined, undefined, isAnimeCandidate, detail\.networks\)/, 'upcoming series classification uses the ONE central classifier over detail networks');
-  assert.match(upcomingSource, /movieRowVerdict\(\{[\s\S]*?adult: m\.adult/, 'upcoming movie rows classify through the central-classifier flag path');
+  assert.match(upcomingSource, /movieRowVerdict\(\{[\s\S]*?adult: m\?\.adult/, 'upcoming movie rows classify through the central-classifier flag path');
 
   // ---- Cache isolation (structural) ----
   // Normal-rail caches and the adult-rail cache live in DISJOINT namespaces;

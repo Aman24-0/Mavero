@@ -12,6 +12,12 @@
 
 export type UpcomingType = 'movie' | 'series' | 'anime';
 
+// India movie release channel (Phase F): a movie discovered through the
+// theatrical (TMDB release types 2|3) and/or digital (release type 4)
+// India query. Movies qualifying for BOTH render ONE card carrying both
+// kinds — duplicates are merged by canonical TMDB ID.
+export type UpcomingReleaseKind = 'theatrical' | 'digital';
+
 export type UpcomingProvider = {
   id: number;
   name: string;
@@ -33,6 +39,9 @@ export type UpcomingItem = {
   year?: number;
   rating?: number;
   genres?: string[];
+  // movies only: India release channels this title qualified through
+  // ('theatrical' and/or 'digital'). Present for every movie item.
+  releaseKinds?: UpcomingReleaseKind[];
   source: 'tmdb';
 };
 

@@ -4,6 +4,8 @@
   import { ArrowLeft, Calendar, Film, Tv, Sparkles, Star, ArrowUpRight } from 'lucide-svelte';
   import Dropdown from '$components/Dropdown.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
+  import AppFooter from '$components/AppFooter.svelte';
+  import { upcomingDetailPath } from '$lib/shared/upcoming-policy';
   import type { PageData } from './$types';
   import type { UpcomingItem, UpcomingType } from '$lib/server/content/upcoming-types';
 
@@ -89,8 +91,19 @@
     const d = new Date(date + 'T00:00:00Z');
     return `${monthLabels[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2, '0')} · ${d.getUTCFullYear()}`;
   }
+  // Phase F — canonical detail navigation. Upcoming event IDs are
+  // episode-unique ("series-123-s58e294") but the detail routes need the
+  // parent TMDB ID ("/series/123"). The strict parser lives in the pure
+  // upcoming-policy module so it is directly unit-testable; malformed IDs
+  // yield null and the card renders WITHOUT a link instead of routing to
+  // a guaranteed 404 ("Series not found" / "Anime not found").
   function detailHref(item: UpcomingItem) {
-    return `/${item.type}/${item.id.replace(/^(movie|series|anime)-/, '')}`;
+    return upcomingDetailPath(item.id);
+  }
+  // Phase F — movie release channel label: THEATRICAL / OTT (or both).
+  function releaseKindLabel(item: UpcomingItem) {
+    if (item.type !== 'movie' || !item.releaseKinds?.length) return undefined;
+    return item.releaseKinds.map((k) => (k === 'theatrical' ? 'Theatrical' : 'OTT')).join(' + ');
   }
 </script>
 
@@ -154,7 +167,9 @@
             <h2 class="day-label">{group.label}</h2>
             <div class="day-cards">
               {#each group.items as item (item.id)}
-                <a class="release-card" href={detailHref(item)}>
+                {@const href = detailHref(item)}
+                {@const kindLabel = releaseKindLabel(item)}
+                <a class="release-card" href={href} {...href === null ? { 'aria-disabled': 'true' } : {}}>
                   <div class="card-poster">
                     {#if item.poster}
                       <img src={item.poster} alt={item.title} loading="lazy" decoding="async" />
@@ -176,6 +191,9 @@
                     {/if}
                     <h3 class="card-title">{item.title}</h3>
                     <div class="card-meta">
+                      {#if kindLabel}
+                        <span class="ep-tag kind-tag">{kindLabel}</span>
+                      {/if}
                       {#if item.type === 'series' && item.season !== undefined && item.episode !== undefined}
                         <span class="ep-tag">S{String(item.season).padStart(2, '0')} · E{String(item.episode).padStart(2, '0')}</span>
                       {:else if item.type === 'anime' && item.episode !== undefined}
@@ -203,6 +221,8 @@
     {/if}
   </div>
 </div>
+
+<AppFooter />
 
 <ScrollToTop />
 
@@ -402,6 +422,13 @@
     color: #f5f5f5;
     font-size: .58rem; font-weight: 800;
     letter-spacing: .03em;
+  }
+  /* Phase F — movie release channel tag (THEATRICAL / OTT). Shares the
+     ep-tag geometry; only the tint differs so the channel is scannable
+     without introducing a new component language. */
+  .kind-tag {
+    background: rgba(155, 135, 245, .16);
+    color: #cabffe;
   }
   .date-tag { color: #c7c7cc; }
   .rating-tag {
