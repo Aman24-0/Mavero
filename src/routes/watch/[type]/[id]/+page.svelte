@@ -196,7 +196,17 @@
   // The default is only used for the INITIAL selection — manual source
   // switches set selectedSourceId directly and pass allowFallback=false, so
   // the default is NOT forced back after a manual switch.
-  $: defaultSourceId = data.streamingConfig.defaults?.[contentType];
+  //
+  // Post-release fix (adult default source): Adult-tagged titles use the
+  // dedicated 'adult' default when one is configured. This page only renders
+  // for ADULT titles when the Phase 6 server guard has ALREADY authorized the
+  // request (unauthorized adult access is a non-disclosing 404 before any of
+  // this code runs), so the adult default can never affect unauthorized
+  // users — with Adult Mode OFF the watch route 404s adult titles and this
+  // selection never executes for them. When no adult default is configured,
+  // the content-type default applies exactly as before (unchanged behavior).
+  $: isAdultTitle = item.tags?.includes('Adult') === true;
+  $: defaultSourceId = (isAdultTitle ? data.streamingConfig.defaults?.adult : undefined) ?? data.streamingConfig.defaults?.[contentType];
   // Phase 9 fix: source selection MUST wait for progressReady before selecting.
   // The old code used `!selectedSourceId` which fired as soon as sourceOptions
   // was populated — before savedSourceId was loaded from IndexedDB. This caused

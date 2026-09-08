@@ -235,25 +235,32 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 {
   const section = await read('src/lib/components/AdultDiscoverSection.svelte');
   const discoverPage = await read('src/lib/components/DiscoverPage.svelte');
-  // The Adult rail fetches ONLY the Phase 7 endpoint: every fetch call in
-  // the component routes through discoverUrl, which builds that URL and
-  // nothing else.
-  const fetchMatches = [...section.matchAll(/fetch\((.{0,40})/g)];
+  // The Adult rail's CATALOG fetches route ONLY through discoverUrl (the
+  // dedicated endpoint builder). The provider-OPTIONS fetch goes to the
+  // policy-gated verified-registry endpoint (display-only — asserted
+  // separately below).
+  const fetchMatches = [...section.matchAll(/fetch\((.{0,40})/g)].filter((call) => !/adult-providers/.test(call[1]));
   assert.ok(fetchMatches.length >= 2, 'first-load and show-more fetches exist');
   for (const call of fetchMatches) {
-    assert.match(call[1], /discoverUrl\(/, 'every fetch routes through discoverUrl (the dedicated endpoint builder)');
+    assert.match(call[1], /discoverUrl\(/, 'every CATALOG fetch routes through discoverUrl (the dedicated endpoint builder)');
   }
   // The URL builder carries EXACTLY the supported parameters — type,
-  // language, page — and nothing else: no network/provider source params,
-  // no TMDB passthrough, no authorization flag.
+  // provider (closed union), page — and nothing else: no language (the
+  // language filter was removed from this surface), no network/TMDB ids,
+  // no authorization flag.
   const urlFn = section.match(/function discoverUrl[\s\S]*?^  }/m);
   assert.ok(urlFn, 'discoverUrl found');
   const paramsObj = urlFn![0].match(/new URLSearchParams\(\{([\s\S]*?)\}\)/);
   assert.ok(paramsObj, 'the query is built from a fixed object literal');
   const keys = [...paramsObj![1].matchAll(/^\s*(\w+)[,:]/gm)].map((m) => m[1]);
-  assert.deepEqual(keys.sort(), ['language', 'page', 'type'], 'exactly type/language/page are ever sent');
-  assert.doesNotMatch(paramsObj![1], /adult|network|provider|watch/i, 'no source/authorization parameter is ever appended');
+  assert.deepEqual(keys.sort(), ['page', 'provider', 'type'], 'exactly type/provider/page are ever sent');
+  assert.ok(!/language/i.test(paramsObj![1]), 'no language parameter is sent (filter removed from the Adult surface)');
+  assert.doesNotMatch(paramsObj![1], /\badult\b|\bnetwork\b|\bwatch\b|\binclude_adult\b/i, 'no source-id/authorization parameter is ever appended (provider is a closed-union key)');
   assert.doesNotMatch(section, /tmdb\.org|api\.themoviedb/, 'no direct TMDB calls from the client');
+  // The provider options come from the policy-gated verified-registry
+  // endpoint — never a hardcoded brand list, never unverified candidates.
+  assert.match(section, /fetch\('\/api\/discover\/adult-providers'\)/, 'provider options are fetched from the policy-gated verified-registry endpoint');
+  assert.doesNotMatch(section, /'ullu'|'kooku'|'atrangii'|2902|4573|7355/, 'no hardcoded brand keys or network ids in the component');
   // Visibility is driven by the server-reported state, nothing else.
   assert.match(discoverPage, /\{#if adultCanAccess\}/, 'DiscoverPage renders the Adult surface only on the server-reported state');
   assert.doesNotMatch(discoverPage, /localStorage|sessionStorage/, 'no browser-side persistent caching in DiscoverPage');
@@ -460,19 +467,29 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 // ============================================================================
 // Phase 10 QA regression — deployed mobile-width (390px) browser QA measured
 // a 14px overlap between the nowrap section title (the 18+ label) and the
-// non-shrinking filter pills. The fix wraps the section head on narrow
-// viewports. This wiring assertion keeps the wrap rule in place.
+// non-shrinking filter pills. The Phase 10 fix wrapped the section head.
+// Post-release fix: the wrap produced a visually broken second row, so the
+// header is now ONE row at every width (title truncates; the provider
+// filter collapses to an icon-only compact control on very narrow
+// viewports). This wiring assertion keeps the no-second-row contract.
 // ============================================================================
 {
   const section = await read('src/lib/components/AdultDiscoverSection.svelte');
-  const head = section.match(/@media \(max-width: 640px\) \{[\s\S]*?\n  \}/);
-  assert.ok(head, 'Phase 10: the mobile media query block exists');
+  const head = section.match(/\.section-head \{[^}]*\}/);
+  assert.ok(head, 'Phase 10: the section head rule exists');
   assert.match(
     head?.[0] ?? '',
-    /\.section-head \{[^}]*flex-wrap: wrap;/,
-    'Phase 10: the section head wraps below 640px (title/pill overlap regression)'
+    /flex-wrap: nowrap;/,
+    'post-release fix: the heading row NEVER wraps into a second row'
   );
-  ok('phase10. adult section head wraps on mobile (18+ title vs filter-pill overlap regression)');
+  // The provider filter has both a labelled and a compact (icon-only)
+  // instance sharing one options source; exactly one is visible per width.
+  assert.match(section, /class="provider-full"/, 'labelled provider control exists for wide viewports');
+  assert.match(section, /class="provider-compact"/, 'icon-only compact provider control exists for narrow viewports');
+  assert.match(section, /\.provider-compact \{ display: none; \}/, 'compact instance hidden by default');
+  assert.match(section, /@media \(max-width: 480px\) \{[\s\S]*?\.provider-full \{ display: none; \}[\s\S]*?\.provider-compact \{ display: inline-flex; \}/, 'very narrow viewports swap to the icon-only control');
+  assert.match(section, /compact/, 'the compact instance uses the icon-only dropdown mode');
+  ok('phase10. adult section head stays ONE row (title truncates; provider filter collapses to icon-only on narrow screens)');
 }
 
 console.log(`\nAdult Phase 8 tests passed: ${passed} check groups (Popular TV genre exclusion; Adult Discover UI/API integration; SSR/hydration leak prevention; legacy rail migration + protection; search parity; cache isolation; Phase 6 regression; anime exemption).`);

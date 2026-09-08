@@ -74,23 +74,45 @@
 import { mapWithConcurrency } from './concurrency';
 import { movieRowVerdict, type CandidateVerdict, type UpstreamSearchPage } from './search-classify';
 import { isDiscoverLanguageValue } from './types';
+import { getVerifiedAdultNetworks } from './adult-networks';
 import type { ContentList, DiscoverLanguage } from './types';
 
 // ============================================================
 // Contract types — the closed filter surface of Adult Discover.
-// There is deliberately NO network/provider field: the verified
-// Adult network set is server-controlled and cannot be narrowed,
-// widened, or replaced by client input.
+// The only provider surface is the CLOSED-UNION key filter below: the
+// client may narrow to a VERIFIED registry key (or 'all'), never supply
+// or alter a TMDB network/provider id. The verified Adult network set
+// itself remains server-controlled.
 // ============================================================
 
 export type AdultDiscoverType = 'movie' | 'series';
 export type AdultDiscoverSort = 'popularity' | 'newest' | 'top-rated';
+
+/**
+ * Closed-union provider filter (post-release fix).
+ *
+ * The client may narrow the Adult catalog to ONE verified Adult OTT
+ * service — expressed as the REGISTRY KEY ('ullu' | 'kooku' | 'atrangii'
+ * | ... every key in getVerifiedAdultNetworks()), or 'all' for the full
+ * verified set. Raw TMDB network/provider IDs are NOT part of the union:
+ * the server maps the key to the verified network id (and only the
+ * verified id) via the central registry. The filter means
+ *
+ *     Adult AND selected verified provider
+ *
+ * never `Adult OR provider`, and an unverified/unknown key NEVER widens
+ * the query — unknown values are rejected by the route guard below before
+ * any TMDB call.
+ */
+export const ADULT_DISCOVER_PROVIDER_ALL = 'all';
 
 export type AdultDiscoverFilters = {
   type: AdultDiscoverType;
   language: DiscoverLanguage;
   sort: AdultDiscoverSort;
   page: number;
+  /** Closed-union provider key ('all' | verified registry key). */
+  provider: string;
 };
 
 // ============================================================
@@ -134,9 +156,28 @@ export function isAdultDiscoverSort(value: string | null | undefined): value is 
  * constraint is applied at the TMDB query level AND re-verified by the
  * classifier, so a language can never replace or dilute the Adult
  * condition (Adult AND language, never Adult OR language).
+ *
+ * Post-release fix: the UI no longer renders a language dropdown for the
+ * Adult surface, but the server contract keeps validating (and applying,
+ * as a pure narrowing filter) the language dimension for backward
+ * compatibility — an absent language parameter defaults to 'all'.
  */
 export function isAdultDiscoverLanguage(value: string | null | undefined): value is DiscoverLanguage {
   return isDiscoverLanguageValue(value);
+}
+
+/**
+ * Closed-union provider guard (post-release fix). Accepts exactly
+ *   'all'                                    -> the full verified set
+ *   a key of getVerifiedAdultNetworks()      -> that single service
+ * and NOTHING else. Unverified registry candidates, raw TMDB network/
+ * provider ids, unknown keys and empty values are rejected — they can
+ * never reach TMDB as a network/provider filter.
+ */
+export function isAdultDiscoverProvider(value: string | null | undefined): boolean {
+  if (value === ADULT_DISCOVER_PROVIDER_ALL) return true;
+  if (typeof value !== 'string' || value.length === 0 || value.length > 40) return false;
+  return getVerifiedAdultNetworks().some((entry) => entry.key === value);
 }
 
 /**
@@ -185,8 +226,13 @@ export function buildAdultDiscoverCacheKey(input: {
   page: number;
   networkInclusion?: string;
   providerInclusion?: string;
+  provider?: string;
 }): string {
-  return `${ADULT_DISCOVER_CACHE_NAMESPACE}:${input.type}:${input.language}:${input.sort}:${input.page}:${input.networkInclusion ?? 'no-networks'}:${input.providerInclusion ?? 'no-providers'}`;
+  // The provider dimension is embedded as the validated closed-union key
+  // (never a client-supplied id) so per-provider responses occupy separate
+  // cache entries and an unverified value can never collide with one.
+  const providerDimension = isAdultDiscoverProvider(input.provider) ? input.provider : ADULT_DISCOVER_PROVIDER_ALL;
+  return `${ADULT_DISCOVER_CACHE_NAMESPACE}:${input.type}:${input.language}:${input.sort}:${input.page}:${input.networkInclusion ?? 'no-networks'}:${input.providerInclusion ?? 'no-providers'}:${providerDimension}`;
 }
 
 /**

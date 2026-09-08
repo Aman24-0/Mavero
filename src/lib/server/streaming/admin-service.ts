@@ -171,8 +171,11 @@ export async function deleteSourceCategory(client: StreamingClient, sourceId: st
 // directly without further admin-service changes.
 //
 // Validation contract:
-//   - contentType must be one of 'movie' | 'series' | 'anime' (matches the
-//     streaming_default_sources.content_type CHECK constraint).
+//   - contentType must be one of 'movie' | 'series' | 'anime' | 'adult'
+//     (matches the streaming_default_sources.content_type CHECK constraint
+//     extended by migration 20260914000000_adult_default_source.sql — the
+//     adult default is the same source-based contract, scoped to authorized
+//     Adult playback).
 //   - sourceId must be a UUID that references an existing streaming_sources
 //     row. The FK constraint enforces existence; we do NOT enforce that the
 //     source is currently public+enabled+active here — that filter is the
@@ -181,11 +184,11 @@ export async function deleteSourceCategory(client: StreamingClient, sourceId: st
 //     auto-activate when the source is re-enabled).
 //   - upsert semantics: at most one default per content_type (PRIMARY KEY).
 
-const VALID_DEFAULT_CONTENT_TYPES = new Set(['movie', 'series', 'anime']);
+const VALID_DEFAULT_CONTENT_TYPES = new Set(['movie', 'series', 'anime', 'adult']);
 
 function assertDefaultContentType(contentType: string): void {
   if (!VALID_DEFAULT_CONTENT_TYPES.has(contentType)) {
-    throw new Error(`Invalid default content type '${contentType}'. Must be one of: movie, series, anime.`);
+    throw new Error(`Invalid default content type '${contentType}'. Must be one of: movie, series, anime, adult.`);
   }
 }
 

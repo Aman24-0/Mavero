@@ -62,6 +62,15 @@ export type PublicStreamingDefaults = {
   movie?: string;
   series?: string;
   anime?: string;
+  /**
+   * Post-release fix: default SOURCE for AUTHORIZED Adult playback.
+   * Same source-based contract as the other content types (a
+   * streaming_sources.id, filtered by the same public-config eligibility
+   * rules). The presence of this default NEVER affects Adult Mode
+   * authorization — it only orders candidates for playback the server
+   * has already authorized.
+   */
+  adult?: string;
 };
 
 export type StreamingDefaultRow = Tables<'streaming_default_sources'>;

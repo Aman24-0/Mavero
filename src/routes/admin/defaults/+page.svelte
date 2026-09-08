@@ -10,6 +10,7 @@
     { key: 'movie', label: 'Movie', description: 'Default source for movies (single video, no season/episode).' },
     { key: 'series', label: 'Series', description: 'Default source for TV series (season + episode required).' },
     { key: 'anime', label: 'Anime', description: 'Default source for anime (season + episode required).' },
+    { key: 'adult', label: 'Adult', description: 'Default playback source for authorized Adult content.' },
   ] as const;
 
   // Helper: find the current default source for a content type.

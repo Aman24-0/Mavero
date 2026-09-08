@@ -1,7 +1,9 @@
 import { json } from '@sveltejs/kit';
 import { adultDiscover } from '$lib/server/content/service';
 import {
+  ADULT_DISCOVER_PROVIDER_ALL,
   isAdultDiscoverLanguage,
+  isAdultDiscoverProvider,
   isAdultDiscoverSort,
   isAdultDiscoverType,
   parseAdultDiscoverPage
@@ -27,10 +29,14 @@ import type { RequestHandler } from './$types';
 //      exists.
 //   3. Authorized requests pass strict, closed-union validation before
 //      anything reaches TMDB: type ('movie'|'series'), language (the
-//      closed DiscoverLanguage union), sort (closed union) and a clamped
-//      page. There is NO network/provider parameter: the verified Adult
-//      network set is server-controlled and cannot be narrowed, widened,
-//      or replaced by client input.
+//      closed DiscoverLanguage union), sort (closed union), page (clamped)
+//      and — post-release fix — an OPTIONAL provider filter that accepts
+//      ONLY 'all' or a VERIFIED Adult registry key. The server maps the
+//      key to the verified TMDB network id itself; raw ids
+//      (`provider=2902`, `provider=999999`) and unverified/unknown keys
+//      are rejected with 400 and can never reach TMDB. The filter means
+//      Adult AND selected verified provider — never Adult OR provider —
+//      and the ONE central classifier still re-verifies every candidate.
 //   4. The dedicated service contract (service.adultDiscover) re-checks
 //      the authorization decision (defense-in-depth) and calls the Adult
 //      Discover adapter — never the normal Discover path, never fixtures.
@@ -62,11 +68,18 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   if (!isAdultDiscoverSort(sortParam)) {
     return json({ ok: false, error: { code: 'INVALID_SORT', message: 'Unsupported sort.' } }, { status: 400 });
   }
+  // Closed-union provider filter (post-release fix): 'all' or a VERIFIED
+  // Adult registry key. Raw network ids, unverified candidates and unknown
+  // keys are rejected here — before any cache access or TMDB call.
+  const providerParam = url.searchParams.get('provider') ?? ADULT_DISCOVER_PROVIDER_ALL;
+  if (!isAdultDiscoverProvider(providerParam)) {
+    return json({ ok: false, error: { code: 'INVALID_PROVIDER', message: 'Unknown provider filter.' } }, { status: 400 });
+  }
   const page = parseAdultDiscoverPage(url.searchParams.get('page'));
 
   // ---- 4. Dedicated Adult catalog service (defense-in-depth inside). ----
   try {
-    const result = await adultDiscover({ type: typeParam, language: languageParam, sort: sortParam, page }, canAccess);
+    const result = await adultDiscover({ type: typeParam, language: languageParam, sort: sortParam, page, provider: providerParam }, canAccess);
     return json({
       ok: true,
       items: result.items.map(toMediaItem),
@@ -74,7 +87,8 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
       hasNextPage: result.hasNextPage,
       type: typeParam,
       language: languageParam,
-      sort: sortParam
+      sort: sortParam,
+      provider: providerParam
     });
   } catch (error) {
     // Upstream failure -> error response. NEVER a fallback to the normal

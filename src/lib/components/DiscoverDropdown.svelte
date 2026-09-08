@@ -11,7 +11,7 @@
   // a section heading without pushing it into overflow. This component is
   // also logo-aware (for the OTT provider dropdown).
   import { tick } from 'svelte';
-  import { ChevronDown, Check } from 'lucide-svelte';
+  import { ChevronDown, Check, SlidersHorizontal } from 'lucide-svelte';
 
   type Option = {
     value: string;
@@ -25,12 +25,19 @@
     value,
     onChange,
     ariaLabel,
+    compact = false,
   }: {
     label: string;
     options: Option[];
     value: string;
     onChange: (next: string) => void;
     ariaLabel: string;
+    /** Icon-only trigger (post-release fix): the selected label is hidden
+     *  and a sliders icon is shown instead — used on very narrow viewports
+     *  so the filter can share the section heading row without pushing it
+     *  into a broken second row. The dropdown panel is unchanged and the
+     *  aria-label keeps the control accessible. */
+    compact?: boolean;
   } = $props();
 
   let open = $state(false);
@@ -121,6 +128,7 @@
   <button
     type="button"
     class="dd-trigger"
+    class:compact
     bind:this={triggerEl}
     aria-haspopup="listbox"
     aria-expanded={open}
@@ -129,6 +137,7 @@
     onkeydown={handleTriggerKeydown}
   >
     <span class="dd-label">{selectedLabel}</span>
+    <span class="dd-icon" aria-hidden="true"><SlidersHorizontal size={13} /></span>
     <span class="dd-chevron" class:open><ChevronDown size={13} /></span>
   </button>
   {#if open}
@@ -184,6 +193,13 @@
   .dd-trigger:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 1px; }
   .dd-trigger[aria-expanded="true"] { color: #f5f5f5; border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.08); }
   .dd-label { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+  .dd-icon { display: none; color: #b7b7bd; }
+  /* Compact (icon-only) trigger — opted in per instance via the `compact`
+     prop; hides the label + chevron so the pill collapses to an icon. */
+  .dd-trigger.compact { padding: 0 10px; }
+  .dd-trigger.compact .dd-label,
+  .dd-trigger.compact .dd-chevron { display: none; }
+  .dd-trigger.compact .dd-icon { display: inline-flex; }
   .dd-chevron { display: inline-flex; transition: transform 180ms cubic-bezier(.22,1,.36,1); color: #77777f; }
   .dd-chevron.open { transform: rotate(180deg); }
 

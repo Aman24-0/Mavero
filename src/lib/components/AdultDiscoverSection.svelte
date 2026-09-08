@@ -5,13 +5,13 @@
   // WHY A DEDICATED COMPONENT (not a DiscoverSection prop):
   //   The old rail fetched /api/discover/rail?section=adult-shows — the
   //   legacy merged movie+TV rail without the Phase 7 catalog features
-  //   (per-type catalogs, language filter, classifier defense). The Adult
-  //   surface now has its OWN endpoint with a different contract
-  //   (type/language/page — NO provider parameter), so its data loading is
-  //   intentionally isolated from the normal rail machinery. The VISUAL
-  //   language is shared: the same MediaCard, DiscoverDropdown, loading /
-  //   error / empty states and Show-more pagination conventions as
-  //   DiscoverSection (no duplicated card components, no redesign).
+  //   (per-type catalogs, classifier defense). The Adult surface now has
+  //   its OWN endpoint with a different contract (type/provider/page), so
+  //   its data loading is intentionally isolated from the normal rail
+  //   machinery. The VISUAL language is shared: the same MediaCard,
+  //   DiscoverDropdown, loading / error / empty states and Show-more
+  //   pagination conventions as DiscoverSection (no duplicated card
+  //   components, no redesign).
   //
   // SECURITY MODEL (the UI is NOT the boundary):
   //   - Visibility: the parent (DiscoverPage) renders this section only
@@ -23,9 +23,14 @@
   //     rail — it can never reveal Adult data because the 404 body carries
   //     none. No client flag (adult/enabled/showAdult) is ever sent, and
   //     no authorization decision is made here.
-  //   - No source/network/provider parameters exist in this contract; the
-  //     verified Adult network set is server-controlled and invisible to
-  //     the client.
+  //   - PROVIDER FILTER (post-release fix): a CLOSED-UNION key ('all' or a
+  //     VERIFIED Adult registry key served by the policy-gated
+  //     /api/discover/adult-providers endpoint). The client never sends a
+  //     TMDB network/provider id — the server maps the key to the verified
+  //     network id itself and re-validates it per request (Adult AND
+  //     provider, never OR). The language filter was REMOVED from this
+  //     surface (the server contract still validates the language
+  //     dimension for compatibility, defaulting to 'all').
   //   - Adult catalog data is never persisted browser-side; component state
   //     dies with the section.
   type AdultDiscoverType = 'movie' | 'series';
@@ -35,28 +40,21 @@
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
   import DiscoverDropdown from '$components/DiscoverDropdown.svelte';
-  import type { DiscoverLanguage } from '$lib/server/content/types';
 
   let { title = 'Indian Adult Shows' }: { title?: string } = $props();
 
   type TypeOption = { value: AdultDiscoverType; label: string };
-  type LanguageOption = { value: DiscoverLanguage; label: string };
+  type ProviderOption = { value: string; label: string; logoUrl?: string };
 
   const TYPE_OPTIONS: TypeOption[] = [
     { value: 'series', label: 'TV Shows' },
     { value: 'movie', label: 'Movies' }
   ];
 
-  const LANGUAGE_OPTIONS: LanguageOption[] = [
-    { value: 'all', label: 'All' },
-    { value: 'hi', label: 'Hindi' },
-    { value: 'en', label: 'English' },
-    { value: 'ta', label: 'Tamil' },
-    { value: 'te', label: 'Telugu' },
-    { value: 'ml', label: 'Malayalam' },
-    { value: 'kn', label: 'Kannada' },
-    { value: 'other', label: 'Other language' }
-  ];
+  // 'all' plus the VERIFIED Adult networks served by the policy-gated
+  // endpoint (same registry the classifier uses). Never a hardcoded brand
+  // list, never unverified candidates, never raw TMDB ids.
+  const ALL_PROVIDER_OPTION: ProviderOption = { value: 'all', label: 'All' };
 
   // Per-section state (same shape/conventions as DiscoverSection).
   let items = $state<MediaItem[]>([]);
@@ -66,21 +64,43 @@
   let page = $state(1);
   let hasNextPage = $state(false);
   let type = $state<AdultDiscoverType>('series');
-  let language = $state<DiscoverLanguage>('all');
+  let provider = $state<string>('all');
+  let providerOptions = $state<ProviderOption[]>([ALL_PROVIDER_OPTION]);
   let hidden = $state(false);
   let requestSequence = 0;
   let requestController: AbortController | undefined;
 
   // The Phase 7 API contract — ONLY the supported parameters (type,
-  // language, page). No source, provider or TMDB passthrough parameters,
-  // no adult flag: the server owns the source boundary and the authorization.
+  // provider, page). No language (filter removed from this surface), no
+  // source/TMDB passthrough parameters, no adult flag: the server owns the
+  // source boundary, the provider->network-id mapping and the
+  // authorization.
   function discoverUrl(targetPage: number) {
     const params = new URLSearchParams({
       type,
-      language,
+      provider,
       page: String(targetPage)
     });
     return `/api/content/adult-discover?${params.toString()}`;
+  }
+
+  // Load the VERIFIED Adult provider options (closed union the server
+  // accepts). The endpoint is policy-gated and returns [] when
+  // unauthorized; the section is hidden by then anyway. Display-only —
+  // fetching this list never widens the catalog.
+  async function loadProviderOptions() {
+    try {
+      const response = await fetch('/api/discover/adult-providers');
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!payload?.ok || !Array.isArray(payload.providers)) return;
+      providerOptions = [
+        ALL_PROVIDER_OPTION,
+        ...payload.providers
+          .filter((entry: { key?: unknown; name?: unknown }) => typeof entry?.key === 'string' && typeof entry?.name === 'string' && entry.key !== 'all')
+          .map((entry: { key: string; name: string; logoUrl?: string }) => ({ value: entry.key as string, label: entry.name as string, logoUrl: entry.logoUrl }))
+      ];
+    } catch { /* the 'All' option remains usable — never blocks the rail */ }
   }
 
   async function loadFirst() {
@@ -169,15 +189,15 @@
     void loadFirst();
   }
 
-  function changeLanguage(next: string) {
-    const nextLang = next as DiscoverLanguage;
-    if (nextLang === language) return;
-    language = nextLang;
+  function changeProvider(next: string) {
+    if (next === provider) return;
+    provider = next;
     void loadFirst();
   }
 
   onMount(() => {
     void loadFirst();
+    void loadProviderOptions();
     return () => {
       requestSequence += 1;
       requestController?.abort();
@@ -199,13 +219,32 @@
           value={type}
           onChange={changeType}
         />
-        <DiscoverDropdown
-          label="All"
-          ariaLabel={`Filter ${title} by language`}
-          options={LANGUAGE_OPTIONS}
-          value={language}
-          onChange={changeLanguage}
-        />
+        <!-- Provider filter: full (labelled) instance and compact (icon-only)
+             instance share the same options/value/handler. Exactly one is
+             visible at any width, so the filter NEVER wraps to a second row:
+             wide viewports show both labelled pills; very narrow viewports
+             keep the content-type pill and collapse the provider filter to
+             an icon-only control (same tap target, same dropdown panel,
+             same aria-label). -->
+        <span class="provider-full">
+          <DiscoverDropdown
+            label="All"
+            ariaLabel={`Filter ${title} by provider`}
+            options={providerOptions}
+            value={provider}
+            onChange={changeProvider}
+          />
+        </span>
+        <span class="provider-compact">
+          <DiscoverDropdown
+            label="All"
+            compact
+            ariaLabel={`Filter ${title} by provider`}
+            options={providerOptions}
+            value={provider}
+            onChange={changeProvider}
+          />
+        </span>
       </div>
     </div>
 
@@ -255,8 +294,12 @@
     margin-top: 36px;
     padding: 0 var(--d-gutter, clamp(16px, 5vw, 48px));
   }
+  /* ONE responsive header row at every width: the heading (left, ellipsis-
+     truncated) and the filter controls (right, non-shrinking) can never
+     wrap into a broken second row. */
   .section-head {
-    display: flex; align-items: end; justify-content: space-between; gap: 12px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: nowrap;
     margin-bottom: 14px;
   }
   .section-head-left { min-width: 0; }
@@ -274,6 +317,7 @@
     line-height: 1.1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     display: inline-flex; align-items: center; gap: 8px;
+    min-width: 0; max-width: 100%;
   }
   .adult-badge {
     display: inline-flex; align-items: center; justify-content: center;
@@ -286,6 +330,10 @@
     font-size: .58rem; font-weight: 800; letter-spacing: .04em;
     flex-shrink: 0;
   }
+  /* Provider filter visibility switch: labelled pill by default, icon-only
+     on very narrow viewports. aria-hidden on the hidden instance keeps the
+     accessibility tree clean (exactly one control exposed). */
+  .provider-compact { display: none; }
 
   .section-body { min-height: 60px; }
   .rail {
@@ -326,14 +374,17 @@
 
   @media (max-width: 640px) {
     .adult-discover-section { margin-top: 28px; }
-    /* Phase 10 QA: on narrow viewports the nowrap section title could
-       visually collide with the non-shrinking filter pills (measured 14px
-       overlap at 390px). Wrapping moves the pills below the title instead
-       of letting them overlap the 18+ label. */
-    .section-head { gap: 8px; flex-wrap: wrap; }
+    .section-head { gap: 8px; }
     .section-title { font-size: 1.05rem; }
     .rail { grid-auto-columns: 40vw; gap: 10px; }
     .section-head-right { gap: 6px; }
+  }
+  /* Very narrow viewports: collapse the provider filter to the icon-only
+     compact control so heading + badge + content-type pill + provider
+     control share ONE row (390px QA width) without overlap. */
+  @media (max-width: 480px) {
+    .provider-full { display: none; }
+    .provider-compact { display: inline-flex; }
   }
   @media (min-width: 1900px) {
     .rail { grid-auto-columns: 210px; gap: 18px; }

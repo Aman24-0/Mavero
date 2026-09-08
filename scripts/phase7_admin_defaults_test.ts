@@ -47,7 +47,13 @@ assert.doesNotMatch(defaultsServer, /\.from\('streaming_default_sources'\)/, 'no
 // ============================================================
 
 assert.match(migration, /content_type text primary key check \(content_type in \('movie', 'series', 'anime'\)\)/, 'PK is content_type with CHECK');
-assert.match(adminService, /VALID_DEFAULT_CONTENT_TYPES = new Set\(\['movie', 'series', 'anime'\]\)/, 'valid content types are movie/series/anime');
+// Post-release fix: the ADULT_DEFAULT_SOURCE migration extends the union to
+// include 'adult' (ALTER-only: existing rows preserved, FK/RLS untouched).
+const adultMigration = readFileSync(new URL('../supabase/migrations/20260914000000_adult_default_source.sql', import.meta.url), 'utf8');
+assert.match(adultMigration, /content_type in \('movie', 'series', 'anime', 'adult'\)/, 'adult migration extends the CHECK union with adult');
+assert.doesNotMatch(adultMigration, /drop table|truncate|delete from/i, 'adult migration never resets/recreates the table or touches data');
+assert.match(adultMigration, /validate constraint streaming_default_sources_content_type_check/, 'adult migration re-validates the preserved rows');
+assert.match(adminService, /VALID_DEFAULT_CONTENT_TYPES = new Set\(\['movie', 'series', 'anime', 'adult'\]\)/, 'valid content types are movie/series/anime/adult');
 assert.match(adminService, /function assertDefaultContentType\(contentType: string\): void/, 'assertDefaultContentType validation function exists');
 
 // ============================================================
@@ -91,6 +97,7 @@ assert.match(clearBody, /invalidatePublicStreamingConfig\(\)/, 'clearDefaultSour
 assert.match(defaultsPage, /\{ key: 'movie', label: 'Movie'/, 'UI has movie section');
 assert.match(defaultsPage, /\{ key: 'series', label: 'Series'/, 'UI has series section');
 assert.match(defaultsPage, /\{ key: 'anime', label: 'Anime'/, 'UI has anime section');
+assert.match(defaultsPage, /\{ key: 'adult', label: 'Adult', description: 'Default playback source for authorized Adult content\.' \}/, 'UI has the adult section (post-release fix)');
 
 // ============================================================
 // 9. UI shows warning for ineligible (disabled/non-public) defaults

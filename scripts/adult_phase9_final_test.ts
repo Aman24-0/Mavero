@@ -258,7 +258,8 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   assert.match(popularTv, /with_watch_monetization_types: 'flatrate'/, 'OTT flatrate bias retained');
   assert.match(popularTv, /with_original_language: langParam/, 'language filter retained');
   assert.match(popularTv, /networkExclusion \? \{ without_networks: networkExclusion \}/, 'verified-network exclusion retained alongside');
-  assert.match(popularTv, /const key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}:\$\{adultExclusion \?\? 'no-adult'\}:\$\{genreExclusion \?\? 'no-genre-exclusion'\}`/, 'cache key embeds the genre-exclusion dimension');
+  assert.match(popularTv, /const key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}:\$\{adultExclusion \?\? 'no-adult'\}:\$\{genreExclusion \?\? 'no-genre-exclusion'\}:\$\{soapPolicyKey\}`/, 'cache key embeds the genre-exclusion AND daily-soap policy dimensions');
+  assert.match(popularTv, /isDailySoapEpisodeCount/, 'the isolated daily-soap policy is applied in the rail');
   // The genre filter adds no classification weight: Soap/News/Talk genre IDs are not network IDs.
   assert.equal(isKnownAdultNetwork({ id: 10764, name: 'Soap' }), false, 'Soap genre ID is not an adult network');
   assert.equal(isKnownAdultNetwork({ id: 10767, name: 'Talk' }), false, 'Talk genre ID is not an adult network');
@@ -276,7 +277,7 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   const adultKey = buildAdultDiscoverCacheKey({ type: 'series', language: 'all', sort: 'popularity', page: 1, networkInclusion: '2902|4573|7355' });
   const normalKeys = [
     'tmdb:discover:series:1',
-    'tmdb:popular-v2:series:all:1:2902|4573|7355:10764|10766|10767',
+    'tmdb:popular-v2:series:all:1:2902|4573|7355:10764|10766|10767:daily-soap-gt100',
     'tmdb:collection:series:1:::no-adult',
     'tmdb:search:series:foo:1:::adult-excluded',
     'tmdb:adult-shows:all:1:2902|4573|7355',
@@ -409,14 +410,22 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   assert.match(endpoint, /searchParams\.get\('language'\)/, 'endpoint reads language');
   assert.match(endpoint, /searchParams\.get\('sort'\)/, 'endpoint reads sort');
   assert.match(endpoint, /searchParams\.get\('page'\)/, 'endpoint reads page');
-  assert.doesNotMatch(endpoint, /searchParams\.get\('(network|networks|with_networks|without_networks|provider|watch_provider)'/, 'endpoint has NO network/provider parameter');
+  // Post-release fix: the endpoint HAS an optional provider parameter, but
+  // it is a CLOSED UNION — only 'all' or a VERIFIED registry key passes;
+  // raw network/provider ids and unverified keys are rejected. There is
+  // still NO network parameter surface and no TMDB passthrough.
+  assert.match(endpoint, /searchParams\.get\('provider'\)/, 'endpoint reads the optional provider filter');
+  assert.match(endpoint, /isAdultDiscoverProvider\(providerParam\)/, 'provider is validated against the closed union before any TMDB call');
+  assert.doesNotMatch(endpoint, /searchParams\.get\('(network|networks|with_networks|without_networks|watch_provider)'/, 'endpoint has NO network parameter');
+  assert.doesNotMatch(endpoint.replace(/^\s*\/\/.*$/gm, ''), /\b2902\b|\b4573\b|\b7355\b/, 'endpoint contains no literal network IDs in CODE (keys only)');
   const component = src('../src/lib/components/AdultDiscoverSection.svelte');
   const discoverUrlBody = component.slice(component.indexOf('function discoverUrl'), component.indexOf('async function loadFirst'));
   assert.match(discoverUrlBody, /type/, 'Adult UI sends type');
-  assert.match(discoverUrlBody, /language/, 'Adult UI sends language');
+  assert.match(discoverUrlBody, /provider/, 'Adult UI sends the closed-union provider key');
   assert.match(discoverUrlBody, /page/, 'Adult UI sends page');
-  assert.ok(!/network|provider|with_/i.test(discoverUrlBody), 'Adult UI sends NO network/provider/TMDB-passthrough parameters');
-  ok('11. arbitrary network rejection: unverified IDs rejected; no client network surface on endpoint or UI');
+  assert.ok(!/network|with_/i.test(discoverUrlBody), 'Adult UI sends NO network/TMDB-passthrough parameters');
+  assert.ok(!/language/i.test(discoverUrlBody), 'Adult UI no longer sends a language parameter (filter removed from the surface)');
+  ok('11. arbitrary network rejection: unverified IDs rejected; provider is a closed-union key mapped server-side; no client network surface');
 }
 
 // ============================================================================

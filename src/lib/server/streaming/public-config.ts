@@ -45,8 +45,13 @@ export async function getPublicStreamingConfig(client: StreamingClient): Promise
   // include a default whose source_id resolves to a currently-public source
   // (present in the `sources` array above). Invalid/disabled defaults are
   // silently omitted — the resolver falls back to health/reliability ranking.
+  // Post-release fix: 'adult' is a valid default content type (authorized
+  // Adult playback source; same eligibility rules — see
+  // 20260914000000_adult_default_source.sql). Carrying the value here does
+  // NOT change any authorization boundary: Adult Mode OFF keeps adult
+  // content inaccessible regardless of this config.
   const defaults: PublicStreamingDefaults = {};
-  const VALID_CONTENT_TYPES = new Set(['movie', 'series', 'anime']);
+  const VALID_CONTENT_TYPES = new Set(['movie', 'series', 'anime', 'adult']);
   for (const row of defaultsResult.data ?? []) {
     if (!row?.content_type || !row?.source_id) continue;
     if (!VALID_CONTENT_TYPES.has(row.content_type)) continue;
@@ -54,6 +59,7 @@ export async function getPublicStreamingConfig(client: StreamingClient): Promise
     if (row.content_type === 'movie') defaults.movie = row.source_id;
     else if (row.content_type === 'series') defaults.series = row.source_id;
     else if (row.content_type === 'anime') defaults.anime = row.source_id;
+    else if (row.content_type === 'adult') defaults.adult = row.source_id;
   }
 
   const config: PublicStreamingConfig = { version, updatedAt, providers, sources, categories, sourceCategories, defaults };

@@ -64,6 +64,16 @@ export type AdultNetwork = {
    */
   tmdbNetworkId: number;
   /**
+   * TMDB network LOGO path (post-release fix — controlled logo mapping for
+   * the authorized Adult provider dropdown). Static TMDB metadata captured
+   * from the same live network pages that verified the IDs; served through
+   * the SAME image CDN convention as provider logos
+   * (https://image.tmdb.org/t/p/w92{path} via providerLogoUrl) — never an
+   * arbitrary remote host. Optional and display-only: classification and
+   * catalog filters never read it. Unverified entries carry no logo.
+   */
+  tmdbLogoPath?: string | null;
+  /**
    * 'verified' requires BOTH a live-confirmed tmdbNetworkId > 0 and the
    * evidence note in the entry comment. Accessors in this module never
    * treat 'unverified' entries as active classification signals.
@@ -80,22 +90,27 @@ export type AdultNetworkRef = {
 // Curated registry of Indian adult OTT services modelled as TMDB TV networks.
 const ADULT_NETWORK_REGISTRY: AdultNetwork[] = [
   // --- Verified against live TMDB (2026-09-07, see header evidence note) ---
+  // tmdbLogoPath values captured from the same live network pages (2026-09-08;
+  // each confirmed to resolve on image.tmdb.org) — display metadata only.
   {
     key: 'ullu',
     name: 'Ullu',
     tmdbNetworkId: 2902, // live TMDB: /network/2902 -> "2902-ullu"
+    tmdbLogoPath: '/v5YSGiZxWsQTRQaijkEcUSSBFeQ.png',
     verification: 'verified'
   },
   {
     key: 'kooku',
     name: 'Kooku',
     tmdbNetworkId: 4573, // live TMDB: /network/4573 -> "4573-kooku"
+    tmdbLogoPath: '/aDbQUqZNtukLcX5LpOCTrKI2y5v.png',
     verification: 'verified'
   },
   {
     key: 'atrangii',
     name: 'Atrangii',
     tmdbNetworkId: 7355, // live TMDB: /network/7355 -> "7355-atrangii"
+    tmdbLogoPath: '/qi6eRXHYSozqypShWsYpyWCWRJT.png',
     verification: 'verified'
   },
   // --- Candidates: known adult services, network IDs NOT yet confirmed ---
@@ -180,6 +195,18 @@ export function getAdultNetworkIds(): number[] {
 export function getAdultNetworkById(id: number): AdultNetwork | undefined {
   if (!Number.isInteger(id) || id <= 0) return undefined;
   return activeRegistry().find((entry) => entry.tmdbNetworkId === id);
+}
+
+/**
+ * Display options for the authorized Adult provider dropdown (post-release
+ * fix): VERIFIED networks only — unverified candidates are structurally
+ * excluded, exactly like the classification accessors. Display metadata
+ * (key/name/logo path) only; carrying a logo never widens filtering. Used
+ * by the policy-gated provider list endpoint; the client maps these to the
+ * closed-union `provider` values the Adult Discover API accepts.
+ */
+export function getVerifiedAdultNetworkOptions(): Array<{ key: string; name: string; logoPath: string | null }> {
+  return getVerifiedAdultNetworks().map((entry) => ({ key: entry.key, name: entry.name, logoPath: entry.tmdbLogoPath ?? null }));
 }
 
 /**

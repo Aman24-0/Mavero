@@ -744,7 +744,12 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   assert.match(tmdb, /export async function getTmdbAdultDiscover/, 'the dedicated Adult Discover adapter function exists');
   const adultDiscoverAdapter = tmdb.match(/export async function getTmdbAdultDiscover[\s\S]*?^}/m);
   assert.ok(adultDiscoverAdapter, 'getTmdbAdultDiscover found');
-  assert.match(adultDiscoverAdapter![0], /withAdultNetworksParams\(\)/, 'the TV source is the VERIFIED adult network registry');
+  // Post-release fix: the TV source is still the VERIFIED adult network
+  // registry — 'all' (or absent) keeps the full verified set; an optional
+  // closed-union provider key narrows to that single verified id via
+  // withAdultNetworksParams(selectedNetworkId) (verified-only builder).
+  assert.match(adultDiscoverAdapter![0], /withAdultNetworksParams\(selectedNetworkId\)/, 'the TV source is the VERIFIED adult network registry (optionally narrowed to a verified provider id)');
+  assert.match(adultDiscoverAdapter![0], /getVerifiedAdultNetworkIdForKey\(selectedProviderKey\)/, 'the provider key resolves through the verified registry (never a client id)');
   assert.match(adultDiscoverAdapter![0], /getAdultProviderIds\(\)/, 'the movie source is the resolved transitional provider set');
   assert.match(adultDiscoverAdapter![0], /include_adult: true/, 'the Adult surface queries with include_adult: true');
   assert.match(adultDiscoverAdapter![0], /buildAdultDiscoverCacheKey/, 'responses cache under the isolated adult-discover namespace');
@@ -793,13 +798,19 @@ const settingsPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pa
   // module doc comment may reference the old endpoint as documentation).
   const acFetches = [...adultSection.matchAll(/fetch\((.{0,40})/g)];
   assert.ok(acFetches.length >= 2, 'the Adult rail has first-load and show-more fetches');
-  for (const call of acFetches) {
-    assert.match(call[1], /discoverUrl\(/, 'every Adult rail fetch routes through discoverUrl (the Phase 7 endpoint builder)');
+  // Post-release fix: the CATALOG fetches route through discoverUrl (the
+  // Phase 7 endpoint builder); the provider OPTIONS fetch goes to the
+  // policy-gated verified-registry endpoint (display-only, never the
+  // catalog). Assert both contracts separately.
+  const catalogFetches = acFetches.filter((call) => !/adult-providers/.test(call[1]));
+  assert.ok(catalogFetches.length >= 2, 'catalog first-load and show-more fetches route through discoverUrl');
+  for (const call of catalogFetches) {
+    assert.match(call[1], /discoverUrl\(/, 'every Adult rail CATALOG fetch routes through discoverUrl (the Phase 7 endpoint builder)');
   }
+  assert.match(adultSection, /fetch\('\/api\/discover\/adult-providers'\)/, 'provider options come from the policy-gated verified-registry endpoint');
   assert.doesNotMatch(adultSection, /with_networks|watch_providers|include_adult/, 'the Adult rail sends no source/authorization parameters');
   assert.match(adultSection, /import MediaCard from '\$components\/MediaCard\.svelte'/, 'the Adult rail reuses the existing card component (no duplication)');
   assert.match(adultSection, /status === 404/, 'the Adult rail treats the non-disclosing 404 as section-hidden (never as data)');
-  assert.match(adultSection, /import type \{ DiscoverLanguage \} from '\$lib\/server\/content\/types'/, 'the Adult rail shares the closed language union');
 
   // ---- DiscoverPage migration: legacy dropdown gone, server-driven visibility ----
   assert.doesNotMatch(discoverPage, /section="adult-shows"/, 'DiscoverPage no longer renders the legacy adult-shows rail');

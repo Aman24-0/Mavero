@@ -9,16 +9,19 @@ import {
   ADULT_DISCOVER_PAGE_SIZE,
   ADULT_DISCOVER_MAX_UPSTREAM_PAGES,
   ADULT_DISCOVER_CLASSIFY_CONCURRENCY,
+  ADULT_DISCOVER_PROVIDER_ALL,
   buildAdultDiscoverCacheKey,
   emptyAdultDiscoverResult,
   adultDiscoverSortBy,
   classifyAdultDiscoverRow,
   collectConfirmedAdultPage,
+  isAdultDiscoverProvider,
   type AdultDiscoverFilters,
   type AdultDiscoverCandidateRow,
   type AdultDiscoverDetailVerdictLoader
 } from '../adult-discover';
 import { mapWithConcurrency } from '../concurrency';
+import { INDIAN_POPULAR_TV_SOAP_POLICY_KEY, INDIAN_POPULAR_TV_NO_SOAP_POLICY_KEY, INDIAN_POPULAR_TV_SOAP_CHECK_CONCURRENCY, isDailySoapEpisodeCount } from '../popular-tv-policy';
 import { movieRowVerdict, detailVerdict, collectSafeSearchPage, searchFilterMode, buildSearchCacheKey, type CandidateVerdict, type UpstreamSearchPage } from '../search-classify';
 import { filterSafeRailItems, type RailCandidateRow, type DetailVerdictLoader } from '../list-classify';
 
@@ -898,6 +901,26 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
  * normal Popular TV contract stays Adult-excluded and genre-clean in
  * both states). 10764/10766/10767 are TV genres — the movie half is
  * untouched.
+ *
+ * DAILY-SOAP STRUCTURAL EXCLUSION (post-release fix, popular-tv-policy.ts):
+ * TMDB tags Indian daily soaps with ONLY Drama (18) — never the Soap
+ * genre — so the Phase 8 genre exclusion cannot see them (measured:
+ * Patiala Babes /tv/85879, Vantalakka /tv/235424, Pallakilo Pellikuturu
+ * /tv/235330, Meenakshi Ponnunga /tv/276583, Bhoomige Bandha Bhagyantha
+ * /tv/275535 are ALL Drama-only). Genre metadata alone is insufficient
+ * (prestige Drama-only shows like Rocket Boys must stay), so the TV half
+ * additionally applies the ISOLATED daily-soap policy: a candidate whose
+ * CACHED DETAIL reports more than
+ * INDIAN_POPULAR_TV_DAILY_SOAP_MAX_EPISODES released episodes is a
+ * serial by production model and is dropped. Metadata-based (never a
+ * title blacklist), deterministic, scoped to THIS rail only (not movies,
+ * not Top Rated, not Search, not Adult Discover, not anime). A failed
+ * detail lookup keeps the candidate (curation fail-open — the ADULT
+ * exclusion above stays unconditional and query-level). For specific
+ * languages the walk is deterministic from upstream page 1 so rail
+ * pages tile the soap-free survivor stream without overlap; 'all'
+ * keeps the single-page behavior. The applied policy is embedded in
+ * the cache key (INDIAN_POPULAR_TV_SOAP_POLICY_KEY dimension).
  */
 export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime'>, language: DiscoverLanguage, page = 1): Promise<ContentList> {
   // Phase 3: TV excludes verified adult NETWORKS; movies keep the
@@ -910,15 +933,29 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
   // (a constant dimension, like the adult-exclusion value above) so the key
   // always reflects the query shape that produced the response.
   const genreExclusion = type === 'series' ? POPULAR_TV_WITHOUT_GENRES : undefined;
-  const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}:${genreExclusion ?? 'no-genre-exclusion'}`;
+  // Post-release fix: the applied daily-soap policy is a cache-key dimension
+  // too (constant per media type) — a policy bump re-keys instead of serving
+  // stale-era rails.
+  const soapPolicyKey = type === 'series' ? INDIAN_POPULAR_TV_SOAP_POLICY_KEY : INDIAN_POPULAR_TV_NO_SOAP_POLICY_KEY;
+  const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}:${genreExclusion ?? 'no-genre-exclusion'}:${soapPolicyKey}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    // Daily-soap exclusion scope: TV candidates of the Popular TV rail only.
+    // For specific languages the walk starts at upstream page 1 EVERY time so
+    // rail page N = survivor rows [(N-1)*10, N*10) — disjoint, stable pages
+    // even though serial-heavy upstream pages are being skipped. 'all' keeps
+    // the existing single-upstream-page behavior (verified by discover_v2
+    // tests) with the soap filter applied inside that page.
+    const isSeries = type === 'series';
+    const deterministicSoapWalk = isSeries && language !== 'all';
+    const survivorTarget = deterministicSoapWalk ? page * DISCOVER_PAGE_SIZE : DISCOVER_PAGE_SIZE;
+    const maxWalked = deterministicSoapWalk ? Math.min(MAX_OTHER_LANGUAGE_PAGES * page, 30) : MAX_OTHER_LANGUAGE_PAGES;
     const collected: TmdbMedia[] = [];
-    let upstreamPage = page;
+    let upstreamPage = deterministicSoapWalk ? 1 : page;
     let upstreamHasNext = true;
     let pagesWalked = 0;
-    while (collected.length < DISCOVER_PAGE_SIZE && upstreamHasNext && pagesWalked < MAX_OTHER_LANGUAGE_PAGES) {
+    while (collected.length < survivorTarget && upstreamHasNext && pagesWalked < maxWalked) {
       const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, {
         page: upstreamPage,
         include_adult: false,
@@ -941,7 +978,24 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
-      for (const item of filtered) {
+      // DAILY-SOAP STRUCTURAL EXCLUSION (Popular TV rail only — see the
+      // function header and popular-tv-policy.ts). Each surviving candidate
+      // is checked against its CACHED detail's released-episode count with
+      // bounded concurrency. A failed detail lookup keeps the candidate
+      // (curation fail-open); the adult exclusion above is unaffected.
+      let pageCandidates = filtered;
+      if (isSeries) {
+        const soapVerdicts = await mapWithConcurrency(filtered, async (item): Promise<boolean> => {
+          try {
+            const detail = await getTmdbDetail('series', String(item.id));
+            return isDailySoapEpisodeCount(detail.episodes);
+          } catch {
+            return false;
+          }
+        }, INDIAN_POPULAR_TV_SOAP_CHECK_CONCURRENCY);
+        pageCandidates = filtered.filter((_, index) => !soapVerdicts[index]);
+      }
+      for (const item of pageCandidates) {
         if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
       }
       upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
@@ -949,8 +1003,11 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
       pagesWalked += 1;
       if (language === 'all') break;
     }
-    const items = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, type, 'Popular'));
-    const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
+    const sliceStart = deterministicSoapWalk ? (page - 1) * DISCOVER_PAGE_SIZE : 0;
+    const items = collected.slice(sliceStart, sliceStart + DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, type, 'Popular'));
+    const hasNextPage = deterministicSoapWalk
+      ? collected.length >= sliceStart + DISCOVER_PAGE_SIZE && upstreamHasNext
+      : collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
     return { items, page, hasNextPage, source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
@@ -1356,21 +1413,44 @@ const adultDiscoverDetailVerdictLoader: AdultDiscoverDetailVerdictLoader = async
 
 export async function getTmdbAdultDiscover(filters: AdultDiscoverFilters): Promise<ContentList> {
   const { type, language, sort, page } = filters;
+  // ---- Closed-union provider filter (post-release fix). ----
+  // `provider` arrives route-validated (isAdultDiscoverProvider) and is
+  // mapped HERE to the verified registry id — the client never supplies
+  // one. 'all'/absent keeps the full verified set; a verified key narrows
+  // BOTH halves to that ONE service (Adult AND provider, never OR):
+  //   TV:    with_networks=<that verified network id>
+  //   Movie: with_watch_providers=<that service's resolved watch-provider
+  //          id> — when the service has no resolved India watch-provider
+  //          entry the movie half has NO verified source and stays EMPTY
+  //          (fail-closed; never falls back to all providers).
+  const selectedProviderKey = isAdultDiscoverProvider(filters.provider) && filters.provider !== ADULT_DISCOVER_PROVIDER_ALL ? filters.provider : undefined;
+  const selectedNetworkId = selectedProviderKey ? getVerifiedAdultNetworkIdForKey(selectedProviderKey) : undefined;
   // ---- Server-controlled source boundary (no client input involved). ----
-  const networkInclusion = type === 'series' ? withAdultNetworksParams() : {};
+  const networkInclusion = type === 'series' ? withAdultNetworksParams(selectedNetworkId) : {};
   let providerInclusion: string | undefined;
   if (type === 'movie') {
     // Resolve the transitional movie-side source against the live TMDB
     // India provider list (5-min cache). An empty resolved set -> empty
     // catalog (never a fabricated or widened query).
     await getTmdbIndiaProviders();
-    const adultIds = getAdultProviderIds();
-    providerInclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+    const resolvedAdultProviders = getCachedAdultProviders() ?? [];
+    if (selectedProviderKey) {
+      // Narrowed: only this service's resolved watch-provider id — or
+      // nothing (a verified NETWORK without a JustWatch movie presence
+      // yields an empty movie catalog, the documented safe under-fill).
+      const match = resolvedAdultProviders.find((p) => p.key === selectedProviderKey && p.tmdbProviderId > 0);
+      providerInclusion = match ? String(match.tmdbProviderId) : undefined;
+    } else {
+      const adultIds = getAdultProviderIds();
+      providerInclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+    }
   }
   const hasSource = type === 'series' ? 'with_networks' in networkInclusion : Boolean(providerInclusion);
   if (!hasSource) {
     // Nothing verified to query in the relevant ID space — return the
-    // empty non-disclosing result rather than fabricating filters.
+    // empty non-disclosing result rather than fabricating filters. This
+    // includes a provider selection with no verified id in the relevant
+    // ID space (fail-closed: the selection never widens to 'all').
     return emptyAdultDiscoverResult(page);
   }
   const key = buildAdultDiscoverCacheKey({
@@ -1379,7 +1459,8 @@ export async function getTmdbAdultDiscover(filters: AdultDiscoverFilters): Promi
     sort,
     page,
     networkInclusion: networkInclusion.with_networks,
-    providerInclusion
+    providerInclusion,
+    provider: filters.provider ?? ADULT_DISCOVER_PROVIDER_ALL
   });
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const sortBy = adultDiscoverSortBy(sort, type);
