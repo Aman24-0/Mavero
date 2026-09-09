@@ -6,11 +6,12 @@
 
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { X, Download, ExternalLink, ChevronDown, AlertTriangle, Loader2 } from 'lucide-svelte';
+  import { X, Download, ExternalLink, ChevronDown, AlertTriangle, Loader2, CalendarClock } from 'lucide-svelte';
   import {
-    buildDownloadUrl,
     filterProvidersByMediaType,
+    getDownloadUrlCandidates,
     type DownloadMediaType,
+    type DownloadUrlCandidate,
     type PublicDownloadProvider,
   } from '$lib/shared/downloader';
 
@@ -26,6 +27,11 @@
   export let tmdbId = '';
   export let season: number | undefined = undefined;
   export let episode: number | undefined = undefined;
+  // Optional release year, used ONLY to compute a Cineverse alternate URL
+  // candidate (e.g. "dhurandhar-the-revenge-2026"). Other providers ignore
+  // this prop entirely. The primary iframe URL is always the year-less
+  // deterministic slug; the alternate is offered as a manual fallback.
+  export let releaseYear: number | undefined = undefined;
   export let onClose: () => void = () => {};
 
   // ----- Internal state -----
@@ -39,6 +45,15 @@
   let sheetElement: HTMLDivElement | null = null;
   let previouslyFocused: HTMLElement | null = null;
   let dropdownOpen = false;
+
+  // Cineverse alternate-URL state. When the active provider has a
+  // year-suffixed alternate URL candidate, we surface a "Try with year"
+  // affordance in the fallback bar. The user can swap the iframe src to
+  // the alternate manually — we do NOT do this automatically (cross-origin
+  // iframe onload cannot reliably detect a Cineverse 404).
+  let urlCandidates: DownloadUrlCandidate[] = [];
+  let alternateUrl: string | null = null;
+  let useAlternate = false;
 
   // Body scroll lock: restored on close. We snapshot the previous overflow
   // value rather than assuming 'auto' so we don't clobber a custom scroll
@@ -70,15 +85,33 @@
 
   $: activeProvider = resolveActive(filteredProviders);
 
-  // ----- Build the iframe URL whenever the active provider or context changes -----
+  // ----- Compute URL candidates + iframe URL whenever inputs change -----
+  // The PRIMARY URL is always buildDownloadUrl()'s output (year-less for
+  // Cineverse, TMDB-id for everyone else). For Cineverse only, when a
+  // releaseYear is supplied, an ALTERNATE year-suffixed URL is computed
+  // and offered as a manual fallback (the user can swap the iframe src
+  // to it via the "Try with year" button in the fallback bar).
   $: if (activeProvider && open) {
-    iframeUrl = buildDownloadUrl(activeProvider, { mediaType, tmdbId, title, season, episode });
+    urlCandidates = getDownloadUrlCandidates(activeProvider, { mediaType, tmdbId, title, season, episode, releaseYear });
+    alternateUrl = urlCandidates.length > 1 ? urlCandidates[1].url : null;
+    // Reset the useAlternate toggle whenever the active provider or media
+    // context changes — a fresh sheet open always starts with the primary
+    // URL (deterministic, no surprises).
+    useAlternate = false;
+    iframeUrl = urlCandidates.length > 0 ? urlCandidates[0].url : null;
     iframeLoading = iframeUrl !== null;
     iframeError = false;
   } else if (!activeProvider) {
+    urlCandidates = [];
+    alternateUrl = null;
+    useAlternate = false;
     iframeUrl = null;
     iframeLoading = false;
   }
+
+  // The currently-rendered iframe URL: primary by default, alternate when
+  // the user has manually toggled to it.
+  $: renderedIframeUrl = useAlternate && alternateUrl ? alternateUrl : iframeUrl;
 
   // ----- Body scroll lock + focus management -----
   function lockBodyScroll() {
@@ -163,9 +196,23 @@
     activeProvider = provider;
     selectedProviderId = provider.id;
     dropdownOpen = false;
+    // The reactive $: if (activeProvider && open) block above will
+    // recompute urlCandidates, alternateUrl, useAlternate (reset to
+    // false), and iframeUrl. We don't need to set iframeUrl manually
+    // here — doing so would overwrite the candidate-aware reactive
+    // assignment with the primary URL only.
     iframeLoading = true;
     iframeError = false;
-    iframeUrl = buildDownloadUrl(provider, { mediaType, tmdbId, title, season, episode });
+  }
+
+  // User-initiated swap to the Cineverse alternate year-suffixed URL.
+  // Resets the loading state so the spinner shows while the new iframe
+  // src loads.
+  function toggleAlternate() {
+    if (!alternateUrl) return;
+    useAlternate = !useAlternate;
+    iframeLoading = true;
+    iframeError = false;
   }
 
   function handleBackdropClick() {
@@ -260,15 +307,13 @@
             <p>Downloading is not configured for this content type right now. Please try again later.</p>
           </div>
         {:else if iframeUrl === null}
-          <!-- buildDownloadUrl() returned null: the active provider cannot
-               produce a valid URL for this title (missing TMDB id, missing
-               title for the {titleSlug} placeholder, unsupported media
-               type, or a non-HTTPS template). There is NO resolvable URL
-               to link to — so we do NOT show a fallback "Open" link here
-               (the previous version incorrectly linked to the raw URL
-               template with placeholders still in it, e.g.
-               https://cineverse.modiplay.xyz/download/{titleSlug}). The
-               only recovery is to switch provider or close the sheet. -->
+          <!-- getDownloadUrlCandidates() returned no candidates: the active
+               provider cannot produce a valid URL for this title (missing
+               TMDB id, missing title for the {titleSlug} placeholder,
+               unsupported media type, or a non-HTTPS template). There is NO
+               resolvable URL to link to — so we do NOT show a fallback
+               "Open" link here. The only recovery is to switch provider or
+               close the sheet. -->
           <div class="dl-empty">
             <AlertTriangle size={26} />
             <h3>This downloader can't open this title</h3>
@@ -279,7 +324,7 @@
             {#if iframeLoading}
               <div class="dl-loading" role="status" aria-live="polite">
                 <span class="dl-spin"><Loader2 size={22} /></span>
-                <span>Loading {activeProvider?.name ?? 'downloader'}…</span>
+                <span>Loading {activeProvider?.name ?? 'downloader'}{#if useAlternate} (year-suffixed){/if}…</span>
               </div>
             {/if}
             {#if iframeError}
@@ -287,7 +332,7 @@
                 <AlertTriangle size={26} />
                 <h3>Couldn't embed {activeProvider?.name}</h3>
                 <p>This downloader may not allow embedding. You can still open it in a new tab.</p>
-                <a class="dl-open-external" href={iframeUrl} target="_blank" rel="noopener noreferrer">
+                <a class="dl-open-external" href={renderedIframeUrl} target="_blank" rel="noopener noreferrer">
                   <ExternalLink size={14} /> Open {activeProvider?.name}
                 </a>
               </div>
@@ -296,7 +341,7 @@
                 class="dl-frame"
                 class:hidden={iframeLoading}
                 title={iframeTitle}
-                src={iframeUrl}
+                src={renderedIframeUrl}
                 loading="eager"
                 referrerpolicy="no-referrer"
                 allow="fullscreen; encrypted-media"
@@ -305,16 +350,35 @@
               ></iframe>
             {/if}
           </div>
-          <!-- Always-available fallback link. Uses the SAME resolved URL
-               that buildDownloadUrl() produced for the iframe src — never
-               a raw template. Cross-origin iframe load errors cannot
-               always be detected; this link guarantees the user can reach
-               the downloader page directly. -->
+          <!-- Always-available fallback bar. Uses the SAME resolved URL
+               that the iframe src uses (primary or alternate) — never a raw
+               template. Cross-origin iframe load errors cannot always be
+               detected; the "Open in new tab" link guarantees the user can
+               reach the downloader page directly. -->
           <div class="dl-fallback-bar">
-            <span>Can't see the downloader?</span>
-            <a href={iframeUrl} target="_blank" rel="noopener noreferrer">
-              <ExternalLink size={13} /> Open {activeProvider?.name} in a new tab
-            </a>
+            <span>
+              Can't see the downloader?
+              {#if useAlternate && alternateUrl}
+                <span class="dl-alt-tag">Showing year-suffixed URL</span>
+              {/if}
+            </span>
+            <span class="dl-fallback-actions">
+              {#if alternateUrl}
+                <button
+                  type="button"
+                  class="dl-alt-toggle"
+                  onclick={toggleAlternate}
+                  aria-pressed={useAlternate}
+                  title={useAlternate ? 'Switch back to the primary URL' : 'Try the year-suffixed URL'}
+                >
+                  <CalendarClock size={13} />
+                  {useAlternate ? 'Use primary' : 'Try with year'}
+                </button>
+              {/if}
+              <a href={renderedIframeUrl} target="_blank" rel="noopener noreferrer">
+                <ExternalLink size={13} /> Open in new tab
+              </a>
+            </span>
           </div>
         {/if}
       </div>
@@ -582,6 +646,42 @@
     text-decoration: none;
   }
   .dl-fallback-bar a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+  .dl-fallback-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .dl-alt-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    color: #c7c7cc;
+    background: rgba(255, 255, 255, 0.04);
+    font: inherit;
+    font-size: 0.6rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
+  }
+  .dl-alt-toggle:hover { color: #f5f5f5; background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.24); }
+  .dl-alt-toggle[aria-pressed='true'] { color: #0d0d0d; background: #f5f5f5; border-color: transparent; }
+  .dl-alt-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    color: #0d0d0d;
+    background: rgba(245, 245, 245, 0.85);
+    font-size: 0.5rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
 
   .dl-safe-area { height: max(12px, env(safe-area-inset-bottom)); flex: 0 0 auto; }
 

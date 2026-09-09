@@ -266,3 +266,178 @@ export function sortPublicDownloadProviders(providers: PublicDownloadProvider[])
     return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
   });
 }
+
+// ============================================================
+// Cineverse alternate-URL candidate strategy
+// ============================================================
+//
+// Background (Phase 2 refinement):
+//   Cineverse's URL scheme is `https://cineverse.modiplay.xyz/download/{titleSlug}`.
+//   Most titles resolve with the year-less slug produced by slugifyTitle()
+//   (e.g. "Toxic: A Fairy Tale for Grown-ups" → "toxic-a-fairy-tale-for-grown-ups"
+//   works; "Spider-Man: Brand New Day" → "spider-man-brand-new-day" works).
+//   But a non-trivial minority of titles require the release year appended
+//   to the slug (e.g. "Dhurandhar: The Revenge" →
+//   "dhurandhar-the-revenge-2026" is the working URL, while
+//   "dhurandhar-the-revenge" returns 404).
+//
+// Design constraints (from the spec):
+//   - Do NOT blindly append the year to every Cineverse title (would break
+//     the working year-less URLs).
+//   - Do NOT invent hardcoded title mappings like "Dhurandhar".
+//   - Do NOT implement fake automatic 404 detection (cross-origin iframe
+//     onload cannot reliably inspect a Cineverse response).
+//   - Preserve the existing deterministic slugifyTitle() behavior.
+//   - Keep the normal title slug as the PRIMARY candidate.
+//   - Provide a Cineverse alternate candidate {titleSlug}-{releaseYear}
+//     ONLY when a release year exists. The user can manually switch to the
+//     alternate if the primary doesn't load.
+//
+// What this module exposes:
+//   - cineverseAlternateSlug(title, releaseYear) → string | null
+//       Returns the year-suffixed slug ("dhurandhar-the-revenge-2026")
+//       or null when the year is missing/invalid (so we never produce
+//       "-undefined" / "-0" / "-NaN" candidates).
+//   - getDownloadUrlCandidates(provider, options) → { label, url }[]
+//       Returns the primary URL first; if the provider is Cineverse AND
+//       a release year is supplied AND the alternate URL is different
+//       from the primary, appends a labeled alternate URL.
+//
+// No server-side fetching/proxying is performed. The browser iframe loads
+// the primary URL directly; the alternate is offered as a manual fallback.
+
+/**
+ * The Cineverse provider slug, as seeded in the migration. Used to detect
+ * "this provider is Cineverse" without inventing a separate flag column.
+ */
+export const CINEVERSE_PROVIDER_SLUG = 'cineverse';
+
+/**
+ * Compute the Cineverse alternate slug: the deterministic title slug with
+ * the release year appended.
+ *
+ *   cineverseAlternateSlug("Dhurandhar: The Revenge", 2026)
+ *     → "dhurandhar-the-revenge-2026"
+ *
+ *   cineverseAlternateSlug("Toxic: A Fairy Tale for Grown-ups", 2024)
+ *     → "toxic-a-fairy-tale-for-grown-ups-2024"
+ *
+ * Returns null when:
+ *   - the title is empty/whitespace (slug would be empty)
+ *   - the release year is missing, not a finite number, or non-positive
+ *
+ * The "null when no year" rule is critical: we must NEVER produce a
+ * "-undefined" / "-0" / "-NaN" candidate — those would generate broken
+ * URLs and confuse the user.
+ */
+export function cineverseAlternateSlug(title: string, releaseYear: number | undefined | null): string | null {
+  const slug = slugifyTitle(title ?? '');
+  if (!slug) return null;
+  // Strict year validation: must be a finite positive integer. We accept
+  // years as low as 1900 (anything older is almost certainly a data error
+  // and we'd rather skip the alternate than produce a misleading URL).
+  if (typeof releaseYear !== 'number' || !Number.isFinite(releaseYear)) return null;
+  const year = Math.trunc(releaseYear);
+  if (year < 1900) return null;
+  return `${slug}-${year}`;
+}
+
+/**
+ * A labeled download URL candidate. `label` is a short human-readable
+ * description used by the DownloadSheet's alternate-URL affordance.
+ */
+export type DownloadUrlCandidate = {
+  label: string;
+  url: string;
+};
+
+/**
+ * Compute all download URL candidates for a single provider given a media
+ * item.
+ *
+ * Behaviour:
+ *   - The PRIMARY candidate is always the output of buildDownloadUrl()
+ *     (the existing deterministic year-less URL for Cineverse, the
+ *     TMDB-id URL for every other provider).
+ *   - For the Cineverse provider ONLY, when a releaseYear is supplied
+ *     AND the alternate URL is different from the primary, an ALTERNATE
+ *     candidate is appended with label "Try with year".
+ *   - For every other provider, only the primary candidate is returned
+ *     (the array has length 1, or length 0 if buildDownloadUrl returns
+ *     null for the primary).
+ *
+ * The function never fetches anything server-side. The browser iframe
+ * loads the primary URL directly; the alternate is offered to the user
+ * as a manual fallback when Cineverse returns a blank/404 page.
+ *
+ * @returns An array of { label, url } candidates. Primary first; alternate
+ *          (if any) second. Empty if the provider cannot build any valid
+ *          URL for this item.
+ */
+export function getDownloadUrlCandidates(
+  provider: Pick<PublicDownloadProvider, 'slug' | 'supportsMovie' | 'supportsTv' | 'movieUrlTemplate' | 'tvUrlTemplate'>,
+  options: {
+    mediaType: DownloadMediaType;
+    tmdbId?: string;
+    title?: string;
+    season?: number;
+    episode?: number;
+    releaseYear?: number;
+  }
+): DownloadUrlCandidate[] {
+  const primaryUrl = buildDownloadUrl(provider, options);
+  if (!primaryUrl) return [];
+
+  const candidates: DownloadUrlCandidate[] = [{ label: 'Primary', url: primaryUrl }];
+
+  // Cineverse-only alternate: {titleSlug}-{releaseYear}. We detect
+  // Cineverse by its slug (no separate DB column needed).
+  if (provider.slug !== CINEVERSE_PROVIDER_SLUG) return candidates;
+  if (!options.title) return candidates;
+
+  const altSlug = cineverseAlternateSlug(options.title, options.releaseYear);
+  if (!altSlug) return candidates;
+
+  // Build the alternate URL by re-applying the template with the
+  // year-suffixed slug. We do this by calling applyDownloadTemplate
+  // with a title whose slugified form equals altSlug. The cleanest way
+  // is to inline the substitution against the same template the primary
+  // used, replacing {titleSlug} with altSlug.
+  const template = options.mediaType === 'movie' ? provider.movieUrlTemplate : provider.tvUrlTemplate;
+  if (!template || !template.includes('{titleSlug}')) return candidates;
+
+  // Substitute every placeholder EXCEPT {titleSlug} using the normal
+  // applyDownloadTemplate path, then manually swap {titleSlug} → altSlug.
+  // We do the manual swap because applyDownloadTemplate always slugifies
+  // the title itself — there's no way to inject a pre-computed slug
+  // through it without changing its public signature (which we don't
+  // want to do, to keep the change minimal).
+  const tmdbId = options.tmdbId?.trim();
+  const season = typeof options.season === 'number' && Number.isFinite(options.season) ? options.season : undefined;
+  const episode = typeof options.episode === 'number' && Number.isFinite(options.episode) ? options.episode : undefined;
+
+  // Validate required placeholders are present (mirror buildDownloadUrl's
+  // graceful-fail behavior).
+  if (template.includes('{tmdbId}') && !tmdbId) return candidates;
+  if (template.includes('{season}') && season === undefined) return candidates;
+  if (template.includes('{season2}') && season === undefined) return candidates;
+  if (template.includes('{episode}') && episode === undefined) return candidates;
+  if (template.includes('{episode2}') && episode === undefined) return candidates;
+
+  let altUrl = template;
+  altUrl = altUrl.split('{tmdbId}').join(encodePlaceholderValue(tmdbId ?? ''));
+  altUrl = altUrl.split('{titleSlug}').join(encodePlaceholderValue(altSlug));
+  if (template.includes('{season}')) altUrl = altUrl.split('{season}').join(encodePlaceholderValue(season as number));
+  if (template.includes('{season2}')) altUrl = altUrl.split('{season2}').join(encodePlaceholderValue(pad2(season as number)));
+  if (template.includes('{episode}')) altUrl = altUrl.split('{episode}').join(encodePlaceholderValue(episode as number));
+  if (template.includes('{episode2}')) altUrl = altUrl.split('{episode2}').join(encodePlaceholderValue(pad2(episode as number)));
+
+  // Validate HTTPS + dedupe against the primary (if the year-suffixed
+  // URL happens to equal the primary — e.g. the title already ends with
+  // the year — skip the alternate).
+  if (!/^https:\/\/[a-z0-9]/i.test(altUrl)) return candidates;
+  if (altUrl === primaryUrl) return candidates;
+
+  candidates.push({ label: 'Try with year', url: altUrl });
+  return candidates;
+}

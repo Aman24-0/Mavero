@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { AlertTriangle, ChevronRight, LoaderCircle, Play } from 'lucide-svelte';
+  import { AlertTriangle, ChevronRight, Download, LoaderCircle, Play } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
 
   type Episode = { id: string; number: number; season: number; title: string; overview?: string; airDate?: string; runtime?: string; still?: string };
@@ -13,6 +13,15 @@
   // Defaults to 'series'. For anime content loaded via /anime/ route,
   // pass 'anime' so episode links go to /watch/anime/{id}?season=1&episode=N.
   export let watchType: 'series' | 'anime' = 'series';
+  // Phase 2 downloader refinement: optional callback the episode card fires
+  // when the user clicks its Download button. DetailPage owns the
+  // DownloadSheet, so this callback just forwards the clicked episode's
+  // season + episode number to the parent. SeasonEpisodes does NOT
+  // duplicate provider filtering, URL building, or iframe logic — the
+  // existing downloader module stays the single source of truth.
+  // The callback is optional so existing callers that don't supply it
+  // (e.g. tests) keep working unchanged.
+  export let onDownload: ((season: number, episode: number) => void) | undefined = undefined;
   let selectedSeason = 1;
   let season: Season | undefined;
   let loading = true;
@@ -38,6 +47,16 @@
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
 
   onMount(() => { void loadSeason(1); });
+
+  // Episode-card Download click handler. Forwards the EXACT selected
+  // season + clicked episode number to the parent. The parent owns the
+  // DownloadSheet + the download target state. We do NOT use the parent's
+  // resume-episode state or fall back to S1E1 here — the user clicked a
+  // specific episode, so that exact episode is what the download URL
+  // must target.
+  function handleEpisodeDownload(episode: Episode) {
+    onDownload?.(selectedSeason, episode.number);
+  }
 </script>
 
 <section class="ep-section" aria-labelledby="ep-heading">
@@ -71,9 +90,22 @@
             <div class="ep-meta">{episode.runtime ?? 'Episode'}{#if episode.airDate}<span>·</span>{episode.airDate}{/if}</div>
             <p>{episode.overview || 'Episode details are not available yet.'}</p>
           </div>
-          <a class="ep-play" href={appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo)} aria-label={`Watch ${episode.title}`}>
-            <Play size={13} fill="currentColor" strokeWidth={0} />
-          </a>
+          <div class="ep-actions">
+            <a class="ep-play" href={appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo)} aria-label={`Watch ${episode.title}`}>
+              <Play size={13} fill="currentColor" strokeWidth={0} />
+            </a>
+            {#if onDownload}
+              <button
+                type="button"
+                class="ep-download"
+                onclick={() => handleEpisodeDownload(episode)}
+                aria-label={`Download ${episode.title}`}
+                title={`Download ${episode.title}`}
+              >
+                <Download size={12} />
+              </button>
+            {/if}
+          </div>
         </article>
       {/each}
     </div>
@@ -100,7 +132,7 @@
 
   .ep-list { padding-top: 6px; }
   .ep-row {
-    display: grid; grid-template-columns: 30px 140px minmax(0, 1fr) 32px; align-items: center; gap: 14px;
+    display: grid; grid-template-columns: 30px 140px minmax(0, 1fr) auto; align-items: center; gap: 14px;
     padding: 12px 8px; border-bottom: 1px solid rgba(255,255,255,.04); border-radius: 8px;
     transition: background 200ms cubic-bezier(.22,1,.36,1);
   }
@@ -110,22 +142,36 @@
   .ep-copy h3 { margin: 0 0 4px; color: #f5f5f5; font-size: .78rem; font-weight: 600; }
   .ep-meta { display: flex; gap: 6px; color: #555; font-size: .56rem; }
   .ep-copy p { max-width: 580px; margin: 6px 0 0; overflow: hidden; color: #77777f; font-size: .68rem; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+  /* Episode action cluster: Play + Download sit side-by-side so the
+     layout doesn't grow taller. Both buttons share the same circular
+     shape + 30px footprint; Download is visually secondary (outline
+     style, smaller icon) so Play remains the primary CTA. */
+  .ep-actions { display: inline-flex; align-items: center; gap: 8px; }
   .ep-play {
     display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
     color: #000; background: rgba(255,255,255,.9); box-shadow: 0 2px 8px rgba(0,0,0,.3);
-    text-decoration: none; transition: transform 200ms cubic-bezier(.22,1,.36,1);
+    text-decoration: none; transition: transform 200ms cubic-bezier(.22,1,.36,1), background 200ms ease;
   }
   .ep-play:hover { background: #fff; transform: scale(1.08); }
+  .ep-download {
+    display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.18); color: #f5f5f5; background: rgba(255,255,255,.04);
+    cursor: pointer; transition: transform 200ms cubic-bezier(.22,1,.36,1), background 200ms ease, border-color 200ms ease;
+  }
+  .ep-download:hover { transform: scale(1.08); background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.3); }
+  .ep-download:active { transform: scale(.96); }
+  .ep-download:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
 
   @media (max-width: 640px) {
     .ep-head { flex-direction: column; align-items: start; gap: 12px; }
     .season-tabs { max-width: 100%; width: 100%; }
-    .ep-row { grid-template-columns: 22px 84px minmax(0, 1fr) 28px; gap: 10px; padding-inline: 0; }
+    .ep-row { grid-template-columns: 22px 84px minmax(0, 1fr) auto; gap: 10px; padding-inline: 0; }
     .ep-row img, .ep-still { width: 84px; }
     .ep-copy p { display: none; }
-    .ep-play { width: 26px; height: 26px; }
+    .ep-play, .ep-download { width: 26px; height: 26px; }
+    .ep-actions { gap: 6px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .ep-row, .ep-play, .season-tabs button { transition: none; }
+    .ep-row, .ep-play, .ep-download, .season-tabs button { transition: none; }
   }
 </style>

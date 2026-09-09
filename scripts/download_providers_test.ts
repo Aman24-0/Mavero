@@ -690,9 +690,12 @@ console.log('\nFollow-up fix #3: single resolved URL for iframe + fallback');
 const sheetSrc = readFileSync(new URL('../src/lib/components/DownloadSheet.svelte', import.meta.url), 'utf8');
 
 // The iframe src and the fallback-bar href must BOTH reference the same
-// `iframeUrl` variable (which is the output of buildDownloadUrl).
-assert.match(sheetSrc, /src=\{iframeUrl\}/, 'iframe src uses iframeUrl');
-assert.match(sheetSrc, /<a href=\{iframeUrl\}[^>]*>[\s\S]*?Open[^<]*in a new tab/, 'fallback bar uses iframeUrl (the resolved URL)');
+// resolved URL value. In Phase 2 this value is `renderedIframeUrl`
+// (primary by default, alternate when the user toggles to the
+// year-suffixed Cineverse URL). Both iframe + fallback use this single
+// value so they can never diverge.
+assert.match(sheetSrc, /src=\{renderedIframeUrl\}/, 'iframe src uses renderedIframeUrl');
+assert.match(sheetSrc, /<a href=\{renderedIframeUrl\}[^>]*>[\s\S]*?Open in new tab/, 'fallback bar uses renderedIframeUrl (the resolved URL)');
 
 // The previous broken fallback that used raw template fragments must be
 // GONE. The old code did:
@@ -700,16 +703,17 @@ assert.match(sheetSrc, /<a href=\{iframeUrl\}[^>]*>[\s\S]*?Open[^<]*in a new tab
 assert.doesNotMatch(sheetSrc, /movieUrlTemplate\?\.replace/, 'broken raw-template fallback removed');
 assert.doesNotMatch(sheetSrc, /activeProvider\.movieUrlTemplate \|\| activeProvider\.tvUrlTemplate/, 'no raw template used as href');
 
-// When iframeUrl is null (buildDownloadUrl returned null), there must be
-// NO fallback link at all — just the "can't open this title" message.
-// The old code showed a fallback link with a broken (raw-template) href.
+// When iframeUrl is null (getDownloadUrlCandidates returned no candidates),
+// there must be NO fallback link at all — just the "can't open this title"
+// message. The old code showed a fallback link with a broken (raw-template)
+// href.
 assert.match(sheetSrc, /\{:else if iframeUrl === null\}[\s\S]*?This downloader can't open this title[\s\S]*?\{\/if\}/, 'null-URL branch shows "can\'t open" message');
 // Verify the null-URL branch does NOT contain an <a> link (no fallback
 // when there's no resolvable URL).
 const nullBranchMatch = sheetSrc.match(/\{:else if iframeUrl === null\}([\s\S]*?)\{:else\}/);
 assert.ok(nullBranchMatch, 'null-URL branch is delimited');
 assert.doesNotMatch(nullBranchMatch![1], /<a\s/, 'null-URL branch contains no <a> link (no broken fallback)');
-ok('DownloadSheet uses one resolved iframeUrl for iframe + fallback; null-URL branch has no broken link');
+ok('DownloadSheet uses one resolved renderedIframeUrl for iframe + fallback; null-URL branch has no broken link');
 
 // Sanity: buildDownloadUrl still produces the exact expected URLs (this
 // was already tested above, but re-verify with a Cineverse TV case to
@@ -724,5 +728,224 @@ const cineverseTvUrl = buildDownloadUrl(fixtures[4], {
 assert.equal(cineverseTvUrl, 'https://cineverse.modiplay.xyz/download/breaking-bad-s02e05', 'Cineverse TV URL is fully resolved (no raw {titleSlug} or {season2})');
 assert.ok(!cineverseTvUrl?.includes('{'), 'resolved URL contains no {placeholder} tokens');
 ok('buildDownloadUrl produces fully-resolved URLs (no raw placeholders) — fallback uses same value');
+
+// ============================================================
+// Phase 2 — TASK A: Cineverse alternate-URL candidate strategy
+// ============================================================
+console.log('\nPhase 2 Task A: Cineverse alternate-URL candidate strategy');
+
+// Import the new helpers.
+const { cineverseAlternateSlug, getDownloadUrlCandidates, CINEVERSE_PROVIDER_SLUG } = await import('../src/lib/shared/downloader.ts');
+
+// === Test case 1: "Dhurandhar: The Revenge" + 2026 ===
+//   primary slug:  dhurandhar-the-revenge
+//   alternate slug: dhurandhar-the-revenge-2026
+//   primary URL:    https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge
+//   alternate URL:  https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge-2026
+const dhurandharPrimarySlug = slugifyTitle('Dhurandhar: The Revenge');
+assert.equal(dhurandharPrimarySlug, 'dhurandhar-the-revenge', 'Dhurandhar primary slug');
+const dhurandharAltSlug = cineverseAlternateSlug('Dhurandhar: The Revenge', 2026);
+assert.equal(dhurandharAltSlug, 'dhurandhar-the-revenge-2026', 'Dhurandhar alternate slug (year-suffixed)');
+
+const dhurandharCandidates = getDownloadUrlCandidates(fixtures[4], {
+  mediaType: 'movie',
+  tmdbId: '1234567',
+  title: 'Dhurandhar: The Revenge',
+  releaseYear: 2026,
+});
+assert.equal(dhurandharCandidates.length, 2, 'Dhurandhar has 2 candidates (primary + alternate)');
+assert.equal(dhurandharCandidates[0].url, 'https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge', 'Dhurandhar primary URL');
+assert.equal(dhurandharCandidates[1].url, 'https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge-2026', 'Dhurandhar alternate URL (year-suffixed)');
+assert.equal(dhurandharCandidates[1].label, 'Try with year', 'Dhurandhar alternate label');
+ok('"Dhurandhar: The Revenge" + 2026 → primary slug + year-suffixed alternate');
+
+// === Test case 2: "Toxic: A Fairy Tale for Grown-ups" ===
+// Existing year-less behavior remains unchanged. The primary URL is the
+// year-less slug. When a release year is supplied, an alternate IS
+// offered (this is correct — the alternate is optional, the user can
+// ignore it). When NO release year is supplied, NO alternate is offered.
+const toxicPrimarySlug = slugifyTitle('Toxic: A Fairy Tale for Grown-ups');
+assert.equal(toxicPrimarySlug, 'toxic-a-fairy-tale-for-grown-ups', 'Toxic primary slug unchanged');
+const toxicCandidatesNoYear = getDownloadUrlCandidates(fixtures[4], {
+  mediaType: 'movie',
+  tmdbId: '1111111',
+  title: 'Toxic: A Fairy Tale for Grown-ups',
+  // releaseYear intentionally omitted
+});
+assert.equal(toxicCandidatesNoYear.length, 1, 'Toxic without year: only primary candidate (no alternate)');
+assert.equal(toxicCandidatesNoYear[0].url, 'https://cineverse.modiplay.xyz/download/toxic-a-fairy-tale-for-grown-ups', 'Toxic primary URL (year-less, unchanged)');
+ok('"Toxic: A Fairy Tale for Grown-ups" primary behavior unchanged (year-less slug still works)');
+
+// === Test case 3: "Spider-Man: Brand New Day" ===
+// Same as Toxic — primary year-less slug unchanged.
+const spidermanPrimarySlug = slugifyTitle('Spider-Man: Brand New Day');
+assert.equal(spidermanPrimarySlug, 'spider-man-brand-new-day', 'Spider-Man primary slug unchanged');
+const spidermanCandidatesNoYear = getDownloadUrlCandidates(fixtures[4], {
+  mediaType: 'movie',
+  tmdbId: '2222222',
+  title: 'Spider-Man: Brand New Day',
+});
+assert.equal(spidermanCandidatesNoYear.length, 1, 'Spider-Man without year: only primary candidate');
+assert.equal(spidermanCandidatesNoYear[0].url, 'https://cineverse.modiplay.xyz/download/spider-man-brand-new-day', 'Spider-Man primary URL (year-less, unchanged)');
+ok('"Spider-Man: Brand New Day" primary behavior unchanged');
+
+// === Test case 4: existing Cineverse SERIES slug behavior unchanged ===
+// "Breaking Bad" S02E05 → primary URL is the year-less slug + s02e05.
+// No alternate is offered when no releaseYear is supplied.
+const breakingBadCandidates = getDownloadUrlCandidates(fixtures[4], {
+  mediaType: 'tv',
+  tmdbId: '6263850',
+  title: 'Breaking Bad',
+  season: 2,
+  episode: 5,
+});
+assert.equal(breakingBadCandidates.length, 1, 'Breaking Bad (no year): only primary candidate');
+assert.equal(breakingBadCandidates[0].url, 'https://cineverse.modiplay.xyz/download/breaking-bad-s02e05', 'Breaking Bad primary TV URL unchanged');
+ok('existing Cineverse series slug behavior unchanged (year-less + s02e05)');
+
+// === Test case 5: no year → no invalid "-undefined" / "-0" / "-NaN" candidate ===
+// This is the critical safety check. cineverseAlternateSlug must return
+// null for: missing year, undefined, null, NaN, Infinity, 0, negative.
+assert.equal(cineverseAlternateSlug('Dhurandhar: The Revenge', undefined), null, 'undefined year → null');
+assert.equal(cineverseAlternateSlug('Dhurandhar: The Revenge', null as unknown as undefined), null, 'null year → null');
+assert.equal(cineverseAlternateSlug('Dhurandhar: The Revenge', NaN), null, 'NaN year → null');
+assert.equal(cineverseAlternateSlug('Dhurandhar: The Revenge', Infinity), null, 'Infinity year → null');
+assert.equal(cineverseAlternateSlug('Dhurandhar: The Revenge', 0), null, 'year 0 → null');
+assert.equal(cineverseAlternateSlug('Dhurandhar: The Revenge', -2026), null, 'negative year → null');
+assert.equal(cineverseAlternateSlug('Dhurandhar: The Revenge', 1899), null, 'year < 1900 → null');
+assert.equal(cineverseAlternateSlug('', 2026), null, 'empty title → null');
+assert.equal(cineverseAlternateSlug('   ', 2026), null, 'whitespace-only title → null');
+// And NO invalid "-undefined" / "-0" / "-NaN" suffix leaks into the URL.
+const noYearCandidates = getDownloadUrlCandidates(fixtures[4], {
+  mediaType: 'movie',
+  tmdbId: '1234567',
+  title: 'Dhurandhar: The Revenge',
+  // releaseYear intentionally omitted
+});
+assert.equal(noYearCandidates.length, 1, 'no year → only primary candidate');
+assert.ok(!noYearCandidates[0].url.includes('-undefined'), 'no "-undefined" in URL');
+assert.ok(!noYearCandidates[0].url.includes('-0'), 'no "-0" in URL');
+assert.ok(!noYearCandidates[0].url.includes('-NaN'), 'no "-NaN" in URL');
+assert.ok(!noYearCandidates[0].url.includes('-null'), 'no "-null" in URL');
+ok('no year → no invalid "-undefined" / "-0" / "-NaN" candidate (critical safety)');
+
+// === Test case 6: other providers are NOT affected ===
+// A non-Cineverse provider (e.g. 02movie) must return only the primary
+// candidate, even when a releaseYear is supplied. The alternate-URL
+// logic is Cineverse-only.
+const twoMovieCandidates = getDownloadUrlCandidates(fixtures[0], {
+  mediaType: 'movie',
+  tmdbId: '6263850',
+  title: 'Deadpool & Wolverine',
+  releaseYear: 2024,
+});
+assert.equal(twoMovieCandidates.length, 1, '02movie: only primary candidate (alternate is Cineverse-only)');
+assert.equal(twoMovieCandidates[0].url, 'https://02moviedownloader.site/api/download/movie/6263850', '02movie primary URL unchanged');
+ok('other providers are unaffected by the Cineverse alternate-URL logic');
+
+// === Test case 7: CINEVERSE_PROVIDER_SLUG constant matches the seeded slug ===
+assert.equal(CINEVERSE_PROVIDER_SLUG, 'cineverse', 'CINEVERSE_PROVIDER_SLUG constant');
+ok('CINEVERSE_PROVIDER_SLUG constant = "cineverse" (matches the seeded provider)');
+
+// === Test case 8: DownloadSheet exposes the alternate-URL toggle ===
+// The sheet must render a "Try with year" button when an alternate URL
+// exists, and the toggle must swap the iframe src to the alternate.
+assert.match(sheetSrc, /Try with year/, 'DownloadSheet renders a "Try with year" toggle');
+assert.match(sheetSrc, /toggleAlternate/, 'DownloadSheet has a toggleAlternate handler');
+assert.match(sheetSrc, /useAlternate/, 'DownloadSheet tracks useAlternate state');
+assert.match(sheetSrc, /releaseYear/, 'DownloadSheet accepts a releaseYear prop');
+ok('DownloadSheet exposes the Cineverse alternate-URL toggle');
+
+// ============================================================
+// Phase 2 — TASK B: TV/anime-series Download moved into episode cards
+// ============================================================
+console.log('\nPhase 2 Task B: TV/anime-series Download moved into episode cards');
+
+const detailPageSrc = readFileSync(new URL('../src/lib/components/DetailPage.svelte', import.meta.url), 'utf8');
+const seasonEpisodesSrc = readFileSync(new URL('../src/lib/components/SeasonEpisodes.svelte', import.meta.url), 'utf8');
+
+// === Test case 1: movie download still works ===
+// DetailPage must still render the top-level Download button for movies.
+assert.match(detailPageSrc, /\{#if showDownloadButton\}[\s\S]*?<button class="download-btn"/, 'movie DetailPage still renders top-level Download button');
+// And openDownloadSheet must clear the target season/episode so the
+// sheet uses the movie URL.
+assert.match(detailPageSrc, /function openDownloadSheet\(\) \{[\s\S]*?downloadTargetSeason = undefined;[\s\S]*?downloadTargetEpisode = undefined;/, 'openDownloadSheet clears target season/episode (movie path)');
+ok('movie download still works (top-level Download button, no season/episode)');
+
+// === Test cases 2-4: TV episode S1E1, S1E2, S2E1 ===
+// The episode-card Download callback must pass selectedSeason + episode.number.
+// SeasonEpisodes must call onDownload?.(selectedSeason, episode.number).
+assert.match(seasonEpisodesSrc, /export let onDownload/, 'SeasonEpisodes declares onDownload prop');
+assert.match(seasonEpisodesSrc, /function handleEpisodeDownload[\s\S]*?onDownload\?\.\(selectedSeason, episode\.number\)/, 'SeasonEpisodes calls onDownload(selectedSeason, episode.number)');
+// DetailPage must define openEpisodeDownloadSheet(season, episode).
+assert.match(detailPageSrc, /function openEpisodeDownloadSheet\(season: number, episode: number\) \{[\s\S]*?downloadTargetSeason = season;[\s\S]*?downloadTargetEpisode = episode;[\s\S]*?downloadSheetOpen = true;/, 'DetailPage openEpisodeDownloadSheet sets target season + episode + opens sheet');
+// DetailPage must wire the callback to SeasonEpisodes.
+assert.match(detailPageSrc, /<SeasonEpisodes[\s\S]*?onDownload=\{[^}]*openEpisodeDownloadSheet[^}]*\}/, 'DetailPage wires onDownload={openEpisodeDownloadSheet} to SeasonEpisodes');
+ok('TV episode S1E1/S1E2/S2E1 download path: SeasonEpisodes onDownload → DetailPage openEpisodeDownloadSheet → DownloadSheet with exact season + episode');
+
+// === Test case 5: anime series episode download ===
+// Anime series use the SAME SeasonEpisodes component (the existing
+// condition `type === 'series' || (item.isAnime && item.animeFormat !== 'movie')`
+// is preserved). The onDownload callback is wired unconditionally for
+// both series + anime series.
+assert.match(detailPageSrc, /\{#if type === 'series' \|\| \(item\.isAnime && item\.animeFormat !== 'movie'\)\}[\s\S]*?<SeasonEpisodes[\s\S]*?onDownload=/, 'anime series uses the same SeasonEpisodes + onDownload wiring');
+ok('anime series episode download uses the same path (no separate implementation)');
+
+// === Test case 6: movie still uses movie URL ===
+// downloadMediaType = 'movie' for movies → the sheet uses movieUrlTemplate.
+// Verify the mediaType mapping is unchanged.
+assert.match(detailPageSrc, /\$: downloadMediaType = \(type === 'movie' \|\| \(item\.isAnime && item\.animeFormat === 'movie'\)\) \? 'movie' : 'tv'/, 'downloadMediaType mapping unchanged (movie → movie, series → tv, anime movie → movie, anime series → tv)');
+ok('movie still uses movie URL (mediaType mapping unchanged)');
+
+// === Test case 7: top-level TV Download button is no longer rendered ===
+// showDownloadButton must be gated by isMovieLike so TV/anime series
+// don't get a top-level Download button.
+assert.match(detailPageSrc, /\$: isMovieLike = downloadMediaType === 'movie';/, 'isMovieLike derived (movies only)');
+assert.match(detailPageSrc, /\$: showDownloadButton = isMovieLike && downloadProvidersLoaded && visibleDownloadProviders\.length > 0;/, 'showDownloadButton gated by isMovieLike (movies only)');
+ok('top-level TV/anime-series Download button is no longer rendered');
+
+// === Test case 8: episode Download callback receives selectedSeason + episode.number ===
+// (Already covered by test case 2-4 above, but verify explicitly.)
+assert.match(seasonEpisodesSrc, /onDownload\?\.\(selectedSeason, episode\.number\)/, 'onDownload callback receives (selectedSeason, episode.number)');
+// And the callback does NOT use resumeEpisode or fall back to S1E1.
+assert.doesNotMatch(seasonEpisodesSrc, /resumeEpisode/, 'SeasonEpisodes does not reference resumeEpisode');
+assert.doesNotMatch(seasonEpisodesSrc, /season = 1\b.*episode = 1/, 'SeasonEpisodes does not fall back to S1E1');
+ok('episode Download callback receives selectedSeason + episode.number (no resumeEpisode, no S1E1 fallback)');
+
+// === Test case 9: Cineverse Dhurandhar year candidate ===
+// (Already verified above in Task A test case 1, but re-assert here for
+// the regression-safety checklist.)
+assert.equal(
+  getDownloadUrlCandidates(fixtures[4], { mediaType: 'movie', tmdbId: '1234567', title: 'Dhurandhar: The Revenge', releaseYear: 2026 })[1]?.url,
+  'https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge-2026',
+  'Cineverse Dhurandhar year candidate = dhurandhar-the-revenge-2026',
+);
+ok('Cineverse Dhurandhar year candidate = dhurandhar-the-revenge-2026');
+
+// === Test case 10: existing year-less Cineverse behavior remains intact ===
+// (Already verified above in Task A test cases 2-4, but re-assert here.)
+assert.equal(
+  getDownloadUrlCandidates(fixtures[4], { mediaType: 'movie', tmdbId: '1111111', title: 'Toxic: A Fairy Tale for Grown-ups' })[0].url,
+  'https://cineverse.modiplay.xyz/download/toxic-a-fairy-tale-for-grown-ups',
+  'Toxic year-less Cineverse URL intact',
+);
+assert.equal(
+  getDownloadUrlCandidates(fixtures[4], { mediaType: 'tv', tmdbId: '6263850', title: 'Breaking Bad', season: 2, episode: 5 })[0].url,
+  'https://cineverse.modiplay.xyz/download/breaking-bad-s02e05',
+  'Breaking Bad year-less Cineverse TV URL intact',
+);
+ok('existing year-less Cineverse behavior remains intact (Toxic + Breaking Bad)');
+
+// === Regression: episode card UI ===
+// The episode Download button must:
+//   - be visually consistent with the existing circular Play button
+//   - have aria-label="Download {episode.title}"
+//   - not make the episode card significantly taller (both buttons in
+//     a side-by-side .ep-actions cluster)
+assert.match(seasonEpisodesSrc, /class="ep-download"/, 'episode Download button has class ep-download');
+assert.match(seasonEpisodesSrc, /aria-label=\{`Download \$\{episode\.title\}`\}/, 'episode Download button has aria-label="Download {episode.title}"');
+assert.match(seasonEpisodesSrc, /\.ep-actions \{ display: inline-flex[\s\S]*gap: 8px/, 'ep-actions cluster lays out Play + Download side-by-side');
+assert.match(seasonEpisodesSrc, /\.ep-download \{[\s\S]*width: 30px; height: 30px; border-radius: 50%/, 'ep-download matches Play button footprint (30px circle)');
+ok('episode Download button: circular, aria-labelled, side-by-side with Play (no height increase)');
 
 console.log(`\nDownload provider tests passed (${passed} check groups).`);

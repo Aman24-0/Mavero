@@ -41,6 +41,16 @@
   let downloadProvidersLoaded = false;
   let downloadProvidersLoading = false;
   let downloadProvidersFailed = false;
+  // Phase 2 downloader refinement: the episode-card download target.
+  // When the user clicks an episode's Download button, SeasonEpisodes
+  // fires onDownload(season, episode) which sets these two values + opens
+  // the existing DownloadSheet. They are SEPARATE from `resumeEpisode`
+  // (which drives the main Play link's "Continue S1E1" behavior) so the
+  // download URL always targets the EXACT episode the user clicked —
+  // never a resume fallback or S1E1 default.
+  // For movies, these stay undefined (the sheet uses the movie URL).
+  let downloadTargetSeason: number | undefined = undefined;
+  let downloadTargetEpisode: number | undefined = undefined;
   const statusOptions = [
     { key: 'watching', label: 'Watching', icon: '▶', description: 'Keep this in your current rotation.' },
     { key: 'planned', label: 'Planned', icon: '＋', description: 'Save it for a future night.' },
@@ -205,12 +215,22 @@
 
   // ----- Download integration -----
   //
-  // The Download button is shown beside Play on every authorized Movie /
-  // Series / Anime DetailPage. Adult content is gated by the existing SSR
-  // load (the load throws 404 for unauthorized adult items), so the
-  // DetailPage only ever renders for items the user is authorized to see —
-  // no extra adult guard is needed here. Adult authorization, classifier,
-  // and routing are NOT modified.
+  // Phase 2 refinement:
+  //   - MOVIES: keep the existing main DetailPage Download button beside
+  //     Play. The sheet opens with mediaType='movie' and no season/episode.
+  //   - TV SERIES + ANIME SERIES: REMOVE the main Download button. The
+  //     Download action moves into each episode card (see SeasonEpisodes's
+  //     onDownload callback). The sheet opens with the EXACT clicked
+  //     episode's season + episode — never a resume fallback or S1E1
+  //     default.
+  //   - ANIME MOVIES: keep the main DetailPage Download button (uses the
+  //     movie URL, same as a regular movie).
+  //
+  // Adult content is gated by the existing SSR load (the load throws 404
+  // for unauthorized adult items), so the DetailPage only ever renders
+  // for items the user is authorized to see — no extra adult guard is
+  // needed here. Adult authorization, classifier, and routing are NOT
+  // modified.
   //
   // Media type mapping (per spec):
   //   - movie                  -> 'movie'
@@ -221,36 +241,23 @@
   // fields preserved by the existing anime routing.
   $: downloadMediaType = (type === 'movie' || (item.isAnime && item.animeFormat === 'movie')) ? 'movie' : 'tv' as DownloadMediaType;
 
-  // Season/episode selection for TV downloads (per spec, in priority order):
-  //   1. season/episode already present in the DetailPage URL query
-  //   2. existing resumeEpisode from progress
-  //   3. fallback to S1E1
-  // We do NOT modify SeasonEpisodes architecture — we just read its outputs
-  // (URL params + resumeEpisode) here.
-  $: downloadSeason = (() => {
-    const urlSeason = Number(page.url.searchParams.get('season') || '');
-    if (Number.isFinite(urlSeason) && urlSeason > 0) return urlSeason;
-    if (resumeEpisode?.season) return resumeEpisode.season;
-    return 1;
-  })();
-  $: downloadEpisode = (() => {
-    const urlEpisode = Number(page.url.searchParams.get('episode') || '');
-    if (Number.isFinite(urlEpisode) && urlEpisode > 0) return urlEpisode;
-    if (resumeEpisode?.episode) return resumeEpisode.episode;
-    return 1;
-  })();
+  // The top-level Download button beside Play is now MOVIES-ONLY.
+  // TV/anime series get a Download button on each episode card instead.
+  // This avoids the previous bug where the top-level TV Download button
+  // could only resolve one episode (the resume/S1E1 fallback).
+  $: isMovieLike = downloadMediaType === 'movie';
 
   // Filtered providers for the current media type. We hide the Download
   // button entirely if no enabled provider supports the current type (so
   // the user is never offered an empty sheet).
   $: visibleDownloadProviders = filterProvidersByMediaType(downloadProviders, downloadMediaType);
-  // The Download button is shown ONLY after the prefetch has completed and
-  // at least one provider supports the current media type. While the
-  // prefetch is in flight (or has failed), the button stays hidden — this
-  // avoids a flicker of an un-clickable button. The prefetch is kicked off
-  // in onMount (see above), so the button becomes reachable as soon as the
-  // config arrives; the user never has to click to "discover" the button.
-  $: showDownloadButton = downloadProvidersLoaded && visibleDownloadProviders.length > 0;
+  // The top-level Download button is shown ONLY for movies, ONLY after
+  // the prefetch has completed, and ONLY when at least one provider
+  // supports the movie type. For TV/anime series, the per-episode
+  // Download buttons in SeasonEpisodes are gated by the same
+  // visibleDownloadProviders list (the parent passes it through via the
+  // onDownload callback being defined).
+  $: showDownloadButton = isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0;
 
   // TMDB id resolution. The DetailPage's `item.id` is the content id used
   // across the app — for TMDB-backed content this IS the TMDB id. For
@@ -261,6 +268,12 @@
   // We prefer the explicit externalIds.tmdb, fall back to item.id, and
   // finally to '' (the sheet will show its "can't open this title" state).
   $: downloadTmdbId = item.externalIds?.tmdb || item.id || '';
+
+  // Release year for the Cineverse alternate-URL candidate. item.year is
+  // already resolved by the existing content presenter (TMDB release_year
+  // for movies, first-air-year for series). Passed through to the sheet
+  // — other providers ignore it.
+  $: downloadReleaseYear = item.year || undefined;
 
   async function loadDownloadProviders() {
     if (downloadProvidersLoaded || downloadProvidersLoading) return;
@@ -284,6 +297,8 @@
     }
   }
 
+  // Open the sheet for a MOVIE download. No season/episode — the sheet
+  // uses the movie URL template. The target state stays undefined.
   function openDownloadSheet() {
     haptic('light');
     // The downloader config is prefetched on mount, so by the time the
@@ -294,10 +309,32 @@
     if (!downloadProvidersLoaded && !downloadProvidersLoading) {
       void loadDownloadProviders();
     }
+    downloadTargetSeason = undefined;
+    downloadTargetEpisode = undefined;
     downloadSheetOpen = true;
   }
+
+  // Open the sheet for an EPISODE download. Called from SeasonEpisodes's
+  // onDownload callback with the EXACT clicked episode's season + number.
+  // We do NOT consult resumeEpisode or fall back to S1E1 — the user
+  // clicked a specific episode, so that's what the download URL targets.
+  function openEpisodeDownloadSheet(season: number, episode: number) {
+    haptic('light');
+    if (!downloadProvidersLoaded && !downloadProvidersLoading) {
+      void loadDownloadProviders();
+    }
+    downloadTargetSeason = season;
+    downloadTargetEpisode = episode;
+    downloadSheetOpen = true;
+  }
+
   function closeDownloadSheet() {
     downloadSheetOpen = false;
+    // Leave downloadTargetSeason/Episode alone so re-opening the sheet
+    // (e.g. by clicking another episode) sees the last values until the
+    // new onDownload call overwrites them. The openDownloadSheet and
+    // openEpisodeDownloadSheet functions always set both values before
+    // flipping downloadSheetOpen=true, so there's no stale-state risk.
   }
 
 </script>
@@ -429,7 +466,12 @@
 
     <!-- Series: seasons + episodes (includes anime series via isAnime + animeFormat) -->
     {#if type === 'series' || (item.isAnime && item.animeFormat !== 'movie')}
-      <SeasonEpisodes id={item.id} seasonCount={item.seasons ?? 1} watchType={type === 'anime' ? 'anime' : 'series'} />
+      <SeasonEpisodes
+        id={item.id}
+        seasonCount={item.seasons ?? 1}
+        watchType={type === 'anime' ? 'anime' : 'series'}
+        onDownload={downloadProvidersLoaded && visibleDownloadProviders.length > 0 ? openEpisodeDownloadSheet : undefined}
+      />
     {/if}
 
     <!-- Recommendations -->
@@ -467,7 +509,11 @@
 
 <!-- Download sheet (modal bottom-sheet). The sheet is rendered always-on
      (with open=false) so the iframe lifecycle is owned by the sheet itself;
-     the parent only flips `open` and supplies the media context. -->
+     the parent only flips `open` and supplies the media context. For
+     movies, season/episode are undefined (the sheet uses the movie URL).
+     For TV/anime series, the values come from downloadTargetSeason/
+     downloadTargetEpisode which are set by openEpisodeDownloadSheet when
+     the user clicks an episode card's Download button. -->
 <DownloadSheet
   open={downloadSheetOpen}
   title={item.title}
@@ -475,8 +521,9 @@
   selectedProviderId={null}
   mediaType={downloadMediaType}
   tmdbId={downloadTmdbId}
-  season={downloadMediaType === 'tv' ? downloadSeason : undefined}
-  episode={downloadMediaType === 'tv' ? downloadEpisode : undefined}
+  season={downloadMediaType === 'tv' ? downloadTargetSeason : undefined}
+  episode={downloadMediaType === 'tv' ? downloadTargetEpisode : undefined}
+  releaseYear={downloadReleaseYear}
   onClose={closeDownloadSheet}
 />
 
