@@ -370,7 +370,7 @@ async function getMovieWatchProviders(movieId: number, region: string): Promise<
   return value ?? [];
 }
 
-async function loadUpcomingMovies(year: number, month: number, region: string, language: string = 'all'): Promise<UpcomingItem[]> {
+async function loadUpcomingMovies(year: number, month: number, region: string, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
   // Phase 6: the Upcoming module previously sent NO adult filters at all.
   // /discover/movie supports the TRANSITIONAL watch-provider exclusion
   // (documented Phase 3 movie-side mechanism — same as every other movie
@@ -393,7 +393,10 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
   // Hard cap on the deduped candidates entering the per-movie enrichment
   // N+1 (bounded N+1 invariant; see UPCOMING_MOVIE_MAX_CANDIDATES — the
   // cap covers the whole bounded page walk and never truncates it).
-  const candidates = [...rowsById.values()].slice(0, UPCOMING_MOVIE_MAX_CANDIDATES);
+  // When maxCandidates is provided (pagination page 1), use the smaller
+  // bound so page 1 does NOT process the full month.
+  const candidateCap = maxCandidates !== undefined ? Math.min(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES) : UPCOMING_MOVIE_MAX_CANDIDATES;
+  const candidates = [...rowsById.values()].slice(0, candidateCap);
   const { startMs, endMs } = monthBounds(year, month);
 
   // CineLog model — DISCOVERY IS THE TRUTH for existence + date. Every
@@ -764,7 +767,7 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
   });
 }
 
-async function loadUpcomingSeries(year: number, month: number, region: string, language: string = 'all'): Promise<UpcomingItem[]> {
+async function loadUpcomingSeries(year: number, month: number, region: string, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
   const { gte, lte } = monthBounds(year, month);
   // Phase 6: the Upcoming series source previously sent NO adult filters.
   // /discover/tv supports the canonical Phase 3 mechanism — exclude VERIFIED
@@ -781,7 +784,7 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
   // serial curation policy version and the season-resolution model
   // version — so a policy or semantics bump re-keys instead of serving
   // stale-era entries.
-  const key = `upcoming:series:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_TV_ELIGIBILITY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}`;
+  const key = `upcoming:series:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_TV_ELIGIBILITY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}:${maxCandidates ?? 'full'}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: DISCOVER candidate series with episodes airing in the
     // month (CineLog TV model — DISCOVERY IS PURELY SCHEDULE + LANGUAGE
@@ -846,10 +849,13 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
     // costs a detail + season + provider lookup). ANIME CANDIDATES
     // (genre 16 + ja) are rejected BEFORE the cap so anime never
     // consumes Series slots and never reaches expensive processing.
+    // When maxCandidates is provided (pagination page 1), use the
+    // smaller bound so page 1 does NOT process the full month.
+    const candidateCap = maxCandidates !== undefined ? Math.min(maxCandidates, UPCOMING_TV_MAX_CANDIDATES) : UPCOMING_TV_MAX_CANDIDATES;
     const scopedCandidates = candidates
       .filter((s) => s.id && (s.name || s.original_name))
       .filter((s) => !isAnimeCandidate(s.genre_ids, s.original_language))
-      .slice(0, UPCOMING_TV_MAX_CANDIDATES);
+      .slice(0, candidateCap);
     // Step 2: for each candidate, fetch detail + season + episodes to
     // find ALL episodes airing in the month (one UpcomingItem per
     // episode). Concurrency-limited to avoid N+1 request explosions.
@@ -887,7 +893,7 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
 //
 // IMPORTANT: this replaces the previous AniList AiringSchedule source.
 // AniList is no longer used — anime is now TMDB content only.
-export async function loadUpcomingAnime(year: number, month: number, region: string = DEFAULT_REGION, language: string = 'all'): Promise<UpcomingItem[]> {
+export async function loadUpcomingAnime(year: number, month: number, region: string = DEFAULT_REGION, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
   // Phase F.1 — anime language semantics: anime is intrinsically
   // original_language='ja' (Mavero's TMDB-only anime definition). When a
   // language OTHER than ja is selected, no anime can match — return an
@@ -912,7 +918,7 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
   // dimension (Phase F.1) so language-era result sets never share
   // entries.
   const networkExclusion = adultNetworkExclusionValue();
-  const key = `upcoming:anime:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_SEASON_MODEL_KEY}`;
+  const key = `upcoming:anime:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_SEASON_MODEL_KEY}:${maxCandidates ?? 'full'}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: discover anime TV series with episodes airing in the month.
     // TMDB filters server-side by Animation genre (16) + ja language.
@@ -928,12 +934,13 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
       ...(networkExclusion ? { without_networks: networkExclusion } : {}),
       page: 1
     });
+    const animeCap = maxCandidates !== undefined ? Math.min(maxCandidates, 20) : 20;
     const candidates = (result.results ?? [])
       .filter((s) => s.id && (s.name || s.original_name))
       // Defense in depth: TMDB filters server-side, but ensure the
       // candidate actually looks like anime (genre 16 in genre_ids).
       .filter((s) => Array.isArray(s.genre_ids) ? s.genre_ids.includes(ANIME_GENRE_ID) : true)
-      .slice(0, 20);
+      .slice(0, animeCap);
     // Step 2: for each candidate, fetch detail + season + episodes via
     // the shared buildSeriesItems path. itemType='anime' so the emitted
     // UpcomingItems have type='anime' and id='anime-{tmdbId}-s{S}e{E}'.
@@ -958,6 +965,20 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
 
 export const UPCOMING_PAGE_SIZE = 24;
 
+// Bounded candidate caps for page 1 (the initial SSR load).
+// These are SMALLER than the full-month caps (UPCOMING_MOVIE_MAX_CANDIDATES=200,
+// UPCOMING_TV_MAX_CANDIDATES=80, anime=20) so page 1 does NOT process
+// the full month before returning. The values are tuned to produce
+// enough final Upcoming EVENT records for one ~24-item page:
+//   - movies: 30 candidates → ~30 events (1 movie = 1 event, most survive)
+//   - series: 15 candidates → ~15-30 events (1 series = 1+ episodes)
+//   - anime: 10 candidates → ~10-20 events
+// Merged chronologically, the first 24 are returned. Page 2+ uses the
+// full caps (the per-item caches from page 1 make the full load fast).
+const PAGE_1_MOVIE_CANDIDATES = 30;
+const PAGE_1_SERIES_CANDIDATES = 15;
+const PAGE_1_ANIME_CANDIDATES = 10;
+
 export type UpcomingPageResult = {
   items: UpcomingItem[];
   filters: UpcomingFilters;
@@ -969,31 +990,92 @@ export type UpcomingPageResult = {
 };
 
 /**
- * Load one page of Upcoming items with real server-side pagination.
+ * Load one page of Upcoming items with REAL server-side pagination.
  *
- * Page 1 (the initial SSR load) processes a BOUNDED subset of upstream
- * candidates (reduced movie/TV/anime candidate caps) so the first page
- * is available without processing the full month. Subsequent pages
- * leverage the cached full result set.
+ * CRITICAL: This function does NOT call loadUpcoming(). It calls the
+ * individual source functions (loadUpcomingMovies, loadUpcomingSeries,
+ * loadUpcomingAnime) directly, with BOUNDED candidate caps for page 1
+ * so the first page does NOT process the full month.
  *
- * The full result is cached per filter combination (month/year/type/
- * language), so page 2+ return instantly without re-fetching from TMDB.
- * Page 1 does materially less upstream work than the full-month load.
+ * Page 1: processes a bounded subset of candidates (30 movies + 15
+ * series + 10 anime — enough for ~24 merged events). The per-item
+ * caches (release_dates, providers, season episodes) are populated
+ * during this bounded pass, so page 2+ benefit from them.
+ *
+ * Page 2+: calls the source functions with the FULL candidate caps.
+ * The source-level caches (10-minute TTL) cache the full result, so
+ * page 2+ return from cache without re-fetching from TMDB. The per-item
+ * caches from page 1 also speed up the full-candidate enrichment.
+ *
+ * The merge is chronological: all source events are combined and sorted
+ * by timestamp, then the requested page slice is returned.
  */
 export async function loadUpcomingPage(filters: UpcomingFilters, page: number = 1): Promise<UpcomingPageResult> {
   const pageSize = UPCOMING_PAGE_SIZE;
+  const region = DEFAULT_REGION;
+  const language = parseUpcomingLanguage(filters.language ?? 'all');
+  const errors: string[] = [];
+  const allItems: UpcomingItem[] = [];
+
+  // Page 1 uses bounded candidate caps; page 2+ uses full caps.
+  const isPage1 = page === 1;
+  const movieMax = isPage1 ? PAGE_1_MOVIE_CANDIDATES : undefined;
+  const seriesMax = isPage1 ? PAGE_1_SERIES_CANDIDATES : undefined;
+  const animeMax = isPage1 ? PAGE_1_ANIME_CANDIDATES : undefined;
+
+  const wantMovies = filters.type === 'all' || filters.type === 'movie';
+  const wantSeries = filters.type === 'all' || filters.type === 'series';
+  const wantAnime = filters.type === 'all' || filters.type === 'anime';
+
+  const tasks: Array<Promise<void>> = [];
+
+  if (wantMovies) {
+    tasks.push(
+      loadUpcomingMovies(filters.year, filters.month, region, language, movieMax)
+        .then((m) => { allItems.push(...m); })
+        .catch((err) => { errors.push(`Movies: ${safeMessage(err)}`); })
+    );
+  }
+  if (wantSeries) {
+    tasks.push(
+      loadUpcomingSeries(filters.year, filters.month, region, language, seriesMax)
+        .then((s) => { allItems.push(...s); })
+        .catch((err) => { errors.push(`Series: ${safeMessage(err)}`); })
+    );
+  }
+  if (wantAnime) {
+    tasks.push(
+      loadUpcomingAnime(filters.year, filters.month, region, language, animeMax)
+        .then((a) => { allItems.push(...a); })
+        .catch((err) => { errors.push(`Anime: ${safeMessage(err)}`); })
+    );
+  }
+
+  await Promise.all(tasks);
+
+  // Sort all items chronologically.
+  allItems.sort((a, b) => a.timestamp - b.timestamp);
+
+  // Deduplicate by event ID (defensive — should never duplicate within
+  // a single source, but the merge could theoretically produce dups
+  // if a source returns the same event twice).
+  const seen = new Set<string>();
+  const deduped = allItems.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+
   const startIndex = (page - 1) * pageSize;
-  // The full result is cached. Page 1 may use reduced candidate caps
-  // for speed; subsequent pages use the full cached result.
-  const fullResult = await loadUpcoming(filters);
   const endIndex = startIndex + pageSize;
-  const pageItems = fullResult.items.slice(startIndex, endIndex);
-  const hasNextPage = endIndex < fullResult.items.length;
+  const pageItems = deduped.slice(startIndex, endIndex);
+  const hasNextPage = endIndex < deduped.length;
+
   return {
     items: pageItems,
-    filters: fullResult.filters,
-    errors: fullResult.errors,
-    errorMessage: fullResult.errorMessage,
+    filters,
+    errors,
+    errorMessage: deduped.length === 0 && errors.length > 0 ? 'Upcoming releases are temporarily unavailable. Please try again.' : undefined,
     page,
     pageSize,
     hasNextPage
@@ -1069,6 +1151,9 @@ export const upcomingInternals = {
   loadUpcomingPage,
   loadUpcoming,
   UPCOMING_PAGE_SIZE,
+  PAGE_1_MOVIE_CANDIDATES,
+  PAGE_1_SERIES_CANDIDATES,
+  PAGE_1_ANIME_CANDIDATES,
   getTvWatchProviders,
   getTvSeasonWatchProviders,
   getMovieIndiaReleaseDates,

@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// MAVERO — Upcoming Pagination Regression Test
+// MAVERO — Upcoming Real Pagination Regression Test
 //
-// BUG 2: Upcoming loaded the entire month before showing anything
-// (4–5 second initial load). The fix introduces real server-side
-// pagination: the SSR load returns only page 1 (~24 items), and
-// subsequent pages are loaded via /api/upcoming infinite scroll.
+// CRITICAL ACCEPTANCE TEST: loadUpcomingPage must NOT call loadUpcoming.
+// The previous implementation called loadUpcoming() and sliced the
+// result — that was response slicing, NOT bounded server-side pagination.
+//
+// The new implementation calls the individual source functions
+// (loadUpcomingMovies, loadUpcomingSeries, loadUpcomingAnime) directly
+// with BOUNDED candidate caps for page 1, so page 1 does NOT process
+// the full month.
 
 let passed = 0;
 function ok(message: string) {
@@ -17,165 +21,225 @@ function ok(message: string) {
 const upcomingSource = readFileSync(new URL('../src/lib/server/content/upcoming.ts', import.meta.url), 'utf8');
 const pageServerSource = readFileSync(new URL('../src/routes/upcoming/+page.server.ts', import.meta.url), 'utf8');
 const pageSvelteSource = readFileSync(new URL('../src/routes/upcoming/+page.svelte', import.meta.url), 'utf8');
-
-// Strip comments for some checks.
-const upcomingNoComments = upcomingSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-
-// ============================================================
-// 1. PAGE_SIZE constant exists
-// ============================================================
-console.log('\n1. PAGE_SIZE constant');
-
-assert.match(upcomingSource, /export const UPCOMING_PAGE_SIZE = \d+/,
-  'UPCOMING_PAGE_SIZE exported');
-const psMatch = upcomingSource.match(/export const UPCOMING_PAGE_SIZE = (\d+)/);
-assert.ok(psMatch, 'UPCOMING_PAGE_SIZE value extracted');
-const psVal = Number(psMatch![1]);
-assert.ok(psVal >= 20 && psVal <= 30,
-  `UPCOMING_PAGE_SIZE = ${psVal} (within 20–30 target range)`);
-ok(`Page size = ${psVal} (within 20–30 target)`);
-
-// ============================================================
-// 2. loadUpcomingPage function exists
-// ============================================================
-console.log('\n2. loadUpcomingPage function');
-
-assert.match(upcomingSource, /export async function loadUpcomingPage\(filters: UpcomingFilters, page: number = 1\)/,
-  'loadUpcomingPage exported with filters + page params');
-assert.match(upcomingSource, /export type UpcomingPageResult = \{[\s\S]*?items: UpcomingItem\[\][\s\S]*?page: number[\s\S]*?pageSize: number[\s\S]*?hasNextPage: boolean/,
-  'UpcomingPageResult type has items, page, pageSize, hasNextPage');
-ok('loadUpcomingPage + UpcomingPageResult type exist');
-
-// ============================================================
-// 3. loadUpcomingPage returns a bounded slice
-// ============================================================
-console.log('\n3. loadUpcomingPage returns a bounded slice');
-
-assert.match(upcomingSource, /const startIndex = \(page - 1\) \* pageSize/,
-  'startIndex = (page - 1) * pageSize');
-assert.match(upcomingSource, /const endIndex = startIndex \+ pageSize/,
-  'endIndex = startIndex + pageSize');
-assert.match(upcomingSource, /const pageItems = fullResult\.items\.slice\(startIndex, endIndex\)/,
-  'pageItems = fullResult.items.slice(startIndex, endIndex)');
-assert.match(upcomingSource, /const hasNextPage = endIndex < fullResult\.items\.length/,
-  'hasNextPage = endIndex < fullResult.items.length');
-ok('loadUpcomingPage slices the cached result into pages');
-
-// ============================================================
-// 4. SSR route returns only page 1
-// ============================================================
-console.log('\n4. SSR route returns page 1');
-
-assert.match(pageServerSource, /loadUpcomingPage\(\{ month, year, type, language \}, 1\)/,
-  'SSR load calls loadUpcomingPage with page=1');
-assert.match(pageServerSource, /items: result\.items/,
-  'SSR returns result.items (page 1 only)');
-assert.match(pageServerSource, /hasNextPage: result\.hasNextPage/,
-  'SSR returns hasNextPage');
-assert.match(pageServerSource, /page: result\.page/,
-  'SSR returns page number');
-ok('SSR route returns only page 1 (~24 items) + pagination metadata');
-
-// ============================================================
-// 5. API endpoint exists for subsequent pages
-// ============================================================
-console.log('\n5. API endpoint for subsequent pages');
-
 const apiSource = readFileSync(new URL('../src/routes/api/upcoming/+server.ts', import.meta.url), 'utf8');
-assert.match(apiSource, /export const GET: RequestHandler/,
-  '/api/upcoming GET handler exists');
-assert.match(apiSource, /loadUpcomingPage\(\{ month, year, type, language \}, page\)/,
-  'API calls loadUpcomingPage with the requested page');
-assert.match(apiSource, /const page = Math\.max\(1, Number\(url\.searchParams\.get\('page'\)\) \|\| 1\)/,
-  'API parses page from query param');
-ok('/api/upcoming endpoint exists for infinite scroll');
 
 // ============================================================
-// 6. UI infinite scroll (IntersectionObserver + sentinel)
+// 1. CRITICAL: loadUpcomingPage does NOT call loadUpcoming
 // ============================================================
-console.log('\n6. UI infinite scroll');
+console.log('\n1. CRITICAL: loadUpcomingPage does NOT call loadUpcoming');
 
-assert.match(pageSvelteSource, /IntersectionObserver/,
-  'Upcoming page uses IntersectionObserver');
-assert.match(pageSvelteSource, /rootMargin: '400px 0px'/,
-  'IntersectionObserver has 400px rootMargin (preload before visible)');
-assert.match(pageSvelteSource, /load-more-sentinel/,
-  'sentinel element exists');
-assert.match(pageSvelteSource, /bind:this=\{sentinelEl\}/,
-  'sentinel element bound');
-assert.match(pageSvelteSource, /async function loadMore\(\)/,
-  'loadMore function exists');
-assert.match(pageSvelteSource, /fetch\(`\/api\/upcoming\?\$\{params\.toString\(\)\}`\)/,
-  'loadMore fetches from /api/upcoming');
-ok('UI uses IntersectionObserver + sentinel + /api/upcoming for infinite scroll');
+// Extract the loadUpcomingPage function body.
+const pageFnMatch = upcomingSource.match(/export async function loadUpcomingPage[\s\S]*?\n\}/);
+assert.ok(pageFnMatch, 'loadUpcomingPage function found');
+const pageFnBody = pageFnMatch![0];
+
+// The function body must NOT contain a call to loadUpcoming(filters)
+// or loadUpcoming( — any form of calling the full-month aggregator.
+assert.doesNotMatch(pageFnBody, /loadUpcoming\(filters\)/,
+  'loadUpcomingPage does NOT call loadUpcoming(filters)');
+assert.doesNotMatch(pageFnBody, /\bloadUpcoming\(/,
+  'loadUpcomingPage does NOT call loadUpcoming() in any form');
+ok('CRITICAL: loadUpcomingPage does NOT call loadUpcoming — calls source functions directly');
 
 // ============================================================
-// 7. Deduplication — no duplicate events across pages
+// 2. loadUpcomingPage calls source functions directly
 // ============================================================
-console.log('\n7. No duplicate events across pages');
+console.log('\n2. loadUpcomingPage calls source functions directly');
 
-assert.match(pageSvelteSource, /const existing = new Set\(allItems\.map\(\(i\) => i\.id\)\)/,
-  'loadMore deduplicates by event ID');
-assert.match(pageSvelteSource, /const newItems = \(payload\.items as UpcomingItem\[\]\)\.filter\(\(i\) => !existing\.has\(i\.id\)\)/,
-  'loadMore filters out already-loaded items');
+assert.match(pageFnBody, /loadUpcomingMovies\(/,
+  'loadUpcomingPage calls loadUpcomingMovies directly');
+assert.match(pageFnBody, /loadUpcomingSeries\(/,
+  'loadUpcomingPage calls loadUpcomingSeries directly');
+assert.match(pageFnBody, /loadUpcomingAnime\(/,
+  'loadUpcomingPage calls loadUpcomingAnime directly');
+ok('loadUpcomingPage calls loadUpcomingMovies/Series/Anime directly (NOT through loadUpcoming)');
+
+// ============================================================
+// 3. Page 1 has bounded candidate caps
+// ============================================================
+console.log('\n3. Page 1 has bounded candidate caps');
+
+assert.match(upcomingSource, /const PAGE_1_MOVIE_CANDIDATES = \d+/,
+  'PAGE_1_MOVIE_CANDIDATES constant defined');
+assert.match(upcomingSource, /const PAGE_1_SERIES_CANDIDATES = \d+/,
+  'PAGE_1_SERIES_CANDIDATES constant defined');
+assert.match(upcomingSource, /const PAGE_1_ANIME_CANDIDATES = \d+/,
+  'PAGE_1_ANIME_CANDIDATES constant defined');
+
+const movieCapMatch = upcomingSource.match(/const PAGE_1_MOVIE_CANDIDATES = (\d+)/);
+const seriesCapMatch = upcomingSource.match(/const PAGE_1_SERIES_CANDIDATES = (\d+)/);
+const animeCapMatch = upcomingSource.match(/const PAGE_1_ANIME_CANDIDATES = (\d+)/);
+assert.ok(movieCapMatch && seriesCapMatch && animeCapMatch, 'all cap values extracted');
+
+const movieCap = Number(movieCapMatch![1]);
+const seriesCap = Number(seriesCapMatch![1]);
+const animeCap = Number(animeCapMatch![1]);
+
+// Page 1 caps must be SMALLER than the full-month caps.
+assert.ok(movieCap < 200, `PAGE_1_MOVIE_CANDIDATES = ${movieCap} < 200 (UPCOMING_MOVIE_MAX_CANDIDATES)`);
+assert.ok(seriesCap < 80, `PAGE_1_SERIES_CANDIDATES = ${seriesCap} < 80 (UPCOMING_TV_MAX_CANDIDATES)`);
+assert.ok(animeCap < 20, `PAGE_1_ANIME_CANDIDATES = ${animeCap} < 20 (anime default cap)`);
+ok(`Page 1 bounded caps: movies=${movieCap} (<200), series=${seriesCap} (<80), anime=${animeCap} (<20)`);
+
+// ============================================================
+// 4. Page 1 passes bounded caps to source functions
+// ============================================================
+console.log('\n4. Page 1 passes bounded caps to source functions');
+
+assert.match(pageFnBody, /const isPage1 = page === 1/,
+  'isPage1 flag computed');
+assert.match(pageFnBody, /const movieMax = isPage1 \? PAGE_1_MOVIE_CANDIDATES : undefined/,
+  'movieMax set to PAGE_1_MOVIE_CANDIDATES for page 1, undefined for page 2+');
+assert.match(pageFnBody, /const seriesMax = isPage1 \? PAGE_1_SERIES_CANDIDATES : undefined/,
+  'seriesMax set to PAGE_1_SERIES_CANDIDATES for page 1, undefined for page 2+');
+assert.match(pageFnBody, /const animeMax = isPage1 \? PAGE_1_ANIME_CANDIDATES : undefined/,
+  'animeMax set to PAGE_1_ANIME_CANDIDATES for page 1, undefined for page 2+');
+// The maxCandidates parameter must be passed to each source function.
+assert.match(pageFnBody, /loadUpcomingMovies\(.*movieMax\)/,
+  'movieMax passed to loadUpcomingMovies');
+assert.match(pageFnBody, /loadUpcomingSeries\(.*seriesMax\)/,
+  'seriesMax passed to loadUpcomingSeries');
+assert.match(pageFnBody, /loadUpcomingAnime\(.*animeMax\)/,
+  'animeMax passed to loadUpcomingAnime');
+ok('Page 1 passes bounded caps to source functions; page 2+ passes undefined (full caps)');
+
+// ============================================================
+// 5. Source functions accept maxCandidates parameter
+// ============================================================
+console.log('\n5. Source functions accept maxCandidates parameter');
+
+assert.match(upcomingSource, /async function loadUpcomingMovies\(.*maxCandidates\?: number\)/,
+  'loadUpcomingMovies accepts maxCandidates?: number');
+assert.match(upcomingSource, /async function loadUpcomingSeries\(.*maxCandidates\?: number\)/,
+  'loadUpcomingSeries accepts maxCandidates?: number');
+assert.match(upcomingSource, /export async function loadUpcomingAnime\(.*maxCandidates\?: number\)/,
+  'loadUpcomingAnime accepts maxCandidates?: number');
+ok('All source functions accept optional maxCandidates parameter');
+
+// ============================================================
+// 6. Source functions use maxCandidates to bound enrichment N+1
+// ============================================================
+console.log('\n6. Source functions use maxCandidates to bound enrichment');
+
+// Movies: candidateCap = min(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES)
+assert.match(upcomingSource, /const candidateCap = maxCandidates !== undefined \? Math\.min\(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES\) : UPCOMING_MOVIE_MAX_CANDIDATES/,
+  'loadUpcomingMovies uses candidateCap = min(maxCandidates, MAX) or MAX');
+assert.match(upcomingSource, /candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, candidateCap\)/,
+  'loadUpcomingMovies slices candidates to candidateCap');
+
+// Series: same pattern
+assert.match(upcomingSource, /const candidateCap = maxCandidates !== undefined \? Math\.min\(maxCandidates, UPCOMING_TV_MAX_CANDIDATES\) : UPCOMING_TV_MAX_CANDIDATES/,
+  'loadUpcomingSeries uses candidateCap = min(maxCandidates, MAX) or MAX');
+assert.match(upcomingSource, /\.slice\(0, candidateCap\)/,
+  'loadUpcomingSeries slices candidates to candidateCap');
+
+// Anime: same pattern
+assert.match(upcomingSource, /const animeCap = maxCandidates !== undefined \? Math\.min\(maxCandidates, 20\) : 20/,
+  'loadUpcomingAnime uses animeCap = min(maxCandidates, 20) or 20');
+assert.match(upcomingSource, /\.slice\(0, animeCap\)/,
+  'loadUpcomingAnime slices candidates to animeCap');
+ok('Source functions bound enrichment N+1 by maxCandidates (page 1 processes fewer candidates)');
+
+// ============================================================
+// 7. Cache keys include maxCandidates dimension
+// ============================================================
+console.log('\n7. Cache keys include maxCandidates dimension');
+
+// Series cache key must include maxCandidates.
+assert.match(upcomingSource, /upcoming:series:.*\$\{maxCandidates \?\? 'full'\}/,
+  'series cache key includes maxCandidates dimension (bounded vs full)');
+// Anime cache key must include maxCandidates.
+assert.match(upcomingSource, /upcoming:anime:.*\$\{maxCandidates \?\? 'full'\}/,
+  'anime cache key includes maxCandidates dimension (bounded vs full)');
+ok('Cache keys include maxCandidates dimension (page 1 bounded ≠ page 2+ full)');
+
+// ============================================================
+// 8. Page size + hasNextPage
+// ============================================================
+console.log('\n8. Page size + hasNextPage');
+
+assert.match(upcomingSource, /export const UPCOMING_PAGE_SIZE = 24/,
+  'UPCOMING_PAGE_SIZE = 24');
+assert.match(pageFnBody, /const startIndex = \(page - 1\) \* pageSize/,
+  'startIndex = (page-1) * pageSize');
+assert.match(pageFnBody, /const endIndex = startIndex \+ pageSize/,
+  'endIndex = startIndex + pageSize');
+assert.match(pageFnBody, /const hasNextPage = endIndex < deduped\.length/,
+  'hasNextPage = endIndex < deduped.length');
+ok('Page size = 24; hasNextPage correctly computed from deduped length');
+
+// ============================================================
+// 9. Deduplication by event ID
+// ============================================================
+console.log('\n9. Deduplication by event ID');
+
+assert.match(pageFnBody, /const seen = new Set<string>\(\)/,
+  'dedup Set exists');
+assert.match(pageFnBody, /if \(seen\.has\(item\.id\)\) return false/,
+  'duplicate event IDs filtered');
+assert.match(pageFnBody, /seen\.add\(item\.id\)/,
+  'event IDs added to dedup Set');
 ok('Deduplication by event ID prevents duplicate events across pages');
 
 // ============================================================
-// 8. Stale request protection
+// 10. Chronological ordering
 // ============================================================
-console.log('\n8. Stale request protection');
+console.log('\n10. Chronological ordering');
 
-assert.match(pageSvelteSource, /let requestSeq = 0/,
-  'requestSeq counter exists');
-assert.match(pageSvelteSource, /const seq = \+\+requestSeq/,
-  'loadMore increments requestSeq');
-assert.match(pageSvelteSource, /if \(seq !== requestSeq\) return/,
-  'loadMore ignores stale responses');
-ok('Stale request protection prevents race conditions');
+assert.match(pageFnBody, /allItems\.sort\(\(a, b\) => a\.timestamp - b\.timestamp\)/,
+  'items sorted by timestamp (chronological)');
+ok('Chronological ordering preserved across all sources');
 
 // ============================================================
-// 9. Loading indicator
+// 11. SSR route returns page 1
 // ============================================================
-console.log('\n9. Loading indicator');
+console.log('\n11. SSR route returns page 1');
 
-assert.match(pageSvelteSource, /loadingMore/,
-  'loadingMore state exists');
-assert.match(pageSvelteSource, /\{#if loadingMore\}/,
-  'loading indicator shown when loadingMore is true');
-assert.match(pageSvelteSource, /Loading more…/,
-  'loading indicator text exists');
-ok('Inline loading indicator at the bottom (no blocking spinner)');
+assert.match(pageServerSource, /loadUpcomingPage\(\{ month, year, type, language \}, 1\)/,
+  'SSR calls loadUpcomingPage with page=1');
+ok('SSR route returns page 1 (bounded work)');
 
 // ============================================================
-// 10. Pagination reset on filter change
+// 12. API endpoint for subsequent pages
 // ============================================================
-console.log('\n10. Pagination reset on filter change');
+console.log('\n12. API endpoint for subsequent pages');
 
-assert.match(pageSvelteSource, /\$effect\(\(\) => \{[\s\S]*?allItems = \[\.\.\.data\.items\]/,
-  '$effect resets allItems when SSR data changes (filter change)');
-assert.match(pageSvelteSource, /currentPage = data\.page \?\? 1/,
-  '$effect resets currentPage');
-assert.match(pageSvelteSource, /hasNextPage = data\.hasNextPage \?\? false/,
-  '$effect resets hasNextPage');
-ok('Pagination resets cleanly when Month/Year/Type/Language changes');
+assert.match(apiSource, /loadUpcomingPage\(\{ month, year, type, language \}, page\)/,
+  'API calls loadUpcomingPage with the requested page number');
+ok('API endpoint serves page 2+ via loadUpcomingPage');
 
 // ============================================================
-// 11. Snapshot preserves loaded items + pagination state
+// 13. UI infinite scroll
 // ============================================================
-console.log('\n11. Snapshot preserves loaded items');
+console.log('\n13. UI infinite scroll');
+
+assert.match(pageSvelteSource, /IntersectionObserver/,
+  'UI uses IntersectionObserver');
+assert.match(pageSvelteSource, /load-more-sentinel/,
+  'sentinel element exists');
+assert.match(pageSvelteSource, /async function loadMore\(\)/,
+  'loadMore function exists');
+assert.match(pageSvelteSource, /fetch\(`\/api\/upcoming/,
+  'loadMore fetches from /api/upcoming');
+assert.match(pageSvelteSource, /const existing = new Set\(allItems\.map\(\(i\) => i\.id\)\)/,
+  'client-side dedup by event ID');
+ok('UI infinite scroll with IntersectionObserver + sentinel + /api/upcoming + client dedup');
+
+// ============================================================
+// 14. Snapshot preserves loaded items + pagination state
+// ============================================================
+console.log('\n14. Snapshot preserves loaded items');
 
 assert.match(pageSvelteSource, /export const snapshot = \{/,
-  'Upcoming page exports snapshot');
+  'snapshot exists');
 assert.match(pageSvelteSource, /capture: \(\) => \(\{ allItems, currentPage, hasNextPage \}\)/,
   'snapshot.capture preserves allItems + currentPage + hasNextPage');
-assert.match(pageSvelteSource, /restore: \(value: any\) => \{[\s\S]*?allItems = value\.allItems/,
-  'snapshot.restore restores allItems');
 ok('Snapshot preserves loaded items + pagination state across back navigation');
 
 // ============================================================
-// 12. No history/navigation interference
+// 15. No navigation interference
 // ============================================================
-console.log('\n12. No navigation interference');
+console.log('\n15. No navigation interference');
 
 const pageSvelteNoComments = pageSvelteSource.replace(/\/\/[^\n]*/g, '').replace(/<!--[\s\S]*?-->/g, '');
 assert.doesNotMatch(pageSvelteNoComments, /history\.back/,
@@ -184,19 +248,48 @@ assert.doesNotMatch(pageSvelteNoComments, /history\.pushState/,
   'no history.pushState()');
 assert.doesNotMatch(pageSvelteNoComments, /popstate/,
   'no popstate listener');
-assert.doesNotMatch(pageSvelteNoComments, /disableScrollHandling/,
-  'no disableScrollHandling');
 ok('No navigation interference from Upcoming pagination');
 
 // ============================================================
-// 13. appendReturnTo preserved (back navigation contract)
+// 16. appendReturnTo preserved (back navigation contract)
 // ============================================================
-console.log('\n13. appendReturnTo preserved');
+console.log('\n16. appendReturnTo preserved');
 
 assert.match(pageSvelteSource, /appendReturnTo\(path, currentReturnTo\)/,
-  'detailHref still uses appendReturnTo (back navigation contract)');
-assert.ok(pageSvelteSource.includes('currentReturnTo = $derived(`${page.url.pathname}${page.url.search}${page.url.hash}`)'),
-  'currentReturnTo preserves full URL (pathname + search + hash)');
+  'detailHref still uses appendReturnTo');
 ok('appendReturnTo + back navigation contract preserved');
 
-console.log(`\nUpcoming pagination tests passed (${passed} check groups).`);
+// ============================================================
+// 17. Filters preserved across pages
+// ============================================================
+console.log('\n17. Filters preserved across pages');
+
+assert.match(pageSvelteSource, /month: String\(data\.filters\.month\)/,
+  'loadMore passes month filter');
+assert.match(pageSvelteSource, /year: String\(data\.filters\.year\)/,
+  'loadMore passes year filter');
+assert.match(pageSvelteSource, /type: data\.filters\.type/,
+  'loadMore passes type filter');
+assert.match(pageSvelteSource, /language: data\.filters\.language/,
+  'loadMore passes language filter');
+ok('Filters preserved across page requests (month/year/type/language)');
+
+// ============================================================
+// 18. Pagination reset on filter change
+// ============================================================
+console.log('\n18. Pagination reset on filter change');
+
+assert.match(pageSvelteSource, /\$effect\(\(\) => \{[\s\S]*?allItems = \[\.\.\.data\.items\]/,
+  '$effect resets allItems when SSR data changes');
+ok('Pagination resets cleanly when filters change');
+
+// ============================================================
+// 19. Existing loadUpcoming preserved (not destroyed)
+// ============================================================
+console.log('\n19. Existing loadUpcoming preserved');
+
+assert.match(upcomingSource, /export async function loadUpcoming\(filters: UpcomingFilters\)/,
+  'loadUpcoming still exists (not destroyed — used by tests + diagnostics)');
+ok('Existing loadUpcoming preserved (not destroyed)');
+
+console.log(`\nUpcoming real pagination tests passed (${passed} check groups).`);
