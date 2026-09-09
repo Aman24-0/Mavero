@@ -133,21 +133,25 @@ assert.match(svgSource, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/,
 assert.match(svgSource, /viewBox="0 0 512 512"/,
   'SVG has 512x512 viewBox');
 assert.match(svgSource, /mGradient/,
-  'SVG has purple gradient definition');
-assert.match(svgSource, /#9b6dff/,
-  'SVG uses premium purple (#9b6dff)');
-assert.match(svgSource, /bgGlow/,
-  'SVG has dark background glow');
+  'SVG has M gradient definition');
+assert.match(svgSource, /#f5f5f5/,
+  'SVG uses white/off-white (#f5f5f5) for the M — matches Mavero UI');
+assert.match(svgSource, /#d0d0d0/,
+  'SVG uses off-white gradient end (#d0d0d0) — subtle depth without color');
+assert.match(svgSource, /bgGlass/,
+  'SVG has dark glass background');
 assert.match(svgSource, /bgClip/,
   'SVG has rounded-square background clip');
-// The SVG must contain the M shape (path data) and play triangle.
+// The SVG must contain the M shape (path data).
 assert.match(svgSource, /fill="url\(#mGradient\)"/,
-  'SVG has M shape with purple gradient');
-assert.match(svgSource, /fill="url\(#mGradientLight\)"/,
-  'SVG has front M leg with lighter gradient (3D ribbon effect)');
-assert.match(svgSource, /fill="#0d0a18"/,
-  'SVG has play triangle cut (dark fill)');
-ok('SVG source artwork valid: M + play triangle + purple gradient + dark bg');
+  'SVG has M shape with white gradient');
+// Must NOT contain purple/violet/neon colors.
+assert.doesNotMatch(svgSource, /#9b6dff|#b894ff|#7c4ddb|#d4bfff|#e0ccff/,
+  'SVG must NOT contain purple/violet colors (dark/white design only)');
+// Must NOT contain a play triangle (removed per design direction).
+assert.doesNotMatch(svgSource, /fill="#0d0a18"/,
+  'SVG must NOT contain a play triangle cut (play motif removed)');
+ok('SVG source artwork valid: white M + dark glass bg, no purple/neon, no play triangle');
 
 // ============================================================
 // 8. No old/accidental icon references remain
