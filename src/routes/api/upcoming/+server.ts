@@ -1,15 +1,17 @@
 import { json } from '@sveltejs/kit';
-import { loadUpcomingPage, parseUpcomingMonth, parseUpcomingType, parseUpcomingYear } from '$lib/server/content/upcoming';
+import { loadUpcomingPage, parseCursor, parseUpcomingMonth, parseUpcomingType, parseUpcomingYear, serializeCursor } from '$lib/server/content/upcoming';
 import { parseUpcomingLanguage } from '$lib/shared/upcoming-policy';
 import type { RequestHandler } from './$types';
 
-// Upcoming pagination API endpoint.
+// Upcoming pagination API endpoint (cursor-based).
 //
-// Returns one page (~24 items) of Upcoming items for the given filters
-// + page number. The full result set is cached per filter combination,
-// so page 2+ return instantly without re-fetching from TMDB.
+// Each request processes only SOURCE_CANDIDATE_BATCH candidates per
+// source (movie/series/anime), starting from the cursor position.
+// The cursor is a serializable JSON object returned in the response
+// and passed back in the next request's `cursor` query param.
 //
-// Used by the Upcoming page's IntersectionObserver infinite scroll.
+// The server NEVER restarts from candidate 0 on page 2+ — it continues
+// from where the previous request left off.
 
 export const GET: RequestHandler = async ({ url }) => {
   try {
@@ -18,13 +20,15 @@ export const GET: RequestHandler = async ({ url }) => {
     const type = parseUpcomingType(url.searchParams.get('type'));
     const language = parseUpcomingLanguage(url.searchParams.get('language'));
     const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-    const result = await loadUpcomingPage({ month, year, type, language }, page);
+    const cursor = parseCursor(url.searchParams.get('cursor'));
+    const result = await loadUpcomingPage({ month, year, type, language }, page, cursor);
     return json({
       ok: true,
       items: result.items,
       page: result.page,
       pageSize: result.pageSize,
       hasNextPage: result.hasNextPage,
+      cursor: serializeCursor(result.cursor),
       errors: result.errors
     });
   } catch (error) {

@@ -13,13 +13,14 @@
 
   let { data }: { data: PageData } = $props();
 
-  // BUG 2 FIX — Infinite scroll pagination.
-  // The SSR load returns only page 1 (~24 items). Subsequent pages are
-  // fetched from /api/upcoming via IntersectionObserver. The full result
-  // is cached server-side, so page 2+ return instantly.
+  // BUG 2 FIX — Cursor-based infinite scroll pagination.
+  // Each API request processes only SOURCE_CANDIDATE_BATCH candidates
+  // per source, starting from the cursor position returned by the
+  // previous response. The server NEVER restarts from candidate 0.
   let allItems = $state<UpcomingItem[]>([...data.items]);
   let currentPage = $state(data.page ?? 1);
   let hasNextPage = $state(data.hasNextPage ?? false);
+  let nextCursor = $state<string>(data.cursor ?? '');
   let loadingMore = $state(false);
   let sentinelEl: HTMLElement | undefined;
   let requestSeq = 0;
@@ -29,6 +30,7 @@
     allItems = [...data.items];
     currentPage = data.page ?? 1;
     hasNextPage = data.hasNextPage ?? false;
+    nextCursor = data.cursor ?? '';
   });
 
   // Phase F.1 — COMPACT month labels keep all four filters on ONE row on
@@ -156,7 +158,10 @@
     return item.releaseKinds.map((k) => (k === 'theatrical' ? 'Theatrical' : 'OTT')).join(' + ');
   }
 
-  // BUG 2 FIX — Infinite scroll: load next page from /api/upcoming.
+  // Cursor-based infinite scroll: load next batch from /api/upcoming.
+  // The cursor is a serializable JSON object that tracks each source's
+  // progress (movie/series/anime candidateIndex). The server continues
+  // from the cursor position — never restarting from candidate 0.
   async function loadMore() {
     if (loadingMore || !hasNextPage) return;
     const seq = ++requestSeq;
@@ -167,7 +172,8 @@
         year: String(data.filters.year),
         type: data.filters.type,
         language: data.filters.language ?? 'all',
-        page: String(currentPage + 1)
+        page: String(currentPage + 1),
+        cursor: nextCursor
       });
       const res = await fetch(`/api/upcoming?${params.toString()}`);
       if (seq !== requestSeq) return; // stale
@@ -181,6 +187,7 @@
         allItems = [...allItems, ...newItems];
         currentPage = payload.page;
         hasNextPage = payload.hasNextPage;
+        nextCursor = payload.cursor ?? '';
       }
     } catch {
       // Silently fail — the user can scroll again to retry.
@@ -199,14 +206,15 @@
   });
 
   // SvelteKit snapshot — preserves loaded items + pagination state
-  // across back/forward navigation (DetailPage → Back → Upcoming).
+  // (including the cursor) across back/forward navigation.
   export const snapshot = {
-    capture: () => ({ allItems, currentPage, hasNextPage }),
+    capture: () => ({ allItems, currentPage, hasNextPage, nextCursor }),
     restore: (value: any) => {
       if (!value || typeof value !== 'object') return;
       if (Array.isArray(value.allItems)) allItems = value.allItems;
       if (typeof value.currentPage === 'number') currentPage = value.currentPage;
       if (typeof value.hasNextPage === 'boolean') hasNextPage = value.hasNextPage;
+      if (typeof value.nextCursor === 'string') nextCursor = value.nextCursor;
     }
   };
 </script>

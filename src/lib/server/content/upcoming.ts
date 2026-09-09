@@ -965,19 +965,40 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
 
 export const UPCOMING_PAGE_SIZE = 24;
 
-// Bounded candidate caps for page 1 (the initial SSR load).
-// These are SMALLER than the full-month caps (UPCOMING_MOVIE_MAX_CANDIDATES=200,
-// UPCOMING_TV_MAX_CANDIDATES=80, anime=20) so page 1 does NOT process
-// the full month before returning. The values are tuned to produce
-// enough final Upcoming EVENT records for one ~24-item page:
-//   - movies: 30 candidates → ~30 events (1 movie = 1 event, most survive)
-//   - series: 15 candidates → ~15-30 events (1 series = 1+ episodes)
-//   - anime: 10 candidates → ~10-20 events
-// Merged chronologically, the first 24 are returned. Page 2+ uses the
-// full caps (the per-item caches from page 1 make the full load fast).
-const PAGE_1_MOVIE_CANDIDATES = 30;
-const PAGE_1_SERIES_CANDIDATES = 15;
-const PAGE_1_ANIME_CANDIDATES = 10;
+// Bounded candidate batch size per source per page request.
+// Each page request processes at most this many NEW candidates per
+// source (starting from the cursor position). This is the real bound:
+// page 1 processes BATCH candidates per source; page 2 processes the
+// NEXT BATCH candidates per source (continuing from the cursor).
+const SOURCE_CANDIDATE_BATCH = 30;
+
+/**
+ * Serializable source cursor state. Each source (movie/series/anime)
+ * tracks how many candidates have been enriched so far. The cursor is
+ * returned in the API response and passed back in the next request so
+ * the server continues from the previous position without restarting.
+ *
+ * - movieCursor.candidateIndex: number of movie candidates already
+ *   enriched (0 = start from the first candidate)
+ * - seriesCursor.candidateIndex: number of series candidates already
+ *   enriched
+ * - animeCursor.candidateIndex: number of anime candidates already
+ *   enriched
+ * - exhausted: true when the source has no more candidates to process
+ *
+ * The cursor is serializable (plain object, JSON-safe) so it can be
+ * passed via URL query params or API response JSON.
+ */
+export type SourceCursor = {
+  candidateIndex: number;
+  exhausted: boolean;
+};
+
+export type UpcomingCursor = {
+  movie: SourceCursor;
+  series: SourceCursor;
+  anime: SourceCursor;
+};
 
 export type UpcomingPageResult = {
   items: UpcomingItem[];
@@ -987,78 +1008,289 @@ export type UpcomingPageResult = {
   page: number;
   pageSize: number;
   hasNextPage: boolean;
+  cursor: UpcomingCursor;
 };
 
+function emptyCursor(): UpcomingCursor {
+  return {
+    movie: { candidateIndex: 0, exhausted: false },
+    series: { candidateIndex: 0, exhausted: false },
+    anime: { candidateIndex: 0, exhausted: false }
+  };
+}
+
 /**
- * Load one page of Upcoming items with REAL server-side pagination.
+ * Parse a cursor from a string (URL query param). Returns a fresh
+ * empty cursor if the input is missing/invalid — page 1 always starts
+ * from scratch.
+ */
+export function parseCursor(raw: string | null | undefined): UpcomingCursor {
+  if (!raw) return emptyCursor();
+  try {
+    const parsed = JSON.parse(decodeURIComponent(raw));
+    if (!parsed || typeof parsed !== 'object') return emptyCursor();
+    const ensure = (s: any): SourceCursor => ({
+      candidateIndex: typeof s?.candidateIndex === 'number' && s.candidateIndex >= 0 ? Math.floor(s.candidateIndex) : 0,
+      exhausted: typeof s?.exhausted === 'boolean' ? s.exhausted : false
+    });
+    return {
+      movie: ensure(parsed.movie),
+      series: ensure(parsed.series),
+      anime: ensure(parsed.anime)
+    };
+  } catch {
+    return emptyCursor();
+  }
+}
+
+/**
+ * Serialize a cursor to a URL-safe string.
+ */
+export function serializeCursor(cursor: UpcomingCursor): string {
+  return encodeURIComponent(JSON.stringify(cursor));
+}
+
+// ---- Cursor-based source loaders ----
+//
+// These functions split the existing source pipeline into two phases:
+//   1. Discovery (already cached) — returns the full candidate list
+//   2. Enrichment (bounded per request) — processes a BATCH of
+//      candidates starting from cursor.candidateIndex
+//
+// The discovery phase is unchanged (same TMDB queries, same cache
+// keys). The enrichment phase is the expensive N+1 (detail/season/
+// provider lookups) — this is what the cursor bounds.
+
+async function loadMovieBatch(
+  year: number, month: number, region: string, language: string,
+  cursor: SourceCursor
+): Promise<{ items: UpcomingItem[]; nextCursor: SourceCursor }> {
+  await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
+  const adultIds = getAdultProviderIds();
+  const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const candidateRows = await discoverIndiaMovieCandidates(year, month, region, language, providerExclusion);
+  const rowsById = new Map<number, TmdbMovieRow>();
+  for (const row of candidateRows) if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
+  const allCandidates = [...rowsById.values()].slice(0, UPCOMING_MOVIE_MAX_CANDIDATES);
+
+  // Process only the next BATCH candidates starting from cursor position.
+  const startIdx = Math.min(cursor.candidateIndex, allCandidates.length);
+  const batch = allCandidates.slice(startIdx, startIdx + SOURCE_CANDIDATE_BATCH);
+  const { startMs, endMs } = monthBounds(year, month);
+
+  type EnrichedMovie = { row: TmdbMovieRow; releaseKinds: UpcomingReleaseKind[]; providers: UpcomingProvider[] };
+  const enriched = await mapWithConcurrency(batch, async (candidate): Promise<EnrichedMovie> => {
+    let releaseKinds: UpcomingReleaseKind[] = [];
+    try {
+      const payload = await getMovieIndiaReleaseDates(candidate.id);
+      const events = extractIndiaMovieReleaseEvents(payload, startMs, endMs);
+      releaseKinds = deriveMovieReleaseKinds(events);
+    } catch {
+      releaseKinds = [];
+    }
+    const providers = await getMovieWatchProviders(candidate.id, region);
+    return { row: candidate, releaseKinds, providers };
+  }, LOOKUP_CONCURRENCY);
+
+  const items = enriched
+    .map(({ row: m, releaseKinds, providers }): UpcomingItem | null => {
+      if (!m || (!m.title && !m.original_title)) return null;
+      const date = m.release_date ?? '';
+      if (!date || !Number.isFinite(Date.parse(date))) return null;
+      return {
+        id: `movie-${m.id}`,
+        type: 'movie' as const,
+        title: m.title || m.original_title || 'Untitled',
+        poster: tmdbImage(m.poster_path, 'w500'),
+        backdrop: tmdbImage(m.backdrop_path, 'w780') || undefined,
+        date,
+        timestamp: Date.parse(date) || 0,
+        year: Number(date.slice(0, 4)) || undefined,
+        rating: m.vote_average ? Math.round(m.vote_average * 10) / 10 : undefined,
+        genres: m.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3),
+        providers: providers.length ? providers.slice(0, 3) : undefined,
+        releaseKinds: releaseKinds.length ? [...releaseKinds] : undefined,
+        source: 'tmdb' as const
+      } satisfies UpcomingItem;
+    })
+    .filter((item): item is UpcomingItem => item !== null)
+    .filter((item) => {
+      const m = rowsById.get(Number(item.id.slice('movie-'.length)));
+      return movieRowVerdict({ adult: m?.adult, isAnime: isAnimeCandidate(m?.genre_ids, m?.original_language) }) !== 'adult';
+    })
+    .filter((item) => isDateInMonth(item.date, year, month));
+
+  const nextIdx = startIdx + batch.length;
+  return {
+    items: items.sort((a, b) => a.timestamp - b.timestamp),
+    nextCursor: { candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates.length }
+  };
+}
+
+async function loadSeriesBatch(
+  year: number, month: number, region: string, language: string,
+  cursor: SourceCursor, isAnime: boolean = false
+): Promise<{ items: UpcomingItem[]; nextCursor: SourceCursor }> {
+  const { gte, lte } = monthBounds(year, month);
+  const networkExclusion = adultNetworkExclusionValue();
+
+  // Discover candidates (same TMDB query as the existing source —
+  // cached at the source level).
+  const discoverParams: Record<string, string | number | boolean | undefined> = {
+    'air_date.gte': gte,
+    'air_date.lte': lte,
+    sort_by: 'popularity.desc',
+    include_adult: false,
+    ...(networkExclusion ? { without_networks: networkExclusion } : {}),
+    ...(language !== 'all' && !isAnime ? { with_original_language: language } : {}),
+    ...(isAnime ? { with_genres: ANIME_GENRE_ID, with_original_language: ANIME_ORIGINAL_LANGUAGE } : {}),
+  };
+
+  const discoverKey = isAnime
+    ? `upcoming:anime:discover:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}`
+    : `upcoming:series:discover:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}`;
+  const { value: allCandidates } = await getOrSet(discoverKey, upcomingPolicy, async () => {
+    const collected: Array<{ id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; first_air_date?: string; vote_average?: number; genre_ids?: number[]; popularity?: number; original_language?: string }> = [];
+    const seen = new Set<number>();
+    const maxPages = isAnime ? 1 : UPCOMING_TV_MAX_CANDIDATE_PAGES;
+    let page = 1;
+    let totalPages = 1;
+    while (page <= Math.min(totalPages, maxPages)) {
+      const result = await tmdbRequest<TmdbTvList>('/discover/tv', { ...discoverParams, page });
+      for (const s of result.results ?? []) {
+        if (s.id && !seen.has(s.id)) {
+          seen.add(s.id);
+          collected.push(s);
+        }
+      }
+      totalPages = result.total_pages ?? page;
+      if ((result.page ?? page) >= totalPages) break;
+      page += 1;
+    }
+    return collected;
+  });
+
+  // Filter candidates (anime exclusion for series, anime validation for anime).
+  const filtered = isAnime
+    ? allCandidates
+        .filter((s) => s.id && (s.name || s.original_name))
+        .filter((s) => Array.isArray(s.genre_ids) ? s.genre_ids.includes(ANIME_GENRE_ID) : true)
+        .slice(0, 20)
+    : allCandidates
+        .filter((s) => s.id && (s.name || s.original_name))
+        .filter((s) => !isAnimeCandidate(s.genre_ids, s.original_language))
+        .slice(0, UPCOMING_TV_MAX_CANDIDATES);
+
+  // Process only the next BATCH candidates starting from cursor position.
+  const startIdx = Math.min(cursor.candidateIndex, filtered.length);
+  const batch = filtered.slice(startIdx, startIdx + SOURCE_CANDIDATE_BATCH);
+
+  let failures = 0;
+  const built = await mapWithConcurrency(batch, async (c) => {
+    try {
+      return await buildSeriesItems(c, year, month, region, isAnime ? 'anime' : 'series');
+    } catch {
+      failures += 1;
+      return [];
+    }
+  }, LOOKUP_CONCURRENCY);
+
+  if (batch.length > 0 && failures === batch.length) {
+    // All candidates failed — propagate as an error (same contract as
+    // the existing source functions).
+    throw new ContentServiceError('The content provider returned an upstream error.', { code: 'UPSTREAM_ERROR', status: 502 });
+  }
+
+  const items = built.flat().sort((a, b) => a.timestamp - b.timestamp);
+  const nextIdx = startIdx + batch.length;
+  return {
+    items,
+    nextCursor: { candidateIndex: nextIdx, exhausted: nextIdx >= filtered.length }
+  };
+}
+
+/**
+ * Load one page of Upcoming items with REAL cursor-based pagination.
  *
  * CRITICAL: This function does NOT call loadUpcoming(). It calls the
- * individual source functions (loadUpcomingMovies, loadUpcomingSeries,
- * loadUpcomingAnime) directly, with BOUNDED candidate caps for page 1
- * so the first page does NOT process the full month.
+ * cursor-based batch loaders (loadMovieBatch, loadSeriesBatch) which
+ * process only SOURCE_CANDIDATE_BATCH candidates per source per request,
+ * starting from the cursor position.
  *
- * Page 1: processes a bounded subset of candidates (30 movies + 15
- * series + 10 anime — enough for ~24 merged events). The per-item
- * caches (release_dates, providers, season episodes) are populated
- * during this bounded pass, so page 2+ benefit from them.
+ * The cursor is a serializable JSON object with independent
+ * movie/series/anime source positions. Each API request passes the
+ * cursor from the previous response so the server continues from
+ * where it left off — never restarting from candidate 0.
  *
- * Page 2+: calls the source functions with the FULL candidate caps.
- * The source-level caches (10-minute TTL) cache the full result, so
- * page 2+ return from cache without re-fetching from TMDB. The per-item
- * caches from page 1 also speed up the full-candidate enrichment.
+ * For type=all, all three sources are loaded in parallel, each
+ * processing its next batch. The results are merged chronologically
+ * and the first PAGE_SIZE items are returned. The cursor reflects
+ * the actual progress of each source.
  *
- * The merge is chronological: all source events are combined and sorted
- * by timestamp, then the requested page slice is returned.
+ * If a source is exhausted (all candidates processed), its cursor
+ * stays exhausted and no more work is done for that source.
  */
-export async function loadUpcomingPage(filters: UpcomingFilters, page: number = 1): Promise<UpcomingPageResult> {
+export async function loadUpcomingPage(
+  filters: UpcomingFilters,
+  page: number = 1,
+  incomingCursor?: UpcomingCursor
+): Promise<UpcomingPageResult> {
   const pageSize = UPCOMING_PAGE_SIZE;
   const region = DEFAULT_REGION;
   const language = parseUpcomingLanguage(filters.language ?? 'all');
   const errors: string[] = [];
-  const allItems: UpcomingItem[] = [];
-
-  // Page 1 uses bounded candidate caps; page 2+ uses full caps.
-  const isPage1 = page === 1;
-  const movieMax = isPage1 ? PAGE_1_MOVIE_CANDIDATES : undefined;
-  const seriesMax = isPage1 ? PAGE_1_SERIES_CANDIDATES : undefined;
-  const animeMax = isPage1 ? PAGE_1_ANIME_CANDIDATES : undefined;
+  const cursor = incomingCursor ?? emptyCursor();
 
   const wantMovies = filters.type === 'all' || filters.type === 'movie';
   const wantSeries = filters.type === 'all' || filters.type === 'series';
   const wantAnime = filters.type === 'all' || filters.type === 'anime';
 
+  // For single-type filters, only one source runs. For type=all,
+  // all three run in parallel — each processes its own batch.
   const tasks: Array<Promise<void>> = [];
+  let movieItems: UpcomingItem[] = [];
+  let seriesItems: UpcomingItem[] = [];
+  let animeItems: UpcomingItem[] = [];
+  let movieCursor = cursor.movie;
+  let seriesCursor = cursor.series;
+  let animeCursor = cursor.anime;
 
-  if (wantMovies) {
+  if (wantMovies && !cursor.movie.exhausted) {
     tasks.push(
-      loadUpcomingMovies(filters.year, filters.month, region, language, movieMax)
-        .then((m) => { allItems.push(...m); })
-        .catch((err) => { errors.push(`Movies: ${safeMessage(err)}`); })
+      loadMovieBatch(filters.year, filters.month, region, language, cursor.movie)
+        .then((r) => { movieItems = r.items; movieCursor = r.nextCursor; })
+        .catch((err) => { errors.push(`Movies: ${safeMessage(err)}`); movieCursor = { ...cursor.movie, exhausted: true }; })
     );
   }
-  if (wantSeries) {
+  if (wantSeries && !cursor.series.exhausted) {
     tasks.push(
-      loadUpcomingSeries(filters.year, filters.month, region, language, seriesMax)
-        .then((s) => { allItems.push(...s); })
-        .catch((err) => { errors.push(`Series: ${safeMessage(err)}`); })
+      loadSeriesBatch(filters.year, filters.month, region, language, cursor.series, false)
+        .then((r) => { seriesItems = r.items; seriesCursor = r.nextCursor; })
+        .catch((err) => { errors.push(`Series: ${safeMessage(err)}`); seriesCursor = { ...cursor.series, exhausted: true }; })
     );
   }
-  if (wantAnime) {
-    tasks.push(
-      loadUpcomingAnime(filters.year, filters.month, region, language, animeMax)
-        .then((a) => { allItems.push(...a); })
-        .catch((err) => { errors.push(`Anime: ${safeMessage(err)}`); })
-    );
+  if (wantAnime && !cursor.anime.exhausted) {
+    // Anime language semantics: anime is intrinsically ja. A non-ja
+    // language filter returns empty deterministically (same as the
+    // existing loadUpcomingAnime).
+    if (language !== 'all' && language !== ANIME_ORIGINAL_LANGUAGE) {
+      animeCursor = { ...cursor.anime, exhausted: true };
+    } else {
+      tasks.push(
+        loadSeriesBatch(filters.year, filters.month, region, language, cursor.anime, true)
+          .then((r) => { animeItems = r.items; animeCursor = r.nextCursor; })
+          .catch((err) => { errors.push(`Anime: ${safeMessage(err)}`); animeCursor = { ...cursor.anime, exhausted: true }; })
+        );
+    }
   }
 
   await Promise.all(tasks);
 
-  // Sort all items chronologically.
+  // Merge all source items chronologically.
+  const allItems = [...movieItems, ...seriesItems, ...animeItems];
   allItems.sort((a, b) => a.timestamp - b.timestamp);
 
-  // Deduplicate by event ID (defensive — should never duplicate within
-  // a single source, but the merge could theoretically produce dups
-  // if a source returns the same event twice).
+  // Deduplicate by event ID.
   const seen = new Set<string>();
   const deduped = allItems.filter((item) => {
     if (seen.has(item.id)) return false;
@@ -1066,10 +1298,12 @@ export async function loadUpcomingPage(filters: UpcomingFilters, page: number = 
     return true;
   });
 
-  const startIndex = (page - 1) * pageSize;
-  const endIndex = startIndex + pageSize;
-  const pageItems = deduped.slice(startIndex, endIndex);
-  const hasNextPage = endIndex < deduped.length;
+  // Return the first PAGE_SIZE items from this batch.
+  const pageItems = deduped.slice(0, pageSize);
+  const hasNextPage = deduped.length > pageSize ||
+    !movieCursor.exhausted ||
+    (!wantSeries || !seriesCursor.exhausted) ||
+    (!wantAnime || !animeCursor.exhausted);
 
   return {
     items: pageItems,
@@ -1078,7 +1312,12 @@ export async function loadUpcomingPage(filters: UpcomingFilters, page: number = 
     errorMessage: deduped.length === 0 && errors.length > 0 ? 'Upcoming releases are temporarily unavailable. Please try again.' : undefined,
     page,
     pageSize,
-    hasNextPage
+    hasNextPage,
+    cursor: {
+      movie: movieCursor,
+      series: seriesCursor,
+      anime: animeCursor
+    }
   };
 }
 
@@ -1150,10 +1389,10 @@ export const upcomingInternals = {
   loadUpcomingAnime,
   loadUpcomingPage,
   loadUpcoming,
+  parseCursor,
+  serializeCursor,
   UPCOMING_PAGE_SIZE,
-  PAGE_1_MOVIE_CANDIDATES,
-  PAGE_1_SERIES_CANDIDATES,
-  PAGE_1_ANIME_CANDIDATES,
+  SOURCE_CANDIDATE_BATCH,
   getTvWatchProviders,
   getTvSeasonWatchProviders,
   getMovieIndiaReleaseDates,

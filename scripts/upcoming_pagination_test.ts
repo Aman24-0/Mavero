@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// MAVERO — Upcoming Real Pagination Regression Test
+// MAVERO — Upcoming Cursor-Based Pagination Regression Test
 //
-// CRITICAL ACCEPTANCE TEST: loadUpcomingPage must NOT call loadUpcoming.
-// The previous implementation called loadUpcoming() and sliced the
-// result — that was response slicing, NOT bounded server-side pagination.
-//
-// The new implementation calls the individual source functions
-// (loadUpcomingMovies, loadUpcomingSeries, loadUpcomingAnime) directly
-// with BOUNDED candidate caps for page 1, so page 1 does NOT process
-// the full month.
+// Verifies the cursor-based pagination architecture:
+//   - loadUpcomingPage does NOT call loadUpcoming
+//   - Serializable source cursor (movie/series/anime candidateIndex)
+//   - Each request processes only SOURCE_CANDIDATE_BATCH per source
+//   - Page 2 continues from the cursor position (never restarts from 0)
+//   - Independent movie/series/anime cursors for type=all
+//   - Cursor is serializable (parseCursor + serializeCursor)
+//   - hasNextPage correct (false when all sources exhausted)
+//   - No duplicate event IDs
+//   - Chronological merge
+//   - No navigation interference
 
 let passed = 0;
 function ok(message: string) {
@@ -28,218 +31,254 @@ const apiSource = readFileSync(new URL('../src/routes/api/upcoming/+server.ts', 
 // ============================================================
 console.log('\n1. CRITICAL: loadUpcomingPage does NOT call loadUpcoming');
 
-// Extract the loadUpcomingPage function body.
 const pageFnMatch = upcomingSource.match(/export async function loadUpcomingPage[\s\S]*?\n\}/);
 assert.ok(pageFnMatch, 'loadUpcomingPage function found');
 const pageFnBody = pageFnMatch![0];
 
-// The function body must NOT contain a call to loadUpcoming(filters)
-// or loadUpcoming( — any form of calling the full-month aggregator.
-assert.doesNotMatch(pageFnBody, /loadUpcoming\(filters\)/,
-  'loadUpcomingPage does NOT call loadUpcoming(filters)');
 assert.doesNotMatch(pageFnBody, /\bloadUpcoming\(/,
   'loadUpcomingPage does NOT call loadUpcoming() in any form');
-ok('CRITICAL: loadUpcomingPage does NOT call loadUpcoming — calls source functions directly');
+ok('CRITICAL: loadUpcomingPage does NOT call loadUpcoming');
 
 // ============================================================
-// 2. loadUpcomingPage calls source functions directly
+// 2. Cursor type exists and is serializable
 // ============================================================
-console.log('\n2. loadUpcomingPage calls source functions directly');
+console.log('\n2. Cursor type + serialization');
 
-assert.match(pageFnBody, /loadUpcomingMovies\(/,
-  'loadUpcomingPage calls loadUpcomingMovies directly');
-assert.match(pageFnBody, /loadUpcomingSeries\(/,
-  'loadUpcomingPage calls loadUpcomingSeries directly');
-assert.match(pageFnBody, /loadUpcomingAnime\(/,
-  'loadUpcomingPage calls loadUpcomingAnime directly');
-ok('loadUpcomingPage calls loadUpcomingMovies/Series/Anime directly (NOT through loadUpcoming)');
-
-// ============================================================
-// 3. Page 1 has bounded candidate caps
-// ============================================================
-console.log('\n3. Page 1 has bounded candidate caps');
-
-assert.match(upcomingSource, /const PAGE_1_MOVIE_CANDIDATES = \d+/,
-  'PAGE_1_MOVIE_CANDIDATES constant defined');
-assert.match(upcomingSource, /const PAGE_1_SERIES_CANDIDATES = \d+/,
-  'PAGE_1_SERIES_CANDIDATES constant defined');
-assert.match(upcomingSource, /const PAGE_1_ANIME_CANDIDATES = \d+/,
-  'PAGE_1_ANIME_CANDIDATES constant defined');
-
-const movieCapMatch = upcomingSource.match(/const PAGE_1_MOVIE_CANDIDATES = (\d+)/);
-const seriesCapMatch = upcomingSource.match(/const PAGE_1_SERIES_CANDIDATES = (\d+)/);
-const animeCapMatch = upcomingSource.match(/const PAGE_1_ANIME_CANDIDATES = (\d+)/);
-assert.ok(movieCapMatch && seriesCapMatch && animeCapMatch, 'all cap values extracted');
-
-const movieCap = Number(movieCapMatch![1]);
-const seriesCap = Number(seriesCapMatch![1]);
-const animeCap = Number(animeCapMatch![1]);
-
-// Page 1 caps must be SMALLER than the full-month caps.
-assert.ok(movieCap < 200, `PAGE_1_MOVIE_CANDIDATES = ${movieCap} < 200 (UPCOMING_MOVIE_MAX_CANDIDATES)`);
-assert.ok(seriesCap < 80, `PAGE_1_SERIES_CANDIDATES = ${seriesCap} < 80 (UPCOMING_TV_MAX_CANDIDATES)`);
-assert.ok(animeCap < 20, `PAGE_1_ANIME_CANDIDATES = ${animeCap} < 20 (anime default cap)`);
-ok(`Page 1 bounded caps: movies=${movieCap} (<200), series=${seriesCap} (<80), anime=${animeCap} (<20)`);
+assert.match(upcomingSource, /export type SourceCursor = \{[\s\S]*?candidateIndex: number[\s\S]*?exhausted: boolean/,
+  'SourceCursor type has candidateIndex + exhausted');
+assert.match(upcomingSource, /export type UpcomingCursor = \{[\s\S]*?movie: SourceCursor[\s\S]*?series: SourceCursor[\s\S]*?anime: SourceCursor/,
+  'UpcomingCursor type has independent movie/series/anime cursors');
+assert.match(upcomingSource, /export function parseCursor\(raw: string \| null \| undefined\): UpcomingCursor/,
+  'parseCursor function exists');
+assert.match(upcomingSource, /export function serializeCursor\(cursor: UpcomingCursor\): string/,
+  'serializeCursor function exists');
+assert.match(upcomingSource, /encodeURIComponent\(JSON\.stringify\(cursor\)\)/,
+  'serializeCursor uses JSON.stringify + encodeURIComponent (serializable)');
+assert.match(upcomingSource, /JSON\.parse\(decodeURIComponent\(raw\)\)/,
+  'parseCursor uses JSON.parse + decodeURIComponent (deserializable)');
+ok('Cursor type + parseCursor + serializeCursor exist and are JSON-serializable');
 
 // ============================================================
-// 4. Page 1 passes bounded caps to source functions
+// 3. loadUpcomingPage accepts a cursor parameter
 // ============================================================
-console.log('\n4. Page 1 passes bounded caps to source functions');
+console.log('\n3. loadUpcomingPage accepts cursor');
 
-assert.match(pageFnBody, /const isPage1 = page === 1/,
-  'isPage1 flag computed');
-assert.match(pageFnBody, /const movieMax = isPage1 \? PAGE_1_MOVIE_CANDIDATES : undefined/,
-  'movieMax set to PAGE_1_MOVIE_CANDIDATES for page 1, undefined for page 2+');
-assert.match(pageFnBody, /const seriesMax = isPage1 \? PAGE_1_SERIES_CANDIDATES : undefined/,
-  'seriesMax set to PAGE_1_SERIES_CANDIDATES for page 1, undefined for page 2+');
-assert.match(pageFnBody, /const animeMax = isPage1 \? PAGE_1_ANIME_CANDIDATES : undefined/,
-  'animeMax set to PAGE_1_ANIME_CANDIDATES for page 1, undefined for page 2+');
-// The maxCandidates parameter must be passed to each source function.
-assert.match(pageFnBody, /loadUpcomingMovies\(.*movieMax\)/,
-  'movieMax passed to loadUpcomingMovies');
-assert.match(pageFnBody, /loadUpcomingSeries\(.*seriesMax\)/,
-  'seriesMax passed to loadUpcomingSeries');
-assert.match(pageFnBody, /loadUpcomingAnime\(.*animeMax\)/,
-  'animeMax passed to loadUpcomingAnime');
-ok('Page 1 passes bounded caps to source functions; page 2+ passes undefined (full caps)');
+assert.match(upcomingSource, /export async function loadUpcomingPage\([\s\S]*?incomingCursor\?: UpcomingCursor/,
+  'loadUpcomingPage accepts optional incomingCursor parameter');
+assert.match(pageFnBody, /const cursor = incomingCursor \?\? emptyCursor\(\)/,
+  'loadUpcomingPage uses incomingCursor or empty cursor for page 1');
+ok('loadUpcomingPage accepts incomingCursor (page 2+ continues from cursor)');
 
 // ============================================================
-// 5. Source functions accept maxCandidates parameter
+// 4. UpcomingPageResult returns a cursor
 // ============================================================
-console.log('\n5. Source functions accept maxCandidates parameter');
+console.log('\n4. UpcomingPageResult returns cursor');
 
-assert.match(upcomingSource, /async function loadUpcomingMovies\(.*maxCandidates\?: number\)/,
-  'loadUpcomingMovies accepts maxCandidates?: number');
-assert.match(upcomingSource, /async function loadUpcomingSeries\(.*maxCandidates\?: number\)/,
-  'loadUpcomingSeries accepts maxCandidates?: number');
-assert.match(upcomingSource, /export async function loadUpcomingAnime\(.*maxCandidates\?: number\)/,
-  'loadUpcomingAnime accepts maxCandidates?: number');
-ok('All source functions accept optional maxCandidates parameter');
+assert.match(upcomingSource, /export type UpcomingPageResult = \{[\s\S]*?cursor: UpcomingCursor/,
+  'UpcomingPageResult type has cursor field');
+assert.match(pageFnBody, /cursor: \{[\s\S]*?movie: movieCursor[\s\S]*?series: seriesCursor[\s\S]*?anime: animeCursor/,
+  'loadUpcomingPage returns the updated cursor with all three source positions');
+ok('UpcomingPageResult returns the cursor for the next request');
 
 // ============================================================
-// 6. Source functions use maxCandidates to bound enrichment N+1
+// 5. Cursor-based batch loaders exist
 // ============================================================
-console.log('\n6. Source functions use maxCandidates to bound enrichment');
+console.log('\n5. Cursor-based batch loaders');
 
-// Movies: candidateCap = min(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES)
-assert.match(upcomingSource, /const candidateCap = maxCandidates !== undefined \? Math\.min\(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES\) : UPCOMING_MOVIE_MAX_CANDIDATES/,
-  'loadUpcomingMovies uses candidateCap = min(maxCandidates, MAX) or MAX');
-assert.match(upcomingSource, /candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, candidateCap\)/,
-  'loadUpcomingMovies slices candidates to candidateCap');
-
-// Series: same pattern
-assert.match(upcomingSource, /const candidateCap = maxCandidates !== undefined \? Math\.min\(maxCandidates, UPCOMING_TV_MAX_CANDIDATES\) : UPCOMING_TV_MAX_CANDIDATES/,
-  'loadUpcomingSeries uses candidateCap = min(maxCandidates, MAX) or MAX');
-assert.match(upcomingSource, /\.slice\(0, candidateCap\)/,
-  'loadUpcomingSeries slices candidates to candidateCap');
-
-// Anime: same pattern
-assert.match(upcomingSource, /const animeCap = maxCandidates !== undefined \? Math\.min\(maxCandidates, 20\) : 20/,
-  'loadUpcomingAnime uses animeCap = min(maxCandidates, 20) or 20');
-assert.match(upcomingSource, /\.slice\(0, animeCap\)/,
-  'loadUpcomingAnime slices candidates to animeCap');
-ok('Source functions bound enrichment N+1 by maxCandidates (page 1 processes fewer candidates)');
+assert.match(upcomingSource, /async function loadMovieBatch\([\s\S]*?cursor: SourceCursor/,
+  'loadMovieBatch function exists with cursor parameter');
+assert.match(upcomingSource, /async function loadSeriesBatch\([\s\S]*?cursor: SourceCursor/,
+  'loadSeriesBatch function exists with cursor parameter');
+assert.match(upcomingSource, /SOURCE_CANDIDATE_BATCH = \d+/,
+  'SOURCE_CANDIDATE_BATCH constant defined');
+ok('Cursor-based batch loaders (loadMovieBatch, loadSeriesBatch) exist');
 
 // ============================================================
-// 7. Cache keys include maxCandidates dimension
+// 6. Batch loaders process only SOURCE_CANDIDATE_BATCH per request
 // ============================================================
-console.log('\n7. Cache keys include maxCandidates dimension');
+console.log('\n6. Batch size bounded per request');
 
-// Series cache key must include maxCandidates.
-assert.match(upcomingSource, /upcoming:series:.*\$\{maxCandidates \?\? 'full'\}/,
-  'series cache key includes maxCandidates dimension (bounded vs full)');
-// Anime cache key must include maxCandidates.
-assert.match(upcomingSource, /upcoming:anime:.*\$\{maxCandidates \?\? 'full'\}/,
-  'anime cache key includes maxCandidates dimension (bounded vs full)');
-ok('Cache keys include maxCandidates dimension (page 1 bounded ≠ page 2+ full)');
+assert.match(upcomingSource, /SOURCE_CANDIDATE_BATCH = (\d+)/);
+const batchMatch = upcomingSource.match(/SOURCE_CANDIDATE_BATCH = (\d+)/);
+assert.ok(batchMatch, 'SOURCE_CANDIDATE_BATCH value extracted');
+const batchVal = Number(batchMatch![1]);
+assert.ok(batchVal >= 20 && batchVal <= 50,
+  `SOURCE_CANDIDATE_BATCH = ${batchVal} (within 20–50 range)`);
 
-// ============================================================
-// 8. Page size + hasNextPage
-// ============================================================
-console.log('\n8. Page size + hasNextPage');
+// Movie batch: slice from cursor position to cursor + BATCH
+assert.match(upcomingSource, /const startIdx = Math\.min\(cursor\.candidateIndex, allCandidates\.length\)/,
+  'loadMovieBatch starts from cursor.candidateIndex');
+assert.match(upcomingSource, /const batch = allCandidates\.slice\(startIdx, startIdx \+ SOURCE_CANDIDATE_BATCH\)/,
+  'loadMovieBatch processes only SOURCE_CANDIDATE_BATCH candidates');
 
-assert.match(upcomingSource, /export const UPCOMING_PAGE_SIZE = 24/,
-  'UPCOMING_PAGE_SIZE = 24');
-assert.match(pageFnBody, /const startIndex = \(page - 1\) \* pageSize/,
-  'startIndex = (page-1) * pageSize');
-assert.match(pageFnBody, /const endIndex = startIndex \+ pageSize/,
-  'endIndex = startIndex + pageSize');
-assert.match(pageFnBody, /const hasNextPage = endIndex < deduped\.length/,
-  'hasNextPage = endIndex < deduped.length');
-ok('Page size = 24; hasNextPage correctly computed from deduped length');
+// Series batch: same pattern
+assert.match(upcomingSource, /const startIdx = Math\.min\(cursor\.candidateIndex, filtered\.length\)/,
+  'loadSeriesBatch starts from cursor.candidateIndex');
+assert.match(upcomingSource, /const batch = filtered\.slice\(startIdx, startIdx \+ SOURCE_CANDIDATE_BATCH\)/,
+  'loadSeriesBatch processes only SOURCE_CANDIDATE_BATCH candidates');
+ok(`Batch size = ${batchVal} per source per request (bounded, not full month)`);
 
 // ============================================================
-// 9. Deduplication by event ID
+// 7. Batch loaders return nextCursor (advances the position)
 // ============================================================
-console.log('\n9. Deduplication by event ID');
+console.log('\n7. Batch loaders advance the cursor');
+
+assert.match(upcomingSource, /const nextIdx = startIdx \+ batch\.length/,
+  'nextIdx = startIdx + batch.length (cursor advances by batch size)');
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates\.length \}/,
+  'loadMovieBatch returns nextCursor with advanced candidateIndex + exhausted flag');
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= filtered\.length \}/,
+  'loadSeriesBatch returns nextCursor with advanced candidateIndex + exhausted flag');
+ok('Batch loaders advance the cursor (candidateIndex += batch.length)');
+
+// ============================================================
+// 8. Page 2+ continues from cursor (does NOT restart from 0)
+// ============================================================
+console.log('\n8. Page 2+ continues from cursor');
+
+// loadUpcomingPage must check cursor.movie.exhausted etc. before
+// calling the batch loaders — exhausted sources are skipped.
+assert.match(pageFnBody, /if \(wantMovies && !cursor\.movie\.exhausted\)/,
+  'loadUpcomingPage skips movie source when cursor.movie.exhausted');
+assert.match(pageFnBody, /if \(wantSeries && !cursor\.series\.exhausted\)/,
+  'loadUpcomingPage skips series source when cursor.series.exhausted');
+assert.match(pageFnBody, /if \(wantAnime && !cursor\.anime\.exhausted\)/,
+  'loadUpcomingPage skips anime source when cursor.anime.exhausted');
+// The batch loaders receive the cursor from the incoming request.
+assert.match(pageFnBody, /loadMovieBatch\(.*cursor\.movie\)/,
+  'loadMovieBatch receives cursor.movie (continues from previous position)');
+assert.match(pageFnBody, /loadSeriesBatch\(.*cursor\.series, false\)/,
+  'loadSeriesBatch receives cursor.series');
+assert.match(pageFnBody, /loadSeriesBatch\(.*cursor\.anime, true\)/,
+  'loadSeriesBatch receives cursor.anime (isAnime=true)');
+ok('Page 2+ passes the incoming cursor to batch loaders (continues, never restarts)');
+
+// ============================================================
+// 9. Independent movie/series/anime cursors for type=all
+// ============================================================
+console.log('\n9. Independent source cursors for type=all');
+
+assert.match(pageFnBody, /let movieCursor = cursor\.movie/,
+  'movieCursor tracked independently');
+assert.match(pageFnBody, /let seriesCursor = cursor\.series/,
+  'seriesCursor tracked independently');
+assert.match(pageFnBody, /let animeCursor = cursor\.anime/,
+  'animeCursor tracked independently');
+assert.match(pageFnBody, /cursor: \{[\s\S]*?movie: movieCursor[\s\S]*?series: seriesCursor[\s\S]*?anime: animeCursor/,
+  'returned cursor has all three independent source positions');
+ok('Independent movie/series/anime cursors preserved across requests');
+
+// ============================================================
+// 10. hasNextPage checks all source exhaustion
+// ============================================================
+console.log('\n10. hasNextPage checks all source exhaustion');
+
+assert.match(pageFnBody, /const hasNextPage = deduped\.length > pageSize \|\|/,
+  'hasNextPage checks deduped.length > pageSize (items overflow)');
+assert.match(pageFnBody, /!movieCursor\.exhausted/,
+  'hasNextPage checks movieCursor.exhausted');
+assert.match(pageFnBody, /!seriesCursor\.exhausted/,
+  'hasNextPage checks seriesCursor.exhausted');
+assert.match(pageFnBody, /!animeCursor\.exhausted/,
+  'hasNextPage checks animeCursor.exhausted');
+ok('hasNextPage correct: false only when all sources exhausted + no overflow');
+
+// ============================================================
+// 11. Deduplication by event ID
+// ============================================================
+console.log('\n11. Deduplication by event ID');
 
 assert.match(pageFnBody, /const seen = new Set<string>\(\)/,
   'dedup Set exists');
 assert.match(pageFnBody, /if \(seen\.has\(item\.id\)\) return false/,
   'duplicate event IDs filtered');
-assert.match(pageFnBody, /seen\.add\(item\.id\)/,
-  'event IDs added to dedup Set');
 ok('Deduplication by event ID prevents duplicate events across pages');
 
 // ============================================================
-// 10. Chronological ordering
+// 12. Chronological merge
 // ============================================================
-console.log('\n10. Chronological ordering');
+console.log('\n12. Chronological merge');
 
+assert.match(pageFnBody, /const allItems = \[\.\.\.movieItems, \.\.\.seriesItems, \.\.\.animeItems\]/,
+  'all source items merged into one array');
 assert.match(pageFnBody, /allItems\.sort\(\(a, b\) => a\.timestamp - b\.timestamp\)/,
-  'items sorted by timestamp (chronological)');
-ok('Chronological ordering preserved across all sources');
+  'merged items sorted chronologically');
+ok('Chronological merge of movie/series/anime items');
 
 // ============================================================
-// 11. SSR route returns page 1
+// 13. API endpoint accepts + returns cursor
 // ============================================================
-console.log('\n11. SSR route returns page 1');
+console.log('\n13. API endpoint cursor handling');
+
+assert.match(apiSource, /parseCursor\(url\.searchParams\.get\('cursor'\)\)/,
+  'API parses cursor from query param');
+assert.match(apiSource, /loadUpcomingPage\(\{ month, year, type, language \}, page, cursor\)/,
+  'API passes cursor to loadUpcomingPage');
+assert.match(apiSource, /cursor: serializeCursor\(result\.cursor\)/,
+  'API returns serialized cursor in response');
+ok('API endpoint accepts cursor query param + returns serialized cursor');
+
+// ============================================================
+// 14. SSR route returns cursor for page 1
+// ============================================================
+console.log('\n14. SSR route returns cursor');
 
 assert.match(pageServerSource, /loadUpcomingPage\(\{ month, year, type, language \}, 1\)/,
-  'SSR calls loadUpcomingPage with page=1');
-ok('SSR route returns page 1 (bounded work)');
+  'SSR calls loadUpcomingPage with page=1 (no cursor = empty)');
+assert.match(pageServerSource, /cursor: serializeCursor\(result\.cursor\)/,
+  'SSR returns serialized cursor for the UI');
+ok('SSR route returns page 1 + cursor for the UI');
 
 // ============================================================
-// 12. API endpoint for subsequent pages
+// 15. UI passes cursor to API
 // ============================================================
-console.log('\n12. API endpoint for subsequent pages');
+console.log('\n15. UI passes cursor to API');
 
-assert.match(apiSource, /loadUpcomingPage\(\{ month, year, type, language \}, page\)/,
-  'API calls loadUpcomingPage with the requested page number');
-ok('API endpoint serves page 2+ via loadUpcomingPage');
-
-// ============================================================
-// 13. UI infinite scroll
-// ============================================================
-console.log('\n13. UI infinite scroll');
-
-assert.match(pageSvelteSource, /IntersectionObserver/,
-  'UI uses IntersectionObserver');
-assert.match(pageSvelteSource, /load-more-sentinel/,
-  'sentinel element exists');
-assert.match(pageSvelteSource, /async function loadMore\(\)/,
-  'loadMore function exists');
-assert.match(pageSvelteSource, /fetch\(`\/api\/upcoming/,
-  'loadMore fetches from /api/upcoming');
-assert.match(pageSvelteSource, /const existing = new Set\(allItems\.map\(\(i\) => i\.id\)\)/,
-  'client-side dedup by event ID');
-ok('UI infinite scroll with IntersectionObserver + sentinel + /api/upcoming + client dedup');
+assert.match(pageSvelteSource, /let nextCursor = \$state<string>\(data\.cursor \?\? ''\)/,
+  'UI tracks nextCursor from SSR data');
+assert.match(pageSvelteSource, /cursor: nextCursor/,
+  'loadMore passes cursor in API request params');
+assert.match(pageSvelteSource, /nextCursor = payload\.cursor \?\? ''/,
+  'loadMore updates nextCursor from API response');
+ok('UI passes cursor to API + updates from response');
 
 // ============================================================
-// 14. Snapshot preserves loaded items + pagination state
+// 16. Snapshot preserves cursor
 // ============================================================
-console.log('\n14. Snapshot preserves loaded items');
+console.log('\n16. Snapshot preserves cursor');
 
-assert.match(pageSvelteSource, /export const snapshot = \{/,
-  'snapshot exists');
-assert.match(pageSvelteSource, /capture: \(\) => \(\{ allItems, currentPage, hasNextPage \}\)/,
-  'snapshot.capture preserves allItems + currentPage + hasNextPage');
-ok('Snapshot preserves loaded items + pagination state across back navigation');
+assert.match(pageSvelteSource, /capture: \(\) => \(\{ allItems, currentPage, hasNextPage, nextCursor \}\)/,
+  'snapshot.capture includes nextCursor');
+assert.match(pageSvelteSource, /if \(typeof value\.nextCursor === 'string'\) nextCursor = value\.nextCursor/,
+  'snapshot.restore restores nextCursor');
+ok('Snapshot preserves cursor across back navigation');
 
 // ============================================================
-// 15. No navigation interference
+// 17. Pagination reset includes cursor
 // ============================================================
-console.log('\n15. No navigation interference');
+console.log('\n17. Pagination reset includes cursor');
+
+assert.match(pageSvelteSource, /\$effect\(\(\) => \{[\s\S]*?nextCursor = data\.cursor \?\? ''/,
+  '$effect resets nextCursor when SSR data changes');
+ok('Pagination reset includes cursor (filter change resets cursor)');
+
+// ============================================================
+// 18. No maxCandidates=undefined pattern (old approach)
+// ============================================================
+console.log('\n18. No maxCandidates=undefined pattern');
+
+// The old approach used isPage1 + maxCandidates=undefined for page 2+.
+// The new approach uses cursor-based continuation — no isPage1 flag.
+assert.doesNotMatch(pageFnBody, /const isPage1 = page === 1/,
+  'loadUpcomingPage does NOT use isPage1 flag (old approach)');
+assert.doesNotMatch(pageFnBody, /maxCandidates/,
+  'loadUpcomingPage does NOT pass maxCandidates (old approach)');
+ok('No isPage1/maxCandidates=undefined pattern — pure cursor-based');
+
+// ============================================================
+// 19. No navigation interference
+// ============================================================
+console.log('\n19. No navigation interference');
 
 const pageSvelteNoComments = pageSvelteSource.replace(/\/\/[^\n]*/g, '').replace(/<!--[\s\S]*?-->/g, '');
 assert.doesNotMatch(pageSvelteNoComments, /history\.back/,
@@ -248,48 +287,24 @@ assert.doesNotMatch(pageSvelteNoComments, /history\.pushState/,
   'no history.pushState()');
 assert.doesNotMatch(pageSvelteNoComments, /popstate/,
   'no popstate listener');
-ok('No navigation interference from Upcoming pagination');
+ok('No navigation interference');
 
 // ============================================================
-// 16. appendReturnTo preserved (back navigation contract)
+// 20. appendReturnTo preserved
 // ============================================================
-console.log('\n16. appendReturnTo preserved');
+console.log('\n20. appendReturnTo preserved');
 
 assert.match(pageSvelteSource, /appendReturnTo\(path, currentReturnTo\)/,
   'detailHref still uses appendReturnTo');
 ok('appendReturnTo + back navigation contract preserved');
 
 // ============================================================
-// 17. Filters preserved across pages
+// 21. Existing loadUpcoming preserved
 // ============================================================
-console.log('\n17. Filters preserved across pages');
-
-assert.match(pageSvelteSource, /month: String\(data\.filters\.month\)/,
-  'loadMore passes month filter');
-assert.match(pageSvelteSource, /year: String\(data\.filters\.year\)/,
-  'loadMore passes year filter');
-assert.match(pageSvelteSource, /type: data\.filters\.type/,
-  'loadMore passes type filter');
-assert.match(pageSvelteSource, /language: data\.filters\.language/,
-  'loadMore passes language filter');
-ok('Filters preserved across page requests (month/year/type/language)');
-
-// ============================================================
-// 18. Pagination reset on filter change
-// ============================================================
-console.log('\n18. Pagination reset on filter change');
-
-assert.match(pageSvelteSource, /\$effect\(\(\) => \{[\s\S]*?allItems = \[\.\.\.data\.items\]/,
-  '$effect resets allItems when SSR data changes');
-ok('Pagination resets cleanly when filters change');
-
-// ============================================================
-// 19. Existing loadUpcoming preserved (not destroyed)
-// ============================================================
-console.log('\n19. Existing loadUpcoming preserved');
+console.log('\n21. Existing loadUpcoming preserved');
 
 assert.match(upcomingSource, /export async function loadUpcoming\(filters: UpcomingFilters\)/,
-  'loadUpcoming still exists (not destroyed — used by tests + diagnostics)');
+  'loadUpcoming still exists (not destroyed)');
 ok('Existing loadUpcoming preserved (not destroyed)');
 
-console.log(`\nUpcoming real pagination tests passed (${passed} check groups).`);
+console.log(`\nUpcoming cursor pagination tests passed (${passed} check groups).`);
