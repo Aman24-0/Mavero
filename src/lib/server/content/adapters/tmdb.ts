@@ -528,8 +528,18 @@ async function classifySearchRow(row: SearchCandidateRow): Promise<CandidateVerd
   // networks[] — read the central classification from the cached detail
   // (getTmdbDetail classifies via isAdultContent over networks[]/
   // providers/adult/isAnime and is cached 30 min, in-flight deduplicated).
+  //
+  // BUG FIX: mapTmdb() creates normalized IDs like "series-1399", but
+  // getTmdbDetail expects a NUMERIC TMDB external ID. The canonical
+  // numeric TMDB ID is available on item.externalIds.tmdb (e.g. "1399").
+  // Using String(item.id) passed "series-1399" → Number("series-1399")
+  // → NaN → detail lookup failed → 'uncertain' → fail-closed exclusion
+  // → ALL TV search results were excluded. This was the root cause of
+  // TV Show search returning zero results.
+  const tmdbId = item.externalIds?.tmdb;
+  if (!tmdbId || !/^\d+$/.test(tmdbId)) return 'uncertain';
   try {
-    const detail = await getTmdbDetail('series', String(item.id));
+    const detail = await getTmdbDetail('series', tmdbId);
     return detailVerdict(detail.tags);
   } catch {
     return 'uncertain';
@@ -987,6 +997,10 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
       if (isSeries) {
         const soapVerdicts = await mapWithConcurrency(filtered, async (item): Promise<boolean> => {
           try {
+            // NOTE: `filtered` is TmdbMedia[] (raw TMDB rows), so item.id
+            // is the raw numeric TMDB ID (e.g. 1399) — NOT the prefixed
+            // "series-1399" from mapTmdb. The original String(item.id)
+            // was correct here. No fix needed for this path.
             const detail = await getTmdbDetail('series', String(item.id));
             return isDailySoapEpisodeCount(detail.episodes);
           } catch {

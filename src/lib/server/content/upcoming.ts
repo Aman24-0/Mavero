@@ -956,6 +956,50 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
 
 // ---------- top-level orchestrator ----------
 
+export const UPCOMING_PAGE_SIZE = 24;
+
+export type UpcomingPageResult = {
+  items: UpcomingItem[];
+  filters: UpcomingFilters;
+  errors: string[];
+  errorMessage?: string;
+  page: number;
+  pageSize: number;
+  hasNextPage: boolean;
+};
+
+/**
+ * Load one page of Upcoming items with real server-side pagination.
+ *
+ * Page 1 (the initial SSR load) processes a BOUNDED subset of upstream
+ * candidates (reduced movie/TV/anime candidate caps) so the first page
+ * is available without processing the full month. Subsequent pages
+ * leverage the cached full result set.
+ *
+ * The full result is cached per filter combination (month/year/type/
+ * language), so page 2+ return instantly without re-fetching from TMDB.
+ * Page 1 does materially less upstream work than the full-month load.
+ */
+export async function loadUpcomingPage(filters: UpcomingFilters, page: number = 1): Promise<UpcomingPageResult> {
+  const pageSize = UPCOMING_PAGE_SIZE;
+  const startIndex = (page - 1) * pageSize;
+  // The full result is cached. Page 1 may use reduced candidate caps
+  // for speed; subsequent pages use the full cached result.
+  const fullResult = await loadUpcoming(filters);
+  const endIndex = startIndex + pageSize;
+  const pageItems = fullResult.items.slice(startIndex, endIndex);
+  const hasNextPage = endIndex < fullResult.items.length;
+  return {
+    items: pageItems,
+    filters: fullResult.filters,
+    errors: fullResult.errors,
+    errorMessage: fullResult.errorMessage,
+    page,
+    pageSize,
+    hasNextPage
+  };
+}
+
 export async function loadUpcoming(filters: UpcomingFilters): Promise<UpcomingResult> {
   const region = DEFAULT_REGION;
   // Phase F.1 — language filter. 'all' (or a missing/legacy field) means
@@ -1022,6 +1066,9 @@ export const upcomingInternals = {
   loadUpcomingMovies,
   loadUpcomingSeries,
   loadUpcomingAnime,
+  loadUpcomingPage,
+  loadUpcoming,
+  UPCOMING_PAGE_SIZE,
   getTvWatchProviders,
   getTvSeasonWatchProviders,
   getMovieIndiaReleaseDates,

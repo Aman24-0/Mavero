@@ -3,10 +3,22 @@
   import { replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { Search, LoaderCircle, X, Compass } from 'lucide-svelte';
-  import MediaCard from '$components/MediaCard.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
+
+  // BUG 3 FIX: MediaCard is lazily imported only when results exist.
+  // The initial empty Search state (no query, no results) does NOT need
+  // MediaCard's dependency tree (lucide icons, IntersectionObserver,
+  // navigation helpers). By deferring the import, the Search route chunk
+  // is smaller and the empty Search page becomes interactive faster.
+  // The import fires on first render where visibleResults.length > 0.
+  let MediaCardComponent: any = null;
+  async function loadMediaCard() {
+    if (MediaCardComponent) return;
+    const mod = await import('$components/MediaCard.svelte');
+    MediaCardComponent = mod.default;
+  }
 
   let { data }: { data: PageData } = $props();
 
@@ -179,6 +191,11 @@
       type === 'All' ? true : item.type === (type === 'Movie' ? 'movie' : 'series')
     )
   );
+
+  // Trigger lazy MediaCard import when results first appear.
+  $effect(() => {
+    if (visibleResults.length > 0) void loadMediaCard();
+  });
 </script>
 
 <svelte:head>
@@ -260,7 +277,9 @@
         </div>
         <div class="results-grid">
           {#each visibleResults as item (item.type + ':' + item.id)}
-            <MediaCard {item} compact />
+            {#if MediaCardComponent}
+              <MediaCardComponent {item} compact />
+            {/if}
           {/each}
         </div>
       </section>

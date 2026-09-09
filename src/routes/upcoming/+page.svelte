@@ -1,7 +1,8 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { Calendar, Film, Tv, Sparkles, Star, ArrowUpRight } from 'lucide-svelte';
+  import { onMount } from 'svelte';
+  import { Calendar, Film, Tv, Sparkles, Star, ArrowUpRight, LoaderCircle } from 'lucide-svelte';
   import Dropdown from '$components/Dropdown.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import AppFooter from '$components/AppFooter.svelte';
@@ -11,6 +12,24 @@
   import type { UpcomingItem, UpcomingType } from '$lib/server/content/upcoming-types';
 
   let { data }: { data: PageData } = $props();
+
+  // BUG 2 FIX — Infinite scroll pagination.
+  // The SSR load returns only page 1 (~24 items). Subsequent pages are
+  // fetched from /api/upcoming via IntersectionObserver. The full result
+  // is cached server-side, so page 2+ return instantly.
+  let allItems = $state<UpcomingItem[]>([...data.items]);
+  let currentPage = $state(data.page ?? 1);
+  let hasNextPage = $state(data.hasNextPage ?? false);
+  let loadingMore = $state(false);
+  let sentinelEl: HTMLElement | undefined;
+  let requestSeq = 0;
+
+  // Reset pagination when SSR data changes (filter change / navigation).
+  $effect(() => {
+    allItems = [...data.items];
+    currentPage = data.page ?? 1;
+    hasNextPage = data.hasNextPage ?? false;
+  });
 
   // Phase F.1 — COMPACT month labels keep all four filters on ONE row on
   // small mobile screens (the dropdown trigger shows the selected value).
@@ -76,7 +95,7 @@
 
   let dayGroups = $derived.by(() => {
     const map = new Map<string, UpcomingItem[]>();
-    for (const item of data.items) {
+    for (const item of allItems) {
       const key = item.date;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(item);
@@ -92,7 +111,7 @@
     return groups.sort((a, b) => a.date.localeCompare(b.date));
   });
 
-  let hasResults = $derived(data.items.length > 0);
+  let hasResults = $derived(allItems.length > 0);
   // Page heading keeps the FULL month name ("September 2026") while the
   // dropdown triggers use the compact labels.
   let monthLabel = $derived(monthFullNames[Number(selectedMonth) - 1] ?? '');
@@ -136,6 +155,60 @@
     if (item.type !== 'movie' || !item.releaseKinds?.length) return undefined;
     return item.releaseKinds.map((k) => (k === 'theatrical' ? 'Theatrical' : 'OTT')).join(' + ');
   }
+
+  // BUG 2 FIX — Infinite scroll: load next page from /api/upcoming.
+  async function loadMore() {
+    if (loadingMore || !hasNextPage) return;
+    const seq = ++requestSeq;
+    loadingMore = true;
+    try {
+      const params = new URLSearchParams({
+        month: String(data.filters.month),
+        year: String(data.filters.year),
+        type: data.filters.type,
+        language: data.filters.language ?? 'all',
+        page: String(currentPage + 1)
+      });
+      const res = await fetch(`/api/upcoming?${params.toString()}`);
+      if (seq !== requestSeq) return; // stale
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      if (seq !== requestSeq) return; // stale
+      if (payload.ok) {
+        // Deduplicate by event ID — never show the same event twice.
+        const existing = new Set(allItems.map((i) => i.id));
+        const newItems = (payload.items as UpcomingItem[]).filter((i) => !existing.has(i.id));
+        allItems = [...allItems, ...newItems];
+        currentPage = payload.page;
+        hasNextPage = payload.hasNextPage;
+      }
+    } catch {
+      // Silently fail — the user can scroll again to retry.
+    } finally {
+      if (seq === requestSeq) loadingMore = false;
+    }
+  }
+
+  onMount(() => {
+    if (!sentinelEl || !('IntersectionObserver' in window)) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) void loadMore();
+    }, { rootMargin: '400px 0px' });
+    observer.observe(sentinelEl);
+    return () => observer.disconnect();
+  });
+
+  // SvelteKit snapshot — preserves loaded items + pagination state
+  // across back/forward navigation (DetailPage → Back → Upcoming).
+  export const snapshot = {
+    capture: () => ({ allItems, currentPage, hasNextPage }),
+    restore: (value: any) => {
+      if (!value || typeof value !== 'object') return;
+      if (Array.isArray(value.allItems)) allItems = value.allItems;
+      if (typeof value.currentPage === 'number') currentPage = value.currentPage;
+      if (typeof value.hasNextPage === 'boolean') hasNextPage = value.hasNextPage;
+    }
+  };
 </script>
 
 <svelte:head>
@@ -251,6 +324,13 @@
           </section>
         {/each}
       </div>
+      {#if hasNextPage}
+        <div class="load-more-sentinel" bind:this={sentinelEl} aria-hidden="true">
+          {#if loadingMore}
+            <div class="loading-more"><LoaderCircle size={16} /> Loading more…</div>
+          {/if}
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -348,6 +428,10 @@
   }
 
   .day-groups { display: grid; gap: 24px; }
+  .load-more-sentinel { min-height: 60px; display: grid; place-items: center; padding: 20px 0; }
+  .loading-more { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: .72rem; }
+  .loading-more :global(svg) { animation: spin 0.8s linear infinite; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .day-group { display: grid; gap: 12px; }
   .day-label {
     margin: 0;

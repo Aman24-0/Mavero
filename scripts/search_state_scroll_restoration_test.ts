@@ -48,9 +48,15 @@ await assert.rejects(
 // BUG 1 — Search state restoration after Back navigation (snapshot approach)
 // ============================================================================
 {
-  // The Search page must NOT use the previous $effect/untrack workaround.
-  assert.doesNotMatch(searchSource, /\$effect\(/,
-    'Search page must NOT use the $effect/untrack workaround — snapshots replace it');
+  // The Search page must NOT use the previous $effect+untrack workaround
+  // to sync local state from data. $effect for OTHER purposes (e.g.
+  // triggering a lazy MediaCard import) is allowed — the guard is
+  // specifically against $effect that syncs query/type/results from
+  // `data` (the failed Phase approach).
+  assert.doesNotMatch(searchSource, /\$effect\([\s\S]*?query = /,
+    'Search page must NOT use $effect to sync query from data');
+  assert.doesNotMatch(searchSource, /\$effect\([\s\S]*?results = /,
+    'Search page must NOT use $effect to sync results from data');
   assert.doesNotMatch(searchSource, /\buntrack\b/,
     'Search page must NOT import or use untrack');
   assert.match(searchSource, /import \{ onDestroy \} from 'svelte'/,
@@ -237,9 +243,12 @@ await assert.rejects(
   assert.doesNotMatch(layoutSource, /\bscrollMap\b/,
     'Root layout must NOT use a URL-keyed scroll Map');
 
-  // Search page must NOT use $effect to sync from data.
-  assert.doesNotMatch(searchSource, /\$effect\(/,
-    'Search page must NOT use $effect to sync local state from data');
+  // Search page must NOT use $effect to sync from data (the failed
+  // approach). $effect for other purposes (lazy import) is allowed.
+  assert.doesNotMatch(searchSource, /\$effect\([\s\S]*?query = /,
+    'Search page must NOT use $effect to sync query from data');
+  assert.doesNotMatch(searchSource, /\$effect\([\s\S]*?results = /,
+    'Search page must NOT use $effect to sync results from data');
 }
 
 // ============================================================================
