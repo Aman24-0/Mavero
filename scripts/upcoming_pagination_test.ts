@@ -76,7 +76,7 @@ console.log('\n4. UpcomingPageResult returns cursor');
 
 assert.match(upcomingSource, /export type UpcomingPageResult = \{[\s\S]*?cursor: UpcomingCursor/,
   'UpcomingPageResult type has cursor field');
-assert.match(pageFnBody, /cursor: \{[\s\S]*?movie: movieCursor[\s\S]*?series: seriesCursor[\s\S]*?anime: animeCursor/,
+assert.match(pageFnBody, /cursor: \{[\s\S]*?movie: nextMovieCursor[\s\S]*?series: nextSeriesCursor[\s\S]*?anime: nextAnimeCursor/,
   'loadUpcomingPage returns the updated cursor with all three source positions');
 ok('UpcomingPageResult returns the cursor for the next request');
 
@@ -125,9 +125,9 @@ console.log('\n7. Batch loaders advance the cursor');
 
 assert.match(upcomingSource, /const nextIdx = startIdx \+ batch\.length/,
   'nextIdx = startIdx + batch.length (cursor advances by batch size)');
-assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates\.length \}/,
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates\.length, pending: \[\] \}/,
   'loadMovieBatch returns nextCursor with advanced candidateIndex + exhausted flag');
-assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= filtered\.length \}/,
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= filtered\.length, pending: \[\] \}/,
   'loadSeriesBatch returns nextCursor with advanced candidateIndex + exhausted flag');
 ok('Batch loaders advance the cursor (candidateIndex += batch.length)');
 
@@ -138,12 +138,12 @@ console.log('\n8. Page 2+ continues from cursor');
 
 // loadUpcomingPage must check cursor.movie.exhausted etc. before
 // calling the batch loaders — exhausted sources are skipped.
-assert.match(pageFnBody, /if \(wantMovies && !cursor\.movie\.exhausted\)/,
-  'loadUpcomingPage skips movie source when cursor.movie.exhausted');
-assert.match(pageFnBody, /if \(wantSeries && !cursor\.series\.exhausted\)/,
-  'loadUpcomingPage skips series source when cursor.series.exhausted');
-assert.match(pageFnBody, /if \(wantAnime && !cursor\.anime\.exhausted\)/,
-  'loadUpcomingPage skips anime source when cursor.anime.exhausted');
+assert.match(pageFnBody, /if \(wantMovies && \(!cursor\.movie\.exhausted \|\| cursor\.movie\.pending\.length > 0\)\)/,
+  'loadUpcomingPage skips movie source when exhausted AND no pending');
+assert.match(pageFnBody, /if \(wantSeries && \(!cursor\.series\.exhausted \|\| cursor\.series\.pending\.length > 0\)\)/,
+  'loadUpcomingPage skips series source when exhausted AND no pending');
+assert.match(pageFnBody, /if \(wantAnime && \(!cursor\.anime\.exhausted \|\| cursor\.anime\.pending\.length > 0\)\)/,
+  'loadUpcomingPage skips anime source when exhausted AND no pending');
 // The batch loaders receive the cursor from the incoming request.
 assert.match(pageFnBody, /loadMovieBatch\(.*cursor\.movie\)/,
   'loadMovieBatch receives cursor.movie (continues from previous position)');
@@ -164,24 +164,37 @@ assert.match(pageFnBody, /let seriesCursor = cursor\.series/,
   'seriesCursor tracked independently');
 assert.match(pageFnBody, /let animeCursor = cursor\.anime/,
   'animeCursor tracked independently');
-assert.match(pageFnBody, /cursor: \{[\s\S]*?movie: movieCursor[\s\S]*?series: seriesCursor[\s\S]*?anime: animeCursor/,
+assert.match(pageFnBody, /cursor: \{[\s\S]*?movie: nextMovieCursor[\s\S]*?series: nextSeriesCursor[\s\S]*?anime: nextAnimeCursor/,
   'returned cursor has all three independent source positions');
 ok('Independent movie/series/anime cursors preserved across requests');
 
 // ============================================================
-// 10. hasNextPage checks all source exhaustion
+// 10. FIX 1: hasNextPage only checks ACTIVE source cursors
 // ============================================================
-console.log('\n10. hasNextPage checks all source exhaustion');
+console.log('\n10. FIX 1: hasNextPage only checks active sources');
 
-assert.match(pageFnBody, /const hasNextPage = deduped\.length > pageSize \|\|/,
-  'hasNextPage checks deduped.length > pageSize (items overflow)');
-assert.match(pageFnBody, /!movieCursor\.exhausted/,
-  'hasNextPage checks movieCursor.exhausted');
-assert.match(pageFnBody, /!seriesCursor\.exhausted/,
-  'hasNextPage checks seriesCursor.exhausted');
-assert.match(pageFnBody, /!animeCursor\.exhausted/,
-  'hasNextPage checks animeCursor.exhausted');
-ok('hasNextPage correct: false only when all sources exhausted + no overflow');
+// hasNextPage must use movieActive/seriesActive/animeActive gates so
+// an unused source's non-exhausted cursor doesn't keep it true forever.
+assert.match(pageFnBody, /const movieActive = wantMovies/,
+  'movieActive flag computed');
+assert.match(pageFnBody, /const seriesActive = wantSeries/,
+  'seriesActive flag computed');
+assert.match(pageFnBody, /const animeActive = wantAnime/,
+  'animeActive flag computed');
+assert.match(pageFnBody, /const hasNextPage =[\s\S]*?movieActive &&/,
+  'hasNextPage gated by movieActive');
+assert.match(pageFnBody, /seriesActive &&/,
+  'hasNextPage gated by seriesActive');
+assert.match(pageFnBody, /animeActive &&/,
+  'hasNextPage gated by animeActive');
+// Must also check pending (overflow events stored in cursor).
+assert.match(pageFnBody, /nextMovieCursor\.pending\.length > 0 \|\| !nextMovieCursor\.exhausted/,
+  'hasNextPage checks movie pending OR not-exhausted');
+assert.match(pageFnBody, /nextSeriesCursor\.pending\.length > 0 \|\| !nextSeriesCursor\.exhausted/,
+  'hasNextPage checks series pending OR not-exhausted');
+assert.match(pageFnBody, /nextAnimeCursor\.pending\.length > 0 \|\| !nextAnimeCursor\.exhausted/,
+  'hasNextPage checks anime pending OR not-exhausted');
+ok('FIX 1: hasNextPage only checks ACTIVE source cursors (single-type filters work correctly)');
 
 // ============================================================
 // 11. Deduplication by event ID
@@ -306,5 +319,81 @@ console.log('\n21. Existing loadUpcoming preserved');
 assert.match(upcomingSource, /export async function loadUpcoming\(filters: UpcomingFilters\)/,
   'loadUpcoming still exists (not destroyed)');
 ok('Existing loadUpcoming preserved (not destroyed)');
+
+// ============================================================
+// 22. FIX 2: Pending events in cursor (no enriched events dropped)
+// ============================================================
+console.log('\n22. FIX 2: Pending events stored in cursor');
+
+// SourceCursor must have a pending field.
+assert.match(upcomingSource, /pending: UpcomingItem\[\]/,
+  'SourceCursor has pending: UpcomingItem[] field');
+// emptyCursor must initialize pending to [].
+assert.match(upcomingSource, /pending: \[\]/,
+  'emptyCursor initializes pending to []');
+// parseCursor must handle pending.
+assert.match(upcomingSource, /pending: Array\.isArray\(s\?\.pending\) \? s\.pending : \[\]/,
+  'parseCursor handles pending field');
+// loadUpcomingPage must slice PAGE_SIZE and store overflow.
+assert.match(pageFnBody, /const overflow = deduped\.slice\(pageSize\)/,
+  'overflow = deduped.slice(pageSize) — events beyond PAGE_SIZE');
+assert.match(pageFnBody, /moviePending\.push\(item\)/,
+  'overflow movie items stored in moviePending');
+assert.match(pageFnBody, /seriesPending\.push\(item\)/,
+  'overflow series items stored in seriesPending');
+assert.match(pageFnBody, /animePending\.push\(item\)/,
+  'overflow anime items stored in animePending');
+// Next cursor must carry the pending arrays.
+assert.match(pageFnBody, /nextMovieCursor: SourceCursor = \{ \.\.\.movieCursor, pending: moviePending \}/,
+  'nextMovieCursor carries moviePending');
+assert.match(pageFnBody, /nextSeriesCursor: SourceCursor = \{ \.\.\.seriesCursor, pending: seriesPending \}/,
+  'nextSeriesCursor carries seriesPending');
+assert.match(pageFnBody, /nextAnimeCursor: SourceCursor = \{ \.\.\.animeCursor, pending: animePending \}/,
+  'nextAnimeCursor carries animePending');
+// Batch loaders must prepend pending from the cursor.
+assert.match(upcomingSource, /\[\.\.\.cursor\.pending, \.\.\.items\]/,
+  'batch loaders prepend cursor.pending before newly enriched items');
+// Batch loaders must clear pending in the returned cursor.
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates\.length, pending: \[\] \}/,
+  'loadMovieBatch returns cursor with empty pending (consumed)');
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= filtered\.length, pending: \[\] \}/,
+  'loadSeriesBatch returns cursor with empty pending (consumed)');
+// loadUpcomingPage must check pending before deciding to call batch loaders.
+assert.match(pageFnBody, /!cursor\.movie\.exhausted \|\| cursor\.movie\.pending\.length > 0/,
+  'loadUpcomingPage calls movie batch when pending exists even if exhausted');
+ok('FIX 2: Pending events stored in cursor — no enriched events dropped across pages');
+
+// ============================================================
+// 23. FIX 3: Upstream failure preserves cursor position
+// ============================================================
+console.log('\n23. FIX 3: Upstream failure preserves cursor position');
+
+// The catch blocks must NOT set exhausted: true. They must preserve
+// the cursor as-is (including candidateIndex and pending).
+assert.match(pageFnBody, /\.catch\(\(err\) => \{[\s\S]*?errors\.push\(`Movies: \$\{safeMessage\(err\)\}`\);[\s\S]*?movieCursor = cursor\.movie/,
+  'movie catch preserves cursor.movie (NOT marked exhausted)');
+assert.match(pageFnBody, /\.catch\(\(err\) => \{[\s\S]*?errors\.push\(`Series: \$\{safeMessage\(err\)\}`\);[\s\S]*?seriesCursor = cursor\.series/,
+  'series catch preserves cursor.series (NOT marked exhausted)');
+assert.match(pageFnBody, /\.catch\(\(err\) => \{[\s\S]*?errors\.push\(`Anime: \$\{safeMessage\(err\)\}`\);[\s\S]*?animeCursor = cursor\.anime/,
+  'anime catch preserves cursor.anime (NOT marked exhausted)');
+// Verify NO catch block sets exhausted: true.
+const catchBlocks = pageFnBody.match(/\.catch\(\(err\) => \{[\s\S]*?\}\)/g) ?? [];
+for (const block of catchBlocks) {
+  assert.doesNotMatch(block, /exhausted: true/,
+    'no catch block sets exhausted: true (failure != exhaustion)');
+}
+ok('FIX 3: Upstream failure preserves cursor position (NOT marked exhausted, retry possible)');
+
+// ============================================================
+// 24. FIX 2 continued: cursor serialization preserves pending
+// ============================================================
+console.log('\n24. Cursor serialization preserves pending');
+
+assert.match(upcomingSource, /encodeURIComponent\(JSON\.stringify\(cursor\)\)/,
+  'serializeCursor uses JSON.stringify (serializes pending arrays)');
+// parseCursor must restore pending as an array.
+assert.match(upcomingSource, /pending: Array\.isArray\(s\?\.pending\) \? s\.pending : \[\]/,
+  'parseCursor restores pending array from deserialized JSON');
+ok('Cursor serialization/deserialization preserves pending events');
 
 console.log(`\nUpcoming cursor pagination tests passed (${passed} check groups).`);

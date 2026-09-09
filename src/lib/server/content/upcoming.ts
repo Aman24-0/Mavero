@@ -992,6 +992,13 @@ const SOURCE_CANDIDATE_BATCH = 30;
 export type SourceCursor = {
   candidateIndex: number;
   exhausted: boolean;
+  /**
+   * Pending events produced by the previous batch but not returned
+   * (because they exceeded PAGE_SIZE). These are consumed BEFORE
+   * processing new candidates on the next request, so no enriched
+   * event is ever lost.
+   */
+  pending: UpcomingItem[];
 };
 
 export type UpcomingCursor = {
@@ -1013,9 +1020,9 @@ export type UpcomingPageResult = {
 
 function emptyCursor(): UpcomingCursor {
   return {
-    movie: { candidateIndex: 0, exhausted: false },
-    series: { candidateIndex: 0, exhausted: false },
-    anime: { candidateIndex: 0, exhausted: false }
+    movie: { candidateIndex: 0, exhausted: false, pending: [] },
+    series: { candidateIndex: 0, exhausted: false, pending: [] },
+    anime: { candidateIndex: 0, exhausted: false, pending: [] }
   };
 }
 
@@ -1031,7 +1038,8 @@ export function parseCursor(raw: string | null | undefined): UpcomingCursor {
     if (!parsed || typeof parsed !== 'object') return emptyCursor();
     const ensure = (s: any): SourceCursor => ({
       candidateIndex: typeof s?.candidateIndex === 'number' && s.candidateIndex >= 0 ? Math.floor(s.candidateIndex) : 0,
-      exhausted: typeof s?.exhausted === 'boolean' ? s.exhausted : false
+      exhausted: typeof s?.exhausted === 'boolean' ? s.exhausted : false,
+      pending: Array.isArray(s?.pending) ? s.pending : []
     });
     return {
       movie: ensure(parsed.movie),
@@ -1121,9 +1129,14 @@ async function loadMovieBatch(
     .filter((item) => isDateInMonth(item.date, year, month));
 
   const nextIdx = startIdx + batch.length;
+  // Prepend any pending events from the previous request so they are
+  // consumed before new candidates. The caller (loadUpcomingPage)
+  // handles the merge/slice — the batch loader just returns ALL events
+  // (pending + newly enriched) and the cursor with empty pending.
+  const combinedItems = [...cursor.pending, ...items].sort((a, b) => a.timestamp - b.timestamp);
   return {
-    items: items.sort((a, b) => a.timestamp - b.timestamp),
-    nextCursor: { candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates.length }
+    items: combinedItems,
+    nextCursor: { candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates.length, pending: [] }
   };
 }
 
@@ -1203,9 +1216,11 @@ async function loadSeriesBatch(
 
   const items = built.flat().sort((a, b) => a.timestamp - b.timestamp);
   const nextIdx = startIdx + batch.length;
+  // Prepend pending events from the previous request.
+  const combinedItems = [...cursor.pending, ...items].sort((a, b) => a.timestamp - b.timestamp);
   return {
-    items,
-    nextCursor: { candidateIndex: nextIdx, exhausted: nextIdx >= filtered.length }
+    items: combinedItems,
+    nextCursor: { candidateIndex: nextIdx, exhausted: nextIdx >= filtered.length, pending: [] }
   };
 }
 
@@ -1247,40 +1262,56 @@ export async function loadUpcomingPage(
 
   // For single-type filters, only one source runs. For type=all,
   // all three run in parallel — each processes its own batch.
+  // Each source returns ALL its events (pending from previous + newly
+  // enriched). loadUpcomingPage merges them, slices PAGE_SIZE, and
+  // stores the overflow back into per-source pending for next time.
   const tasks: Array<Promise<void>> = [];
   let movieItems: UpcomingItem[] = [];
   let seriesItems: UpcomingItem[] = [];
   let animeItems: UpcomingItem[] = [];
+  // On failure, preserve the cursor position (do NOT mark exhausted).
+  // The caller can retry from the same position.
   let movieCursor = cursor.movie;
   let seriesCursor = cursor.series;
   let animeCursor = cursor.anime;
 
-  if (wantMovies && !cursor.movie.exhausted) {
+  if (wantMovies && (!cursor.movie.exhausted || cursor.movie.pending.length > 0)) {
     tasks.push(
       loadMovieBatch(filters.year, filters.month, region, language, cursor.movie)
         .then((r) => { movieItems = r.items; movieCursor = r.nextCursor; })
-        .catch((err) => { errors.push(`Movies: ${safeMessage(err)}`); movieCursor = { ...cursor.movie, exhausted: true }; })
+        .catch((err) => {
+          errors.push(`Movies: ${safeMessage(err)}`);
+          // FIX 3: preserve cursor position on failure — do NOT mark
+          // exhausted. The pending events are preserved too so they
+          // are not lost. The caller can retry from the same position.
+          movieCursor = cursor.movie;
+        })
     );
   }
-  if (wantSeries && !cursor.series.exhausted) {
+  if (wantSeries && (!cursor.series.exhausted || cursor.series.pending.length > 0)) {
     tasks.push(
       loadSeriesBatch(filters.year, filters.month, region, language, cursor.series, false)
         .then((r) => { seriesItems = r.items; seriesCursor = r.nextCursor; })
-        .catch((err) => { errors.push(`Series: ${safeMessage(err)}`); seriesCursor = { ...cursor.series, exhausted: true }; })
+        .catch((err) => {
+          errors.push(`Series: ${safeMessage(err)}`);
+          seriesCursor = cursor.series;
+        })
     );
   }
-  if (wantAnime && !cursor.anime.exhausted) {
+  if (wantAnime && (!cursor.anime.exhausted || cursor.anime.pending.length > 0)) {
     // Anime language semantics: anime is intrinsically ja. A non-ja
-    // language filter returns empty deterministically (same as the
-    // existing loadUpcomingAnime).
+    // language filter returns empty deterministically.
     if (language !== 'all' && language !== ANIME_ORIGINAL_LANGUAGE) {
       animeCursor = { ...cursor.anime, exhausted: true };
     } else {
       tasks.push(
         loadSeriesBatch(filters.year, filters.month, region, language, cursor.anime, true)
           .then((r) => { animeItems = r.items; animeCursor = r.nextCursor; })
-          .catch((err) => { errors.push(`Anime: ${safeMessage(err)}`); animeCursor = { ...cursor.anime, exhausted: true }; })
-        );
+          .catch((err) => {
+            errors.push(`Anime: ${safeMessage(err)}`);
+            animeCursor = cursor.anime;
+          })
+      );
     }
   }
 
@@ -1298,12 +1329,39 @@ export async function loadUpcomingPage(
     return true;
   });
 
-  // Return the first PAGE_SIZE items from this batch.
+  // Return the first PAGE_SIZE items. Store the overflow as pending
+  // events in the cursor so they are returned on the next request
+  // BEFORE processing new candidates. This prevents losing enriched
+  // events that exceeded PAGE_SIZE.
   const pageItems = deduped.slice(0, pageSize);
-  const hasNextPage = deduped.length > pageSize ||
-    !movieCursor.exhausted ||
-    (!wantSeries || !seriesCursor.exhausted) ||
-    (!wantAnime || !animeCursor.exhausted);
+  const overflow = deduped.slice(pageSize);
+
+  // Distribute overflow back to source cursors as pending. Since the
+  // merge was chronological, we assign each overflow item to its
+  // source's pending list so the next request consumes them first.
+  const moviePending: UpcomingItem[] = [];
+  const seriesPending: UpcomingItem[] = [];
+  const animePending: UpcomingItem[] = [];
+  for (const item of overflow) {
+    if (item.type === 'movie') moviePending.push(item);
+    else if (item.type === 'anime') animePending.push(item);
+    else seriesPending.push(item);
+  }
+
+  const nextMovieCursor: SourceCursor = { ...movieCursor, pending: moviePending };
+  const nextSeriesCursor: SourceCursor = { ...seriesCursor, pending: seriesPending };
+  const nextAnimeCursor: SourceCursor = { ...animeCursor, pending: animePending };
+
+  // FIX 1: hasNextPage must only depend on ACTIVE sources for the
+  // current filter type. An unused source's non-exhausted cursor must
+  // NOT keep hasNextPage=true forever.
+  const movieActive = wantMovies;
+  const seriesActive = wantSeries;
+  const animeActive = wantAnime;
+  const hasNextPage =
+    (movieActive && (nextMovieCursor.pending.length > 0 || !nextMovieCursor.exhausted)) ||
+    (seriesActive && (nextSeriesCursor.pending.length > 0 || !nextSeriesCursor.exhausted)) ||
+    (animeActive && (nextAnimeCursor.pending.length > 0 || !nextAnimeCursor.exhausted));
 
   return {
     items: pageItems,
@@ -1314,9 +1372,9 @@ export async function loadUpcomingPage(
     pageSize,
     hasNextPage,
     cursor: {
-      movie: movieCursor,
-      series: seriesCursor,
-      anime: animeCursor
+      movie: nextMovieCursor,
+      series: nextSeriesCursor,
+      anime: nextAnimeCursor
     }
   };
 }
