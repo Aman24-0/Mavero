@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import AppShell from '$components/AppShell.svelte';
   import PwaExperience from '$components/PwaExperience.svelte';
+  import PwaBootOverlay from '$components/PwaBootOverlay.svelte';
   import Toast from '$components/Toast.svelte';
   import type { Snippet } from 'svelte';
   import type { LayoutData } from './$types';
@@ -12,7 +13,22 @@
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
   const title = 'Mavero — Movies, series & anime';
 
+  // PWA boot overlay — only shown when the app is launched as an
+  // installed PWA (standalone mode). Normal browser tab loads never
+  // see the boot overlay. The check runs on mount (not during SSR,
+  // where window is undefined) so the overlay is a client-only
+  // enhancement. The PwaBootOverlay component itself also guards
+  // defensively — if it somehow mounts in non-standalone mode, it
+  // bails immediately.
+  let isPwaStandalone = $state(false);
+  function checkStandalone() {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    if (window.matchMedia('(display-mode: standalone)').matches) return true;
+    return Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+  }
+
   onMount(() => {
+    isPwaStandalone = checkStandalone();
     if (!data.user) return;
     void syncAuthenticatedState();
     const retry = () => { if (navigator.onLine) void syncAuthenticatedState(); };
@@ -112,6 +128,16 @@
       {@render pageChildren()}
     {/snippet}
   </AppShell>
+{/if}
+
+<!-- PWA branded boot overlay — only renders when the app is launched
+     as an installed PWA (standalone mode). The overlay is a pure
+     visual layer: pointer-events: none, aria-hidden, no navigation
+     interference. It disappears automatically once the app has painted
+     (2 animation frames). See PwaBootOverlay.svelte for the full
+     lifecycle. -->
+{#if isPwaStandalone}
+  <PwaBootOverlay />
 {/if}
 
 <PwaExperience />
