@@ -1,8 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { onMount } from 'svelte';
-  import { Calendar, Film, Tv, Sparkles, Star, ArrowUpRight, LoaderCircle } from 'lucide-svelte';
+  import { Calendar, Film, Tv, Sparkles, Star, ArrowUpRight, LoaderCircle, AlertCircle } from 'lucide-svelte';
   import Dropdown from '$components/Dropdown.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import AppFooter from '$components/AppFooter.svelte';
@@ -13,24 +12,64 @@
 
   let { data }: { data: PageData } = $props();
 
-  // BUG 2 FIX — Cursor-based infinite scroll pagination.
-  // Each API request processes only SOURCE_CANDIDATE_BATCH candidates
-  // per source, starting from the cursor position returned by the
-  // previous response. The server NEVER restarts from candidate 0.
+  // ---- Infinite scroll pagination (v2: compact cursor + server-side
+  // snapshots). The cursor is a small continuation token the server
+  // validates against the active filters — it never carries item
+  // payloads, so the URL stays small for every filter combination. ----
   let allItems = $state<UpcomingItem[]>([...data.items]);
   let currentPage = $state(data.page ?? 1);
   let hasNextPage = $state(data.hasNextPage ?? false);
   let nextCursor = $state<string>(data.cursor ?? '');
   let loadingMore = $state(false);
-  let sentinelEl: HTMLElement | undefined;
-  let requestSeq = 0;
+  // Filter change in flight (skeleton replaces the stale list so old
+  // content is never shown as if it belonged to the new filter).
+  let filterPending = $state(false);
+  // Controlled restart in flight (expired/stale cursor).
+  let restarting = $state(false);
+  // Pagination failure state — NEVER silently swallowed; the sentinel
+  // area offers an explicit, keyboard-accessible retry.
+  let loadMoreError = $state<string | null>(null);
+  // Consecutive zero-progress responses (defensive loop breaker).
+  let zeroProgressStreak = $state(0);
+  // Partial source failures (SSR + latest pagination response).
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
+  let pageWarnings = $state<string[]>([...(data.errors ?? [])]);
+  // Complete upstream failure surfaced through a pagination response.
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
+  let pageError = $state<string | null>(data.errorMessage ?? null);
+  // Screen-reader pagination status (aria-live region below).
+  let liveMessage = $state('');
+  // The sentinel is a STABLE element: bound via $state so the observer
+  // effect re-attaches whenever the element (re-)enters the DOM.
+  let sentinelEl = $state<HTMLElement | undefined>();
+  let sentinelVisible = $state(false);
+  // Request generation token: bumped by EVERY state transition that
+  // invalidates in-flight requests (filter change, data sync, snapshot
+  // restore). A response only mutates state when its token is current,
+  // so old pagination requests can never mutate new filter state.
+  let requestToken = 0;
 
-  // Reset pagination when SSR data changes (filter change / navigation).
+  // Server data sync — runs on every SSR/navigation data change (filter
+  // change, back/forward navigation). Resets pagination COMPLETELY (no
+  // old cursor survives) and re-syncs every filter control with the
+  // actual URL/server state.
   $effect(() => {
-    allItems = [...data.items];
-    currentPage = data.page ?? 1;
-    hasNextPage = data.hasNextPage ?? false;
-    nextCursor = data.cursor ?? '';
+    const d = data;
+    requestToken += 1;
+    loadingMore = false;
+    filterPending = false;
+    loadMoreError = null;
+    zeroProgressStreak = 0;
+    pageError = d.errorMessage ?? null;
+    pageWarnings = [...(d.errors ?? [])];
+    allItems = [...d.items];
+    currentPage = d.page ?? 1;
+    hasNextPage = d.hasNextPage ?? false;
+    nextCursor = d.cursor ?? '';
+    selectedMonth = String(d.filters.month);
+    selectedYear = String(d.filters.year);
+    selectedType = d.filters.type;
+    selectedLanguage = String(d.filters.language ?? 'all');
   });
 
   // Phase F.1 — COMPACT month labels keep all four filters on ONE row on
@@ -82,7 +121,16 @@
     if (next.year !== undefined) params.set('year', next.year);
     if (next.type !== undefined) params.set('type', next.type);
     if (next.language !== undefined) params.set('language', next.language);
-    void goto(`${page.url.pathname}?${params.toString()}`, { keepFocus: true, noScroll: true });
+    // Filter changes reset pagination completely: the server re-runs
+    // load with NO cursor and the data-sync effect invalidates any
+    // in-flight pagination request from the previous filter.
+    filterPending = true;
+    requestToken += 1;
+    void goto(`${page.url.pathname}?${params.toString()}`, { keepFocus: true, noScroll: true })
+      .catch(() => {})
+      .finally(() => {
+        filterPending = false;
+      });
   }
 
   function setMonth(value: string) { selectedMonth = value; updateFilter({ month: value }); }
@@ -158,14 +206,21 @@
     return item.releaseKinds.map((k) => (k === 'theatrical' ? 'Theatrical' : 'OTT')).join(' + ');
   }
 
-  // Cursor-based infinite scroll: load next batch from /api/upcoming.
-  // The cursor is a serializable JSON object that tracks each source's
-  // progress (movie/series/anime candidateIndex). The server continues
-  // from the cursor position — never restarting from candidate 0.
+  // Infinite scroll: load the next page from /api/upcoming using the
+  // compact cursor. Guarantees:
+  //   - no concurrent page requests (loadingMore gate),
+  //   - stale responses discarded via the generation token,
+  //   - pagination failures SURFACE as a retry state (never swallowed),
+  //   - zero-progress responses cannot loop (streak breaker),
+  //   - expired cursors restart through the explicit deterministic
+  //     mechanism (never a silent page-1 reset).
   async function loadMore() {
-    if (loadingMore || !hasNextPage) return;
-    const seq = ++requestSeq;
+    if (loadingMore || restarting || filterPending) return;
+    if (!hasNextPage || !nextCursor) return;
+    if (loadMoreError) return; // explicit retry required
+    const token = ++requestToken;
     loadingMore = true;
+    liveMessage = 'Loading more results…';
     try {
       const params = new URLSearchParams({
         month: String(data.filters.month),
@@ -176,37 +231,139 @@
         cursor: nextCursor
       });
       const res = await fetch(`/api/upcoming?${params.toString()}`);
-      if (seq !== requestSeq) return; // stale
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const payload = await res.json();
-      if (seq !== requestSeq) return; // stale
-      if (payload.ok) {
-        // Deduplicate by event ID — never show the same event twice.
-        const existing = new Set(allItems.map((i) => i.id));
-        const newItems = (payload.items as UpcomingItem[]).filter((i) => !existing.has(i.id));
-        allItems = [...allItems, ...newItems];
-        currentPage = payload.page;
-        hasNextPage = payload.hasNextPage;
-        nextCursor = payload.cursor ?? '';
+      if (token !== requestToken) return; // stale request
+      const payload = await res.json().catch(() => null);
+      if (token !== requestToken) return; // stale request
+      if (!res.ok || !payload?.ok) {
+        const code = payload?.error?.code ?? `HTTP ${res.status}`;
+        if (code === 'INVALID_CURSOR' || code === 'CURSOR_STALE' || code === 'CURSOR_FILTER_MISMATCH') {
+          // Controlled, deterministic restart — announced to the user.
+          await restartPagination(token);
+          return;
+        }
+        throw new Error(payload?.error?.message ?? `Could not load more results (${code}).`);
       }
-    } catch {
-      // Silently fail — the user can scroll again to retry.
+      // Deduplicate by event ID — never render the same event twice.
+      const incoming = (payload.items ?? []) as UpcomingItem[];
+      const existing = new Set(allItems.map((i) => i.id));
+      const fresh = incoming.filter((i) => !existing.has(i.id));
+      if (fresh.length === 0 && payload.hasNextPage) {
+        // Zero-progress defense: a response that advances nothing while
+        // claiming more pages exist must not loop forever.
+        zeroProgressStreak += 1;
+        if (zeroProgressStreak >= 2) {
+          loadMoreError = 'The next page returned no new results. Retry to continue.';
+          liveMessage = 'Could not load more results. Retry available.';
+          return;
+        }
+      } else {
+        zeroProgressStreak = 0;
+      }
+      allItems = [...allItems, ...fresh];
+      currentPage = typeof payload.page === 'number' ? payload.page : currentPage + 1;
+      hasNextPage = Boolean(payload.hasNextPage);
+      nextCursor = typeof payload.cursor === 'string' && payload.cursor ? payload.cursor : '';
+      pageWarnings = Array.isArray(payload.errors) ? payload.errors : [];
+      if (!hasNextPage) liveMessage = 'End of results.';
+      else if (fresh.length === 0) liveMessage = 'No new results on this page.';
+      else liveMessage = `${fresh.length} more results loaded.`;
+    } catch (error) {
+      if (token !== requestToken) return; // stale request
+      loadMoreError = error instanceof Error ? error.message : 'Could not load more results.';
+      liveMessage = 'Could not load more results. Retry available.';
     } finally {
-      if (seq === requestSeq) loadingMore = false;
+      if (token === requestToken) {
+        loadingMore = false;
+        // If the sentinel is still on screen (short pages / tall
+        // viewports), keep going — otherwise pagination would stall
+        // until the next scroll event.
+        if (!loadMoreError && hasNextPage && sentinelVisible) {
+          queueMicrotask(() => void loadMore());
+        }
+      }
     }
   }
 
-  onMount(() => {
-    if (!sentinelEl || !('IntersectionObserver' in window)) return;
+  function retryLoadMore() {
+    loadMoreError = null;
+    zeroProgressStreak = 0;
+    void loadMore();
+  }
+
+  // Explicit deterministic restart for expired/stale cursors: fetch
+  // page 1 fresh and REPLACE the list. Never a silent duplicate-prone
+  // continuation, never a full page reload.
+  async function restartPagination(token: number) {
+    restarting = true;
+    loadingMore = false;
+    liveMessage = 'Results were refreshed — starting from the first page.';
+    try {
+      const params = new URLSearchParams({
+        month: String(data.filters.month),
+        year: String(data.filters.year),
+        type: data.filters.type,
+        language: data.filters.language ?? 'all',
+        page: '1'
+      });
+      const res = await fetch(`/api/upcoming?${params.toString()}`);
+      if (token !== requestToken) return;
+      const payload = await res.json().catch(() => null);
+      if (token !== requestToken) return;
+      if (!res.ok || !payload?.ok) {
+        loadMoreError = payload?.error?.message ?? `Could not refresh results (HTTP ${res.status}).`;
+        liveMessage = 'Could not refresh results. Retry available.';
+        return;
+      }
+      if ((payload.items ?? []).length === 0 && payload.errorMessage) {
+        // The refresh itself surfaced an upstream failure — retry state.
+        pageError = payload.errorMessage;
+        pageWarnings = Array.isArray(payload.errors) ? payload.errors : [];
+        allItems = [];
+        hasNextPage = false;
+        nextCursor = '';
+        liveMessage = 'Upcoming releases are temporarily unavailable.';
+        return;
+      }
+      allItems = (payload.items ?? []) as UpcomingItem[];
+      currentPage = 1;
+      hasNextPage = Boolean(payload.hasNextPage);
+      nextCursor = typeof payload.cursor === 'string' && payload.cursor ? payload.cursor : '';
+      pageWarnings = Array.isArray(payload.errors) ? payload.errors : [];
+      pageError = null;
+      loadMoreError = null;
+      zeroProgressStreak = 0;
+    } catch (error) {
+      if (token !== requestToken) return;
+      loadMoreError = error instanceof Error ? error.message : 'Could not refresh results.';
+      liveMessage = 'Could not refresh results. Retry available.';
+    } finally {
+      if (token === requestToken) restarting = false;
+    }
+  }
+
+  // IntersectionObserver lifecycle tied to the ACTUAL sentinel element:
+  // the effect re-runs whenever sentinelEl is bound/replaced and
+  // disconnects cleanly on teardown. No observer ever outlives its
+  // element, and none is created on the server.
+  $effect(() => {
+    const el = sentinelEl;
+    if (!el || !('IntersectionObserver' in window)) return;
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) void loadMore();
+      sentinelVisible = entries.some((e) => e.isIntersecting);
+      if (sentinelVisible) void loadMore();
     }, { rootMargin: '400px 0px' });
-    observer.observe(sentinelEl);
-    return () => observer.disconnect();
+    observer.observe(el);
+    return () => {
+      sentinelVisible = false;
+      observer.disconnect();
+    };
   });
 
   // SvelteKit snapshot — preserves loaded items + pagination state
-  // (including the cursor) across back/forward navigation.
+  // (including the compact cursor) across back/forward navigation. The
+  // v2 cursor keeps this payload small (it never contained item
+  // payloads). Restore invalidates in-flight requests so a restored
+  // state can never be mutated by an old response.
   export const snapshot = {
     capture: () => ({ allItems, currentPage, hasNextPage, nextCursor }),
     restore: (value: any) => {
@@ -215,6 +372,10 @@
       if (typeof value.currentPage === 'number') currentPage = value.currentPage;
       if (typeof value.hasNextPage === 'boolean') hasNextPage = value.hasNextPage;
       if (typeof value.nextCursor === 'string') nextCursor = value.nextCursor;
+      requestToken += 1;
+      loadingMore = false;
+      loadMoreError = null;
+      zeroProgressStreak = 0;
     }
   };
 </script>
@@ -251,12 +412,24 @@
     </div>
   </div>
 
-  <div class="upcoming-body">
-    {#if data.errorMessage && !hasResults}
+  <div class="upcoming-body" aria-busy={filterPending}>
+    {#if filterPending}
+      <!-- Filter change in flight: the skeleton replaces the previous
+           filter's list so stale content is never shown as if it
+           belonged to the new selection. -->
+      <div class="loading-state" role="status" aria-live="polite">
+        <div class="loading-inline"><LoaderCircle size={16} /> Updating results…</div>
+        <div class="skeleton-grid" aria-hidden="true">
+          {#each Array(8) as _, i (i)}
+            <div class="skeleton-card"></div>
+          {/each}
+        </div>
+      </div>
+    {:else if (data.errorMessage || pageError) && !hasResults}
       <section class="error-state" role="alert">
         <div class="error-mark">!</div>
         <h2>No releases found</h2>
-        <p>{data.errorMessage}</p>
+        <p>{data.errorMessage ?? pageError}</p>
         <button class="retry-btn" type="button" onclick={() => window.location.reload()}>Try again</button>
       </section>
     {:else if !hasResults}
@@ -267,9 +440,9 @@
         <button class="empty-action" type="button" onclick={() => setType('all')}>Change filters</button>
       </section>
     {:else}
-      {#if data.errors.length}
+      {#if pageWarnings.length}
         <div class="partial-warning" role="status">
-          Some sources were unavailable: {data.errors.join('; ')}
+          Some sources were unavailable: {pageWarnings.join('; ')}
         </div>
       {/if}
 
@@ -332,15 +505,30 @@
           </section>
         {/each}
       </div>
-      {#if hasNextPage}
-        <div class="load-more-sentinel" bind:this={sentinelEl} aria-hidden="true">
-          {#if loadingMore}
-            <div class="loading-more"><LoaderCircle size={16} /> Loading more…</div>
-          {/if}
-        </div>
-      {/if}
+      <!-- STABLE pagination sentinel: always present while results are
+           shown, so the IntersectionObserver never attaches to a
+           detached element. Its CONTENT reflects the pagination state:
+           loading / retry / clean end. -->
+      <div class="load-more-sentinel" bind:this={sentinelEl}>
+        {#if loadingMore || restarting}
+          <div class="loading-more" role="status">
+            <LoaderCircle size={16} /> {restarting ? 'Refreshing results…' : 'Loading more…'}
+          </div>
+        {:else if loadMoreError}
+          <div class="load-error" role="alert">
+            <AlertCircle size={14} />
+            <span class="load-error-text">{loadMoreError}</span>
+            <button class="retry-btn retry-inline" type="button" onclick={retryLoadMore}>Retry</button>
+          </div>
+        {:else if !hasNextPage}
+          <div class="end-of-results" role="status">You're all caught up.</div>
+        {/if}
+      </div>
     {/if}
   </div>
+
+  <!-- Pagination status for assistive technology. -->
+  <div class="sr-only" aria-live="polite">{liveMessage}</div>
 </div>
 
 <AppFooter />
@@ -440,6 +628,68 @@
   .loading-more { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: .72rem; }
   .loading-more :global(svg) { animation: spin 0.8s linear infinite; }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* Pagination failure state — a visible, keyboard-accessible retry. */
+  .load-error {
+    display: inline-flex; align-items: center; flex-wrap: wrap;
+    justify-content: center; gap: 10px;
+    padding: 10px 16px;
+    border: 1px solid rgba(255, 176, 32, .25);
+    border-radius: 10px;
+    background: rgba(255, 176, 32, .04);
+    color: #ffb020;
+    font-size: .72rem; font-weight: 600;
+  }
+  .load-error :global(svg) { flex: 0 0 auto; }
+  .retry-inline { margin-top: 0; padding: 6px 16px; font-size: .68rem; }
+
+  /* Clean end-of-results state. */
+  .end-of-results {
+    color: #646464;
+    font-size: .68rem; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+
+  /* Screen-reader-only live region for pagination announcements. */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Filter-change loading state: skeleton replaces the stale list. */
+  .loading-state { display: grid; gap: 16px; padding: 8px 0 24px; }
+  .loading-inline {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: var(--muted); font-size: .72rem; font-weight: 700;
+    justify-self: center;
+  }
+  .loading-inline :global(svg) { animation: spin 0.8s linear infinite; }
+  .skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .skeleton-card {
+    height: 128px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, .05);
+    background: linear-gradient(100deg, rgba(255, 255, 255, .02) 40%, rgba(255, 255, 255, .05) 50%, rgba(255, 255, 255, .02) 60%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -80% 0; } }
+  @media (min-width: 900px) {
+    .skeleton-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton-card { animation: none; }
+    .loading-more :global(svg), .loading-inline :global(svg) { animation: none; }
+  }
   .day-group { display: grid; gap: 12px; }
   .day-label {
     margin: 0;

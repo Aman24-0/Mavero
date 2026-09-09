@@ -149,6 +149,15 @@ import {
 } from '../../shared/upcoming-policy';
 import type { UpcomingFilters, UpcomingItem, UpcomingProvider, UpcomingReleaseKind, UpcomingResult, UpcomingType } from './upcoming-types';
 import type { IndiaReleaseDatesPayload, SeasonWatchProvidersPayload } from '../../shared/upcoming-policy';
+import {
+  UpcomingCursorError,
+  computeStreamId,
+  computeUpcomingFilterFingerprint,
+  parseUpcomingCursor,
+  sampleStreamIds,
+  serializeUpcomingCursor,
+  type UpcomingCursorV2
+} from './upcoming-cursor';
 
 const TMDB_IMAGE = 'https://image.tmdb.org/t/p';
 const DEFAULT_REGION = 'IN';
@@ -396,26 +405,56 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
   // When maxCandidates is provided (pagination page 1), use the smaller
   // bound so page 1 does NOT process the full month.
   const candidateCap = maxCandidates !== undefined ? Math.min(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES) : UPCOMING_MOVIE_MAX_CANDIDATES;
-  const candidates = [...rowsById.values()].slice(0, candidateCap);
-  const { startMs, endMs } = monthBounds(year, month);
 
   // CineLog model — DISCOVERY IS THE TRUTH for existence + date. Every
   // candidate row was returned by region=IN + with_release_country=IN +
   // release_date month window, so it HAS an India release inside the
   // selected month and its `release_date` IS the primary card date.
-  // No mandatory post-discovery gate may starve it:
-  //   - GET /movie/{id}/release_dates is OPTIONAL ENRICHMENT: it
-  //     contributes ONLY the releaseKinds badges (IN events of type 2|3
-  //     -> theatrical, 4 -> digital, inside the selected month). A
-  //     missing/failed response — or one without any in-month IN type
-  //     2/3/4 event — leaves the kinds UNKNOWN (no badges) and the
-  //     movie STAYS. Availability is never fabricated either way.
-  //   - OTT provider icons come from /movie/{id}/watch/providers
-  //     (results.IN.flatrate ONLY, no US/cross-region fallback). The
-  //     provider data is its own truth source — icons render whenever
-  //     India flatrate availability exists, independent of the kind
-  //     enrichment. A provider lookup failure hides the icons but never
-  //     removes the movie (caught inside the provider lookup).
+  // No mandatory post-discovery gate may starve it (see the shared
+  // enrichMovieCandidates helper below for the full gate contract).
+  const candidates = [...rowsById.values()].slice(0, candidateCap);
+  const { startMs, endMs } = monthBounds(year, month);
+  // Shared enrichment + mapping + classification pipeline (one aligned
+  // entry per candidate). loadUpcomingMovies keeps its FULL-month
+  // contract: every capped candidate is enriched, mapped, classified and
+  // month-guarded exactly as before — the identical pipeline the
+  // bounded pagination stream uses per chunk.
+  const aligned = await enrichMovieCandidates(candidates, year, month, region, startMs, endMs);
+  return aligned
+    .filter((item): item is UpcomingItem => item !== null)
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+// Shared MOVIE enrichment + mapping + classification pipeline.
+//
+// Returns ONE entry per input candidate, ALIGNED BY INDEX: null when the
+// candidate produces no card. The alignment is what lets the pagination
+// stream map every produced item back to its candidate position (the
+// rewind continuation) while loadUpcomingMovies simply drops the nulls.
+//
+// Gate contract (unchanged from the CineLog model):
+//   - DISCOVERY IS THE TRUTH for existence + date: the discover row's
+//     India `release_date` IS the primary card date.
+//   - GET /movie/{id}/release_dates is OPTIONAL ENRICHMENT: it
+//     contributes ONLY the releaseKinds badges. A missing/failed
+//     response leaves the kinds UNKNOWN (no badges) and the movie
+//     STAYS. Availability is never fabricated either way.
+//   - OTT provider icons come from /movie/{id}/watch/providers
+//     (results.IN.flatrate ONLY, no US/cross-region fallback). A
+//     provider lookup failure hides the icons but never removes the
+//     movie (caught inside the provider lookup).
+//   - Phase 6 defense-in-depth: every row passes the ONE central adult
+//     classifier (cheap flag path; anime exemption via genre 16 + ja).
+//   - Final month invariant: a card's date always belongs to the
+//     selected YYYY-MM (defensive backstop; no post-filter starvation).
+async function enrichMovieCandidates(
+  candidates: TmdbMovieRow[],
+  year: number,
+  month: number,
+  region: string,
+  startMs: number,
+  endMs: number
+): Promise<Array<UpcomingItem | null>> {
   type EnrichedMovie = { row: TmdbMovieRow; releaseKinds: UpcomingReleaseKind[]; providers: UpcomingProvider[] };
   const enriched = await mapWithConcurrency(candidates, async (candidate): Promise<EnrichedMovie> => {
     let releaseKinds: UpcomingReleaseKind[] = [];
@@ -431,50 +470,42 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
     const providers = await getMovieWatchProviders(candidate.id, region);
     return { row: candidate, releaseKinds, providers };
   }, LOOKUP_CONCURRENCY);
-  return enriched
-    .map(({ row: m, releaseKinds, providers }): UpcomingItem | null => {
-      // Metadata contract: a row without a real title or without a
-      // parseable India release date is not a card.
-      if (!m || (!m.title && !m.original_title)) return null;
-      const date = m.release_date ?? '';
-      if (!date || !Number.isFinite(Date.parse(date))) return null;
-      return {
-        id: `movie-${m.id}`,
-        type: 'movie' as const,
-        title: m.title || m.original_title || 'Untitled',
-        poster: tmdbImage(m.poster_path, 'w500'),
-        backdrop: tmdbImage(m.backdrop_path, 'w780') || undefined,
-        date,
-        timestamp: Date.parse(date) || 0,
-        year: Number(date.slice(0, 4)) || undefined,
-        rating: m.vote_average ? Math.round(m.vote_average * 10) / 10 : undefined,
-        genres: m.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3),
-        providers: providers.length ? providers.slice(0, 3) : undefined,
-        releaseKinds: releaseKinds.length ? [...releaseKinds] : undefined,
-        source: 'tmdb' as const
-      } satisfies UpcomingItem;
-    })
-    .filter((item): item is UpcomingItem => item !== null)
+  return enriched.map(({ row: m, releaseKinds, providers }): UpcomingItem | null => {
+    // Metadata contract: a row without a real title or without a
+    // parseable India release date is not a card.
+    if (!m || (!m.title && !m.original_title)) return null;
+    const date = m.release_date ?? '';
+    if (!date || !Number.isFinite(Date.parse(date))) return null;
+    const item: UpcomingItem = {
+      id: `movie-${m.id}`,
+      type: 'movie' as const,
+      title: m.title || m.original_title || 'Untitled',
+      poster: tmdbImage(m.poster_path, 'w500'),
+      backdrop: tmdbImage(m.backdrop_path, 'w780') || undefined,
+      date,
+      timestamp: Date.parse(date) || 0,
+      year: Number(date.slice(0, 4)) || undefined,
+      rating: m.vote_average ? Math.round(m.vote_average * 10) / 10 : undefined,
+      genres: m.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3),
+      providers: providers.length ? providers.slice(0, 3) : undefined,
+      releaseKinds: releaseKinds.length ? [...releaseKinds] : undefined,
+      source: 'tmdb' as const
+    };
     // Phase 6 defense-in-depth: classify every row through the ONE central
     // classifier (cheap flag path; anime exemption via genre 16 + ja) and
     // drop adult candidates. Normal rail: filtered regardless of Adult Mode
     // state.
-    .filter((item) => {
-      const m = rowsById.get(Number(item.id.slice('movie-'.length)));
-      return movieRowVerdict({
-        adult: m?.adult,
-        isAnime: isAnimeCandidate(m?.genre_ids, m?.original_language)
-      }) !== 'adult';
-    })
+    const verdict = movieRowVerdict({
+      adult: m.adult,
+      isAnime: isAnimeCandidate(m.genre_ids, m.original_language)
+    });
+    if (verdict === 'adult') return null;
     // Final month invariant (kept from Phase F.1): a month-filtered
     // Upcoming page must NEVER display a movie whose date is outside the
-    // selected month — every surviving card's date belongs to the
-    // selected YYYY-MM. With with_release_country=IN + the release_date
-    // window this holds by construction; the guard is the defensive
-    // backstop (no post-filter starvation — discover results cannot be
-    // dropped for lacking enrichment, only for an out-of-window date).
-    .filter((item) => isDateInMonth(item.date, year, month))
-    .sort((a, b) => a.timestamp - b.timestamp);
+    // selected month.
+    if (!isDateInMonth(item.date, year, month)) return null;
+    return item;
+  });
 }
 
 // ---------- TMDB TV episodes ----------
@@ -961,51 +992,42 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
   return value.sort((a, b) => a.timestamp - b.timestamp);
 }
 
-// ---------- top-level orchestrator ----------
+// ---------- top-level orchestrator (v2 pagination) ----------
 
 export const UPCOMING_PAGE_SIZE = 24;
 
-// Bounded candidate batch size per source per page request.
-// Each page request processes at most this many NEW candidates per
-// source (starting from the cursor position). This is the real bound:
-// page 1 processes BATCH candidates per source; page 2 processes the
-// NEXT BATCH candidates per source (continuing from the cursor).
+// Bounded candidate chunk per page request for the MOVIE stream. Movie
+// discovery (release_date.asc) IS chronological, so the movie stream can
+// be enriched lazily: each request advances through the deterministic
+// candidate order in bounded chunks until the page is filled. Series and
+// anime stay FULLY enriched snapshots (popularity.desc discovery is not
+// chronological — full enrichment is required for chronological
+// correctness; the existing source-level caches make repeat
+// materialization cheap and page 2+ effectively free).
 const SOURCE_CANDIDATE_BATCH = 30;
 
-/**
- * Serializable source cursor state. Each source (movie/series/anime)
- * tracks how many candidates have been enriched so far. The cursor is
- * returned in the API response and passed back in the next request so
- * the server continues from the previous position without restarting.
- *
- * - movieCursor.candidateIndex: number of movie candidates already
- *   enriched (0 = start from the first candidate)
- * - seriesCursor.candidateIndex: number of series candidates already
- *   enriched
- * - animeCursor.candidateIndex: number of anime candidates already
- *   enriched
- * - exhausted: true when the source has no more candidates to process
- *
- * The cursor is serializable (plain object, JSON-safe) so it can be
- * passed via URL query params or API response JSON.
- */
-export type SourceCursor = {
-  candidateIndex: number;
-  exhausted: boolean;
-  /**
-   * Pending events produced by the previous batch but not returned
-   * (because they exceeded PAGE_SIZE). These are consumed BEFORE
-   * processing new candidates on the next request, so no enriched
-   * event is ever lost.
-   */
-  pending: UpcomingItem[];
-};
+// Deterministic global ordering: timestamp first, then the stable event
+// ID as the secondary key. EVERY stream (movie candidates, series,
+// anime, and the merged type=all snapshot) uses this exact comparator,
+// so page boundaries can never regress chronologically and
+// equal-timestamp events keep one deterministic order everywhere.
+function chronologicalComparator(a: UpcomingItem, b: UpcomingItem): number {
+  if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? -1 : 1;
+}
 
-export type UpcomingCursor = {
-  movie: SourceCursor;
-  series: SourceCursor;
-  anime: SourceCursor;
-};
+function sortStream(items: UpcomingItem[]): UpcomingItem[] {
+  return [...items].sort(chronologicalComparator);
+}
+
+function streamIdForItems(items: UpcomingItem[]): string {
+  return computeStreamId(items.length, sampleStreamIds(items.map((item) => item.id)));
+}
+
+function streamIdForMovieCandidates(candidates: TmdbMovieRow[]): string {
+  return computeStreamId(candidates.length, sampleStreamIds(candidates.map((row) => `movie-${row.id}`)));
+}
 
 export type UpcomingPageResult = {
   items: UpcomingItem[];
@@ -1015,383 +1037,293 @@ export type UpcomingPageResult = {
   page: number;
   pageSize: number;
   hasNextPage: boolean;
-  cursor: UpcomingCursor;
+  cursor: UpcomingCursorV2;
 };
 
-function emptyCursor(): UpcomingCursor {
+// Policy/query version constants that materially change result content.
+// They ride inside the cursor fingerprint so a policy or query-semantics
+// bump invalidates outstanding cursors instead of serving stale pages.
+const CURSOR_POLICY_KEYS = [
+  UPCOMING_TV_SERIAL_POLICY_KEY,
+  UPCOMING_TV_DISCOVERY_KEY,
+  UPCOMING_TV_ELIGIBILITY_KEY,
+  UPCOMING_SEASON_MODEL_KEY,
+  UPCOMING_MOVIE_RELEASE_TRUTH_KEY,
+  UPCOMING_PROVIDER_MODEL_KEY
+];
+
+function freshCursor(fingerprint: string, streamId: string): UpcomingCursorV2 {
+  return { version: 2, fingerprint, streamId, movieCandidateIndex: 0, snapshotOffset: 0 };
+}
+
+type SourcePage = {
+  items: UpcomingItem[];
+  hasNextPage: boolean;
+  cursor: UpcomingCursorV2;
+  errors: string[];
+};
+
+// Shared result assembly. The genuine-empty / partial-failure /
+// complete-upstream-failure distinction is preserved exactly: a
+// non-empty result (or a clean end) carries `errors` as partial-failure
+// messages; an empty, non-continuable result WITH source failures is a
+// real upstream failure (errorMessage set — the API layer maps it to a
+// structured retryable response, never a silently empty page).
+function finalizeSourcePage(source: SourcePage, filters: UpcomingFilters, page: number, pageSize: number): UpcomingPageResult {
+  const failed = source.items.length === 0 && source.errors.length > 0 && !source.hasNextPage;
   return {
-    movie: { candidateIndex: 0, exhausted: false, pending: [] },
-    series: { candidateIndex: 0, exhausted: false, pending: [] },
-    anime: { candidateIndex: 0, exhausted: false, pending: [] }
+    items: source.items,
+    filters,
+    errors: source.errors,
+    errorMessage: failed ? 'Upcoming releases are temporarily unavailable. Please try again.' : undefined,
+    page,
+    pageSize,
+    hasNextPage: source.hasNextPage,
+    cursor: source.cursor
   };
 }
 
-/**
- * Parse a cursor from a string (URL query param). Returns a fresh
- * empty cursor if the input is missing/invalid — page 1 always starts
- * from scratch.
- */
-export function parseCursor(raw: string | null | undefined): UpcomingCursor {
-  if (!raw) return emptyCursor();
+// ---- MOVIE STREAM PAGINATION (type=movie) ----
+//
+// Movie candidates are ordered deterministically (release timestamp,
+// then ID) and enriched LAZILY in bounded chunks: a page request
+// enriches candidates from the cursor position until the page is filled
+// or the stream ends. Movies stay bounded per request (page 1 does NOT
+// enrich the whole month) while the cursor remains compact — the
+// position is a candidate INDEX, never item payloads.
+//
+// Overflow rewind: a chunk may produce more items than the page serves.
+// Instead of carrying overflow items inside the cursor (the v1 bug that
+// serialized full UpcomingItem[] payloads into the URL), the cursor
+// rewinds to the candidate AFTER the last SERVED item; surplus
+// candidates are simply re-enriched on the next request through the
+// per-item caches (release_dates + watch/providers) — no upstream
+// re-request, no event loss, no duplication.
+async function loadMovieStreamPage(
+  filters: UpcomingFilters,
+  region: string,
+  language: string,
+  pageSize: number,
+  fingerprint: string,
+  cursor: UpcomingCursorV2 | undefined
+): Promise<SourcePage> {
+  const errors: string[] = [];
   try {
-    const parsed = JSON.parse(decodeURIComponent(raw));
-    if (!parsed || typeof parsed !== 'object') return emptyCursor();
-    const ensure = (s: any): SourceCursor => ({
-      candidateIndex: typeof s?.candidateIndex === 'number' && s.candidateIndex >= 0 ? Math.floor(s.candidateIndex) : 0,
-      exhausted: typeof s?.exhausted === 'boolean' ? s.exhausted : false,
-      pending: Array.isArray(s?.pending) ? s.pending : []
-    });
-    return {
-      movie: ensure(parsed.movie),
-      series: ensure(parsed.series),
-      anime: ensure(parsed.anime)
-    };
-  } catch {
-    return emptyCursor();
-  }
-}
-
-/**
- * Serialize a cursor to a URL-safe string.
- */
-export function serializeCursor(cursor: UpcomingCursor): string {
-  return encodeURIComponent(JSON.stringify(cursor));
-}
-
-// ---- Cursor-based source loaders ----
-//
-// These functions split the existing source pipeline into two phases:
-//   1. Discovery (already cached) — returns the full candidate list
-//   2. Enrichment (bounded per request for movies; full for series/anime)
-//
-// CHRONOLOGICAL ORDERING CONTRACT:
-//   Movie discovery uses sort_by=release_date.asc, so movie candidates
-//   ARE in chronological order. Batching movies is safe: batch N's
-//   events are all ≤ batch N+1's events.
-//
-//   Series/anime discovery uses sort_by=popularity.desc, so candidates
-//   are NOT chronological. A later candidate can produce an earlier-
-//   dated event. Therefore series/anime MUST be fully enriched before
-//   any events are emitted, to guarantee chronological correctness.
-//   The per-item caches (detail/season/providers) make the full
-//   enrichment fast on repeat requests.
-
-async function loadMovieBatch(
-  year: number, month: number, region: string, language: string,
-  cursor: SourceCursor
-): Promise<{ items: UpcomingItem[]; nextCursor: SourceCursor }> {
-  await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
-  const adultIds = getAdultProviderIds();
-  const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  const candidateRows = await discoverIndiaMovieCandidates(year, month, region, language, providerExclusion);
-  const rowsById = new Map<number, TmdbMovieRow>();
-  for (const row of candidateRows) if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
-  const allCandidates = [...rowsById.values()].slice(0, UPCOMING_MOVIE_MAX_CANDIDATES);
-
-  // Process only the next BATCH candidates starting from cursor position.
-  // Movies are chronological (release_date.asc), so batching is safe.
-  const startIdx = Math.min(cursor.candidateIndex, allCandidates.length);
-  const batch = allCandidates.slice(startIdx, startIdx + SOURCE_CANDIDATE_BATCH);
-  const { startMs, endMs } = monthBounds(year, month);
-
-  type EnrichedMovie = { row: TmdbMovieRow; releaseKinds: UpcomingReleaseKind[]; providers: UpcomingProvider[] };
-  const enriched = await mapWithConcurrency(batch, async (candidate): Promise<EnrichedMovie> => {
-    let releaseKinds: UpcomingReleaseKind[] = [];
-    try {
-      const payload = await getMovieIndiaReleaseDates(candidate.id);
-      const events = extractIndiaMovieReleaseEvents(payload, startMs, endMs);
-      releaseKinds = deriveMovieReleaseKinds(events);
-    } catch {
-      releaseKinds = [];
+    await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
+    const adultIds = getAdultProviderIds();
+    const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+    // Cached discovery (10-minute TTL). A discovery failure propagates —
+    // it is a real upstream error, never a silently empty stream.
+    const candidateRows = await discoverIndiaMovieCandidates(filters.year, filters.month, region, language, providerExclusion);
+    const rowsById = new Map<number, TmdbMovieRow>();
+    for (const row of candidateRows) if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
+    // Deterministic chronological candidate stream. Discovery already
+    // sorts release_date.asc; the explicit (timestamp, id) sort pins the
+    // tie-breaking to the global comparator.
+    const candidates = [...rowsById.values()]
+      .slice(0, UPCOMING_MOVIE_MAX_CANDIDATES)
+      .sort((a, b) => (Date.parse(a.release_date ?? '') || 0) - (Date.parse(b.release_date ?? '') || 0) || a.id - b.id);
+    const streamId = streamIdForMovieCandidates(candidates);
+    const startIndex = cursor?.movieCandidateIndex ?? 0;
+    if (cursor) {
+      if (cursor.streamId !== streamId) {
+        throw new UpcomingCursorError('stale', 'The movie result set changed since this cursor was issued.');
+      }
+      if (startIndex > candidates.length) {
+        throw new UpcomingCursorError('stale', 'The movie position is beyond the current result set.');
+      }
     }
-    const providers = await getMovieWatchProviders(candidate.id, region);
-    return { row: candidate, releaseKinds, providers };
-  }, LOOKUP_CONCURRENCY);
-
-  const items = enriched
-    .map(({ row: m, releaseKinds, providers }): UpcomingItem | null => {
-      if (!m || (!m.title && !m.original_title)) return null;
-      const date = m.release_date ?? '';
-      if (!date || !Number.isFinite(Date.parse(date))) return null;
-      return {
-        id: `movie-${m.id}`,
-        type: 'movie' as const,
-        title: m.title || m.original_title || 'Untitled',
-        poster: tmdbImage(m.poster_path, 'w500'),
-        backdrop: tmdbImage(m.backdrop_path, 'w780') || undefined,
-        date,
-        timestamp: Date.parse(date) || 0,
-        year: Number(date.slice(0, 4)) || undefined,
-        rating: m.vote_average ? Math.round(m.vote_average * 10) / 10 : undefined,
-        genres: m.genre_ids?.map((id) => genreNames[id]).filter(Boolean).slice(0, 3),
-        providers: providers.length ? providers.slice(0, 3) : undefined,
-        releaseKinds: releaseKinds.length ? [...releaseKinds] : undefined,
-        source: 'tmdb' as const
-      } satisfies UpcomingItem;
-    })
-    .filter((item): item is UpcomingItem => item !== null)
-    .filter((item) => {
-      const m = rowsById.get(Number(item.id.slice('movie-'.length)));
-      return movieRowVerdict({ adult: m?.adult, isAnime: isAnimeCandidate(m?.genre_ids, m?.original_language) }) !== 'adult';
-    })
-    .filter((item) => isDateInMonth(item.date, year, month));
-
-  const nextIdx = startIdx + batch.length;
-  // Prepend any pending events from the previous request so they are
-  // consumed before new candidates.
-  const combinedItems = [...cursor.pending, ...items].sort((a, b) => a.timestamp - b.timestamp);
-  return {
-    items: combinedItems,
-    nextCursor: { candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates.length, pending: [] }
-  };
-}
-
-/**
- * Load ALL movie events for the month (for type=all chronological merge).
- *
- * When type=all, movies must be fully enriched because series/anime
- * events (which are fully enriched) can have dates that interleave
- * with movie dates from a later batch. Batching movies in type=all
- * would cause chronological regressions across page boundaries.
- *
- * Uses the existing loadUpcomingMovies (which enriches all candidates).
- * The per-item caches make this fast on repeat requests.
- */
-async function loadMovieFull(
-  year: number, month: number, region: string, language: string,
-  cursor: SourceCursor
-): Promise<{ items: UpcomingItem[]; nextCursor: SourceCursor }> {
-  if (cursor.exhausted && cursor.pending.length === 0) {
-    return { items: [], nextCursor: cursor };
-  }
-  // If already exhausted (full enrichment was done on a previous call),
-  // return ONLY the pending items — the full result was already
-  // distributed as pending by loadUpcomingPage. Re-calling
-  // loadUpcomingMovies would return the same items again, causing
-  // duplicates.
-  if (cursor.exhausted) {
+    const { startMs, endMs } = monthBounds(filters.year, filters.month);
+    // Enrich chunk-by-chunk until the page is filled or the stream ends.
+    // The loop never stops early with zero collected items while
+    // candidates remain (zero-progress pages are structurally
+    // impossible); the whole remaining stream is bounded by
+    // UPCOMING_MOVIE_MAX_CANDIDATES.
+    const collected: Array<{ index: number; item: UpcomingItem }> = [];
+    let scanIndex = Math.min(startIndex, candidates.length);
+    while (scanIndex < candidates.length && collected.length < pageSize) {
+      const chunkEnd = Math.min(scanIndex + SOURCE_CANDIDATE_BATCH, candidates.length);
+      const chunk = candidates.slice(scanIndex, chunkEnd);
+      const aligned = await enrichMovieCandidates(chunk, filters.year, filters.month, region, startMs, endMs);
+      for (let k = 0; k < aligned.length; k++) {
+        const item = aligned[k];
+        if (item) collected.push({ index: scanIndex + k, item });
+      }
+      scanIndex = chunkEnd;
+    }
+    const kept = collected.slice(0, pageSize);
+    const items = kept.map((entry) => entry.item);
+    // Cursor continuation — the rewind contract above.
+    let nextIndex: number;
+    let hasNextPage: boolean;
+    if (kept.length === 0) {
+      // The scan consumed every remaining candidate without producing
+      // another card — the stream is genuinely exhausted.
+      nextIndex = candidates.length;
+      hasNextPage = false;
+    } else if (collected.length > pageSize || scanIndex < candidates.length) {
+      // Page filled: surplus items exist (rewound candidates re-enrich
+      // from cache on the next request) and/or unprocessed candidates
+      // remain.
+      nextIndex = kept[kept.length - 1].index + 1;
+      hasNextPage = true;
+    } else {
+      // The final candidates filled the page exactly and nothing remains
+      // beyond the scan position.
+      nextIndex = candidates.length;
+      hasNextPage = false;
+    }
     return {
-      items: [...cursor.pending].sort((a, b) => a.timestamp - b.timestamp),
-      nextCursor: { candidateIndex: 0, exhausted: true, pending: [] }
+      items,
+      hasNextPage,
+      cursor: { version: 2, fingerprint, streamId, movieCandidateIndex: nextIndex, snapshotOffset: 0 },
+      errors
     };
+  } catch (error) {
+    if (error instanceof UpcomingCursorError) throw error;
+    // Complete upstream failure for the movie source — graceful shape
+    // (never a thrown 500 on the SSR page-1 path); the API layer maps
+    // the failure to a structured retryable response. The cursor
+    // position was never advanced, so a retry simply re-requests.
+    errors.push(`Movies: ${safeMessage(error)}`);
+    return { items: [], hasNextPage: false, cursor: freshCursor(fingerprint, streamIdForItems([])), errors };
   }
-  // First call: full enrichment
-  const fullItems = await loadUpcomingMovies(year, month, region, language);
-  const combinedItems = [...cursor.pending, ...fullItems].sort((a, b) => a.timestamp - b.timestamp);
+}
+
+// ---- SNAPSHOT PAGINATION (type=series / anime / all) ----
+//
+// Series/anime discovery is popularity-ordered (NOT chronological), so
+// the complete normalized source result is materialized ONCE through the
+// existing source-level caches and pagination slices the cached stream
+// by a compact offset. type=all merges the three cached full results
+// (movie + series + anime) into ONE globally chronological, deduped
+// stream and paginates it the same way. The cursor never carries items —
+// only the offset and the stream identity hash.
+async function loadSnapshotPage(
+  filters: UpcomingFilters,
+  region: string,
+  language: string,
+  pageSize: number,
+  fingerprint: string,
+  cursor: UpcomingCursorV2 | undefined
+): Promise<SourcePage> {
+  const errors: string[] = [];
+  let stream: UpcomingItem[];
+  try {
+    if (filters.type === 'series') {
+      // A total series failure propagates to the graceful failure shape
+      // below — a failed source is never silently "empty".
+      stream = sortStream(await loadUpcomingSeries(filters.year, filters.month, region, language));
+    } else if (filters.type === 'anime') {
+      // Anime language semantics live inside loadUpcomingAnime: a
+      // non-ja language filter returns [] deterministically without
+      // querying upstream.
+      stream = sortStream(await loadUpcomingAnime(filters.year, filters.month, region, language));
+    } else {
+      // type=all: full chronological merge of the three cached sources.
+      // Partial failure keeps the successful sources' events and
+      // surfaces the failed ones in `errors` (never silent); a failure
+      // of EVERY requested source lands in the graceful failure shape.
+      const [moviesResult, seriesResult, animeResult] = await Promise.allSettled([
+        loadUpcomingMovies(filters.year, filters.month, region, language),
+        loadUpcomingSeries(filters.year, filters.month, region, language),
+        loadUpcomingAnime(filters.year, filters.month, region, language)
+      ]);
+      const parts: UpcomingItem[][] = [];
+      if (moviesResult.status === 'fulfilled') parts.push(moviesResult.value);
+      else errors.push(`Movies: ${safeMessage(moviesResult.reason)}`);
+      if (seriesResult.status === 'fulfilled') parts.push(seriesResult.value);
+      else errors.push(`Series: ${safeMessage(seriesResult.reason)}`);
+      if (animeResult.status === 'fulfilled') parts.push(animeResult.value);
+      else errors.push(`Anime: ${safeMessage(animeResult.reason)}`);
+      // Global merge: dedupe by event ID, then the deterministic
+      // chronological comparator. Source-specific ordering can never
+      // leak into the final page ordering.
+      const seen = new Set<string>();
+      stream = sortStream(parts.flat().filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      }));
+    }
+  } catch (error) {
+    if (error instanceof UpcomingCursorError) throw error;
+    errors.push(`${filters.type === 'anime' ? 'Anime' : 'Series'}: ${safeMessage(error)}`);
+    return { items: [], hasNextPage: false, cursor: freshCursor(fingerprint, streamIdForItems([])), errors };
+  }
+
+  const streamId = streamIdForItems(stream);
+  const offset = cursor?.snapshotOffset ?? 0;
+  if (cursor && stream.length > 0) {
+    if (cursor.streamId !== streamId) {
+      throw new UpcomingCursorError('stale', 'The result set changed since this cursor was issued.');
+    }
+    if (offset > stream.length) {
+      throw new UpcomingCursorError('stale', 'The snapshot position is beyond the current result set.');
+    }
+  }
+  // A cursor over a genuinely empty (error-free) stream hashes
+  // identically on every materialization — the clean end state is
+  // reached without a false "stale" report.
+  const safeOffset = Math.min(offset, stream.length);
+  const items = stream.slice(safeOffset, safeOffset + pageSize);
+  const nextOffset = safeOffset + items.length;
   return {
-    items: combinedItems,
-    nextCursor: { candidateIndex: 0, exhausted: true, pending: [] }
+    items,
+    hasNextPage: nextOffset < stream.length,
+    cursor: { version: 2, fingerprint, streamId, movieCandidateIndex: 0, snapshotOffset: nextOffset },
+    errors
   };
 }
 
 /**
- * Load ALL series or anime events for the month.
+ * Load one page of Upcoming items (v2 pagination).
  *
- * Series/anime discovery uses sort_by=popularity.desc, so candidates
- * are NOT in chronological order. A later candidate can produce an
- * earlier-dated event. Therefore ALL candidates must be enriched before
- * any events are emitted to guarantee chronological correctness.
+ * The cursor is a COMPACT transport token (see upcoming-cursor.ts) — it
+ * never contains UpcomingItem payloads. Continuation state lives on the
+ * server: type=movie continues through the deterministic chronological
+ * candidate stream; series/anime/all paginate by offset into
+ * materialized server-side snapshots built on the existing source-level
+ * caches.
  *
- * The enrichment is cached per-item (detail/season/providers — 30min
- * TTL), so repeat requests are fast. The source-level cache (10min TTL)
- * caches the full result.
- *
- * This function uses the existing loadUpcomingSeries/loadUpcomingAnime
- * (which already enrich all candidates) — it does NOT batch. The
- * cursor's candidateIndex is set to the full candidate count on first
- * call, and exhausted=true. Subsequent calls return from the cache
- * with no new enrichment work.
- */
-async function loadSeriesOrAnimeFull(
-  year: number, month: number, region: string, language: string,
-  cursor: SourceCursor, isAnime: boolean
-): Promise<{ items: UpcomingItem[]; nextCursor: SourceCursor }> {
-  if (cursor.exhausted && cursor.pending.length === 0) {
-    return { items: [], nextCursor: cursor };
-  }
-  // If already exhausted (full enrichment was done on a previous call),
-  // return ONLY the pending items — the full result was already
-  // distributed as pending by loadUpcomingPage.
-  if (cursor.exhausted) {
-    return {
-      items: [...cursor.pending].sort((a, b) => a.timestamp - b.timestamp),
-      nextCursor: { candidateIndex: 0, exhausted: true, pending: [] }
-    };
-  }
-  // First call: full enrichment
-  const fullItems = isAnime
-    ? await loadUpcomingAnime(year, month, region, language)
-    : await loadUpcomingSeries(year, month, region, language);
-  const combinedItems = [...cursor.pending, ...fullItems].sort((a, b) => a.timestamp - b.timestamp);
-  return {
-    items: combinedItems,
-    nextCursor: { candidateIndex: 0, exhausted: true, pending: [] }
-  };
-}
-
-/**
- * Load one page of Upcoming items with REAL cursor-based pagination.
- *
- * CRITICAL: This function does NOT call loadUpcoming(). It calls the
- * cursor-based batch loaders (loadMovieBatch, loadSeriesBatch) which
- * process only SOURCE_CANDIDATE_BATCH candidates per source per request,
- * starting from the cursor position.
- *
- * The cursor is a serializable JSON object with independent
- * movie/series/anime source positions. Each API request passes the
- * cursor from the previous response so the server continues from
- * where it left off — never restarting from candidate 0.
- *
- * For type=all, all three sources are loaded in parallel, each
- * processing its next batch. The results are merged chronologically
- * and the first PAGE_SIZE items are returned. The cursor reflects
- * the actual progress of each source.
- *
- * If a source is exhausted (all candidates processed), its cursor
- * stays exhausted and no more work is done for that source.
+ * Cursor safety (never silently absorbed):
+ *   - malformed / unknown-version cursor -> UpcomingCursorError (API 400)
+ *   - cursor issued for different filters -> UpcomingCursorError (API 409)
+ *   - stream identity mismatch            -> UpcomingCursorError (API 409)
+ * The frontend restarts through the explicit deterministic mechanism —
+ * the server never silently converts an invalid cursor into page 1.
  */
 export async function loadUpcomingPage(
   filters: UpcomingFilters,
   page: number = 1,
-  incomingCursor?: UpcomingCursor
+  rawCursor?: string | null
 ): Promise<UpcomingPageResult> {
   const pageSize = UPCOMING_PAGE_SIZE;
   const region = DEFAULT_REGION;
   const language = parseUpcomingLanguage(filters.language ?? 'all');
-  const errors: string[] = [];
-  const cursor = incomingCursor ?? emptyCursor();
+  const normalizedFilters: UpcomingFilters = { ...filters, language };
+  const fingerprint = computeUpcomingFilterFingerprint(normalizedFilters, region, CURSOR_POLICY_KEYS);
 
-  const wantMovies = filters.type === 'all' || filters.type === 'movie';
-  const wantSeries = filters.type === 'all' || filters.type === 'series';
-  const wantAnime = filters.type === 'all' || filters.type === 'anime';
-
-  // For single-type filters, only one source runs. For type=all,
-  // all three run in parallel — each processes its own batch.
-  // Each source returns ALL its events (pending from previous + newly
-  // enriched). loadUpcomingPage merges them, slices PAGE_SIZE, and
-  // stores the overflow back into per-source pending for next time.
-  const tasks: Array<Promise<void>> = [];
-  let movieItems: UpcomingItem[] = [];
-  let seriesItems: UpcomingItem[] = [];
-  let animeItems: UpcomingItem[] = [];
-  // On failure, preserve the cursor position (do NOT mark exhausted).
-  // The caller can retry from the same position.
-  let movieCursor = cursor.movie;
-  let seriesCursor = cursor.series;
-  let animeCursor = cursor.anime;
-
-  // CHRONOLOGICAL ORDERING CONTRACT:
-  //   When type=all, ALL sources must be fully enriched because events
-  //   from different sources can interleave chronologically. Batching
-  //   any source in type=all would cause chronological regressions
-  //   across page boundaries.
-  //   When type=movie (single source), movies CAN be safely batched
-  //   because movie discovery uses release_date.asc (chronological).
-  //   Series/anime are ALWAYS fully enriched (popularity.desc discovery
-  //   is not chronological).
-  const isSingleType = filters.type !== 'all';
-
-  if (wantMovies && (!cursor.movie.exhausted || cursor.movie.pending.length > 0)) {
-    const movieLoader = isSingleType ? loadMovieBatch : loadMovieFull;
-    tasks.push(
-      movieLoader(filters.year, filters.month, region, language, cursor.movie)
-        .then((r) => { movieItems = r.items; movieCursor = r.nextCursor; })
-        .catch((err) => {
-          errors.push(`Movies: ${safeMessage(err)}`);
-          movieCursor = cursor.movie;
-        })
-    );
-  }
-  if (wantSeries && (!cursor.series.exhausted || cursor.series.pending.length > 0)) {
-    tasks.push(
-      loadSeriesOrAnimeFull(filters.year, filters.month, region, language, cursor.series, false)
-        .then((r) => { seriesItems = r.items; seriesCursor = r.nextCursor; })
-        .catch((err) => {
-          errors.push(`Series: ${safeMessage(err)}`);
-          seriesCursor = cursor.series;
-        })
-    );
-  }
-  if (wantAnime && (!cursor.anime.exhausted || cursor.anime.pending.length > 0)) {
-    // Anime language semantics: anime is intrinsically ja. A non-ja
-    // language filter returns empty deterministically.
-    if (language !== 'all' && language !== ANIME_ORIGINAL_LANGUAGE) {
-      animeCursor = { ...cursor.anime, exhausted: true };
-    } else {
-      tasks.push(
-        loadSeriesOrAnimeFull(filters.year, filters.month, region, language, cursor.anime, true)
-          .then((r) => { animeItems = r.items; animeCursor = r.nextCursor; })
-          .catch((err) => {
-            errors.push(`Anime: ${safeMessage(err)}`);
-            animeCursor = cursor.anime;
-          })
-      );
+  let cursor: UpcomingCursorV2 | undefined;
+  if (rawCursor !== null && rawCursor !== undefined && rawCursor !== '') {
+    const parsed = parseUpcomingCursor(rawCursor);
+    if (!parsed.ok) {
+      throw new UpcomingCursorError(parsed.reason, 'The pagination cursor is invalid.');
+    }
+    cursor = parsed.cursor;
+    if (cursor.fingerprint !== fingerprint) {
+      throw new UpcomingCursorError('filter-mismatch', 'The pagination cursor does not belong to the selected filters.');
     }
   }
 
-  await Promise.all(tasks);
-
-  // Merge all source items chronologically.
-  const allItems = [...movieItems, ...seriesItems, ...animeItems];
-  allItems.sort((a, b) => a.timestamp - b.timestamp);
-
-  // Deduplicate by event ID.
-  const seen = new Set<string>();
-  const deduped = allItems.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
-
-  // Return the first PAGE_SIZE items. Store the overflow as pending
-  // events in the cursor so they are returned on the next request
-  // BEFORE processing new candidates. This prevents losing enriched
-  // events that exceeded PAGE_SIZE.
-  const pageItems = deduped.slice(0, pageSize);
-  const overflow = deduped.slice(pageSize);
-
-  // Distribute overflow back to source cursors as pending. Since the
-  // merge was chronological, we assign each overflow item to its
-  // source's pending list so the next request consumes them first.
-  const moviePending: UpcomingItem[] = [];
-  const seriesPending: UpcomingItem[] = [];
-  const animePending: UpcomingItem[] = [];
-  for (const item of overflow) {
-    if (item.type === 'movie') moviePending.push(item);
-    else if (item.type === 'anime') animePending.push(item);
-    else seriesPending.push(item);
-  }
-
-  const nextMovieCursor: SourceCursor = { ...movieCursor, pending: moviePending };
-  const nextSeriesCursor: SourceCursor = { ...seriesCursor, pending: seriesPending };
-  const nextAnimeCursor: SourceCursor = { ...animeCursor, pending: animePending };
-
-  // FIX 1: hasNextPage must only depend on ACTIVE sources for the
-  // current filter type. An unused source's non-exhausted cursor must
-  // NOT keep hasNextPage=true forever.
-  const movieActive = wantMovies;
-  const seriesActive = wantSeries;
-  const animeActive = wantAnime;
-  const hasNextPage =
-    (movieActive && (nextMovieCursor.pending.length > 0 || !nextMovieCursor.exhausted)) ||
-    (seriesActive && (nextSeriesCursor.pending.length > 0 || !nextSeriesCursor.exhausted)) ||
-    (animeActive && (nextAnimeCursor.pending.length > 0 || !nextAnimeCursor.exhausted));
-
-  return {
-    items: pageItems,
-    filters,
-    errors,
-    errorMessage: deduped.length === 0 && errors.length > 0 ? 'Upcoming releases are temporarily unavailable. Please try again.' : undefined,
-    page,
-    pageSize,
-    hasNextPage,
-    cursor: {
-      movie: nextMovieCursor,
-      series: nextSeriesCursor,
-      anime: nextAnimeCursor
-    }
-  };
+  const source = normalizedFilters.type === 'movie'
+    ? await loadMovieStreamPage(normalizedFilters, region, language, pageSize, fingerprint, cursor)
+    : await loadSnapshotPage(normalizedFilters, region, language, pageSize, fingerprint, cursor);
+  return finalizeSourcePage(source, normalizedFilters, page, pageSize);
 }
+
+// Compact URL-safe cursor serialization for the API/page-server boundary.
+export const serializeCursor = serializeUpcomingCursor;
 
 export async function loadUpcoming(filters: UpcomingFilters): Promise<UpcomingResult> {
   const region = DEFAULT_REGION;
@@ -1461,9 +1393,6 @@ export const upcomingInternals = {
   loadUpcomingAnime,
   loadUpcomingPage,
   loadUpcoming,
-  loadMovieBatch,
-  loadSeriesOrAnimeFull,
-  parseCursor,
   serializeCursor,
   UPCOMING_PAGE_SIZE,
   SOURCE_CANDIDATE_BATCH,
@@ -1473,6 +1402,12 @@ export const upcomingInternals = {
   getMovieWatchProviders,
   buildSeriesItems,
   discoverIndiaMovieCandidates,
+  enrichMovieCandidates,
+  chronologicalComparator,
+  sortStream,
+  streamIdForItems,
+  streamIdForMovieCandidates,
+  CURSOR_POLICY_KEYS,
   DEFAULT_REGION,
   ANIME_GENRE_ID,
   ANIME_ORIGINAL_LANGUAGE

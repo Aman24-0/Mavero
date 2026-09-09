@@ -177,7 +177,7 @@ assert.doesNotMatch(upcomingCode, /primary_release_date/, 'primary_release_date 
 assert.doesNotMatch(upcomingCode, /with_release_type/, 'with_release_type is NOT sent to Discover at all (release kinds come only from the optional enrichment)');
 assert.doesNotMatch(upcomingCode, /vote_count/, 'NO vote_count floor anywhere in Upcoming discovery (zero-vote future titles must survive)');
 assert.match(upcomingSrc, /async function discoverIndiaMovieCandidates\(year: number, month: number, region: string, language: string, providerExclusion: string \| undefined\)/, 'ONE candidate-discovery function produces the single CineLog stream');
-assert.equal((upcomingSrc.match(/discoverIndiaMovieCandidates\(/g) ?? []).length, 2, 'movie candidate discovery referenced exactly twice (definition + the ONE loadUpcomingMovies call — no fallback query duplication)');
+assert.equal((upcomingSrc.match(/discoverIndiaMovieCandidates\(/g) ?? []).length, 3, 'movie candidate discovery referenced exactly three times (definition + loadUpcomingMovies + the v2 movie pagination stream — no fallback query duplication)');
 assert.match(upcomingSrc, /sort_by: 'release_date\.asc',/, 'movie discovery sorts by release date ascending (CineLog model — earliest releases first)');
 assert.match(upcomingSrc, /include_adult: false,/, 'discovery sends include_adult=false');
 // The final India release-kind ENRICHMENT (6b/6c) is what badges kinds.
@@ -194,7 +194,8 @@ assert.match(upcomingSrc, /page \+= 1;/, 'movie pagination advances the upstream
 assert.match(upcomingSrc, /const collected: TmdbMovieRow\[\] = \[\];/, 'movie pagination accumulates rows across pages');
 assert.equal(UPCOMING_MOVIE_MAX_UPSTREAM_PAGES >= 2, true, 'movie page cap actually allows walking BEYOND page 1');
 // Phase cap: the deduped candidates are hard-capped before the N+1.
-assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, UPCOMING_MOVIE_MAX_CANDIDATES\);/, 'deduped candidates hard-capped before the enrichment N+1 (bounded N+1)');
+assert.match(upcomingSrc, /const candidateCap = maxCandidates !== undefined \? Math\.min\(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES\) : UPCOMING_MOVIE_MAX_CANDIDATES;/, 'candidate cap = the smaller of the request bound and the hard cap (bounded N+1)');
+assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, candidateCap\);/, 'deduped candidates hard-capped before the enrichment N+1 (bounded N+1)');
 assert.equal(UPCOMING_MOVIE_MAX_CANDIDATES >= UPCOMING_TV_MAX_CANDIDATES, true, 'movie candidate cap is proportionate to the discovery depth');
 
 // --- 6. MOVIE CANDIDATE DEDUPE (canonical IDs across pages) ---
@@ -215,7 +216,7 @@ assert.equal(UPCOMING_MOVIE_MAX_CANDIDATES >= UPCOMING_TV_MAX_CANDIDATES, true, 
 }
 assert.match(upcomingSrc, /const candidateRows = await discoverIndiaMovieCandidates\(year, month, region, language, providerExclusion\);/, 'loadUpcomingMovies consumes the ONE candidate stream');
 assert.match(upcomingSrc, /for \(const row of candidateRows\) if \(row\.id && !rowsById\.has\(row\.id\)\) rowsById\.set\(row\.id, row\);/, 'candidate rows re-deduped into the metadata map by canonical TMDB ID');
-assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, UPCOMING_MOVIE_MAX_CANDIDATES\);/, 'enrichment N+1 runs over the DEDUPED + CAPPED candidates only');
+assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, candidateCap\);/, 'enrichment N+1 runs over the DEDUPED + CAPPED candidates only');
 
 // --- 6b. MOVIE RELEASE-KIND ENRICHMENT (pure unit tests) ---
 // September 2026 month window.
@@ -327,7 +328,7 @@ assert.match(upcomingSrc, /releaseKinds = deriveMovieReleaseKinds\(events\);/, '
 assert.match(upcomingSrc, /const date = m\.release_date \?\? '';/, 'card date IS the discover row release_date (region=IN + with_release_country=IN + month window)');
 assert.doesNotMatch(upcomingCode, /if \(!events\.length\) return null;/, 'NO mandatory enrichment gate: an event-less release_dates response can never drop a discover-qualified movie');
 assert.match(upcomingCode, /catch \{\n\s*releaseKinds = \[\];\n\s*\}/, 'a FAILED release_dates lookup is absorbed — the movie STAYS without kind badges');
-assert.match(upcomingSrc, /\.filter\(\(item\) => isDateInMonth\(item\.date, year, month\)\)/, 'final invariant: every movie card date belongs to the selected month/year');
+assert.match(upcomingSrc, /if \(!isDateInMonth\(item\.date, year, month\)\) return null;/, 'final invariant: every movie card date belongs to the selected month/year');
 // Bounded enrichment: one optional lookup per UNIQUE candidate,
 // concurrency-limited. Enrichment failures can never empty the section
 // (the discover call is the real outage signal).
@@ -472,7 +473,7 @@ assert.equal(isIndiaFlatrateEligible(undefined), false, 'NOT eligible: missing p
 assert.match(upcomingSrc, /include_adult: false,\n\s*\.\.\.\(networkExclusion \? \{ without_networks: networkExclusion \} : \{\}\),\n\s*page\n\s*\}\);/, 'series query keeps include_adult=false + adult network exclusion');
 // TV bounded pagination + candidate caps (Phase F.3 production widening)
 assert.match(upcomingSrc, /while \(page <= Math\.min\(totalPages, UPCOMING_TV_MAX_CANDIDATE_PAGES\)\)/, 'TV candidate discovery walks pages under a hard cap');
-assert.match(upcomingSrc, /const scopedCandidates = candidates\n\s*\.filter\(\(s\) => s\.id && \(s\.name \|\| s\.original_name\)\)\n\s*\.filter\(\(s\) => !isAnimeCandidate\(s\.genre_ids, s\.original_language\)\)\n\s*\.slice\(0, UPCOMING_TV_MAX_CANDIDATES\);/, 'TV candidates hard-capped (bounded N+1) AFTER the anime exclusion');
+assert.match(upcomingSrc, /const scopedCandidates = candidates\n\s*\.filter\(\(s\) => s\.id && \(s\.name \|\| s\.original_name\)\)\n\s*\.filter\(\(s\) => !isAnimeCandidate\(s\.genre_ids, s\.original_language\)\)\n\s*\.slice\(0, candidateCap\);/, 'TV candidates hard-capped (bounded N+1) AFTER the anime exclusion');
 assert.equal(UPCOMING_TV_MAX_CANDIDATE_PAGES, 5, 'TV pagination widened to 5 upstream pages (real total_pages still bounds every walk)');
 assert.equal(UPCOMING_TV_MAX_CANDIDATES, 80, 'TV candidate cap widened to 80 processed candidates (bounded N+1 preserved)');
 
@@ -663,7 +664,7 @@ assert.equal(parseUpcomingLanguage(undefined), 'all', 'undefined -> all');
 assert.equal(parseUpcomingLanguage('en; drop table'), 'all', 'injection attempt fails safe to all');
 // Server-side plumbing: URL parsing + orchestrator + per-source queries.
 assert.match(upcomingServerSrc, /parseUpcomingLanguage\(url\.searchParams\.get\('language'\)\)/, 'server parses language strictly from the URL');
-assert.match(upcomingServerSrc, /loadUpcoming\(\{ month, year, type, language \}\)/, 'server passes language into loadUpcoming');
+assert.match(upcomingServerSrc, /loadUpcomingPage\(\{ month, year, type, language \}, 1\)/, 'server passes language into loadUpcomingPage (v2 pagination page 1)');
 assert.match(upcomingSrc, /const language = parseUpcomingLanguage\(filters\.language \?\? 'all'\);/, 'orchestrator normalizes the language filter (legacy callers default to all)');
 assert.match(upcomingSrc, /loadUpcomingMovies\(filters\.year, filters\.month, region, language\)/, 'movie source receives the language filter');
 assert.match(upcomingSrc, /loadUpcomingSeries\(filters\.year, filters\.month, region, language\)/, 'series source receives the language filter');
@@ -766,8 +767,8 @@ assert.match(upcomingPageSrc, /languageLabel/, 'language label participates in t
 // series, serial policy key, season-model key, provider model key.
 assert.match(upcomingSrc, /const key = `upcoming:movies:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{providerExclusion \?\? 'no-adult'\}:\$\{UPCOMING_MOVIE_RELEASE_TRUTH_KEY\}`/, 'movie candidate cache key includes year+month+region+language+adult-exclusion+release-model version (ONE stream — no per-kind split)');
 assert.match(upcomingSrc, /const key = `upcoming:movierd:\$\{movieId\}:\$\{UPCOMING_MOVIE_RELEASE_TRUTH_KEY\}`/, 'per-movie release_dates cache is versioned by the release model');
-assert.match(upcomingSrc, /const key = `upcoming:series:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_TV_ELIGIBILITY_KEY\}:\$\{UPCOMING_TV_SERIAL_POLICY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}`/, 'series cache key includes year+month+region+language+network-exclusion+discovery+eligibility+serial-policy+season-model dimensions');
-assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}`/, 'anime cache key includes year+month+region+language+network-exclusion+DISCOVERY version+season-model version');
+assert.match(upcomingSrc, /const key = `upcoming:series:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_TV_ELIGIBILITY_KEY\}:\$\{UPCOMING_TV_SERIAL_POLICY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}:\$\{maxCandidates \?\? 'full'\}`/, 'series cache key includes year+month+region+language+network-exclusion+discovery+eligibility+serial-policy+season-model+candidate-scope dimensions');
+assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}:\$\{maxCandidates \?\? 'full'\}`/, 'anime cache key includes year+month+region+language+network-exclusion+DISCOVERY version+season-model version+candidate-scope dimension');
 assert.match(upcomingSrc, /const key = `upcoming:providers:tv:\$\{seriesId\}:\$\{region\}:\$\{UPCOMING_PROVIDER_MODEL_KEY\}`/, 'series parent provider cache is versioned by the provider model');
 assert.match(upcomingSrc, /const key = `upcoming:providers:tvseason:\$\{seriesId\}:\$\{seasonNumber\}:\$\{region\}:\$\{UPCOMING_PROVIDER_MODEL_KEY\}`/, 'SEASON provider cache is a distinct namespace carrying series ID + season number + region + model version');
 // The version dimensions are distinct constants (no key collisions).
