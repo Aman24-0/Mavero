@@ -1,26 +1,31 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// MAVERO — PWA Branded Launch / Boot Overlay Regression Test
+// MAVERO — PWA Branded Boot / Launch Overlay Regression Test
 //
-// Verifies the PwaBootOverlay component + its wiring in +layout.svelte:
-//   1. Standalone detection exists (display-mode: standalone + navigator.standalone).
-//   2. Normal browser does NOT get forced into PWA boot mode (gated by
-//      isPwaStandalone).
-//   3. Boot UI exists (wordmark + progress bar).
-//   4. Ready lifecycle removes/hides boot UI (rAF-based, no arbitrary
-//      multi-second delay).
-//   5. Reduced-motion support exists (static wordmark + static progress).
-//   6. No history.back / pushState / popstate / goto.
-//   7. No arbitrary multi-second delay as the PRIMARY lifecycle (the
-//      2.5s fallback is a safety net only, not the primary signal).
-//   8. No service-worker registration changes.
-//   9. No navigation interference (no disableScrollHandling, no
-//      beforeNavigate/afterNavigate/onNavigate).
-//  10. Overlay is aria-hidden + pointer-events: none (does not block
-//      interaction or screen-reader navigation).
-//  11. Defensive max fallback exists (overlay can never get stuck
-//      permanently).
+// Verifies the FIXED PwaBootOverlay component + its wiring in
+// +layout.svelte. The fix addresses two root causes from the previous
+// version:
+//   1. The overlay was gated behind standalone detection — normal
+//      browser tabs never saw it. Now it renders unconditionally.
+//   2. The 2-rAF lifecycle (~32ms) was imperceptible. Now it uses a
+//      minimum-presentation-window (600ms) + real ready signal (rAF
+//      after onMount/hydration) + defensive max fallback (3s).
+//
+// Contracts tested:
+//   1. Boot component exists.
+//   2. Root layout mounts it unconditionally (no standalone-only gate).
+//   3. Normal browser is allowed to show it (no isPwaStandalone check).
+//   4. Visible initial state (visible = true on mount).
+//   5. Minimum presentation lifecycle exists (MIN_PRESENTATION_MS).
+//   6. Ready lifecycle removes it (rAF ready signal + tryFinish).
+//   7. Defensive fallback exists (MAX_FALLBACK_MS = 3s).
+//   8. Reduced-motion support exists.
+//   9. No history.back / pushState / popstate / goto.
+//  10. No service-worker changes.
+//  11. No artificial multi-second delay as the PRIMARY lifecycle.
+//  12. Overlay is aria-hidden + pointer-events: none.
+//  13. Overlay is mounted once at root level (not per-navigation).
 
 let passed = 0;
 function ok(message: string) {
@@ -31,48 +36,18 @@ function ok(message: string) {
 const overlaySource = readFileSync(new URL('../src/lib/components/PwaBootOverlay.svelte', import.meta.url), 'utf8');
 const layoutSource = readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
 
-// ============================================================
-// 1. Standalone detection exists
-// ============================================================
-console.log('\n1. Standalone detection exists');
-
-assert.match(overlaySource, /display-mode: standalone/,
-  'PwaBootOverlay checks display-mode: standalone');
-assert.match(overlaySource, /window\.matchMedia\('\(display-mode: standalone\)'\)\.matches/,
-  'PwaBootOverlay uses matchMedia for (display-mode: standalone)');
-assert.match(overlaySource, /navigator as Navigator & \{ standalone\?: boolean \}\)\.standalone/,
-  'PwaBootOverlay checks navigator.standalone (iOS Safari)');
-// +layout.svelte must also have the standalone check (gates the render).
-assert.match(layoutSource, /display-mode: standalone/,
-  '+layout.svelte checks display-mode: standalone');
-assert.match(layoutSource, /navigator as Navigator & \{ standalone\?: boolean \}\)\.standalone/,
-  '+layout.svelte checks navigator.standalone (iOS Safari)');
-ok('Standalone detection exists in both PwaBootOverlay + +layout.svelte');
+// Strip comments for navigation-handler checks (source mentions these
+// in comments).
+const overlayNoComments = overlaySource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+const layoutNoComments = layoutSource.replace(/\/\/[^\n]*/g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
 // ============================================================
-// 2. Normal browser does NOT get forced into PWA boot mode
+// 1. Boot component exists
 // ============================================================
-console.log('\n2. Normal browser not forced into PWA boot mode');
+console.log('\n1. Boot component exists');
 
-// +layout.svelte must gate the PwaBootOverlay render on isPwaStandalone.
-assert.match(layoutSource, /let isPwaStandalone = \$state\(false\)/,
-  '+layout.svelte has isPwaStandalone state (default false = not shown)');
-assert.match(layoutSource, /isPwaStandalone = checkStandalone\(\)/,
-  '+layout.svelte sets isPwaStandalone in onMount (client-only)');
-assert.match(layoutSource, /\{#if isPwaStandalone\}[\s\S]*?<PwaBootOverlay/,
-  '+layout.svelte renders <PwaBootOverlay> only when isPwaStandalone is true');
-ok('Normal browser loads never see the boot overlay (gated by isPwaStandalone)');
-
-// PwaBootOverlay must also defensively bail if mounted in non-standalone.
-assert.match(overlaySource, /if \(!isStandalone\(\)\) \{[\s\S]*?visible = false/,
-  'PwaBootOverlay bails immediately if mounted in non-standalone mode');
-ok('PwaBootOverlay has defensive non-standalone bail (visible = false)');
-
-// ============================================================
-// 3. Boot UI exists (wordmark + progress bar)
-// ============================================================
-console.log('\n3. Boot UI exists');
-
+assert.match(overlaySource, /class="pwa-boot"/,
+  'overlay container exists');
 assert.match(overlaySource, /class="pwa-boot-wordmark"/,
   'wordmark container exists');
 assert.match(overlaySource, /class="pwa-boot-mark"/,
@@ -85,32 +60,119 @@ assert.match(overlaySource, /class="pwa-boot-progress"/,
   'progress bar container exists');
 assert.match(overlaySource, /class="pwa-boot-progress-bar"/,
   'progress bar fill exists');
-ok('Boot UI: Mavero wordmark (M + MAVERO) + thin progress bar');
+ok('Boot component exists: Mavero wordmark (M + MAVERO) + thin progress bar');
 
 // ============================================================
-// 4. Ready lifecycle removes/hides boot UI
+// 2. Root layout mounts it unconditionally (no standalone-only gate)
 // ============================================================
-console.log('\n4. Ready lifecycle removes/hides boot UI');
+console.log('\n2. Root layout mounts boot overlay unconditionally');
 
-// The primary ready signal must be requestAnimationFrame (2 frames).
+assert.match(layoutSource, /import PwaBootOverlay from '\$components\/PwaBootOverlay\.svelte'/,
+  '+layout.svelte imports PwaBootOverlay');
+// The render must NOT be gated behind {#if isPwaStandalone} or any
+// standalone check. It must be a bare <PwaBootOverlay />.
+assert.match(layoutSource, /<PwaBootOverlay \/>/,
+  '+layout.svelte renders <PwaBootOverlay /> unconditionally');
+// Verify NO standalone gate wraps the PwaBootOverlay render.
+assert.doesNotMatch(layoutSource, /\{#if isPwaStandalone\}[\s\S]*?<PwaBootOverlay/,
+  '+layout.svelte does NOT gate PwaBootOverlay behind isPwaStandalone');
+ok('Root layout mounts <PwaBootOverlay /> unconditionally (no standalone gate)');
+
+// ============================================================
+// 3. Normal browser is allowed to show it (no standalone check)
+// ============================================================
+console.log('\n3. Normal browser allowed to show boot');
+
+// +layout.svelte must NOT have isPwaStandalone state or checkStandalone
+// function anymore (the previous version had these — they're removed).
+assert.doesNotMatch(layoutSource, /isPwaStandalone/,
+  '+layout.svelte has no isPwaStandalone state');
+assert.doesNotMatch(layoutSource, /checkStandalone/,
+  '+layout.svelte has no checkStandalone function');
+assert.doesNotMatch(layoutSource, /display-mode: standalone/,
+  '+layout.svelte has no standalone display-mode check');
+ok('Normal browser is allowed to show the boot overlay (no standalone detection in layout)');
+
+// ============================================================
+// 4. Visible initial state
+// ============================================================
+console.log('\n4. Visible initial state');
+
+assert.match(overlaySource, /let visible = true/,
+  'visible starts as true (overlay is visible on mount)');
+assert.match(overlaySource, /\{#if visible\}/,
+  'overlay wrapped in {#if visible}');
+ok('Overlay is visible on initial mount (visible = true)');
+
+// ============================================================
+// 5. Minimum presentation lifecycle exists
+// ============================================================
+console.log('\n5. Minimum presentation lifecycle');
+
+assert.match(overlaySource, /const MIN_PRESENTATION_MS = \d+/,
+  'MIN_PRESENTATION_MS constant defined');
+// The minimum must be within the 500–800ms target.
+const minMatch = overlaySource.match(/const MIN_PRESENTATION_MS = (\d+)/);
+assert.ok(minMatch, 'MIN_PRESENTATION_MS value extracted');
+const minMs = Number(minMatch![1]);
+assert.ok(minMs >= 500 && minMs <= 800,
+  `MIN_PRESENTATION_MS = ${minMs}ms (within 500–800ms target)`);
+// The lifecycle must track minElapsed.
+assert.match(overlaySource, /let minElapsed = false/,
+  'minElapsed state tracked');
+assert.match(overlaySource, /minTimer = setTimeout\([\s\S]*?MIN_PRESENTATION_MS\)/,
+  'minTimer uses MIN_PRESENTATION_MS');
+ok(`Minimum presentation window: ${minMs}ms (within 500–800ms target)`);
+
+// ============================================================
+// 6. Ready lifecycle removes it
+// ============================================================
+console.log('\n6. Ready lifecycle removes overlay');
+
+// The ready signal must be rAF (fires after hydration + first paint).
 assert.match(overlaySource, /requestAnimationFrame/,
   'uses requestAnimationFrame as the ready signal');
-assert.match(overlaySource, /frameCount >= 2/,
-  'waits for 2 animation frames (app has painted)');
-// After ready, the overlay must fade out + be removed.
-assert.match(overlaySource, /fading = true/,
-  'sets fading = true to trigger fade-out');
-assert.match(overlaySource, /visible = false/,
-  'sets visible = false to remove from DOM');
-// The {#if visible} gate must wrap the overlay.
-assert.match(overlaySource, /\{#if visible\}[\s\S]*?<div[\s\S]*?class="pwa-boot"/,
-  'overlay wrapped in {#if visible} (removed from DOM when not visible)');
-ok('Ready lifecycle: 2 rAF frames → fade out → remove from DOM');
+assert.match(overlaySource, /let appReady = false/,
+  'appReady state tracked');
+assert.match(overlaySource, /rafId = requestAnimationFrame\(\(\) => \{[\s\S]*?appReady = true/,
+  'rAF callback sets appReady = true');
+// tryFinish must check BOTH appReady AND minElapsed.
+assert.match(overlaySource, /function tryFinish\(\) \{[\s\S]*?if \(appReady && minElapsed\)/,
+  'tryFinish requires BOTH appReady AND minElapsed');
+// finish must set fading + visible = false.
+assert.match(overlaySource, /function finish\(\) \{[\s\S]*?fading = true/,
+  'finish sets fading = true (fade-out)');
+assert.match(overlaySource, /function finish\(\) \{[\s\S]*?visible = false/,
+  'finish sets visible = false (remove from DOM)');
+ok('Ready lifecycle: rAF (appReady) + minElapsed → fade out → remove from DOM');
 
 // ============================================================
-// 5. Reduced-motion support exists
+// 7. Defensive fallback exists
 // ============================================================
-console.log('\n5. Reduced-motion support');
+console.log('\n7. Defensive fallback exists');
+
+assert.match(overlaySource, /const MAX_FALLBACK_MS = \d+/,
+  'MAX_FALLBACK_MS constant defined');
+const maxMatch = overlaySource.match(/const MAX_FALLBACK_MS = (\d+)/);
+assert.ok(maxMatch, 'MAX_FALLBACK_MS value extracted');
+const maxMs = Number(maxMatch![1]);
+assert.ok(maxMs >= 2000 && maxMs <= 5000,
+  `MAX_FALLBACK_MS = ${maxMs}ms (within 2–5s defensive range)`);
+assert.match(overlaySource, /maxTimer = setTimeout\(finish, MAX_FALLBACK_MS\)/,
+  'maxTimer calls finish after MAX_FALLBACK_MS');
+assert.match(overlaySource, /Defensive max fallback/,
+  'fallback documented as defensive');
+assert.match(overlaySource, /if \(maxTimer\) clearTimeout\(maxTimer\)/,
+  'maxTimer is cleared on finish (no leak)');
+// The onMount cleanup must also clear the fallback.
+assert.match(overlaySource, /return \(\) => \{[\s\S]*?if \(maxTimer\) clearTimeout\(maxTimer\)/,
+  'onMount cleanup clears maxTimer');
+ok(`Defensive max fallback: ${maxMs}ms (safety net, cleaned up on destroy)`);
+
+// ============================================================
+// 8. Reduced-motion support exists
+// ============================================================
+console.log('\n8. Reduced-motion support');
 
 assert.match(overlaySource, /@media \(prefers-reduced-motion: reduce\)/,
   'has prefers-reduced-motion media query');
@@ -118,16 +180,12 @@ assert.match(overlaySource, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*
   'entrance animation disabled for reduced-motion');
 assert.match(overlaySource, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pwa-boot-progress-bar \{[\s\S]*?animation: none/,
   'progress sweep disabled for reduced-motion (static bar)');
-ok('Reduced-motion: static wordmark + static progress bar (no animation)');
+ok('Reduced-motion: static wordmark + static progress bar (lifecycle unchanged)');
 
 // ============================================================
-// 6. No history.back / pushState / popstate / goto
+// 9. No history.back / pushState / popstate / goto
 // ============================================================
-console.log('\n6. No history/navigation handlers');
-
-// Strip comments before checking (source mentions these in comments).
-const overlayNoComments = overlaySource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-const layoutNoComments = layoutSource.replace(/\/\/[^\n]*/g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+console.log('\n9. No history/navigation handlers');
 
 assert.doesNotMatch(overlayNoComments, /popstate/,
   'PwaBootOverlay: no popstate listener');
@@ -146,8 +204,6 @@ assert.doesNotMatch(overlayNoComments, /beforeNavigate|afterNavigate|onNavigate/
 ok('No history/navigation handlers in PwaBootOverlay');
 
 // +layout.svelte must not have NEW navigation handlers from this change.
-// (The existing snapshot + onMount online listener are unchanged — we
-// only ADDED the isPwaStandalone check + PwaBootOverlay render.)
 assert.doesNotMatch(layoutNoComments, /popstate/,
   '+layout.svelte: no popstate listener (unchanged)');
 assert.doesNotMatch(layoutNoComments, /history\.back/,
@@ -157,69 +213,41 @@ assert.doesNotMatch(layoutNoComments, /disableScrollHandling/,
 ok('No new navigation handlers in +layout.svelte');
 
 // ============================================================
-// 7. No arbitrary multi-second delay as the PRIMARY lifecycle
+// 10. No service-worker changes
 // ============================================================
-console.log('\n7. No arbitrary multi-second delay as primary lifecycle');
+console.log('\n10. No service-worker changes');
 
-// The PRIMARY lifecycle must be rAF-based (not setTimeout-based).
-// The 2.5s fallback is a SAFETY NET only — it must be clearly marked
-// as defensive + must not be the only lifecycle signal.
-assert.match(overlaySource, /Defensive max fallback/,
-  '2.5s fallback documented as defensive');
-assert.match(overlaySource, /maxFallbackTimer = setTimeout\(finish, 2500\)/,
-  '2.5s defensive fallback exists');
-assert.match(overlaySource, /ONLY fires if rAF never/,
-  '2.5s fallback ONLY fires if rAF never fires (safety net)');
-// No other setTimeout with a multi-second delay as the primary signal.
-// The only other setTimeout is the 160ms fade-out delay (acceptable).
-const setTimeouts = [...overlaySource.matchAll(/setTimeout\([^,]+, (\d+)\)/g)];
-for (const m of setTimeouts) {
-  const ms = Number(m[1]);
-  assert.ok(ms <= 2500,
-    `setTimeout delay ${ms}ms is within the 2.5s defensive max (not an arbitrary long delay)`);
-}
-ok('Primary lifecycle is rAF (2 frames); 2.5s is a defensive safety net only');
-
-// ============================================================
-// 8. No service-worker registration changes
-// ============================================================
-console.log('\n8. No service-worker registration changes');
-
-// PwaBootOverlay must NOT touch serviceWorker.
 assert.doesNotMatch(overlayNoComments, /serviceWorker/,
   'PwaBootOverlay: no serviceWorker reference');
 assert.doesNotMatch(overlayNoComments, /navigator\.serviceWorker/,
   'PwaBootOverlay: no navigator.serviceWorker');
-// +layout.svelte must not have NEW serviceWorker registration (the
-// existing SW registration lives in PwaExperience.svelte, unchanged).
 assert.doesNotMatch(layoutNoComments, /navigator\.serviceWorker/,
   '+layout.svelte: no serviceWorker registration (unchanged — SW lives in PwaExperience)');
 ok('No service-worker registration changes (SW stays in PwaExperience)');
 
 // ============================================================
-// 9. No navigation interference
+// 11. No artificial multi-second delay as the PRIMARY lifecycle
 // ============================================================
-console.log('\n9. No navigation interference');
+console.log('\n11. No artificial multi-second delay as primary lifecycle');
 
-// The overlay must not interfere with SvelteKit snapshots.
-// +layout.svelte's existing `export const snapshot` must be unchanged.
-assert.match(layoutSource, /export const snapshot = \{/,
-  '+layout.svelte snapshot preserved');
-assert.match(layoutSource, /capture:[\s\S]*?window\.scrollX/,
-  'snapshot.capture (scrollX) preserved');
-assert.match(layoutSource, /capture:[\s\S]*?window\.scrollY/,
-  'snapshot.capture (scrollY) preserved');
-assert.match(layoutSource, /restore:[\s\S]*?window\.scrollTo/,
-  'snapshot.restore (scrollTo) preserved');
-ok('SvelteKit snapshot (scroll capture/restore) preserved in +layout.svelte');
-
-// The overlay must not interfere with scroll restoration.
-// (No disableScrollHandling, no noScroll — covered in test #6.)
+// The PRIMARY lifecycle must be rAF + min-presentation (not a single
+// long setTimeout). The MAX_FALLBACK_MS is a safety net, not the
+// primary signal.
+assert.match(overlaySource, /Safety net/,
+  'MAX_FALLBACK_MS documented as safety net (not primary)');
+// All setTimeout delays must be within reasonable bounds.
+const setTimeouts = [...overlaySource.matchAll(/setTimeout\([^,]+, (\d+)\)/g)];
+for (const m of setTimeouts) {
+  const ms = Number(m[1]);
+  assert.ok(ms <= 3000,
+    `setTimeout delay ${ms}ms is within the 3s defensive max (not an arbitrary long delay)`);
+}
+ok('Primary lifecycle is rAF + 600ms min-presentation; 3s is a defensive safety net only');
 
 // ============================================================
-// 10. Overlay is aria-hidden + pointer-events: none
+// 12. Overlay is aria-hidden + pointer-events: none
 // ============================================================
-console.log('\n10. Overlay is aria-hidden + pointer-events: none');
+console.log('\n12. Overlay is aria-hidden + pointer-events: none');
 
 assert.match(overlaySource, /aria-hidden="true"/,
   'overlay has aria-hidden="true" (decorative boot UI)');
@@ -233,52 +261,50 @@ assert.doesNotMatch(overlaySource, /<button|<a\s|<input|<select|tabindex=/,
 ok('Overlay: aria-hidden + pointer-events: none + no focusable elements');
 
 // ============================================================
-// 11. Defensive max fallback exists
+// 13. Overlay is mounted once at root level (not per-navigation)
 // ============================================================
-console.log('\n11. Defensive max fallback exists');
+console.log('\n13. Overlay mounted once at root level');
 
-assert.match(overlaySource, /maxFallbackTimer/,
-  'maxFallbackTimer variable exists');
-assert.match(overlaySource, /if \(maxFallbackTimer\) clearTimeout\(maxFallbackTimer\)/,
-  'maxFallbackTimer is cleared on finish (no leak)');
-// The onMount cleanup must also clear the fallback.
-assert.match(overlaySource, /return \(\) => \{[\s\S]*?if \(maxFallbackTimer\) clearTimeout\(maxFallbackTimer\)/,
-  'onMount cleanup clears maxFallbackTimer');
-ok('Defensive 2.5s fallback exists + is cleaned up on destroy (overlay never stuck)');
+// PwaBootOverlay must be rendered OUTSIDE the {#if page.url.pathname...}
+// bare-render branch — it's at the root level, not inside AppShell or
+// the bare-render path. This ensures it shows on EVERY route (watch,
+// admin, auth, detail, discover, etc.) on initial load.
+assert.match(layoutSource, /\{\/if\}[\s\S]*?<PwaBootOverlay/,
+  'PwaBootOverlay is rendered after the bare-render {/if} (root level, not inside either branch)');
+// PwaBootOverlay must NOT be inside the AppShell's children snippet.
+// The AppShell block ends with </AppShell> followed by {/if} —
+// PwaBootOverlay must come AFTER that {/if}, not inside.
+const appShellBlock = layoutSource.match(/<AppShell[\s\S]*?<\/AppShell>/);
+assert.ok(appShellBlock, 'AppShell block found');
+assert.doesNotMatch(appShellBlock![0], /PwaBootOverlay/,
+  'PwaBootOverlay is NOT inside the <AppShell>...</AppShell> block');
+ok('Overlay is mounted once at root level (outside bare-render + AppShell branches)');
 
 // ============================================================
-// 12. Visual design — premium OTT, Mavero tokens
+// 14. Visual design — premium OTT, Mavero tokens
 // ============================================================
-console.log('\n12. Visual design — premium OTT, Mavero tokens');
+console.log('\n14. Visual design — premium OTT, Mavero tokens');
 
-// Background must be dark (Mavero --base = #000).
 assert.match(overlaySource, /background:[\s\S]*?#000000/,
   'background uses #000000 (Mavero --base)');
-// Must have a subtle radial glow (premium depth, not flat).
 assert.match(overlaySource, /radial-gradient/,
   'subtle radial-gradient glow for depth');
-// Wordmark must use Inter font (Mavero brand language).
 assert.match(overlaySource, /font-family: 'Inter'/,
   'wordmark uses Inter font (Mavero brand language)');
-// Progress bar must be thin (2px).
 assert.match(overlaySource, /height: 2px/,
   'progress bar is thin (2px)');
-// Progress bar must be indeterminate (sweep animation).
 assert.match(overlaySource, /pwa-boot-progress-sweep/,
   'progress bar has indeterminate sweep animation');
-// No giant spinner.
 assert.doesNotMatch(overlaySource, /border.*solid.*border-radius: 50%.*animation:.*spin|rotate\(360deg\)/,
   'no giant spinner (thin progress bar instead)');
-// z-index must be high (above everything) so the overlay covers the
-// full viewport during boot.
 assert.match(overlaySource, /z-index: 9999/,
   'z-index: 9999 (above all app content)');
 ok('Visual design: dark bg + radial glow + Inter wordmark + thin progress + no spinner');
 
 // ============================================================
-// 13. Mobile responsive
+// 15. Mobile responsive
 // ============================================================
-console.log('\n13. Mobile responsive');
+console.log('\n15. Mobile responsive');
 
 assert.match(overlaySource, /@media \(max-width: 380px\)/,
   'has small-screen media query (380px)');
@@ -291,9 +317,9 @@ assert.match(overlaySource, /@media \(max-width: 380px\)[\s\S]*?\.pwa-boot-progr
 ok('Mobile responsive (wordmark + progress bar shrink on <380px screens)');
 
 // ============================================================
-// 14. +layout.svelte existing architecture preserved
+// 16. +layout.svelte existing architecture preserved
 // ============================================================
-console.log('\n14. +layout.svelte existing architecture preserved');
+console.log('\n16. +layout.svelte existing architecture preserved');
 
 // The bare-render regex (watch/admin/auth/detail/discover-subpages)
 // must be unchanged.
@@ -321,6 +347,13 @@ assert.match(layoutSource, /void syncAuthenticatedState\(\)/,
   'syncAuthenticatedState preserved');
 assert.match(layoutSource, /window\.addEventListener\('online', retry\)/,
   'online listener preserved');
-ok('+layout.svelte: bare-render regex + AppShell + PwaExperience + Toast + onMount all preserved');
+// Root snapshot must be preserved.
+assert.match(layoutSource, /export const snapshot = \{/,
+  'root layout snapshot preserved');
+assert.match(layoutSource, /capture:[\s\S]*?window\.scrollX/,
+  'snapshot.capture (scrollX) preserved');
+assert.match(layoutSource, /restore:[\s\S]*?window\.scrollTo/,
+  'snapshot.restore (scrollTo) preserved');
+ok('+layout.svelte: bare-render regex + AppShell + PwaExperience + Toast + onMount + snapshot all preserved');
 
 console.log(`\nPWA boot overlay tests passed (${passed} check groups).`);

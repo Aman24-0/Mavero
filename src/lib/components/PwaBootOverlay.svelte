@@ -2,119 +2,136 @@
   import { onMount } from 'svelte';
 
   // ============================================================
-  // PWA Branded Launch / Boot Overlay
+  // Mavero Branded Boot / Launch Overlay
   // ============================================================
   //
   // Purpose:
-  //   When Mavero is launched as an INSTALLED PWA, the browser/OS
-  //   shows a native splash screen (controlled by the manifest — we
-  //   do NOT touch it). Once the web app starts rendering, this
-  //   overlay shows a short premium Mavero-branded boot screen so the
-  //   transition from native splash → app doesn't feel like a plain
-  //   website loader.
+  //   A premium Mavero-branded loading screen shown on EVERY initial
+  //   app load — both normal browser tabs AND installed PWA launches.
+  //   The native Android/Chrome PWA splash (controlled by the manifest
+  //   icons — NOT touchable from HTML/CSS) transitions into this HTML
+  //   boot screen, which then transitions into the Discover/app
+  //   content.
   //
-  // Eligibility:
-  //   The overlay ONLY appears when running in standalone mode
-  //   (installed PWA). Normal browser tab loads NEVER see it. This is
-  //   detected via:
-  //     - window.matchMedia('(display-mode: standalone)').matches
-  //     - navigator.standalone (iOS Safari)
+  //   Android native splash (browser controlled)
+  //         ↓
+  //   Mavero branded HTML boot screen (THIS overlay)
+  //         ↓
+  //   Discover/app
   //
-  // Lifecycle (deterministic, no arbitrary delay):
-  //   1. Component mounts (only in standalone mode — the parent
-  //      +layout.svelte gates the render on isStandalone()).
-  //   2. The Mavero wordmark + thin indeterminate progress bar render
-  //      immediately.
-  //   3. We wait for the app to be "ready" = the browser has painted
-  //      at least 2 animation frames (rAF). This is the standard
-  //      signal that the SvelteKit shell has hydrated + the first page
-  //      is rendering. Two frames (not one) avoids a flash if the
-  //      first rAF fires before the DOM is actually visible.
-  //   4. Once ready, the overlay fades out (150ms) and is removed
-  //      from the DOM.
-  //   5. Defensive max fallback: if rAF somehow never fires (headless
-  //      test environments, extremely slow devices), a 2.5s
-  //      setTimeout removes the overlay. This is a SAFETY NET only —
-  //      it never fires in normal browser/PWA usage where rAF fires
-  //      in <16ms.
+  //   Normal Chrome:
+  //   Mavero branded HTML boot screen (THIS overlay)
+  //         ↓
+  //   Discover/app
+  //
+  // Why the previous version was invisible:
+  //   1. It was gated behind standalone detection — normal browser
+  //      tabs never saw it.
+  //   2. It used a 2-requestAnimationFrame lifecycle (~32ms), which
+  //      is imperceptible to the human eye. The overlay flashed and
+  //      disappeared before the user could see it.
+  //
+  // Lifecycle (minimum presentation window + real ready signal):
+  //   1. The overlay renders immediately on mount (visible = true).
+  //   2. The Mavero wordmark + thin progress bar paint.
+  //   3. We track TWO conditions:
+  //      a. "app ready" = onMount has fired (SvelteKit hydration
+  //         complete) + 1 requestAnimationFrame (first paint after
+  //         hydration). This is the real "the app shell is rendering
+  //         and can take over" signal.
+  //      b. "minimum presentation elapsed" = MIN_PRESENTATION_MS
+  //         (600ms) since mount. This guarantees the branded screen
+  //         is visible long enough to be perceived as a deliberate
+  //         launch experience, not a 32ms flash.
+  //   4. The overlay fades out ONLY when BOTH conditions are met:
+  //        - If the app is ready in <600ms (the common case —
+  //          SvelteKit hydrates fast), the overlay waits for the
+  //          remaining minimum time, then fades.
+  //        - If the app takes >600ms to ready (slow connection,
+  //          cold start), the overlay stays visible until ready,
+  //          then fades immediately.
+  //   5. Defensive max fallback: MAX_FALLBACK_MS (3s). If something
+  //      goes wrong (rAF never fires, JS error during hydration),
+  //      the overlay is force-removed so the user is never trapped.
+  //      This is a SAFETY NET — it never fires in normal usage.
+  //
+  // Root-level, once-per-load:
+  //   The overlay is mounted once in the root +layout.svelte. It does
+  //   NOT re-appear on SvelteKit client-side navigations (only on a
+  //   fresh page load / hard refresh / PWA cold launch).
   //
   // No navigation interference:
   //   No popstate, no history.back, no goto, no disableScrollHandling,
   //   no beforeNavigate/afterNavigate. The overlay is a pure visual
-  //   layer. After the entrance animation completes, pointer-events
-  //   becomes none so the overlay never blocks interaction even
-  //   during the brief fade-out.
+  //   layer with pointer-events: none so it never blocks interaction.
   //
   // Accessibility:
-  //   - aria-hidden="true" on the entire overlay (decorative boot UI;
-  //     screen readers should skip it and read the actual app content
-  //     underneath).
+  //   - aria-hidden="true" on the entire overlay (decorative boot UI).
   //   - No focusable elements inside the overlay.
   //   - prefers-reduced-motion: static wordmark + static progress bar
-  //     (no animation). The overlay still disappears via the same rAF
-  //     lifecycle — reduced-motion only affects the visual animation,
-  //     not the lifecycle.
+  //     (no animation). The overlay still disappears via the same
+  //     lifecycle — reduced-motion only affects the visual animation.
+
+  // Minimum presentation window: 600ms. Within the 500–800ms target.
+  // Long enough to be perceived as a deliberate branded launch; short
+  // enough that the app still feels fast.
+  const MIN_PRESENTATION_MS = 600;
+  // Defensive max fallback: 3s. Only fires if the ready signal never
+  // arrives (JS error, rAF never fires in a throttled background tab).
+  const MAX_FALLBACK_MS = 3000;
 
   let visible = true;
   let fading = false;
 
-  // Standalone detection — same robust check as PwaExperience.
-  // The parent (+layout.svelte) gates the render, but we also guard
-  // here defensively in case the component is mounted in a non-
-  // standalone context (e.g. during SSR where window is undefined).
-  function isStandalone(): boolean {
-    if (typeof window === 'undefined' || !window.matchMedia) return false;
-    if (window.matchMedia('(display-mode: standalone)').matches) return true;
-    return Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
-  }
-
   onMount(() => {
-    // If somehow mounted in non-standalone mode, bail immediately —
-    // never show the overlay. This is a defensive guard; the parent
-    // already gates the render.
-    if (!isStandalone()) {
-      visible = false;
-      return;
-    }
-
-    let frameCount = 0;
-    let rafId = 0;
-    let maxFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    const startTime = Date.now();
+    let appReady = false;
+    let minElapsed = false;
     let done = false;
+    let rafId = 0;
+    let minTimer: ReturnType<typeof setTimeout> | undefined;
+    let maxTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function tryFinish() {
+      if (done) return;
+      if (appReady && minElapsed) {
+        finish();
+      }
+    }
 
     function finish() {
       if (done) return;
       done = true;
       cancelAnimationFrame(rafId);
-      if (maxFallbackTimer) clearTimeout(maxFallbackTimer);
+      if (minTimer) clearTimeout(minTimer);
+      if (maxTimer) clearTimeout(maxTimer);
       // Start the fade-out, then remove from DOM after it completes.
       fading = true;
-      setTimeout(() => { visible = false; }, 160);
+      setTimeout(() => { visible = false; }, 200);
     }
 
-    // Ready signal: 2 animation frames = the browser has painted at
-    // least once after hydration. This is the standard "app is
-    // rendering" signal — no arbitrary delay.
-    rafId = requestAnimationFrame(function tick() {
-      frameCount += 1;
-      if (frameCount >= 2) {
-        finish();
-        return;
-      }
-      rafId = requestAnimationFrame(tick);
+    // --- Ready signal: onMount (hydration complete) + 1 rAF (first
+    //     paint after hydration). This is the real "the app shell is
+    //     rendering and can take over" signal. ---
+    rafId = requestAnimationFrame(() => {
+      appReady = true;
+      tryFinish();
     });
 
-    // Defensive max fallback: 2.5s. This ONLY fires if rAF never
-    // fires (headless test environments,极端 throttled background
-    // tabs). In normal PWA usage rAF fires in <16ms so this never
-    // runs. It guarantees the overlay can never get stuck
-    // permanently.
-    maxFallbackTimer = setTimeout(finish, 2500);
+    // --- Minimum presentation window: 600ms since mount. ---
+    minTimer = setTimeout(() => {
+      minElapsed = true;
+      tryFinish();
+    }, MIN_PRESENTATION_MS);
+
+    // --- Defensive max fallback: 3s. Safety net only. ---
+    maxTimer = setTimeout(finish, MAX_FALLBACK_MS);
 
     return () => {
       done = true;
       cancelAnimationFrame(rafId);
-      if (maxFallbackTimer) clearTimeout(maxFallbackTimer);
+      if (minTimer) clearTimeout(minTimer);
+      if (maxTimer) clearTimeout(maxTimer);
     };
   });
 </script>
@@ -159,7 +176,7 @@
        so the overlay never blocks interaction even during fade. */
     pointer-events: none;
     opacity: 1;
-    transition: opacity 160ms var(--ease-out, cubic-bezier(.22, 1, .36, 1));
+    transition: opacity 200ms var(--ease-out, cubic-bezier(.22, 1, .36, 1));
   }
   .pwa-boot.fading {
     opacity: 0;
