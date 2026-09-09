@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star } from 'lucide-svelte';
-  export let active: 'overview' | 'providers' | 'sources' | 'categories' | 'defaults' = 'overview';
+  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download } from 'lucide-svelte';
+  export let active: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' = 'overview';
   const links = [
     { id: 'overview', label: 'Overview', href: '/admin', icon: Database },
     { id: 'providers', label: 'Providers', href: '/admin/providers', icon: ShieldCheck },
     { id: 'sources', label: 'Sources', href: '/admin/sources', icon: SlidersHorizontal },
+    { id: 'downloaders', label: 'Downloaders', href: '/admin/downloaders', icon: Download },
     { id: 'defaults', label: 'Defaults', href: '/admin/defaults', icon: Star },
     { id: 'categories', label: 'Categories', href: '/admin/categories', icon: Layers3 },
   ] as const;
@@ -14,7 +15,7 @@
   <aside class="admin-nav" aria-label="Admin navigation">
     <div class="admin-nav-top"><a class="admin-brand" href="/discover"><span class="brand-symbol">M</span><span>MAVERO</span><small>Control room</small></a><span class="admin-mode"><Activity size={12} /> Live</span></div>
     <nav><div class="admin-label">Workspace</div>{#each links as link}<a class:active={active === link.id} href={link.href} aria-current={active === link.id ? 'page' : undefined}><svelte:component this={link.icon} size={15} /> <span>{link.label}</span></a>{/each}</nav>
-    <div class="admin-note"><div class="eyebrow">Phase 7</div><p>Admin provider, source, default, and capability management. Source testing is health-isolated.</p></div>
+    <div class="admin-note"><div class="eyebrow">Phase 7</div><p>Admin provider, source, downloader, default, and capability management. Source testing is health-isolated.</p></div>
     <a class="admin-back" href="/discover"><ArrowLeft size={14} /> Back to app</a>
   </aside>
   <main class="admin-content"><slot /></main>

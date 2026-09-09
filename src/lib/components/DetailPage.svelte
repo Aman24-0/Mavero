@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, X } from 'lucide-svelte';
+  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, X, Download } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
+  import DownloadSheet from '$components/DownloadSheet.svelte';
   import type { ContentType } from '$data/content';
   import { getMedia, media, formatBadges, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
@@ -15,6 +16,8 @@
   import { appendReturnTo } from '$lib/shared/navigation';
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
+  import type { PublicDownloadProvider, DownloadMediaType } from '$lib/shared/downloader';
+  import { filterProvidersByMediaType } from '$lib/shared/downloader';
 
   export let id = 'afterlight';
   export let type: ContentType = 'movie';
@@ -26,6 +29,18 @@
   let resumeEpisode: { season: number; episode: number } | undefined;
   let overviewExpanded = false;
   let trailerOpen = false;
+
+  // ----- Download sheet state -----
+  // The downloader registry is loaded lazily from the public
+  // /api/downloader/config endpoint the FIRST time the user opens the
+  // Download sheet. We keep the resolved providers in component state so
+  // subsequent opens are instant (and benefit from the HTTP cache-control
+  // header).
+  let downloadSheetOpen = false;
+  let downloadProviders: PublicDownloadProvider[] = [];
+  let downloadProvidersLoaded = false;
+  let downloadProvidersLoading = false;
+  let downloadProvidersFailed = false;
   const statusOptions = [
     { key: 'watching', label: 'Watching', icon: '▶', description: 'Keep this in your current rotation.' },
     { key: 'planned', label: 'Planned', icon: '＋', description: 'Save it for a future night.' },
@@ -179,6 +194,94 @@
   function handleTrailerKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape' && trailerOpen) closeTrailer();
   }
+
+  // ----- Download integration -----
+  //
+  // The Download button is shown beside Play on every authorized Movie /
+  // Series / Anime DetailPage. Adult content is gated by the existing SSR
+  // load (the load throws 404 for unauthorized adult items), so the
+  // DetailPage only ever renders for items the user is authorized to see —
+  // no extra adult guard is needed here. Adult authorization, classifier,
+  // and routing are NOT modified.
+  //
+  // Media type mapping (per spec):
+  //   - movie                  -> 'movie'
+  //   - series                 -> 'tv'
+  //   - anime movie            -> 'movie'
+  //   - anime series           -> 'tv'
+  // The mapping is computed from the existing `item.isAnime` + `item.animeFormat`
+  // fields preserved by the existing anime routing.
+  $: downloadMediaType = (type === 'movie' || (item.isAnime && item.animeFormat === 'movie')) ? 'movie' : 'tv' as DownloadMediaType;
+
+  // Season/episode selection for TV downloads (per spec, in priority order):
+  //   1. season/episode already present in the DetailPage URL query
+  //   2. existing resumeEpisode from progress
+  //   3. fallback to S1E1
+  // We do NOT modify SeasonEpisodes architecture — we just read its outputs
+  // (URL params + resumeEpisode) here.
+  $: downloadSeason = (() => {
+    const urlSeason = Number(page.url.searchParams.get('season') || '');
+    if (Number.isFinite(urlSeason) && urlSeason > 0) return urlSeason;
+    if (resumeEpisode?.season) return resumeEpisode.season;
+    return 1;
+  })();
+  $: downloadEpisode = (() => {
+    const urlEpisode = Number(page.url.searchParams.get('episode') || '');
+    if (Number.isFinite(urlEpisode) && urlEpisode > 0) return urlEpisode;
+    if (resumeEpisode?.episode) return resumeEpisode.episode;
+    return 1;
+  })();
+
+  // Filtered providers for the current media type. We hide the Download
+  // button entirely if no enabled provider supports the current type (so
+  // the user is never offered an empty sheet).
+  $: visibleDownloadProviders = filterProvidersByMediaType(downloadProviders, downloadMediaType);
+  $: showDownloadButton = downloadProvidersLoaded && visibleDownloadProviders.length > 0;
+
+  // TMDB id resolution. The DetailPage's `item.id` is the content id used
+  // across the app — for TMDB-backed content this IS the TMDB id. For
+  // fixtures (the static `media` array used in dev) the id is a slug like
+  // 'afterlight'; the download URLs would not resolve for those, but
+  // production DetailPage is always reached via the SSR load which sets
+  // dataItem from a real TMDB detail (so item.externalIds?.tmdb is set).
+  // We prefer the explicit externalIds.tmdb, fall back to item.id, and
+  // finally to '' (the sheet will show its "can't open this title" state).
+  $: downloadTmdbId = item.externalIds?.tmdb || item.id || '';
+
+  async function loadDownloadProviders() {
+    if (downloadProvidersLoaded || downloadProvidersLoading) return;
+    downloadProvidersLoading = true;
+    downloadProvidersFailed = false;
+    try {
+      const res = await fetch('/api/downloader/config', { headers: { accept: 'application/json' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json() as { ok: boolean; config?: { providers: PublicDownloadProvider[] } };
+      if (!payload.ok || !payload.config) throw new Error('Downloader config unavailable');
+      downloadProviders = payload.config.providers ?? [];
+      downloadProvidersLoaded = true;
+    } catch (error) {
+      console.error('[DetailPage] Failed to load downloader config', error);
+      downloadProvidersFailed = true;
+      // Don't show a toast — the user hasn't opened the sheet yet, so a
+      // toast would be confusing. The sheet itself will show the empty
+      // state if the user clicks through.
+    } finally {
+      downloadProvidersLoading = false;
+    }
+  }
+
+  function openDownloadSheet() {
+    haptic('light');
+    // Lazy-load the providers the first time the sheet is opened.
+    if (!downloadProvidersLoaded) {
+      void loadDownloadProviders();
+    }
+    downloadSheetOpen = true;
+  }
+  function closeDownloadSheet() {
+    downloadSheetOpen = false;
+  }
+
 </script>
 
 <svelte:head>
@@ -257,10 +360,18 @@
 
     <!-- Actions -->
     <section class="actions">
-      <a class="play-btn" href={watchHref}>
-        <Play size={16} fill="currentColor" strokeWidth={0} />
-        {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else}Play{/if}
-      </a>
+      <div class="primary-actions">
+        <a class="play-btn" href={watchHref}>
+          <Play size={16} fill="currentColor" strokeWidth={0} />
+          {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else}Play{/if}
+        </a>
+        {#if showDownloadButton}
+          <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen}>
+            <Download size={16} />
+            <span>Download</span>
+          </button>
+        {/if}
+      </div>
       <div class="secondary-actions">
         <button class="secondary-btn" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}>
           {#if watchlistStatus}<Heart size={15} fill="currentColor" />{:else}<ListPlus size={15} />{/if}
@@ -335,6 +446,21 @@
     </div>
   </div>
 {/if}
+
+<!-- Download sheet (modal bottom-sheet). The sheet is rendered always-on
+     (with open=false) so the iframe lifecycle is owned by the sheet itself;
+     the parent only flips `open` and supplies the media context. -->
+<DownloadSheet
+  open={downloadSheetOpen}
+  title={item.title}
+  providers={visibleDownloadProviders}
+  selectedProviderId={null}
+  mediaType={downloadMediaType}
+  tmdbId={downloadTmdbId}
+  season={downloadMediaType === 'tv' ? downloadSeason : undefined}
+  episode={downloadMediaType === 'tv' ? downloadEpisode : undefined}
+  onClose={closeDownloadSheet}
+/>
 
 <style>
   .detail-page { position: relative; overflow: hidden; padding-bottom: 80px; background: #000; }
@@ -418,15 +544,31 @@
 
   /* Actions */
   .actions { margin-top: 22px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  /* Primary row holds Play + Download side-by-side. They share the available
+     width so neither becomes tiny on mobile; Play keeps a slight flex bias so
+     it remains the visually-dominant CTA. */
+  .primary-actions {
+    display: flex; align-items: stretch; gap: 8px;
+    width: 100%; max-width: 480px;
+  }
   .play-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    width: 100%; max-width: 420px; padding: 14px 24px; border-radius: 999px;
+    flex: 1 1 60%; padding: 14px 24px; border-radius: 999px;
     color: #000; font-size: .9rem; font-weight: 800; text-decoration: none;
     background: #fff; box-shadow: 0 6px 24px rgba(255,255,255,.18);
     transition: transform 220ms cubic-bezier(.22,1,.36,1), box-shadow 220ms cubic-bezier(.22,1,.36,1);
   }
   .play-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 28px rgba(255,255,255,.25); }
   .play-btn:active { transform: scale(.98); }
+  .download-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    flex: 1 1 40%; padding: 14px 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.18);
+    color: #f5f5f5; font-size: .9rem; font-weight: 800; cursor: pointer;
+    background: rgba(255,255,255,.06); backdrop-filter: blur(6px);
+    transition: transform 220ms cubic-bezier(.22,1,.36,1), background 220ms cubic-bezier(.22,1,.36,1), border-color 220ms cubic-bezier(.22,1,.36,1);
+  }
+  .download-btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.3); }
+  .download-btn:active { transform: scale(.98); }
   .secondary-actions {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
     width: 100%; max-width: 480px;
@@ -507,7 +649,8 @@
     .identity { margin-top: 22px; }
     .detail-title { font-size: clamp(2rem, 3.4vw, 3rem); }
     .detail-desc { font-size: .88rem; max-width: 720px; }
-    .play-btn { max-width: 360px; padding: 14px 28px; }
+    .primary-actions { max-width: 420px; }
+    .play-btn { padding: 14px 28px; }
     .cast-card { flex: 0 0 110px; }
     .cast-photo { width: 110px; height: 110px; }
   }
@@ -522,11 +665,12 @@
     .meta-row { font-size: .7rem; gap: 6px; }
     .detail-desc { font-size: .8rem; }
     .play-btn { padding: 12px 22px; font-size: .85rem; }
+    .download-btn { padding: 12px 16px; font-size: .85rem; }
     .secondary-btn { padding: 9px 14px; font-size: .72rem; }
     .cast-section { margin-top: 30px; }
     .recs-rail { margin-top: 28px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .back-btn, .play-btn, .secondary-btn, .trailer-modal { transition: none; animation: none; }
+    .back-btn, .play-btn, .download-btn, .secondary-btn, .trailer-modal { transition: none; animation: none; }
   }
 </style>

@@ -596,6 +596,80 @@ export type Database = {
           },
         ]
       }
+      // Added by 20260915000000_download_providers.sql.
+      // Separate downloader registry (independent from streaming provider/source).
+      download_providers: {
+        Row: {
+          id: string
+          name: string
+          slug: string
+          description: string | null
+          icon: string | null
+          enabled: boolean
+          is_default: boolean
+          ordering: number
+          supports_movie: boolean
+          supports_tv: boolean
+          movie_url_template: string | null
+          tv_url_template: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          slug: string
+          description?: string | null
+          icon?: string | null
+          enabled?: boolean
+          is_default?: boolean
+          ordering?: number
+          supports_movie?: boolean
+          supports_tv?: boolean
+          movie_url_template?: string | null
+          tv_url_template?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          slug?: string
+          description?: string | null
+          icon?: string | null
+          enabled?: boolean
+          is_default?: boolean
+          ordering?: number
+          supports_movie?: boolean
+          supports_tv?: boolean
+          movie_url_template?: string | null
+          tv_url_template?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      // Added by 20260915000000_download_providers.sql.
+      // Independent cache-invalidation version counter for the downloader
+      // registry (never shared with streaming_config_meta).
+      download_providers_config_meta: {
+        Row: {
+          id: number
+          version: number
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          version?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          version?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       watch_history: {
         Row: {
           completion_state: string
@@ -712,11 +786,59 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      // Added by 20260915000000_download_providers.sql.
+      // Sanitized public view of enabled download providers.
+      download_providers_public: {
+        Row: {
+          id: string
+          name: string
+          slug: string
+          description: string | null
+          icon: string | null
+          enabled: boolean
+          is_default: boolean
+          ordering: number
+          supports_movie: boolean
+          supports_tv: boolean
+          movie_url_template: string | null
+          tv_url_template: string | null
+        }
+        Insert: {
+          id: string
+          name: string
+          slug: string
+          description?: string | null
+          icon?: string | null
+          enabled: boolean
+          is_default: boolean
+          ordering: number
+          supports_movie: boolean
+          supports_tv: boolean
+          movie_url_template?: string | null
+          tv_url_template?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          slug?: string
+          description?: string | null
+          icon?: string | null
+          enabled?: boolean
+          is_default?: boolean
+          ordering?: number
+          supports_movie?: boolean
+          supports_tv?: boolean
+          movie_url_template?: string | null
+          tv_url_template?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       is_admin: { Args: never; Returns: boolean }
       refresh_streaming_public_config: { Args: never; Returns: undefined }
+      // Added by 20260915000000_download_providers.sql.
+      bump_download_providers_config_version: { Args: never; Returns: undefined }
       remove_favorite: {
         Args: {
           p_content_id: string

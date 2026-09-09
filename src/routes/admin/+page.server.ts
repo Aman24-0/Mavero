@@ -3,10 +3,18 @@ import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createProvider, getAdminOverview } from '$lib/server/streaming/admin-service';
 import { StreamingValidationError, parseProviderForm } from '$lib/server/streaming/validation';
+import { getDownloadersAdminOverview } from '$lib/server/downloader/admin-service';
 
 export const load: PageServerLoad = async ({ locals }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
-  return { overview: await getAdminOverview(locals.supabase) };
+  const [overview, downloadersOverview] = await Promise.all([
+    getAdminOverview(locals.supabase),
+    // Optional card on the overview — degrades gracefully if the new
+    // table doesn't exist yet (pre-migration environments) so the admin
+    // overview never 500s.
+    getDownloadersAdminOverview(locals.supabase).catch(() => null),
+  ]);
+  return { overview, downloadersOverview };
 };
 
 export const actions: Actions = {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUpRight, Database, Layers3, ShieldCheck, SlidersHorizontal, Wifi } from 'lucide-svelte';
+  import { ArrowUpRight, Database, Download, Layers3, ShieldCheck, SlidersHorizontal, Wifi } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import type { PageData } from './$types';
 
@@ -29,6 +29,17 @@
     <a class="admin-card" href="/admin/sources"><span class="card-icon"><SlidersHorizontal size={18} /></span><div><h3>Sources</h3><p>Configure selectable source metadata and inert media templates.</p></div><ArrowUpRight size={16} /></a>
     <a class="admin-card" href="/admin/categories"><span class="card-icon"><Layers3 size={18} /></span><div><h3>Categories</h3><p>Organize public sources with category-specific ordering.</p></div><ArrowUpRight size={16} /></a>
   </div>
+
+  <!-- Optional Downloaders card. Renders only when the downloaders overview
+       loaded successfully (the load catches errors and returns null for
+       pre-migration environments). Kept intentionally small — this is not a
+       redesign of the overview, just a pointer to the new section. -->
+  {#if data.downloadersOverview}
+    <div class="admin-section-head"><div><div class="eyebrow">Separate registry</div><h2>Download providers</h2></div><span class="version">v{data.downloadersOverview.configVersion}</span></div>
+    <div class="admin-cards">
+      <a class="admin-card" href="/admin/downloaders"><span class="card-icon"><Download size={18} /></span><div><h3>Downloaders</h3><p>{data.downloadersOverview.providerCount} providers · {data.downloadersOverview.enabledCount} enabled · {data.downloadersOverview.defaultCount} default</p></div><ArrowUpRight size={16} /></a>
+    </div>
+  {/if}
 
   <div class="admin-lower-grid">
     <section class="admin-panel"><div class="eyebrow">Configuration status</div><h3>Sanitized public contract</h3><p>The public service exposes only enabled, visible records and safe capabilities. Credentials, templates, internal notes, and admin-only metadata remain server-side.</p><span class="security-line"><ShieldCheck size={15} /> RLS and server authorization active</span></section>
