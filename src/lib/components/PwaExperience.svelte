@@ -268,7 +268,7 @@
 {#if showInstallPrompt && installEvent}
   <div class="install-prompt" role="dialog" aria-label="Install Mavero">
     <div class="install-icon" aria-hidden="true">
-      <img src="/icons/mavero-192.png" alt="" width="36" height="36" loading="lazy" decoding="async" />
+      <img src="/icons/mavero-apple-touch.png" alt="" width="36" height="36" loading="lazy" decoding="async" />
     </div>
     <div class="install-copy">
       <strong>Install Mavero</strong>

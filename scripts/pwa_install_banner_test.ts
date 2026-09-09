@@ -288,8 +288,8 @@ assert.match(source, /backdrop-filter: blur\(16px\)/,
 ok('Banner uses Mavero visual tokens (surface, accent, radius, shadow)');
 
 // Banner must include the Mavero icon.
-assert.match(source, /<img src="\/icons\/mavero-192\.png"/,
-  'banner includes mavero-192.png icon');
+assert.match(source, /<img src="\/icons\/mavero-apple-touch\.png"/,
+  'banner includes mavero-apple-touch.png icon');
 assert.match(source, /alt=""/,
   'icon img has empty alt (decorative — label is on the container)');
 ok('Banner includes the Mavero icon (decorative, alt="")');

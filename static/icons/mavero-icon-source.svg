@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Purple-violet gradient for the M (back layer) -->
+    <linearGradient id="mGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b894ff"/>
+      <stop offset="50%" stop-color="#9b6dff"/>
+      <stop offset="100%" stop-color="#7c4ddb"/>
+    </linearGradient>
+    <!-- Lighter gradient for the front-facing ribbon leg -->
+    <linearGradient id="mGradientLight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d4bfff"/>
+      <stop offset="50%" stop-color="#b894ff"/>
+      <stop offset="100%" stop-color="#9b6dff"/>
+    </linearGradient>
+    <!-- Subtle radial glow behind the M -->
+    <radialGradient id="bgGlow" cx="50%" cy="42%" r="55%">
+      <stop offset="0%" stop-color="#1a1430"/>
+      <stop offset="60%" stop-color="#0d0a18"/>
+      <stop offset="100%" stop-color="#08060f"/>
+    </radialGradient>
+    <!-- Clip path for the rounded square background -->
+    <clipPath id="bgClip">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+  </defs>
+
+  <!--
+    Mavero App Icon — Premium OTT streaming identity
+
+    Design optimized for small-size readability:
+      - Thick bold M bands (55px wide) for clear silhouette at 16px
+      - Simplified geometry: two bold diagonal strokes forming the M
+        with a center V valley
+      - Play button triangle (▶) cut from the right counter
+      - Purple-violet gradient on dark rounded-square background
+      - All content within 80% maskable safe zone
+
+    The M is the primary identifier. The play triangle is secondary
+    (visible at 48px+). No text inside the icon.
+  -->
+  <g clip-path="url(#bgClip)">
+    <rect x="0" y="0" width="512" height="512" fill="url(#bgGlow)"/>
+
+    <!-- Left leg of the M (back layer).
+         Bold thick band: bottom-left → top peak → center valley.
+         Width ~55px for strong 16px silhouette. -->
+    <path
+      d="M 140 380
+         L 140 140
+         L 256 230
+         L 256 305
+         L 185 260
+         L 185 380
+         Z"
+      fill="url(#mGradient)"
+    />
+
+    <!-- Right leg of the M (front layer — crosses in front at center V).
+         Lighter gradient for 3D ribbon-fold depth. -->
+    <path
+      d="M 372 380
+         L 372 140
+         L 256 230
+         L 256 305
+         L 327 260
+         L 327 380
+         Z"
+      fill="url(#mGradientLight)"
+    />
+
+    <!-- Play button triangle — cut from the right counter of the M.
+         Points right (▶). Filled with dark background color.
+         Visible at 48px+, doesn't distort M silhouette at 16px. -->
+    <path
+      d="M 300 215
+         L 342 246
+         L 300 277
+         Z"
+      fill="#0d0a18"
+    />
+
+    <!-- Subtle top-edge highlight (low opacity, doesn't affect
+         silhouette readability). -->
+    <path
+      d="M 140 140 L 256 230 L 372 140"
+      fill="none"
+      stroke="#e0ccff"
+      stroke-width="3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.45"
+    />
+  </g>
+</svg>
