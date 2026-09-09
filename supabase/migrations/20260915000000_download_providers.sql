@@ -88,31 +88,40 @@ alter table public.download_providers
 
 -- Only allow known placeholders when the template contains a "{" (i.e. it has
 -- any placeholder at all). Templates without placeholders (rare) are allowed
--- as long as they are HTTPS + single-line. We forbid "{...}" tokens that are
--- NOT one of the known placeholders by checking that every "{...}" group is
--- one of the allowed set.
+-- as long as they are HTTPS + single-line.
+--
+-- PostgreSQL's POSIX regex engine does NOT support Perl-style negative
+-- lookahead `(?!...)`, so the previous version of this constraint (which
+-- used `(?!...)`) was invalid SQL and would have failed at ALTER TABLE
+-- time. This rewrite uses a portable two-step approach instead:
+--
+--   1. Globally strip every KNOWN placeholder from the template using
+--      `regexp_replace(..., 'g')` (PG has supported the global flag since
+--      8.0; alternation is POSIX-standard).
+--   2. Verify the stripped string contains NO remaining `{...}` group. If
+--      any `{X}` survives the strip, X is not in the known set → reject.
+--
+-- This is plain POSIX regex + standard string functions — no lookahead, no
+-- backrefs, no PCRE-specific features. It correctly rejects `{foo}`,
+-- `{url}`, `{javascript}`, etc. while accepting the six known placeholders.
+-- Unmatched braces (e.g. `https://x/{`) pass this CHECK but are still
+-- rejected by the application-layer validator (urlTemplate() in
+-- src/lib/server/downloader/validation.ts), so the defense-in-depth
+-- contract is preserved.
 alter table public.download_providers
   add constraint download_providers_movie_url_template_placeholders
   check (
     movie_url_template is null
-    or movie_url_template !~ '\{'
-    or movie_url_template ~ '^\{tmdbId\}$'
-    or movie_url_template ~ '^\{titleSlug\}$'
-    or (
-      movie_url_template !~ '\{(?!tmdbId\}|titleSlug\})'
-      and movie_url_template ~ '\{(tmdbId|titleSlug)\}'
-    )
+    or position('{' in movie_url_template) = 0
+    or regexp_replace(movie_url_template, '\{(tmdbId|titleSlug)\}', '', 'g') !~ '\{[^}]*\}'
   );
 
 alter table public.download_providers
   add constraint download_providers_tv_url_template_placeholders
   check (
     tv_url_template is null
-    or tv_url_template !~ '\{'
-    or (
-      tv_url_template !~ '\{(?!tmdbId\}|season\}|episode\}|season2\}|episode2\}|titleSlug\})'
-      and tv_url_template ~ '\{(tmdbId|season|episode|season2|episode2|titleSlug)\}'
-    )
+    or position('{' in tv_url_template) = 0
+    or regexp_replace(tv_url_template, '\{(tmdbId|season|episode|season2|episode2|titleSlug)\}', '', 'g') !~ '\{[^}]*\}'
   );
 
 -- At most one default downloader (partial unique index).

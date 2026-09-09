@@ -185,7 +185,6 @@
   $: sheetTitle = title ? `Download ${title}` : 'Download';
   $: iframeTitle = activeProvider ? `Download ${activeProvider.name} for ${title || 'this title'}` : 'Download';
   $: hasProviders = filteredProviders.length > 0;
-  $: supportsCurrentMediaType = mediaType === 'movie' ? true : true; // already filtered
 </script>
 
 <svelte:window onkeydown={handleKeydown} onclick={handleWindowClick} />
@@ -261,22 +260,19 @@
             <p>Downloading is not configured for this content type right now. Please try again later.</p>
           </div>
         {:else if iframeUrl === null}
-          <!-- Could not build a valid URL for this provider (missing TMDB id,
-               missing title slug, etc.). Show the fallback link. -->
+          <!-- buildDownloadUrl() returned null: the active provider cannot
+               produce a valid URL for this title (missing TMDB id, missing
+               title for the {titleSlug} placeholder, unsupported media
+               type, or a non-HTTPS template). There is NO resolvable URL
+               to link to — so we do NOT show a fallback "Open" link here
+               (the previous version incorrectly linked to the raw URL
+               template with placeholders still in it, e.g.
+               https://cineverse.modiplay.xyz/download/{titleSlug}). The
+               only recovery is to switch provider or close the sheet. -->
           <div class="dl-empty">
             <AlertTriangle size={26} />
             <h3>This downloader can't open this title</h3>
-            <p>{activeProvider?.name} could not generate a download link for this title. Try another provider or open the downloader directly.</p>
-            {#if activeProvider}
-              <a
-                class="dl-open-external"
-                href={activeProvider.movieUrlTemplate?.replace(/^https:\/\/[^/]+/, '') ? (activeProvider.movieUrlTemplate || activeProvider.tvUrlTemplate || '#') : '#'}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ExternalLink size={14} /> Open {activeProvider.name}
-              </a>
-            {/if}
+            <p>{activeProvider?.name} could not generate a download link for this title. Try another provider from the dropdown above.</p>
           </div>
         {:else}
           <div class="dl-frame-wrap">
@@ -309,9 +305,11 @@
               ></iframe>
             {/if}
           </div>
-          <!-- Always-available fallback link. Cross-origin iframe load
-               errors cannot always be detected; this link guarantees the
-               user can reach the downloader page directly. -->
+          <!-- Always-available fallback link. Uses the SAME resolved URL
+               that buildDownloadUrl() produced for the iframe src — never
+               a raw template. Cross-origin iframe load errors cannot
+               always be detected; this link guarantees the user can reach
+               the downloader page directly. -->
           <div class="dl-fallback-bar">
             <span>Can't see the downloader?</span>
             <a href={iframeUrl} target="_blank" rel="noopener noreferrer">

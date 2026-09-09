@@ -76,6 +76,14 @@
         resumeEpisode = latestResumeEpisode(type, item.id, progress);
       }
     })();
+    // Prefetch the downloader registry on mount so the Download button is
+    // reachable as soon as config loads (instead of being hidden behind a
+    // click handler that never fires because the button is hidden). This
+    // is purely additive client-side prefetching — no server-side load is
+    // added to the movie/series/anime routes. The fetch hits the cached
+    // /api/downloader/config endpoint (HTTP cache-control + in-process
+    // server cache), so subsequent DetailPage visits reuse the response.
+    void loadDownloadProviders();
     const autoplay = page.url.searchParams.get('autoplay') === '1';
     if (autoplay && typeof window !== 'undefined') {
       const params = new URLSearchParams(page.url.searchParams);
@@ -236,6 +244,12 @@
   // button entirely if no enabled provider supports the current type (so
   // the user is never offered an empty sheet).
   $: visibleDownloadProviders = filterProvidersByMediaType(downloadProviders, downloadMediaType);
+  // The Download button is shown ONLY after the prefetch has completed and
+  // at least one provider supports the current media type. While the
+  // prefetch is in flight (or has failed), the button stays hidden — this
+  // avoids a flicker of an un-clickable button. The prefetch is kicked off
+  // in onMount (see above), so the button becomes reachable as soon as the
+  // config arrives; the user never has to click to "discover" the button.
   $: showDownloadButton = downloadProvidersLoaded && visibleDownloadProviders.length > 0;
 
   // TMDB id resolution. The DetailPage's `item.id` is the content id used
@@ -272,8 +286,12 @@
 
   function openDownloadSheet() {
     haptic('light');
-    // Lazy-load the providers the first time the sheet is opened.
-    if (!downloadProvidersLoaded) {
+    // The downloader config is prefetched on mount, so by the time the
+    // user can see + click the Download button the providers are already
+    // loaded. If the prefetch failed (e.g. transient network error), we
+    // retry here so a click still opens the sheet with a fresh attempt —
+    // the sheet itself shows the empty state if the retry also fails.
+    if (!downloadProvidersLoaded && !downloadProvidersLoading) {
       void loadDownloadProviders();
     }
     downloadSheetOpen = true;

@@ -591,4 +591,138 @@ assert.match(apiEndpoint, /getPublicDownloadConfig/, 'public API endpoint uses g
 assert.match(apiEndpoint, /cache-control/, 'public API endpoint sets cache-control');
 ok('public /api/downloader/config endpoint exists and uses the public-config reader');
 
+// ============================================================
+// Follow-up fix #1: DetailPage must prefetch /api/downloader/config on
+// mount (NOT lazy-load on click) — otherwise the Download button is
+// circularly hidden (button hidden → no click → no config load → button
+// never appears).
+// ============================================================
+console.log('\nFollow-up fix #1: prefetch-on-mount contract');
+
+// The onMount block must call loadDownloadProviders() so the prefetch
+// starts as soon as DetailPage mounts — the button becomes reachable
+// when the config arrives, without requiring a click.
+assert.match(detailPage, /onMount\(\(\) => \{[\s\S]*?void loadDownloadProviders\(\)/, 'onMount calls loadDownloadProviders() (prefetch on mount)');
+// The openDownloadSheet handler must NOT be the only place that triggers
+// loading. It can RETRY if loading failed, but the primary load must be
+// in onMount.
+assert.doesNotMatch(detailPage, /\/\/ Lazy-load the providers the first time the sheet is opened\./, 'old lazy-load-only comment removed from openDownloadSheet');
+assert.match(detailPage, /\/\/ The downloader config is prefetched on mount/, 'openDownloadSheet documents the prefetch-on-mount contract');
+ok('DetailPage prefetches downloader config in onMount (no circular-hide)');
+
+// ============================================================
+// Follow-up fix #2: PostgreSQL migration must NOT use unsupported
+// regex lookahead (?!...). PostgreSQL's POSIX regex engine doesn't
+// support Perl-style lookahead — the original migration would have
+// failed at ALTER TABLE time.
+// ============================================================
+console.log('\nFollow-up fix #2: PostgreSQL-compatible CHECK constraints');
+
+const migrationSrc = readFileSync(new URL('../supabase/migrations/20260915000000_download_providers.sql', import.meta.url), 'utf8');
+// Strip SQL comments (-- to end of line) before checking for unsupported
+// lookahead. The migration mentions (?!...) only in explanatory comments.
+const migrationNoComments = migrationSrc.replace(/--[^\n]*/g, '');
+assert.doesNotMatch(migrationNoComments, /\(\?!/, 'migration contains no (?! lookahead in non-comment text');
+assert.match(migrationSrc, /regexp_replace/, 'migration uses regexp_replace (PG-compatible approach)');
+assert.match(migrationSrc, /download_providers_movie_url_template_placeholders/, 'movie placeholder constraint exists');
+assert.match(migrationSrc, /download_providers_tv_url_template_placeholders/, 'tv placeholder constraint exists');
+ok('migration uses regexp_replace (no unsupported lookahead)');
+
+// Emulate the exact PG CHECK constraint logic in JS to verify it accepts
+// the seed URLs + rejects arbitrary placeholders. This mirrors the
+// runtime behavior we validated against real PostgreSQL 18.6.
+function pgCheckEmulation(template: string | null, knownPlaceholders: string[]): boolean {
+  if (template == null) return true;
+  if (!template.includes('{')) return true;
+  const knownAlt = knownPlaceholders.join('|');
+  const stripPattern = new RegExp(`\\{(${knownAlt})\\}`, 'g');
+  const stripped = template.replace(stripPattern, '');
+  // After stripping known placeholders, no {X} should remain.
+  return !/\{[^}]*\}/.test(stripped);
+}
+
+const movieKnown = ['tmdbId', 'titleSlug'];
+const tvKnown = ['tmdbId', 'season', 'episode', 'season2', 'episode2', 'titleSlug'];
+
+// All 5 seed URLs must PASS the CHECK (would be accepted by PostgreSQL).
+const seedMovieUrls = [
+  'https://02moviedownloader.site/api/download/movie/{tmdbId}',
+  'https://vidvault.ru/movie/{tmdbId}',
+  'https://nxsha.space/dl/movie/{tmdbId}',
+  'https://nhdapi.com/dl/movie/{tmdbId}',
+  'https://cineverse.modiplay.xyz/download/{titleSlug}',
+];
+const seedTvUrls = [
+  'https://02moviedownloader.site/api/download/tv/{tmdbId}/{season}/{episode}',
+  'https://vidvault.ru/tv/{tmdbId}/{season}/{episode}',
+  'https://nxsha.space/dl/tv/{tmdbId}/{season}/{episode}',
+  'https://nhdapi.com/dl/tv/{tmdbId}/{season}/{episode}',
+  'https://cineverse.modiplay.xyz/download/{titleSlug}-s{season2}e{episode2}',
+];
+for (const url of seedMovieUrls) {
+  assert.ok(pgCheckEmulation(url, movieKnown), `seed movie URL passes CHECK: ${url}`);
+}
+for (const url of seedTvUrls) {
+  assert.ok(pgCheckEmulation(url, tvKnown), `seed TV URL passes CHECK: ${url}`);
+}
+ok('all 5 seed movie + 5 seed TV URLs pass the PG-compatible CHECK emulation');
+
+// Arbitrary placeholders must FAIL the CHECK.
+const badUrls = [
+  'https://example.com/movie/{foo}',
+  'https://example.com/movie/{url}',
+  'https://example.com/movie/{javascript}',
+  'https://example.com/movie/{tmdbId}-{evil}',
+  'https://example.com/tv/{tmdbId}/{evil}',
+];
+for (const url of badUrls) {
+  assert.ok(!pgCheckEmulation(url, movieKnown) || !pgCheckEmulation(url, tvKnown), `bad URL fails CHECK: ${url}`);
+}
+ok('arbitrary placeholders ({foo}, {url}, {javascript}, {tmdbId}-{evil}) are rejected by the emulation');
+
+// ============================================================
+// Follow-up fix #3: DownloadSheet must use ONE resolved URL for both
+// the iframe src AND the fallback "Open in new tab" link — never the
+// raw URL template with placeholders still in it.
+// ============================================================
+console.log('\nFollow-up fix #3: single resolved URL for iframe + fallback');
+
+const sheetSrc = readFileSync(new URL('../src/lib/components/DownloadSheet.svelte', import.meta.url), 'utf8');
+
+// The iframe src and the fallback-bar href must BOTH reference the same
+// `iframeUrl` variable (which is the output of buildDownloadUrl).
+assert.match(sheetSrc, /src=\{iframeUrl\}/, 'iframe src uses iframeUrl');
+assert.match(sheetSrc, /<a href=\{iframeUrl\}[^>]*>[\s\S]*?Open[^<]*in a new tab/, 'fallback bar uses iframeUrl (the resolved URL)');
+
+// The previous broken fallback that used raw template fragments must be
+// GONE. The old code did:
+//   href={activeProvider.movieUrlTemplate?.replace(/^https:\/\/[^/]+/, '') ? ...}
+assert.doesNotMatch(sheetSrc, /movieUrlTemplate\?\.replace/, 'broken raw-template fallback removed');
+assert.doesNotMatch(sheetSrc, /activeProvider\.movieUrlTemplate \|\| activeProvider\.tvUrlTemplate/, 'no raw template used as href');
+
+// When iframeUrl is null (buildDownloadUrl returned null), there must be
+// NO fallback link at all — just the "can't open this title" message.
+// The old code showed a fallback link with a broken (raw-template) href.
+assert.match(sheetSrc, /\{:else if iframeUrl === null\}[\s\S]*?This downloader can't open this title[\s\S]*?\{\/if\}/, 'null-URL branch shows "can\'t open" message');
+// Verify the null-URL branch does NOT contain an <a> link (no fallback
+// when there's no resolvable URL).
+const nullBranchMatch = sheetSrc.match(/\{:else if iframeUrl === null\}([\s\S]*?)\{:else\}/);
+assert.ok(nullBranchMatch, 'null-URL branch is delimited');
+assert.doesNotMatch(nullBranchMatch![1], /<a\s/, 'null-URL branch contains no <a> link (no broken fallback)');
+ok('DownloadSheet uses one resolved iframeUrl for iframe + fallback; null-URL branch has no broken link');
+
+// Sanity: buildDownloadUrl still produces the exact expected URLs (this
+// was already tested above, but re-verify with a Cineverse TV case to
+// confirm the resolved URL is what the fallback would use).
+const cineverseTvUrl = buildDownloadUrl(fixtures[4], {
+  mediaType: 'tv',
+  tmdbId: '6263850',
+  title: 'Breaking Bad',
+  season: 2,
+  episode: 5,
+});
+assert.equal(cineverseTvUrl, 'https://cineverse.modiplay.xyz/download/breaking-bad-s02e05', 'Cineverse TV URL is fully resolved (no raw {titleSlug} or {season2})');
+assert.ok(!cineverseTvUrl?.includes('{'), 'resolved URL contains no {placeholder} tokens');
+ok('buildDownloadUrl produces fully-resolved URLs (no raw placeholders) — fallback uses same value');
+
 console.log(`\nDownload provider tests passed (${passed} check groups).`);
