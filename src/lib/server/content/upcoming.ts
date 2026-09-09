@@ -154,7 +154,6 @@ import {
   computeStreamId,
   computeUpcomingFilterFingerprint,
   parseUpcomingCursor,
-  sampleStreamIds,
   serializeUpcomingCursor,
   type UpcomingCursorV2
 } from './upcoming-cursor';
@@ -1021,12 +1020,23 @@ function sortStream(items: UpcomingItem[]): UpcomingItem[] {
   return [...items].sort(chronologicalComparator);
 }
 
+// Full-digest stream identity (see computeStreamId in upcoming-cursor.ts).
+// Every pagination-relevant event contributes its COMPLETE identity, in
+// stream order — NO sampling:
+//   - normalized items:      `id@timestamp` (the exact (timestamp, id)
+//     sort key the chronological comparator orders by),
+//   - movie candidates:      `movie-id@release_date` (the exact
+//     (release_date, id) sort key the candidate stream orders by).
+// Insertion, deletion, replacement, ID changes, timestamp/date changes,
+// and reordering ANYWHERE (first, middle, or final entry) all re-key
+// the stream, so an outstanding cursor is invalidated (CURSOR_STALE)
+// instead of silently slicing a different result set.
 function streamIdForItems(items: UpcomingItem[]): string {
-  return computeStreamId(items.length, sampleStreamIds(items.map((item) => item.id)));
+  return computeStreamId(items.map((item) => `${item.id}@${item.timestamp}`));
 }
 
 function streamIdForMovieCandidates(candidates: TmdbMovieRow[]): string {
-  return computeStreamId(candidates.length, sampleStreamIds(candidates.map((row) => `movie-${row.id}`)));
+  return computeStreamId(candidates.map((row) => `movie-${row.id}@${row.release_date ?? ''}`));
 }
 
 export type UpcomingPageResult = {
@@ -1254,7 +1264,11 @@ async function loadSnapshotPage(
 
   const streamId = streamIdForItems(stream);
   const offset = cursor?.snapshotOffset ?? 0;
-  if (cursor && stream.length > 0) {
+  if (cursor) {
+    // Identity validates on EVERY continuation — including the empty
+    // stream, whose digest is a deterministic constant: a genuinely
+    // empty stream never falsely reports stale, while a stream that
+    // BECAME empty (or grew) after the cursor was issued correctly does.
     if (cursor.streamId !== streamId) {
       throw new UpcomingCursorError('stale', 'The result set changed since this cursor was issued.');
     }
@@ -1262,9 +1276,6 @@ async function loadSnapshotPage(
       throw new UpcomingCursorError('stale', 'The snapshot position is beyond the current result set.');
     }
   }
-  // A cursor over a genuinely empty (error-free) stream hashes
-  // identically on every materialization — the clean end state is
-  // reached without a false "stale" report.
   const safeOffset = Math.min(offset, stream.length);
   const items = stream.slice(safeOffset, safeOffset + pageSize);
   const nextOffset = safeOffset + items.length;

@@ -58,6 +58,7 @@
     requestToken += 1;
     loadingMore = false;
     filterPending = false;
+    filterNavError = null;
     loadMoreError = null;
     zeroProgressStreak = 0;
     pageError = d.errorMessage ?? null;
@@ -115,6 +116,26 @@
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
   let selectedLanguage = $state(String(data.filters.language ?? 'all'));
 
+  // Filter-navigation failure — a rejected goto() is NEVER silently
+  // swallowed: the optimistic selection is rolled back to the last
+  // server state and a small retryable error is surfaced next to the
+  // filter bar (the same explicit-retry convention as pagination
+  // failures).
+  let filterNavError = $state<string | null>(null);
+  // The filter values whose navigation failed, so Retry re-applies
+  // exactly what failed. Non-reactive on purpose — only handlers read it.
+  let failedFilter: { month?: string; year?: string; type?: string; language?: string } | null = null;
+
+  function restoreFilterSelections() {
+    // After a failed navigation `data` still holds the last SUCCESSFUL
+    // server state — the dropdowns re-sync to it (the optimistic
+    // selection is rolled back; no stale mismatch with the URL).
+    selectedMonth = String(data.filters.month);
+    selectedYear = String(data.filters.year);
+    selectedType = data.filters.type;
+    selectedLanguage = String(data.filters.language ?? 'all');
+  }
+
   function updateFilter(next: { month?: string; year?: string; type?: string; language?: string }) {
     const params = new URLSearchParams(page.url.searchParams);
     if (next.month !== undefined) params.set('month', next.month);
@@ -125,12 +146,35 @@
     // load with NO cursor and the data-sync effect invalidates any
     // in-flight pagination request from the previous filter.
     filterPending = true;
-    requestToken += 1;
+    filterNavError = null;
+    const token = ++requestToken;
     void goto(`${page.url.pathname}?${params.toString()}`, { keepFocus: true, noScroll: true })
-      .catch(() => {})
+      .catch(() => {
+        // Navigation failure (offline / route load rejection) must not
+        // leave a silent dead end: roll the selection back and offer an
+        // explicit retry. The token check keeps a STALE failure from
+        // clobbering a newer navigation (a successful navigation bumps
+        // the token through the data-sync effect, which also clears
+        // this error) — and never breaks SvelteKit's own navigation
+        // behavior; it only observes the rejection.
+        if (token !== requestToken) return;
+        restoreFilterSelections();
+        failedFilter = next;
+        filterNavError = 'Could not update the filters. Check your connection and retry.';
+        liveMessage = 'Could not update the filters. Retry available.';
+      })
       .finally(() => {
-        filterPending = false;
+        // Only the CURRENT navigation may clear the pending flag — a
+        // newer filter change's pending state must survive.
+        if (token === requestToken) filterPending = false;
       });
+  }
+
+  function retryFilterNav() {
+    const failed = failedFilter;
+    filterNavError = null;
+    failedFilter = null;
+    if (failed) updateFilter(failed);
   }
 
   function setMonth(value: string) { selectedMonth = value; updateFilter({ month: value }); }
@@ -359,11 +403,16 @@
     };
   });
 
-  // SvelteKit snapshot — preserves loaded items + pagination state
-  // (including the compact cursor) across back/forward navigation. The
-  // v2 cursor keeps this payload small (it never contained item
-  // payloads). Restore invalidates in-flight requests so a restored
-  // state can never be mutated by an old response.
+  // SvelteKit snapshot — preserves the LOADED UI STATE (items, page,
+  // continuation) across back/forward navigation. This is deliberately
+  // NOT the same mechanism as the URL cursor:
+  //   - URL cursor  = compact metadata ONLY (never item payloads),
+  //   - this snapshot = the full loaded list + continuation, kept in
+  //     SvelteKit's in-memory history state so back/forward restores
+  //     the exact UI without re-fetching.
+  // The snapshot is intentionally richer than the cursor; restore
+  // invalidates in-flight requests so a restored state can never be
+  // mutated by an old response.
   export const snapshot = {
     capture: () => ({ allItems, currentPage, hasNextPage, nextCursor }),
     restore: (value: any) => {
@@ -410,6 +459,15 @@
         <Dropdown id="upcoming-language" label="Language" value={selectedLanguage} options={languageOptions} onChange={setLanguage} />
       </div>
     </div>
+    {#if filterNavError}
+      <!-- Failed filter navigation: a small, retryable error next to the
+           filters — never a silent dead end, never a noisy global modal. -->
+      <div class="filter-nav-error load-error" role="alert">
+        <AlertCircle size={14} />
+        <span class="load-error-text">{filterNavError}</span>
+        <button class="retry-btn retry-inline" type="button" onclick={retryFilterNav}>Retry</button>
+      </div>
+    {/if}
   </div>
 
   <div class="upcoming-body" aria-busy={filterPending}>
@@ -642,6 +700,9 @@
   }
   .load-error :global(svg) { flex: 0 0 auto; }
   .retry-inline { margin-top: 0; padding: 6px 16px; font-size: .68rem; }
+  /* Filter-navigation failure reuses the pagination error chip, placed
+     inside the filter bar. */
+  .filter-nav-error { margin-top: 12px; }
 
   /* Clean end-of-results state. */
   .end-of-results {

@@ -60,7 +60,7 @@ ok('old pending-cursor architecture fully removed');
 console.log('\n2. Cursor module: parse/serialize round-trip + strict validation');
 
 {
-  const { parseUpcomingCursor, serializeUpcomingCursor, computeUpcomingFilterFingerprint, computeStreamId, sampleStreamIds, UpcomingCursorError } = await import('../src/lib/server/content/upcoming-cursor.ts');
+  const { parseUpcomingCursor, serializeUpcomingCursor, computeUpcomingFilterFingerprint, computeStreamId, UpcomingCursorError } = await import('../src/lib/server/content/upcoming-cursor.ts');
 
   // Round-trip: serialize -> parse returns the identical cursor.
   const cursor = { version: 2 as const, fingerprint: 'fp123abc', streamId: 'sn789def', movieCandidateIndex: 4711, snapshotOffset: 132 };
@@ -127,16 +127,55 @@ console.log('\n2. Cursor module: parse/serialize round-trip + strict validation'
   assert.ok(base.length <= 32, 'fingerprint token is compact');
   ok('filter fingerprint isolates month/year/type/language/region/policy version — deterministic and compact');
 
-  // Stream identity: content-sensitive, deterministic.
-  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm'];
-  const s1 = computeStreamId(ids.length, sampleStreamIds(ids));
-  const s2 = computeStreamId(ids.length, sampleStreamIds(ids));
-  assert.equal(s1, s2, 'stream identity is deterministic for identical content');
-  assert.notEqual(s1, computeStreamId(ids.length + 1, sampleStreamIds([...ids, 'n'])), 'appending an event changes the stream identity');
-  assert.notEqual(s1, computeStreamId(ids.length - 1, sampleStreamIds(ids.slice(0, -1))), 'removing an event changes the stream identity');
-  assert.notEqual(s1, computeStreamId(ids.length, sampleStreamIds(['z', ...ids.slice(1)])), 'changing an early event changes the stream identity');
-  assert.equal(computeStreamId(0, sampleStreamIds([])), computeStreamId(0, sampleStreamIds([])), 'the empty stream has a stable identity (clean end, never a false stale)');
-  ok('stream identity hash detects any content change; empty stream is stable');
+  // Stream identity: a FULL deterministic digest of the pagination-
+  // relevant identity (NO sampling). Every scenario below drives the
+  // REAL computeStreamId implementation with `id@timestamp` entries —
+  // the exact per-event identity the server feeds it.
+  const identityBase = ['e1@1000', 'e2@2000', 'e3@3000', 'e4@4000', 'e5@5000', 'e6@6000', 'e7@7000', 'e8@8000'];
+  const idOf = (entries: string[]) => computeStreamId(entries);
+
+  // 1. identical stream -> identical stream ID (deterministic across calls)
+  assert.equal(idOf(identityBase), idOf([...identityBase]), '1. identical stream -> identical stream ID');
+  // 2-4. ANY position mutating: first, middle, final event ID change.
+  assert.notEqual(idOf(identityBase), idOf(['x1@1000', ...identityBase.slice(1)]), '2. first event ID change -> stream ID changes');
+  const mid = Math.floor(identityBase.length / 2);
+  assert.notEqual(idOf(identityBase), idOf([...identityBase.slice(0, mid), 'x-mid@5000', ...identityBase.slice(mid + 1)]), '3. middle event ID change -> stream ID changes');
+  assert.notEqual(idOf(identityBase), idOf([...identityBase.slice(0, -1), 'e8@9999']), '4. final event change -> stream ID changes');
+  // 5-6. insertion / removal in the middle.
+  assert.notEqual(idOf(identityBase), idOf([...identityBase.slice(0, mid), 'new@5500', ...identityBase.slice(mid)]), '5. middle insertion -> stream ID changes');
+  assert.notEqual(idOf(identityBase), idOf([...identityBase.slice(0, mid), ...identityBase.slice(mid + 1)]), '6. middle removal -> stream ID changes');
+  // 7. timestamp changes while the ID stays IDENTICAL (the old sampled-ID
+  //    identity was blind to exactly this).
+  assert.notEqual(idOf(identityBase), idOf(identityBase.map((e) => (e.startsWith('e3@') ? 'e3@3500' : e))), '7. timestamp change (same ID) -> stream ID changes');
+  // 8. two events swap chronological order -> re-keyed (order feeds the hash).
+  const swapped = [...identityBase];
+  [swapped[2], swapped[3]] = [swapped[3], swapped[2]];
+  assert.notEqual(idOf(identityBase), idOf(swapped), '8. chronological swap -> stream ID changes');
+  // 9. same IDs, same count, different timestamps.
+  assert.notEqual(idOf(identityBase), idOf(identityBase.map((e, i) => `${e.split('@')[0]}@${1000 + i * 111}`)), '9. same IDs + count, different timestamps -> stream ID changes');
+  // 10. movie-candidate identity: release_date changes while the ID stays
+  //     identical (entry shape `movie-id@release_date`).
+  const movieIdentityBase = ['movie-101@2027-05-05', 'movie-102@2027-05-10', 'movie-103@2027-05-15'];
+  assert.notEqual(computeStreamId(movieIdentityBase), computeStreamId(['movie-101@2027-05-05', 'movie-102@2027-05-25', 'movie-103@2027-05-15']), '10. movie release_date change (same ID) -> stream ID changes');
+  // 11. determinism: repeated calls AND a fresh module evaluation agree.
+  assert.equal(idOf(identityBase), idOf([...identityBase]), '11a. repeated calls are deterministic');
+  const freshCursorModule = await import(`../src/lib/server/content/upcoming-cursor.ts?fresh-eval=${Date.now()}`);
+  assert.equal(freshCursorModule.computeStreamId(identityBase), idOf(identityBase), '11b. a fresh module evaluation hashes identically (no hidden state)');
+  // 12. the empty stream is deterministic (a clean end never falsely reports stale).
+  assert.equal(computeStreamId([]), computeStreamId([]), '12. empty stream -> stable deterministic identity');
+  assert.notEqual(computeStreamId([]), computeStreamId(['a@1']), '12b. empty vs non-empty streams never collide');
+  ok('stream identity: full digest sensitive to ID/timestamp/date/order changes at ANY position; deterministic; empty-stream stable');
+
+  // COMPACTNESS REGRESSION (the v1-bug contract, restated for the full
+  // digest): the STREAM may be arbitrarily large — the cursor must not.
+  // 5,000 events hash into the same ~11-char token as 8 events.
+  const hugeStream = Array.from({ length: 5000 }, (_, i) => `movie-${100000 + i}@2027-05-${String((i % 28) + 1).padStart(2, '0')}`);
+  const hugeStreamId = computeStreamId(hugeStream);
+  assert.ok(hugeStreamId.length <= 11, `the stream ID token stays compact for a 5,000-event stream (got ${hugeStreamId.length} chars)`);
+  const hugeCursor = serializeUpcomingCursor({ version: 2, fingerprint: 'fp1a2b3c4d5e', streamId: hugeStreamId, movieCandidateIndex: 4321, snapshotOffset: 0 });
+  assert.ok(hugeCursor.length <= 150, `the serialized cursor stays <= 150 chars over a 5,000-event stream (got ${hugeCursor.length})`);
+  assert.ok(!hugeCursor.includes('movie-') && !hugeCursor.includes('@2027'), 'the cursor carries zero per-event entries (identity is a digest, not a list)');
+  ok(`compactness regression: 5,000-event stream -> ${hugeCursor.length}-char cursor (stream ID token: ${hugeStreamId})`);
 }
 
 // ============================================================
@@ -152,6 +191,16 @@ assert.match(upcomingSource, /function chronologicalComparator\(a: UpcomingItem,
 assert.match(upcomingSource, /const serializeCursor = serializeUpcomingCursor;/, 'the API/page-server boundary serializes the COMPACT v2 cursor');
 assert.match(upcomingSource, /UPCOMING_TV_SERIAL_POLICY_KEY,\s*UPCOMING_TV_DISCOVERY_KEY,\s*UPCOMING_TV_ELIGIBILITY_KEY,\s*UPCOMING_SEASON_MODEL_KEY,\s*UPCOMING_MOVIE_RELEASE_TRUTH_KEY,\s*UPCOMING_PROVIDER_MODEL_KEY/, 'the cursor fingerprint embeds ALL policy/query version constants (policy bumps invalidate cursors)');
 ok('server module v2 contracts hold');
+
+// Full-digest stream identity wiring (behavioral proofs live in
+// scripts/upcoming_stream_identity_test.ts — these pin the wiring).
+assert.match(upcomingSource, /computeStreamId\(items\.map\(\(item\) => `\$\{item\.id\}@\$\{item\.timestamp\}`\)\)/, 'normalized-item stream identity feeds ID + TIMESTAMP for EVERY event (no sampling)');
+assert.match(upcomingSource, /computeStreamId\(candidates\.map\(\(row\) => `movie-\$\{row\.id\}@\$\{row\.release_date \?\? ''\}`\)\)/, 'movie candidate stream identity feeds ID + RELEASE_DATE for EVERY candidate (no sampling)');
+assert.doesNotMatch(upcomingSource, /sampleStreamIds/, 'the sampled-identity API is fully removed from the server module');
+assert.doesNotMatch(cursorSource, /sampleStreamIds|sampledIds|sampleCount/, 'no sampled-identity API survives in the cursor module');
+assert.match(cursorSource, /export function computeStreamId\(entries: string\[\]\): string/, 'computeStreamId digests the FULL ordered identity-entry list');
+assert.match(upcomingSource, /const offset = cursor\?\.snapshotOffset \?\? 0;\s*if \(cursor\) \{/, 'snapshot stream identity validates on EVERY continuation (no empty-stream validation skip)');
+ok('stream identity: full digest over ID+timestamp / ID+release_date — sampled identity fully removed');
 
 // Movie stream: bounded chunks + rewind continuation (no pending).
 assert.match(upcomingSource, /while \(scanIndex < candidates\.length && collected\.length < pageSize\)/, 'movie stream enriches in bounded chunks until the page is filled');
@@ -230,8 +279,18 @@ assert.match(pageSvelteSource, /let requestToken = 0;/, 'a request generation to
 assert.match(pageSvelteSource, /if \(loadingMore \|\| restarting \|\| filterPending\) return;/, 'concurrent page requests are impossible (loadingMore gate)');
 assert.match(pageSvelteSource, /if \(token !== requestToken\) return; \/\/ stale request/g, 'every await boundary re-checks the generation token (stale responses never mutate state)');
 assert.match(pageSvelteSource, /requestToken \+= 1;\s*loadingMore = false;\s*filterPending = false;/, 'filter/data changes invalidate in-flight pagination requests');
-assert.match(pageSvelteSource, /filterPending = true;\s*requestToken \+= 1;/, 'a filter change immediately invalidates the previous filter\u2019s in-flight requests');
+assert.match(pageSvelteSource, /filterPending = true;\s*filterNavError = null;\s*const token = \+\+requestToken;/, 'a filter change immediately invalidates the previous filter\u2019s in-flight requests');
 ok('request safety: generation token + concurrency gate + filter-change invalidation');
+
+// Filter navigation failures are NEVER silently swallowed: the rejected
+// goto() restores the previous selection and offers an explicit retry.
+assert.doesNotMatch(pageSvelteSource, /\.catch\(\(\) => \{\}\)/, 'the silent goto().catch(() => {}) swallow is REMOVED from the filter path');
+assert.match(pageSvelteSource, /let filterNavError = \$state<string \| null>\(null\);/, 'filter navigation failures surface as retryable state');
+assert.match(pageSvelteSource, /restoreFilterSelections\(\);/, 'a failed filter navigation restores the previous selection');
+assert.match(pageSvelteSource, /function retryFilterNav\(\)/, 'a failed filter navigation offers an explicit retry');
+assert.match(pageSvelteSource, /<button class="retry-btn retry-inline" type="button" onclick=\{retryFilterNav\}>Retry<\/button>/, 'the filter navigation retry is a real keyboard-accessible <button>');
+assert.match(pageSvelteSource, /filterNavError = null;\s*loadMoreError = null;\s*zeroProgressStreak = 0;/, 'a successful navigation clears the filter-nav error (data-sync)');
+ok('filter navigation failures: rollback + explicit retryable error — never silently swallowed');
 
 // Errors surface; retry is explicit and keyboard accessible.
 assert.match(pageSvelteSource, /let loadMoreError = \$state<string \| null>\(null\);/, 'pagination failures are surfaced as state (never silently swallowed)');

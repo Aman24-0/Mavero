@@ -15,10 +15,11 @@
 //   - fp  filter fingerprint (month/year/type/language/region +
 //         policy/query version constants). A cursor can never be
 //         reused for different filters.
-//   - sn  stream identity (content hash of the materialized result
-//         the position refers to). Detects re-materialized/changed
-//         upstream data so an offset can never slice a different
-//         stream silently.
+//   - sn  stream identity (a FULL deterministic digest of the
+//         pagination-relevant stream the position refers to — every
+//         event contributes its ID plus its timestamp/date, in stream
+//         order). Detects re-materialized/changed upstream data so an
+//         offset can never slice a different stream silently.
 //   - m   movie-mode position: number of candidates fully consumed
 //         from the deterministic chronological movie stream.
 //   - x   snapshot-mode position: number of items already returned
@@ -174,25 +175,27 @@ export function computeUpcomingFilterFingerprint(
 }
 
 /**
- * Stream identity: content hash of a materialized item stream (length +
- * stride-sampled event IDs + last ID). Two materializations of the SAME
- * upstream data hash identically (harmless), while any real content
- * change re-keys the stream so a stale offset can never slice silently
- * into a different result set.
+ * Stream identity: a FULL deterministic digest of the pagination-
+ * relevant stream. The caller feeds ONE compact identity entry per
+ * event, IN STREAM ORDER — for normalized Upcoming items `id@timestamp`
+ * (the event's chronological sort key), for movie candidates
+ * `movie-id@release_date` (the candidate's sort key). NOTHING is
+ * sampled: every event participates, so insertion, deletion,
+ * replacement, ID changes, timestamp/date changes, and reordering
+ * ANYWHERE in the stream (first, middle, or final entry) all change the
+ * digest and invalidate outstanding cursors. cyrb53 remains sufficient
+ * precisely because the COMPLETE identity is fed in — no cryptographic
+ * hash is needed for a cache-validation token, and the result stays one
+ * compact base-36 token regardless of stream size (a 10,000-event
+ * stream hashes to the same ~11-character token as a 3-event one).
+ *
+ * Determinism: pure string hashing with no randomness and no clock, so
+ * the same stream hashes identically across calls, restarts, and server
+ * instances, and the empty stream hashes to a stable constant (a clean
+ * end never falsely reports stale).
  */
-export function computeStreamId(length: number, sampledIds: string[]): string {
-  return toToken(cyrb53(`${length}|${sampledIds.join('|')}`));
-}
-
-/**
- * Sample event IDs from a stream for the identity hash: stride-sampled
- * entries plus the final entry — small, deterministic, and sensitive to
- * insertion/removal anywhere in the stream.
- */
-export function sampleStreamIds(ids: string[], sampleCount = 12): string[] {
-  const stride = Math.max(1, Math.floor(ids.length / Math.max(1, sampleCount)));
-  const sampled: string[] = [];
-  for (let i = 0; i < ids.length; i += stride) sampled.push(ids[i]);
-  if (ids.length > 0) sampled.push(ids[ids.length - 1]);
-  return sampled;
+export function computeStreamId(entries: string[]): string {
+  // The length prefix keeps even degenerate inputs (empty stream) keyed
+  // by size; entries are ordered, so ordering changes re-key the hash.
+  return toToken(cyrb53(`${entries.length}|${entries.join('|')}`));
 }
