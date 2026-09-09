@@ -81,17 +81,19 @@ assert.match(pageFnBody, /cursor: \{[\s\S]*?movie: nextMovieCursor[\s\S]*?series
 ok('UpcomingPageResult returns the cursor for the next request');
 
 // ============================================================
-// 5. Cursor-based batch loaders exist
+// 5. Cursor-based source loaders exist
 // ============================================================
-console.log('\n5. Cursor-based batch loaders');
+console.log('\n5. Cursor-based source loaders');
 
 assert.match(upcomingSource, /async function loadMovieBatch\([\s\S]*?cursor: SourceCursor/,
   'loadMovieBatch function exists with cursor parameter');
-assert.match(upcomingSource, /async function loadSeriesBatch\([\s\S]*?cursor: SourceCursor/,
-  'loadSeriesBatch function exists with cursor parameter');
+assert.match(upcomingSource, /async function loadSeriesOrAnimeFull\([\s\S]*?cursor: SourceCursor/,
+  'loadSeriesOrAnimeFull function exists with cursor parameter');
+assert.match(upcomingSource, /async function loadMovieFull\([\s\S]*?cursor: SourceCursor/,
+  'loadMovieFull function exists with cursor parameter');
 assert.match(upcomingSource, /SOURCE_CANDIDATE_BATCH = \d+/,
   'SOURCE_CANDIDATE_BATCH constant defined');
-ok('Cursor-based batch loaders (loadMovieBatch, loadSeriesBatch) exist');
+ok('Cursor-based source loaders (loadMovieBatch, loadMovieFull, loadSeriesOrAnimeFull) exist');
 
 // ============================================================
 // 6. Batch loaders process only SOURCE_CANDIDATE_BATCH per request
@@ -111,12 +113,10 @@ assert.match(upcomingSource, /const startIdx = Math\.min\(cursor\.candidateIndex
 assert.match(upcomingSource, /const batch = allCandidates\.slice\(startIdx, startIdx \+ SOURCE_CANDIDATE_BATCH\)/,
   'loadMovieBatch processes only SOURCE_CANDIDATE_BATCH candidates');
 
-// Series batch: same pattern
-assert.match(upcomingSource, /const startIdx = Math\.min\(cursor\.candidateIndex, filtered\.length\)/,
-  'loadSeriesBatch starts from cursor.candidateIndex');
-assert.match(upcomingSource, /const batch = filtered\.slice\(startIdx, startIdx \+ SOURCE_CANDIDATE_BATCH\)/,
-  'loadSeriesBatch processes only SOURCE_CANDIDATE_BATCH candidates');
-ok(`Batch size = ${batchVal} per source per request (bounded, not full month)`);
+// Series/anime use full enrichment (not batched) for chronological safety
+assert.match(upcomingSource, /async function loadSeriesOrAnimeFull/,
+  'loadSeriesOrAnimeFull exists (full enrichment for series/anime)');
+ok(`Batch size = ${batchVal} for movie batch (type=movie only); series/anime use full enrichment`);
 
 // ============================================================
 // 7. Batch loaders return nextCursor (advances the position)
@@ -127,8 +127,9 @@ assert.match(upcomingSource, /const nextIdx = startIdx \+ batch\.length/,
   'nextIdx = startIdx + batch.length (cursor advances by batch size)');
 assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates\.length, pending: \[\] \}/,
   'loadMovieBatch returns nextCursor with advanced candidateIndex + exhausted flag');
-assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= filtered\.length, pending: \[\] \}/,
-  'loadSeriesBatch returns nextCursor with advanced candidateIndex + exhausted flag');
+// loadSeriesOrAnimeFull returns exhausted=true (all candidates processed)
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: 0, exhausted: true, pending: \[\] \}/,
+  'loadSeriesOrAnimeFull returns exhausted cursor (full enrichment done)');
 ok('Batch loaders advance the cursor (candidateIndex += batch.length)');
 
 // ============================================================
@@ -145,12 +146,15 @@ assert.match(pageFnBody, /if \(wantSeries && \(!cursor\.series\.exhausted \|\| c
 assert.match(pageFnBody, /if \(wantAnime && \(!cursor\.anime\.exhausted \|\| cursor\.anime\.pending\.length > 0\)\)/,
   'loadUpcomingPage skips anime source when exhausted AND no pending');
 // The batch loaders receive the cursor from the incoming request.
-assert.match(pageFnBody, /loadMovieBatch\(.*cursor\.movie\)/,
-  'loadMovieBatch receives cursor.movie (continues from previous position)');
-assert.match(pageFnBody, /loadSeriesBatch\(.*cursor\.series, false\)/,
-  'loadSeriesBatch receives cursor.series');
-assert.match(pageFnBody, /loadSeriesBatch\(.*cursor\.anime, true\)/,
-  'loadSeriesBatch receives cursor.anime (isAnime=true)');
+// Movie loader depends on type: batched for type=movie, full for type=all
+assert.match(pageFnBody, /const movieLoader = isSingleType \? loadMovieBatch : loadMovieFull/,
+  'loadUpcomingPage uses loadMovieBatch for type=movie, loadMovieFull for type=all');
+assert.match(pageFnBody, /movieLoader\(.*cursor\.movie\)/,
+  'movieLoader receives cursor.movie');
+assert.match(pageFnBody, /loadSeriesOrAnimeFull\(.*cursor\.series, false\)/,
+  'loadSeriesOrAnimeFull receives cursor.series');
+assert.match(pageFnBody, /loadSeriesOrAnimeFull\(.*cursor\.anime, true\)/,
+  'loadSeriesOrAnimeFull receives cursor.anime (isAnime=true)');
 ok('Page 2+ passes the incoming cursor to batch loaders (continues, never restarts)');
 
 // ============================================================
@@ -356,8 +360,12 @@ assert.match(upcomingSource, /\[\.\.\.cursor\.pending, \.\.\.items\]/,
 // Batch loaders must clear pending in the returned cursor.
 assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= allCandidates\.length, pending: \[\] \}/,
   'loadMovieBatch returns cursor with empty pending (consumed)');
-assert.match(upcomingSource, /nextCursor: \{ candidateIndex: nextIdx, exhausted: nextIdx >= filtered\.length, pending: \[\] \}/,
-  'loadSeriesBatch returns cursor with empty pending (consumed)');
+// loadMovieFull also returns empty pending (consumed)
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: 0, exhausted: true, pending: \[\] \}/,
+  'loadMovieFull returns cursor with empty pending (consumed)');
+// loadSeriesOrAnimeFull also returns empty pending (consumed)
+assert.match(upcomingSource, /nextCursor: \{ candidateIndex: 0, exhausted: true, pending: \[\] \}/,
+  'loadSeriesOrAnimeFull returns cursor with empty pending (consumed)');
 // loadUpcomingPage must check pending before deciding to call batch loaders.
 assert.match(pageFnBody, /!cursor\.movie\.exhausted \|\| cursor\.movie\.pending\.length > 0/,
   'loadUpcomingPage calls movie batch when pending exists even if exhausted');
