@@ -178,12 +178,67 @@
     // restoration entirely, leaving the user at the top of an empty
     // listing.
     //
-    // The fallback (`goto('/discover', ...)`) is preserved for the
-    // direct-detail-page case (e.g. shared link, deep link from
-    // outside the app) where there is no valid internal `from` to
-    // go back to.
+    // CRITICAL RELIABILITY FIX (history.back() silent no-op):
+    //   `window.history.back()` is fire-and-forget: it returns void,
+    //   has no callback, and SILENTLY does nothing when there is no
+    //   previous history entry (history index 0). This happens when
+    //   the user deep-links / shares / refreshes the DetailPage URL —
+    //   the DetailPage becomes the first history entry, and back()
+    //   no-ops. BOTH the DetailPage Back button AND the Android/browser
+    //   hardware Back button fail simultaneously because they rely on
+    //   the same empty history stack.
+    //
+    //   The existing fallback (goto '/discover') only fires when `from`
+    //   is missing/invalid. When `from` IS present (shared link with a
+    //   from param), the old code called back() and returned — but
+    //   back() was a no-op, leaving the user stuck.
+    //
+    //   Fix: after calling back(), listen for popstate. If popstate
+    //   doesn't fire within one macrotask (setTimeout 0 — browsers
+    //   fire popstate as a macrotask, so if it hasn't fired by the
+    //   next macrotask it won't fire), fall back to goto(returnTo).
+    //   This preserves the snapshot-restore path for normal navigation
+    //   and only falls back when back() provably did nothing.
+    //
+    //   Fast path: if history.length === 1, there is provably no
+    //   previous entry — skip back() entirely and go straight to the
+    //   goto fallback (no timeout needed).
+    //
+    // The final fallback (`goto('/discover', ...)`) is preserved for
+    // the direct-detail-page case where there is no valid internal
+    // `from` to go back to.
     if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) {
       if (typeof window !== 'undefined' && typeof window.history.back === 'function') {
+        // Fast path: history.length === 1 means we're at the first entry
+        // — back() would no-op. Skip it and go straight to goto.
+        // replaceState: true replaces the deep-link DetailPage entry with
+        // the listing URL so the user can't go "back" to a page they
+        // never navigated to.
+        if (window.history.length <= 1) {
+          void goto(returnTo, { replaceState: true, keepFocus: true });
+          return;
+        }
+        // Normal path: call back() + detect whether popstate fires.
+        // If it doesn't (back() no-op due to history cursor at index 0
+        // despite length > 1 — rare but possible), fall back to goto.
+        let navigated = false;
+        const onPopState = () => { navigated = true; cleanup(); };
+        const timer = setTimeout(() => {
+          cleanup();
+          if (!navigated) {
+            // back() was a no-op — no previous history entry. Fall
+            // back to a fresh goto. replaceState: true replaces the
+            // DetailPage entry so the user can't go "back" to a page
+            // they never navigated to. This loses snapshot restore, but
+            // there's no snapshot to restore (deep-link case).
+            void goto(returnTo, { replaceState: true, keepFocus: true });
+          }
+        }, 0);
+        function cleanup() {
+          window.removeEventListener('popstate', onPopState);
+          clearTimeout(timer);
+        }
+        window.addEventListener('popstate', onPopState, { once: true });
         window.history.back();
         return;
       }
