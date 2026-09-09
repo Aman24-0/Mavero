@@ -6,10 +6,11 @@
 
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { X, Download, ExternalLink, ChevronDown, AlertTriangle, Loader2, CalendarClock } from 'lucide-svelte';
+  import { X, Download, ExternalLink, ChevronDown, AlertTriangle, Loader2, CalendarClock, Info, ArrowLeftRight } from 'lucide-svelte';
   import {
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
+    providerUsesExternalServers,
     type DownloadMediaType,
     type DownloadUrlCandidate,
     type PublicDownloadProvider,
@@ -55,6 +56,26 @@
   let alternateUrl: string | null = null;
   let useAlternate = false;
 
+  // External-sub-server navigation state.
+  //
+  // Some providers (currently Cineverse) show multiple sub-download
+  // servers inside their page (e.g. StreamHG, EarnVids, SeekStreaming).
+  // Clicking a sub-server button opens the sub-server page in a SEPARATE
+  // browsing context (new tab / Chrome Custom Tab / full-page navigation)
+  // that escapes the Mavero iframe. This is a cross-origin browser-security
+  // constraint — we cannot inspect or intercept the click inside the
+  // cross-origin iframe.
+  //
+  // Rather than pretending the sub-server page is embedded when it is not,
+  // we show a clear dismissible info banner for these providers. The
+  // banner explains the behavior and reminds the user they can return to
+  // this sheet to try another server. The sheet stays open.
+  //
+  // `externalBannerDismissed` resets whenever the active provider changes
+  // (so switching to Cineverse re-shows the banner even if the user
+  // previously dismissed it for a different Cineverse title).
+  let externalBannerDismissed = false;
+
   // Body scroll lock: restored on close. We snapshot the previous overflow
   // value rather than assuming 'auto' so we don't clobber a custom scroll
   // lock set by another component (none today, but defensive).
@@ -98,6 +119,9 @@
     // context changes — a fresh sheet open always starts with the primary
     // URL (deterministic, no surprises).
     useAlternate = false;
+    // Reset the external-server banner dismissal when the provider changes
+    // — the banner is provider-specific, so a new provider re-shows it.
+    externalBannerDismissed = false;
     iframeUrl = urlCandidates.length > 0 ? urlCandidates[0].url : null;
     iframeLoading = iframeUrl !== null;
     iframeError = false;
@@ -105,6 +129,7 @@
     urlCandidates = [];
     alternateUrl = null;
     useAlternate = false;
+    externalBannerDismissed = false;
     iframeUrl = null;
     iframeLoading = false;
   }
@@ -112,6 +137,10 @@
   // The currently-rendered iframe URL: primary by default, alternate when
   // the user has manually toggled to it.
   $: renderedIframeUrl = useAlternate && alternateUrl ? alternateUrl : iframeUrl;
+
+  // Whether the active provider is known to use external sub-server
+  // navigation (Cineverse today). Drives the info banner.
+  $: usesExternalServers = providerUsesExternalServers(activeProvider?.slug);
 
   // ----- Body scroll lock + focus management -----
   function lockBodyScroll() {
@@ -213,6 +242,13 @@
     useAlternate = !useAlternate;
     iframeLoading = true;
     iframeError = false;
+  }
+
+  // Dismiss the external-sub-server info banner. The banner re-appears
+  // when the provider changes (see the reactive block above) — this
+  // dismissal only hides it for the current provider session.
+  function dismissExternalBanner() {
+    externalBannerDismissed = true;
   }
 
   function handleBackdropClick() {
@@ -350,6 +386,34 @@
               ></iframe>
             {/if}
           </div>
+          <!-- External-sub-server info banner (Cineverse + any provider in
+               PROVIDERS_WITH_EXTERNAL_SERVERS). This is the UX fallback
+               required by the spec: we cannot keep the provider's
+               sub-server click inside the iframe (cross-origin browser
+               security forbids inspecting or intercepting the click), so
+               we honestly explain what will happen and keep the sheet open.
+
+               The banner is dismissible — the user can hide it after
+               reading. It re-appears when the provider changes. It does
+               NOT change the iframe's behavior (no sandbox, no
+               interception, no fake overlay). -->
+          {#if usesExternalServers && !externalBannerDismissed && !iframeError}
+            <div class="dl-server-banner" role="status" aria-live="polite">
+              <span class="dl-server-banner-icon"><Info size={14} /></span>
+              <div class="dl-server-banner-copy">
+                <strong>{activeProvider?.name} opens download servers in a separate tab.</strong>
+                <span>Click a server inside the page above. If a new tab opens, that's normal — switch to it to continue your download. Return here to try another server or close this sheet.</span>
+              </div>
+              <button
+                type="button"
+                class="dl-server-banner-close"
+                onclick={dismissExternalBanner}
+                aria-label="Dismiss this notice"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          {/if}
           <!-- Always-available fallback bar. Uses the SAME resolved URL
                that the iframe src uses (primary or alternate) — never a raw
                template. Cross-origin iframe load errors cannot always be
@@ -624,6 +688,59 @@
   }
   .dl-open-external:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(255, 255, 255, 0.18); }
 
+  /* External-sub-server info banner. Shown for providers that open
+     download servers in a separate browsing context (Cineverse today).
+     This is an honest UX explanation — NOT a fake overlay. The banner
+     sits between the iframe and the fallback bar, is dismissible, and
+     does not change the iframe's behavior. */
+  .dl-server-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 10px 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 176, 32, 0.06);
+    color: #b7b7bd;
+    font-size: 0.64rem;
+    line-height: 1.45;
+    flex: 0 0 auto;
+  }
+  .dl-server-banner-icon {
+    flex: 0 0 auto;
+    color: #ffb020;
+    margin-top: 1px;
+  }
+  .dl-server-banner-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .dl-server-banner-copy strong {
+    color: #f5f5f5;
+    font-weight: 700;
+    font-size: 0.66rem;
+  }
+  .dl-server-banner-copy span {
+    color: #969696;
+    font-size: 0.6rem;
+  }
+  .dl-server-banner-close {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 50%;
+    color: #969696;
+    background: transparent;
+    cursor: pointer;
+    transition: color 180ms ease, border-color 180ms ease;
+  }
+  .dl-server-banner-close:hover { color: #f5f5f5; border-color: rgba(255, 255, 255, 0.28); }
+
   /* Fallback bar — always visible when an iframe is rendered. */
   .dl-fallback-bar {
     display: flex;
@@ -699,6 +816,9 @@
     .dl-header h2 { font-size: 0.92rem; }
     .dl-dropdown-trigger { padding: 7px 10px; font-size: 0.68rem; max-width: 150px; }
     .dl-fallback-bar { padding: 8px 14px; font-size: 0.62rem; flex-wrap: wrap; }
+    .dl-server-banner { padding: 8px 12px; gap: 7px; }
+    .dl-server-banner-copy strong { font-size: 0.62rem; }
+    .dl-server-banner-copy span { font-size: 0.56rem; }
   }
   @media (prefers-reduced-motion: reduce) {
     .dl-sheet, .dl-backdrop, .dl-dropdown-menu { animation: none; transition: none; }

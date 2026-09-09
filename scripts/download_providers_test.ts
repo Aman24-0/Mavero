@@ -948,4 +948,188 @@ assert.match(seasonEpisodesSrc, /\.ep-actions \{ display: inline-flex[\s\S]*gap:
 assert.match(seasonEpisodesSrc, /\.ep-download \{[\s\S]*width: 30px; height: 30px; border-radius: 50%/, 'ep-download matches Play button footprint (30px circle)');
 ok('episode Download button: circular, aria-labelled, side-by-side with Play (no height increase)');
 
+// ============================================================
+// Phase 2 UX fix: Cineverse sub-server navigation UX fallback
+// ============================================================
+//
+// Root cause (confirmed via screenshot analysis):
+//   Cineverse's download page (loaded inside the Mavero iframe) shows
+//   multiple sub-download server buttons (StreamHG, EarnVids,
+//   SeekStreaming, etc.). Clicking a sub-server button opens the
+//   sub-server page (e.g. hanerix.com for StreamHG) in a SEPARATE
+//   browsing context — a new tab, Chrome Custom Tab, or full-page
+//   navigation that escapes the Mavero iframe.
+//
+//   This happens because Cineverse's sub-server links use
+//   target="_blank" / target="_top" / window.open(). Since the iframe
+//   is cross-origin, Mavero CANNOT inspect or intercept the click.
+//   Browser security forbids cross-origin DOM access.
+//
+// Solution:
+//   Per the spec's "IMPORTANT UX FALLBACK" section, we add a clear,
+//   dismissible info banner inside DownloadSheet that:
+//     - explains the provider opens download servers separately
+//     - keeps the Mavero sheet open (so the user can return)
+//     - does NOT pretend the sub-server page is embedded
+//     - does NOT add a sandbox (which would break the click silently)
+//     - does NOT create a server-side proxy
+//     - does NOT attempt cross-origin DOM manipulation
+//
+//   The banner is driven by a provider-level behavioral flag
+//   (PROVIDERS_WITH_EXTERNAL_SERVERS) keyed by the provider's slug.
+//   Currently only 'cineverse' is in the set.
+console.log('\nPhase 2 UX fix: Cineverse sub-server navigation fallback');
+
+// Re-read the sheet source (it was read earlier but may have changed
+// since the last read in this test file).
+const sheetSrcFinal = readFileSync(new URL('../src/lib/components/DownloadSheet.svelte', import.meta.url), 'utf8');
+const downloaderSrcFinal = readFileSync(new URL('../src/lib/shared/downloader.ts', import.meta.url), 'utf8');
+
+// Import the new helpers.
+const { providerUsesExternalServers, PROVIDERS_WITH_EXTERNAL_SERVERS } = await import('../src/lib/shared/downloader.ts');
+
+// === Test: PROVIDERS_WITH_EXTERNAL_SERVERS contains Cineverse ===
+assert.ok(PROVIDERS_WITH_EXTERNAL_SERVERS instanceof Set, 'PROVIDERS_WITH_EXTERNAL_SERVERS is a Set');
+assert.ok(PROVIDERS_WITH_EXTERNAL_SERVERS.has('cineverse'), 'Cineverse is in the external-servers set');
+assert.equal(PROVIDERS_WITH_EXTERNAL_SERVERS.size, 1, 'only Cineverse is in the set (no other providers affected)');
+ok('PROVIDERS_WITH_EXTERNAL_SERVERS = { "cineverse" } (only Cineverse flagged)');
+
+// === Test: providerUsesExternalServers helper ===
+assert.equal(providerUsesExternalServers('cineverse'), true, 'cineverse → true');
+assert.equal(providerUsesExternalServers('02movie'), false, '02movie → false');
+assert.equal(providerUsesExternalServers('vidvault'), false, 'vidvault → false');
+assert.equal(providerUsesExternalServers('nxsha'), false, 'nxsha → false');
+assert.equal(providerUsesExternalServers('nhd'), false, 'nhd → false');
+assert.equal(providerUsesExternalServers(null), false, 'null → false');
+assert.equal(providerUsesExternalServers(undefined), false, 'undefined → false');
+assert.equal(providerUsesExternalServers(''), false, 'empty string → false');
+assert.equal(providerUsesExternalServers('unknown-provider'), false, 'unknown provider → false');
+ok('providerUsesExternalServers: only cineverse returns true; all others false');
+
+// === Test: DownloadSheet imports + uses the helper ===
+assert.match(sheetSrcFinal, /import \{[\s\S]*providerUsesExternalServers[\s\S]*\} from '\$lib\/shared\/downloader'/, 'DownloadSheet imports providerUsesExternalServers');
+assert.match(sheetSrcFinal, /\$: usesExternalServers = providerUsesExternalServers\(activeProvider\?\.slug\)/, 'DownloadSheet computes usesExternalServers from active provider slug');
+ok('DownloadSheet imports + computes usesExternalServers');
+
+// === Test: the info banner is rendered for external-server providers ===
+assert.match(sheetSrcFinal, /\{#if usesExternalServers && !externalBannerDismissed && !iframeError\}/, 'banner shown when usesExternalServers && not dismissed && not iframeError');
+assert.match(sheetSrcFinal, /class="dl-server-banner"/, 'banner has class dl-server-banner');
+assert.match(sheetSrcFinal, /role="status" aria-live="polite"/, 'banner has role=status + aria-live=polite (accessible)');
+assert.match(sheetSrcFinal, /opens download servers in a separate tab/, 'banner text explains the behavior');
+assert.match(sheetSrcFinal, /switch to it to continue your download/, 'banner tells user to switch to the new tab');
+assert.match(sheetSrcFinal, /Return here to try another server/, 'banner tells user to return to the sheet');
+ok('info banner rendered with correct explanatory text');
+
+// === Test: the banner is dismissible ===
+assert.match(sheetSrcFinal, /function dismissExternalBanner\(\)/, 'dismissExternalBanner handler exists');
+assert.match(sheetSrcFinal, /externalBannerDismissed = true/, 'dismissExternalBanner sets externalBannerDismissed = true');
+assert.match(sheetSrcFinal, /onclick=\{dismissExternalBanner\}/, 'banner close button calls dismissExternalBanner');
+assert.match(sheetSrcFinal, /aria-label="Dismiss this notice"/, 'banner close button has aria-label');
+ok('info banner is dismissible (with accessible close button)');
+
+// === Test: banner dismissal resets when provider changes ===
+// The reactive block must reset externalBannerDismissed = false when
+// the active provider changes. This ensures switching to Cineverse
+// re-shows the banner even if the user previously dismissed it.
+assert.match(sheetSrcFinal, /externalBannerDismissed = false;/, 'externalBannerDismissed is reset to false in the reactive block');
+ok('banner dismissal resets when provider changes (re-shows for new provider)');
+
+// === Test: the banner does NOT change iframe behavior ===
+// No sandbox attribute added (sandbox would break sub-server clicks
+// silently — worse UX than the current behavior).
+assert.doesNotMatch(sheetSrcFinal, /sandbox=/, 'no sandbox attribute on the iframe (would break sub-server clicks)');
+// No server-side proxy URL.
+assert.doesNotMatch(sheetSrcFinal, /\/api\/proxy\//, 'no server-side proxy endpoint');
+// No cross-origin postMessage.
+assert.doesNotMatch(sheetSrcFinal, /postMessage/, 'no postMessage cross-origin communication');
+ok('banner does NOT change iframe behavior (no sandbox, no proxy, no postMessage)');
+
+// === Test: the sheet stays open when a sub-server opens ===
+// The sheet's open/close is driven by the `open` prop + onClose
+// callback. The banner does NOT call onClose. The iframe's onload/
+// onerror handlers don't close the sheet either.
+assert.doesNotMatch(sheetSrcFinal, /dismissExternalBanner[\s\S]{0,50}onClose/, 'dismissExternalBanner does not call onClose');
+ok('sheet stays open when banner is shown/dismissed (no automatic close)');
+
+// === Test: the "Open in new tab" fallback link still uses the resolved URL ===
+// The existing fallback bar must still use renderedIframeUrl (primary or
+// alternate) — the banner doesn't change this.
+assert.match(sheetSrcFinal, /<a href=\{renderedIframeUrl\}[^>]*>[\s\S]*?Open in new tab/, 'fallback bar still uses renderedIframeUrl');
+ok('"Open in new tab" still uses the current resolved URL (unchanged)');
+
+// === Test: Cineverse year fallback still works ===
+// The "Try with year" toggle must still be present + functional.
+assert.match(sheetSrcFinal, /Try with year/, '"Try with year" toggle still present');
+assert.match(sheetSrcFinal, /function toggleAlternate\(\)/, 'toggleAlternate handler still exists');
+ok('Cineverse year fallback still works (unchanged)');
+
+// === Test: provider dropdown still works ===
+assert.match(sheetSrcFinal, /class="dl-dropdown-trigger"/, 'provider dropdown trigger still present');
+assert.match(sheetSrcFinal, /function chooseProvider/, 'chooseProvider handler still exists');
+ok('provider dropdown still works (unchanged)');
+
+// === Test: close button + escape still work ===
+assert.match(sheetSrcFinal, /class="dl-close"/, 'close button still present');
+assert.match(sheetSrcFinal, /function handleKeydown/, 'escape key handler still exists');
+ok('close button + escape still work (unchanged)');
+
+// === Test: mobile bottom-sheet layout unchanged ===
+assert.match(sheetSrcFinal, /height: min\(70dvh, 720px\)/, 'sheet height still ~70vh');
+assert.match(sheetSrcFinal, /@media \(max-width: 640px\)/, 'mobile responsive media query still present');
+assert.match(sheetSrcFinal, /\.dl-server-banner \{ padding: 8px 12px; gap: 7px; \}/, 'banner has mobile-specific styling');
+ok('mobile bottom-sheet layout unchanged (banner has mobile styling)');
+
+// === Test: no raw unresolved template reaches the iframe ===
+// (Regression: the iframe src must always be the resolved
+// renderedIframeUrl, never a raw template with {placeholder} tokens.)
+assert.match(sheetSrcFinal, /src=\{renderedIframeUrl\}/, 'iframe src uses renderedIframeUrl (resolved)');
+assert.doesNotMatch(sheetSrcFinal, /src=\{.*UrlTemplate\}/, 'iframe src never uses a raw template variable');
+assert.doesNotMatch(sheetSrcFinal, /src=".*\{.*\}"/, 'iframe src never contains a literal {placeholder}');
+ok('no raw unresolved template reaches the iframe (src is always resolved)');
+
+// === Test: existing providers remain unchanged ===
+// The 02movie, vidvault, nxsha, nhd providers must NOT be in the
+// PROVIDERS_WITH_EXTERNAL_SERVERS set — they don't show sub-server
+// buttons, so the banner should not appear for them.
+assert.equal(providerUsesExternalServers('02movie'), false, '02movie not flagged');
+assert.equal(providerUsesExternalServers('vidvault'), false, 'vidvault not flagged');
+assert.equal(providerUsesExternalServers('nxsha'), false, 'nxsha not flagged');
+assert.equal(providerUsesExternalServers('nhd'), false, 'nhd not flagged');
+ok('existing non-Cineverse providers remain unchanged (no banner)');
+
+// === Test: Cineverse URL generation still correct ===
+// (Regression: the Cineverse URL generation must not have changed.)
+const uxMovieUrl = buildDownloadUrl(fixtures[4], {
+  mediaType: 'movie',
+  tmdbId: '1234567',
+  title: 'Dhurandhar: The Revenge',
+});
+assert.equal(uxMovieUrl, 'https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge', 'Cineverse movie URL (year-less primary)');
+const uxTvUrl = buildDownloadUrl(fixtures[4], {
+  mediaType: 'tv',
+  tmdbId: '6263850',
+  title: 'Breaking Bad',
+  season: 2,
+  episode: 5,
+});
+assert.equal(uxTvUrl, 'https://cineverse.modiplay.xyz/download/breaking-bad-s02e05', 'Cineverse TV URL (year-less primary + s02e05)');
+ok('Cineverse URL generation unchanged (movie + TV)');
+
+// === Test: Cineverse year fallback still produces the alternate URL ===
+const uxCandidates = getDownloadUrlCandidates(fixtures[4], {
+  mediaType: 'movie',
+  tmdbId: '1234567',
+  title: 'Dhurandhar: The Revenge',
+  releaseYear: 2026,
+});
+assert.equal(uxCandidates.length, 2, 'Cineverse with year: 2 candidates');
+assert.equal(uxCandidates[0].url, 'https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge', 'primary candidate (year-less)');
+assert.equal(uxCandidates[1].url, 'https://cineverse.modiplay.xyz/download/dhurandhar-the-revenge-2026', 'alternate candidate (year-suffixed)');
+ok('Cineverse year fallback still produces the alternate URL');
+
+// === Test: shared downloader module exports the new helpers ===
+assert.match(downloaderSrcFinal, /export const PROVIDERS_WITH_EXTERNAL_SERVERS/, 'PROVIDERS_WITH_EXTERNAL_SERVERS exported');
+assert.match(downloaderSrcFinal, /export function providerUsesExternalServers/, 'providerUsesExternalServers exported');
+ok('shared downloader module exports PROVIDERS_WITH_EXTERNAL_SERVERS + providerUsesExternalServers');
+
 console.log(`\nDownload provider tests passed (${passed} check groups).`);

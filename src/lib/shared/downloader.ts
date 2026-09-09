@@ -313,6 +313,53 @@ export function sortPublicDownloadProviders(providers: PublicDownloadProvider[])
 export const CINEVERSE_PROVIDER_SLUG = 'cineverse';
 
 /**
+ * Provider slugs known to use EXTERNAL sub-server navigation inside their
+ * download page — i.e. the provider's page loads fine inside the Mavero
+ * iframe, but clicking a sub-server button (e.g. "StreamHG", "EarnVids",
+ * "SeekStreaming" on Cineverse) opens the sub-server page in a SEPARATE
+ * browsing context (new tab / Chrome Custom Tab / full-page navigation)
+ * that escapes the iframe.
+ *
+ * This is a cross-origin browser-security constraint: the parent page
+ * (Mavero) cannot inspect or intercept clicks inside a cross-origin iframe.
+ * The sub-server links use target="_blank" / target="_top" / window.open(),
+ * and the browser opens them in a new browsing context. We CANNOT redirect
+ * that navigation back into the iframe without:
+ *   - a server-side proxy (forbidden by spec)
+ *   - cross-origin DOM manipulation (forbidden by browser security)
+ *   - a sandbox that blocks popups (breaks the sub-server click entirely —
+ *     the user clicks and nothing happens, which is worse)
+ *
+ * The DownloadSheet uses this set to show a clear UX fallback info banner
+ * for these providers: the banner explains that clicking a download server
+ * opens it in a separate browser tab, and provides an "Open in new tab"
+ * action so the user can manually reach the current page. The sheet stays
+ * open so the user can return to it after checking the sub-server tab.
+ *
+ * This is NOT a hardcoded title mapping — it's a provider-level behavioral
+ * flag keyed by the provider's slug (the same slug used everywhere else).
+ * Adding a provider to this set is a one-line change; the DownloadSheet
+ * picks it up automatically.
+ */
+export const PROVIDERS_WITH_EXTERNAL_SERVERS: ReadonlySet<string> = new Set([
+  CINEVERSE_PROVIDER_SLUG,
+]);
+
+/**
+ * Check whether a provider slug is known to use external sub-server
+ * navigation (the provider's download page shows multiple sub-server
+ * buttons, and clicking one opens the sub-server in a separate browsing
+ * context that escapes the iframe).
+ *
+ * Used by the DownloadSheet to decide whether to show the "this provider
+ * opens servers separately" info banner.
+ */
+export function providerUsesExternalServers(slug: string | null | undefined): boolean {
+  if (!slug) return false;
+  return PROVIDERS_WITH_EXTERNAL_SERVERS.has(slug);
+}
+
+/**
  * Compute the Cineverse alternate slug: the deterministic title slug with
  * the release year appended.
  *
