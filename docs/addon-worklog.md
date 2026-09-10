@@ -360,3 +360,265 @@ commands used, as in Phase 1)
 **Phase 2 complete. Stremio stream resolution and native playback are NOT implemented yet.**
 
 ---
+## Phase 3 — Stremio HTTP stream resolver (DONE)
+
+**Commit:** `feat: add stremio http stream resolver`
+**Date:** 2026-09-10
+**Status:** Complete. Stream RESOLUTION only. Native playback, player integration, source UI, and the MAVERO Player are NOT implemented.
+
+### Pre-Phase-3 corrective fix (explicit stream capability)
+
+Phase 2 normalized a manifest with an OMITTED `resources` field to the raw
+protocol default `['catalog', 'meta', 'stream']`, and
+`supportsStreamResource()` checks `resources.includes('stream')` — so such a
+manifest WAS reported as stream-capable, contradicting the "supportsStream
+only from a declared stream resource" policy. Fixed with the smallest
+possible change in `manifest-normalize.ts`:
+
+- `STREMIO_PROTOCOL_DEFAULT_RESOURCES` → **`MAVERO_DEFAULT_RESOURCES =
+  ['catalog', 'meta']`** (deliberate, documented deviation from the raw
+  Stremio protocol): a missing `resources` field never implies stream
+  support, so Mavero never calls `/stream/{type}/{id}.json` on an addon
+  that did not explicitly advertise it.
+- `supportsStreamResource()` keeps its exact logic — with the corrected
+  default its "explicit declaration only" contract is now actually true.
+- Regression checks added to `scripts/stremio_addons_phase2_test.ts`
+  (191 → 202 checks): omitted resources normalize without `'stream'`,
+  capability view + persisted capability are explicit-only, explicit
+  declarations (string and object form) still work.
+- Additive (Phase 3 consumer): `persistableCapabilities` now also stores the
+  stream resource's own `streamTypes` / `streamIdPrefixes` in the
+  whitelisted capabilities JSONB, so the resolver can apply the stream
+  resource's NARROWER declarations from persisted metadata without
+  re-fetching manifests (the Phase 2 whitelist test was extended
+  accordingly).
+
+### What was built
+
+A server-only stream resolver alongside the Phase 2 manifest service in
+`src/lib/server/streaming/stremio/`:
+
+1. **`stream-errors.ts`** — `StreamServiceError` with a closed code union
+   (`INVALID_REQUEST`, `INVALID_URL`, `BLOCKED_URL`, `TIMEOUT`, `NETWORK`,
+   `HTTP_ERROR`, `TOO_LARGE`, `INVALID_JSON`, `INVALID_RESPONSE`,
+   `UNEXPECTED`), mirroring the Phase 2 error convention. These are
+   per-addon, in-memory diagnostics only — never persisted, never exposed
+   to end users (spec §24/§26).
+
+2. **`stream-ids.ts`** — eligibility + video ID construction (pure):
+   - **EXPLICIT stream capability gate** (the pre-fix policy): an addon
+     participates only when the Phase 2 sync recorded
+     `capabilities.supportsStream === true`. Missing capability data fails
+     closed.
+   - **Video ID per addon semantics (spec §1–§5):** declared `idProperty`
+     wins (`imdb_id` → the Mavero IMDb id `tt1234567`; `tmdb_id` →
+     `tmdb:{id}`, the documented Stremio TMDB convention); otherwise the
+     property is inferred from idPrefixes (`tt…` → imdb, `tmdb…` → tmdb);
+     neither declared → the protocol default `imdb_id` (Stremio's canonical
+     ID namespace). Any other idProperty (`mal_id`, `anilist_id`, `slug`,
+     `custom`, …) → the addon is SKIPPED — Mavero does not invent ID
+     formats it cannot construct from its identifier system, and no network
+     request is made just to discover an ID is invalid.
+   - **Series IDs:** `:{season}:{episode}` appended
+     (`tt1234567:2:13`); season/episode must be positive integers.
+   - **ID allowlist:** constructed IDs must match `^[A-Za-z0-9][A-Za-z0-9._:-]*$`
+     (≤200 chars) before ever touching a URL — colons are legal path
+     characters and are preserved exactly as the protocol expects (no
+     `encodeURIComponent` mangling); traversal/whitespace/arbitrary strings
+     never become path segments.
+   - **idPrefixes filtering (spec §3):** stream-scoped prefixes (from the
+     capabilities JSONB) take precedence over manifest-level
+     `id_prefixes`; a non-empty list must match the CONSTRUCTED id
+     (`startsWith`); an empty list adds no invented restriction.
+   - **Endpoint construction:** `/stream/{type}/{videoID}.json` resolved
+     against the admin-configured manifest URL directory; keyed manifests
+     keep their query string. Invalid manifest URLs yield a typed skip
+     (`invalid-endpoint`).
+
+3. **`stream-fetch.ts`** — secure server-side stream endpoint fetcher
+   (spec §9), same security conventions as the Phase 2 manifest fetcher:
+   every request AND every redirect hop re-runs the full Phase 2 SSRF guard
+   (`assertSafeManifestUrl` + `assertSafeManifestDestination` — the Mavero
+   server is the one connecting, so manifest-grade protection applies to
+   addon endpoints), `redirect: 'manual'` with max 3 hops,
+   `STREAM_REQUEST_TIMEOUT_MS = 10_000` overall deadline per request, an
+   aggregate-budget abort signal, `STREAM_MAX_BYTES = 512 KiB` enforced via
+   Content-Length AND while streaming the body (in-flight abort on
+   overflow), non-JSON content types rejected, `JSON.parse` only. NOT a
+   generic proxy: the fetcher only ever calls an addon's own endpoint.
+
+4. **`stream-normalize.ts`** — untrusted stream response classification:
+   - Response must be `{ streams: [...] }`; missing/non-array `streams` →
+     INVALID response (typed addon failure); empty array → valid, zero
+     sources. Entries bounded (200) and individually classified — malformed
+     siblings never reject valid entries.
+   - **HTTP/HLS only (spec §11):** only the entry's direct `url` field can
+     become a source; http/https schemes only (which also kills `magnet:`,
+     `javascript:`, `data:`, `blob:`, `file:`, `chrome-extension:`, …),
+     credentials rejected, `.torrent` paths and torrent/debrid-ish
+     hostname/path tokens rejected.
+   - **Torrent/P2P (spec §15):** entries carrying `infoHash`/`infohash`/
+     `info_hash`/`magnetUri`/`magnet`/`btih`/`sources`/`peers` fields are
+     rejected outright — torrent metadata is never transformed into a URL,
+     even when a direct URL is also present (conservative; documented).
+     Descriptive text mentioning torrents never rejects a valid HTTP
+     stream.
+   - **externalUrl (spec §14):** rejected/skipped — "open elsewhere" links
+     are never playable media for Mavero.
+   - **Proxy headers (spec §16):** streams requiring custom request headers
+     (`behaviorHints.proxyHeaders`) are EXCLUDED from the playable list
+     (HTML5 playback cannot attach arbitrary headers; Mavero builds no
+     proxy). The required header NAMES (never values) are preserved as
+     in-memory diagnostics.
+   - **Protocol/transport (spec §13/§17):** reuses the existing
+     `protocolForUrl` (`.m3u8` → `hls`, `.mpd` → `dash`, `.mp4/.m4v/.webm/
+     .mov` → `mp4`, otherwise honestly `unknown`); the URL is preserved
+     verbatim (never rewritten http→https) and the transport
+     (`http`/`https`) is recorded for later mixed-content handling.
+   - **Quality (spec §20):** conservative extraction from filename → title
+     → name against a known height set (2160/1440/1080/720/576/540/480/360/
+     240/144 + `4K`/`UHD` → 2160); unknown → label `Auto`; bitrate only
+     when the addon states it (never derived); `behaviorHints.videoSize`
+     preserved as raw metadata.
+
+5. **`stream-resolver.ts`** — orchestration (spec §6–§8, §22–§27):
+   - Loads ENABLED addons with usable status (`active`/`experimental` —
+     `enabled=true` is the admin opt-in and `experimental` is the Phase 1
+     default; `disabled`/`maintenance`/`unavailable` never resolve),
+     ordered `ordering ASC, name ASC`, limit 50.
+   - **Bounded parallel resolution:** `STREAM_RESOLUTION_CONCURRENCY = 4`
+     worker pool (never one-after-another, never unbounded).
+   - **Timeouts:** 10s per addon request + `STREAM_RESOLUTION_TIMEOUT_MS =
+     15_000` aggregate budget — one slow addon never stalls the resolution.
+   - **Failure isolation:** every addon outcome is captured
+     (allSettled-style); timeout/HTTP-500/invalid-JSON/malformed-shape
+     become typed per-addon diagnostics; the resolver NEVER throws because
+     an individual addon failed. Zero playable sources → an EMPTY result,
+     not an error. Only the addon DB query itself (infrastructure) throws.
+   - **Deduplication (spec §22):** canonical playable-URL identity
+     (scheme + lowercased host + default-port-stripped authority + path +
+     query), first-wins in deterministic order; different URLs are never
+     merged by title/quality.
+   - **Deterministic ordering (spec §23):** sorted AFTER all resolution —
+     addon `ordering` → addon name → original stream index → quality
+     height; completion speed can never reorder results.
+   - **No health mutation (spec §26):** per-stream/per-addon failures are
+     ephemeral in-memory diagnostics; manifest health (Phase 2) is a
+     different concept and is untouched.
+   - **No caching (spec §27):** stream URLs expire — every resolution is
+     fresh; no stream cache exists.
+   - Every normalized source retains full addon identity (addon id/slug/
+     name/ordering, original stream index, name/title, videoId,
+     idProperty, protocol, transport, quality, bingeGroup/filename/
+     videoSize) for the future source/quality UX (spec §19).
+
+6. **`stream-player-source.ts`** — pure `PlayerSource` adapter (spec §18):
+   `type: 'direct'`, the existing shared model (no second representation);
+   `providerId` = the real `streaming_addons` row id (no fake uuids);
+   `sourceId` = deterministic synthetic key `stremio:{slug}:{index}` (addons
+   have no `streaming_sources` row; the player treats sourceId as an opaque
+   selection key); `metadata.protocol` + transport note; `headers` NEVER
+   populated (header-dependent streams are excluded upstream). Nothing
+   wires this into the player yet.
+
+### Integration decision (spec §29–§30)
+
+The Stremio resolver ships as a STANDALONE service plus the pure adapter.
+The existing `/api/playback/resolve` endpoint, `resolveSource`,
+`fallback`, `ranking`, and every provider adapter are UNTOUCHED — a test
+pins that the route does not import the Stremio resolver and that the
+existing template/embed/direct flows resolve exactly as before. Stremio
+resolution is an additional branch, never mandatory; wiring it into the
+player path belongs to a later phase.
+
+### Files changed
+
+- `src/lib/server/streaming/stremio/stream-errors.ts` (new)
+- `src/lib/server/streaming/stremio/stream-ids.ts` (new)
+- `src/lib/server/streaming/stremio/stream-fetch.ts` (new)
+- `src/lib/server/streaming/stremio/stream-normalize.ts` (new)
+- `src/lib/server/streaming/stremio/stream-resolver.ts` (new)
+- `src/lib/server/streaming/stremio/stream-player-source.ts` (new)
+- `src/lib/server/streaming/stremio/manifest-normalize.ts` (pre-Phase-3
+  explicit-stream fix + additive capability keys)
+- `scripts/stremio_addons_phase2_test.ts` (191 → 202 checks)
+- `scripts/stremio_addons_phase3_test.ts` (new, 158 checks)
+- `package.json` (test chain: + `stremio_addons_phase3_test.ts`)
+- `docs/addon-worklog.md` (this section)
+
+No migration was needed: the resolver reads existing Phase 1 columns plus
+the Phase 2 capabilities JSONB.
+
+### Test coverage (158 checks, all with injected fetch/DNS — zero live network)
+
+Spec groups: A movie IMDb id; B series id (`:1:1`); C season/episode >1;
+D idProperty (declared `tmdb_id`, unsupported `mal_id` skipped without a
+request, protocol-default fallback, prefix inference); E idPrefixes
+matching + stream-scoped narrowing; F incompatible prefixes skipped with
+typed reason (no request); G unsupported media type skipped + anime→series
+mapping pinned; H disabled/maintenance/unavailable addons excluded while
+experimental participates; I addons without EXPLICIT stream capability
+fail closed (incl. empty capabilities); J valid response fully normalized;
+K multiple streams; L multiple addons; M bounded parallel execution
+(controlled promise gates — exactly 4 in flight, slot hand-off, never 5);
+N timeout isolation; O HTTP 500 isolation; P invalid JSON; Q malformed
+entries classified, top-level array invalid; R missing `streams` array
+invalid; S empty array valid (zero sources, no error); T HTTP accepted +
+never rewritten; U HTTPS transport recorded; V `.m3u8` → hls; W `.mp4` →
+mp4 / extension-less → unknown; X magnet rejected; Y infoHash rejected
+(incl. hybrid url+infohash); Z torrent/debrid URLs + legacy fields
+rejected, descriptive text tolerated; AA externalUrl rejected; AB
+javascript/data/blob/file/chrome-extension rejected; AC credential URLs
+rejected; AD proxy-header streams excluded (names kept, values never); AE
+duplicate URL dedupe (host-case/default-port) without over-merging; AF
+deterministic ordering with a slow addon; AG quality extraction (title/
+filename/4K/Auto/bitrate never fabricated); AH raw language metadata
+preserved into PlayerSource; AI addon failure never fails the resolution;
+AJ all-fail → empty result (no throw); AK full addon identity retained;
+AL 512 KiB default cap enforced while streaming; AM 10s/15s constants
+pinned + prompt timeout; AN colon-preserving path construction, keyed
+query preservation, traversal/whitespace/over-long id rejection; AO
+existing provider behavior unchanged (direct https-only, embed allowlist,
+parseResolverRequest, template end-to-end, resolve route has no Stremio
+import). Security section: media URLs are NEVER fetched server-side (only
+the addon endpoint is), loopback stream endpoints blocked by the SSRF
+guard before connecting, raw addon response shape never leaks into the
+result. Adapter section: PlayerSource mapping contract.
+
+### Commands / results (pnpm unavailable in this environment; repo-equivalent
+commands used, as in Phases 1–2)
+
+- `./node_modules/.bin/tsx --tsconfig ./jsconfig.json scripts/stremio_addons_phase1_test.ts` → **111 checks pass**
+- `./node_modules/.bin/tsx --tsconfig ./jsconfig.json scripts/stremio_addons_phase2_test.ts` → **202 checks pass**
+- `./node_modules/.bin/tsx --tsconfig ./jsconfig.json scripts/stremio_addons_phase3_test.ts` → **158 checks pass**
+- Full test chain (80 scripts from `package.json`, run via tsx directly) → **80/80 pass**
+- `./node_modules/.bin/svelte-check --threshold warning` → **0 errors / 41 warnings** (baseline unchanged)
+- `./node_modules/.bin/vite build` → success
+- `git diff --check` → clean
+
+### Known limitations
+
+- **Stream responses are trusted for shape only from enabled, verified
+  addons** — every URL is re-validated (scheme/credentials/torrent
+  tokens), but the resolver cannot guarantee a returned media URL actually
+  plays; the future player phase owns transport errors.
+- **Header-dependent streams are excluded**, not proxied: HTML5 playback
+  cannot attach arbitrary request headers, and Phase 3 deliberately builds
+  no media proxy. The requirement is preserved in diagnostics only.
+- **Torrent-tagged streams that also carry a direct HTTP URL are dropped
+  conservatively** — Mavero never accepts torrent-metadata streams even
+  when an independent media URL might exist.
+- **idProperty support is deliberately narrow** (`imdb_id`, `tmdb_id`):
+  other Stremio properties lack a Mavero-constructible, protocol-documented
+  ID format and are skipped rather than guessed.
+- **No stream-result caching** (stream URLs expire) — every resolution is
+  fresh; the aggregate budget (15s) bounds worst-case latency.
+- **No endpoint/UI**: the resolver is service-level; wiring it into the
+  player path, a public/admin endpoint, and the source selector belongs to
+  later phases (specs §28–§30).
+
+**Phase 3 complete. Stremio HTTP stream resolution is implemented. Native
+HLS playback, MAVERO Player aggregation, source UI, and player integration
+are NOT implemented yet.**
+
+---

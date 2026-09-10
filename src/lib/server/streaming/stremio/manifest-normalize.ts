@@ -7,10 +7,15 @@ import { ManifestServiceError } from './errors';
  *
  * Converts an arbitrary parsed-JSON manifest into a small, predictable
  * internal representation containing only the fields Mavero needs. Unknown
- * manifest fields are IGNORED (never blindly copied). Per the Stremio addon
- * protocol, a missing `resources` field defaults to
- * `['catalog', 'meta', 'stream']` — addons that omit resources are
- * stream-capable by protocol default.
+ * manifest fields are IGNORED (never blindly copied).
+ *
+ * EXPLICIT STREAM CAPABILITY (Phase 3 corrective fix): the raw Stremio addon
+ * protocol treats an omitted `resources` field as
+ * `['catalog', 'meta', 'stream']`, but Mavero must NEVER infer stream
+ * support from a missing declaration. The Mavero-side default therefore
+ * excludes `'stream'` — only an addon that EXPLICITLY advertises the
+ * `stream` resource is ever treated as a streaming addon and called at
+ * `/stream/{type}/{id}.json` (see `supportsStreamResource`).
  *
  * HTTP-only contract (Phase 2 spec §16): torrent/P2P-related tokens are
  * NEVER accepted as streaming capabilities. They are filtered out of the
@@ -37,8 +42,17 @@ const MANIFEST_VERSION_PATTERN = /^\d+(?:\.\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?$/;
 /** idProperty values are property names like `imdb_id` or `yt_id` (protocol forms). */
 const MANIFEST_ID_PROPERTY_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-/** Protocol default when a manifest omits `resources` (Stremio addon spec). */
-export const STREMIO_PROTOCOL_DEFAULT_RESOURCES = ['catalog', 'meta', 'stream'] as const;
+/**
+ * Mavero-side default applied when a manifest omits `resources`.
+ *
+ * Deliberate deviation from the raw Stremio addon protocol (which treats an
+ * omitted `resources` as `['catalog', 'meta', 'stream']`): Mavero's HTTP
+ * streaming integration requires stream capability to be EXPLICIT, so the
+ * Mavero-side default excludes `'stream'`. An addon that never declared a
+ * stream resource is never treated as a streaming addon by Mavero and is
+ * never called at `/stream/{type}/{id}.json` (Phase 3 policy).
+ */
+export const MAVERO_DEFAULT_RESOURCES = ['catalog', 'meta'] as const;
 
 export type NormalizedStremioManifest = {
   id: string;
@@ -228,7 +242,9 @@ export function validateStremioManifest(value: unknown): NormalizedStremioManife
   let streamTypes: string[] = [];
   let streamIdPrefixes: string[] = [];
   if (manifest.resources === undefined || manifest.resources === null) {
-    resources = [...STREMIO_PROTOCOL_DEFAULT_RESOURCES];
+    // EXPLICIT stream capability: a missing `resources` field never implies
+    // stream support (see MAVERO_DEFAULT_RESOURCES).
+    resources = [...MAVERO_DEFAULT_RESOURCES];
   } else {
     if (!Array.isArray(manifest.resources)) throw invalid('Manifest resources must be an array when present.');
     if (manifest.resources.length > MANIFEST_ARRAY_MAX_ITEMS * 4) throw invalid('Manifest resources are too large.');
@@ -270,8 +286,11 @@ export function validateStremioManifest(value: unknown): NormalizedStremioManife
 }
 
 /**
- * True only when the manifest explicitly declares the `stream` resource.
- * An existing manifest alone never implies stream support (spec §7).
+ * True only when the manifest EXPLICITLY declares the `stream` resource.
+ * Stream support is never inferred: a missing `resources` field normalizes
+ * to the Mavero default WITHOUT `'stream'`, so an addon that omitted its
+ * resources is never treated as a streaming addon (Phase 3 policy — Mavero
+ * only calls `/stream/{type}/{id}.json` on addons that advertise it).
  */
 export function supportsStreamResource(manifest: NormalizedStremioManifest): boolean {
   return manifest.resources.includes('stream');
@@ -306,10 +325,15 @@ export function persistableCapabilities(manifest: NormalizedStremioManifest, nor
   const capabilities = getManifestCapabilities(manifest);
   // Whitelisted keys only — never a raw manifest dump (spec §9). The keys
   // are checked against the Phase 1 forbidden-token contract by tests.
+  // `streamTypes` / `streamIdPrefixes` (Phase 3, additive): the stream
+  // resource's OWN narrower declarations, so the Phase 3 resolver can filter
+  // eligibility from the persisted metadata without re-fetching manifests.
   return {
     supportsStream: capabilities.supportsStream,
     manifestId: manifest.id,
     manifestVersion: manifest.version,
     normalizedAt,
+    streamTypes: manifest.streamTypes,
+    streamIdPrefixes: manifest.streamIdPrefixes,
   };
 }

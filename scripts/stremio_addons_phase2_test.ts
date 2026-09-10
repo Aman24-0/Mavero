@@ -498,7 +498,7 @@ const staleTargets: AddonManifestTarget[] = [];
   const successUpdate = success.ok ? success.update : null;
   ok(successUpdate !== null && captured.length === 1, 'W: success update persisted once');
   const capabilityKeys = Object.keys((successUpdate?.capabilities ?? {}) as Record<string, unknown>);
-  ok(capabilityKeys.every((key) => ['supportsStream', 'manifestId', 'manifestVersion', 'normalizedAt'].includes(key)), 'W: capabilities keys are whitelisted');
+  ok(capabilityKeys.every((key) => ['supportsStream', 'manifestId', 'manifestVersion', 'normalizedAt', 'streamTypes', 'streamIdPrefixes'].includes(key)), 'W: capabilities keys are whitelisted');
   const successBlob = JSON.stringify(successUpdate).toLowerCase();
   for (const secret of ['authorization', 'password', 'cookie', 'secret header']) {
     ok(!successBlob.includes(secret), `W: persisted update never contains "${secret}"`);
@@ -684,6 +684,34 @@ const staleTargets: AddonManifestTarget[] = [];
   const mapped = mapAddonRow(row);
   ok(mapped.manifestUrl === row.manifest_url && mapped.idProperty === 'imdb_id', 'Extra4: Phase 1 DB→domain mapping unchanged');
   ok(mapped.capabilities.supportsStream === true, 'Extra4: manifest capabilities survive the DB round-trip');
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 corrective fix — EXPLICIT stream capability regression:
+// a manifest that omits `resources` must NEVER be treated as a streaming
+// addon (the raw protocol default ['catalog','meta','stream'] must not leak
+// into Mavero's capability view).
+// ---------------------------------------------------------------------------
+{
+  const omitted = validateStremioManifest(manifestFixture({ resources: undefined }));
+  ok(omitted.resources.join(',') === 'catalog,meta', 'Fix: omitted resources normalize to the Mavero default without stream');
+  ok(supportsStreamResource(omitted) === false, 'Fix: omitted resources NEVER imply stream support');
+  ok(getManifestCapabilities(omitted).supportsStream === false, 'Fix: capability view reports supportsStream=false for omitted resources');
+  const omittedUpdate = buildSuccessfulManifestUpdate(omitted, '2026-09-10T00:00:00.000Z');
+  ok((omittedUpdate.capabilities as Record<string, unknown>).supportsStream === false, 'Fix: persisted capability is explicit-only');
+  ok((omittedUpdate.resources ?? []).includes('stream') === false, 'Fix: persisted resources never claim an undeclared stream resource');
+  ok((omittedUpdate.capabilities as Record<string, unknown>).supportsStream !== true, 'Fix: the raw protocol default never reaches the persisted capability');
+  // Explicit declarations keep working unchanged (control).
+  const explicit = validateStremioManifest(manifestFixture({ resources: ['catalog', 'meta', 'stream'] }));
+  ok(supportsStreamResource(explicit) === true, 'Fix: explicitly declared stream resource still detected');
+  const explicitObject = validateStremioManifest(manifestFixture());
+  ok(supportsStreamResource(explicitObject) === true, 'Fix: explicit stream resource object still detected');
+  // Persisted stream-scoped capability keys (Phase 3 additive whitelist).
+  const scopedUpdate = buildSuccessfulManifestUpdate(explicitObject, '2026-09-10T00:00:00.000Z');
+  const scopedCapabilities = scopedUpdate.capabilities as Record<string, unknown>;
+  ok(Array.isArray(scopedCapabilities.streamTypes) && Array.isArray(scopedCapabilities.streamIdPrefixes), 'Fix: stream-scoped capability arrays persisted for the resolver');
+  ok((scopedCapabilities.streamTypes as string[]).join(',') === 'movie,series', 'Fix: stream resource types persisted');
+  ok((scopedCapabilities.streamIdPrefixes as string[]).join(',') === 'tt', 'Fix: stream resource idPrefixes persisted');
 }
 
 console.log(`stremio_addons_phase2_test: ${passed} checks passed`);
