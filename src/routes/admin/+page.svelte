@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUpRight, Database, Download, Layers3, ShieldCheck, SlidersHorizontal, Wifi } from 'lucide-svelte';
+  import { ArrowUpRight, Database, Download, Layers3, Puzzle, ShieldCheck, SlidersHorizontal, Wifi } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import type { PageData } from './$types';
 
@@ -38,6 +38,16 @@
     <div class="admin-section-head"><div><div class="eyebrow">Separate registry</div><h2>Download providers</h2></div><span class="version">v{data.downloadersOverview.configVersion}</span></div>
     <div class="admin-cards">
       <a class="admin-card" href="/admin/downloaders"><span class="card-icon"><Download size={18} /></span><div><h3>Downloaders</h3><p>{data.downloadersOverview.providerCount} providers · {data.downloadersOverview.enabledCount} enabled · {data.downloadersOverview.defaultCount} default</p></div><ArrowUpRight size={16} /></a>
+    </div>
+  {/if}
+
+  <!-- Optional Stremio addons card (Phase 7). Same graceful-degradation
+       pattern as the downloaders card — renders only when the registry
+       overview loads (pre-migration environments return null). -->
+  {#if data.addonsOverview}
+    <div class="admin-section-head"><div><div class="eyebrow">MAVERO Player registry</div><h2>Stremio addons</h2></div><span class="version">Admin-managed</span></div>
+    <div class="admin-cards">
+      <a class="admin-card" href="/admin/addons"><span class="card-icon"><Puzzle size={18} /></span><div><h3>Stremio Addons</h3><p>{data.addonsOverview.addonCount} addons · {data.addonsOverview.enabledCount} enabled</p></div><ArrowUpRight size={16} /></a>
     </div>
   {/if}
 

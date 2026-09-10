@@ -1184,3 +1184,138 @@ phase — no admin controls of any kind).
 
 **Phase 6 complete. MAVERO Player source/quality UX is implemented.**
 Phase 7 admin addon management UI is NOT implemented.
+
+## Phase 7 — Admin Stremio Addon Management UI (DONE)
+
+**Scope.** The administrator-facing addon management interface for the
+EXISTING `streaming_addons` registry (Phase 1) and the EXISTING secure
+manifest service (Phase 2). An administrator can add (with a validated
+preview), inspect, enable/disable, reorder, refresh, and remove supported
+Stremio HTTP addons from `/admin/addons`. Normal end users never see addon
+management: the player (Phases 4–6) remains consumption-only, and no
+user-facing surface links to the admin section.
+
+### Implementation
+
+* **Server service** — `src/lib/server/streaming/stremio/admin-addons.ts`
+  (the only new server module):
+  * `listAdminAddons` (deterministic ordering → name → created_at) and
+    `getAddonsAdminOverview` (counts for the overview card).
+  * `previewAddonFromManifestUrl` — validate URL syntax (reused
+    `validateAddonManifestUrl`) → canonical duplicate check → fetch through
+    the EXISTING secure pipeline (`fetchNormalizedManifest`: SSRF, DNS,
+    redirects, timeout, body cap) → EXPLICIT stream-capability policy
+    (`supportsStreamResource`); NO persistence.
+  * `createAddonFromManifestUrl` — the same pipeline, then persists via the
+    existing `mapAddonToInsert` mapper: `enabled=false`, status
+    `experimental` (Phase 1 defaults — resolution only after the admin
+    explicitly enables), unique slug derived from the manifest name,
+    appended `ordering`, honest health timestamps.
+  * `setAddonEnabled`, `refreshAddonById`, `moveAddon`, `deleteAddonById` —
+    CRUD mutations with UUID id validation and not-found safety.
+* **Route** — `src/routes/admin/addons/+page.server.ts` (+ `+page.svelte`).
+  SvelteKit form actions (the established admin convention — same as
+  `/admin/downloaders`): `previewAddon`, `confirmAddon`, `setEnabled`,
+  `refreshAddon`, `moveAddon`, `deleteAddon`. The add workflow is
+  two-step: Validate addon → safe preview (name/version/description/
+  types/prefixes/stream support) → Add addon; the confirm action re-fetches
+  and re-validates server-side (the client is never trusted).
+
+### Security
+
+* `requireAdmin` runs on the page load AND on EVERY mutation
+  (`profiles.role === 'admin'` checked server-side each time); the Phase 1
+  RLS policy (`public.is_admin()`, anon revoked) remains the second layer.
+  No client-side `isAdmin` trust anywhere.
+* The browser NEVER fetches manifest URLs — zero `fetch()` in the page.
+  Refresh never accepts a URL: `refreshAddonById` re-reads the STORED
+  manifest URL server-side. CSRF protection is SvelteKit's built-in
+  form-action origin check (the same mechanism all existing admin
+  mutations use).
+* Duplicates are rejected server-side by canonical URL identity
+  (`canonicalManifestUrlKey`: scheme + lowercased host + default-port
+  stripped + path + query; fragment dropped) with the fixed safe message
+  "This addon is already configured."
+* Reordering persists absolute positions (0..n-1) computed from the SAME
+  deterministic sort the resolver consumes (ordering → name → created_at);
+  only changed rows are written, and tied/gapped legacy orderings self-heal.
+  The Phase 3 ordering semantics are consumed, not redefined.
+* Safe errors only: `StreamingValidationError` messages, the fixed
+  unsupported message ("This addon is not supported by MAVERO. Only HTTP
+  stream addons are supported."), and the curated Phase 2
+  `ManifestServiceError` table. No SSRF/DNS/stack/upstream details.
+* No torrent/magnet/P2P/debrid, no proxy, no arbitrary headers, no DRM, no
+  service-role client in the admin surface (all pinned by tests).
+* No migration: `streaming_addons` already carries `enabled`, `status`,
+  `ordering`, manifest metadata and health columns (Phase 1 was complete
+  by design).
+
+### Admin UI
+
+* `/admin/addons` inside the existing `AdminShell` (new "Stremio Addons"
+  nav entry with the Puzzle icon; optional overview card on `/admin` with
+  the same graceful-degradation pattern as the downloaders card).
+* Addon rows show name, version, description, stream support, types,
+  prefixes, resources, status (existing model: Active/Experimental/
+  Disabled/Maintenance/Unavailable), enabled state, manifest URL
+  (admin-only page), last successful refresh, and the safe refresh status
+  text. Logos are NOT loaded remotely (same safe fallback icon policy as
+  Phase 6).
+* Duplicate-submission guard: every submit button is disabled while any
+  mutation is in flight (`pending` state, cleared on response or
+  navigation), with per-action labels (Validating addon… / Adding… /
+  Saving… / Refreshing… / Removing…) and `aria-busy`.
+* Delete uses `confirm()` with the exact destructive copy ("Remove addon? …
+  Its streams will no longer be available."); failure isolation keeps one
+  broken addon from affecting the page or other addons.
+* Accessibility: real `<form>`/`<button>`/`<input>` elements, labeled
+  manifest input (`aria-describedby`), `aria-label`s on icon-only
+  ordering buttons, `role="status"`/`role="alert"` regions; mobile breakpoint
+  stacks all grids to one column and long URLs wrap (`overflow-wrap`).
+
+### Tests
+
+* `scripts/stremio_player_phase7_test.ts` — **194 checks**, sections A–J
+  plus helpers: admin authorization (load + all 6 mutations, no isAdmin,
+  no service-role, user-nav isolation); URL syntax/capability validation
+  (http/https accept, malformed/ftp/credentials/whitespace reject,
+  catalog-only & torrent-only & empty-resources reject with safe
+  messages); manifest-service integration (metadata + capability
+  persistence, refresh via STORED URL, admin-owned columns untouched);
+  CRUD + not-found safety; canonical duplicate protection; ordering
+  (adjacent swap persists, edge no-ops, tie self-heal, resolver-visible);
+  failure isolation (temporary vs permanent refresh outcomes, safe error
+  text, others untouched); security pins (no P2P/proxy/fetch/proxy-hooks/
+  service-role, Phase 1 RLS intact, playback endpoint unchanged); UI
+  contract (empty state, add flow, loading states, delete confirmation,
+  status labels, a11y, responsive); regression pins (MAVERO source id,
+  resolver enabled/status/ordering contract, manifest-service selection,
+  status union, test-chain registration). Behavioral service tests run on
+  a fake PostgREST-style client; network tests use injected fetch/DNS
+  fakes (never the real internet).
+* Registered in `package.json` after `stremio_player_phase6_test.ts`.
+
+### Commands / results
+
+- Full test chain (87 scripts, Phase 1 → Phase 7) → **exit 0, all pass**
+  (Phase 1: 111 · Phase 2: 202 · Phase 3: 158 · Phase 4: 130 · Phase 5: 130
+  · Phase 6: 213 · Phase 7: 194 checks)
+- `pnpm check` (svelte-check) → **0 errors / 41 warnings** (baseline
+  unchanged from Phase 6)
+- `pnpm build` (vite + adapter-netlify) → **success**
+- `git diff --check` → clean
+
+### Limitations
+
+* The add-flow preview re-fetches the manifest at confirm time; if the
+  upstream manifest changes between the two steps, the CONFIRMED (fresh)
+  data is what persists — the preview is informational.
+* Slug deduplication appends `-2`, `-3`… suffixes; slugs are not user-editable
+  in this phase.
+* Reorder is ↑/↓ button based (simplest reliable mechanism); drag-and-drop
+  was deliberately not added.
+* No bulk operations, no addon logo rendering (consistent with the Phase 6
+  external-image policy), and no audit log — deferred as out of scope.
+
+**Phase 7 admin addon management is implemented.** Phase 8 is NOT
+implemented yet.
