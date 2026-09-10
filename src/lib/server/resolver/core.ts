@@ -1,12 +1,10 @@
 import { createDefaultAdapterIds, createDefaultAdapters } from './adapters';
 import { ResolverError, asResolverError } from './errors';
 import { normalizeContentIdentifiers } from './identifiers';
-import { evaluatePlaybackUrl } from './playback-policy';
 import { allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
 import type { ProviderAdapter, ResolverDependencies, ResolverRequest, SourceResult, TrustedResolutionConfig } from './types';
 import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
-import { playbackAdProtectionFromCapabilities } from '$lib/shared/playback-ad-protection';
 import type { IntegrationType } from '$lib/server/streaming/types';
 
 const activeProviderStatuses = new Set(['active']);
@@ -53,42 +51,6 @@ function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']
   const sourceCapabilities = context.config.source.capabilities;
   const allowDynamic = allowDynamicEmbedOriginsFromCapabilities(sourceCapabilities);
   const url = validatePlaybackUrl(result.url, result.type, allowedEmbedOriginsFromCapabilities(sourceCapabilities), allowDynamic);
-  // Third-Party Playback Ad Protection — provider/source-scoped and OFF by
-  // default. The effective setting is loaded from the TRUSTED server-side
-  // capabilities (source override → provider default → system default OFF),
-  // never from the playback request. When it is OFF for this source, ONLY
-  // this policy is skipped: validatePlaybackUrl() above (HTTPS-only, no
-  // credentials, non-private host, embed origin allowlist), expiry
-  // validation, and the sandbox policy all remain fully in force. When it
-  // is ON, the policy runs strictly AFTER validatePlaybackUrl() and a
-  // rejection propagates as ResolverError('PLAYBACK_POLICY_BLOCKED') so the
-  // existing fallback, default-source ordering, health ranking, and manual
-  // source switching try the next source — each candidate evaluated with
-  // its OWN effective setting.
-  const adProtection = playbackAdProtectionFromCapabilities(context.config.provider.capabilities, context.config.source.capabilities);
-  if (adProtection.enabled) {
-    const policy = evaluatePlaybackUrl(url, result.type, {
-      providerId: context.config.provider.id,
-      sourceId: context.config.source.id,
-      providerName: context.config.provider.name,
-      sourceName: context.config.source.name,
-      policy: adProtection,
-    });
-    if (!policy.allowed) {
-      // Diagnostics only: reason/category/hostname — never the URL itself
-      // (signed query strings and path tokens must not reach logs).
-      console.warn('[PlaybackPolicy] blocked playback URL', {
-        providerId: context.config.provider.id,
-        sourceId: context.config.source.id,
-        providerName: context.config.provider.name,
-        sourceName: context.config.source.name,
-        reason: policy.reason,
-        category: policy.category,
-        host: policy.host,
-      });
-      throw new ResolverError('PLAYBACK_POLICY_BLOCKED');
-    }
-  }
   return {
     type: result.type,
     url,

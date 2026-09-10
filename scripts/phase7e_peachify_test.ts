@@ -10,10 +10,9 @@ const sourceId = '00000000-0000-4000-8000-0000000007e4';
 const peachifyOrigin = 'https://peachify.top';
 
 // Committed Peachify configuration (supabase/migrations/20260821040000 +
-// 20260916000000): Peachify's player refuses sandboxed frames ("Sandbox
-// Detected"), so the sandbox policy is unrestricted — and the INDEPENDENT
-// playback_ad_protection setting is ON so the resolver classifies each
-// candidate playback URL. Neither setting forces the other.
+// 20260917000000): Peachify's player refuses sandboxed frames ("Sandbox
+// Detected"), so the sandbox policy is unrestricted — a fully independent
+// sandbox-policy decision about normal playback.
 const capabilities = {
   movie: true,
   series: true,
@@ -23,7 +22,6 @@ const capabilities = {
   supports_direct: false,
   allow_experimental_playback: true,
   sandbox_policy: 'unrestricted',
-  playback_ad_protection: true,
   allowed_embed_origins: [peachifyOrigin]
 };
 
@@ -176,8 +174,8 @@ await assert.rejects(
 );
 
 // Sandbox policy resolves source-first (source override → provider default
-// → system default), independently of the separate ad-protection setting:
-// the source-level explicit value beats the provider default, both ways.
+// → system default): the source-level explicit value beats the provider
+// default, both ways.
 const sourceRequiredOverProvider = await resolveSourceFromConfig(
   { sourceId, contentId: '533535', mediaType: 'movie' },
   {

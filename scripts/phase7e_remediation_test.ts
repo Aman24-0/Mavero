@@ -25,9 +25,7 @@ assert.equal(sandboxPolicyFromCapabilities({}), 'required');
 assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'optional' }), 'optional');
 assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'unrestricted' }), 'unrestricted');
 assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'invalid' }), 'required');
-// Hierarchy: source override → provider default → system default ('required'),
-// identical to the playback_ad_protection hierarchy — the two settings stay
-// fully independent.
+// Hierarchy: source override → provider default → system default ('required').
 assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'unrestricted' }, { sandbox_policy: 'required' }), 'required');
 assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'required' }, { sandbox_policy: 'unrestricted' }), 'unrestricted');
 assert.equal(iframeSandboxAttribute('required')?.includes('allow-scripts'), true);
