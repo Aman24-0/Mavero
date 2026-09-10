@@ -6,6 +6,7 @@
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
+  import { playerCanDisableSandbox } from '$lib/shared/sandbox-policy';
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -144,6 +145,15 @@
     sandboxEnabled = source.sandboxPolicy !== 'unrestricted';
   }
   $: effectiveSandboxEnabled = source?.type === 'embed' ? sandboxEnabled : true;
+  // Sandbox control is HARDEN-ONLY: for required/optional embeds the secure
+  // sandbox attribute is enforced for the whole session and the shield is a
+  // locked indicator, because a runtime disable is exactly the route that
+  // lets provider popunders open external browser tabs during playback
+  // (docs/peachify-redirect-investigation.md). Only an explicitly
+  // 'unrestricted' admin policy keeps the toggle available — toggling then
+  // stays within the admin's own baseline. Admin remains authoritative:
+  // changing the baseline is an admin-panel action, never a player tap.
+  $: sandboxControlLocked = Boolean(source && source.type === 'embed' && !playerCanDisableSandbox(source.sandboxPolicy));
   // Phase 6 audit fix: reactive watcher for embed playback events. The watch
   // route pushes { type, _seq } into the embedPlaybackEvent prop whenever the
   // PlaybackManager receives a normalized provider play/pause/ended event.
@@ -469,6 +479,9 @@
 
   function toggleSandbox() {
     if (source?.type !== 'embed') return;
+    // Harden-only guard: the sandbox can never be switched OFF at runtime
+    // for a required/optional embed. See sandboxControlLocked above.
+    if (!playerCanDisableSandbox(source.sandboxPolicy)) return;
     sandboxEnabled = !sandboxEnabled;
     state = 'embed-loading';
     errorMessage = '';
@@ -1041,7 +1054,13 @@
           {#if sourceOptions.length}<button class="shell-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={16} /></button>{/if}
           {#if episodes.length}<button class="shell-button" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={(e) => { if (episodeMenuOpen) closeEpisodeSheet(); else openEpisodeSheet(e.currentTarget as HTMLElement); }}><ListVideo size={16} /></button>{/if}
           <button class="shell-button" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={16} /></button>
-          {#if source?.type === 'embed'}<button class="shell-button" class:active={effectiveSandboxEnabled} type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={16} />{:else}<ShieldOff size={16} />{/if}</button>{/if}
+          {#if source?.type === 'embed'}
+            {#if sandboxControlLocked}
+            <button class="shell-button active" type="button" disabled title="Sandbox enforced by the provider configuration" aria-label="Sandbox enforced by the provider configuration" aria-pressed="true"><ShieldCheck size={16} /></button>
+            {:else}
+            <button class="shell-button" class:active={effectiveSandboxEnabled} type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={16} />{:else}<ShieldOff size={16} />{/if}</button>
+            {/if}
+          {/if}
         </div>
       </div>
     {/if}
