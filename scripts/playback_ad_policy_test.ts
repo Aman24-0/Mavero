@@ -361,21 +361,25 @@ passed += 1;
 
 // ---------------------------------------------------------------------------
 // 13. Peachify-specific protection works when enabled (REAL Peachify config
-//     from supabase/migrations/20260821040000: embed, sandbox required,
-//     allowed_embed_origins https://peachify.top, accent param template).
+//     from supabase/migrations/20260821040000 + 20260916000000: embed,
+//     sandbox UNRESTRICTED — Peachify refuses sandboxed frames —
+//     playback_ad_protection ON, allowed_embed_origins https://peachify.top,
+//     accent param template).
 // ---------------------------------------------------------------------------
 registerProviderPlaybackPolicy('peachify-test-provider', { blockedHosts: ['redirect.peachify-ads.example.test'] });
 const peachifyOn = config({
   integrationType: 'embed',
-  providerCapabilities: { result_type: 'embed', sandbox_policy: 'required', allowed_embed_origins: ['https://peachify.top'], playback_ad_protection: true },
+  providerCapabilities: { result_type: 'embed', sandbox_policy: 'unrestricted', allowed_embed_origins: ['https://peachify.top'], playback_ad_protection: true },
   sourceCapabilities: { allowed_embed_origins: ['https://peachify.top'] },
   movieTemplate: 'https://peachify.top/embed/movie/{tmdb_id}?accent=b1a1ff',
 });
-// The real Peachify embed URL is legitimate and must play with protection ON.
+// The real Peachify embed URL is legitimate and must play with protection ON,
+// and the sandbox policy stays UNRESTRICTED (Ad Protection never forces a
+// sandbox onto the embed — the two settings are independent).
 const peachifyPlayback = await resolveSourceFromConfig(request, peachifyOn, content, {});
 assert.equal(peachifyPlayback.type, 'embed');
 assert.equal(peachifyPlayback.url, 'https://peachify.top/embed/movie/778899?accent=b1a1ff');
-assert.equal(peachifyPlayback.sandboxPolicy, 'required');
+assert.equal(peachifyPlayback.sandboxPolicy, 'unrestricted');
 passed += 2;
 // A Peachify-SCOPED classified host is blocked only when Peachify's
 // protection is ON — demonstrating per-provider rule application. (Direct
@@ -400,7 +404,7 @@ passed += 1;
 //     the toggle OFF resolves identically, and Peachify's scoped rule does
 //     not exist for other providers (no inheritance).
 // ---------------------------------------------------------------------------
-const peachifyOff = { ...peachifyOn, provider: { ...peachifyOn.provider, capabilities: { result_type: 'embed', sandbox_policy: 'required', allowed_embed_origins: ['https://peachify.top'], playback_ad_protection: false } } };
+const peachifyOff = { ...peachifyOn, provider: { ...peachifyOn.provider, capabilities: { result_type: 'embed', sandbox_policy: 'unrestricted', allowed_embed_origins: ['https://peachify.top'], playback_ad_protection: false } } };
 const peachifyOffPlayback = await resolveSourceFromConfig(request, peachifyOff, content, {});
 assert.equal(peachifyOffPlayback.url, 'https://peachify.top/embed/movie/778899?accent=b1a1ff');
 const peachifyOffDirect = config({ providerId: 'peachify-test-provider', providerCapabilities: { playback_ad_protection: false } });

@@ -1,49 +1,70 @@
 /**
- * Peachify unwanted external redirect — mechanism pins and protection tests.
+ * Peachify playback architecture — sandbox / ad-protection independence pins.
  *
- * Investigation summary (docs/peachify-redirect-investigation.md):
- *   The Peachify → Google Search → reCAPTCHA behavior observed on a real
- *   Android device is a POPUNDER: the provider document opens a NEW window
- *   (`window.open`, `target="_blank"` anchors, and delayed "late" popunders)
- *   after the iframe has loaded. The new tab redirect-chains into Google
- *   Search, and Google serves its /sorry/ "unusual traffic" (reCAPTCHA)
- *   page. Runtime verification in Chromium (agent-browser, exact Mavero
+ * Real Android/Chromium evidence (docs/peachify-redirect-investigation.md):
+ *   The Peachify player REFUSES sandboxed frames — with the sandbox
+ *   attribute present it shows "Sandbox Detected — Please disable iframe
+ *   sandboxing permissions to access this player." and never starts
+ *   playback. Without the sandbox attribute Peachify plays, but its own
+ *   document opens popunders (`window.open`, `target="_blank"`, delayed
+ *   popunders) that redirect-chain into Google Search and Google's
+ *   /sorry/ "unusual traffic" (reCAPTCHA) page — the originally reported
+ *   symptom. Runtime verification in Chromium (agent-browser, exact Mavero
  *   runtime iframe attributes, real user activation):
  *
- *     sandbox ON  (required policy attrs) → window.open returns null, no
- *                 tab opens, top navigation blocked (SecurityError), and
- *                 even a service worker registered from the sandboxed frame
- *                 is refused clients.openWindow() (InvalidAccessError).
- *     sandbox OFF → every popup attempt opens a real tab that lands on
- *                 google.com/sorry/ — the exact reported symptom.
+ *     sandbox ON  → popups/top-navigation all blocked, but Peachify shows
+ *                   "Sandbox Detected" and does not play.
+ *     sandbox OFF → Peachify plays; popup attempts open real tabs that
+ *                   land on google.com/sorry/ — uninterceptable by the
+ *                   embedding app (browser same-origin security).
  *
- *   Therefore the ONLY app-level route that reproduces the bug is rendering
- *   the embed WITHOUT the sandbox attribute. The committed Peachify config
- *   is `sandbox_policy: 'required'` (provider AND source), so the runtime
- *   escape route was the player's one-tap sandbox shield, which could
- *   silently disable the sandbox. The fix makes that control HARDEN-ONLY:
- *   required/optional embeds are locked ON for the session; only an
- *   explicitly `unrestricted` admin policy keeps the toggle available
- *   (within the admin's own baseline). Admin remains authoritative.
+ * Architecture pinned by this file:
+ *   - Sandbox Policy (required | optional | unrestricted) and Third-Party
+ *     Playback Ad Protection (ON | OFF) are TWO COMPLETELY INDEPENDENT
+ *     settings. Both resolve through the same hierarchy — source override →
+ *     provider default → system default — on their own capability keys, and
+ *     neither ever forces the other (Ad Protection ON never re-adds a
+ *     sandbox; an unrestricted sandbox never toggles Ad Protection).
+ *   - `sandbox_policy: 'unrestricted'` + `playback_ad_protection: true` is a
+ *     FIRST-CLASS configuration and is exactly Peachify's committed config
+ *     (migrations 20260821040000 + 20260916000000).
+ *   - The player renders the RESOLVED policy: unrestricted → no sandbox
+ *     attribute (no "Sandbox Detected" screen); the harden-only shield can
+ *     strengthen but never weaken a locked policy; the shield is never an
+ *     Ad Protection control.
+ *   - With the sandbox OFF, the technically enforceable protection is the
+ *     resolver-level one: EVERY fallback candidate's playback URL is
+ *     classified before iframe creation (ad-domain / redirect /
+ *     unsafe-navigation / provider-rule), scoped to the provider/source
+ *     being played. Popups opened by the cross-origin provider document
+ *     AFTER the iframe loads cannot be intercepted by Mavero without the
+ *     sandbox — documented limitation, never faked as blocked.
  *
- * This file pins:
- *   A. the sandbox token set (the browser-level popup/top-nav guarantees),
- *   B. the harden-only runtime control decision,
- *   C. Peachify's committed configuration resolves to the locked-secure
- *      state, with Ad Protection still OFF by default,
- *   D. legitimate Peachify playback URLs stay allowed with protection ON,
+ * Sections:
+ *   A. sandbox token set (browser-level popup/top-nav guarantees),
+ *   B. harden-only runtime control decision,
+ *   C. Peachify's committed configuration → unrestricted + protection ON,
+ *   D. legitimate Peachify playback stays allowed with protection ON,
  *   E. Peachify-scoped rules never leak to another provider,
  *   F. sandbox independence from Ad Protection + unrestricted authority,
  *   G. source pins binding PlayerViewport/PlayerShell markup to the policy,
- *   H. the 8 required scenarios from the task specification.
+ *   H. the eight required scenarios,
+ *   I. the nine independence scenarios (unrestricted+ON, unrestricted+OFF,
+ *      required+ON, required+OFF, source overrides of BOTH settings,
+ *      fallback preserving BOTH settings, Peachify end-to-end).
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { evaluatePlaybackUrl, registerProviderPlaybackPolicy, unregisterProviderPlaybackPolicy } from '../src/lib/server/resolver/playback-policy';
+import { resolveSourceFromConfig } from '../src/lib/server/resolver/core';
+import { ResolverError } from '../src/lib/server/resolver/errors';
+import { resolveWithBoundedFallback } from '../src/lib/server/resolver/fallback';
 import { defaultPlaybackAdProtection, playbackAdProtectionFromCapabilities } from '../src/lib/shared/playback-ad-protection';
 import { iframeSandboxAttribute, playerCanDisableSandbox, sandboxPolicyFromCapabilities, type SandboxPolicy } from '../src/lib/shared/sandbox-policy';
+import type { AdapterResult, ProviderAdapter, TrustedResolutionConfig } from '../src/lib/server/resolver/types';
+import type { NormalizedMediaItem } from '../src/lib/server/content/types';
 
 let passed = 0;
 function ok(value: unknown, message: string) {
@@ -57,7 +78,11 @@ function eq(actual: unknown, expected: unknown, message: string) {
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-// ----- Peachify's committed migration configuration (20260821040000) -----
+// ----- Peachify's committed migration configuration -----
+// (20260821040000_phase7e_peachify_experimental +
+//  20260916000000_peachify_unrestricted_playback): Peachify refuses
+// sandboxed frames, so the sandbox is unrestricted, and the INDEPENDENT
+// playback_ad_protection setting is ON. Both levels carry identical values.
 const peachifyProviderCapabilities = {
   movie: true,
   series: true,
@@ -66,7 +91,8 @@ const peachifyProviderCapabilities = {
   supports_episode: true,
   supports_direct: false,
   allow_experimental_playback: true,
-  sandbox_policy: 'required',
+  sandbox_policy: 'unrestricted',
+  playback_ad_protection: true,
   allowed_embed_origins: ['https://peachify.top'],
 } satisfies Record<string, unknown>;
 const peachifySourceCapabilities = {
@@ -77,7 +103,8 @@ const peachifySourceCapabilities = {
   supports_episode: true,
   supports_direct: false,
   allow_experimental_playback: true,
-  sandbox_policy: 'required',
+  sandbox_policy: 'unrestricted',
+  playback_ad_protection: true,
   allowed_embed_origins: ['https://peachify.top'],
 } satisfies Record<string, unknown>;
 const PEACHIFY_TEMPLATE_MOVIE = 'https://peachify.top/embed/movie/27205?accent=b1a1ff';
@@ -114,12 +141,14 @@ eq(playerCanDisableSandbox(undefined), false, 'B: legacy/unknown policy locks to
 eq(playerCanDisableSandbox('unrestricted'), true, 'B: only an explicitly unrestricted policy keeps the toggle');
 
 // ===========================================================================
-// C. Peachify committed config → locked-secure + Ad Protection default OFF.
+// C. Peachify committed config → unrestricted + Ad Protection ON — the exact
+//    first-class combination needed because Peachify refuses sandboxed
+//    frames ("Sandbox Detected"), while the two settings stay independent.
 // ===========================================================================
-eq(sandboxPolicyFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities), 'required' as SandboxPolicy, 'C: Peachify effective sandbox policy is required');
-eq(playerCanDisableSandbox(sandboxPolicyFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities)), false, 'C: the Android escape route (player tap disabling the sandbox) is impossible for Peachify');
-ok(sandboxPolicyFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities) !== 'unrestricted', 'C: Peachify is not unrestricted');
-eq(playbackAdProtectionFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities).enabled, false, 'C: Ad Protection remains OFF by default for Peachify');
+eq(sandboxPolicyFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities), 'unrestricted' as SandboxPolicy, 'C: Peachify effective sandbox policy is unrestricted');
+eq(iframeSandboxAttribute(sandboxPolicyFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities)), undefined, 'C: Peachify renders NO sandbox attribute (no "Sandbox Detected" screen)');
+eq(playerCanDisableSandbox(sandboxPolicyFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities)), true, 'C: unrestricted keeps the (admin-baseline) harden-only toggle');
+eq(playbackAdProtectionFromCapabilities(peachifyProviderCapabilities, peachifySourceCapabilities).enabled, true, 'C: Ad Protection is ON for Peachify — independently of the sandbox');
 eq(playbackAdProtectionFromCapabilities(undefined, undefined).enabled, defaultPlaybackAdProtection.enabled, 'C: system default Ad Protection is OFF');
 
 // ===========================================================================
@@ -211,5 +240,139 @@ ok(secureAttribute.includes('allow-scripts') && viewportSource.includes('autopla
 eq(iframeSandboxAttribute('optional'), 'allow-forms allow-presentation allow-same-origin allow-scripts', 'H7: other providers keep the exact same secure sandbox');
 // 8. Unrestricted providers remain unrestricted — no sandbox forced (F), toggle stays available within the admin baseline.
 eq(playerCanDisableSandbox('unrestricted'), true, 'H8: unrestricted stays user-toggleable within the admin baseline');
+
+// ===========================================================================
+// I. The nine independence scenarios (Sandbox Policy × Ad Protection).
+//    Each resolver scenario runs end-to-end through resolveSourceFromConfig
+//    so the SourceResult carries the RESOLVED sandboxPolicy next to the
+//    executed (or skipped) policy — the exact values the player and iframe
+//    receive at runtime.
+// ===========================================================================
+const matrixProviderA = 'c0000000-0000-4000-8000-00000000000a';
+const matrixProviderB = 'c0000000-0000-4000-8000-00000000000b';
+const matrixSourceA = 'd0000000-0000-4000-8000-00000000000a';
+const matrixSourceB = 'd0000000-0000-4000-8000-00000000000b';
+const matrixContent: NormalizedMediaItem = {
+  id: 'independence-fixture', title: 'Independence Fixture', year: 2026, type: 'movie', runtime: '1h 30m', rating: 7.5, genres: ['Drama'], description: 'Fixture', poster: 'https://image.tmdb.org/t/p/w500/independence.jpg', backdrop: 'https://image.tmdb.org/t/p/original/independence.jpg', accent: '#9b87f5', source: { provider: 'tmdb', externalId: '778899', fetchedAt: new Date().toISOString() }, externalIds: { tmdb: '778899', imdb: 'tt1234567' },
+};
+const matrixRequest = { sourceId: matrixSourceA, contentId: 'independence-fixture', mediaType: 'movie' } as const;
+const legitMatrixUrl = 'https://media.example.test/v/independence/master.m3u8';
+const classifiedMatrixUrl = 'https://serve.popads.net/fake-stream.m3u8?token=x';
+function matrixAdapter(result: AdapterResult | null): ProviderAdapter {
+  return { integrationType: 'direct', resolve: async () => result };
+}
+/** Per-provider adapter: provider A can be unavailable while B returns a URL. */
+function perProviderAdapter(results: Record<string, AdapterResult | null>): ProviderAdapter {
+  return { integrationType: 'direct', resolve: async (context) => results[context.config.provider.id] ?? null };
+}
+function matrixConfig(opts: { providerId?: string; sourceId?: string; providerCapabilities?: Record<string, unknown>; sourceCapabilities?: Record<string, unknown> } = {}): TrustedResolutionConfig {
+  const pid = opts.providerId ?? matrixProviderA;
+  return {
+    provider: { id: pid, name: `Matrix Provider ${pid.slice(-1)}`, status: 'active', enabled: true, integration_type: 'direct', adapter_id: undefined, capabilities: { movie: true, series: true, ...(opts.providerCapabilities ?? {}) } },
+    source: { id: opts.sourceId ?? matrixSourceA, provider_id: pid, name: `Matrix Source ${pid.slice(-1)}`, status: 'active', enabled: true, visibility: 'public', integration_type: 'direct', capabilities: { movie: true, ...(opts.sourceCapabilities ?? {}) }, movie_template: 'https://media.example.test/{tmdb_id}.m3u8', series_template: '', anime_template: '', identifier_mode: 'tmdb_id', audio_languages: ['English'], subtitle_capability: true, quality_capability: ['HD'] },
+  };
+}
+async function matrixResolves(label: string, cfg: TrustedResolutionConfig, url: string, expectedSandbox: SandboxPolicy): Promise<void> {
+  const result = await resolveSourceFromConfig(matrixRequest, cfg, matrixContent, { adapters: { direct: matrixAdapter({ type: 'direct', url }) } });
+  eq(result.type, 'direct', `I:${label} resolves`);
+  eq(result.sandboxPolicy, expectedSandbox, `I:${label} result carries its own resolved sandboxPolicy`);
+}
+async function matrixBlocked(label: string, cfg: TrustedResolutionConfig, url: string, expectedSandbox: SandboxPolicy): Promise<void> {
+  try {
+    await resolveSourceFromConfig(matrixRequest, cfg, matrixContent, { adapters: { direct: matrixAdapter({ type: 'direct', url }) } });
+    ok(false, `I:${label} must be rejected`);
+  } catch (error) {
+    ok(error instanceof ResolverError && error.code === 'PLAYBACK_POLICY_BLOCKED', `I:${label} rejected as PLAYBACK_POLICY_BLOCKED (policy executed)`);
+  }
+  // The rejection is thrown BEFORE a SourceResult exists — re-derive the
+  // sandbox policy the embed WOULD have received from the same capabilities.
+  eq(iframeSandboxAttribute(sandboxPolicyFromCapabilities(cfg.provider.capabilities, cfg.source.capabilities)), expectedSandbox === 'unrestricted' ? undefined : secureAttribute, `I:${label} sandbox attribute matches its own policy, independent of the protection outcome`);
+}
+
+// 1. sandbox=unrestricted + adProtection=true → no sandbox attr + policy executes.
+await matrixResolves('1a unrestricted+ON legit', matrixConfig({ providerCapabilities: { sandbox_policy: 'unrestricted', playback_ad_protection: true } }), legitMatrixUrl, 'unrestricted');
+await matrixBlocked('1b unrestricted+ON classified', matrixConfig({ providerCapabilities: { sandbox_policy: 'unrestricted', playback_ad_protection: true } }), classifiedMatrixUrl, 'unrestricted');
+// 2. sandbox=unrestricted + adProtection=false → no sandbox attr + policy skipped.
+await matrixResolves('2 unrestricted+OFF classified', matrixConfig({ providerCapabilities: { sandbox_policy: 'unrestricted', playback_ad_protection: false } }), classifiedMatrixUrl, 'unrestricted');
+// 3. sandbox=required + adProtection=true → secure attr + policy executes.
+await matrixResolves('3a required+ON legit', matrixConfig({ providerCapabilities: { sandbox_policy: 'required', playback_ad_protection: true } }), legitMatrixUrl, 'required');
+await matrixBlocked('3b required+ON classified', matrixConfig({ providerCapabilities: { sandbox_policy: 'required', playback_ad_protection: true } }), classifiedMatrixUrl, 'required');
+// 4. sandbox=required + adProtection=false → secure attr + policy skipped.
+await matrixResolves('4 required+OFF classified', matrixConfig({ providerCapabilities: { sandbox_policy: 'required', playback_ad_protection: false } }), classifiedMatrixUrl, 'required');
+// 5. Source override INDEPENDENTLY overrides the provider sandbox policy
+//    (ad-protection capabilities untouched in both directions).
+await matrixResolves('5a source unrestricted override', matrixConfig({ providerCapabilities: { sandbox_policy: 'required' }, sourceCapabilities: { sandbox_policy: 'unrestricted' } }), legitMatrixUrl, 'unrestricted');
+await matrixResolves('5b source required override', matrixConfig({ providerCapabilities: { sandbox_policy: 'unrestricted' }, sourceCapabilities: { sandbox_policy: 'required' } }), legitMatrixUrl, 'required');
+// 6. Source override INDEPENDENTLY overrides the provider ad protection
+//    (sandbox capabilities untouched in both directions).
+await matrixResolves('6a source OFF override of provider ON', matrixConfig({ providerCapabilities: { playback_ad_protection: true }, sourceCapabilities: { playback_ad_protection: false } }), classifiedMatrixUrl, 'required');
+await matrixBlocked('6b source ON override of provider OFF', matrixConfig({ providerCapabilities: { playback_ad_protection: false }, sourceCapabilities: { playback_ad_protection: true } }), classifiedMatrixUrl, 'required');
+// 7. Provider fallback preserves the EFFECTIVE ad protection per candidate:
+//    A (ON) is blocked → B (OFF) resolves the same classified URL.
+const fallbackProtection = await resolveWithBoundedFallback(
+  matrixRequest,
+  matrixContent,
+  [
+    { config: matrixConfig({ providerId: matrixProviderA, sourceId: matrixSourceA, providerCapabilities: { playback_ad_protection: true } }) },
+    { config: matrixConfig({ providerId: matrixProviderB, sourceId: matrixSourceB, providerCapabilities: { playback_ad_protection: false } }) },
+  ],
+  { adapters: { direct: matrixAdapter({ type: 'direct', url: classifiedMatrixUrl }) } },
+);
+eq(fallbackProtection.result.url, classifiedMatrixUrl, 'I:7 fallback lands on the OFF candidate');
+eq(fallbackProtection.result.sandboxPolicy, 'required', 'I:7 surviving candidate keeps its own sandbox policy');
+eq(fallbackProtection.attempts[0]?.result, 'failure', 'I:7 protected candidate failed first');
+eq(fallbackProtection.attempts[0]?.errorCode, 'PLAYBACK_POLICY_BLOCKED', 'I:7 protected candidate failed by policy');
+eq(fallbackProtection.attempts[1]?.result, 'success', 'I:7 unprotected candidate succeeded');
+//    Reverse: A (OFF) is unavailable → B (ON) rejects the classified URL.
+try {
+  await resolveWithBoundedFallback(
+    matrixRequest,
+    matrixContent,
+    [
+      { config: matrixConfig({ providerId: matrixProviderA, sourceId: matrixSourceA, providerCapabilities: { playback_ad_protection: false } }) },
+      { config: matrixConfig({ providerId: matrixProviderB, sourceId: matrixSourceB, providerCapabilities: { playback_ad_protection: true } }) },
+    ],
+    { adapters: { direct: perProviderAdapter({ [matrixProviderA]: null, [matrixProviderB]: { type: 'direct', url: classifiedMatrixUrl } }) } },
+  );
+  ok(false, 'I:7 reverse fallback must reject');
+} catch (error) {
+  ok(error instanceof ResolverError && error.code === 'PLAYBACK_POLICY_BLOCKED', 'I:7 reverse fallback: ON candidate still enforces the policy');
+}
+// 8. Provider fallback preserves the EFFECTIVE sandbox policy per candidate:
+//    A (required, unavailable) fails → B (unrestricted) succeeds and the
+//    result carries B's OWN sandboxPolicy.
+const fallbackSandbox = await resolveWithBoundedFallback(
+  matrixRequest,
+  matrixContent,
+  [
+    { config: matrixConfig({ providerId: matrixProviderA, sourceId: matrixSourceA, providerCapabilities: { sandbox_policy: 'required' } }) },
+    { config: matrixConfig({ providerId: matrixProviderB, sourceId: matrixSourceB, providerCapabilities: { sandbox_policy: 'unrestricted', playback_ad_protection: true } }) },
+  ],
+  { adapters: { direct: perProviderAdapter({ [matrixProviderA]: null, [matrixProviderB]: { type: 'direct', url: legitMatrixUrl } }) } },
+);
+eq(fallbackSandbox.result.url, legitMatrixUrl, 'I:8 fallback lands on the unrestricted candidate');
+eq(fallbackSandbox.result.sandboxPolicy, 'unrestricted', 'I:8 surviving candidate keeps unrestricted (Ad Protection ON did NOT force a sandbox)');
+eq(iframeSandboxAttribute(fallbackSandbox.result.sandboxPolicy), undefined, 'I:8 the iframe for the surviving candidate renders WITHOUT a sandbox');
+//    Reverse: A (unrestricted, unavailable) fails → B (required) succeeds.
+const fallbackSandboxReverse = await resolveWithBoundedFallback(
+  matrixRequest,
+  matrixContent,
+  [
+    { config: matrixConfig({ providerId: matrixProviderA, sourceId: matrixSourceA, providerCapabilities: { sandbox_policy: 'unrestricted' } }) },
+    { config: matrixConfig({ providerId: matrixProviderB, sourceId: matrixSourceB, providerCapabilities: { sandbox_policy: 'required' } }) },
+  ],
+  { adapters: { direct: perProviderAdapter({ [matrixProviderA]: null, [matrixProviderB]: { type: 'direct', url: legitMatrixUrl } }) } },
+);
+eq(fallbackSandboxReverse.result.sandboxPolicy, 'required', 'I:8 reverse: surviving candidate keeps required');
+// 9. Peachify end-to-end: the exact committed config resolves with BOTH
+//    settings in force — playback resolves, sandbox stays unrestricted, and
+//    a Peachify-scoped rule (playback_ad_protection_rules) executes.
+const peachifyScopedRule = { playback_ad_protection_rules: { blockedHosts: ['popunder.peachify-ads.example.test'] } };
+const peachifyMatrixConfig = matrixConfig({
+  providerCapabilities: { sandbox_policy: 'unrestricted', playback_ad_protection: true, ...peachifyScopedRule },
+  sourceCapabilities: { sandbox_policy: 'unrestricted', playback_ad_protection: true },
+});
+await matrixResolves('9a peachify legit embed config', peachifyMatrixConfig, PEACHIFY_TEMPLATE_MOVIE, 'unrestricted');
+await matrixBlocked('9b peachify scoped host', matrixConfig({ providerCapabilities: { sandbox_policy: 'unrestricted', playback_ad_protection: true, ...peachifyScopedRule } }), 'https://popunder.peachify-ads.example.test/pixel', 'unrestricted');
 
 console.log(`peachify_redirect_protection_test: ${passed} checks passed`);

@@ -13,12 +13,23 @@ export function isSandboxPolicy(value: unknown): value is SandboxPolicy {
 }
 
 /**
- * Resolves the effective policy from provider capabilities first, then source
- * capabilities. Provider policy is authoritative when explicitly configured;
- * missing or malformed values fall back to the secure default.
+ * Resolves the effective policy with the SAME hierarchy as every other
+ * streaming capability: source override → provider default → system default.
+ *
+ * The sandbox policy and Third-Party Playback Ad Protection are TWO COMPLETELY
+ * INDEPENDENT settings: each resolves through this hierarchy on its own
+ * capability key, and neither ever forces the other (Ad Protection ON never
+ * re-enables a sandbox; an unrestricted sandbox never toggles Ad Protection).
+ * A provider may legitimately run `sandbox_policy: 'unrestricted'` (some
+ * providers refuse to play sandboxed) together with
+ * `playback_ad_protection: true` — that is a first-class configuration.
+ *
+ * A source-level value therefore overrides the provider default when
+ * explicitly configured; missing or malformed values fall through, and the
+ * secure system default applies when neither level sets the key.
  */
 export function sandboxPolicyFromCapabilities(providerCapabilities: unknown, sourceCapabilities?: unknown): SandboxPolicy {
-  for (const capability of [providerCapabilities, sourceCapabilities]) {
+  for (const capability of [sourceCapabilities, providerCapabilities]) {
     if (!isRecord(capability)) continue;
     const value = capability.sandbox_policy;
     if (isSandboxPolicy(value)) return value;
@@ -57,7 +68,7 @@ export function playerCanDisableSandbox(policy: SandboxPolicy | undefined): bool
 }
 
 export function sandboxPolicyDescription(policy: SandboxPolicy) {
-  if (policy === 'unrestricted') return 'Sandbox disabled for this embed. Use only when the provider explicitly requires it.';
+  if (policy === 'unrestricted') return 'Sandbox disabled for this embed. Required for providers that refuse sandboxed frames — pair with Ad Protection ON to classify playback redirects.';
   if (policy === 'optional') return 'Sandbox remains enabled by default; the provider may be reviewed for a different policy later.';
   return 'Sandbox remains enabled with MAVERO’s secure iframe permissions.';
 }

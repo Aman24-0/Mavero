@@ -173,7 +173,10 @@ await assert.rejects(
   (error: unknown) => error instanceof ResolverError && error.code === 'PROVIDER_DISABLED'
 );
 
-const unrestrictedProvider = await resolveSourceFromConfig(
+// Sandbox policy resolves source-first (source override → provider default
+// → system default), independently of the separate ad-protection setting:
+// the source-level explicit value beats the provider default, both ways.
+const sourceRequiredOverProvider = await resolveSourceFromConfig(
   { sourceId, contentId: '550', mediaType: 'movie' },
   {
     provider: { ...provider, capabilities: { ...capabilities, sandbox_policy: 'unrestricted' } },
@@ -182,6 +185,16 @@ const unrestrictedProvider = await resolveSourceFromConfig(
   content('movie', '550'),
   { adapters: genericAdapters }
 );
-assert.equal(unrestrictedProvider.sandboxPolicy, 'unrestricted');
+assert.equal(sourceRequiredOverProvider.sandboxPolicy, 'required');
+const sourceUnrestrictedOverProvider = await resolveSourceFromConfig(
+  { sourceId, contentId: '550', mediaType: 'movie' },
+  {
+    provider: { ...provider, capabilities: { ...capabilities, sandbox_policy: 'required' } },
+    source: { ...source, capabilities: { ...capabilities, sandbox_policy: 'unrestricted' } }
+  },
+  content('movie', '550'),
+  { adapters: genericAdapters }
+);
+assert.equal(sourceUnrestrictedOverProvider.sandboxPolicy, 'unrestricted');
 
 console.log('Phase 7E YapGrid generic-template and resolver tests passed.');

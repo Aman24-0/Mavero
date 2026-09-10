@@ -1,6 +1,6 @@
 # Peachify unwanted external redirect — investigation record
 
-Date: 2026-09-10 · Scope: `Third-Party Streaming Provider Playback Ad Protection` · Bug target: Peachify embed opening an external browser (Google Search → "unusual traffic" / reCAPTCHA) during playback.
+Date: 2026-09-10 (updated after real-device playback testing) · Scope: `Third-Party Streaming Provider Playback Ad Protection` · Bug target: Peachify embed opening an external browser (Google Search → "unusual traffic" / reCAPTCHA) during playback.
 
 ## Observed real-world behavior (Android device, screenshot evidence)
 
@@ -9,6 +9,22 @@ Peachify Embed → video plays correctly → after some time / provider interact
 → external browser / custom tab opens → Google Search
 → Google "unusual traffic" / reCAPTCHA page
 ```
+
+## NEW: real-device playback testing (sandbox vs. playback)
+
+Real Chromium/Android testing of the committed configuration established a
+second, decisive fact that reshapes the architecture:
+
+| Sandbox state | Peachify behavior |
+|---|---|
+| Sandbox attribute present (`sandbox_policy: 'required'`, the previously committed config) | Peachify's player **detects the sandboxed frame** and refuses to start: **"Sandbox Detected — Please disable iframe sandboxing permissions to access this player."** Playback is impossible. |
+| Sandbox attribute absent (`sandbox_policy: 'unrestricted'`) | Peachify plays normally — and may open popunders (the original bug). |
+
+Consequences:
+
+1. The committed `sandbox_policy: 'required'` configuration makes Peachify **permanently unplayable** (the in-player sandbox control is harden-only and cannot weaken it either).
+2. The only playable state for Peachify is an **unsandboxed** frame, so the sandbox cannot be the redirect defense for this provider.
+3. Therefore `sandbox_policy` and `playback_ad_protection` must be — and are — **two completely independent settings**, and `sandbox_policy: 'unrestricted'` + `playback_ad_protection: true` is a first-class configuration. This is now Peachify's committed configuration (migration `20260916000000_peachify_unrestricted_playback.sql`).
 
 ## Investigation constraints
 
@@ -35,22 +51,40 @@ The unsandboxed popup run reproduced the user's screenshot chain end-to-end: thr
 
 1. **Mechanism: popunders.** The unwanted navigation is the popup family (`window.open`, `target="_blank"`, delayed popunders) opening a NEW browser window/custom tab that redirect-chains into Google Search. Top-level navigation was ruled out by signature (it replaces the Mavero page; the reported case kept playing). Service-worker `openWindow` was empirically closed in both sandbox states.
 2. **Why `d1c2fb6` could not catch it:** the resolver-level policy evaluates the playback URL at RESOLVE time, before the iframe loads. The popunder is emitted by provider JavaScript AFTER the embed has loaded, inside a cross-origin document the server never sees. This is an architecture boundary, not a bug in that commit.
-3. **Why the sandbox normally stops it:** the committed Peachify configuration (`supabase/migrations/20260821040000_phase7e_peachify_experimental.sql`) is `sandbox_policy: 'required'` at BOTH provider and source level. The resulting sandbox token set omits `allow-popups` and `allow-top-navigation*`, which blocks the entire popup family — verified at runtime above.
-4. **Why the Android test escaped:** the embed must have been rendered WITHOUT the sandbox attribute at that moment. Exactly one in-app control could produce that state: the player's sandbox shield (`toggleSandbox()`), a one-tap silent disable available on every embed. (The alternative — the deployed database having Peachify's `sandbox_policy` edited to `unrestricted` — is an admin action, unverifiable remotely; the committed config says `required`.)
+3. **Why the sandbox normally stops it:** the sandbox token set omits `allow-popups` and `allow-top-navigation*`, which blocks the entire popup family — verified at runtime above. **But Peachify refuses to play under the sandbox** ("Sandbox Detected" screen), so for this provider the sandbox cannot be used as the redirect defense at all.
+4. **Correction of the earlier hypothesis** (that the Android escape route was the player's one-tap shield): with the committed `required` configuration the shield is harden-only and could not have disabled the sandbox. The real explanation is the newly confirmed provider behavior: Peachify only ever plays in an unsandboxed frame — the device that captured the redirect was simply playing Peachify the only way Peachify allows.
 
-## Fix implemented (this commit)
+## Architecture implemented (final)
 
-**The in-player sandbox control is now HARDEN-ONLY** — it can strengthen protection but can never weaken the admin-configured policy:
+**Sandbox Policy and Ad Protection are two independent settings resolving through the same hierarchy — source override → provider default → system default:**
 
-- `src/lib/shared/sandbox-policy.ts` — new `playerCanDisableSandbox(policy)`: returns `true` ONLY for an explicit `unrestricted` admin policy (toggling then stays within the admin's own baseline); `required`/`optional`/unknown are locked.
-- `src/lib/components/player/PlayerShell.svelte` — `toggleSandbox()` refuses to disable the sandbox for a locked policy; the shield button renders as a disabled "Sandbox enforced by the provider configuration" indicator for locked embeds, and keeps its previous toggle behavior only for `unrestricted` embeds.
-- `PlayerViewport.svelte` — unchanged; it keeps applying the exact secure token set and the autoplay/fullscreen/PiP/EME permission, so play, pause, seek, fullscreen, progress, resume, subtitles, source switching and episode switching are unaffected.
-- `scripts/peachify_redirect_protection_test.ts` (new, wired into the test chain) — 59 checks pinning the token set, the harden-only control, Peachify's locked-secure config, legitimate Peachify templates staying allowed with Ad Protection ON, scoped-rule isolation, sandbox independence, and the eight required scenarios.
+- `sandbox_policy: 'required' | 'optional' | 'unrestricted'` — resolves via `sandboxPolicyFromCapabilities` (source value overrides the provider default; secure system default `'required'`).
+- `playback_ad_protection: true | false` (+ optional `playback_ad_protection_rules`) — resolves via `playbackAdProtectionFromCapabilities` (source override → provider default → system default OFF).
+- **Neither setting ever forces the other**: enabling Ad Protection does NOT re-add a sandbox; an unrestricted sandbox does NOT toggle Ad Protection. Admin provider/source UI keeps two separate controls (Sandbox Policy select + Ad Protection checkbox); the player shield is a sandbox-state control only, never an Ad Protection control.
+- Peachify's committed configuration is now `sandbox_policy: 'unrestricted'` + `playback_ad_protection: true` at BOTH provider and source level (migration `20260916000000`): the iframe renders without a sandbox attribute (no "Sandbox Detected" screen, playback works), while the resolver still classifies every candidate playback URL for this provider/source only.
+- The in-player sandbox control remains HARDEN-ONLY (`playerCanDisableSandbox`): `required`/`optional` embeds are locked ON for the session; only an explicitly `unrestricted` admin policy keeps the toggle available (within the admin's own baseline). The player simply renders the RESOLVED policy; it never silently re-enables the sandbox.
 
-Deliberately NOT done: no global ad blocker; no destination blacklist (Google is NOT blacklisted anywhere — the destination is evidence, not the cause); no anti-adblock interference; no sandbox forced onto `unrestricted` providers; no change to the Ad Protection architecture (`d1c2fb6`) or to `sandbox_policy` semantics; no coupling between Ad Protection and Sandbox.
+**What Ad Protection actually enforces with the sandbox OFF (technically valid, application/resolver level):**
+
+- **A. Resolver returns an ad/redirect playback URL before iframe creation** → BLOCKED. `evaluatePlaybackUrl` runs after `validatePlaybackUrl` for every candidate (ad-domain / redirect / unsafe-navigation categories + provider-scoped rules from `playback_ad_protection_rules`), rejecting with `PLAYBACK_POLICY_BLOCKED` so fallback, default-source ordering, health ranking and manual switching continue with the next candidate — each evaluated with its OWN effective setting.
+- **B. Mavero itself navigating/popup to a blocked destination** → not applicable by construction: Mavero never opens provider popups and never navigates its top level to provider URLs (embeds render inside the player iframe only).
+
+**What CANNOT be blocked (browser security boundary — documented, never faked):**
+
+- **C. Cross-origin provider iframe internally executing `window.open(...)` / `location=...` / `target="_blank"` / delayed popunders / dynamically generated redirects.** Without the sandbox attribute, the parent page has NO mechanism to intercept, inspect, or veto navigations and window openings initiated by a cross-origin document (same-origin policy; no cross-origin JS injection, no fetch/XHR monkey-patching, no service-worker interception of third-party iframe traffic — all forbidden anti-adblock-adjacent techniques). For an `unrestricted` provider this channel is OPEN and complete redirect protection is explicitly NOT claimed.
+- **D. Advertisements rendered inside the provider's own iframe/player.** No application-level mechanism exists to distinguish and block them without the (refused) sandbox or forbidden injection; not claimed.
+
+## Fix history
+
+- `e17402c` — resolver-level playback policy layer (global scope at the time).
+- `d1c2fb6` — Ad Protection scoped per provider/source (source override → provider default → system default OFF), admin UI/API, per-candidate evaluation.
+- `e4ba560` — harden-only in-player sandbox control (required/optional locked; unrestricted keeps the toggle), after the runtime mechanism verification above.
+- Current commit — **decoupling correction**: Peachify committed config → `unrestricted` + `playback_ad_protection: true` (migration); `sandbox_policy` resolution unified to the source-override hierarchy (source override → provider default → system default) matching `playback_ad_protection`, so a source override can independently override either setting; docs + tests updated (93-check independence matrix incl. fallback preservation of BOTH settings).
+
+Deliberately NOT done: no global ad blocker; no destination blacklist (Google is NOT blacklisted anywhere — the destination is evidence, not the cause); no anti-adblock interference; no sandbox forced onto `unrestricted` providers; no Ad Protection dependency on the sandbox in either direction; no change to MaveroAds independence.
 
 ## Remaining browser-security limitation (documented, by design)
 
-- An admin who explicitly sets `sandbox_policy: 'unrestricted'` for a provider re-opens the popup channel; per the task specification the admin setting remains authoritative, so for such providers complete redirect protection is NOT claimed. The player may still harden (enable the sandbox) per session via the shield.
+- For Peachify (`unrestricted` + protection ON), resolver-level classification is the enforceable protection. Popunders opened by the provider document itself land in a NEW browser target the app cannot intercept — the limitation the original Android screenshot demonstrated. Complete redirect protection for such providers would require the sandbox, which Peachify refuses; the tradeoff is an explicit admin decision encoded in the committed configuration.
 - A sandboxed frame CAN navigate itself (in-frame redirects to ad pages remain possible); they stay inside the iframe and cannot open the external browser while the attribute is present.
 - Service-worker `clients.openWindow()` from a sandboxed-registered worker was rejected in the tested Chromium; behavior on other engines may differ and is not a controllable channel from a cross-origin parent.
