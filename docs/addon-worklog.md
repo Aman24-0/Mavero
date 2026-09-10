@@ -622,3 +622,164 @@ HLS playback, MAVERO Player aggregation, source UI, and player integration
 are NOT implemented yet.**
 
 ---
+## Phase 4 — MAVERO Player integration (DONE)
+
+**Commit:** `feat: integrate stremio streams with mavero player` — the single
+focused Phase 4 commit on `main` (this section ships inside it; the exact SHA
+is the HEAD shown by `git log` after push). Phase 4 connects the completed
+Phase 3 Stremio HTTP
+stream resolver to the existing playback architecture as ONE virtual,
+aggregate source named **"MAVERO Player"** — additively, with the existing
+provider/embed/direct system fully preserved.
+
+### Architecture implemented
+
+```
+Existing (UNTOUCHED):
+  provider source → /api/playback/resolve → provider resolver
+    → provider adapter → embed/direct player
+
+New (ADDITIVE):
+  "MAVERO Player" (virtual option in the EXISTING source sheet)
+    → POST /api/playback/stremio (dedicated endpoint; content ids ONLY)
+    → getDetail + normalizeContentIdentifiers (EXISTING id pipeline)
+    → Phase 3 resolveStremioStreams() (enabled addons from DB, service role)
+    → Phase 3 stremioStreamToPlayerSource() adapter (per stream)
+    → ONE aggregate PlayerSource (type 'direct')
+    → PlaybackManager presetSource branch (skips the resolver fetch, reuses
+      the SAME validation/adapter/race machinery) → native player path
+```
+
+### Files changed
+
+- `src/lib/shared/mavero-player.ts` (new) — virtual identity:
+  `MAVERO_PLAYER_SOURCE_ID = 'mavero-player'` (deliberately NOT a UUID → the
+  existing `parseResolverRequest()` UUID requirement still rejects it, so the
+  virtual source can never enter the provider resolver id space), name,
+  integration marker, `isMaveroPlayerSourceId()`, `maveroPlayerSourceOption()`
+  (reuses the existing `PlayerSourceOption` model — no second representation).
+- `src/lib/server/streaming/stremio/mavero-player-source.ts` (new) —
+  `parseStremioPlaybackRequest()` (strict server-side input validation:
+  contentId/mediaType/season/episode ONLY; movie has no episode scope,
+  series/anime require both), `maveroPlayerSourceFromResolution()` (composes
+  the aggregate PlayerSource), `hasStreamEligibleAddons()` (boolean feature
+  gate), `MAVERO_PLAYER_MAX_STREAMS = 24` (deterministic payload cap).
+- `src/routes/api/playback/stremio/+server.ts` (new) — the dedicated
+  endpoint; mirrors `/api/playback/resolve` conventions (POST + JSON,
+  `readJsonBody`, no-store, `{ ok, source | error }`).
+- `src/lib/client/player/mavero-player.ts` (new) — client helper
+  (`resolveMaveroPlayerSource`): POSTs content identifiers only; validates
+  the response through the EXISTING `isPlayablePlayerSource` guard;
+  `source: null` → graceful `NO_STREAMS` result.
+- `src/lib/client/player/PlaybackManager.ts` (additive) — optional
+  `presetSource` on the resolver request: when present the manager skips the
+  `/api/playback/resolve` fetch and runs the supplied source through the
+  unchanged validation → adapter-picking → session lifecycle. The original
+  fetch path is byte-identical (moved into an `else` branch).
+- `src/routes/watch/[type]/[id]/+page.server.ts` (additive) —
+  `maveroPlayerAvailable` boolean (server-gated via service-role client —
+  `streaming_addons` has NO anon read by Phase 1 RLS; failure → `false`).
+- `src/routes/watch/[type]/[id]/+page.svelte` (additive) — appends the ONE
+  virtual option when server-gated available; `prepareSource()` branches on
+  `isMaveroPlayerSourceId()`; `prepareMaveroPlayerSource()` (loading state →
+  endpoint call → manager `presetSource` load, with request-sequence +
+  AbortController stale-response protection on episode change/destroy).
+- `scripts/stremio_player_phase4_test.ts` (new, 130 checks).
+- `package.json` (test chain: + `stremio_player_phase4_test.ts`).
+
+### Virtual source design
+
+* ONE aggregate entry in the existing source sheet (`status: 'available'`,
+  `integrationType: 'stremio'`). Individual addon streams NEVER become
+  `sourceOptions` entries or `streaming_sources` database rows (no migration,
+  no writes anywhere in the phase).
+* Stable virtual identity `mavero-player` is used as the loaded source's
+  `sourceId`/`providerId` → source-sheet highlight, prev/next navigation,
+  progress-record `selectedSourceId` and resume all address the LOGICAL
+  source. Resume re-resolves fresh (correct — stream URLs expire).
+* Per-stream selection INSIDE MAVERO Player reuses the EXISTING quality
+  menu: every resolved stream becomes one `qualities[]` entry labelled
+  `"<addon name> · <quality>"` (urls unique — Phase 3 dedupe). Switching is
+  position-preserving through the shell's existing `pendingSeek` behavior.
+  No source-sheet redesign, no new switching machinery.
+* Deterministic first stream = aggregate `url` (resolver order:
+  addon ordering → name → stream index → quality).
+
+### API contract (`POST /api/playback/stremio`)
+
+Request (content identifiers ONLY — never addon ids/manifest URLs):
+
+```json
+{ "contentId": "series-94605", "mediaType": "series", "season": 2, "episode": 13 }
+```
+
+Response — `{ "ok": true, "source": PlayerSource | null }`:
+
+* non-null: aggregate `type: 'direct'` PlayerSource (virtual ids; `qualities`
+  = resolved streams; metadata names MAVERO Player; content title; primary
+  protocol). Only shared PlayerSource fields — NEVER manifestUrl, raw addon
+  JSON, per-addon failure detail, proxy header values or torrent metadata.
+* `null`: zero playable streams → graceful "no playable streams" state.
+* Errors: 400 `INVALID_REQUEST`, 502 `CONTENT_UNAVAILABLE`,
+  503 `RESOLUTION_UNAVAILABLE` (resolution-infrastructure only; per-addon
+  failures never fail the request — Phase 3 isolation).
+
+### PlayerSource integration + security
+
+* Every stream is mapped by the Phase 3 adapter
+  (`stremioStreamToPlayerSource`) — no second competing representation.
+* Every candidate URL passes the EXISTING `validatePlaybackUrl(url, 'direct')`
+  boundary — the same HTTPS-only, credential-free, non-private-host policy
+  all provider direct sources pass. Plain-http streams (permitted at the
+  Phase 3 resolver boundary) are silently excluded from the playable list —
+  the existing direct player path is HTTPS-only and Mavero does not proxy or
+  rewrite media URLs.
+* The client never imports server Stremio code (pinned); all addon
+  configuration, eligibility, ordering and identifiers are server-side;
+  anime uses the existing Phase 3 anime→series mapping; identifiers come
+  from the EXISTING `getDetail` + `normalizeContentIdentifiers` pipeline.
+
+### Test counts
+
+`stremio_addons_phase1_test.ts` 111 · `stremio_addons_phase2_test.ts` 202 ·
+`stremio_addons_phase3_test.ts` 158 · `stremio_player_phase4_test.ts` 130
+(sections A identity/contract isolation · B request parsing · C composition ·
+D multi-stream · E HTTPS-only boundary · F/G empty+partial-failure · H cap ·
+I anime mapping · J end-to-end resolver→composition · K client helper ·
+L manager presetSource incl. embed/direct/race/provider-pins · M availability
+gate · N source-level boundary pins).
+
+### Commands / results
+
+- Full test chain (84 scripts from `package.json`) → **84/84 pass**
+- `pnpm check` (svelte-check) → **0 errors / 41 warnings** (Phase 3 baseline unchanged)
+- `pnpm build` (vite + adapter-netlify) → **success**
+- `git diff --check` → clean
+
+### Explicit scope statements
+
+* **HLS.js / native HLS enhancement is NOT part of Phase 4.** No hls.js
+  dependency was added. HLS URLs (`.m3u8`) are passed through the existing
+  direct-player path — browsers with native HLS play them; browsers without
+  will surface the existing media-error state. Robust HLS.js support is
+  explicitly deferred to Phase 5.
+* **Existing provider/embed/direct playback remains intact.** The provider
+  resolver imports nothing from Stremio (pinned); `/api/playback/resolve`
+  is untouched (pinned); embed sources still use provider-owned iframes;
+  direct sources still use the native path; saved-source/default/fallback,
+  progress/resume, fullscreen/PiP/Media Session/Wake Lock are unchanged
+  (full existing suite passes).
+
+### Known limitations (deferred)
+
+* Plain-http addon streams are excluded at the playback boundary (HTTPS-only
+  policy — a proxy/upgrade path would belong to a later phase).
+* The per-stream list inside MAVERO Player is capped at 24 (deterministic).
+* No persistent stream cache (per Phase 3 policy — URLs expire); every
+  selection re-resolves.
+* The availability gate is a global boolean (any eligible enabled addon);
+  per-title eligibility is resolved at selection time (graceful empty state).
+
+**Phase 4 complete. MAVERO Player integration is implemented.** Torrent/P2P,
+magnet/externalUrl playback, media proxying, admin addon UI and HLS.js
+remain excluded (later phases).

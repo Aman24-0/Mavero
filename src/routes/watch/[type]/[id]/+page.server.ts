@@ -5,6 +5,8 @@ import { toMediaItem } from '$lib/server/content/presenter';
 import { isContentType } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { detailVerdict } from '$lib/server/content/search-classify';
+import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
+import { hasStreamEligibleAddons } from '$lib/server/streaming/stremio/mavero-player-source';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals, cookies, url }) => {
@@ -67,7 +69,20 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
     } catch {
       streamingConfig = { version: 1, updatedAt: new Date(0).toISOString(), providers: [], sources: [], categories: [], sourceCategories: [], defaults: {} };
     }
-    return { item: toMediaItem(item), streamingConfig, episodes };
+    // Phase 4 — MAVERO Player availability gate (server-side feature flag).
+    // True only when at least one ENABLED, usable addon advertises an
+    // explicit `stream` capability. The flag is a bare boolean: no addon
+    // identity, manifest URL or health detail ever reaches the client.
+    // `streaming_addons` has no anon read (Phase 1 RLS), so the lookup uses
+    // the service-role client; any failure degrades to `false` — the watch
+    // route simply renders the provider sources exactly as before.
+    let maveroPlayerAvailable = false;
+    try {
+      maveroPlayerAvailable = await hasStreamEligibleAddons(createSupabaseAdminClient());
+    } catch {
+      maveroPlayerAvailable = false;
+    }
+    return { item: toMediaItem(item), streamingConfig, episodes, maveroPlayerAvailable };
   } catch {
     throw error(404, 'Title not found');
   }

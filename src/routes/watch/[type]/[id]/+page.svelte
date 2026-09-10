@@ -12,6 +12,8 @@
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import type { PlaybackContext } from '$lib/client/progress/types';
   import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
+  import { resolveMaveroPlayerSource } from '$lib/client/player/mavero-player';
+  import { isMaveroPlayerSourceId, MAVERO_PLAYER_SOURCE_ID, maveroPlayerSourceOption } from '$lib/shared/mavero-player';
 
   export let data: PageData;
 
@@ -35,17 +37,26 @@
   // Source options are built directly from the public streaming config. The
   // MegaPlay-style SUB/DUB variant toggle was removed alongside the Yenime
   // anime provider — all sources are now opaque options selected by name.
-  $: sourceOptions = data.streamingConfig.sources.map((source) => {
-    const provider = data.streamingConfig.providers.find((provider) => provider.id === source.provider_id);
-    const option: PlayerSourceOption = {
-      id: source.id,
-      name: source.name,
-      status: source.status,
-      integrationType: source.integration_type ?? undefined,
-      sandboxPolicy: sandboxPolicyFromCapabilities(provider?.capabilities, source.capabilities)
-    };
-    return option;
-  });
+  //
+  // Phase 4: the MAVERO Player virtual source is APPENDED (never replacing
+  // or reordering the provider sources) when the server-side availability
+  // gate (`data.maveroPlayerAvailable`) reports at least one eligible
+  // enabled Stremio addon. It is ONE aggregate option — individual addon
+  // streams never become source options or `streaming_sources` rows.
+  $: sourceOptions = [
+    ...data.streamingConfig.sources.map((source) => {
+      const provider = data.streamingConfig.providers.find((provider) => provider.id === source.provider_id);
+      const option: PlayerSourceOption = {
+        id: source.id,
+        name: source.name,
+        status: source.status,
+        integrationType: source.integration_type ?? undefined,
+        sandboxPolicy: sandboxPolicyFromCapabilities(provider?.capabilities, source.capabilities)
+      };
+      return option;
+    }),
+    ...(data.maveroPlayerAvailable ? [maveroPlayerSourceOption()] : [])
+  ];
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
   $: playerContent = ({ id: item.id, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
 
@@ -107,6 +118,13 @@
   // the adapter destroy. Including selectedSourceId here is a safety net.
   let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq: number; sourceId?: string } | null = null;
   let embedPlaybackSeq = 0;
+  // Phase 4: MAVERO Player in-flight resolution guards. `maveroRequestSeq`
+  // invalidates stale responses (incremented on every new resolution, on
+  // episode change and on destroy — an older response can never overwrite
+  // a newer source selection); `maveroResolveController` aborts the
+  // in-flight /api/playback/stremio fetch when superseded.
+  let maveroRequestSeq = 0;
+  let maveroResolveController: AbortController | null = null;
 
   // Subscribe to manager state so the route's reactive locals mirror the
   // manager snapshot. PlayerShell receives these via its existing props.
@@ -186,6 +204,11 @@
     // Phase 4: clear savedSourceId so the new episode's progress record
     // is loaded fresh (different episode = different progressKey).
     savedSourceId = undefined;
+    // Phase 4: invalidate any in-flight MAVERO Player resolution — an older
+    // response must never overwrite the new episode's source selection.
+    maveroRequestSeq += 1;
+    maveroResolveController?.abort();
+    maveroResolveController = null;
   }
   $: if (browser && playbackKey !== writerKey) void setupProgressContext();
   // Phase 2: select the admin-configured default source for this content type
@@ -270,6 +293,10 @@
     active = false;
     unsubscribeManager();
     unsubscribeManagerEvents();
+    // Phase 4: abort any in-flight MAVERO Player resolution.
+    maveroRequestSeq += 1;
+    maveroResolveController?.abort();
+    maveroResolveController = null;
     manager.dispose();
     void writer?.flush();
     writer?.dispose();
@@ -363,13 +390,21 @@
     // For MANUAL source switches, startPosition = currentPlaybackTime
     // (the position the user was at in the previous source).
     const startPosition = allowFallback ? resumeTime : currentPlaybackTime;
-    const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
-    if (allowFallback && defaultSourceId) request.defaultSourceId = defaultSourceId;
-    await manager.loadSource(
-      request,
-      startPosition,
-      allowFallback,
-    );
+    // Phase 4: the MAVERO Player virtual source takes the additive Stremio
+    // branch — resolve server-side via /api/playback/stremio, then load the
+    // aggregate source through the SAME manager/adapter path. The existing
+    // provider branch below is unchanged.
+    if (isMaveroPlayerSourceId(sourceId)) {
+      await prepareMaveroPlayerSource(startPosition);
+    } else {
+      const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
+      if (allowFallback && defaultSourceId) request.defaultSourceId = defaultSourceId;
+      await manager.loadSource(
+        request,
+        startPosition,
+        allowFallback,
+      );
+    }
     if (!active) return;
     const resolved = manager.getSource();
     // Phase 4: if the resolver walked the fallback list and selected a
@@ -388,6 +423,59 @@
       } catch {
         // Playback remains available even if local list promotion is unavailable.
       }
+    }
+  }
+
+  /**
+   * Phase 4 — MAVERO Player resolution branch (additive).
+   *
+   * Resolves the virtual source server-side and loads the result through
+   * the EXISTING PlaybackManager direct-player path:
+   *   1. show the loading state (resolving),
+   *   2. POST /api/playback/stremio with ONLY content identifiers
+   *      (all addon configuration is server-side),
+   *   3. `ok` source → manager.loadSource with `presetSource` (the manager
+   *      skips its resolver fetch and runs the source through the normal
+   *      adapter lifecycle — race guards included),
+   *   4. empty/failed resolution → graceful unavailable/network-error state.
+   *      Existing provider sources are untouched and remain switchable.
+   *
+   * Stale-response protection: `maveroRequestSeq` + AbortController —
+   * an older resolution can never overwrite a newer source selection, and
+   * superseded fetches are aborted. Per-stream switching INSIDE the loaded
+   * aggregate source uses the existing quality menu (position-preserving
+   * via the shell's pendingSeek) — no extra machinery here.
+   */
+  async function prepareMaveroPlayerSource(startPosition: number) {
+    const requestId = ++maveroRequestSeq;
+    maveroResolveController?.abort();
+    const controller = new AbortController();
+    maveroResolveController = controller;
+    resolvedSource = null;
+    resolutionState = 'resolving';
+    resolutionMessage = 'Resolving MAVERO Player streams…';
+    try {
+      const result = await resolveMaveroPlayerSource(
+        { contentId: item.id, mediaType: contentType, season, episode },
+        { signal: controller.signal },
+      );
+      if (!active || requestId !== maveroRequestSeq) return;
+      if (!result.ok) {
+        resolvedSource = null;
+        resolutionState = result.code === 'NO_STREAMS' ? 'unavailable' : 'network-error';
+        resolutionMessage = result.message;
+        return;
+      }
+      await manager.loadSource(
+        { sourceId: MAVERO_PLAYER_SOURCE_ID, contentId: item.id, mediaType: contentType, season, episode, presetSource: result.source },
+        startPosition,
+        false,
+      );
+    } catch {
+      if (!active || requestId !== maveroRequestSeq) return;
+      resolvedSource = null;
+      resolutionState = 'network-error';
+      resolutionMessage = 'MAVERO Player could not be reached. Try again or choose another source.';
     }
   }
 

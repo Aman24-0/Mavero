@@ -284,38 +284,51 @@ export class PlaybackManager {
     });
 
     try {
-      const body: Record<string, unknown> = {
-        sourceId: request.sourceId,
-        contentId: request.contentId,
-        mediaType: request.mediaType,
-        enableFallback: allowFallback,
-      };
-      if (request.season !== undefined) body.season = request.season;
-      if (request.episode !== undefined) body.episode = request.episode;
-      // Phase 2: forward the admin-configured default source id so the
-      // resolver can sort it to the front of the fallback candidate list.
-      // Only forwarded when allowFallback is true (manual source switches
-      // pass allowFallback=false and do not want the default forced back).
-      if (allowFallback && request.defaultSourceId) body.defaultSourceId = request.defaultSourceId;
-      // Phase 7F (MegaPlay): forward the user-selected playback variant
-      // (e.g. 'sub' or 'dub'). Adapters that do not support variants
-      // ignore this field. MegaPlay's resolver adapter substitutes the
-      // URL path segment based on this value.
-      if (request.variant) body.variant = request.variant;
-      const response = await this.fetcher('/api/playback/resolve', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      const payload = (await response.json()) as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
-      if (!this.active || sessionId !== this.sessionId) return;
+      let safeSource: PlayerSource | null = null;
+      if (request.presetSource) {
+        // Phase 4 (MAVERO Player): the watch route already resolved this
+        // source server-side (Stremio addon streams via the dedicated
+        // endpoint). Skip the `/api/playback/resolve` fetch and run the
+        // supplied source through the SAME validation + adapter lifecycle
+        // below — session/abort/race guards, adapter picking and state
+        // transitions are unchanged.
+        if (!this.active || sessionId !== this.sessionId) return;
+        safeSource = normalizePlayerSource(request.presetSource);
+        if (!safeSource) throw new ResolverError('RESOLUTION_UNAVAILABLE', 'This source is currently unavailable.');
+      } else {
+        const body: Record<string, unknown> = {
+          sourceId: request.sourceId,
+          contentId: request.contentId,
+          mediaType: request.mediaType,
+          enableFallback: allowFallback,
+        };
+        if (request.season !== undefined) body.season = request.season;
+        if (request.episode !== undefined) body.episode = request.episode;
+        // Phase 2: forward the admin-configured default source id so the
+        // resolver can sort it to the front of the fallback candidate list.
+        // Only forwarded when allowFallback is true (manual source switches
+        // pass allowFallback=false and do not want the default forced back).
+        if (allowFallback && request.defaultSourceId) body.defaultSourceId = request.defaultSourceId;
+        // Phase 7F (MegaPlay): forward the user-selected playback variant
+        // (e.g. 'sub' or 'dub'). Adapters that do not support variants
+        // ignore this field. MegaPlay's resolver adapter substitutes the
+        // URL path segment based on this value.
+        if (request.variant) body.variant = request.variant;
+        const response = await this.fetcher('/api/playback/resolve', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const payload = (await response.json()) as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
+        if (!this.active || sessionId !== this.sessionId) return;
 
-      const safeSource = normalizePlayerSource(payload.source);
-      if (!response.ok || !payload.ok || !safeSource) {
-        const code = payload.error?.code ?? '';
-        const message = payload.error?.message ?? 'This source is currently unavailable.';
-        throw new ResolverError(code || 'RESOLUTION_UNAVAILABLE', message);
+        safeSource = normalizePlayerSource(payload.source);
+        if (!response.ok || !payload.ok || !safeSource) {
+          const code = payload.error?.code ?? '';
+          const message = payload.error?.message ?? 'This source is currently unavailable.';
+          throw new ResolverError(code || 'RESOLUTION_UNAVAILABLE', message);
+        }
       }
 
       // Pick an adapter and load it.
@@ -744,6 +757,17 @@ export type ResolverRequest = {
    * anime resolver). Other adapters silently ignore it.
    */
   variant?: string;
+  /**
+   * Phase 4 (MAVERO Player): an ALREADY-RESOLVED source supplied by the
+   * watch route (resolved server-side via `/api/playback/stremio`). When
+   * present, the manager skips the `/api/playback/resolve` fetch entirely
+   * and runs THIS source through the exact same validation + adapter
+   * lifecycle below (same session/abort/race guards, same adapter
+   * picking, same state transitions). The manager itself never talks to
+   * the Stremio resolver — the client/server Stremio boundary lives in
+   * the watch route + dedicated endpoint.
+   */
+  presetSource?: PlayerSource;
 };
 
 export class ResolverError extends Error {
