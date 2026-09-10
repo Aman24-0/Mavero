@@ -497,6 +497,37 @@ export class PlaybackManager {
   }
 
   /**
+   * Phase 10 (MAVERO Player progressive loading): swaps the CURRENT
+   * preset-source payload for an EXTENDED one WITHOUT touching the adapter,
+   * the media element or the playback state — late addon results merge into
+   * the aggregate live while the video keeps playing (GOAL 2: "DO NOT
+   * restart playback merely because another addon finished resolving").
+   *
+   * Guards: only applies when (a) the manager is active, (b) the current
+   * session was loaded from a preset source (the MAVERO aggregate — provider
+   * sources are never rewritten) and (c) the supplied source keeps the SAME
+   * sourceId identity and passes the existing playable guard. A merge for a
+   * stale/different source is dropped (GOAL 5 stale protection at the
+   * manager layer, mirroring the watch route's generation guard).
+   *
+   * The resolved state stays 'ready' — this is not a resolution event.
+   */
+  updatePresetSource(next: PlayerSource): boolean {
+    if (!this.active) return false;
+    const session = this.session;
+    const current = this._state.source;
+    if (!current) return false;
+    if (current.sourceId !== next.sourceId || current.providerId !== next.providerId) return false;
+    const normalized = normalizePlayerSource(next);
+    if (!normalized || !isPlayablePlayerSource(normalized) || sourceIsExpired(normalized)) return false;
+    session.source = normalized;
+    // Keep the resolved-media bookkeeping consistent without flipping the
+    // playback state: duration/buffered/position belong to the element.
+    this.patch(this.sessionId, { source: normalized });
+    return true;
+  }
+
+  /**
    * Dispose the manager entirely. Called by the watch route's `onDestroy`.
    * After `dispose()`, every public method is a no-op.
    */

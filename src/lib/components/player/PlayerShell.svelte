@@ -15,6 +15,18 @@
   // Phase 9: robust pending-seek state machine (streaming VOD seeking) — pure,
   // unit-tested; the shell feeds it media snapshots and applies the result.
   import { applyPendingSeek, capturePendingSeek, createPendingSeek, type PendingSeekState } from '$lib/client/player/pending-seek';
+  // Phase 10: live per-addon resolution statuses (GOAL 3) — the streams
+  // sheet renders Loading/✓/Failed — Retry per session addon while results
+  // merge progressively into the aggregate.
+  import type { MaveroAddonStatus } from '$lib/client/player/mavero-progressive';
+  // Phase 10 (GOAL 18): audio-track display — a LOCAL structural type so the
+  // shell stays engine-library-name-free (same pattern as WakeLockSentinelHandle).
+  type AudioTrackHandle = { id: number; lang?: string; name?: string; default?: boolean };
+  // Phase 10 (GOALS 12–15): controlled compatibility path — signed worker
+  // sessions for streams the browser cannot decode, honest badges for
+  // uncertain formats.
+  import { COMPAT_PREPARING_MESSAGE, requestMaveroCompatStream } from '$lib/client/player/mavero-compat';
+  import { checkMediaCompatibility, type MediaCompatibilityDecision } from '$lib/client/player/media-capabilities';
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -40,6 +52,11 @@
   // black-box embed providers that never post play/pause events never
   // acquire a wake lock — which is correct (iframe load ≠ actual playback).
   export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number; sourceId?: string } | null = null;
+  // Phase 10: live addon statuses for the MAVERO streams sheet (session
+  // order) + the retry hook — retrying ONE failed addon never restarts the
+  // video or the other addons (GOAL 6).
+  export let maveroAddons: MaveroAddonStatus[] = [];
+  export let onMaveroRetry: (addonKey: string) => void = () => {};
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
@@ -146,7 +163,17 @@
   // `enginequality` events — the shell never sees engine-library types. `null` when the
   // current playback is not engine-driven (MP4, native streaming, embeds) —
   // the quality UI then falls back to the existing per-stream select.
-  let engineQuality: { options: PlayerInternalQualityOption[]; selected: string | null } | null = null;
+  // Phase 10 (GOAL 18): the payload also carries the manifest's audio tracks
+  // (empty unless the stream REALLY has alternates) + the active index.
+  let engineQuality: { options: PlayerInternalQualityOption[]; selected: string | null; audioTracks: AudioTrackHandle[]; selectedAudioTrack: number | null } | null = null;
+
+  /** Safe audio-track label: manifest-provided name/lang verbatim — never invented. */
+  function audioTrackLabel(track: AudioTrackHandle): string {
+    const name = typeof track.name === 'string' ? track.name.trim() : '';
+    if (name) return name;
+    const lang = typeof track.lang === 'string' ? track.lang.trim() : '';
+    return lang || `Track ${track.id + 1}`;
+  }
 
   // Phase 6: local WakeLockSentinel type. lib.dom.d.ts may not include this on
   // older TS versions, so we declare the minimal shape we use, matching the
@@ -163,7 +190,22 @@
   $: qualities = source?.qualities ?? [];
   $: subtitles = source?.subtitles ?? [];
   $: selectedQualityOption = qualities.find((quality) => quality.url === selectedQuality) as PlayerQualityOption | undefined;
-  $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
+  // Phase 10: compat override — when a compatibility session succeeds, the
+  // player plays the WORKER-PROVIDED streaming url instead of the addon’s direct URL
+  // (which the browser cannot decode). Cleared on any source/stream switch.
+  let compatOverrideUrl: string | null = null;
+  let compatPreparing = false;
+  $: mediaUrl = compatOverrideUrl ?? selectedQualityOption?.url ?? source?.url ?? null;
+  $: statusNote = compatPreparing ? COMPAT_PREPARING_MESSAGE : '';
+  // Phase 10 stale guard: a source object that no longer contains the
+  // selected stream (episode switch → fresh aggregate) invalidates any
+  // pending compatibility session. Live merges KEEP the playing stream
+  // (mergeMaveroResults pins it), so they never trigger this reset.
+  $: if (source && source.sourceId === sourceIdentity && selectedQuality && !source.qualities?.some((quality) => quality.url === selectedQuality)) {
+    compatOverrideUrl = null;
+    compatPreparing = false;
+    selectedQuality = '';
+  }
   // Phase 6: MAVERO Player addon-stream presentation — derived ONLY when the
   // active source IS the aggregate MAVERO Player source. Provider sources
   // never enter this path (their UX is untouched), the resolver's
@@ -171,6 +213,17 @@
   // presentation layer by stable URL identity.
   $: maveroStreams = isMaveroAggregateSource(source) ? dedupeMaveroStreams(qualities) : [];
   $: maveroStreamGroups = groupMaveroStreams(maveroStreams);
+  // Phase 10: per-addon resolution state. Groups with streams get a ✓ when
+  // their session status is ok; session addons WITHOUT a visible group
+  // (pending/loading/failed/skipped, or ok with 0 streams) render as status
+  // rows so a late or failed addon is never hidden (GOAL 3).
+  $: maveroStatusByName = new Map(maveroAddons.map((addon) => [addon.addonName, addon]));
+  $: maveroPendingAddons = maveroAddons.filter((addon) => {
+    const grouped = maveroStreamGroups.some((group) => group.addonName === addon.addonName);
+    if (grouped) return false;
+    // ok-with-zero-streams needs no row (nothing to retry, nothing loading).
+    return addon.status !== 'ok';
+  });
   // Phase 9: the MAVERO Player source option (provider selection) — the
   // source sheet shows ONE "X Streams →" entry point for it.
   $: maveroSourceOption = sourceOptions.find((option) => option.id === MAVERO_PLAYER_SOURCE_ID);
@@ -209,6 +262,10 @@
     errorMessage = '';
     playing = false;
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
+    // Phase 10: any pending compatibility override belongs to the previous
+    // source session — the new session starts direct.
+    compatOverrideUrl = null;
+    compatPreparing = false;
     // Phase 9: failure markers are per-source-session — a stream that failed
     // for a previous source/aggregate must not mark the new one.
     failedStreamUrls = [];
@@ -619,11 +676,17 @@
 
   /**
    * Viewport `enginequality` event sink: the ONLY writer of `engineQuality`.
-   * An empty options list means the engine is gone (source switch to
-   * MP4/native, teardown) — the quality UI falls back to the stream list.
+   * An empty options list with no selectable audio tracks means the engine is
+   * gone (source switch to MP4/native, teardown) — the quality UI falls back
+   * to the stream list. Audio tracks alone keep the state alive (GOAL 18).
    */
-  function handleEngineQuality(event: CustomEvent<{ options: PlayerInternalQualityOption[]; selected: string | null }>) {
-    engineQuality = event.detail.options.length ? event.detail : null;
+  function handleEngineQuality(event: CustomEvent<{ options: PlayerInternalQualityOption[]; selected: string | null; audioTracks: AudioTrackHandle[]; selectedAudioTrack: number | null }>) {
+    engineQuality = event.detail.options.length || event.detail.audioTracks.length > 1 ? event.detail : null;
+  }
+
+  /** Phase 10 (GOAL 18): audio track selection through the viewport controller. */
+  function setAudioTrack(index: number) {
+    viewport?.selectEngineAudioTrack(index);
   }
 
   /**
@@ -642,11 +705,67 @@
    * into the pending-seek controller, keeps the player mounted and lets the
    * existing generation/race protection invalidate the previous stream.
    * Selecting the current stream is a no-op (sheet just closes).
+   *
+   * PHASE 10 — compatibility decision tree (GOALS 10/12/14):
+   *   1. runtime probe first (`checkMediaCompatibility` on addon-supplied
+   *      metadata): a browser that CAN decode the stream plays directly —
+   *      no conversion is ever forced on a capable device;
+   *   2. remux/transcode verdict + a SIGNED reference → request the
+   *      compatibility session ("Preparing compatible stream…"), then play
+   *      the worker-provided streaming url;
+   *   3. verdict without a reference (worker not provisioned for that
+   *      stream) → attempt direct anyway (uncertainty is honest), the
+   *      existing failure isolation catches the miss;
+   *   4. compat endpoint degradation → per-stream error state, every other
+   *      stream stays selectable (GOAL 8).
    */
   function selectMaveroStream(stream: PlayerQualityOption) {
     closeStreamsSheet();
-    if (!stream.url || stream.url === mediaUrl) return;
-    setQuality(stream.url);
+    if (!stream.url || (stream.url === mediaUrl && !compatOverrideUrl)) return;
+    const compatToken = typeof stream.compatToken === 'string' ? stream.compatToken : null;
+    const compatKind = stream.compatKind === 'remux' || stream.compatKind === 'transcode' ? stream.compatKind : null;
+    const sourceAtSelection = source;
+    void (async () => {
+      // Runtime capability refinement (never filename-only guessing).
+      let decision: MediaCompatibilityDecision;
+      try {
+        decision = await checkMediaCompatibility({ protocol: stream.protocol, container: stream.container, codec: stream.codec, filename: stream.filename });
+      } catch {
+        decision = { supported: true, needsRemux: false, needsTranscode: false, reason: 'probe-unavailable', tier: 'DIRECT_UNCERTAIN' };
+      }
+      const needsCompat = !decision.supported && (decision.needsRemux || decision.needsTranscode) && Boolean(compatToken);
+      if (needsCompat && compatToken) {
+        const kind: 'remux' | 'transcode' = compatKind ?? 'transcode';
+        compatPreparing = true;
+        state = 'preparing';
+        errorMessage = '';
+        playing = false;
+        capturePendingSeek(pendingSeekState, currentTime, Date.now());
+        const result = await requestMaveroCompatStream(compatToken, kind);
+        compatPreparing = false;
+        // Stale guard: a source/episode switch since selection started
+        // invalidates the outcome (the new session must not be touched).
+        if (source !== sourceAtSelection) return;
+        if (result.ok) {
+          // Play the signed worker session — identity stays the stream's url
+          // so the sheet's selected-state and progress keys are unchanged.
+          compatOverrideUrl = result.workerUrl;
+          selectedQuality = stream.url;
+          state = 'preparing';
+          return;
+        }
+        // Graceful degradation (GOAL 8): this stream errors, others remain.
+        compatOverrideUrl = null;
+        failedStreamUrls = failedStreamUrls.includes(stream.url) ? failedStreamUrls : [...failedStreamUrls, stream.url];
+        errorMessage = result.message;
+        state = 'error';
+        revealControls();
+        return;
+      }
+      // Direct playback (supported, uncertain, or no reference available).
+      compatOverrideUrl = null;
+      setQuality(stream.url);
+    })();
   }
 
   type OrientationController = ScreenOrientation & { lock?: (value: 'landscape' | 'portrait' | 'any' | 'natural' | 'landscape-primary' | 'landscape-secondary' | 'portrait-primary' | 'portrait-secondary') => Promise<void>; unlock?: () => void };
@@ -1186,7 +1305,7 @@
   {/if}
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} {statusNote} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
@@ -1263,20 +1382,49 @@
         <button class="close-button" type="button" aria-label="Close stream list" onclick={() => closeStreamsSheet()}><X size={17} /></button>
       </div>
       <div class="sheet-list streams-list">
-        {#if maveroStreamGroups.length}
+        {#if maveroStreamGroups.length || maveroPendingAddons.length}
           <div class="mavero-groups" role="listbox" aria-label="MAVERO Player addon streams">
             {#each maveroStreamGroups as group (group.addonName)}
               <div class="mavero-group" role="group" aria-label={`${group.addonName} streams`}>
                 <div class="mavero-group-head" role="presentation">
                   <span class="mavero-group-name" title={group.addonName}>{group.addonName}</span>
                   <small class="mavero-group-count">{group.streams.length} stream{group.streams.length === 1 ? '' : 's'}</small>
+                  {#if maveroStatusByName.get(group.addonName)?.status === 'ok'}<span class="mavero-group-state" role="presentation">✓</span>{/if}
                 </div>
                 {#each group.streams as stream (stream.url)}
                   <MaveroStreamCard {stream} selected={stream.url === mediaUrl} failed={failedStreamUrls.includes(stream.url)} onselect={selectMaveroStream} />
                 {/each}
               </div>
             {/each}
+            {#each maveroPendingAddons as addon (addon.key)}
+              <!-- Phase 10 GOAL 3: addons still resolving, failed, or skipped
+                   stay VISIBLE — a late/failed addon is never hidden. -->
+              <div class="mavero-group mavero-addon-status" role="group" aria-label={`${addon.addonName} resolution status`}>
+                <div class="mavero-group-head" role="presentation">
+                  <span class="mavero-group-name" title={addon.addonName}>{addon.addonName}</span>
+                  {#if addon.status === 'pending' || addon.status === 'loading'}
+                    <small class="mavero-group-state loading" role="status">Loading…</small>
+                  {:else if addon.status === 'failed'}
+                    <small class="mavero-group-state failed" role="status">Failed</small>
+                    <button class="mavero-retry" type="button" onclick={() => onMaveroRetry(addon.key)}>Retry</button>
+                  {:else}
+                    <small class="mavero-group-state" role="status">Unavailable</small>
+                  {/if}
+                </div>
+              </div>
+            {/each}
           </div>
+          {#if engineQuality && engineQuality.audioTracks.length > 1}
+            <!-- Phase 10 GOAL 18: audio selector ONLY for streams whose
+                 manifest really carries multiple audio renditions; labels
+                 are the manifest's own name/lang (never invented). -->
+            <div class="variant-row mavero-quality-row" role="group" aria-label="Audio track">
+              <span class="mavero-quality-title">Audio</span>
+              {#each engineQuality.audioTracks as track (track.id)}
+                <button class="variant-button" class:active={engineQuality?.selectedAudioTrack === track.id} type="button" aria-pressed={engineQuality?.selectedAudioTrack === track.id} onclick={() => setAudioTrack(track.id)}>{audioTrackLabel(track)}</button>
+              {/each}
+            </div>
+          {/if}
           {#if engineQuality && engineQuality.options.length > 1}
             <!-- Phase 6: internal quality of the ACTIVE engine-driven
                  manifest (AUTO + levels). Lives with the ACTIVE stream's
@@ -1443,6 +1591,12 @@
   .mavero-group-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 6px 12px 2px; }
   .mavero-group-name { overflow: hidden; color: var(--ink-soft); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
   .mavero-group-count { flex: 0 0 auto; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
+  /* Phase 10: per-addon resolution state — Loading…/✓/Failed + Retry. */
+  .mavero-group-state { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
+  .mavero-group-state.loading { color: var(--muted); }
+  .mavero-group-state.failed { color: #ffb020; }
+  .mavero-retry { flex: 0 0 auto; min-height: 26px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 2px 9px; color: var(--ink); background: transparent; cursor: pointer; font: inherit; font-size: .55rem; }
+  .mavero-retry:hover, .mavero-retry:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
   .streams-empty { display: grid; place-items: center; min-height: 88px; color: var(--muted); font-size: .66rem; }
   .mavero-quality-row { align-items: center; flex-wrap: wrap; margin-top: 4px; }
   .mavero-quality-title { padding: 0 4px 0 12px; color: var(--muted); font-size: .58rem; }

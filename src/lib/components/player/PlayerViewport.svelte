@@ -3,7 +3,7 @@
   import type { PlayerInternalQualityOption, PlayerPlaybackState, PlayerSource, PlayerSubtitleTrack } from '$lib/shared/player';
   import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import { iframeSandboxAttribute } from '$lib/shared/sandbox-policy';
-  import { HlsPlaybackEngine, resolveDirectPlaybackMode } from '$lib/client/player/hls-engine';
+  import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
   import { sourceForStreamUrl } from '$lib/client/player/mavero-streams';
 
   export let source: PlayerSource | null = null;
@@ -14,6 +14,10 @@
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
   export let iframeElement: HTMLIFrameElement | undefined;
+  // Phase 10 (GOAL 14): user-visible status line (e.g. "Preparing compatible
+  // stream…") rendered in the state label while a compatibility session is
+  // being prepared. Empty = the default state labels apply.
+  export let statusNote = '';
   // Phase 9: the subtitle tracks for the CURRENT media. PlayerShell passes
   // the SELECTED stream's addon-provided tracks (quality-option subtitles)
   // falling back to the aggregate source's tracks — provider sources are
@@ -41,7 +45,7 @@
     canplay: void;
     progress: void;
     /** Phase 6: internal quality state of the engine-driven HLS source. */
-    enginequality: { options: PlayerInternalQualityOption[]; selected: string | null };
+    enginequality: { options: PlayerInternalQualityOption[]; selected: string | null; audioTracks: HlsAudioTrackLike[]; selectedAudioTrack: number | null };
   }>();
 
   export function play() {
@@ -113,7 +117,10 @@
   function dispatchEngineQuality() {
     const engine = hlsEngine;
     if (!engine || !hlsEngineActive) return;
-    const payload = { options: engine.getQualityOptions(), selected: engine.getQualitySelection() };
+    // Phase 10 (GOAL 18): audio tracks ride the same signature-guarded
+    // payload — the UI may offer track selection ONLY when the manifest
+    // actually carries more than one audio rendition.
+    const payload = { options: engine.getQualityOptions(), selected: engine.getQualitySelection(), audioTracks: engine.getAudioTracks(), selectedAudioTrack: engine.getSelectedAudioTrack() };
     const signature = JSON.stringify(payload);
     if (signature === engineQualitySignature) return;
     engineQualitySignature = signature;
@@ -133,7 +140,7 @@
     // (source switch to MP4/native HLS, unmount, etc.).
     if (hadEngine && engineQualitySignature !== null) {
       engineQualitySignature = null;
-      dispatch('enginequality', { options: [], selected: null });
+      dispatch('enginequality', { options: [], selected: null, audioTracks: [], selectedAudioTrack: null });
     } else {
       engineQualitySignature = null;
     }
@@ -226,6 +233,17 @@
     return hlsEngine?.getQualityOptions() ?? [];
   }
 
+  /** Phase 10 (GOAL 18): the ACTIVE stream's audio tracks (safe display). */
+  export function engineAudioTracks(): HlsAudioTrackLike[] {
+    return hlsEngine?.getAudioTracks() ?? [];
+  }
+
+  /** Phase 10 (GOAL 18): select one audio track by engine index. */
+  export function selectEngineAudioTrack(index: number) {
+    hlsEngine?.selectAudioTrack(index);
+    dispatchEngineQuality();
+  }
+
   /** Current generic selection id (AUTO id or level index string). */
   export function engineQualitySelected(): string | null {
     return hlsEngine?.getQualitySelection() ?? null;
@@ -298,7 +316,7 @@
 
   {#if source?.type !== 'embed'}<div class="viewport-shade" aria-hidden="true"></div>{/if}
   <div class="state-label" aria-live="polite">
-    {#if state === 'buffering'}Buffering…{:else if state === 'preparing' || state === 'resolving'}Preparing playback…{:else if state === 'switching-source'}Switching source…{:else if state === 'embed-loading'}Loading embed…{/if}
+    {#if statusNote}{statusNote}{:else if state === 'buffering'}Buffering…{:else if state === 'preparing' || state === 'resolving'}Preparing playback…{:else if state === 'switching-source'}Switching source…{:else if state === 'embed-loading'}Loading embed…{/if}
   </div>
 </div>
 

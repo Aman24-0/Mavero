@@ -47,6 +47,14 @@ export type PlayerQualityOption = {
   videoSize?: number;
   /** Addon-provided subtitle tracks (URLs already https-validated server-side). */
   subtitles?: PlayerSubtitleTrack[];
+  /**
+   * Phase 10 (GOAL 12): the SIGNED compatibility reference issued with this
+   * stream when the classifier routes it to remux/transcode. Opaque to the
+   * client — it authorizes exactly ONE worker-backed conversion of exactly
+   * THIS stream. Streams without a reference never touch the compat path.
+   */
+  compatToken?: string;
+  compatKind?: 'remux' | 'transcode';
 };
 
 /**

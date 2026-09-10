@@ -86,8 +86,9 @@ const controlsSource = read('src/lib/components/player/PlayerControls.svelte');
 const pendingSeekSource = read('src/lib/client/player/pending-seek.ts');
 const composerSource = read('src/lib/server/streaming/stremio/mavero-player-source.ts');
 const normalizeSource = read('src/lib/server/streaming/stremio/stream-normalize.ts');
-const packageJson = JSON.parse(read('package.json')) as { dependencies: Record<string, string>; scripts: { test: string } };
+const packageJson = JSON.parse(read('package.json')) as { dependencies: Record<string, string>; scripts: { test: string }; pnpm?: { overrides?: Record<string, string> } };
 const worklog = read('docs/addon-worklog.md');
+const engineSource = read('src/lib/client/player/hls-engine.ts');
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -384,7 +385,9 @@ function streamFixture(overrides: Record<string, unknown> = {}): Record<string, 
   ok(shellTemplate.includes('{MAVERO_PLAYER_SOURCE_NAME} · {maveroStreams.length} stream'), '15: the streams sheet header shows the exact aggregated count');
   ok(shellTemplate.includes('{group.streams.length} stream'), '17: each addon section shows ITS OWN real stream count');
   ok(shellTemplate.includes('selected={stream.url === mediaUrl}'), '17: the current stream is identified by the stable mediaUrl identity');
-  ok(/if \(!stream\.url \|\| stream\.url === mediaUrl\) return;/.test(shellSource), '17: re-selecting the current stream is a no-op (stale selection cannot overwrite the live stream)');
+  // Phase 10: re-selection is allowed while a compat session is live (the
+  // worker url owns mediaUrl) — direct re-selection stays a no-op.
+  ok(/if \(!stream\.url \|\| \(stream\.url === mediaUrl && !compatOverrideUrl\)\) return;/.test(shellSource), '17: re-selecting the current stream is a no-op (stale selection cannot overwrite the live stream; Phase 10 compat-aware)');
   ok(shellSource.includes('failedStreamUrls') && shellTemplate.includes('failed={failedStreamUrls.includes(stream.url)}'), '18: failed streams are marked per-session in the sheet');
   ok(cardSource.includes('class:failed') && cardSource.includes('Failed — try another or retry'), '18: a failed stream keeps its card with a visible marker');
   ok(shellTemplate.includes('onselect={selectMaveroStream}'), '18: cards route selection through the single selectMaveroStream path');
@@ -561,12 +564,21 @@ function loaderOf(factory: HlsFactory) {
 }
 
 // ===========================================================================
-// 31–32 — ONE playback engine (Video.js decision + no duplicates)
+// 31–32 — ONE playback engine (Phase 10: Video.js v10 IS the owner)
 // ===========================================================================
 
 {
-  ok(packageJson.dependencies['video.js'] === undefined && packageJson.dependencies['@videojs/html'] === undefined && !JSON.stringify(packageJson).includes('videojs'), '31: no half-integrated Video.js: no video.js dependency exists in the repository');
-  ok(/video\.js/i.test(worklog), '31: the Video.js evaluation and its deferral rationale are documented in the worklog');
+  // Phase 10 UPDATE: the Phase 9 deferral is superseded — the official
+  // Video.js v10 HlsJsVideo adapter (@videojs/hlsjs-video 10 RC, from the
+  // @videojs/html family) is now THE single HLS owner behind the engine.
+  // The legacy video.js v8 package remains absent (the "DO NOT blindly
+  // install an old Video.js 8 package" rule still holds), and the
+  // shell/viewport stay engine-library-free.
+  ok(packageJson.dependencies['video.js'] === undefined, '31: the legacy video.js v8 package stays absent (Phase 9 rule preserved)');
+  ok(typeof packageJson.dependencies['@videojs/hlsjs-video'] === 'string', '31: the official Video.js v10 hlsjs-video adapter is the integrated dependency');
+  ok(packageJson.pnpm?.overrides?.['hls.js'] === '1.7.2', '31: hls.js is pinned to 1.7.2 via the pnpm override (ONE copy, shared with Video.js)');
+  ok(engineSource.includes('@videojs/hlsjs-video') && engineSource.includes('VIDEO.JS IS THE SINGLE HLS OWNER'), '31: Video.js ownership is explicit in the engine (no half integration — direct hls.js control was removed)');
+  ok(/video\.js/i.test(worklog), '31: the Video.js integration is documented in the worklog');
   ok(!shellSource.toLowerCase().includes('videojs') && !viewportSource.toLowerCase().includes('videojs'), '31: no Video.js code path exists in the player shell or viewport');
   ok(viewportSource.includes("import('hls.js')") === false && viewportSource.includes('HlsPlaybackEngine') && viewportSource.includes('resolveDirectPlaybackMode'), '32: PlayerViewport routes EVERY direct source through the single engine decision');
   ok(viewportSource.includes('teardownHlsEngine();') && viewportSource.includes('onDestroy(teardownHlsEngine)'), '32: the viewport destroys the engine on switch/unmount (exactly one owner of the media element)');

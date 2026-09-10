@@ -398,7 +398,9 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(aggregate?.url === aggregate?.qualities?.[0]?.url, 'I: the initial current stream IS qualities[0] (mediaUrl falls back to source.url)');
   ok(cardSource.includes('aria-selected={selected}') && shellTemplate.includes('selected={stream.url === mediaUrl}'), 'I: current-stream identity is the stable stream URL compared against the live mediaUrl');
   const body = shellSource.slice(shellSource.indexOf('function selectMaveroStream'));
-  ok(/if \(!stream\.url \|\| stream\.url === mediaUrl\) return;/.test(body), 'I: selecting the CURRENT stream is a no-op (no pointless reload)');
+  // Phase 10: a compat override keeps mediaUrl on the worker session, so the
+  // no-op guard allows re-selection while an override is active.
+  ok(/if \(!stream\.url \|\| \(stream\.url === mediaUrl && !compatOverrideUrl\)\) return;/.test(body), 'I: selecting the CURRENT stream is a no-op (no pointless reload; Phase 10: re-selection allowed while a compat session is live)');
 }
 
 // ===========================================================================
@@ -469,13 +471,17 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
     unsupported: [], diagnostics: [], consideredAddons: 1, elapsedMs: 1,
   });
   ok(empty === null, 'M: zero playable streams compose to NULL (graceful empty result, never a throw)');
-  ok(watchSource.includes("resolutionState = result.code === 'NO_STREAMS' ? 'unavailable' : 'network-error';"), 'M: the watch route maps the empty result to the graceful unavailable state');
+  // Phase 10: the watch route's empty mapping now lives in the PROGRESSIVE
+  // branch — same outcome (graceful unavailable vs network-error), decided
+  // after all session addons settle instead of one aggregate response.
+  ok(watchSource.includes("resolutionState = anyOk ? 'unavailable' : 'network-error';"), 'M: the watch route maps the empty result to the graceful unavailable state (Phase 10 progressive settle)');
+  ok(watchSource.includes("'No playable streams are available from MAVERO Player right now.'"), 'M: the zero-stream message is preserved verbatim in the progressive branch');
   const clientHelper = read('src/lib/client/player/mavero-player.ts');
   ok(clientHelper.includes("const NO_STREAMS_MESSAGE = 'No playable streams are available from MAVERO Player right now.';"), 'M: the zero-stream message is the clear, generic Phase 4 text');
   const noStreamsMessage = /const NO_STREAMS_MESSAGE = '([^']*)';/.exec(clientHelper)?.[1] ?? '';
   const networkMessage = /const NETWORK_MESSAGE = '([^']*)';/.exec(clientHelper)?.[1] ?? '';
   ok(!/manifest|http|addon|error/i.test(noStreamsMessage + networkMessage), 'M: the user-facing zero-stream/network messages expose no addon, manifest or transport internals');
-  ok(shellTemplate.includes('{#if maveroStreamGroups.length}'), 'M: with no aggregate source the stream section simply does not render — the provider rows stay usable');
+  ok(shellTemplate.includes('{#if maveroStreamGroups.length || maveroPendingAddons.length}'), 'M: with no aggregate source the stream section simply does not render — the provider rows stay usable (Phase 10: pending addon rows extend the condition)');
 }
 
 // ===========================================================================

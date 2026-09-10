@@ -139,8 +139,11 @@ type StreamingClient = SupabaseClient<Database>;
  * addons are created with the `experimental` default and `enabled=true` is
  * already the administrator's explicit opt-in; `disabled`, `maintenance` and
  * `unavailable` never resolve.
+ *
+ * Phase 10: exported — the progressive addon-session service reuses the
+ * EXACT same eligibility query (no second policy can drift apart).
  */
-async function loadEnabledAddons(client: StreamingClient): Promise<StreamingAddon[]> {
+export async function loadEnabledAddons(client: StreamingClient): Promise<StreamingAddon[]> {
   const { data, error } = await client
     .from('streaming_addons')
     .select('*')

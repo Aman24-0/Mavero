@@ -180,14 +180,15 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   ok(!/torrent|bittorrent|webtorrent|debrid|magnet|peerflix|p2p/.test(depNames), 'A: no P2P/torrent/debrid dependencies exist');
 
   const testScript: string = pkg.scripts.test;
-  // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8
-  // — the chain still runs phase 7 before phase 8, and now ENDS with phase 9.
+  // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8;
+  // Phase 10 appended stremio_player_phase10_test.ts — the chain still runs
+  // phase 7 before phase 8 before phase 9 and now ENDS with phase 10.
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('stremio_player_phase9_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 9 suite (Phase 9 extension)',
+      testScript.trimEnd().endsWith('stremio_player_phase10_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 10 suite (Phase 9/10 extension)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');
@@ -961,7 +962,12 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   ok(lockfile.includes('undici@8.10.2'), 'Q: lockfile resolves undici to exactly 8.10.2');
 
   const engine = readRepoFile('src/lib/client/player/hls-engine.ts');
-  ok(engine.includes("import('hls.js')"), 'Q: hls.js is lazily imported by the engine only');
+  // Phase 10: the engine lazily imports the official Video.js v10 adapter
+  // (@videojs/hlsjs-video) — the single HLS owner. Direct hls.js control is
+  // removed from Mavero source; hls.js itself arrives as the adapter's
+  // pinned dependency (1.7.2 via the pnpm override above).
+  ok(engine.includes("import('@videojs/hlsjs-video')"), 'Q: the Video.js hlsjs-video module is lazily imported by the engine only (Phase 10 single-owner)');
+  ok(!engine.includes("import('hls.js')"), 'Q: no direct hls.js import remains in Mavero source (Phase 10)');
   ok(engine.includes('.destroy('), 'Q: engine tears down hls.js instances (lifecycle hygiene)');
   ok(engine.includes('setAutoQualityLevel') && engine.includes('nextLevel'), 'Q: Phase 6 seamless quality API intact');
   ok(engine.includes('vnd.apple.mpegurl'), 'Q: native HLS branch preserved (Safari path)');
@@ -1029,8 +1035,26 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     logTotal += countOccurrences(content, 'console.log');
     serviceRoleRefs += countOccurrences(content.toLowerCase(), 'service_role');
   }
-  ok(warnTotal === 3 && logTotal === 0, `T: stremio server modules log through exactly the 3 sanctioned warns (warn=${warnTotal}, log=${logTotal})`);
-  ok(serviceRoleRefs === 0, 'T: no service-role key usage inside the stremio modules');
+  // Phase 10: addon-session.ts adds ONE sanctioned warn (unexpected addon
+  // failure — the same safe, code-only pattern as the resolver's).
+  ok(warnTotal === 4 && logTotal === 0, `T: stremio server modules log through exactly the 4 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 in addon-session)`);
+  // Phase 10: session-env.ts may REFERENCE the env-var NAME for the documented
+  // signing-key derivation (one-way, domain-separated SHA-256 — the raw key is
+  // never used as a credential nor leaves the server). Zero references in every
+  // other stremio module, and no module constructs a Supabase client from it.
+  let serviceRoleOutsideEnv = 0;
+  let serviceRoleClientUsage = 0;
+  for (const file of moduleFiles) {
+    const content = readRepoFile(file).toLowerCase();
+    const occurrences = countOccurrences(content, 'service_role');
+    if (file.endsWith('session-env.ts')) {
+      if (/(createclient|from\s+'\$lib\/server\/supabase)/.test(content)) serviceRoleClientUsage += 1;
+      continue;
+    }
+    serviceRoleOutsideEnv += occurrences;
+  }
+  ok(serviceRoleOutsideEnv === 0, 'T: no service-role key usage inside stremio modules (session-env derivation reference excluded)');
+  ok(serviceRoleClientUsage === 0, 'T: session-env.ts never constructs a Supabase client');
 
   const pkg = JSON.parse(readRepoFile('package.json'));
   ok('undici' in pkg.dependencies && !('undici' in (pkg.devDependencies ?? {})), 'T: undici is a runtime dependency (not dev-only)');
@@ -1046,6 +1070,7 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const stremioDir = 'src/lib/server/streaming/stremio';
   const inventory = readdirSync(stremioDir).sort();
   const expected = [
+    'addon-session.ts', // Phase 10: progressive addon resolution service
     'admin-addons.ts',
     'connect-guard.ts',
     'errors.ts',
@@ -1054,6 +1079,8 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     'manifest-normalize.ts',
     'manifest-service.ts',
     'mavero-player-source.ts',
+    'session-env.ts', // Phase 10: signing-secret + media-worker env wiring
+    'session-tokens.ts', // Phase 10: signed short-lived session/compat tokens
     'ssrf.ts',
     'stream-errors.ts',
     'stream-fetch.ts',

@@ -643,7 +643,10 @@ function makeDirectSource(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(watchPage.includes('data.maveroPlayerAvailable'), 'N: the virtual option is server-gated');
   ok(watchPage.includes('isMaveroPlayerSourceId(sourceId)'), 'N: the route branches to the MAVERO Player path by identity');
   ok(watchPage.includes('prepareMaveroPlayerSource'), 'N: the route implements the MAVERO Player resolution branch');
-  ok(watchPage.includes('presetSource: result.source'), 'N: the resolved aggregate source loads through the manager');
+  // Phase 10: the aggregate source loads through the manager from the
+  // PROGRESSIVELY MERGED result (first playable stream → live merges) —
+  // same presetSource mechanism, now fed by mergeMaveroResults.
+  ok(watchPage.includes('presetSource: merged'), 'N: the resolved aggregate source loads through the manager (Phase 10: progressively merged)');
 
   const watchServer = readFileSync('src/routes/watch/[type]/[id]/+page.server.ts', 'utf8');
   ok(watchServer.includes('hasStreamEligibleAddons'), 'N: availability is decided server-side');

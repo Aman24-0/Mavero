@@ -176,13 +176,22 @@ const directAdapterSource = read('src/lib/client/player/direct-adapter.ts');
 
 const staticImportPattern = /from\s+['"]hls\.js['"]/;
 ok(!staticImportPattern.test(engineSource), 'C: hls-engine.ts has NO static hls.js import (dynamic import only)');
+// Phase 10: the ONLY HLS engine library in Mavero source is now the official
+// Video.js v10 adapter module (@videojs/hlsjs-video) — loaded dynamically by
+// the engine loader. No source file imports 'hls.js' directly anymore.
+ok(!staticImportPattern.test(engineSource.replace(/hlsjs-video/g, '')), 'C: hls-engine.ts has NO static import of any hls engine module (Phase 10: Video.js owns the engine)');
 ok(!staticImportPattern.test(viewportSource), 'C: PlayerViewport never imports hls.js directly (only via the engine module)');
 ok(!staticImportPattern.test(playbackManagerSource), 'C: PlaybackManager knows nothing about hls.js');
 ok(!staticImportPattern.test(shellSource), 'C: PlayerShell knows nothing about hls.js');
 ok(!staticImportPattern.test(directAdapterSource), 'C: DirectPlayerAdapter knows nothing about hls.js');
 
+// Phase 10: exactly ONE dynamic import of the Video.js hlsjs-video module
+// exists (in the engine loader) — and ZERO dynamic import("hls.js") remain
+// (the direct hls.js control was REMOVED, not parallel-kept).
 const dynamicImportOccurrences = [...engineSource.matchAll(/import\(\s*['"]hls\.js['"]\s*\)/g)].length;
-ok(dynamicImportOccurrences === 1, 'C: exactly ONE dynamic import("hls.js") exists (in the engine loader)');
+ok(dynamicImportOccurrences === 0, 'C: ZERO dynamic import("hls.js") remain (Phase 10: Video.js is the single HLS owner)');
+const videoJsImportOccurrences = [...engineSource.matchAll(/import\(\s*['"]@videojs\/hlsjs-video['"]\s*\)/g)].length;
+ok(videoJsImportOccurrences === 1, 'C: exactly ONE dynamic import of @videojs/hlsjs-video exists (in the engine loader)');
 
 let serverFilesWithHls = 0;
 for (const relative of ['src/lib/server/resolver/service.ts', 'src/lib/server/resolver/core.ts', 'src/lib/server/streaming/stremio/stream-resolver.ts', 'src/routes/api/playback/resolve/+server.ts', 'src/routes/api/playback/stremio/+server.ts']) {
@@ -197,10 +206,12 @@ const inertEngine = new HlsPlaybackEngine();
 ok(inertEngine.isActive() === false, 'D: constructing the engine performs no work (no hls.js instantiation during import/SSR)');
 ok(inertEngine.getInstance() === null, 'D: no hls.js instance exists before attach');
 ok(engineSource.includes('let cachedFactoryPromise: Promise<HlsFactory | null> | null = null;'), 'D: the module loader memoizes its factory promise lazily (dynamic import only fires from a browser code path)');
-// The hls.js construction must live INSIDE the async loader function (never
-// evaluated at module import time — the SSR boundary).
+// The engine construction must live INSIDE the async loader function (never
+// evaluated at module import time — the SSR boundary). Phase 10: the module
+// loaded is @videojs/hlsjs-video (Video.js v10 HlsJsVideo — the single HLS
+// owner) and the factory builds the Video.js-backed facade.
 const loaderBody = engineSource.slice(engineSource.indexOf('export async function defaultHlsModuleLoader'), engineSource.indexOf('let cachedFactoryPromise'));
-ok(loaderBody.includes("import('hls.js')") && loaderBody.includes('new Hls(config)'), 'D: hls.js construction lives only inside the async module loader (never at module scope)');
+ok(loaderBody.includes("import('@videojs/hlsjs-video')") && loaderBody.includes('new VideoJsHlsFacade(module)'), 'D: Video.js adapter construction lives only inside the async module loader (never at module scope)');
 ok(engineSource.includes('export function resetHlsFactoryCache()'), 'D: the loader cache is resettable (deterministic tests)');
 
 // ===========================================================================

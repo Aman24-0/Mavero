@@ -2,7 +2,7 @@
   import { Check, ChevronDown, Plus, SlidersHorizontal, Trash2, FlaskConical, Loader2, X } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import { integrationTypes, identifierModes, providerStatuses, sourceVisibilities } from '$lib/shared/streaming';
-  import { sandboxPolicies, sandboxPolicyDescription, sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
+  import { sandboxPolicyChoices, sandboxPolicyDescription, sandboxPolicyFromCapabilities, configuredSandboxPolicy, type SandboxPolicyChoice } from '$lib/shared/sandbox-policy';
   import type { ActionData, PageData } from './$types';
 
   export let data: PageData;
@@ -12,8 +12,14 @@
   const typeLabels = { template: 'Template', api: 'API', direct: 'Direct', embed: 'Embed', custom: 'Custom' };
   const visibilityLabels = { public: 'Public', internal: 'Internal', hidden: 'Hidden' };
   const identifierLabels = { tmdb_id: 'TMDB ID', anilist_id: 'AniList ID', imdb_id: 'IMDb ID', slug: 'Slug', custom: 'Custom' };
-  const sandboxPolicyLabels = { required: 'Required — secure sandbox', optional: 'Optional — secure by default', unrestricted: 'Unrestricted — warning' };
-  const sourceSandboxPolicy = (source: PageData['sources'][number]) => sandboxPolicyFromCapabilities(data.providers.find((provider) => provider.id === source.provider_id)?.capabilities, source.capabilities);
+  const sandboxPolicyLabels: Record<string, string> = { required: 'Required', optional: 'Optional', unrestricted: 'Unrestricted' };
+  // Phase 10 (GOAL 20): CONFIGURED vs EFFECTIVE are different values. The
+  // select shows the CONFIGURED choice ('provider_default' when the source
+  // stores no policy); the effective value — what runtime actually applies —
+  // is displayed separately and never written back into the form state.
+  const sourceConfiguredSandboxChoice = (source: PageData['sources'][number]): SandboxPolicyChoice => configuredSandboxPolicy(source.capabilities) ?? 'provider_default';
+  const sourceEffectiveSandboxPolicy = (source: PageData['sources'][number]) => sandboxPolicyFromCapabilities(data.providers.find((provider) => provider.id === source.provider_id)?.capabilities, source.capabilities);
+  const sourceSandboxPolicy = sourceEffectiveSandboxPolicy;
   const providerName = (id: string) => data.providers.find((provider) => provider.id === id)?.name ?? 'Unknown provider';
 
   // Phase 7: source test state — per-source panel + result.
@@ -86,7 +92,7 @@
       <div class="form-grid two"><label>Language<input name="language" maxlength="60" placeholder="Original" /></label><label>Audio languages<input name="audio_languages" placeholder="English, Hindi" /></label></div>
       <div class="form-grid two"><label class="check"><input type="checkbox" name="enabled" /> Enabled for public config</label><label class="check"><input type="checkbox" name="subtitle_capability" /> Subtitle capability</label></div>
       <label>Quality capability<input name="quality_capability" placeholder="HD, Full HD, 4K" /></label>
-      <label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as policy}<option value={policy}>{sandboxPolicyLabels[policy]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription('required')}</small></label>
+      <label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicyChoices as choice}<option value={choice} selected={choice === 'provider_default'}>{choice === 'provider_default' ? 'Provider default — inherit' : sandboxPolicyLabels[choice]}</option>{/each}</select><small class="security-note">Provider default inherits the provider's sandbox policy; the system default is required.</small></label>
       <div class="form-grid three"><label>Movie template<textarea name="movie_template" rows="2" placeholder="Configuration only"></textarea></label><label>Series template<textarea name="series_template" rows="2" placeholder="Configuration only"></textarea></label><label>Anime template<textarea name="anime_template" rows="2" placeholder="Configuration only"></textarea></label></div>
       <label>Capabilities JSON<textarea name="capabilities" rows="3" placeholder="JSON object, e.g. movies=true">&#123;&quot;movies&quot;:true&#125;</textarea></label>
       <label>Description<textarea name="description" maxlength="500" rows="2"></textarea></label><label>Admin notes<textarea name="notes" maxlength="2000" rows="2"></textarea></label>
@@ -105,7 +111,7 @@
         <div class="form-grid two"><label>Language<input name="language" maxlength="60" value={source.language ?? ''} /></label><label>Audio languages<input name="audio_languages" value={source.audio_languages?.join(', ') ?? ''} /></label></div>
         <div class="form-grid two"><label class="check"><input type="checkbox" name="enabled" checked={source.enabled} /> Enabled for public config</label><label class="check"><input type="checkbox" name="subtitle_capability" checked={source.subtitle_capability} /> Subtitle capability</label></div>
         <label>Quality capability<input name="quality_capability" value={source.quality_capability?.join(', ') ?? ''} /></label>
-        {#if source.integration_type === 'embed' || data.providers.find((provider) => provider.id === source.provider_id)?.integration_type === 'embed'}<label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as candidate}<option value={candidate} selected={sourceSandboxPolicy(source) === candidate}>{sandboxPolicyLabels[candidate]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription(sourceSandboxPolicy(source))}</small></label>{/if}
+        {#if source.integration_type === 'embed' || data.providers.find((provider) => provider.id === source.provider_id)?.integration_type === 'embed'}<label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicyChoices as choice}<option value={choice} selected={sourceConfiguredSandboxChoice(source) === choice}>{choice === 'provider_default' ? `Provider default — inherit (${sandboxPolicyLabels[sourceEffectiveSandboxPolicy(source)] ?? sourceEffectiveSandboxPolicy(source)})` : sandboxPolicyLabels[choice]}</option>{/each}</select><small class="security-note">Effective: {sourceEffectiveSandboxPolicy(source)} — {sandboxPolicyDescription(sourceEffectiveSandboxPolicy(source))}</small></label>{/if}
         <div class="form-grid three"><label>Movie template<textarea name="movie_template" rows="2">{source.movie_template ?? ''}</textarea></label><label>Series template<textarea name="series_template" rows="2">{source.series_template ?? ''}</textarea></label><label>Anime template<textarea name="anime_template" rows="2">{source.anime_template ?? ''}</textarea></label></div>
         <label>Capabilities JSON<textarea name="capabilities" rows="3">{JSON.stringify(source.capabilities ?? {}, null, 2)}</textarea></label>
         <label>Description<textarea name="description" maxlength="500" rows="2">{source.description ?? ''}</textarea></label><label>Admin notes<textarea name="notes" maxlength="2000" rows="2">{source.notes ?? ''}</textarea></label>

@@ -1,5 +1,5 @@
 import { identifierModes, integrationTypes, providerStatuses, sourceVisibilities, type IdentifierMode, type IntegrationType, type JsonObject, type ProviderStatus, type SourceVisibility } from './types';
-import { sandboxPolicies, withSandboxPolicy, type SandboxPolicy } from '$lib/shared/sandbox-policy';
+import { sandboxPolicyChoices, withSourceSandboxChoice, withSandboxPolicy, sandboxPolicies, type SandboxPolicy, type SandboxPolicyChoice } from '$lib/shared/sandbox-policy';
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const adapterPattern = /^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
@@ -113,7 +113,17 @@ export function parseSourceForm(form: FormData) {
       const value = String(form.get('integration_type') ?? '').trim();
       return value ? enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType : null;
     })(),
-    capabilities: withSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities'), enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicies, 'required') as SandboxPolicy),
+    // Phase 10 (GOAL 20): the source sandbox select carries the
+    // `provider_default` choice. That choice means INHERIT — the source
+    // capabilities JSON must NOT store a sandbox_policy at all (any legacy
+    // key is removed). Only the three concrete policies are stored
+    // explicitly. This fixes the Phase 7A bug where EVERY source write
+    // force-stamped `sandbox_policy` into the JSON (defaulting to
+    // `required`), silently overriding a provider's policy.
+    capabilities: withSourceSandboxChoice(
+      jsonObject(form.get('capabilities'), 'Capabilities'),
+      enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicyChoices, 'provider_default') as SandboxPolicyChoice,
+    ),
     movie_template: template(form.get('movie_template'), 'Movie template'),
     series_template: template(form.get('series_template'), 'Series template'),
     anime_template: template(form.get('anime_template'), 'Anime template'),

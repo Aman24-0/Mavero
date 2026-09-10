@@ -12,8 +12,12 @@
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import type { PlaybackContext } from '$lib/client/progress/types';
   import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
-  import { resolveMaveroPlayerSource } from '$lib/client/player/mavero-player';
-  import { isMaveroPlayerSourceId, MAVERO_PLAYER_SOURCE_ID, maveroPlayerSourceOption } from '$lib/shared/mavero-player';
+  // Phase 10: progressive Stremio addon resolution — the ONE-fetch aggregate
+  // (`resolveMaveroPlayerSource`) is superseded by a session + independent
+  // per-addon requests merged live (GOALS 1–6). The aggregate endpoint stays
+  // available for backward compatibility but is no longer on this path.
+  import { mergeMaveroResults, startMaveroProgressiveResolution, type MaveroAddonResult, type MaveroAddonStatus, type ProgressiveSession } from '$lib/client/player/mavero-progressive';
+  import { isMaveroPlayerSourceId, MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME, maveroPlayerSourceOption } from '$lib/shared/mavero-player';
 
   export let data: PageData;
 
@@ -119,12 +123,22 @@
   let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq: number; sourceId?: string } | null = null;
   let embedPlaybackSeq = 0;
   // Phase 4: MAVERO Player in-flight resolution guards. `maveroRequestSeq`
-  // invalidates stale responses (incremented on every new resolution, on
-  // episode change and on destroy — an older response can never overwrite
-  // a newer source selection); `maveroResolveController` aborts the
-  // in-flight /api/playback/stremio fetch when superseded.
+  // invalidates stale resolution sessions (incremented on every new
+  // resolution, on episode change and on destroy — an older session's
+  // callbacks can never overwrite a newer selection).
   let maveroRequestSeq = 0;
-  let maveroResolveController: AbortController | null = null;
+  // Phase 10: the LIVE progressive session (per-addon requests + retry) and
+  // its safe per-addon display statuses (GOAL 3). Results accumulate in
+  // `maveroResults` keyed by addon key; every arrival recomputes the fair
+  // aggregate and merges it into the manager WITHOUT restarting playback.
+  let maveroSession: ProgressiveSession | null = null;
+  let maveroAddonStatuses: MaveroAddonStatus[] = [];
+  let maveroResults: MaveroAddonResult[] = [];
+  // Serialized merge chain: the first playable result starts playback via
+  // manager.loadSource; later results chain AFTER it so a fast merge can
+  // never interleave with the initial load (mirrors sourceSwitchChain).
+  let maveroLoadChain: Promise<void> = Promise.resolve();
+  let maveroLoadStarted = false;
 
   // Subscribe to manager state so the route's reactive locals mirror the
   // manager snapshot. PlayerShell receives these via its existing props.
@@ -204,11 +218,15 @@
     // Phase 4: clear savedSourceId so the new episode's progress record
     // is loaded fresh (different episode = different progressKey).
     savedSourceId = undefined;
-    // Phase 4: invalidate any in-flight MAVERO Player resolution — an older
-    // response must never overwrite the new episode's source selection.
+    // Phase 4/10: invalidate any in-flight MAVERO resolution session — an
+    // older session's addon results must never populate the new episode.
     maveroRequestSeq += 1;
-    maveroResolveController?.abort();
-    maveroResolveController = null;
+    maveroSession?.dispose();
+    maveroSession = null;
+    maveroAddonStatuses = [];
+    maveroResults = [];
+    maveroLoadStarted = false;
+    maveroLoadChain = Promise.resolve();
   }
   $: if (browser && playbackKey !== writerKey) void setupProgressContext();
   // Phase 2: select the admin-configured default source for this content type
@@ -293,10 +311,10 @@
     active = false;
     unsubscribeManager();
     unsubscribeManagerEvents();
-    // Phase 4: abort any in-flight MAVERO Player resolution.
+    // Phase 4/10: tear down any in-flight MAVERO resolution session.
     maveroRequestSeq += 1;
-    maveroResolveController?.abort();
-    maveroResolveController = null;
+    maveroSession?.dispose();
+    maveroSession = null;
     manager.dispose();
     void writer?.flush();
     writer?.dispose();
@@ -390,13 +408,32 @@
     // For MANUAL source switches, startPosition = currentPlaybackTime
     // (the position the user was at in the previous source).
     const startPosition = allowFallback ? resumeTime : currentPlaybackTime;
-    // Phase 4: the MAVERO Player virtual source takes the additive Stremio
-    // branch — resolve server-side via /api/playback/stremio, then load the
-    // aggregate source through the SAME manager/adapter path. The existing
-    // provider branch below is unchanged.
+    // Phase 4/10: the MAVERO Player virtual source takes the progressive
+    // Stremio branch — session + independent per-addon requests, playback
+    // starts from the FIRST playable result and later results merge live.
+    // The existing provider branch below is unchanged (and any in-flight
+    // MAVERO session is torn down when a provider source is selected).
     if (isMaveroPlayerSourceId(sourceId)) {
-      await prepareMaveroPlayerSource(startPosition);
+      prepareMaveroPlayerSource(startPosition);
+      // Provider fallback bookkeeping below does not apply yet — the first
+      // playable addon result owns the 'watching' promotion (see below).
+      if (!watchingSavedForSession && active) {
+        watchingSavedForSession = true;
+        const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+        try {
+          await setFavoriteStatus(contentType, item.id, snapshot, 'watching');
+          if (active && page.data.user) void syncAuthenticatedState();
+        } catch {
+          // Playback remains available even if local list promotion is unavailable.
+        }
+      }
     } else {
+      // Phase 10: selecting a provider source tears down any MAVERO session —
+      // late addon results must not merge into a provider playback session.
+      maveroRequestSeq += 1;
+      maveroSession?.dispose();
+      maveroSession = null;
+      maveroAddonStatuses = [];
       const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
       if (allowFallback && defaultSourceId) request.defaultSourceId = defaultSourceId;
       await manager.loadSource(
@@ -427,56 +464,130 @@
   }
 
   /**
-   * Phase 4 — MAVERO Player resolution branch (additive).
+   * Phase 10 — MAVERO Player PROGRESSIVE resolution branch (supersedes the
+   * Phase 4 one-shot aggregate fetch; GOALS 1–6).
    *
-   * Resolves the virtual source server-side and loads the result through
-   * the EXISTING PlaybackManager direct-player path:
-   *   1. show the loading state (resolving),
-   *   2. POST /api/playback/stremio with ONLY content identifiers
-   *      (all addon configuration is server-side),
-   *   3. `ok` source → manager.loadSource with `presetSource` (the manager
-   *      skips its resolver fetch and runs the source through the normal
-   *      adapter lifecycle — race guards included),
-   *   4. empty/failed resolution → graceful unavailable/network-error state.
-   *      Existing provider sources are untouched and remain switchable.
+   *   1. POST /api/playback/stremio/session (content identifiers only).
+   *   2. The controller fires ONE independent request per addon token — all
+   *      in flight simultaneously. The first addon that yields playable
+   *      streams STARTS PLAYBACK immediately (GOAL 2) through the SAME
+   *      manager/adapter path (presetSource → direct adapter lifecycle).
+   *   3. Every later addon result re-merges the fair aggregate
+   *      (`mergeMaveroResults` — round-robin budgets shared with the server)
+   *      and updates the manager via `updatePresetSource` — the video keeps
+   *      playing, the stream sheet and the "N Streams" count update LIVE.
+   *   4. A failed addon only marks that addon (sheet shows Failed — Retry);
+   *      `handleMaveroRetry` re-runs exactly that addon (GOAL 6).
    *
-   * Stale-response protection: `maveroRequestSeq` + AbortController —
-   * an older resolution can never overwrite a newer source selection, and
-   * superseded fetches are aborted. Per-stream switching INSIDE the loaded
-   * aggregate source uses the existing quality menu (position-preserving
-   * via the shell's pendingSeek) — no extra machinery here.
+   * Stale protection (GOAL 5): `maveroRequestSeq` invalidates superseded
+   * sessions (new resolution / episode change / destroy), the controller's
+   * generation guard drops late callbacks, every server token is signed and
+   * content-bound, and `manager.updatePresetSource` refuses sources with a
+   * different identity. A→B→A and movie↔episode switches are covered at
+   * every layer.
    */
-  async function prepareMaveroPlayerSource(startPosition: number) {
+  function prepareMaveroPlayerSource(startPosition: number) {
     const requestId = ++maveroRequestSeq;
-    maveroResolveController?.abort();
-    const controller = new AbortController();
-    maveroResolveController = controller;
+    maveroSession?.dispose();
+    maveroAddonStatuses = [];
+    maveroResults = [];
+    maveroLoadStarted = false;
+    maveroLoadChain = Promise.resolve();
     resolvedSource = null;
     resolutionState = 'resolving';
     resolutionMessage = 'Resolving MAVERO Player streams…';
-    try {
-      const result = await resolveMaveroPlayerSource(
-        { contentId: item.id, mediaType: contentType, season, episode },
-        { signal: controller.signal },
-      );
+
+    const mergeContext = { sourceId: MAVERO_PLAYER_SOURCE_ID, sourceName: MAVERO_PLAYER_SOURCE_NAME, mediaType: contentType, contentTitle: item.title };
+
+    /** Applies one addon result: accumulate → re-merge → load-or-update. */
+    const applyResult = (result: MaveroAddonResult) => {
       if (!active || requestId !== maveroRequestSeq) return;
-      if (!result.ok) {
-        resolvedSource = null;
-        resolutionState = result.code === 'NO_STREAMS' ? 'unavailable' : 'network-error';
-        resolutionMessage = result.message;
+      const existing = maveroResults.findIndex((entry) => entry.key === result.key);
+      if (existing >= 0) maveroResults[existing] = result;
+      else maveroResults.push(result);
+      // The merged aggregate ALWAYS keeps the currently playing stream as
+      // its lead (mergeMaveroResults pins `currentUrl`), so a late merge
+      // never retargets the media element.
+      const playingUrl = resolvedSource?.url ?? null;
+      const merged = mergeMaveroResults(maveroResults, mergeContext, playingUrl);
+      if (result.status !== 'ok') {
+        // Failure/skip: statuses update; only the aggregate-state messaging
+        // matters when NOTHING is playable and everything already settled.
+        maybeSettleUnavailable();
         return;
       }
-      await manager.loadSource(
-        { sourceId: MAVERO_PLAYER_SOURCE_ID, contentId: item.id, mediaType: contentType, season, episode, presetSource: result.source },
-        startPosition,
-        false,
-      );
-    } catch {
+      if (!merged) {
+        maybeSettleUnavailable();
+        return;
+      }
+      if (!maveroLoadStarted) {
+        // FIRST playable stream — start playback immediately (GOAL 2).
+        maveroLoadStarted = true;
+        maveroLoadChain = maveroLoadChain.then(async () => {
+          if (!active || requestId !== maveroRequestSeq) return;
+          await manager.loadSource(
+            { sourceId: MAVERO_PLAYER_SOURCE_ID, contentId: item.id, mediaType: contentType, season, episode, presetSource: merged },
+            startPosition,
+            false,
+          );
+        }).catch(() => {
+          // loadSource surfaces its own resolutionState — never unhandled.
+        });
+      } else {
+        // LATER results — extend the aggregate LIVE without restart (GOAL 2).
+        maveroLoadChain = maveroLoadChain.then(() => {
+          if (!active || requestId !== maveroRequestSeq) return;
+          manager.updatePresetSource(merged);
+        });
+      }
+    };
+
+    /** All addons settled and none produced a playable stream. */
+    const maybeSettleUnavailable = () => {
       if (!active || requestId !== maveroRequestSeq) return;
-      resolvedSource = null;
-      resolutionState = 'network-error';
-      resolutionMessage = 'MAVERO Player could not be reached. Try again or choose another source.';
-    }
+      if (maveroLoadStarted) return;
+      const statuses = maveroSession?.statuses() ?? [];
+      const pending = statuses.some((status) => status.status === 'pending' || status.status === 'loading');
+      if (pending) return;
+      const anyOk = statuses.some((status) => status.status === 'ok');
+      resolutionState = anyOk ? 'unavailable' : 'network-error';
+      resolutionMessage = anyOk
+        ? 'No playable streams are available from MAVERO Player right now.'
+        : 'MAVERO Player could not be reached. Try again or choose another source.';
+    };
+
+    maveroSession = startMaveroProgressiveResolution(
+      { contentId: item.id, mediaType: contentType, season, episode },
+      {
+        onSession: (summary) => {
+          if (!active || requestId !== maveroRequestSeq) return;
+          maveroAddonStatuses = summary.addons;
+          if (summary.empty) {
+            resolutionState = 'unavailable';
+            resolutionMessage = 'No playable streams are available from MAVERO Player right now.';
+          }
+        },
+        onResult: (result) => {
+          // Live statuses for the sheet (GOAL 3) + merge (GOAL 2).
+          if (!active || requestId !== maveroRequestSeq) return;
+          maveroAddonStatuses = maveroSession?.statuses() ?? maveroAddonStatuses;
+          applyResult(result);
+        },
+        onSessionError: (code, message) => {
+          if (!active || requestId !== maveroRequestSeq) return;
+          maveroAddonStatuses = [];
+          resolutionState = code === 'INVALID_REQUEST' ? 'unavailable' : 'network-error';
+          resolutionMessage = message;
+        },
+      },
+    );
+  }
+
+  /** Phase 10 GOAL 6: retry ONE failed addon — never the whole session. */
+  function handleMaveroRetry(addonKey: string) {
+    if (maveroRequestSeq === 0) return;
+    maveroSession?.retry(addonKey);
+    maveroAddonStatuses = maveroSession?.statuses() ?? maveroAddonStatuses;
   }
 
   function handlePlayerProgress(event: PlayerProgressEvent) {
@@ -566,7 +677,7 @@
 <svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
 
 {#if progressReady}
-  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} />
+  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} maveroAddons={maveroAddonStatuses} onMaveroRetry={handleMaveroRetry} />
 {:else}
   <main class="watch-loading" aria-live="polite"><div class="loading-ring" aria-hidden="true"><span></span></div><div class="loading-copy"><strong>{progressReady ? 'Starting your stream' : 'Loading player'}</strong><span>{progressReady ? 'Connecting to your provider…' : 'Preparing your watch session…'}</span></div><small>{progressReady ? resolutionMessage || 'Finding the best available source' : localState}</small></main>
 {/if}

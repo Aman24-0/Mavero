@@ -1570,3 +1570,108 @@ torrent/magnet/infoHash/externalUrl/P2P anywhere.
 **Phase 9 playback compatibility and stream UX are implemented.** No new
 product features beyond the Phase 9 scope; no P2P/torrent/debrid/proxy/DRM
 support; no security relaxation.
+
+---
+
+## Phase 10 — progressive addon loading, Video.js primary player, compatibility, sandbox (DONE)
+
+### Progressive Stremio addon resolution (GOALS 1–6)
+
+Root cause of the live-tested failure (DesiFlix late/missing, Pipe never
+appearing): the Phase 4–9 architecture resolved ALL addons behind ONE
+aggregate request (`/api/playback/stremio`, 15s overall budget, 4-way
+bounded concurrency) and the watch route waited for that single response.
+Any slow addon consumed the shared budget; timeouts produced per-request
+failures invisible to the UI; reopening re-ran the same blocking request.
+
+The Phase 10 architecture is Stremio-like progressive resolution:
+
+1. `POST /api/playback/stremio/session` validates content through the
+   EXISTING pipeline, loads enabled addons, plans eligibility locally and
+   returns ONE short-lived signed token per eligible addon plus safe display
+   metadata (name, ordering). NO manifest URLs / configuration / headers
+   reach the client. Ineligible addons get no token.
+2. The client fires ONE INDEPENDENT request per token
+   (`POST /api/playback/stremio/addon`, own AbortController + timeout).
+   The first addon that yields streams starts playback immediately; later
+   results merge LIVE via the fair round-robin composer
+   (`$lib/shared/mavero-aggregate` — budgets shared with the server) and
+   `PlaybackManager.updatePresetSource` — the video NEVER restarts.
+3. Addon status UI: the streams sheet renders every session addon
+   (Loading… / ✓ / Failed — Retry / Unavailable); a late addon is never
+   hidden; retry re-runs EXACTLY that addon with its existing token.
+4. Stale protection at every layer: client generation guard + dispose,
+   per-request abort, server tokens signed+bound to
+   (session, addon, content, mediaType, season/episode), and the manager's
+   identity check. A→B→A and movie↔episode switches are covered.
+
+Security: tokens are HMAC-SHA256 (timing-safe verify), versioned, TTL-bounded
+(10 min), content+addon+session-bound; signatures never carried manifest URLs;
+per-addon responses reuse the hardened fetch pipeline (connect-time SSRF
+guard, body cap, timeout) and the playback boundary re-validates every URL.
+The signing secret: `MAVERO_STREMIO_SESSION_SECRET` (recommended) or a
+domain-separated SHA-256 derivation from the deployment's service key
+(`session-env.ts` — the raw key is never used as a credential).
+
+### Video.js v10 — THE single HLS owner (GOALS 7/8)
+
+The Phase 9 deferral is superseded by an atomic migration: the official
+Video.js v10 HlsJsVideo integration (`@videojs/hlsjs-video@10.0.0-rc.2`,
+the `@videojs/html` v10 family, RC per videojs.org) now creates, attaches,
+loads and destroys the hls.js instance behind the unchanged
+`HlsPlaybackEngine` policy shell. Mavero source no longer imports `hls.js`
+anywhere — direct hls.js control was REMOVED, not parallel-kept (no dual
+owner, no half integration). hls.js itself stays pinned at 1.7.2 via a pnpm
+override (ONE copy shared with Video.js). The legacy `video.js` v8 package
+remains absent. Native MP4/native-HLS routing, embeds, pending-seek, Media
+Session, Wake Lock, PiP, fullscreen, progress and the Phase 6 quality
+surface are byte-identical (P5/P6 suites re-pinned green). The skin/controls
+remain Mavero's OTT UI (Video.js "no skin" configuration); Video.js owns the
+media engine. An audio-track selector (GOAL 18) exposes ONLY manifest-provided
+multi-audio renditions — labels are the manifest's own name/lang, never
+invented.
+
+### Codec compatibility (GOALS 10–17)
+
+* `media-compat.ts` (shared, pure): structural tiers
+  DIRECT_PLAYABLE / DIRECT_UNCERTAIN / REMUX_REQUIRED / TRANSCODE_REQUIRED /
+  UNSUPPORTED from ADDON-SUPPLIED metadata only (container, codec, filename,
+  bit-depth hints via word-boundary lexicons). Missing metadata degrades to
+  UNCERTAIN — never a fabricated verdict; audio language is never guessed.
+* `media-capabilities.ts` (client): runtime refinement via
+  `mediaCapabilities.decodingInfo()` (+ MSE/canPlayType fallbacks) — a
+  capable device plays HEVC directly, a negative authoritative HEVC answer
+  routes to the transcode path.
+* Compatibility gateway: streams needing remux/transcode receive SIGNED
+  references (URL carried INSIDE the token) at resolution time;
+  `POST /api/playback/compat/manifest` accepts ONLY those references
+  (never a client URL), re-validates through the playback boundary and
+  forwards to the configured media worker (`MAVERO_MEDIA_WORKER_URL`). With
+  no worker provisioned it degrades to typed COMPAT_UNAVAILABLE — nothing is
+  faked in serverless. Worker contract + remux-first/transcode-second policy
+  + streaming/cleanup requirements: `docs/compat-worker.md`.
+
+### Sandbox policy fix (GOALS 19–22)
+
+The Phase 7A source form force-stamped `sandbox_policy` into EVERY source
+row (default `required`), silently overriding provider policies and locking
+overrides in on any unrelated edit. Now: the source form offers
+Provider default (inherit — the key is REMOVED from capabilities JSON) plus
+the three explicit policies; the UI displays CONFIGURED vs EFFECTIVE
+separately (`Effective: …`); the resolver/runtime hierarchy
+(source override → provider default → system default required) is unchanged
+and re-pinned from database-through-runtime. No silent data rewrite: existing
+rows keep their effective policy; admins can switch overrides back to
+Provider default via the form (the stale key is removed on save).
+
+### Tests
+
+* New `scripts/stremio_player_phase10_test.ts` (147 checks, A–O): token
+  signing/tamper/expiry/binding, session creation safety, per-addon
+  resolution incl. cap + isolation + mid-session disable, the progressive
+  controller (first stream before slowest, retry-of-one, no refetch of ok
+  addons, dispose), live merge fairness/pinning, manager live update,
+  classifier matrix, runtime capability probes, compat client degradation,
+  gateway contract, the full sandbox matrix incl. admin UI pins, Video.js
+  ownership (incl. the REAL production loader + facade behavioral path),
+  audio-track UI contract, security re-pins, chain registration.

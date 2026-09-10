@@ -2,6 +2,7 @@
   import { Check } from 'lucide-svelte';
   import type { PlayerQualityOption } from '$lib/shared/player';
   import { formatMaveroStreamSize, maveroStreamDetailLabel, maveroStreamFormatLabel, maveroStreamQualityLabel, maveroStreamSubtitleLabel } from '$lib/client/player/mavero-streams';
+  import { compatBadgeForStream } from '$lib/client/player/mavero-compat';
 
   /**
    * Phase 9 — ONE rich MAVERO stream card (reusable presentational
@@ -31,6 +32,10 @@
     formatMaveroStreamSize(stream.videoSize),
   ].filter((badge): badge is string => Boolean(badge));
   $: detail = maveroStreamDetailLabel(stream);
+  // Phase 10 GOAL 11: compatibility hint badge — derived ONLY from the
+  // addon-supplied metadata (shared classifier). `null` renders nothing;
+  // uncertainty is phrased honestly ("May not play in this browser").
+  $: compatBadge = compatBadgeForStream(stream);
 </script>
 
 <button
@@ -54,7 +59,10 @@
         {#each badges as badge (badge)}
           <span class="card-badge">{badge}</span>
         {/each}
+        {#if compatBadge}<span class="card-badge card-compat">{compatBadge}</span>{/if}
       </span>
+    {:else if compatBadge}
+      <span class="card-badges"><span class="card-badge card-compat">{compatBadge}</span></span>
     {/if}
   </span>
 </button>
@@ -70,5 +78,6 @@
   .card-detail { display: -webkit-box; overflow: hidden; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 0.55rem; line-height: 1.45; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
   .card-badges { display: flex; flex-wrap: wrap; gap: 4px; }
   .card-badge { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; color: var(--ink-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 0.53rem; text-overflow: ellipsis; white-space: nowrap; }
+  .card-compat { border-color: rgba(255, 176, 32, 0.45); color: #ffb020; }
   @media (prefers-reduced-motion: reduce) { .mavero-stream-card { transition: none; } }
 </style>

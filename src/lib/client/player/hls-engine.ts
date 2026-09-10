@@ -1,61 +1,76 @@
 import { PLAYER_AUTO_QUALITY_ID, type PlayerInternalQualityOption, type PlayerSource } from '$lib/shared/player';
 
 /**
- * HLS playback engine — Phase 5.
+ * HLS playback engine — Phase 5, Phase 10 (Video.js ownership).
  *
- * A SMALL adapter around hls.js for the EXISTING direct `<video>` path.
- * This is NOT a new player: PlayerShell, PlayerViewport, the
- * PlaybackManager, the DirectPlayerAdapter, progress/resume, quality
- * switching, fullscreen, PiP, Media Session and Wake Lock are untouched.
- * The engine only owns the hls.js instance lifecycle for HLS sources that
- * the browser cannot play natively:
+ * A SMALL adapter for the EXISTING direct `<video>` path. This is NOT a new
+ * player: PlayerShell, PlayerViewport, the PlaybackManager, the
+ * DirectPlayerAdapter, progress/resume, quality switching, fullscreen, PiP,
+ * Media Session and Wake Lock are untouched. The engine only owns the HLS
+ * resource lifecycle for HLS sources that the browser cannot play natively:
  *
  *   PlaybackManager → PlayerShell → PlayerViewport
  *     → direct MP4 / native HLS  → existing `<video src>` path (unchanged)
- *     → non-native HLS           → THIS engine → hls.js → same `<video>`
+ *     → non-native HLS           → THIS engine → SAME `<video>`
+ *
+ * PHASE 10 — VIDEO.JS IS THE SINGLE HLS OWNER (GOALS 7/8):
+ *   The hls.js instance is created, attached, loaded and destroyed by the
+ *   official Video.js v10 adapter (`@videojs/hlsjs-video` 10 RC — the
+ *   `HlsJsVideo` integration documented at videojs.org). Mavero source code
+ *   no longer imports `hls.js` anywhere: the engine constructs the Video.js
+ *   `HlsJsAdapter` and drives it through its documented surface
+ *   (attach/src/load + the `engine` property exposing the underlying hls.js
+ *   instance). Exactly ONE owner exists — Video.js — so there can never be a
+ *   second competing hls.js controller on the same media element. The
+ *   previous direct-hls.js implementation of this file was REMOVED, not
+ *   parallel-kept (no half integration).
+ *
+ *   What Mavero still owns here (policy, not engine): generation/race
+ *   guards, bounded recovery limits, error classification, the engine-free
+ *   quality surface, and the native-HLS routing decision
+ *   (`resolveDirectPlaybackMode`).
  *
  * SSR BOUNDARY (spec §2/§30):
  *   * This module is CLIENT-ONLY. It contains no top-level browser globals
  *     and no top-level side effects, so importing it during SSR is safe.
- *   * hls.js is loaded exclusively through a dynamic ESM import inside
- *     `defaultHlsModuleLoader()` — it can never execute during SvelteKit
- *     SSR, server routes or server resolver code. No server module imports
- *     this file.
+ *   * The Video.js module is loaded exclusively through a dynamic ESM
+ *     import inside `defaultHlsModuleLoader()` — it can never execute
+ *     during SvelteKit SSR, server routes or server resolver code. No
+ *     server module imports this file.
  *
  * OWNERSHIP (spec §7):
  *   PlayerViewport (the component that owns the `<video>` element) is the
  *   single owner of the engine. There is exactly ONE engine instance and
- *   therefore at most ONE live hls.js instance per video element at any
- *   time. The PlaybackManager and PlayerShell never see hls.js APIs.
+ *   therefore at most ONE live Video.js hls.js instance per video element at
+ *   any time. The PlaybackManager and PlayerShell never see hls.js APIs.
  *
  * RACE PROTECTION (spec §8):
  *   Every `attach()` bumps an internal generation token. A slow
  *   initialization for source A is invalidated when the source switches to
- *   B (destroy/attach), and stale loader continuations or stale hls.js
- *   events can never reach the current video element or callbacks.
+ *   B (destroy/attach), and stale loader continuations or stale events can
+ *   never reach the current video element or callbacks.
  *
  * ERROR HANDLING (spec §10):
  *   Bounded recovery only — fatal network errors get a small number of
  *   `startLoad()` retries, fatal media errors get one `recoverMediaError()`
  *   attempt; anything beyond that (and every other fatal type) destroys the
- *   instance and surfaces a generic player error. No infinite retry loops.
+ *   adapter and surfaces a generic player error. No infinite retry loops.
  *
  * SECURITY (spec §24–§27):
  *   No proxying, no URL rewriting, no custom loader hooks (no request-header
- *   injection of any kind), no DRM/EME code. hls.js runs with its DEFAULT
- *   configuration — nothing is overridden in Phase 5 (no concrete Mavero
- *   requirement identified), so manifest/segment/key requests are plain
- *   browser requests subject to normal CORS.
+ *   injection of any kind), no DRM/EME code. The Video.js adapter runs with
+ *   ITS default hls.js configuration; Mavero passes no media-engine config
+ *   overrides. Manifest/segment/key requests are plain browser requests
+ *   subject to normal CORS.
  *
  * PHASE 6: the engine additionally exposes a MINIMAL, generic internal
  * quality-level API (`getQualityLevels/getQualityOptions`,
  * `getQualitySelection`, `setAutoQualityLevel`, `setQualityLevel`) so the
  * existing quality UI can offer AUTO + manifest levels for engine-driven
- * HLS. The API is hls.js-free (`PlayerInternalQualityOption` + the
- * reserved AUTO id only), switches levels SEAMLESSLY via `nextLevel`
- * (never recreating the engine), defaults to AUTO (no level is forced),
- * and falls back to AUTO on a failed switch request instead of destroying
- * the instance.
+ * HLS. The API is hls.js-free (`PlayerInternalQualityOption` + the reserved
+ * AUTO id only), switches levels SEAMLESSLY via `nextLevel` (never recreating
+ * the engine), defaults to AUTO (no level is forced), and falls back to AUTO
+ * on a failed switch request instead of destroying the instance.
  */
 
 /** Minimal structural shape of one hls.js quality level (Phase 6). */
@@ -67,11 +82,11 @@ export type HlsLevelLike = {
 /**
  * Minimal structural shape of the hls.js instance the engine needs.
  *
- * Phase 6 adds the internal quality-level surface as OPTIONAL members
- * (`levels`, `autoLevelEnabled`, `currentLevel`, `nextLevel`): every real
- * hls.js 1.7.2 instance has them (verified against its typings), while
- * existing test doubles of the narrower Phase 5 interface keep compiling
- * and the engine degrades to "no quality UI" when they are absent.
+ * Phase 10: this is the shape of the Video.js adapter's `engine` object
+ * (the underlying hls.js 1.7.2 instance — verified against its typings).
+ * Every real hls.js instance has these members, while existing test doubles
+ * of the narrower interface keep compiling and the engine degrades to "no
+ * quality UI" when they are absent.
  *
  * Level-switch semantics (hls.js 1.7.2, verified from its typings):
  *   * `nextLevel = n`   — switch asap WITHOUT interrupting playback
@@ -102,6 +117,22 @@ export type HlsLike = {
   readonly currentLevel?: number;
   /** Seamless level switch target; `-1` re-enables AUTO (Phase 6). */
   nextLevel?: number;
+  /**
+   * Phase 10 (GOAL 18): addon/HLS-provided audio tracks (only present when
+   * the stream actually carries alternate audio renditions). Never invented:
+   * a mono-audio stream exposes none.
+   */
+  readonly audioTracks?: readonly HlsAudioTrackLike[];
+  /** Selected audio track index (-1 = default); hls.js contract (optional). */
+  audioTrack?: number;
+};
+
+/** One hls.js audio track (structural — hls.js `audioTracks` entries). */
+export type HlsAudioTrackLike = {
+  id: number;
+  lang?: string;
+  name?: string;
+  default?: boolean;
 };
 
 /** Subset of the hls.js error payload the engine inspects. */
@@ -111,13 +142,46 @@ export type HlsEventData = {
   details?: string;
 };
 
-/** Factory that constructs an hls.js instance (injectable for tests). */
+/**
+ * Phase 10: the structural shape of the Video.js HlsJsAdapter surface the
+ * facade drives. Only documented members — attach/detach/destroy, the src
+ * property (assignment triggers the documented load request) and the
+ * read-only `engine` property (the underlying hls.js instance, populated
+ * once the MSE delegate is created).
+ */
+export type VideoJsAdapterLike = {
+  attach(target: HTMLMediaElement): void;
+  detach(): void;
+  destroy(): void;
+  src: string;
+  readonly engine: HlsLike | null;
+  addEventListener(type: string, listener: (event: Event) => void): void;
+  removeEventListener(type: string, listener: (event: Event) => void): void;
+};
+
+/**
+ * Phase 10: the structural shape of the `@videojs/hlsjs-video` module the
+ * loader consumes. `HlsJsAdapter` constructs the Video.js adapter; `Hls`
+ * is the underlying hls.js export (its `.isSupported()` gate and `.Events`
+ * map are used by the facade).
+ */
+export type VideoJsHlsModule = {
+  HlsJsAdapter: new () => VideoJsAdapterLike;
+  Hls: { isSupported(): boolean; Events: Record<string, string> };
+};
+
+/**
+ * Phase 10 factory: constructs the engine-facing instance for ONE playback.
+ * The production factory builds the Video.js-backed facade below; tests
+ * inject fakes of the same shape (unchanged since Phase 5).
+ */
 export type HlsFactory = (config?: Record<string, unknown>) => HlsLike;
 
 /**
- * Loads the hls.js ES module and adapts it to an `HlsFactory`. Returns
- * `null` when the module cannot be loaded (e.g. very old browser) — the
- * caller surfaces an unsupported-media error instead of crashing.
+ * Loads the Video.js hlsjs-video ES module and adapts it to an
+ * `HlsFactory`. Returns `null` when the module cannot be loaded (e.g. very
+ * old browser) — the caller surfaces an unsupported-media error instead of
+ * crashing.
  *
  * CLIENT-ONLY: called exclusively from browser code paths (PlayerViewport
  * wiring). The dynamic import is cached by the browser module system, and
@@ -125,13 +189,246 @@ export type HlsFactory = (config?: Record<string, unknown>) => HlsLike;
  */
 export type HlsModuleLoader = () => Promise<HlsFactory | null>;
 
+/** hls.js engine event names mapped onto Video.js adapter lifecycle hooks. */
+const VIDEO_JS_EVENTS = {
+  /** Adapter hook fired right after the MSE delegate (+hls.js engine) exists. */
+  loadstart: 'loadstart',
+  /** Adapter hook for fatal errors (bridged by the adapter's error mixin). */
+  error: 'error',
+} as const;
+
+/**
+ * The Video.js-backed HlsLike facade (Phase 10). One facade = ONE
+ * `HlsJsAdapter` = ONE hls.js instance, created and destroyed by Video.js:
+ *
+ *   engine.attach()        → facade created by the factory (adapter exists)
+ *   facade.attachMedia(v)  → remembers the media element
+ *   facade.loadSource(url) → adapter.attach(v) + adapter.src = url
+ *                            → Video.js creates the MSE delegate + hls.js
+ *                              instance, attaches, starts loading
+ *   facade.destroy()       → adapter.destroy() (destroys the hls.js instance)
+ *
+ * Event subscriptions made BEFORE the underlying engine exists are buffered
+ * and applied the moment the adapter reports its `loadstart` hook (the
+ * documented point where `adapter.engine` is populated). Fatal errors arrive
+ * through the adapter's own `error` events, carrying the original hls.js
+ * error data (`event.error.data` — set by the adapter's error mixin), which
+ * the engine's recovery policy consumes.
+ */
+class VideoJsHlsFacade implements HlsLike {
+  private adapter: VideoJsAdapterLike;
+  private events: Record<string, string>;
+  private hls: VideoJsHlsModule['Hls'];
+  private video: HTMLMediaElement | null = null;
+  private engine: HlsLike | null = null;
+  private buffered: Array<{ event: string; listener: (event: string, data?: HlsEventData) => void }> = [];
+  /** 'hlsError' listeners — independent of the underlying engine lifecycle. */
+  private errorListeners = new Set<(event: string, data?: HlsEventData) => void>();
+  private adapterError = (event: Event) => {
+    const data = (event as ErrorEvent).error?.data as HlsEventData | undefined;
+    const payload = data ?? { fatal: true, type: 'otherError', details: 'adapter-error' };
+    for (const listener of [...this.errorListeners]) {
+      try {
+        listener('hlsError', payload);
+      } catch {
+        // listener errors must never break the engine
+      }
+    }
+  };
+  private adapterLoadStart = () => {
+    this.captureEngine();
+  };
+
+  constructor(module: VideoJsHlsModule) {
+    this.events = module.Hls.Events;
+    this.hls = module.Hls;
+    this.adapter = new module.HlsJsAdapter();
+    this.adapter.addEventListener(VIDEO_JS_EVENTS.loadstart, this.adapterLoadStart);
+    this.adapter.addEventListener(VIDEO_JS_EVENTS.error, this.adapterError);
+  }
+
+  /** Test/inspection hook: the live hls.js instance owned by Video.js. */
+  getUnderlyingEngine(): HlsLike | null {
+    return this.engine;
+  }
+
+  attachMedia(media: HTMLMediaElement): void {
+    this.video = media;
+  }
+
+  loadSource(url: string): void {
+    if (!this.video) return;
+    // Video.js decides MSE-vs-native itself; Mavero only reaches this path
+    // for browsers without native HLS (PlayerViewport routing). A browser
+    // with neither native HLS nor MSE cannot play the stream at all —
+    // surface the fatal error instead of a doomed native attempt.
+    if (typeof this.events.MANIFEST_PARSED !== 'string' || !this.hls.isSupported()) {
+      this.dispatchError({ fatal: true, type: 'otherError', details: 'mse-unsupported' });
+      return;
+    }
+    this.adapter.attach(this.video);
+    // Documented contract: assigning src triggers the load request
+    // (async microtask) — the `loadstart` hook then exposes `engine`.
+    this.adapter.src = url;
+  }
+
+  destroy(): void {
+    try {
+      this.adapter.removeEventListener(VIDEO_JS_EVENTS.loadstart, this.adapterLoadStart);
+      this.adapter.removeEventListener(VIDEO_JS_EVENTS.error, this.adapterError);
+    } catch {
+      // listener removal must never throw
+    }
+    try {
+      // Video.js owns the hls.js instance lifecycle — destroy through it.
+      this.adapter.destroy();
+    } catch {
+      // destroy must never throw — internals may already be torn down.
+    }
+    this.engine = null;
+    this.video = null;
+    this.buffered = [];
+    this.errorListeners.clear();
+  }
+
+  startLoad(startPosition?: number): void {
+    try {
+      this.engine?.startLoad(startPosition);
+    } catch {
+      // recovery must never throw
+    }
+  }
+
+  stopLoad(): void {
+    try {
+      this.engine?.stopLoad();
+    } catch {
+      // must never throw
+    }
+  }
+
+  recoverMediaError(): void {
+    try {
+      this.engine?.recoverMediaError();
+    } catch {
+      // recovery must never throw
+    }
+  }
+
+  on(event: string, listener: (event: string, data?: HlsEventData) => void): void {
+    if (event === 'hlsError') {
+      // Bridged via the adapter error listener — registered immediately,
+      // independent of when the underlying engine appears.
+      this.errorListeners.add(listener);
+      return;
+    }
+    if (this.engine) this.subscribe(event, listener);
+    else this.buffered.push({ event, listener });
+  }
+
+  off(event: string, listener: (event: string, data?: HlsEventData) => void): void {
+    if (event === 'hlsError') {
+      this.errorListeners.delete(listener);
+      return;
+    }
+    this.buffered = this.buffered.filter((entry) => entry.listener !== listener || entry.event !== event);
+    if (!this.engine) return;
+    const target = this.hlsEventName(event);
+    if (!target) return;
+    try {
+      this.engine.off(target, listener);
+    } catch {
+      // must never throw
+    }
+  }
+
+  get levels(): readonly HlsLevelLike[] | undefined {
+    return this.engine?.levels;
+  }
+
+  get autoLevelEnabled(): boolean | undefined {
+    return this.engine?.autoLevelEnabled;
+  }
+
+  get currentLevel(): number | undefined {
+    return this.engine?.currentLevel;
+  }
+
+  get nextLevel(): number | undefined {
+    return this.engine?.nextLevel;
+  }
+
+  set nextLevel(value: number | undefined) {
+    if (!this.engine || value === undefined) return;
+    this.engine.nextLevel = value;
+  }
+
+  get audioTracks(): readonly HlsAudioTrackLike[] | undefined {
+    return this.engine?.audioTracks;
+  }
+
+  get audioTrack(): number | undefined {
+    return this.engine?.audioTrack;
+  }
+
+  set audioTrack(value: number | undefined) {
+    if (!this.engine || value === undefined) return;
+    this.engine.audioTrack = value;
+  }
+
+  /** Maps an engine event name onto the underlying hls.js event name. */
+  private hlsEventName(event: string): string | null {
+    switch (event) {
+      case 'hlsMediaAttached': return this.events.MEDIA_ATTACHED ?? null;
+      case 'hlsManifestLoading': return this.events.MANIFEST_LOADING ?? null;
+      case 'hlsManifestLoaded': return this.events.MANIFEST_LOADED ?? null;
+      case 'hlsManifestParsed': return this.events.MANIFEST_PARSED ?? null;
+      case 'hlsLevelLoaded': return this.events.LEVEL_LOADED ?? null;
+      case 'hlsLevelSwitched': return this.events.LEVEL_SWITCHED ?? null;
+      // 'hlsError' is delivered through the ADAPTER's error events instead.
+      default: return null;
+    }
+  }
+
+  private dispatchError(data: HlsEventData): void {
+    for (const listener of [...this.errorListeners]) {
+      try {
+        listener('hlsError', data);
+      } catch {
+        // listener errors must never break the engine
+      }
+    }
+  }
+
+  private subscribe(event: string, listener: (event: string, data?: HlsEventData) => void): void {
+    const target = this.hlsEventName(event);
+    if (!target) return;
+    try {
+      this.engine?.on(target, listener);
+    } catch {
+      // subscription must never throw
+    }
+  }
+
+  /** Applies buffered subscriptions once Video.js exposes the hls.js engine. */
+  private captureEngine(): void {
+    const engine = this.adapter.engine;
+    if (!engine || this.engine === engine) return;
+    this.engine = engine;
+    const pending = this.buffered;
+    this.buffered = [];
+    for (const entry of pending) this.subscribe(entry.event, entry.listener);
+  }
+}
+
 export async function defaultHlsModuleLoader(): Promise<HlsFactory | null> {
   try {
-    const mod = (await import('hls.js')) as unknown as { default?: unknown } & Record<string, unknown>;
-    const ctor = typeof mod === 'function' ? mod : mod.default;
-    if (typeof ctor !== 'function') return null;
-    const Hls = ctor as new (config?: Record<string, unknown>) => HlsLike;
-    return (config?: Record<string, unknown>) => new Hls(config);
+    const mod = (await import('@videojs/hlsjs-video')) as unknown as { default?: unknown } & Record<string, unknown>;
+    const AdapterCtor = mod.HlsJsAdapter;
+    const HlsExport = mod.Hls as VideoJsHlsModule['Hls'] | undefined;
+    if (typeof AdapterCtor !== 'function' || !HlsExport || typeof HlsExport.isSupported !== 'function' || !HlsExport.Events) return null;
+    const module: VideoJsHlsModule = { HlsJsAdapter: AdapterCtor as new () => VideoJsAdapterLike, Hls: HlsExport };
+    return () => new VideoJsHlsFacade(module);
   } catch {
     return null;
   }
@@ -190,8 +487,8 @@ export function isHlsMediaSource(source: PlayerSource | null, url: string): bool
 
 /**
  * Native HLS capability check (spec §4 — Safari/iOS path). Uses the
- * standard `canPlayType` probe for the HLS mime types. hls.js must NOT be
- * loaded when native playback works.
+ * standard `canPlayType` probe for the HLS mime types. The Video.js engine
+ * must NOT be loaded when native playback works.
  */
 export function supportsNativeHls(video: Pick<HTMLMediaElement, 'canPlayType'>): boolean {
   return Boolean(
@@ -207,7 +504,8 @@ export type DirectPlaybackMode = 'native' | 'hls-js';
  * Route a direct source:
  *   - non-HLS (MP4/WebM/file) → 'native'   (existing path, unchanged)
  *   - HLS + native support    → 'native'  (`video.src` path — existing lifecycle)
- *   - HLS + no native support → 'hls-js'  (this engine takes over the `<video>`)
+ *   - HLS + no native support → 'hls-js'  (this engine → Video.js adapter
+ *                             takes over the `<video>` — the ONE HLS owner)
  */
 export function resolveDirectPlaybackMode(source: PlayerSource | null, url: string, video: Pick<HTMLMediaElement, 'canPlayType'>): DirectPlaybackMode {
   if (!isHlsMediaSource(source, url)) return 'native';
@@ -218,11 +516,11 @@ export function resolveDirectPlaybackMode(source: PlayerSource | null, url: stri
 // Engine
 // ---------------------------------------------------------------------------
 
-/** Generic (hls.js-agnostic) engine states exposed to the viewport. */
+/** Generic (engine-library-agnostic) engine states exposed to the viewport. */
 export type HlsEngineState = 'loading' | 'manifest-loaded' | 'attached' | 'error';
 
 export type HlsEngineCallbacks = {
-  /** Generic state transitions — never hls.js event names. */
+  /** Generic state transitions — never engine-library event names. */
   onState?: (state: HlsEngineState) => void;
   /** Unrecoverable failure — the video cannot play this source. */
   onFatalError?: (message: string) => void;
@@ -233,7 +531,7 @@ export type HlsEngineCallbacks = {
    */
   onQualityLevels?: (levels: HlsEngineLevel[]) => void;
   /**
-   * Phase 6: the internal quality MODE/level changed (hls.js level switch
+   * Phase 6: the internal quality MODE/level changed (level switch
    * completed). `selection` is the generic selection id — the reserved
    * AUTO id while ABR is in control, else the playing level index.
    */
@@ -248,7 +546,7 @@ export type HlsEngineOptions = {
 /** Bounded recovery budget (spec §10 — no infinite retry loops). */
 export const HLS_RECOVERY_LIMITS = { network: 2, media: 1 } as const;
 
-/** hls.js event names the engine listens to (subset, purposeful only). */
+/** Engine event names the facade listens to (purposeful subset only). */
 export const HLS_ENGINE_EVENTS = {
   mediaAttached: 'hlsMediaAttached',
   manifestLoading: 'hlsManifestLoading',
@@ -266,7 +564,7 @@ export const HLS_UNSUPPORTED_MESSAGE = 'HLS playback is not supported in this br
  * One engine-agnostic internal quality level (Phase 6). `index` is the
  * hls.js level index (the selection key handed back to `setQualityLevel`);
  * `label` is pre-derived safe presentation text — the UI never derives
- * labels from hls.js objects itself.
+ * labels from engine objects itself.
  */
 export type HlsEngineLevel = {
   index: number;
@@ -331,23 +629,23 @@ export class HlsPlaybackEngine {
     this.loader = options.hlsLoader ?? loadHlsFactory;
   }
 
-  /** True while an hls.js instance is attached (or initializing) for a source. */
+  /** True while an adapter instance is attached (or initializing) for a source. */
   isActive(): boolean {
     return this.active;
   }
 
-  /** Test/inspection hook: the live hls.js instance, if any. */
+  /** Test/inspection hook: the live engine-facing instance, if any. */
   getInstance(): HlsLike | null {
     return this.instance;
   }
 
-  // ----- Phase 6: internal quality levels (generic, hls.js-free surface) -----
+  // ----- Phase 6: internal quality levels (generic, library-free surface) -----
   //
   // The UI (PlayerShell / PlayerControls) only ever sees
   // `PlayerInternalQualityOption` lists + the reserved AUTO id — never
-  // `Hls.Level`, `Hls.Events` or any other hls.js type (spec §31). When the
-  // instance predates the quality surface (Phase 5 test doubles) or no
-  // instance is live, the getters degrade gracefully to empty/AUTO.
+  // hls.js types (`Hls.Level`, `Hls.Events`, …). When the instance predates
+  // the quality surface (test doubles) or no instance is live, the getters
+  // degrade gracefully to empty/AUTO.
 
   /** All quality levels of the loaded manifest, in manifest order. */
   getQualityLevels(): HlsEngineLevel[] {
@@ -414,10 +712,41 @@ export class HlsPlaybackEngine {
     }
   }
 
+  // ----- Phase 10 (GOAL 18): audio tracks — only when the stream HAS them -----
+
+  /**
+   * The stream's audio tracks, verbatim from the manifest/engine. EMPTY when
+   * the stream has none (or the engine predates the surface) — the UI never
+   * renders a selector for a single/unknown track set (never claims audio
+   * can be switched when it cannot).
+   */
+  getAudioTracks(): HlsAudioTrackLike[] {
+    const tracks = this.instance?.audioTracks;
+    return Array.isArray(tracks) ? [...tracks] : [];
+  }
+
+  /** The currently playing audio track index, or null when unavailable. */
+  getSelectedAudioTrack(): number | null {
+    const current = this.instance?.audioTrack;
+    return typeof current === 'number' && current >= 0 ? current : null;
+  }
+
+  /** Selects one audio track by engine index. Never recreates the engine. */
+  selectAudioTrack(index: number): void {
+    const instance = this.instance;
+    if (!instance || this.destroyed) return;
+    if (!Number.isSafeInteger(index) || index < 0 || index >= (instance.audioTracks?.length ?? 0)) return;
+    try {
+      instance.audioTrack = index;
+    } catch {
+      // selection failure is non-fatal — the current track keeps playing
+    }
+  }
+
   /**
    * Attach the engine to a video element and start loading `url` through
-   * hls.js. Safe to call repeatedly for source switches: the previous
-   * instance is always destroyed first, so exactly ONE hls.js instance is
+   * Video.js. Safe to call repeatedly for source switches: the previous
+   * adapter is always destroyed first, so exactly ONE hls.js instance is
    * ever attached to the video element.
    */
   async attach(video: HTMLMediaElement, url: string, callbacks: HlsEngineCallbacks = {}): Promise<void> {
@@ -440,8 +769,7 @@ export class HlsPlaybackEngine {
       return;
     }
 
-    // hls.js runs with its DEFAULT configuration — no Mavero-specific
-    // overrides were identified for Phase 5 (spec §5).
+    // The Video.js-backed facade (or a test double of the same shape).
     const instance = factory();
     this.instance = instance;
     instance.on(HLS_ENGINE_EVENTS.manifestLoading, () => {
@@ -487,8 +815,9 @@ export class HlsPlaybackEngine {
 
   /**
    * Tear the engine down completely (component unmount / switch to native
-   * playback). After `destroy()` the engine is inert: no stale hls.js event
-   * or in-flight loader continuation can touch the video element.
+   * playback). After `destroy()` the engine is inert: no stale event
+   * or in-flight loader continuation can touch the video element. Video.js
+   * owns the hls.js instance and destroys it through the adapter.
    */
   destroy(): void {
     this.destroyed = true;
@@ -497,7 +826,7 @@ export class HlsPlaybackEngine {
     this.active = false;
   }
 
-  /** Destroy only the hls.js instance (used before a new attach). */
+  /** Destroy only the active instance (used before a new attach). */
   private destroyInstance(): void {
     const instance = this.instance;
     this.instance = null;
@@ -505,7 +834,7 @@ export class HlsPlaybackEngine {
     try {
       instance.destroy();
     } catch {
-      // destroy must never throw — hls.js internals may already be torn down.
+      // destroy must never throw — internals may already be torn down.
     }
   }
 
@@ -514,10 +843,10 @@ export class HlsPlaybackEngine {
    *   fatal networkError → `startLoad()` retry, max HLS_RECOVERY_LIMITS.network
    *   fatal mediaError   → `recoverMediaError()`, max HLS_RECOVERY_LIMITS.media
    *   any other fatal    → immediate failure
-   * Non-fatal errors are left to hls.js' internal handling.
+   * Non-fatal errors are left to the engine's internal handling.
    */
   private handleHlsError(data: HlsEventData | undefined, callbacks: HlsEngineCallbacks): void {
-    if (!data?.fatal) return; // non-fatal — hls.js recovers internally
+    if (!data?.fatal) return; // non-fatal — the engine recovers internally
     if (data.type === 'networkError' && this.networkRecoveries < HLS_RECOVERY_LIMITS.network) {
       this.networkRecoveries += 1;
       try {
