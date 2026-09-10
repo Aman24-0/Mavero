@@ -992,3 +992,195 @@ same <video> element
 **Phase 5 complete. Native HLS playback is implemented.** Phase 6
 source/quality UX redesign and Phase 7 admin addon management UI remain
 excluded (later phases).
+
+---
+
+## Phase 6 — MAVERO Player source & quality UX (DONE)
+
+Phase 6 upgrades the USER-FACING source and quality experience for the
+Phase 4 MAVERO Player / Stremio HTTP addon integration — without
+rewriting PlayerShell, PlaybackManager, the resolver, or any existing
+provider path. MAVERO Player remains ONE logical source; the existing
+provider/embed/direct UX is byte-preserved; the addon registry and the
+database stay the sole sources of addon configuration (consumption-only
+phase — no admin controls of any kind).
+
+### Source presentation & addon grouping
+
+* The existing source sheet was EXTENDED (not duplicated, not replaced).
+  When the active source IS the MAVERO Player aggregate
+  (`isMaveroAggregateSource` — stable `mavero-player` identity), the sheet
+  renders a nested "MAVERO Player · N streams" section under the source
+  rows: streams grouped by addon DISPLAY NAME, each group a labeled
+  `role="group"` inside one `role="listbox"` ("MAVERO Player addon
+  streams").
+* Grouping/ordering is done client-side by the NEW pure module
+  `src/lib/client/player/mavero-streams.ts` (`groupMaveroStreams`): the
+  resolver's deterministic order (addon ordering → name → stream index →
+  quality) is PRESERVED — first-appearance groups, no re-ranking, no
+  `.sort()`.
+* The server (`qualityOptionOf`) now attaches two additive presentation
+  fields to each aggregate quality option: `addonName` (display name
+  only) and `protocol` (the stream's own normalized protocol). No
+  database ids, manifest URLs, logo URLs or internal identifiers are
+  exposed (spec §39). Aggregate top-level shape unchanged (pinned).
+* New pure presentation helpers: `dedupeMaveroStreams` (presentation-layer
+  dedupe by stable stream URL identity — never by label; Phase 3 already
+  dedupes server-side, this is the safety net), `maveroStreamQualityLabel`
+  (height → "720p", else the quality portion of the existing Phase 4
+  label, else "Auto"; bitrate never displayed raw),
+  `maveroStreamFormatLabel` ("HLS"/"MP4" secondary line, omitted when
+  unknown). Language is never fabricated: Phase 3 provides no reliable
+  language metadata, so no language label is rendered anywhere.
+* Addon logos: the registry holds logo URLs but they are deliberately NOT
+  sent to the client — the sheet renders a consistent fallback icon
+  (lucide Clapperboard) and the player sheet contains zero `<img>`
+  elements (no arbitrary external image loads, no layout instability).
+  Logos are not mandatory.
+
+### Quality presentation & HLS internal levels
+
+* Phase 5's deferral is resolved: the Phase 5 engine now exposes a MINIMAL
+  generic quality API — `getQualityLevels()`, `getQualityOptions()`,
+  `getQualitySelection()`, `setAutoQualityLevel()`, `setQualityLevel()`.
+  All hls.js types stay inside the engine; the UI only sees the new
+  shared `PlayerInternalQualityOption { id, label }` + the reserved
+  `PLAYER_AUTO_QUALITY_ID` constant, matching the shared
+  `PlayerQualityController` contract (spec §31).
+* AUTO is the default and maps to the correct hls.js 1.7.2 mechanism:
+  `nextLevel = -1` (verified from the installed typings). Manual
+  selection uses `nextLevel = n` — the SEAMLESS switch that does not
+  flush the buffer or interrupt playback. The engine never touches
+  `currentLevel`/`loadLevel` (buffer-flushing/deferred semantics).
+* Labels are derived safely (`hlsLevelLabel`): height → "1080p"; else
+  bitrate → "1.5 Mbps"/"800 kbps"; else "Auto". The UI reflects the
+  selected MODE (AUTO vs manual level) via `autoLevelEnabled` — ABR level
+  hops in AUTO mode never flicker the selection (signature-guarded
+  `enginequality` events).
+* Quality switching failure (spec §35): a rejected level switch falls
+  back to the AUTO mechanism; the engine is never destroyed by a quality
+  change — only genuinely unrecoverable playback failures surface errors
+  through the existing fatal path (bounded recovery unchanged).
+* ONE quality surface per context (spec §30/AQ): PlayerControls renders
+  the internal select (AUTO + levels) INSTEAD of the per-stream select
+  only while an engine-driven multi-level HLS source is active; otherwise
+  the existing select behaves byte-identically. The source sheet mirrors
+  the same state as an "Quality" button row (the only touchpath on mobile
+  where the select is hidden by the existing ≤840px CSS).
+
+### Source switching, position & state
+
+* Stream switching inside MAVERO Player (`selectMaveroStream`) rides the
+  EXISTING `setQuality` mechanism: position captured into `pendingSeek`,
+  player stays mounted, no navigation, no re-resolution of the virtual
+  source, existing generation/race protection untouched. Selecting the
+  current stream is a no-op.
+* Internal quality switching is seamless and never recreates the engine
+  (pinned behaviorally: same instance, zero destroys, one media attach).
+* Mixed-protocol aggregates now route correctly: the viewport classifies
+  the SELECTED url via the per-option protocol
+  (`protocolForStreamUrl`/`sourceForStreamUrl`; aggregate metadata
+  protocol stays the fallback). This fixes a latent Phase 5 routing gap
+  where an MP4 stream inside an HLS-primary aggregate would have been fed
+  to hls.js. The HLS↔HLS/MP4 4-way matrix is test-pinned.
+* `engineQuality` state resets on genuine source switches (AUTO never
+  leaks across sources); a torn-down engine dispatches an empty quality
+  payload so the UI falls back to the stream list.
+
+### Mobile / desktop / landscape
+
+* The section lives inside the existing scrollable sheet: portrait
+  bottom-sheet (60dvh, scroll), desktop centered popover (min(400px,…)),
+  landscape right-edge drawer (min(320px,30vw), overflow-y auto,
+  safe-area) — all existing contracts byte-preserved.
+* Stream rows reuse the 52px `.sheet-option` touch target; addon names
+  truncate with ellipsis; the quality row wraps (`flex-wrap`); no fixed
+  widths added; no horizontal overflow surface.
+
+### Accessibility
+
+* Stream rows are real `<button type="button" role="option">` elements
+  with `aria-selected` + check icon + `class:active` (never color alone);
+  groups carry `role="group"` + the addon display name as accessible
+  label; the quality row is `role="group"` with `aria-pressed` toggles
+  (existing variant-button pattern). The Phase 8 sheet dialog/focus-trap/
+  focus-restore contracts are byte-identical; no autofocus added.
+
+### Error states
+
+* Failed stream → existing generic error card (Try again / Switch source)
+  — the sheet stays reachable, other addons' streams remain selectable.
+* Zero playable streams → existing graceful "No playable streams are
+  available from MAVERO Player right now." state; provider sources stay
+  fully usable; no raw addon errors/stack traces/URLs are exposed.
+* One failed addon never removes other addons' streams (server excludes
+  only the failing entries — re-pinned behaviorally).
+
+### Security decisions
+
+* Consumption-only: the client sends only content identifiers; no addon
+  CRUD, no manifest inputs (`<input>` count in the shell: 0), no admin
+  routes, no manifest URLs in any user-facing string (only safe
+  presentation metadata travels in `qualities[]`).
+* No proxy, no URL rewriting, no arbitrary headers (no xhrSetup/fetchSetup),
+  no DRM/EME code, no torrent/P2P path, no network probes from the UI
+  (the presentation modules perform zero fetches). URL validation
+  boundaries (`validatePlaybackUrl`, `isPlayablePlayerSource`) untouched.
+
+### Tests
+
+* `scripts/stremio_player_phase6_test.ts` — **213 checks**, sections A–AT:
+  one-logical-source pins; provider-untouched pins; grouping/names/
+  labels/dedupe/ordering behaviorals; zero-stream/failed-stream/failure
+  isolation; no-navigation switching; HLS↔HLS/MP4 routing matrix on
+  mixed aggregates (including the native-HLS browser branch); position
+  preservation; stale-source protection; mobile/desktop/landscape sheet
+  contracts; keyboard/focus/a11y; admin/manifest/torrent/proxy/headers
+  pins; callback compatibility; Phase 5 engine compatibility (narrow
+  interface degrades gracefully); AUTO/manual levels; labels; no engine
+  recreation; failure recovery; MP4 behavior unchanged; panel behavior;
+  mounted player; single quality menu; accessible controls; test-chain
+  registration.
+* `stremio_player_phase5_test.ts` — ONE assertion updated per Phase 6
+  spec §40-AH (engine extension is sanctioned): the AN "purposeful
+  listeners" set now includes `manifestParsed` + `levelSwitched` (each
+  still registered exactly once; the no-speculative-listeners invariant
+  is preserved). The stricter AD pin ("PlayerShell contains zero
+  hls-specific logic") still passes unchanged — the shell-facing
+  Phase 6 surface is engine-agnostic (`engineQuality` naming).
+* Added to the `package.json` test chain after the Phase 5 test.
+
+### Commands / results
+
+- Full test chain (86 scripts from `package.json`, Phase 1 → Phase 6) →
+  **exit 0, all pass** (Phase 1: 111 · Phase 2: 202 · Phase 3: 158 ·
+  Phase 4: 130 · Phase 5: 130 · Phase 6: 213 checks)
+- `pnpm check` (svelte-check) → **0 errors / 41 warnings** (baseline
+  unchanged from Phase 5)
+- `pnpm build` (vite + adapter-netlify) → **success**; hls.js remains in
+  a lazy client chunk only; the server bundle contains no engine code
+- `git diff --check` → clean
+
+### Explicit scope statements
+
+* **"Phase 7 admin addon management UI is NOT implemented."**
+* No addon CRUD/enable/disable/reorder/manifest management, no new
+  Stremio resolver/manifest fetcher, no torrent/P2P/magnet/debrid, no
+  scraping, no media proxy, no arbitrary headers, no DRM bypass, no new
+  standalone player, no Phase 7/Phase 8 work of any kind.
+
+### Known limitations (deferred)
+
+* Addon logos are not rendered (registry-only; consistent fallback icon
+  instead) — deliberate external-image policy for the player sheet.
+* Two addons sharing the same display name merge into one presentation
+  group (grouping is by display name; harmless and deterministic).
+* Language labels are omitted entirely until stream-level language
+  metadata actually exists upstream (never fabricated).
+* Manual HLS levels apply only when hls.js drives playback (native-HLS
+  Safari/iOS keeps automatic ABR, as the platform gives no level API).
+* A failed manual level request falls back to AUTO (per spec §35); per-
+  level error attribution in the UI is deferred with Phase 7/8.
+
+**Phase 6 complete. MAVERO Player source/quality UX is implemented.**
+Phase 7 admin addon management UI is NOT implemented.

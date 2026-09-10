@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Captions, ChevronLeft, ChevronRight, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
-  import type { PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
-  import { formatPlayerTime, playbackSpeeds } from '$lib/shared/player';
+  import type { PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
+  import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
 
   export let playing = false;
   export let muted = false;
@@ -23,6 +23,13 @@
   export let selectedSubtitle = '';
   export let qualities: PlayerQualityOption[] = [];
   export let selectedQuality = '';
+  // Phase 6: internal quality options of the ACTIVE playback engine (e.g.
+  // hls.js ABR levels). When non-empty they REPLACE the per-stream quality
+  // select so exactly ONE quality menu is ever rendered (spec §30/§AQ):
+  //   engine-driven HLS  → AUTO + manifest levels (internal selection)
+  //   everything else    → the existing per-stream select (unchanged)
+  export let internalQualities: PlayerInternalQualityOption[] = [];
+  export let selectedInternalQuality: string = PLAYER_AUTO_QUALITY_ID;
   export let sourceCount = 0;
   export let onTogglePlay: () => void = () => {};
   export let onSeek: (time: number) => void = () => {};
@@ -31,6 +38,9 @@
   export let onPlaybackRate: (value: number) => void = () => {};
   export let onSubtitle: (value: string) => void = () => {};
   export let onQuality: (value: string) => void = () => {};
+  // Phase 6: internal quality selection — id is PLAYER_AUTO_QUALITY_ID or
+  // one internal option id. Never touches the stream/quality URL state.
+  export let onInternalQuality: (id: string) => void = () => {};
   export let onPictureInPicture: () => void = () => {};
   // Phase 9: onFullscreen removed — handled by PlayerShell header.
   export let onStep: (delta: number) => void = () => {};
@@ -82,7 +92,12 @@
       </div>
       {#if sourceCount > 0}<button class="control-button source-button" type="button" aria-label={`Choose source, ${sourceCount} available`} onclick={onSources}><span>{sourceCount}</span><span class="source-dot"></span></button>{/if}
       {#if subtitles.length}<label class="select-control" aria-label="Subtitles"><Captions size={16} /><select value={selectedSubtitle} onchange={(event) => onSubtitle((event.currentTarget as HTMLSelectElement).value)}><option value="">Subtitles off</option>{#each subtitles as track, index}<option value={track.url}>{track.label ?? track.language ?? `Track ${index + 1}`}</option>{/each}</select></label>{/if}
-      {#if qualities.length > 1}<label class="select-control quality" aria-label="Quality"><Settings2 size={15} /><select value={selectedQuality} onchange={(event) => onQuality((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each qualities as quality}<option value={quality.url}>{qualityLabel(quality)}</option>{/each}</select></label>{/if}
+      {#if internalQualities.length > 1}
+        <!-- Phase 6: internal quality of the engine-driven HLS source (AUTO + levels). -->
+        <label class="select-control quality" aria-label="Playback quality"><Settings2 size={15} /><select value={selectedInternalQuality} onchange={(event) => onInternalQuality((event.currentTarget as HTMLSelectElement).value)}><option value={PLAYER_AUTO_QUALITY_ID}>Auto</option>{#each internalQualities as option}<option value={option.id}>{option.label}</option>{/each}</select></label>
+      {:else if qualities.length > 1}
+        <label class="select-control quality" aria-label="Quality"><Settings2 size={15} /><select value={selectedQuality} onchange={(event) => onQuality((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each qualities as quality}<option value={quality.url}>{qualityLabel(quality)}</option>{/each}</select></label>
+      {/if}
       <label class="select-control speed" aria-label="Playback speed"><span>{playbackRate}×</span><select value={playbackRate} onchange={(event) => onPlaybackRate(Number((event.currentTarget as HTMLSelectElement).value))}>{#each playbackSpeeds as speed}<option value={speed}>{speed}×</option>{/each}</select></label>
       {#if pictureInPictureSupported}<button class="control-button optional" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={16} /></button>{/if}
       <!-- Phase 9: removed duplicate fullscreen button — the header orientation button

@@ -539,7 +539,10 @@ ok(viewportSource.includes('function teardownHlsEngine()') && viewportSource.inc
   const engine = new HlsPlaybackEngine({ hlsLoader: loaderOf(makeFactory(instances)) });
   await engine.attach(makeVideo(''), 'https://cdn.example/a.m3u8');
   await engine.attach(makeVideo(''), 'https://cdn.example/b.m3u8');
-  const purposeful = [HLS_ENGINE_EVENTS.mediaAttached, HLS_ENGINE_EVENTS.manifestLoading, HLS_ENGINE_EVENTS.manifestLoaded, HLS_ENGINE_EVENTS.error];
+  // Phase 6 extended the purposeful set with manifestParsed + levelSwitched
+  // (the sanctioned internal-quality surface — each still purposeful, never
+  // speculative), so the expected set is the CURRENT minimal contract.
+  const purposeful = [HLS_ENGINE_EVENTS.mediaAttached, HLS_ENGINE_EVENTS.manifestLoading, HLS_ENGINE_EVENTS.manifestLoaded, HLS_ENGINE_EVENTS.manifestParsed, HLS_ENGINE_EVENTS.levelSwitched, HLS_ENGINE_EVENTS.error];
   ok(instances[0].listeners.size === purposeful.length, 'AN: exactly the purposeful hls.js events are listened to (minimal set, no speculative listeners)');
   for (const event of purposeful) {
     ok((instances[0].listeners.get(event)?.length ?? 0) === 1, `AN: ${event} is registered exactly once`);

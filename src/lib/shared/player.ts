@@ -14,7 +14,44 @@ export type PlayerQualityOption = {
   label?: string;
   height?: number;
   bitrate?: number;
+  /**
+   * Phase 6 (MAVERO Player): safe presentation metadata for one resolved
+   * addon stream. `addonName` is the addon DISPLAY name (never a manifest
+   * URL, database id or internal identifier) and `protocol` is the already
+   * normalized playback protocol of THIS stream. Both are optional —
+   * provider sources never populate them, and the source-sheet grouping
+   * falls back gracefully when they are missing.
+   */
+  addonName?: string;
+  protocol?: PlayerProtocol;
 };
+
+/**
+ * Phase 6: ONE internal quality option of the ACTIVE playback engine
+ * (e.g. an hls.js ABR level). Engine-agnostic by design — the UI never
+ * sees hls.js types (`Hls.Level`, `Hls.Events`, …). `id` is the stable
+ * selection key handed back to the engine; `label` is pre-derived, safe
+ * presentation text (height → "720p", bitrate fallback, else "Auto").
+ */
+export type PlayerInternalQualityOption = {
+  id: string;
+  label: string;
+};
+
+/**
+ * Phase 6: generic quality-controller contract (spec §31). The active
+ * playback engine exposes its internal quality selection through THIS
+ * shape — currently implemented by PlayerViewport on top of the Phase 5
+ * HLS engine. AUTO is the reserved id `PLAYER_AUTO_QUALITY_ID`.
+ */
+export type PlayerQualityController = {
+  getOptions(): PlayerInternalQualityOption[];
+  getSelected(): string | null;
+  select(id: string): void;
+};
+
+/** Reserved selection id for automatic quality (HLS ABR) — spec §10/§34. */
+export const PLAYER_AUTO_QUALITY_ID = 'auto';
 
 export type PlayerSource = {
   type: PlayerSourceType;

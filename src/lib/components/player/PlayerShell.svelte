@@ -1,11 +1,16 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Clapperboard, Info, ListVideo, Maximize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
-  import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
+  import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerInternalQualityOption, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
+  import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
+  import { MAVERO_PLAYER_SOURCE_NAME } from '$lib/shared/mavero-player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
+  // Phase 6: MAVERO Player stream presentation (addon grouping, labels,
+  // dedupe, current-stream identity) — pure helpers, no second source model.
+  import { dedupeMaveroStreams, groupMaveroStreams, isMaveroAggregateSource, maveroStreamFormatLabel, maveroStreamQualityLabel } from '$lib/client/player/mavero-streams';
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -115,6 +120,13 @@
   let sourceSheetTrigger: HTMLElement | null = null;
   let episodeSheetTrigger: HTMLElement | null = null;
 
+  // Phase 6: internal quality state of the ACTIVE engine-driven streaming source
+  // (AUTO + manifest levels). Populated ONLY by the viewport's generic
+  // `enginequality` events — the shell never sees engine-library types. `null` when the
+  // current playback is not engine-driven (MP4, native streaming, embeds) —
+  // the quality UI then falls back to the existing per-stream select.
+  let engineQuality: { options: PlayerInternalQualityOption[]; selected: string | null } | null = null;
+
   // Phase 6: local WakeLockSentinel type. lib.dom.d.ts may not include this on
   // older TS versions, so we declare the minimal shape we use, matching the
   // existing OrientationController optional-method pattern.
@@ -131,6 +143,13 @@
   $: subtitles = source?.subtitles ?? [];
   $: selectedQualityOption = qualities.find((quality) => quality.url === selectedQuality) as PlayerQualityOption | undefined;
   $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
+  // Phase 6: MAVERO Player addon-stream presentation — derived ONLY when the
+  // active source IS the aggregate MAVERO Player source. Provider sources
+  // never enter this path (their UX is untouched), the resolver's
+  // deterministic order is preserved, and duplicates are removed at the
+  // presentation layer by stable URL identity.
+  $: maveroStreams = isMaveroAggregateSource(source) ? dedupeMaveroStreams(qualities) : [];
+  $: maveroStreamGroups = groupMaveroStreams(maveroStreams);
   $: sourceReady = Boolean(source && isPlayablePlayerSource(source) && !sourceIsExpired(source));
   $: sourceIndex = source ? sourceOptions.findIndex((option) => option.id === source.sourceId) : -1;
   $: previousSourceId = adjacentSource(sourceOptions, source?.sourceId, -1);
@@ -160,6 +179,11 @@
     errorMessage = '';
     playing = false;
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
+    // Phase 6: a genuinely new source session starts with the engine's
+    // internal quality state cleared (the viewport re-dispatches fresh
+    // levels once the new manifest is parsed). The AUTO default never
+    // leaks a manual selection across sources.
+    engineQuality = null;
     // Phase 8: clear any previous embed load timeout, then start a new one
     // for embed sources. Direct sources don't need this — the <video> element
     // fires `error` on failure.
@@ -508,6 +532,40 @@
     selectedQuality = url;
     state = 'preparing';
     playing = false;
+  }
+
+  // ----- Phase 6: MAVERO Player stream & internal-quality selection -----
+
+  /**
+   * Viewport `enginequality` event sink: the ONLY writer of `engineQuality`.
+   * An empty options list means the engine is gone (source switch to
+   * MP4/native, teardown) — the quality UI falls back to the stream list.
+   */
+  function handleEngineQuality(event: CustomEvent<{ options: PlayerInternalQualityOption[]; selected: string | null }>) {
+    engineQuality = event.detail.options.length ? event.detail : null;
+  }
+
+  /**
+   * Internal quality selection (AUTO or one manifest level). Delegates to
+   * the viewport's generic controller — the engine is NOT recreated, the
+   * switch is seamless, and playback position is untouched.
+   */
+  function setInternalQuality(id: string) {
+    viewport?.selectEngineQuality(id);
+  }
+
+  /**
+   * Switch to another resolved addon stream WITHIN the same MAVERO Player
+   * source. The player view NEVER navigates away: this rides the existing
+   * quality-switch mechanism (`setQuality`) which captures the position
+   * into `pendingSeek`, keeps the player mounted and lets the existing
+   * generation/race protection invalidate the previous stream. Selecting
+   * the current stream is a no-op (sheet just closes).
+   */
+  function selectMaveroStream(stream: PlayerQualityOption) {
+    closeSourceSheet();
+    if (!stream.url || stream.url === mediaUrl) return;
+    setQuality(stream.url);
   }
 
   type OrientationController = ScreenOrientation & { lock?: (value: 'landscape' | 'portrait' | 'any' | 'natural' | 'landscape-primary' | 'landscape-secondary' | 'portrait-primary' | 'portrait-secondary') => Promise<void>; unlock?: () => void };
@@ -1008,7 +1066,7 @@
   {/if}
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
@@ -1030,7 +1088,7 @@
   {#if !landscapeMode}
   <div class="bottom-bar" class:visible={controlsVisible}>
     {#if source?.type === 'direct'}
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(document.activeElement as HTMLElement); }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(document.activeElement as HTMLElement); }} />
     {:else if source?.type === 'embed' || effectiveState === 'embed-loading' || effectiveState === 'switching-source'}
       <!-- Phase 5: Embed source shell controls bar — Mavero-owned controls for embed playback -->
       <div class="embed-shell-controls" role="toolbar" aria-label="Embed playback controls">
@@ -1054,7 +1112,48 @@
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each sourceOptions as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}</div>
+      <div class="sheet-list">{#each sourceOptions as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}
+        {#if maveroStreamGroups.length}
+          <!-- Phase 6: MAVERO Player addon streams — a nested presentation INSIDE
+               the ONE logical MAVERO Player source (never a second source entry).
+               Streams are grouped by addon display name in the resolver's
+               deterministic order; the current stream carries the check icon +
+               aria-selected (never color alone). Only safe presentation metadata
+               is rendered: addon display name, quality, format — no manifest URLs,
+               no database/manifest identifiers, no admin controls. -->
+          <div class="mavero-section">
+            <div class="mavero-section-head"><Clapperboard size={13} aria-hidden="true" /><span>{MAVERO_PLAYER_SOURCE_NAME}</span><small>{maveroStreams.length} stream{maveroStreams.length === 1 ? '' : 's'}</small></div>
+            <div class="mavero-groups" role="listbox" aria-label="MAVERO Player addon streams">
+              {#each maveroStreamGroups as group (group.addonName)}
+                <div class="mavero-group" role="group" aria-label={`${group.addonName} streams`}>
+                  <div class="mavero-group-name" role="presentation" title={group.addonName}>{group.addonName}</div>
+                  {#each group.streams as stream (stream.url)}
+                    <button class="sheet-option mavero-stream-option" type="button" role="option" aria-selected={stream.url === mediaUrl} class:active={stream.url === mediaUrl} onclick={() => selectMaveroStream(stream)}>
+                      <span class="option-mark">{#if stream.url === mediaUrl}<Check size={14} />{:else}<span></span>{/if}</span>
+                      <span class="mavero-stream-info">
+                        <strong>{maveroStreamQualityLabel(stream)}</strong>
+                        {#if maveroStreamFormatLabel(stream)}<small>{maveroStreamFormatLabel(stream)}</small>{/if}
+                      </span>
+                    </button>
+                  {/each}
+                </div>
+              {/each}
+            </div>
+            {#if engineQuality && engineQuality.options.length > 1}
+              <!-- Phase 6: internal quality of the ACTIVE engine-driven
+                   manifest (AUTO + levels). Shown in the SAME sheet on all
+                   viewports (the desktop controls select mirrors this exact
+                   state — there is never a second competing quality menu). -->
+              <div class="variant-row mavero-quality-row" role="group" aria-label="Playback quality">
+                <span class="mavero-quality-title">Quality</span>
+                {#each engineQuality.options as option (option.id)}
+                  <button class="variant-button" class:active={engineQuality?.selected === option.id} type="button" aria-pressed={engineQuality?.selected === option.id} onclick={() => setInternalQuality(option.id)}>{option.label}</button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 
@@ -1183,6 +1282,18 @@
   .variant-button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .option-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
   .option-mark > span { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-deep); }
+  /* Phase 6: MAVERO Player addon-stream section inside the existing source
+     sheet. Compact, scrollable, no horizontal overflow: addon names truncate
+     with ellipsis, stream rows reuse the 52px sheet-option touch target, and
+     the quality row reuses the established variant-button sizing. */
+  .mavero-section { display: grid; gap: 4px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .mavero-section-head { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 0 12px 4px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .07em; text-transform: uppercase; }
+  .mavero-section-head small { margin-left: auto; color: var(--muted-deep); font-size: .55rem; letter-spacing: 0; text-transform: none; }
+  .mavero-group-name { overflow: hidden; padding: 6px 12px 2px; color: var(--ink-soft); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+  .mavero-stream-option { width: 100%; }
+  .mavero-stream-info { display: grid; gap: 4px; min-width: 0; }
+  .mavero-quality-row { align-items: center; flex-wrap: wrap; margin-top: 4px; }
+  .mavero-quality-title { padding: 0 4px 0 12px; color: var(--muted); font-size: .58rem; }
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }

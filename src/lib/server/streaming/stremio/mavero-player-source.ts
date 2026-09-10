@@ -107,11 +107,19 @@ function qualityOptionOf(source: PlayerSource): PlayerQualityOption | null {
   const quality = source.qualities?.[0];
   const addonName = source.metadata?.providerName ?? 'Addon';
   const qualityLabel = quality?.label ?? (quality?.height ? `${quality.height}p` : 'Auto');
+  // Phase 6: additive presentation metadata — the addon DISPLAY name and
+  // the normalized protocol of THIS stream, so the source sheet can group
+  // streams by addon and label the format without any second resolution
+  // round-trip. No database ids, manifest URLs or internal identifiers are
+  // exposed (spec §39: the user sees safe presentation metadata only).
+  const protocol = source.metadata?.protocol;
   return {
     url,
     label: `${addonName} · ${qualityLabel}`,
     ...(quality?.height !== undefined ? { height: quality.height } : {}),
     ...(quality?.bitrate !== undefined ? { bitrate: quality.bitrate } : {}),
+    ...(addonName ? { addonName } : {}),
+    ...(protocol ? { protocol } : {}),
   };
 }
 

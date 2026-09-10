@@ -1,4 +1,4 @@
-import type { PlayerSource } from '$lib/shared/player';
+import { PLAYER_AUTO_QUALITY_ID, type PlayerInternalQualityOption, type PlayerSource } from '$lib/shared/player';
 
 /**
  * HLS playback engine — Phase 5.
@@ -46,9 +46,45 @@ import type { PlayerSource } from '$lib/shared/player';
  *   configuration — nothing is overridden in Phase 5 (no concrete Mavero
  *   requirement identified), so manifest/segment/key requests are plain
  *   browser requests subject to normal CORS.
+ *
+ * PHASE 6: the engine additionally exposes a MINIMAL, generic internal
+ * quality-level API (`getQualityLevels/getQualityOptions`,
+ * `getQualitySelection`, `setAutoQualityLevel`, `setQualityLevel`) so the
+ * existing quality UI can offer AUTO + manifest levels for engine-driven
+ * HLS. The API is hls.js-free (`PlayerInternalQualityOption` + the
+ * reserved AUTO id only), switches levels SEAMLESSLY via `nextLevel`
+ * (never recreating the engine), defaults to AUTO (no level is forced),
+ * and falls back to AUTO on a failed switch request instead of destroying
+ * the instance.
  */
 
-/** Minimal structural shape of the hls.js instance the engine needs. */
+/** Minimal structural shape of one hls.js quality level (Phase 6). */
+export type HlsLevelLike = {
+  height?: number;
+  bitrate?: number;
+};
+
+/**
+ * Minimal structural shape of the hls.js instance the engine needs.
+ *
+ * Phase 6 adds the internal quality-level surface as OPTIONAL members
+ * (`levels`, `autoLevelEnabled`, `currentLevel`, `nextLevel`): every real
+ * hls.js 1.7.2 instance has them (verified against its typings), while
+ * existing test doubles of the narrower Phase 5 interface keep compiling
+ * and the engine degrades to "no quality UI" when they are absent.
+ *
+ * Level-switch semantics (hls.js 1.7.2, verified from its typings):
+ *   * `nextLevel = n`   — switch asap WITHOUT interrupting playback
+ *                         (seamless; spec §12 prefers this for manual
+ *                         selection; also aborts stale fragment loads)
+ *   * `nextLevel = -1`  — automatic level selection (the correct AUTO
+ *                         mechanism — no magic numeric level, spec §34)
+ *   * `autoLevelEnabled`— true while ABR is in control (the UI's mode
+ *                         indicator, spec §33)
+ * The engine deliberately does NOT touch `currentLevel` (it flushes the
+ * buffer and interrupts playback) or `loadLevel` (conservative, delayed
+ * effect) — `nextLevel` covers both AUTO and manual switching.
+ */
 export type HlsLike = {
   loadSource(url: string): void;
   attachMedia(media: HTMLMediaElement): void;
@@ -58,6 +94,14 @@ export type HlsLike = {
   recoverMediaError(): void;
   on(event: string, listener: (event: string, data?: HlsEventData) => void): void;
   off(event: string, listener: (event: string, data?: HlsEventData) => void): void;
+  /** All quality levels of the loaded manifest (Phase 6, optional). */
+  readonly levels?: readonly HlsLevelLike[];
+  /** True while automatic level selection (ABR) is enabled (Phase 6). */
+  readonly autoLevelEnabled?: boolean;
+  /** Index of the level currently playing (Phase 6, inspection only). */
+  readonly currentLevel?: number;
+  /** Seamless level switch target; `-1` re-enables AUTO (Phase 6). */
+  nextLevel?: number;
 };
 
 /** Subset of the hls.js error payload the engine inspects. */
@@ -182,6 +226,18 @@ export type HlsEngineCallbacks = {
   onState?: (state: HlsEngineState) => void;
   /** Unrecoverable failure — the video cannot play this source. */
   onFatalError?: (message: string) => void;
+  /**
+   * Phase 6: the manifest's quality levels became known. Fired once per
+   * attach when the manifest is parsed (single-level manifests yield a
+   * one-entry list — the UI stays hidden for those).
+   */
+  onQualityLevels?: (levels: HlsEngineLevel[]) => void;
+  /**
+   * Phase 6: the internal quality MODE/level changed (hls.js level switch
+   * completed). `selection` is the generic selection id — the reserved
+   * AUTO id while ABR is in control, else the playing level index.
+   */
+  onQualitySelection?: (selection: string, levels: HlsEngineLevel[]) => void;
 };
 
 export type HlsEngineOptions = {
@@ -197,12 +253,69 @@ export const HLS_ENGINE_EVENTS = {
   mediaAttached: 'hlsMediaAttached',
   manifestLoading: 'hlsManifestLoading',
   manifestLoaded: 'hlsManifestLoaded',
+  manifestParsed: 'hlsManifestParsed',
   levelLoaded: 'hlsLevelLoaded',
+  levelSwitched: 'hlsLevelSwitched',
   error: 'hlsError',
 } as const;
 
 export const HLS_UNRECOVERABLE_MESSAGE = 'This stream could not be played. Try another source.';
 export const HLS_UNSUPPORTED_MESSAGE = 'HLS playback is not supported in this browser. Try another source.';
+
+/**
+ * One engine-agnostic internal quality level (Phase 6). `index` is the
+ * hls.js level index (the selection key handed back to `setQualityLevel`);
+ * `label` is pre-derived safe presentation text — the UI never derives
+ * labels from hls.js objects itself.
+ */
+export type HlsEngineLevel = {
+  index: number;
+  height?: number;
+  bitrate?: number;
+  label: string;
+};
+
+/**
+ * Safe quality label derivation for one hls.js level (spec §32):
+ *   height 1080      → "1080p"
+ *   bitrate 1500000  → "1.5 Mbps" / bitrate 800000 → "800 kbps"
+ *   neither          → "Auto" (no misleading labels are ever produced)
+ */
+export function hlsLevelLabel(level: HlsLevelLike): string {
+  if (typeof level?.height === 'number' && Number.isFinite(level.height) && level.height > 0) {
+    return `${Math.round(level.height)}p`;
+  }
+  if (typeof level?.bitrate === 'number' && Number.isFinite(level.bitrate) && level.bitrate > 0) {
+    const kbps = Math.round(level.bitrate / 1000);
+    if (kbps >= 1000) {
+      const mbps = kbps / 1000;
+      return `${Number.isInteger(mbps) ? mbps : Number(mbps.toFixed(1))} Mbps`;
+    }
+    return `${kbps} kbps`;
+  }
+  return 'Auto';
+}
+
+/** Map a structural hls.js levels array onto engine-agnostic levels. */
+function engineLevelsOf(levels: readonly HlsLevelLike[] | undefined): HlsEngineLevel[] {
+  if (!Array.isArray(levels)) return [];
+  return levels.map((level, index) => {
+    const label = hlsLevelLabel(level);
+    const height = typeof level?.height === 'number' && Number.isFinite(level.height) && level.height > 0 ? Math.round(level.height) : undefined;
+    const bitrate = typeof level?.bitrate === 'number' && Number.isFinite(level.bitrate) && level.bitrate > 0 ? Math.round(level.bitrate) : undefined;
+    return {
+      index,
+      label,
+      ...(height !== undefined ? { height } : {}),
+      ...(bitrate !== undefined ? { bitrate } : {}),
+    };
+  });
+}
+
+/** Engine-agnostic internal quality options (Phase 6 UI contract). */
+function internalQualityOptionsOf(levels: HlsEngineLevel[]): PlayerInternalQualityOption[] {
+  return levels.map((level) => ({ id: String(level.index), label: level.label }));
+}
 
 export class HlsPlaybackEngine {
   private loader: HlsModuleLoader;
@@ -226,6 +339,79 @@ export class HlsPlaybackEngine {
   /** Test/inspection hook: the live hls.js instance, if any. */
   getInstance(): HlsLike | null {
     return this.instance;
+  }
+
+  // ----- Phase 6: internal quality levels (generic, hls.js-free surface) -----
+  //
+  // The UI (PlayerShell / PlayerControls) only ever sees
+  // `PlayerInternalQualityOption` lists + the reserved AUTO id — never
+  // `Hls.Level`, `Hls.Events` or any other hls.js type (spec §31). When the
+  // instance predates the quality surface (Phase 5 test doubles) or no
+  // instance is live, the getters degrade gracefully to empty/AUTO.
+
+  /** All quality levels of the loaded manifest, in manifest order. */
+  getQualityLevels(): HlsEngineLevel[] {
+    if (this.destroyed) return [];
+    return engineLevelsOf(this.instance?.levels);
+  }
+
+  /**
+   * The current generic selection id: AUTO while ABR is in control, else
+   * the playing level index as a string. `null` when no instance is live.
+   * The UI must reflect the actual selected MODE (spec §33/§34) — in AUTO
+   * mode this stays AUTO even as ABR moves between levels.
+   */
+  getQualitySelection(): string | null {
+    const instance = this.instance;
+    if (!instance || this.destroyed) return null;
+    if (instance.autoLevelEnabled === false) {
+      const current = instance.currentLevel;
+      if (typeof current === 'number' && Number.isSafeInteger(current) && current >= 0) return String(current);
+    }
+    return PLAYER_AUTO_QUALITY_ID;
+  }
+
+  /** Engine-agnostic quality options for the UI (empty when unavailable). */
+  getQualityOptions(): PlayerInternalQualityOption[] {
+    return internalQualityOptionsOf(this.getQualityLevels());
+  }
+
+  /**
+   * Re-enable automatic level selection (spec §10). Uses the `nextLevel =
+   * -1` AUTO mechanism — no magic numeric level (spec §34). Never throws.
+   */
+  setAutoQualityLevel(): void {
+    const instance = this.instance;
+    if (!instance || this.destroyed || instance.nextLevel === undefined) return;
+    try {
+      instance.nextLevel = -1;
+    } catch {
+      // Level API unavailable/failed — stay in the current mode; the ABR
+      // default remains authoritative (never a fatal player error).
+    }
+  }
+
+  /**
+   * Select one quality level manually (spec §12). Uses the SEAMLESS
+   * `nextLevel` switch — playback continues without a buffer flush, the
+   * engine instance is NEVER recreated for an internal level change. On a
+   * failed switch request the engine falls back to AUTO instead of
+   * destroying the instance (spec §35) — only a genuinely unrecoverable
+   * playback failure (the existing fatal-error path) surfaces an error.
+   */
+  setQualityLevel(index: number): void {
+    const instance = this.instance;
+    if (!instance || this.destroyed || instance.nextLevel === undefined) return;
+    if (!Number.isSafeInteger(index) || index < 0 || index >= (instance.levels?.length ?? 0)) return;
+    try {
+      instance.nextLevel = index;
+    } catch {
+      try {
+        instance.nextLevel = -1; // fall back to AUTO (spec §35)
+      } catch {
+        // give up silently — the ABR default remains authoritative
+      }
+    }
   }
 
   /**
@@ -277,6 +463,22 @@ export class HlsPlaybackEngine {
       // instance must not re-trigger recovery or surface a second error.
       if (this.instance !== instance) return;
       this.handleHlsError(data, callbacks);
+    });
+    // Phase 6: internal quality levels. The manifest-parsed event carries
+    // the level list; the level-switched event confirms each completed
+    // switch. Both are generation- AND instance-guarded like every other
+    // listener, so a stale manifest/switch can never reach the current
+    // video element or callbacks. AUTO stays untouched here — the engine
+    // never writes a level unless the user explicitly selects one.
+    instance.on(HLS_ENGINE_EVENTS.manifestParsed, () => {
+      if (generation !== this.generation || this.destroyed) return;
+      if (this.instance !== instance) return;
+      callbacks.onQualityLevels?.(this.getQualityLevels());
+    });
+    instance.on(HLS_ENGINE_EVENTS.levelSwitched, () => {
+      if (generation !== this.generation || this.destroyed) return;
+      if (this.instance !== instance) return;
+      callbacks.onQualitySelection?.(this.getQualitySelection() ?? PLAYER_AUTO_QUALITY_ID, this.getQualityLevels());
     });
 
     instance.attachMedia(video);

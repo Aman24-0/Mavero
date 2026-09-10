@@ -1,8 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy } from 'svelte';
-  import type { PlayerPlaybackState, PlayerSource } from '$lib/shared/player';
+  import type { PlayerInternalQualityOption, PlayerPlaybackState, PlayerSource } from '$lib/shared/player';
+  import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import { iframeSandboxAttribute } from '$lib/shared/sandbox-policy';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode } from '$lib/client/player/hls-engine';
+  import { sourceForStreamUrl } from '$lib/client/player/mavero-streams';
 
   export let source: PlayerSource | null = null;
   export let mediaUrl: string | null = null;
@@ -27,6 +29,8 @@
     ended: void;
     error: void;
     embedload: void;
+    /** Phase 6: internal quality state of the engine-driven HLS source. */
+    enginequality: { options: PlayerInternalQualityOption[]; selected: string | null };
   }>();
 
   export function play() {
@@ -88,14 +92,40 @@
   // When true the engine owns the media resource and the template must NOT
   // bind `src` (the binding would fight hls.js' MediaSource objectURL).
   let hlsEngineActive = false;
+  // Phase 6: signature of the last dispatched internal-quality payload. The
+  // hls.js level events can fire frequently (every ABR switch); the
+  // signature guard keeps the dispatch meaningful — the UI is only notified
+  // when the options or the selected MODE actually changed.
+  let engineQualitySignature: string | null = null;
+
+  /** Build + dispatch the engine's current generic quality state (Phase 6). */
+  function dispatchEngineQuality() {
+    const engine = hlsEngine;
+    if (!engine || !hlsEngineActive) return;
+    const payload = { options: engine.getQualityOptions(), selected: engine.getQualitySelection() };
+    const signature = JSON.stringify(payload);
+    if (signature === engineQualitySignature) return;
+    engineQualitySignature = signature;
+    dispatch('enginequality', payload);
+  }
 
   function teardownHlsEngine() {
+    const hadEngine = hlsEngineActive;
     if (hlsEngine) {
       hlsEngine.destroy();
       hlsEngine = null;
     }
     hlsEngineUrl = null;
     hlsEngineActive = false;
+    // Phase 6: a torn-down engine has no internal quality state anymore —
+    // notify the shell so the quality UI falls back to the stream list
+    // (source switch to MP4/native HLS, unmount, etc.).
+    if (hadEngine && engineQualitySignature !== null) {
+      engineQualitySignature = null;
+      dispatch('enginequality', { options: [], selected: null });
+    } else {
+      engineQualitySignature = null;
+    }
   }
 
   async function wireHlsEngine(url: string | null, currentSource: PlayerSource | null, video: HTMLVideoElement | undefined) {
@@ -106,7 +136,13 @@
     }
     let mode: 'native' | 'hls-js';
     try {
-      mode = resolveDirectPlaybackMode(currentSource, url, video);
+      // Phase 6: classify the SELECTED url, not the aggregate's primary
+      // stream. Mixed-protocol aggregates (e.g. an HLS-primary aggregate
+      // whose quality list also contains an MP4 stream) must route each
+      // stream by its own protocol — the per-option protocol (Phase 6
+      // additive field) wins, the aggregate metadata protocol stays the
+      // fallback. Single-protocol sources pass through unchanged.
+      mode = resolveDirectPlaybackMode(sourceForStreamUrl(currentSource, url), url, video);
     } catch {
       teardownHlsEngine();
       return;
@@ -142,7 +178,19 @@
           if (hlsEngine !== engine) return;
           dispatch('error');
         },
+        // Phase 6: forward the engine's generic quality state to the shell.
+        // Both callbacks run through the same signature-guarded dispatcher,
+        // so ABR level churn in AUTO mode does not spam the UI.
+        onQualityLevels: () => {
+          if (hlsEngine !== engine) return;
+          dispatchEngineQuality();
+        },
+        onQualitySelection: () => {
+          if (hlsEngine !== engine) return;
+          dispatchEngineQuality();
+        },
       });
+      if (hlsEngine === engine) dispatchEngineQuality();
     } catch {
       if (hlsEngine === engine) {
         teardownHlsEngine();
@@ -154,6 +202,40 @@
   $: void wireHlsEngine(mediaUrl, source, videoElement);
 
   onDestroy(teardownHlsEngine);
+
+  // ----- Phase 6: generic internal-quality controller (spec §31) -----
+  //
+  // PlayerShell reaches the engine's quality surface ONLY through these
+  // exported functions + the `enginequality` event — the shell never imports
+  // hls.js, never sees `Hls.Level`/`Hls.Events`, and the engine is never
+  // recreated for an internal level change (seamless `nextLevel` switch).
+
+  /** Current internal quality options (empty when not engine-driven). */
+  export function engineQualityOptions(): PlayerInternalQualityOption[] {
+    return hlsEngine?.getQualityOptions() ?? [];
+  }
+
+  /** Current generic selection id (AUTO id or level index string). */
+  export function engineQualitySelected(): string | null {
+    return hlsEngine?.getQualitySelection() ?? null;
+  }
+
+  /**
+   * Select AUTO or one level index by generic id. Echoes the requested
+   * mode to the shell immediately (the engine's own events confirm the
+   * actual switch as hls.js completes it).
+   */
+  export function selectEngineQuality(id: string) {
+    const engine = hlsEngine;
+    if (!engine) return;
+    if (id === PLAYER_AUTO_QUALITY_ID) engine.setAutoQualityLevel();
+    else {
+      const index = Number.parseInt(id, 10);
+      if (Number.isSafeInteger(index)) engine.setQualityLevel(index);
+      else return;
+    }
+    dispatchEngineQuality();
+  }
 </script>
 
 <div class="viewport" class:embed={source?.type === 'embed'} class:direct={source?.type === 'direct'}>
