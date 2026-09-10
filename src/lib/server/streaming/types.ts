@@ -1,18 +1,22 @@
 import type { Json, Tables, TablesInsert, TablesUpdate } from '$lib/server/supabase/database.types';
 import { providerStatuses, integrationTypes, sourceVisibilities, identifierModes } from '$lib/shared/streaming';
+import { addonStatuses } from '$lib/shared/streaming-addons';
 import type { ProviderHealthSummary, RuntimeHealthRow } from './health';
 
 export { providerStatuses, integrationTypes, sourceVisibilities, identifierModes };
+export { addonStatuses };
 export type ProviderStatus = (typeof providerStatuses)[number];
 export type IntegrationType = (typeof integrationTypes)[number];
 export type SourceVisibility = (typeof sourceVisibilities)[number];
 export type IdentifierMode = (typeof identifierModes)[number];
+export type { StreamingAddonStatus } from '$lib/shared/streaming-addons';
 
 export type StreamingProviderRow = Tables<'streaming_providers'>;
 export type StreamingSourceRow = Tables<'streaming_sources'>;
 export type StreamingCategoryRow = Tables<'streaming_categories'>;
 export type StreamingSourceCategoryRow = Tables<'streaming_source_categories'>;
 export type StreamingConfigMetaRow = Tables<'streaming_config_meta'>;
+export type StreamingAddonRow = Tables<'streaming_addons'>;
 export type { ProviderHealthSummary, RuntimeHealthRow };
 
 export type ProviderInsert = TablesInsert<'streaming_providers'>;
@@ -21,6 +25,8 @@ export type SourceInsert = TablesInsert<'streaming_sources'>;
 export type SourceUpdate = TablesUpdate<'streaming_sources'>;
 export type CategoryInsert = TablesInsert<'streaming_categories'>;
 export type CategoryUpdate = TablesUpdate<'streaming_categories'>;
+export type AddonInsert = TablesInsert<'streaming_addons'>;
+export type AddonUpdate = TablesUpdate<'streaming_addons'>;
 
 export type JsonObject = { [key: string]: Json | undefined };
 

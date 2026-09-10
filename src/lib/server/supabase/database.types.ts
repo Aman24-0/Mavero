@@ -148,6 +148,81 @@ export type Database = {
         }
         Relationships: []
       }
+      // Added by 20260918000000_phase1_stremio_addons.sql.
+      // Phase 1 Stremio HTTP addon registry; configuration foundation only.
+      // Admin-only CRUD via RLS; NO public read policy in Phase 1.
+      streaming_addons: {
+        Row: {
+          id: string
+          name: string
+          slug: string
+          description: string | null
+          manifest_url: string
+          enabled: boolean
+          status: string
+          ordering: number
+          logo: string | null
+          version: string | null
+          id_property: string | null
+          supported_types: string[]
+          id_prefixes: string[]
+          resources: string[]
+          last_checked_at: string | null
+          last_success_at: string | null
+          last_error: string | null
+          capabilities: Json
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          slug: string
+          description?: string | null
+          manifest_url: string
+          enabled?: boolean
+          status?: string
+          ordering?: number
+          logo?: string | null
+          version?: string | null
+          id_property?: string | null
+          supported_types?: string[]
+          id_prefixes?: string[]
+          resources?: string[]
+          last_checked_at?: string | null
+          last_success_at?: string | null
+          last_error?: string | null
+          capabilities?: Json
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          slug?: string
+          description?: string | null
+          manifest_url?: string
+          enabled?: boolean
+          status?: string
+          ordering?: number
+          logo?: string | null
+          version?: string | null
+          id_property?: string | null
+          supported_types?: string[]
+          id_prefixes?: string[]
+          resources?: string[]
+          last_checked_at?: string | null
+          last_success_at?: string | null
+          last_error?: string | null
+          capabilities?: Json
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       streaming_categories: {
         Row: {
           created_at: string
