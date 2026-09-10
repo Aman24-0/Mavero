@@ -1,6 +1,7 @@
 import { createDefaultAdapterIds, createDefaultAdapters } from './adapters';
 import { ResolverError, asResolverError } from './errors';
 import { normalizeContentIdentifiers } from './identifiers';
+import { evaluatePlaybackUrl } from './playback-policy';
 import { allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
 import type { ProviderAdapter, ResolverDependencies, ResolverRequest, SourceResult, TrustedResolutionConfig } from './types';
@@ -51,6 +52,34 @@ function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']
   const sourceCapabilities = context.config.source.capabilities;
   const allowDynamic = allowDynamicEmbedOriginsFromCapabilities(sourceCapabilities);
   const url = validatePlaybackUrl(result.url, result.type, allowedEmbedOriginsFromCapabilities(sourceCapabilities), allowDynamic);
+  // Playback Ad/Redirect Policy — runs strictly AFTER validatePlaybackUrl()
+  // has passed (HTTPS-only, no credentials, non-private host, embed origin
+  // allowlist), so it can only ever reject URLs that are structurally safe
+  // but classified as dedicated ad / paid-redirect infrastructure (or hit an
+  // explicit provider-specific rule). A rejection is a normal resolver
+  // failure: it propagates as ResolverError('PLAYBACK_POLICY_BLOCKED') so
+  // the existing fallback, default-source ordering, health ranking, and
+  // manual source switching try the next source unchanged.
+  const policy = evaluatePlaybackUrl(url, result.type, {
+    providerId: context.config.provider.id,
+    sourceId: context.config.source.id,
+    providerName: context.config.provider.name,
+    sourceName: context.config.source.name,
+  });
+  if (!policy.allowed) {
+    // Diagnostics only: reason/category/hostname — never the URL itself
+    // (signed query strings and path tokens must not reach logs).
+    console.warn('[PlaybackPolicy] blocked playback URL', {
+      providerId: context.config.provider.id,
+      sourceId: context.config.source.id,
+      providerName: context.config.provider.name,
+      sourceName: context.config.source.name,
+      reason: policy.reason,
+      category: policy.category,
+      host: policy.host,
+    });
+    throw new ResolverError('PLAYBACK_POLICY_BLOCKED');
+  }
   return {
     type: result.type,
     url,
