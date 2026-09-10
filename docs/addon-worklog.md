@@ -157,3 +157,206 @@ Hard rules that apply to every phase:
 - `git diff --check`: clean
 
 ---
+
+## Phase 2 — Secure Stremio manifest service (DONE)
+
+**Commit:** `feat: add secure stremio manifest service`
+**Date:** 2026-09-10
+**Status:** Complete. Manifest service only. Stream resolution and playback are NOT implemented.
+
+### What was built
+
+A server-only Stremio **manifest service** under
+`src/lib/server/streaming/stremio/` (new module, spec-suggested location):
+
+1. **`errors.ts`** — `ManifestServiceError` with a closed code union
+   (`INVALID_URL`, `BLOCKED_URL`, `TIMEOUT`, `NETWORK`, `HTTP_ERROR`,
+   `TOO_LARGE`, `INVALID_JSON`, `INVALID_MANIFEST`, `UNSUPPORTED_MANIFEST`,
+   `UNEXPECTED`), mirroring the `discovery/errors.ts` convention. Messages are
+   fixed and curated — they are the ONLY text that may reach
+   `streaming_addons.last_error`; the sole variable detail is a safe HTTP
+   status number. `PERMANENT_MANIFEST_ERROR_CODES` +
+   `isPermanentManifestFailure()` classify failures for health handling.
+
+2. **`ssrf.ts`** — dedicated, independently testable SSRF guard (the
+   repository's `resolver/safe-url.ts` guard is https-only and string-based;
+   the manifest service needs broader coverage, which the Phase 2 spec
+   authorizes as a small dedicated utility):
+   - `assertSafeManifestUrl(raw)` (sync, no I/O): absolute http(s) only, no
+     credentials, no whitespace, ≤ 2048 chars, hostname blocklist
+     (`localhost` + subdomains, `broadcasthost`, `.local`, `.internal`,
+     `.home.arpa`, `metadata.google.internal`, `metadata.goog`,
+     `metadata.azure.internal`), and IP-literal rejection — IPv4 including
+     WHATWG numeric forms (decimal `2130706433`, hex `0x7f000001`,
+     octal `0177.0.0.1`, compact `127.1`) and IPv6 including `::1`, `::`
+     unspecified, IPv4-mapped `::ffff:x`, IPv4-compatible `::x`, NAT64
+     `64:ff9b::x` (embedded IPv4 validated through the IPv4 rules), ULA
+     `fc00::/7`, link-local `fe80::/10`, multicast `ff00::/8`, doc range
+     `2001:db8::/32`.
+   - IPv4 blocked ranges: `0.0.0.0/8`, `10/8`, `100.64/10` (CGNAT),
+     `127/8`, `169.254/16` (link-local + cloud metadata IP), `172.16/12`,
+     `192.168/16`, `198.18/15`, `224/4` + `240/4` (multicast/reserved).
+   - `assertSafeManifestDestination(url, resolver?)` (async): DNS-resolves
+     non-literal hostnames (`dns.promises.lookup`, all addresses) and
+     validates EVERY returned address — catches DNS names that resolve into
+     private networks. Unresolvable → safe `NETWORK` error. Injectable
+     resolver for tests.
+   - Fails closed everywhere (unknown address shapes are blocked).
+
+3. **`manifest-fetch.ts`** — `fetchStremioManifest(url, deps)`. Follows the
+   repo's external-fetch convention (`discovery/service.ts`): injectable
+   `fetcher`, `redirect: 'manual'`, AbortController deadline. Security:
+   - **Redirect policy:** max 3 redirects (initial + 3, matching discovery);
+     EVERY hop re-runs `assertSafeManifestUrl` + `assertSafeManifestDestination`
+     (protocol, hostname blocklist, IP literals, fresh DNS) BEFORE being
+     followed; unsafe destinations are never connected to; redirect-limit
+     overflow and malformed Location headers are typed errors.
+   - **Limits:** `MANIFEST_FETCH_TIMEOUT_MS = 8000` (overall deadline, one
+     AbortController across redirects + body read; slow requests abort),
+     `MANIFEST_MAX_BYTES = 1 MiB` enforced (a) early via Content-Length and
+     (b) per-chunk while streaming the body — Content-Length cannot be
+     trusted; on overflow the in-flight request is aborted (`TOO_LARGE`).
+   - **Payload handling:** obviously non-JSON content types rejected
+     (`text/html`, `image/*`, …); JSON parsed with `JSON.parse` only —
+     returned data is never executed; body text is never persisted.
+   - Error mapping: `TypeError` (fetch layer) → `NETWORK`; `AbortError` →
+     `TIMEOUT`; unexpected → `UNEXPECTED` with the cause preserved
+     server-side only.
+
+4. **`manifest-normalize.ts`** — `validateStremioManifest(value)` + the
+   normalized internal model. Unknown manifest fields are ignored (never
+   blindly copied). Fields: `id` (pattern-bounded), `version` (permissive
+   semver), `name` (≤120), `description` (≤500), `logo` (≤2048),
+   `resources`, `types`, `idPrefixes`, `idProperty`, plus stream-resource
+   scoped `streamTypes` / `streamIdPrefixes`. Normalization per spec §6:
+   `types` accepts strings and `{ type_name }` objects (lowercased,
+   deduplicated, invalid entries skipped); `resources` accepts strings and
+   `{ name, types?, idPrefixes? }` objects; **missing `resources` defaults to
+   `['catalog', 'meta', 'stream']` per the Stremio protocol**; present-but-
+   empty or fully-invalid resources → `UNSUPPORTED_MANIFEST`. `idProperty`
+   accepts string or array (first valid value kept) matching property-name
+   shape (`imdb_id`, `yt_id`, …) — protocol semantics, retained for Phase 3
+   ID mapping but not yet used.
+   - `supportsStreamResource(manifest)` — true ONLY when the manifest
+     explicitly declares the `stream` resource; a fetched manifest alone
+     never implies stream support.
+   - `getManifestCapabilities(manifest)` → `{ supportsStream, supportedTypes,
+     supportedIdPrefixes, idProperty }` — the HTTP-stream capability view.
+   - **P2P/torrent exclusion (spec §16):** the Phase 1
+     `FORBIDDEN_MODEL_TOKENS` list (now exported) is reused as the single
+     source of truth. Torrent-ish tokens are dropped from persisted
+     `supported_types` / `resources`; `supportsStream` only ever comes from a
+     declared `stream` resource; descriptive text mentioning torrents does
+     NOT invalidate a manifest; torrent-only resource declarations grant no
+     stream capability. Magnet/infoHash/debrid/externalUrl semantics are not
+     modeled anywhere.
+
+5. **`manifest-cache.ts`** — small bounded TTL cache (spec §12). The generic
+   `content/cache.ts` was NOT reused because it has no bounded-memory cap and
+   lives in another module. Properties: server-only, TTL 5 min, max 32
+   entries (LRU-style insertion-order eviction), stores the small NORMALIZED
+   manifest (never raw bytes), keyed by canonical URL, entries only ever
+   created by the secure fetcher (hits perform zero network I/O), never
+   reachable from client code. Health checks and stale refreshes bypass the
+   cache by default so health data stays honest (`useCache` opt-in for
+   future metadata flows).
+
+6. **`manifest-service.ts`** — orchestration + persistence:
+   - `fetchNormalizedManifest(url, deps)` — fetch + validate in one step.
+   - `buildSuccessfulManifestUpdate(manifest, now)` → `StreamingAddonUpdate`
+     with name/description/logo/version/id_property/supported_types/
+     id_prefixes/resources/capabilities refreshed from the manifest,
+     `status: 'active'`, `last_checked_at` + `last_success_at` = now,
+     `last_error: null`. Admin-owned columns (`id`, `slug`, `manifest_url`,
+     `enabled`, `ordering`, `notes`) are NEVER included (enforced by test).
+   - `buildFailedManifestUpdate(error, now)` → `last_checked_at` + sanitized
+     `last_error` only; status flips to `'unavailable'` ONLY for permanent
+     failures (invalid/blocked URL, invalid/unsupported manifest); temporary
+     failures (timeout, network, HTTP error, oversized, non-JSON) keep the
+     administrator's status and preserve synced metadata.
+   - `sanitizeLastError` caps at the DB's 1000-char limit.
+   - `persistableCapabilities` stores a whitelisted JSONB object
+     (`supportsStream`, `manifestId`, `manifestVersion`, `normalizedAt`) —
+     never a raw manifest dump.
+   - `syncAddonManifest(client, target, deps)` — health-checks one addon and
+     persists the outcome via the injected `SupabaseClient<Database>` (same
+     convention as `streaming/health-service.ts`); returns a discriminated
+     outcome that includes the exact update payload.
+   - `refreshStaleAddonManifests(client, options)` — refreshes ENABLED addons
+     whose `last_checked_at` is missing or older than `maxAgeMs` (default 6h,
+     limit 10, oldest-first). Service-level only: Phase 2 ships NO endpoint,
+     scheduler, admin UI, or public surface (spec §14).
+
+### Files changed
+
+- `src/lib/server/streaming/stremio/errors.ts` (new)
+- `src/lib/server/streaming/stremio/ssrf.ts` (new)
+- `src/lib/server/streaming/stremio/manifest-fetch.ts` (new)
+- `src/lib/server/streaming/stremio/manifest-normalize.ts` (new)
+- `src/lib/server/streaming/stremio/manifest-cache.ts` (new)
+- `src/lib/server/streaming/stremio/manifest-service.ts` (new)
+- `src/lib/server/streaming/addon-validation.ts` (export the existing
+  `FORBIDDEN_MODEL_TOKENS` const — behavior unchanged)
+- `scripts/stremio_addons_phase2_test.ts` (new)
+- `package.json` (test chain: + `stremio_addons_phase2_test.ts`)
+- `docs/addon-worklog.md` (this section)
+
+No migration was needed: Phase 2 writes only via the existing Phase 1
+columns of `public.streaming_addons`. Player, resolver, admin routes, and
+all existing streaming tables/behavior are untouched.
+
+### Test coverage (191 checks, all with injected fetch/DNS — zero live network)
+
+Spec groups A–X: valid HTTPS manifest; valid HTTP manifest; invalid protocol
+(ftp/file/javascript + credentials); localhost variants blocked; loopback
+(127/8, `::1`); private IPv4 + numeric/compact forms (`2130706433`,
+`0x7f000001`, `0177.0.0.1`, `127.1`, `0x7f.0.0.1`) + IPv4-mapped/ULA/
+multicast/doc IPv6; link-local incl. `169.254.169.254`; unsafe redirect
+blocked AND never fetched; safe redirect followed with re-validation;
+redirect limit (4 hops → NETWORK after exactly 4 requests); timeout;
+oversized (early Content-Length + streamed overflow with in-flight abort);
+invalid JSON + obviously non-JSON content type; non-object JSON; malformed
+manifests (id/version/name/arrays/idProperty/resources); valid manifest
+without stream resource (stored, `supportsStream=false`); stream-capable
+manifest; types normalization (strings + `{ type_name }` objects, casing,
+dupes, invalid entries); idPrefixes normalization (trim/dedupe + stream-
+scoped prefixes); idProperty (string/array/invalid forms); successful DB
+metadata mapping (incl. admin-owned columns never written); failed
+health-check metadata handling (temporary vs permanent); sensitive data
+never persisted (error text, response bodies, capability whitelist); and
+torrent/P2P content never accepted as a streaming capability.
+Extras: DNS layer (private resolution blocked, every address validated,
+failure → NETWORK, fetch TypeError → NETWORK, HTTP error typed), TTL cache
+(hit avoids network, bypass default, bounded entries, key normalization),
+DB sync + stale refresh through a fake Supabase client, and a Phase 1
+round-trip regression check.
+
+### Commands / results (pnpm unavailable in this environment; repo-equivalent
+commands used, as in Phase 1)
+
+- `./node_modules/.bin/tsx --tsconfig ./jsconfig.json scripts/stremio_addons_phase1_test.ts` → **111 checks pass**
+- `./node_modules/.bin/tsx --tsconfig ./jsconfig.json scripts/stremio_addons_phase2_test.ts` → **191 checks pass**
+- Full test chain (79 scripts from `package.json`, run via tsx directly) → **79/79 pass**
+- `./node_modules/.bin/svelte-check --threshold warning` → **0 errors / 41 warnings** (baseline unchanged)
+- `./node_modules/.bin/vite build` → success
+- `git diff --check` → clean
+
+### Known limitations
+
+- **DNS-rebinding TOCTOU window:** Node's global fetch cannot pin a
+  validated IP, so a hostile DNS server could rotate answers between the
+  pre-flight resolution and the connect. The guard resolves immediately
+  before each request/hop and the fetch carries no credentials; full pinning
+  would require a custom undici dispatcher (future hardening, no Phase 2
+  spec impact).
+- Redirect and timeout limits are module constants (implementation defaults
+  per spec §4); they are not exposed as public configuration.
+- `refreshStaleAddonManifests` has no scheduler/endpoint yet by design — it
+  will be wired to an admin route or cron in a later phase.
+- Capability metadata is intentionally minimal (no raw manifest storage);
+  richer normalized fields can be added later without schema changes thanks
+  to the `capabilities` JSONB whitelist approach.
+
+**Phase 2 complete. Stremio stream resolution and native playback are NOT implemented yet.**
+
+---

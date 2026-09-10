@@ -25,8 +25,13 @@ const NOTES_MAX_LENGTH = 2000;
 const MAX_ARRAY_ITEMS = 40;
 const MAX_ARRAY_ITEM_LENGTH = 120;
 
-/** Strings that must never appear as fields of the Phase 1 addon model. */
-const FORBIDDEN_MODEL_TOKENS = ['torrent', 'p2p', 'magnet', 'tracker', 'peer', 'debrid', 'rtorrent'] as const;
+/**
+ * Strings that must never appear as fields of the addon model. Exported so
+ * the Phase 2 manifest service reuses the SAME torrent/P2P exclusion list
+ * when normalizing manifests (single source of truth for the HTTP-only
+ * addon contract).
+ */
+export const FORBIDDEN_MODEL_TOKENS = ['torrent', 'p2p', 'magnet', 'tracker', 'peer', 'debrid', 'rtorrent'] as const;
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== 'string') throw new StreamingValidationError(`${label} must be a string.`);
