@@ -1,4 +1,5 @@
 import type { NormalizedStremioManifest } from './manifest-normalize';
+import { ManifestServiceError } from './errors';
 
 /**
  * MAVERO Stremio manifest service — small bounded TTL cache (Phase 2).
@@ -80,9 +81,21 @@ export function createManifestCache(options: ManifestCacheOptions = {}): Manifes
   };
 }
 
-/** Normalized cache key: canonical URL serialization (host lowercased by URL). */
+/**
+ * Normalized cache key: canonical URL serialization (host lowercased by URL).
+ * Phase 8 (D2): a malformed URL now throws the typed `INVALID_URL`
+ * `ManifestServiceError` — the SAME failure class as the secure fetch path —
+ * instead of an untyped `TypeError` that bypassed the permanent-failure
+ * classification and could surface uncurated text. Callers at the service
+ * layer validate the URL first, so this is defense in depth for any direct
+ * use of the cache helpers.
+ */
 export function manifestCacheKey(rawUrl: string): string {
-  return new URL(rawUrl.trim()).toString();
+  try {
+    return new URL(rawUrl.trim()).toString();
+  } catch {
+    throw new ManifestServiceError('INVALID_URL');
+  }
 }
 
 /** Module-level default instance for future metadata-display flows. */

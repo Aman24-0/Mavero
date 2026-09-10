@@ -24,12 +24,12 @@ import { ManifestServiceError } from './errors';
  *          address against the same blocked ranges (catches DNS names that
  *          resolve into private networks and cloud metadata endpoints).
  *
- * Known residual risk (documented in docs/addon-worklog.md): DNS rebinding
- * has a TOCTOU window between the pre-flight resolution and the actual
- * connect, because Node's global fetch cannot pin a validated IP. The
- * pre-flight check runs immediately before connect and the fetch carries no
- * credentials; full pinning would require a custom undici dispatcher
- * (future hardening).
+ * Previously-documented residual risk (DNS rebinding TOCTOU between the
+ * pre-flight resolution and the actual connect): CLOSED in Phase 8 —
+ * `connect-guard.ts` dispatches the addon fetchers through an undici Agent
+ * whose connect-time lookup re-validates every DNS answer before any socket
+ * exists, so the pre-flight check remains the first (typed-error) gate and
+ * the connect itself can no longer land on an unvalidated address.
  */
 
 const MANIFEST_URL_MAX_LENGTH = 2048;

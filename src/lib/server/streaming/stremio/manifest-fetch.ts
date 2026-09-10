@@ -1,5 +1,6 @@
 import { ManifestServiceError } from './errors';
 import { assertSafeManifestDestination, assertSafeManifestUrl, type SafeDnsResolver, systemDnsResolver } from './ssrf';
+import { ssrfSafeFetch } from './connect-guard';
 
 /**
  * MAVERO Stremio manifest service — secure server-side manifest fetcher
@@ -21,6 +22,11 @@ import { assertSafeManifestDestination, assertSafeManifestUrl, type SafeDnsResol
  *     `JSON.parse` only — returned data is never executed.
  *   * This is NOT a generic proxy: the service only ever fetches addon
  *     manifests, and no response body is ever persisted.
+ *
+ * Phase 8 (D1): when no fetcher is injected, requests are dispatched through
+ * the SSRF-safe undici Agent (`connect-guard.ts`), whose connect-time lookup
+ * re-validates every DNS answer before the socket exists — closing the
+ * DNS-rebinding TOCTOU between the pre-flight check and the connect.
  */
 
 export const MANIFEST_FETCH_TIMEOUT_MS = 8_000;
@@ -92,7 +98,9 @@ async function readBodyWithLimit(response: Response, maxBytes: number, controlle
  * other network I/O is ever performed by the manifest service.
  */
 export async function fetchStremioManifest(rawUrl: string, deps: ManifestFetchDeps = {}): Promise<ManifestFetchResult> {
-  const fetcher = deps.fetcher ?? fetch;
+  // Phase 8 (D1): default fetcher dispatches through the connect-time
+  // validating undici Agent; injected fetchers (tests) are used verbatim.
+  const fetcher = deps.fetcher ?? ssrfSafeFetch;
   const timeoutMs = deps.timeoutMs ?? MANIFEST_FETCH_TIMEOUT_MS;
   const maxBytes = deps.maxBytes ?? MANIFEST_MAX_BYTES;
   const maxRedirects = deps.maxRedirects ?? MAX_MANIFEST_REDIRECTS;

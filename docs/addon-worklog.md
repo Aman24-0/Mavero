@@ -1319,3 +1319,126 @@ user-facing surface links to the admin section.
 
 **Phase 7 admin addon management is implemented.** Phase 8 is NOT
 implemented yet.
+
+---
+
+## Phase 8 — Production hardening & final audit (DONE)
+
+### Scope
+
+Final security audit of the Phase 1–7 chain (ADMIN → `streaming_addons` →
+manifest service → stream resolver → MAVERO aggregate → source/quality UI →
+native playback), fixing only real defects found by the audit. **No new
+product features were added.** Torrent/P2P/debrid/proxy/DRM support remains
+explicitly excluded.
+
+### Baseline
+
+- `main` @ `9abe9158ffabbc0c2c18fcff807aa72bb52344eb` (Phase 7), worktree
+  clean; `pnpm check` 0 errors / 41 warnings; `pnpm build` success;
+  `git diff --check` clean; full Phase 1→7 chain (87 scripts) exit 0.
+
+### Audit results — two real defects fixed
+
+**D1 — DNS rebinding TOCTOU in the addon fetchers (fixed).** Both
+`manifest-fetch.ts` (Phase 2) and `stream-fetch.ts` (Phase 3) ran the
+pre-flight SSRF guard (`assertSafeManifestDestination`) and then called
+`fetch` — which performs its OWN DNS resolution. A DNS rebinding attacker could
+answer the pre-flight with a public IP and the connect with a private or
+metadata IP. This was the residual risk documented in `ssrf.ts` since
+Phase 2 ("full pinning would require a custom undici dispatcher").
+
+Fix (new module `src/lib/server/streaming/stremio/connect-guard.ts`):
+- `createConnectTimeLookup` builds a Node-compatible `lookup` that resolves,
+  validates EVERY answer with the same Phase 2 range rules
+  (`isBlockedIpAddress`), and fails the connection with an error callback
+  BEFORE any socket exists when any address is blocked. The undici connector
+  trusts lookup output (verified), so validation MUST live inside the lookup.
+- `ssrfSafeAgent` — module-level undici `Agent` wired to that lookup; pooled
+  sockets were created through the validating lookup, so reuse adds no new
+  resolution.
+- `ssrfSafeFetch` — drop-in default fetcher for both fetchers, dispatched
+  through the agent via undici's OWN `fetch` (Node's global fetch does not
+  reliably honor a foreign npm dispatcher — verified at runtime).
+- undici 8.10.2 added as a direct runtime dependency (engines floor
+  `>=22.19.0`; netlify.toml pins `NODE_VERSION = "22"` — satisfied).
+
+undici 8.10.2 connector/lookup contract VERIFIED at runtime (probe against
+real loopback servers, kept outside the repo):
+`Agent({connect:{lookup}})` + `undici.fetch` works end-to-end; lookup is
+invoked as `(hostname, options, callback)` with `options.all === true` on the
+autoSelectFamily path; `callback(err)` fails closed with zero server hits;
+the connector CONNECTS to whatever addresses the lookup hands back (so
+validation must be inside the lookup); sync-throwing resolvers fail closed
+without crashing; `redirect:'manual'` still exposes the real 3xx + location;
+abort signals propagate through the custom dispatcher.
+
+**D2 — manifest cache malformed-URL handling (fixed).**
+`fetchNormalizedManifest(..., {useCache:true})` called `manifestCacheKey`
+BEFORE any validation; `manifestCacheKey` used raw `new URL(...)`, so a
+malformed URL escaped as an untyped `TypeError` (classified as a temporary
+`UNEXPECTED` failure) instead of the typed, permanent `INVALID_URL` the
+non-cache path produces.
+- `manifestCacheKey` now throws `ManifestServiceError('INVALID_URL')`.
+- `fetchNormalizedManifest` validates the URL via `assertSafeManifestUrl`
+  BEFORE any cache interaction, so the cache path throws the same typed
+  `INVALID_URL`/`BLOCKED_URL` errors, never builds keys from unvalidated
+  URLs, and never fetches/writes on invalid input. Valid-URL behavior is
+  byte-identical (same canonical key, same cache hits, same eviction).
+
+### Explicitly NOT changed (audit conclusions)
+
+SSRF pre-flight guard, redirect re-validation, timeouts, byte caps, JSON-only
+parsing, error-code curation, resolver concurrency/ordering/isolation,
+admin authz (`requireAdmin` × 7), RLS (`is_admin()`), hls.js 1.7.2 engine
+contract, Safari native HLS branch, security headers, playback endpoint
+surface — all verified sound; no second authorization system, no proxy, no
+media fetching added. `useCache` remains opt-in (no production caller).
+
+### Tests
+
+* `scripts/stremio_player_phase8_test.ts` — sections **A–U** (21 sections,
+  ~170 checks): baseline/dependency pins (hls.js exactly 1.7.2, undici
+  8.10.2, no P2P deps); connect-time lookup unit contract (both callback
+  shapes, mixed-DNS block, family filter, fail-closed); REAL loopback-socket
+  dispatcher tests (production agent blocks `localhost` with ZERO server
+  hits — the D1 proof); D1 wiring pins for both fetchers; D2 typed-error +
+  validate-before-cache behavior + permanence classification; SSRF guard
+  re-pins (javascript:/data:/file:, compact/hex IPv4, IPv6/mapped, metadata
+  hosts); manifest parser hardening re-pins (prototype pollution, bounded
+  text, torrent-only never stream-capable); stream normalize re-pins
+  (magnet/infoHash/externalUrl/oversized never playable, per-stream
+  protocol, list cap); resolver re-pins (deterministic order, isolation,
+  bounded concurrency, aggregate budget, dedupe); admin authz + ordering
+  integrity (behavioral move/delete with a PostgREST-style fake); cache
+  bounds (TTL, eviction, copy-on-get poison-resistance); XSS pins (zero
+  `{@html` in the entire src tree, no innerHTML, no remote images); RLS +
+  user/admin isolation re-pins; HLS engine pins (lazy import, teardown,
+  quality API, native branch, engine-name-free shell); error hygiene (no
+  IPs/DNS internals in curated messages, truncation, sanctioned warns only);
+  URL/stream security invariants (no server-side media fetch, no proxy
+  route, MAVERO source id stable); logging/dependency hygiene; scope
+  inventory (connect-guard exports only guard primitives; stremio dir is
+  exactly the Phase 1–8 module set).
+* Registered in `package.json` after `stremio_player_phase7_test.ts`.
+
+### Commands / results
+
+- Full test chain (88 scripts, Phase 1 → Phase 8) → **exit 0, all pass**
+- `pnpm check` (svelte-check) → **0 errors / 41 warnings** (baseline unchanged)
+- `pnpm build` (vite + adapter-netlify) → **success**
+- `git diff --check` → clean
+
+### Limitations
+
+* The connect-time guard re-resolves DNS at connect (undici keeps the
+  pre-flight as the first, typed-error gate; the lookup is the second,
+  authoritative gate). Both gates use the same blocked-range rules.
+* Node's global fetch is left untouched everywhere else in the app — the
+  guard is scoped to the addon pipeline fetchers by design.
+* undici 8.10.2 requires Node >= 22.19.0; netlify.toml already pins
+  NODE_VERSION = "22" (current 22.x runtimes satisfy the floor).
+
+**Phase 8 production hardening and final audit are implemented.** The
+MAVERO Stremio HTTP addon integration is complete: no P2P/torrent/debrid/
+proxy/DRM support, no new product features — hardening only.

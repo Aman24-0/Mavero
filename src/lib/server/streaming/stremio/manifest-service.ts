@@ -5,7 +5,7 @@ import { asManifestServiceError, isPermanentManifestFailure, ManifestServiceErro
 import { fetchStremioManifest, type ManifestFetchDeps } from './manifest-fetch';
 import { defaultManifestCache, manifestCacheKey, type ManifestCache } from './manifest-cache';
 import { getManifestCapabilities, persistableCapabilities, persistableResourceNames, validateStremioManifest, type NormalizedStremioManifest } from './manifest-normalize';
-import type { SafeDnsResolver } from './ssrf';
+import { assertSafeManifestUrl, type SafeDnsResolver } from './ssrf';
 
 /**
  * MAVERO Stremio manifest service — orchestration + persistence (Phase 2).
@@ -60,16 +60,23 @@ function defaultNowIso(): string {
 /** Fetches and validates a manifest in one step (no DB access). */
 export async function fetchNormalizedManifest(rawUrl: string, deps: ManifestSyncDeps = {}): Promise<{ manifest: NormalizedStremioManifest; finalUrl: string }> {
   const { useCache = false, cache = defaultManifestCache, ...fetchDeps } = deps;
+  // Phase 8 (D2): the URL is validated BEFORE any cache interaction, so the
+  // cache path throws the SAME typed INVALID_URL / BLOCKED_URL errors as the
+  // fetch path (never an untyped error from the key builder) and cache keys
+  // are only ever derived from validated, canonical URLs. For valid URLs the
+  // canonical string is byte-identical to the old key, so cache hits, keys,
+  // and eviction behavior are unchanged.
+  const validatedUrl = assertSafeManifestUrl(rawUrl).toString();
   if (useCache) {
-    const key = manifestCacheKey(rawUrl);
+    const key = manifestCacheKey(validatedUrl);
     const cached = cache.get(key);
     if (cached) return { manifest: cached.manifest, finalUrl: cached.finalUrl };
-    const fetched = await fetchStremioManifest(rawUrl, fetchDeps);
+    const fetched = await fetchStremioManifest(validatedUrl, fetchDeps);
     const manifest = validateStremioManifest(fetched.body);
     cache.set(key, manifest, fetched.finalUrl);
     return { manifest, finalUrl: fetched.finalUrl };
   }
-  const fetched = await fetchStremioManifest(rawUrl, fetchDeps);
+  const fetched = await fetchStremioManifest(validatedUrl, fetchDeps);
   const manifest = validateStremioManifest(fetched.body);
   return { manifest, finalUrl: fetched.finalUrl };
 }

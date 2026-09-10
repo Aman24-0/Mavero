@@ -1,5 +1,6 @@
 import { ManifestServiceError } from './errors';
 import { assertSafeManifestDestination, assertSafeManifestUrl, systemDnsResolver, type SafeDnsResolver } from './ssrf';
+import { ssrfSafeFetch } from './connect-guard';
 import { StreamServiceError } from './stream-errors';
 
 /**
@@ -28,6 +29,11 @@ import { StreamServiceError } from './stream-errors';
  * This is NOT a generic proxy: the fetcher only ever calls an addon's own
  * stream endpoint. The MEDIA URLs inside the response are never fetched by
  * Mavero (they are validated and returned for the future player).
+ *
+ * Phase 8 (D1): when no fetcher is injected, requests are dispatched through
+ * the SSRF-safe undici Agent (`connect-guard.ts`), whose connect-time lookup
+ * re-validates every DNS answer before the socket exists — the same
+ * rebinding-TOCTOU closure as the Phase 2 manifest fetcher.
  */
 
 export const STREAM_REQUEST_TIMEOUT_MS = 10_000;
@@ -117,7 +123,9 @@ async function readBodyWithLimit(response: Response, maxBytes: number, controlle
  * `StreamServiceError`s — never crashes the resolution (spec §24).
  */
 export async function fetchStremioStreamResponse(rawUrl: string, deps: StreamFetchDeps = {}): Promise<unknown> {
-  const fetcher = deps.fetcher ?? fetch;
+  // Phase 8 (D1): default fetcher dispatches through the connect-time
+  // validating undici Agent; injected fetchers (tests) are used verbatim.
+  const fetcher = deps.fetcher ?? ssrfSafeFetch;
   const timeoutMs = deps.timeoutMs ?? STREAM_REQUEST_TIMEOUT_MS;
   const maxBytes = deps.maxBytes ?? STREAM_MAX_BYTES;
   const maxRedirects = deps.maxRedirects ?? MAX_STREAM_REDIRECTS;
