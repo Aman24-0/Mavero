@@ -5,7 +5,7 @@ import type { Database } from '$lib/server/supabase/database.types';
 import type { PlayerSource } from '$lib/shared/player';
 import { isPlayablePlayerSource } from '$lib/shared/player-guards';
 import { MAVERO_PLAYER_INTEGRATION_TYPE, MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME, isMaveroPlayerSourceId, maveroPlayerSourceOption } from '$lib/shared/mavero-player';
-import { MAVERO_PLAYER_MAX_STREAMS, hasStreamEligibleAddons, maveroPlayerSourceFromResolution, parseStremioPlaybackRequest } from '$lib/server/streaming/stremio/mavero-player-source';
+import { MAVERO_PLAYER_MAX_STREAMS, MAVERO_PLAYER_STREAMS_PER_ADDON, hasStreamEligibleAddons, maveroPlayerSourceFromResolution, parseStremioPlaybackRequest } from '$lib/server/streaming/stremio/mavero-player-source';
 import { resolveStremioStreams, type StremioResolvedStream, type StremioStreamResolution } from '$lib/server/streaming/stremio/stream-resolver';
 import { stremioStreamToPlayerSource } from '$lib/server/streaming/stremio/stream-player-source';
 import { parseResolverRequest } from '$lib/server/resolver/identifiers';
@@ -336,8 +336,11 @@ function makeDirectSource(overrides: Partial<PlayerSource> = {}): PlayerSource {
   const urls = (source?.qualities ?? []).map((quality) => quality.url);
   ok(new Set(urls).size === 3, 'D: quality urls are unique');
   ok(source?.url === 'https://a.example/1080.m3u8', 'D: deterministic first stream is the aggregate url (resolver order)');
-  ok((source?.qualities?.[2]?.label ?? '').startsWith('Addon B ·'), 'D: labels distinguish addons');
-  ok(source?.qualities?.[2]?.height === undefined, 'D: Auto quality carries no fabricated height');
+  // Phase 9: fair round-robin aggregation interleaves addon buckets — pass 1
+  // takes A[0] + B[0], pass 2 takes A[1]. B's entry moved from index 2 to 1.
+  ok((source?.qualities?.[1]?.label ?? '').startsWith('Addon B ·'), 'D: labels distinguish addons (round-robin interleaves buckets)');
+  ok(source?.qualities?.[1]?.height === undefined, 'D: Auto quality carries no fabricated height');
+  ok((source?.qualities?.[2]?.label ?? '').startsWith('Addon A ·'), 'D: the first addon\u2019s second stream follows in pass 2');
   ok((source?.metadata?.note ?? '').includes('3 addon streams'), 'D: aggregate note counts the streams');
 }
 
@@ -378,15 +381,19 @@ function makeDirectSource(overrides: Partial<PlayerSource> = {}): PlayerSource {
 }
 
 // ---------------------------------------------------------------------------
-// H. Deterministic payload cap
+// H. Deterministic payload cap (Phase 9: fair per-addon + total budgets)
 // ---------------------------------------------------------------------------
 {
-  ok(MAVERO_PLAYER_MAX_STREAMS === 24, 'H: response cap constant pinned');
+  ok(MAVERO_PLAYER_MAX_STREAMS === 100, 'H: total response cap constant pinned (Phase 9)');
+  ok(MAVERO_PLAYER_STREAMS_PER_ADDON === 40, 'H: per-addon cap constant pinned (Phase 9 — no single addon can consume the aggregate)');
   const many = Array.from({ length: 30 }, (_, index) => resolvedStreamFixture({ streamIndex: index, url: `https://cdn.example/stream-${index}.m3u8`, quality: { label: 'Auto' } }));
   const source = maveroPlayerSourceFromResolution(resolutionFixture(many));
-  ok(source?.qualities?.length === MAVERO_PLAYER_MAX_STREAMS, 'H: composed payload is capped deterministically');
-  ok(source?.qualities?.[0]?.url === 'https://cdn.example/stream-0.m3u8', 'H: cap keeps the first (deterministic) entries');
-  ok(source?.qualities?.[23]?.url === 'https://cdn.example/stream-23.m3u8', 'H: cap order is the resolver order');
+  ok(source?.qualities?.length === 30, 'H: a single addon under the per-addon budget keeps ALL of its streams (order preserved)');
+  ok(source?.qualities?.[0]?.url === 'https://cdn.example/stream-0.m3u8', 'H: first (deterministic) entry unchanged');
+  ok(source?.qualities?.[29]?.url === 'https://cdn.example/stream-29.m3u8', 'H: order inside one addon is the resolver order');
+  const excess = Array.from({ length: 55 }, (_, index) => resolvedStreamFixture({ streamIndex: index, url: `https://cdn.example/over-${index}.m3u8`, quality: { label: 'Auto' } }));
+  const capped = maveroPlayerSourceFromResolution(resolutionFixture(excess));
+  ok(capped?.qualities?.length === MAVERO_PLAYER_STREAMS_PER_ADDON, 'H: one addon can never contribute more than the per-addon budget');
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Captions, ChevronLeft, ChevronRight, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  import { Captions, ChevronLeft, ChevronRight, ListVideo, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
   import type { PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
 
@@ -31,6 +31,11 @@
   export let internalQualities: PlayerInternalQualityOption[] = [];
   export let selectedInternalQuality: string = PLAYER_AUTO_QUALITY_ID;
   export let sourceCount = 0;
+  // Phase 9: MAVERO Player streams entry point — opens the dedicated
+  // streams sheet directly from the controls (switching streams never
+  // forces a detour through the source sheet). 0 = hidden (non-aggregate
+  // sources, or no aggregate resolved yet).
+  export let streamCount = 0;
   export let onTogglePlay: () => void = () => {};
   export let onSeek: (time: number) => void = () => {};
   export let onVolume: (value: number) => void = () => {};
@@ -45,6 +50,7 @@
   // Phase 9: onFullscreen removed — handled by PlayerShell header.
   export let onStep: (delta: number) => void = () => {};
   export let onSources: () => void = () => {};
+  export let onStreams: () => void = () => {};
 
   $: safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
   $: progressPercent = safeDuration ? Math.min(100, Math.max(0, (currentTime / safeDuration) * 100)) : 0;
@@ -91,6 +97,7 @@
         <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" />
       </div>
       {#if sourceCount > 0}<button class="control-button source-button" type="button" aria-label={`Choose source, ${sourceCount} available`} onclick={onSources}><span>{sourceCount}</span><span class="source-dot"></span></button>{/if}
+      {#if streamCount > 0}<button class="control-button streams-button" type="button" aria-label={`Open ${streamCount} MAVERO Player streams`} onclick={onStreams}><ListVideo size={16} /><span>{streamCount}</span></button>{/if}
       {#if subtitles.length}<label class="select-control" aria-label="Subtitles"><Captions size={16} /><select value={selectedSubtitle} onchange={(event) => onSubtitle((event.currentTarget as HTMLSelectElement).value)}><option value="">Subtitles off</option>{#each subtitles as track, index}<option value={track.url}>{track.label ?? track.language ?? `Track ${index + 1}`}</option>{/each}</select></label>{/if}
       {#if internalQualities.length > 1}
         <!-- Phase 6: internal quality of the engine-driven HLS source (AUTO + levels). -->
@@ -134,6 +141,7 @@
   .volume-input { width: 78px; accent-color: var(--accent); }
   .source-button { gap: 3px; min-width: 38px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .6rem; }
   .source-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px rgba(255,255,255,.3); }
+  .streams-button { gap: 4px; min-width: 40px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .6rem; }
   .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 38px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.68); font-size: .62rem; }
   .select-control:hover, .select-control:focus-within { border-color: var(--line-strong); }
   .select-control select { max-width: 90px; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }

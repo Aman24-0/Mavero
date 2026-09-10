@@ -150,7 +150,7 @@ assert.match(shell, /wasPlayingBeforeHidden && \(playing \|\| embedPlaying\)/, '
 // Release wired to pause / end / error / source switch / episode switch / destroy.
 assert.match(shell, /function handlePause\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on pause');
 assert.match(shell, /function handleEnded\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on end');
-assert.match(shell, /function handleMediaError\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on error');
+assert.match(shell, /function handleMediaError\(\)[\s\S]{0,900}releaseWakeLock\(\)/, 'wake lock released on error (window widened for the Phase 9 failure message — behavior unchanged)');
 assert.match(shell, /source\?\.sourceId && source\.sourceId !== sourceIdentity[\s\S]*?releaseWakeLock/, 'wake lock released on source switch');
 assert.match(shell, /episodeIdentity[\s\S]*?releaseWakeLock/, 'wake lock released on episode switch');
 assert.match(shell, /wakeLockDestroyed = true[\s\S]{0,80}releaseWakeLock/, 'destroyed flag set BEFORE releaseWakeLock on destroy');

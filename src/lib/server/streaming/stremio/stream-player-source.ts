@@ -36,6 +36,14 @@ export function stremioSourceId(addonSlug: string, streamIndex: number): string 
 
 export function stremioStreamToPlayerSource(stream: StremioResolvedStream): PlayerSource {
   const protocol: PlayerProtocol = stream.protocol;
+  // Phase 9: addon-provided subtitle tracks flow through the EXISTING
+  // `PlayerSource.subtitles` mechanism. URLs were shape-checked at
+  // normalization; the playback boundary (https-only) applies below before
+  // any track reaches the client — a non-https track is dropped silently.
+  const subtitles = (stream.subtitles ?? [])
+    .filter((track) => track.url.startsWith('https://'))
+    .slice(0, 8)
+    .map((track) => ({ url: track.url, ...(track.language ? { language: track.language } : {}), ...(track.label ? { label: track.label } : {}) }));
   return {
     type: 'direct',
     url: stream.url,
@@ -50,12 +58,21 @@ export function stremioStreamToPlayerSource(stream: StremioResolvedStream): Play
         ...(stream.quality.bitrate !== undefined ? { bitrate: stream.quality.bitrate } : {}),
       },
     ],
+    ...(subtitles.length ? { subtitles } : {}),
     metadata: {
       title: stream.streamTitle ?? stream.streamName,
       sourceName: stream.addonName,
       providerName: stream.addonName,
       protocol,
       note: `Stremio HTTP addon (${stream.transport.toUpperCase()}) · ${stream.videoId}`,
+      // Phase 9: rich addon-supplied metadata, preserved verbatim — the
+      // aggregate composer copies these into the stream's quality option.
+      ...(stream.description ? { streamDescription: stream.description } : {}),
+      ...(stream.audioLanguages ? { audioLanguages: stream.audioLanguages } : {}),
+      ...(stream.container ? { streamContainer: stream.container } : {}),
+      ...(stream.codec ? { streamCodec: stream.codec } : {}),
+      ...(stream.filename ? { filename: stream.filename } : {}),
+      ...(stream.videoSize ? { videoSize: stream.videoSize } : {}),
     },
   };
 }

@@ -67,8 +67,8 @@ assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'To
 // Phase 9 fix (drawer positioning): portrait bottom-sheet rule MUST be
 // scoped to :not(.landscape-mode) so it never leaks into landscape mode
 // (where it would conflict with the right-edge drawer rule).
-assert.match(shell, /\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet \{ position: fixed; z-index: 21; bottom: 0; left: 0; right: 0/, 'portrait source sheet is bottom-anchored AND scoped to non-landscape');
-assert.match(shell, /\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet \{[\s\S]*?max-height: 60dvh/, 'portrait sheet has max-height AND is scoped to non-landscape');
+assert.match(shell, /\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet, \.player-shell:not\(\.landscape-mode\) \.mavero-streams-sheet \{ position: fixed; z-index: 21; bottom: 0; left: 0; right: 0/, 'portrait source sheet is bottom-anchored AND scoped to non-landscape (Phase 9: streams sheet shares the contract)');
+assert.match(shell, /\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet, \.player-shell:not\(\.landscape-mode\) \.mavero-streams-sheet \{[\s\S]*?max-height: 60dvh/, 'portrait sheet has max-height AND is scoped to non-landscape');
 
 // ============================================================
 // 8. iframe remains fullscreen-capable

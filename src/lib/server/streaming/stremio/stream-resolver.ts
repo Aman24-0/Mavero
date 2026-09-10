@@ -7,7 +7,7 @@ import type { StreamingAddon } from '$lib/shared/streaming-addons';
 import type { SafeDnsResolver } from './ssrf';
 import { fetchStremioStreamResponse, STREAM_MAX_BYTES, STREAM_REQUEST_TIMEOUT_MS } from './stream-fetch';
 import { asStreamServiceError, StreamServiceError, type StreamErrorCode } from './stream-errors';
-import { normalizeStremioStreamResponse, type StremioStreamQuality, type UnsupportedStremioStream } from './stream-normalize';
+import { normalizeStremioStreamResponse, type NormalizedStreamSubtitle, type StremioStreamQuality, type UnsupportedStremioStream } from './stream-normalize';
 import { assertEpisodeScope, planAddonStreamRequest, stremioStreamTypeFor, type AddonSkipReason, type AddonStreamPlan, type StremioAddonStreamPlan, type StremioStreamType, type SupportedStremioIdProperty } from './stream-ids';
 
 /**
@@ -74,6 +74,16 @@ export type StremioResolvedStream = {
   bingeGroup?: string;
   filename?: string;
   videoSize?: number;
+  /** Phase 9: addon-supplied stream description (plain text). */
+  description?: string;
+  /** Phase 9: audio languages derived from ADDON-SUPPLIED labels. */
+  audioLanguages?: string[];
+  /** Phase 9: container label derived from the addon filename/URL. */
+  container?: string;
+  /** Phase 9: video codec label derived from ADDON-SUPPLIED text. */
+  codec?: string;
+  /** Phase 9: addon-provided subtitle tracks (shape-checked). */
+  subtitles?: NormalizedStreamSubtitle[];
 };
 
 export type StremioUnsupportedStream = UnsupportedStremioStream & { addonId: string; addonName: string };
@@ -285,6 +295,11 @@ export async function resolveStremioStreams(client: StreamingClient, request: St
             bingeGroup: stream.bingeGroup,
             filename: stream.filename,
             videoSize: stream.videoSize,
+            ...(stream.description ? { description: stream.description } : {}),
+            ...(stream.audioLanguages ? { audioLanguages: stream.audioLanguages } : {}),
+            ...(stream.container ? { container: stream.container } : {}),
+            ...(stream.codec ? { codec: stream.codec } : {}),
+            ...(stream.subtitles ? { subtitles: stream.subtitles } : {}),
           });
         }
         for (const entry of outcome.unsupported) {

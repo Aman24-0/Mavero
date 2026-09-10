@@ -155,3 +155,63 @@ export function sourceForStreamUrl(source: PlayerSource, url: string): PlayerSou
   if (protocol === source.metadata?.protocol) return source;
   return { ...source, metadata: { ...source.metadata, protocol } };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 9 — rich stream-card presentation helpers.
+//
+// Every helper renders ONLY what the addon actually supplied (or what is
+// reliably derived from it). A missing field yields `null` so the card can
+// omit the chip entirely — empty labels such as "Audio:" or "Codec:" are
+// never rendered. All outputs are PLAIN TEXT for Svelte auto-escaping.
+// ---------------------------------------------------------------------------
+
+/** 1 KiB binary steps; sizes below 1 MB are not worth a label. */
+const STREAM_SIZE_MB = 1024 * 1024;
+const STREAM_SIZE_GB = 1024 * 1024 * 1024;
+
+/**
+ * Human-readable file size for one addon stream ("2.1 GB", "812 MB").
+ * `null` when the addon supplied no `videoSize` — never fabricated.
+ */
+export function formatMaveroStreamSize(videoSize: number | undefined | null): string | null {
+  if (typeof videoSize !== 'number' || !Number.isFinite(videoSize) || videoSize <= 0) return null;
+  if (videoSize >= STREAM_SIZE_GB) {
+    const gb = videoSize / STREAM_SIZE_GB;
+    return `${Number.isInteger(gb) ? gb : Number(gb.toFixed(1))} GB`;
+  }
+  if (videoSize >= STREAM_SIZE_MB) {
+    const mb = Math.round(videoSize / STREAM_SIZE_MB);
+    return `${mb} MB`;
+  }
+  return `${Math.max(1, Math.round(videoSize / 1024))} KB`;
+}
+
+/**
+ * "Sub: English" / "Sub: English, Hindi" from the addon's own subtitle
+ * tracks (label or language, in addon order, capped at two). `null` when
+ * the addon supplied no subtitles — the label is never guessed.
+ */
+export function maveroStreamSubtitleLabel(stream: PlayerQualityOption): string | null {
+  const tracks = Array.isArray(stream.subtitles) ? stream.subtitles.slice(0, 2) : [];
+  const parts: string[] = [];
+  for (const track of tracks) {
+    const text = (typeof track?.label === 'string' && track.label.trim()) || (typeof track?.language === 'string' && track.language.trim()) || '';
+    if (text) parts.push(text);
+  }
+  return parts.length ? `Sub: ${parts.join(', ')}` : null;
+}
+
+/**
+ * The addon-provided DETAIL line for one stream card: the addon
+ * description's first line, else the addon-provided filename. `null` when
+ * the addon supplied neither. Long addon text is truncated to a bounded
+ * length here (presentation-layer safety net — the CSS also line-clamps).
+ */
+export function maveroStreamDetailLabel(stream: PlayerQualityOption): string | null {
+  const description = typeof stream.description === 'string' ? stream.description.trim() : '';
+  const firstLine = description.split('\n').map((line) => line.trim()).find(Boolean);
+  const filename = typeof stream.filename === 'string' ? stream.filename.trim() : '';
+  const candidate = firstLine || filename;
+  if (!candidate) return null;
+  return candidate.length > 140 ? `${candidate.slice(0, 140)}…` : candidate;
+}

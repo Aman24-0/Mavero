@@ -24,6 +24,29 @@ export type PlayerQualityOption = {
    */
   addonName?: string;
   protocol?: PlayerProtocol;
+  /**
+   * Phase 9 (MAVERO Player): rich ADDON-SUPPLIED stream metadata, preserved
+   * verbatim from the addon response and displayed only when present. Every
+   * field is untrusted plain text (rendered through Svelte's auto-escaping,
+   * never raw-HTML rendered); Mavero NEVER fabricates a value for any of them —
+   * a missing field stays absent so the UI can omit it entirely.
+   */
+  /** Addon-provided stream title (`stream.title`), when supplied. */
+  title?: string;
+  /** Addon-provided stream description (first line), when supplied. */
+  description?: string;
+  /** Audio languages detected in addon-supplied labels (e.g. ["Hindi"]). */
+  audioLanguages?: string[];
+  /** Container/format label derived from the addon filename/URL (e.g. "MKV"). */
+  container?: string;
+  /** Video codec label detected in addon-supplied text (e.g. "HEVC"). */
+  codec?: string;
+  /** Addon-provided filename (behaviorHints.filename), when supplied. */
+  filename?: string;
+  /** Addon-provided file size in bytes (behaviorHints.videoSize). */
+  videoSize?: number;
+  /** Addon-provided subtitle tracks (URLs already https-validated server-side). */
+  subtitles?: PlayerSubtitleTrack[];
 };
 
 /**
@@ -82,6 +105,19 @@ export type PlayerSource = {
      * active variant button without re-resolving.
      */
     selectedVariant?: string;
+    /**
+     * Phase 9 (MAVERO Player streams): rich ADDON-SUPPLIED metadata for ONE
+     * resolved Stremio stream, carried by the Phase 3 per-stream adapter.
+     * All fields are optional, untrusted plain text, and never invented —
+     * the aggregate composer copies them into the stream's quality option
+     * only when the addon actually supplied them.
+     */
+    streamDescription?: string;
+    audioLanguages?: string[];
+    streamContainer?: string;
+    streamCodec?: string;
+    filename?: string;
+    videoSize?: number;
   };
   error?: {
     code: string;

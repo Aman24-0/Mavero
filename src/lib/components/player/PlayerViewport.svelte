@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy } from 'svelte';
-  import type { PlayerInternalQualityOption, PlayerPlaybackState, PlayerSource } from '$lib/shared/player';
+  import type { PlayerInternalQualityOption, PlayerPlaybackState, PlayerSource, PlayerSubtitleTrack } from '$lib/shared/player';
   import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import { iframeSandboxAttribute } from '$lib/shared/sandbox-policy';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode } from '$lib/client/player/hls-engine';
@@ -14,6 +14,12 @@
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
   export let iframeElement: HTMLIFrameElement | undefined;
+  // Phase 9: the subtitle tracks for the CURRENT media. PlayerShell passes
+  // the SELECTED stream's addon-provided tracks (quality-option subtitles)
+  // falling back to the aggregate source's tracks — provider sources are
+  // unchanged (their sources never populate per-stream subtitles).
+  export let subtitles: PlayerSubtitleTrack[] = [];
+  $: activeSubtitles = subtitles.length ? subtitles : source?.subtitles ?? [];
   $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute('required') : undefined;
   $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${sandboxEnabled ? 'sandbox-on' : 'sandbox-off'}`;
 
@@ -29,6 +35,11 @@
     ended: void;
     error: void;
     embedload: void;
+    /** Phase 9: media lifecycle events for the pending-seek retry chain. */
+    durationchange: void;
+    loadeddata: void;
+    canplay: void;
+    progress: void;
     /** Phase 6: internal quality state of the engine-driven HLS source. */
     enginequality: { options: PlayerInternalQualityOption[]; selected: string | null };
   }>();
@@ -257,9 +268,13 @@
       on:seeked={() => dispatch('seeked')}
       on:ended={() => dispatch('ended')}
       on:error={() => dispatch('error')}
+      on:durationchange={() => dispatch('durationchange')}
+      on:loadeddata={() => dispatch('loadeddata')}
+      on:canplay={() => dispatch('canplay')}
+      on:progress={() => dispatch('progress')}
     >
-      <track kind="captions" src={source.subtitles?.[0]?.url ?? 'data:text/vtt,WEBVTT'} srclang={source.subtitles?.[0]?.language ?? 'en'} label={source.subtitles?.[0]?.label ?? source.subtitles?.[0]?.language ?? 'Captions unavailable'} />
-      {#each (source.subtitles ?? []).slice(1) as subtitle, index}
+      <track kind="captions" src={activeSubtitles?.[0]?.url ?? 'data:text/vtt,WEBVTT'} srclang={activeSubtitles?.[0]?.language ?? 'en'} label={activeSubtitles?.[0]?.label ?? activeSubtitles?.[0]?.language ?? 'Captions unavailable'} />
+      {#each (activeSubtitles ?? []).slice(1) as subtitle, index}
         <track kind="captions" src={subtitle.url} srclang={subtitle.language ?? 'und'} label={subtitle.label ?? subtitle.language ?? `Subtitle ${index + 2}`} />
       {/each}
     </video>

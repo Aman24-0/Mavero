@@ -38,6 +38,19 @@ export const STREAM_URL_MAX_LENGTH = 2048;
 /** Defensive bound on entries processed per response. */
 export const MAX_STREAM_ENTRIES = 200;
 const FIELD_TEXT_MAX_LENGTH = 300;
+/** Defensive bound on addon-provided subtitle tracks per stream (Phase 9). */
+export const MAX_STREAM_SUBTITLES = 8;
+
+/**
+ * Phase 9: one addon-provided subtitle track, preserved verbatim. The URL is
+ * validated for the PLAYBACK boundary later (https-only, credential-free);
+ * here it is only shape-checked — subtitle URLs are never fetched by Mavero.
+ */
+export type NormalizedStreamSubtitle = {
+  url: string;
+  language?: string;
+  label?: string;
+};
 
 /** Why one stream entry was excluded from the playable list (in-memory diagnostics). */
 export type StreamSkipReason =
@@ -62,6 +75,8 @@ export type NormalizedStremioStream = {
   index: number;
   name?: string;
   title?: string;
+  /** Addon-provided stream description (Phase 9, plain text). */
+  description?: string;
   /** Validated DIRECT http(s) media URL — preserved verbatim (never rewritten). */
   url: string;
   protocol: PlaybackProtocol;
@@ -71,6 +86,14 @@ export type NormalizedStremioStream = {
   bingeGroup?: string;
   filename?: string;
   videoSize?: number;
+  /** Audio languages derived from ADDON-SUPPLIED text only (Phase 9). */
+  audioLanguages?: string[];
+  /** Container label derived from the addon filename/URL extension (Phase 9). */
+  container?: string;
+  /** Video codec label derived from ADDON-SUPPLIED text only (Phase 9). */
+  codec?: string;
+  /** Addon-provided subtitle tracks, shape-checked (Phase 9). */
+  subtitles?: NormalizedStreamSubtitle[];
 };
 
 export type UnsupportedStremioStream = {
@@ -113,6 +136,141 @@ const TORRENT_URL_TOKENS: readonly string[] = ['torrent', 'magnet', 'bittorrent'
 /** Heights Mavero confidently recognizes (no aggressive guesses). */
 const KNOWN_QUALITY_HEIGHTS: ReadonlySet<number> = new Set([2160, 1440, 1080, 720, 576, 540, 480, 360, 240, 144]);
 const QUALITY_HEIGHT_PATTERN = /\b(2160|1440|1080|720|576|540|480|360|240|144)p\b/i;
+
+// ---------------------------------------------------------------------------
+// Phase 9 — conservative metadata derivation from ADDON-SUPPLIED text.
+//
+// Everything below reads ONLY what the addon itself wrote into name/title/
+// description/filename/URL. Mavero never invents a value: a language, codec
+// or container label is emitted ONLY when the addon's own text (or the URL
+// filename extension) explicitly carries it. Nothing is ever derived from the
+// addon NAME, the content title or the country of origin.
+// ---------------------------------------------------------------------------
+
+/**
+ * Audio-language lexicon for word-boundary detection in addon labels.
+ * Deliberately narrow: common Indian + international audio languages that
+ * Stremio addons actually write into stream names/titles (e.g.
+ * "1080p HEVC Hindi 5.1", "Audio: Tamil").
+ */
+const AUDIO_LANGUAGE_WORDS: readonly string[] = [
+  'Hindi', 'English', 'Tamil', 'Telugu', 'Malayalam', 'Kannada', 'Bengali',
+  'Punjabi', 'Marathi', 'Gujarati', 'Urdu', 'Japanese', 'Korean', 'Mandarin',
+  'Cantonese', 'Chinese', 'Spanish', 'French', 'German', 'Italian', 'Russian',
+  'Arabic', 'Turkish', 'Portuguese', 'Indonesian', 'Thai', 'Vietnamese', 'Polish',
+];
+const AUDIO_LANGUAGE_PATTERN = new RegExp(
+  `\\b(${AUDIO_LANGUAGE_WORDS.join('|')})\\b`,
+  'gi',
+);
+/** Maximum audio languages displayed per stream (multi-audio files list two). */
+const MAX_AUDIO_LANGUAGES = 2;
+
+/**
+ * Detects audio languages in ADDON-SUPPLIED text by word-boundary matching.
+ * Returns them in order of first appearance, deduplicated, capped at two.
+ * Never called with addon display names or content titles.
+ */
+export function detectAudioLanguages(texts: Array<string | undefined>): string[] | undefined {
+  const found: string[] = [];
+  for (const text of texts) {
+    if (!text) continue;
+    for (const match of text.matchAll(AUDIO_LANGUAGE_PATTERN)) {
+      const language = match[1];
+      // Canonical capitalization from the lexicon (addon text may shout).
+      const canonical = AUDIO_LANGUAGE_WORDS.find((word) => word.toLowerCase() === language.toLowerCase());
+      if (canonical && !found.includes(canonical)) found.push(canonical);
+      if (found.length >= MAX_AUDIO_LANGUAGES) return found;
+    }
+  }
+  return found.length ? found : undefined;
+}
+
+/**
+ * Video-codec labels detected ONLY in addon-supplied text. Canonicalized to
+ * display labels; the first recognized token wins (streams advertise one
+ * primary video codec).
+ */
+const CODEC_LABELS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bhevc\b|\bh\.?265\b|\bx265\b/i, 'HEVC'],
+  [/\bh\.?264\b|\bavc\b|\bx264\b/i, 'H.264'],
+  [/\bav1\b/i, 'AV1'],
+  [/\bvp9\b/i, 'VP9'],
+  [/\bmpeg-?2\b/i, 'MPEG-2'],
+  [/\bdivx\b|\bxvid\b/i, 'DivX/Xvid'],
+];
+
+export function detectVideoCodec(texts: Array<string | undefined>): string | undefined {
+  for (const text of texts) {
+    if (!text) continue;
+    for (const [pattern, label] of CODEC_LABELS) {
+      if (pattern.test(text)) return label;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Container labels derived from the FILE EXTENSION of the addon-supplied
+ * filename (preferred) or the URL pathname. A recognized extension becomes a
+ * display label ("MKV"); anything else stays absent — never guessed.
+ */
+const CONTAINER_EXTENSIONS: ReadonlyMap<string, string> = new Map([
+  ['mkv', 'MKV'], ['mp4', 'MP4'], ['webm', 'WebM'], ['avi', 'AVI'],
+  ['mov', 'MOV'], ['m4v', 'M4V'], ['ts', 'TS'], ['flv', 'FLV'], ['wmv', 'WMV'],
+]);
+
+export function detectContainer(filename: string | undefined, url: string): string | undefined {
+  const candidates = [filename, url.split('#')[0].split('?')[0]];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const match = /\.([a-z0-9]{2,4})$/i.exec(candidate.trim());
+    const label = match ? CONTAINER_EXTENSIONS.get(match[1].toLowerCase()) : undefined;
+    if (label) return label;
+  }
+  return undefined;
+}
+
+/**
+ * Shape-checks one addon-provided subtitle entry: http(s) URL (no
+ * credentials, bounded length), optional language/label text. Anything
+ * malformed is dropped silently — subtitle entries never fail the stream.
+ */
+function normalizeSubtitleEntry(entry: unknown): NormalizedStreamSubtitle | null {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const record = entry as Record<string, unknown>;
+  const rawUrl = typeof record.url === 'string' ? record.url.trim() : '';
+  if (!rawUrl || rawUrl.length > STREAM_URL_MAX_LENGTH) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  if (parsed.username || parsed.password) return null;
+  const language = textField(record.lang) ?? textField(record.language);
+  const label = textField(record.label);
+  return {
+    url: parsed.toString(),
+    ...(language ? { language } : {}),
+    ...(label ? { label } : {}),
+  };
+}
+
+function normalizeSubtitleTracks(value: unknown): NormalizedStreamSubtitle[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tracks: NormalizedStreamSubtitle[] = [];
+  const seen = new Set<string>();
+  for (const entry of value.slice(0, MAX_STREAM_SUBTITLES * 2)) {
+    if (tracks.length >= MAX_STREAM_SUBTITLES) break;
+    const track = normalizeSubtitleEntry(entry);
+    if (!track || seen.has(track.url)) continue;
+    seen.add(track.url);
+    tracks.push(track);
+  }
+  return tracks.length ? tracks : undefined;
+}
 
 function textField(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -234,13 +392,23 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
   const rawVideoSize = hints?.videoSize;
   const videoSize = typeof rawVideoSize === 'number' && Number.isSafeInteger(rawVideoSize) && rawVideoSize > 0 ? rawVideoSize : undefined;
   const bingeGroup = hints && typeof hints.bingeGroup === 'string' ? hints.bingeGroup.slice(0, FIELD_TEXT_MAX_LENGTH) : undefined;
+  // Phase 9: preserve the addon's own description text (plain text, bounded).
+  const description = textField(record.description);
+  const subtitles = normalizeSubtitleTracks(record.subtitles);
 
   // Preserve the URL exactly (spec §13): no silent http→https rewrite.
   const normalizedUrl = parsed.toString();
+  // Phase 9 metadata derivation — strictly from ADDON-SUPPLIED text
+  // (name/title/description/filename/URL). Language is never derived from
+  // the addon display name, the content title or anything else.
+  const audioLanguages = detectAudioLanguages([name, title, description, filename]);
+  const codec = detectVideoCodec([name, title, description]);
+  const container = detectContainer(filename, normalizedUrl);
   streams.push({
     index,
     name,
     title,
+    ...(description ? { description } : {}),
     url: normalizedUrl,
     protocol: protocolForUrl(normalizedUrl),
     transport: parsed.protocol === 'https:' ? 'https' : 'http',
@@ -248,6 +416,10 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
     bingeGroup,
     filename,
     videoSize,
+    ...(audioLanguages ? { audioLanguages } : {}),
+    ...(codec ? { codec } : {}),
+    ...(container ? { container } : {}),
+    ...(subtitles ? { subtitles } : {}),
   });
 }
 

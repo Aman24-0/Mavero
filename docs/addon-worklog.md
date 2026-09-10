@@ -1442,3 +1442,131 @@ media fetching added. `useCache` remains opt-in (no production caller).
 **Phase 8 production hardening and final audit are implemented.** The
 MAVERO Stremio HTTP addon integration is complete: no P2P/torrent/debrid/
 proxy/DRM support, no new product features — hardening only.
+
+---
+
+## Phase 9 — Stremio playback compatibility, rich stream details, MAVERO stream UX, reliable seeking
+
+Date: 2026-09-11 · Baseline: `6babe8d` (Phase 8) · Scope: additive UX + reliability only, zero security relaxation.
+
+### Problems fixed
+
+1. **Addon starvation (GOAL 1)** — the Phase 4 composer applied ONE global
+   cap (`break` at 24 streams in resolver order). Because resolver order is
+   addon-major, prolific early addons (PenguPlay/HdHub) could consume all 24
+   slots and completely hide later enabled addons (DesiFlix). The composer
+   now builds validated per-addon buckets and composes ROUND-ROBIN under
+   `MAVERO_PLAYER_STREAMS_PER_ADDON = 40` (per-addon budget) and
+   `MAVERO_PLAYER_MAX_STREAMS = 100` (total budget): every enabled addon
+   with >=1 playable stream is represented, no addon can consume the whole
+   aggregate, the result stays bounded + deterministic. URL validation runs
+   for the full resolution before budgets apply.
+2. **Source sheet contained the raw stream list (GOALS 2/3/16)** — provider
+   selection and stream selection are now separate acts. The source sheet is
+   a clean provider list with ONE "X Streams ->" button under the MAVERO
+   Player row; streams open in a dedicated `.mavero-streams-sheet` dialog
+   (portrait bottom sheet, desktop popover, landscape right drawer), grouped
+   by addon with per-addon counts, back navigation (returns to the source
+   sheet when entered from it), Escape + focus trap, and a direct
+   "N Streams" button in PlayerControls so switching streams never forces a
+   source-sheet detour.
+3. **Metadata was discarded (GOALS 4/5/10)** — normalization now preserves
+   `description`, addon subtitle tracks (shape-checked, https-only at the
+   adapter, capped at 8), and conservatively derives audio languages /
+   codec / container from ADDON-SUPPLIED text only (word-boundary lexicon,
+   canonicalized labels, filename/URL extension). NOTHING is invented: a
+   stream without language-bearing text gets no language field; language is
+   never derived from the addon name, content title or country. The rich
+   metadata flows resolver -> adapter -> aggregate `qualities[]` -> the new
+   `MaveroStreamCard` component (badges: quality, audio, subtitles, codec,
+   container, format, size; detail line = description first line or
+   filename; all plain text under Svelte auto-escaping, long text clamped).
+   Per-stream addon subtitles attach to playback through the EXISTING
+   `PlayerSource.subtitles` mechanism (selected stream wins, aggregate
+   fallback). The PenguPlay South-audio case is now diagnosable from the
+   card when the addon labels the audio.
+4. **One-shot pending seek (GOAL 6)** — `loadedmetadata` applied the seek
+   and unconditionally zeroed it; HLS VOD `loadedmetadata` can fire before
+   the final duration/seekable range exists, so a 2-hour seek restarted at
+   00:00. Replaced with `src/lib/client/player/pending-seek.ts`: a pure,
+   unit-tested state machine that RETAINS the target until a seekable range
+   covers it (finite-duration fallback for MP4), applies it exactly once,
+   and clears ONLY on success. Retries are event-driven (durationchange /
+   loadeddata / canplay / progress now forwarded by PlayerViewport) with a
+   bounded attempt cap + wall-clock window (no timers, no infinite loops).
+   Every capture takes a monotonic token; source/stream switches re-capture,
+   so a stale pending seek can never land on a newly selected stream.
+   Position-preserving switching (existing product behavior) is unchanged.
+
+### Failure isolation & browser compatibility (GOALS 7/8/9)
+
+* A failed stream marks its URL in a per-session `failedStreamUrls` set —
+  its card shows "Failed — try another or retry" while every other card
+  stays selectable. Source/episode switches reset the markers.
+* The MAVERO failure message names the realistic browser causes (MKV/HEVC,
+  expired source) without exposing internals; non-MAVERO sources keep the
+  exact Phase 6 generic text. MKV/HEVC-class streams are labelled BEFORE
+  selection from addon metadata. No format ever claims guaranteed playback:
+  browser-incompatible streams fail gracefully into the existing error
+  state with Try again / Switch source available.
+
+### Video.js evaluation (GOALS 11/12) — deferred, documented
+
+Video.js v10 RC + the official Svelte/HlsJsVideo integration were evaluated
+against STEP 8's gate ("do not leave a half-integrated Video.js
+implementation"). Deferral rationale:
+
+1. **Single-owner conflict**: the direct path (shared by provider direct
+   sources AND MAVERO streams) currently has ONE owner of HLS playback —
+   the Phase 5/6/8-hardened `HlsPlaybackEngine` behind `PlayerViewport`
+   (lazy hls.js 1.7.2 import, generation guards, bounded recovery, native
+   HLS branch, quality controller). Video.js would either replace that
+   engine for ALL direct sources (a full player-architecture migration:
+   controls, quality selection, error recovery, Media Session/Wake
+   Lock/PiP/fullscreen rewiring, CSS) or run alongside it — which the spec
+   explicitly forbids ("do NOT run both against the same media element").
+2. **v10 RC instability**: release-candidate API surface; pinning a RC into
+   a production repo in the same phase as a 35-area acceptance matrix and a
+   full Phase 1-8 regression chain risks exactly the half-integration the
+   spec forbids.
+3. **No capability gain**: Video.js does not solve CORS, unsupported
+   codecs/containers (MKV/HEVC), missing request headers, expiry or DRM —
+   the actual compatibility constraints. The existing engine already
+   covers AUTO + manual rendition selection (Phase 6).
+
+Consequence: no video.js dependency was added; the Phase 5 engine remains
+the single HLS owner; nothing half-integrated remains. A future migration
+should replace `hls-engine.ts` + `PlayerViewport` wiring atomically, behind
+the existing adapter/quality-controller contracts.
+
+### Security (GOALS 14/15) — unchanged guarantees
+
+Manifest/SSRF/DNS-rebinding/connect-time validation, manual redirect
+validation, body limits, timeouts, private-IP blocking, credential
+rejection, admin authorization, RLS and the HTTPS-only direct boundary are
+byte-identical (Phase 8 suite re-pinned green). Phase 9 additions inherit
+the same discipline: subtitle URLs are https-only + credential-free +
+shape-checked before reaching the client; rich metadata is untrusted plain
+text rendered through Svelte auto-escaping (zero `{@html`, zero
+`innerHTML`, zero `<img>` in the player); no proxy, no header proxying, no
+torrent/magnet/infoHash/externalUrl/P2P anywhere.
+
+### Tests
+
+* New `scripts/stremio_player_phase9_test.ts` (35 coverage areas:
+  aggregation fairness incl. the PenguPlay/HdHub/DesiFlix repro, budgets,
+  resolver-level addon failure isolation, metadata preservation/no
+  invention, sheet separation, per-addon counts, stale-selection guard,
+  failure markers, HTTPS/SSRF/torrent/proxy re-pins, the full pending-seek
+  state machine behavior, HLS<->MP4 switching matrix on real engine
+  instances with fake hls.js, recovery, browser-compat messaging, the
+  documented Video.js deferral, single-engine ownership, quality/AUTO
+  contracts, embed intactness, chain registration).
+* Phase 4/5/6/8 + landscape/accessibility suites: pins legitimately
+  updated where Phase 9 intentionally changed UX (sheet separation,
+  round-robin order, seek controller, streams-sheet CSS) — behavioral
+  contracts preserved.
+
+**Phase 9 playback compatibility and stream UX are implemented.** No new
+product features beyond the Phase 9 scope; no P2P/torrent/debrid/proxy/DRM
+support; no security relaxation.

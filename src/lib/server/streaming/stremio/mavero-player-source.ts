@@ -1,4 +1,4 @@
-import type { PlayerProtocol, PlayerQualityOption, PlayerSource } from '$lib/shared/player';
+import type { PlayerProtocol, PlayerQualityOption, PlayerSource, PlayerSubtitleTrack } from '$lib/shared/player';
 import { MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME } from '$lib/shared/mavero-player';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
@@ -8,7 +8,8 @@ import { stremioStreamToPlayerSource } from './stream-player-source';
 import type { StremioStreamResolution } from './stream-resolver';
 
 /**
- * MAVERO Player — server-side playback integration (Phase 4).
+ * MAVERO Player — server-side playback integration (Phase 4, Phase 9
+ * aggregation).
  *
  * Composes the resolved Phase 3 Stremio stream collection into ONE
  * aggregate `PlayerSource` for the EXISTING player architecture:
@@ -19,12 +20,32 @@ import type { StremioStreamResolution } from './stream-resolver';
  *     (`MAVERO_PLAYER_SOURCE_ID`) so the source sheet, progress records
  *     and source switching all address the logical "MAVERO Player" source,
  *     while every individual addon stream stays reachable through the
- *     source's `qualities` list — the EXISTING quality-switching mechanism
- *     of the direct player (position-preserving via the shell's
- *     pendingSeek behavior). No source-sheet redesign, no new switching
+ *     source's `qualities` list. No source-sheet redesign, no new switching
  *     machinery, no `streaming_sources` rows.
- *   * The deterministic first playable stream is the aggregate `url`
- *     (resolver order: addon ordering → name → stream index → quality).
+ *   * The deterministic first playable stream is the aggregate `url`.
+ *
+ * PHASE 9 — FAIR BOUNDED AGGREGATION (addon starvation fix):
+ *   The Phase 4–8 composer applied ONE global cap (`break` at 24 streams in
+ *   resolver order). Because the resolver order is addon-major (addon A's
+ *   streams all precede addon B's), a prolific FIRST addon could consume the
+ *   entire aggregate budget and completely HIDE every later enabled addon —
+ *   DesiFlix never appeared while PenguPlay/HdHub flooded the first 24
+ *   slots. The composer now applies a FAIR budget:
+ *
+ *     * every addon bucket is first filled with its PLAYABLE (validated)
+ *       streams, in the resolver's deterministic order;
+ *     * the aggregate is then composed ROUND-ROBIN across addon buckets
+ *       (pass 1 takes stream 1 of every addon, pass 2 stream 2, …) under
+ *       `MAVERO_PLAYER_STREAMS_PER_ADDON` (per-addon budget) and
+ *       `MAVERO_PLAYER_MAX_STREAMS` (total payload budget).
+ *
+ *   Guarantees: every enabled addon with ≥1 playable stream is represented
+ *   (the round-robin cannot skip an addon while another still has budget);
+ *   no addon can consume the whole aggregate; the result stays bounded
+ *   (≤100 entries) and deterministic (addon order + resolver order inside
+ *   each pass). URL validation happens for EVERY resolved stream before the
+ *   budgets apply — the composition never spends slots on entries that
+ *   would fail the playback boundary anyway.
  *
  * PLAYBACK URL POLICY: every candidate URL is re-validated through the
  * EXISTING `validatePlaybackUrl(url, 'direct')` contract — the same
@@ -45,12 +66,17 @@ import type { StremioStreamResolution } from './stream-resolver';
  */
 
 /**
- * Deterministic upper bound of addon streams exposed per response. The
- * resolver already bounds per-addon entries and addon count; this bounds
- * the composed payload for the player UI. Ordering is the resolver's
- * deterministic order — the first entries win.
+ * Total upper bound of addon streams exposed per response (Phase 9). The
+ * composed payload for the player UI stays bounded regardless of how many
+ * addons resolve or how many streams each returns.
  */
-export const MAVERO_PLAYER_MAX_STREAMS = 24;
+export const MAVERO_PLAYER_MAX_STREAMS = 100;
+
+/**
+ * Per-addon upper bound (Phase 9). One addon can never contribute more than
+ * this many entries to the aggregate, no matter how many it resolved.
+ */
+export const MAVERO_PLAYER_STREAMS_PER_ADDON = 40;
 
 export type StremioPlaybackRequest = {
   mediaType: ContentType;
@@ -101,18 +127,20 @@ export function parseStremioPlaybackRequest(input: unknown): StremioPlaybackRequ
 }
 
 /** One addon stream entry inside the aggregate source's quality list. */
-function qualityOptionOf(source: PlayerSource): PlayerQualityOption | null {
-  const url = source.url;
-  if (!url) return null;
+function qualityOptionOf(source: PlayerSource): PlayerQualityOption {
+  const url = source.url as string;
   const quality = source.qualities?.[0];
   const addonName = source.metadata?.providerName ?? 'Addon';
   const qualityLabel = quality?.label ?? (quality?.height ? `${quality.height}p` : 'Auto');
   // Phase 6: additive presentation metadata — the addon DISPLAY name and
-  // the normalized protocol of THIS stream, so the source sheet can group
+  // the normalized protocol of THIS stream, so the stream sheet can group
   // streams by addon and label the format without any second resolution
   // round-trip. No database ids, manifest URLs or internal identifiers are
   // exposed (spec §39: the user sees safe presentation metadata only).
   const protocol = source.metadata?.protocol;
+  // Phase 9: rich ADDON-SUPPLIED metadata, carried through only when the
+  // addon actually supplied it — absent fields stay absent (never invented).
+  const subtitleTracks = (source.subtitles ?? []).slice(0, 8);
   return {
     url,
     label: `${addonName} · ${qualityLabel}`,
@@ -120,19 +148,36 @@ function qualityOptionOf(source: PlayerSource): PlayerQualityOption | null {
     ...(quality?.bitrate !== undefined ? { bitrate: quality.bitrate } : {}),
     ...(addonName ? { addonName } : {}),
     ...(protocol ? { protocol } : {}),
+    ...(source.metadata?.title ? { title: source.metadata.title } : {}),
+    ...(source.metadata?.streamDescription ? { description: source.metadata.streamDescription } : {}),
+    ...(source.metadata?.audioLanguages ? { audioLanguages: source.metadata.audioLanguages } : {}),
+    ...(source.metadata?.streamContainer ? { container: source.metadata.streamContainer } : {}),
+    ...(source.metadata?.streamCodec ? { codec: source.metadata.streamCodec } : {}),
+    ...(source.metadata?.filename ? { filename: source.metadata.filename } : {}),
+    ...(source.metadata?.videoSize ? { videoSize: source.metadata.videoSize } : {}),
+    ...(subtitleTracks.length ? { subtitles: subtitleTracks } : {}),
   };
 }
 
+/** Phase 9: one addon's validated playable stream bucket (deterministic order). */
+type AddonStreamBucket = {
+  addonId: string;
+  addonName: string;
+  firstAppearance: number;
+  sources: PlayerSource[];
+};
+
 /**
- * Composes the aggregate MAVERO Player source from a Phase 3 resolution.
- * Returns `null` when ZERO streams survive the existing direct-playback
- * URL policy — the caller turns that into a graceful empty result, never
- * an error that could disturb the existing provider sources.
+ * Validates every resolved stream through the playback boundary and buckets
+ * the survivors per addon, preserving the resolver's deterministic order
+ * (addon ordering → name → stream index → quality). Validation is pure and
+ * cheap, so it runs for the ENTIRE resolution — budgets afterwards apply to
+ * genuinely playable entries only.
  */
-export function maveroPlayerSourceFromResolution(resolution: StremioStreamResolution, contentTitle?: string): PlayerSource | null {
-  const playable: PlayerSource[] = [];
+function validatedAddonBuckets(resolution: StremioStreamResolution): AddonStreamBucket[] {
+  const buckets: AddonStreamBucket[] = [];
+  const byAddonId = new Map<string, AddonStreamBucket>();
   for (const stream of resolution.sources) {
-    if (playable.length >= MAVERO_PLAYER_MAX_STREAMS) break;
     // Phase 3 adapter — the ONLY PlayerSource mapping for Stremio streams.
     const source = stremioStreamToPlayerSource(stream);
     if (!source.url) continue;
@@ -144,15 +189,60 @@ export function maveroPlayerSourceFromResolution(resolution: StremioStreamResolu
     } catch {
       continue;
     }
-    playable.push(source);
+    let bucket = byAddonId.get(stream.addonId);
+    if (!bucket) {
+      bucket = { addonId: stream.addonId, addonName: stream.addonName, firstAppearance: buckets.length, sources: [] };
+      byAddonId.set(stream.addonId, bucket);
+      buckets.push(bucket);
+    }
+    bucket.sources.push(source);
   }
+  return buckets;
+}
+
+/**
+ * Round-robin composer (Phase 9 starvation fix). Repeatedly sweeps the addon
+ * buckets in deterministic order, taking ONE stream per addon per pass,
+ * until the per-addon budget (`MAVERO_PLAYER_STREAMS_PER_ADDON`), the total
+ * budget (`MAVERO_PLAYER_MAX_STREAMS`) or the buckets are exhausted.
+ *
+ * Because every pass touches EVERY addon before any addon gets a second
+ * entry, an early addon can never fill the aggregate budget alone — the
+ * property that keeps DesiFlix visible alongside PenguPlay and HdHub.
+ */
+export function aggregateAddonStreams(buckets: AddonStreamBucket[]): PlayerSource[] {
+  const picked: PlayerSource[] = [];
+  const cursors = new Array<number>(buckets.length).fill(0);
+  let exhausted = buckets.length === 0;
+  while (!exhausted && picked.length < MAVERO_PLAYER_MAX_STREAMS) {
+    let tookAny = false;
+    for (let index = 0; index < buckets.length && picked.length < MAVERO_PLAYER_MAX_STREAMS; index++) {
+      const bucket = buckets[index];
+      if (cursors[index] >= Math.min(bucket.sources.length, MAVERO_PLAYER_STREAMS_PER_ADDON)) continue;
+      picked.push(bucket.sources[cursors[index]]);
+      cursors[index] += 1;
+      tookAny = true;
+    }
+    exhausted = !tookAny;
+  }
+  return picked;
+}
+
+/**
+ * Composes the aggregate MAVERO Player source from a Phase 3 resolution.
+ * Returns `null` when ZERO streams survive the existing direct-playback
+ * URL policy — the caller turns that into a graceful empty result, never
+ * an error that could disturb the existing provider sources.
+ */
+export function maveroPlayerSourceFromResolution(resolution: StremioStreamResolution, contentTitle?: string): PlayerSource | null {
+  const buckets = validatedAddonBuckets(resolution);
+  const playable = aggregateAddonStreams(buckets);
   if (!playable.length) return null;
 
   const primary = playable[0];
   const qualities: PlayerQualityOption[] = [];
   for (const source of playable) {
-    const option = qualityOptionOf(source);
-    if (option) qualities.push(option);
+    qualities.push(qualityOptionOf(source));
   }
   const protocol: PlayerProtocol | undefined = primary.metadata?.protocol;
   return {

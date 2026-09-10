@@ -180,11 +180,14 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   ok(!/torrent|bittorrent|webtorrent|debrid|magnet|peerflix|p2p/.test(depNames), 'A: no P2P/torrent/debrid dependencies exist');
 
   const testScript: string = pkg.scripts.test;
+  // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8
+  // — the chain still runs phase 7 before phase 8, and now ENDS with phase 9.
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
-      testScript.trimEnd().endsWith('stremio_player_phase8_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with it',
+      testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
+      testScript.trimEnd().endsWith('stremio_player_phase9_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 9 suite (Phase 9 extension)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');

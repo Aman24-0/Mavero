@@ -6,7 +6,7 @@ import type { PlayerQualityOption, PlayerSource } from '$lib/shared/player';
 import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
 import { MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME, maveroPlayerSourceOption } from '$lib/shared/mavero-player';
 import { isPlayablePlayerSource } from '$lib/shared/player-guards';
-import { MAVERO_PLAYER_MAX_STREAMS, maveroPlayerSourceFromResolution } from '$lib/server/streaming/stremio/mavero-player-source';
+import { MAVERO_PLAYER_MAX_STREAMS, MAVERO_PLAYER_STREAMS_PER_ADDON, maveroPlayerSourceFromResolution } from '$lib/server/streaming/stremio/mavero-player-source';
 import { stremioStreamToPlayerSource } from '$lib/server/streaming/stremio/stream-player-source';
 import type { StremioResolvedStream } from '$lib/server/streaming/stremio/stream-resolver';
 import { DirectPlayerAdapter } from '$lib/client/player/direct-adapter';
@@ -72,6 +72,8 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 const shellSource = read('src/lib/components/player/PlayerShell.svelte');
 const viewportSource = read('src/lib/components/player/PlayerViewport.svelte');
 const controlsSource = read('src/lib/components/player/PlayerControls.svelte');
+// Phase 9: the rich stream card is its own component.
+const cardSource = read('src/lib/components/player/MaveroStreamCard.svelte');
 const streamsSource = read('src/lib/client/player/mavero-streams.ts');
 const engineSource = read('src/lib/client/player/hls-engine.ts');
 const composerSource = read('src/lib/server/streaming/stremio/mavero-player-source.ts');
@@ -245,13 +247,16 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(!isMaveroAggregateSource({ type: 'embed', url: 'https://embed.example/x', providerId: MAVERO_PLAYER_SOURCE_ID, sourceId: MAVERO_PLAYER_SOURCE_ID } as PlayerSource), 'A: embed sources are never the MAVERO aggregate');
   ok(!isMaveroAggregateSource(null), 'A: a null source is never the MAVERO aggregate');
 
-  // One virtual option in the sheet; the stream section is nested INSIDE it.
+  // One virtual option in the sheet; Phase 9 moves the stream list to a
+  // DEDICATED sheet with ONE "X Streams →" entry point in the source sheet.
   const option = maveroPlayerSourceOption();
   ok(option.id === MAVERO_PLAYER_SOURCE_ID && option.name === MAVERO_PLAYER_SOURCE_NAME, 'A: the virtual source option is unchanged (one logical source)');
   const optionLoopCount = shellTemplate.split('{#each sourceOptions as option}').length - 1;
   ok(optionLoopCount === 1, 'A: the sheet renders exactly ONE source-options loop (no second source list)');
-  ok(shellTemplate.indexOf('{#each sourceOptions as option}') < shellTemplate.indexOf('mavero-section'), 'A: the MAVERO stream section renders INSIDE the same sheet, after the source options (nested presentation, not a second source entry)');
-  ok(shellSource.includes('maveroStreamGroups.length') && !shellSource.includes('sourceOptions.push'), 'A: the section is presentation-only — the source OPTIONS list is never mutated');
+  ok(!shellTemplate.includes('mavero-section'), 'A: Phase 9 — the source sheet no longer embeds the raw stream list (provider selection only)');
+  ok(shellTemplate.includes('streams-entry-button') && shellTemplate.includes('openStreamsSheet'), 'A: the source sheet carries ONE "X Streams →" entry point that opens the dedicated streams sheet');
+  ok(shellTemplate.includes('mavero-streams-sheet') && shellTemplate.includes('aria-label="MAVERO Player streams"'), 'A: the dedicated MAVERO streams sheet exists as its own dialog');
+  ok(shellSource.includes('maveroStreamGroups.length') && !shellSource.includes('sourceOptions.push'), 'A: the sheet is presentation-only — the source OPTIONS list is never mutated');
 }
 
 // ===========================================================================
@@ -312,7 +317,7 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   const groups = groupMaveroStreams([qualityFixture({ addonName: 'HTTP Streams Plus' })]);
   ok(groups[0].addonName === 'HTTP Streams Plus', 'D: the group name IS the addon display name');
-  ok(shellTemplate.includes('<div class="mavero-group-name" role="presentation" title={group.addonName}>{group.addonName}</div>'), 'D: the sheet renders the addon display name as the group header');
+  ok(cardSource.includes('<span class="mavero-group-name"') === false && shellTemplate.includes('<span class="mavero-group-name" title={group.addonName}>{group.addonName}</span>'), 'D: the streams sheet renders the addon display name as the group header');
   ok(shellTemplate.includes('{MAVERO_PLAYER_SOURCE_NAME}'), 'D: the section header shows the stable MAVERO Player display name');
   const unnamed = groupMaveroStreams([qualityFixture({ addonName: undefined, label: '480p' })]);
   ok(unnamed.length === 1 && unnamed[0].addonName === 'Addon', 'D: a stream without a name falls into one stable "Addon" group (never dropped, never fabricated)');
@@ -344,20 +349,22 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(maveroStreamQualityLabel(qualityFixture({ height: undefined, label: undefined })) === 'Auto', 'F: nothing available → "Auto" (never fabricated)');
   ok(maveroStreamQualityLabel(qualityFixture({ height: undefined, label: 'Just a title' })) === 'Just a title', 'F: a label without the "·" separator is preserved as-is');
   ok(!/\d{5,}/.test(maveroStreamQualityLabel(qualityFixture({ height: undefined, bitrate: 1234567, label: undefined }))), 'F: raw bitrate is never displayed as a quality label');
-  ok(shellTemplate.includes('<strong>{maveroStreamQualityLabel(stream)}</strong>'), 'F: the sheet renders the derived quality label');
+  ok(cardSource.includes('<strong class="card-quality">{maveroStreamQualityLabel(stream)}</strong>'), 'F: the stream card renders the derived quality label');
 }
 
 // ===========================================================================
-// G — language labels handled (never fabricated)
+// G — language labels handled (addon-supplied only, never fabricated)
 // ===========================================================================
 
 {
-  // Phase 3 provides no reliable language metadata, so Phase 6 renders none.
+  // Phase 9: audio languages ARE displayed — but ONLY when the addon's own
+  // stream text carries them. A stream with no language-bearing text gets
+  // NO language field at all (never fabricated, never inferred from the
+  // addon name, content title or country).
   const aggregate = maveroPlayerSourceFromResolution({ mediaType: 'movie', requestedMediaType: 'movie', sources: [resolvedStreamFixture()], unsupported: [], diagnostics: [], consideredAddons: 1, elapsedMs: 1 });
   const keys = Object.keys(aggregate?.qualities?.[0] ?? {});
-  ok(!keys.includes('language'), 'G: quality options carry NO language field (nothing fabricated)');
-  ok(!shellTemplate.slice(shellTemplate.indexOf('mavero-section')).includes('language'), 'G: the MAVERO section renders no language label');
-  ok(!streamsSource.match(/language\s*[:=]/), 'G: the presentation module never derives or invents language values');
+  ok(!keys.includes('language') && !keys.includes('audioLanguages'), 'G: a stream without addon language text carries NO language field (nothing fabricated)');
+  ok(!streamsSource.match(/'Hindi'|"Hindi"|'Tamil'|"Tamil"/), 'G: the presentation module contains no language lexicon — it only READS addon-supplied track labels (never invents)');
   ok(maveroStreamQualityLabel(qualityFixture()) === '1080p', 'G: quality labels stay quality-only');
 }
 
@@ -370,7 +377,7 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(maveroStreamFormatLabel(qualityFixture({ protocol: 'mp4' })) === 'MP4', 'H: mp4 → "MP4"');
   ok(maveroStreamFormatLabel(qualityFixture({ protocol: 'file' })) === null, 'H: unknown protocols are omitted (never guessed from filenames)');
   ok(maveroStreamFormatLabel(qualityFixture({ protocol: undefined })) === null, 'H: missing protocol is omitted');
-  ok(shellTemplate.includes('{#if maveroStreamFormatLabel(stream)}<small>{maveroStreamFormatLabel(stream)}</small>{/if}'), 'H: format renders as the SECONDARY line, only when known');
+  ok(cardSource.includes('{#if badges.length}') && cardSource.includes('maveroStreamFormatLabel(stream)'), 'H: format renders as a card badge, only when known');
   const aggregate = maveroPlayerSourceFromResolution({
     mediaType: 'movie', requestedMediaType: 'movie',
     sources: [
@@ -389,7 +396,7 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   const aggregate = maveroPlayerSourceFromResolution({ mediaType: 'movie', requestedMediaType: 'movie', sources: [resolvedStreamFixture({ url: 'https://cdn.example/first.m3u8' })], unsupported: [], diagnostics: [], consideredAddons: 1, elapsedMs: 1 });
   ok(aggregate?.url === aggregate?.qualities?.[0]?.url, 'I: the initial current stream IS qualities[0] (mediaUrl falls back to source.url)');
-  ok(shellTemplate.includes('aria-selected={stream.url === mediaUrl}'), 'I: current-stream identity is the stable stream URL compared against the live mediaUrl');
+  ok(cardSource.includes('aria-selected={selected}') && shellTemplate.includes('selected={stream.url === mediaUrl}'), 'I: current-stream identity is the stable stream URL compared against the live mediaUrl');
   const body = shellSource.slice(shellSource.indexOf('function selectMaveroStream'));
   ok(/if \(!stream\.url \|\| stream\.url === mediaUrl\) return;/.test(body), 'I: selecting the CURRENT stream is a no-op (no pointless reload)');
 }
@@ -399,9 +406,9 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 // ===========================================================================
 
 {
-  ok(shellTemplate.includes('class:active={stream.url === mediaUrl}'), 'J: the current stream row carries the visual selected class');
-  ok(shellTemplate.includes('aria-selected={stream.url === mediaUrl}'), 'J: the current stream row carries aria-selected (not color alone)');
-  ok(/<span class="option-mark">\{#if stream\.url === mediaUrl\}<Check size=\{14\} \/>/.test(shellTemplate), 'J: the current stream row carries the check icon');
+  ok(cardSource.includes('class:selected'), 'J: the current stream card carries the visual selected class');
+  ok(cardSource.includes('aria-selected={selected}'), 'J: the current stream card carries aria-selected (not color alone)');
+  ok(/<span class="option-mark">\{#if selected\}<Check size=\{14\} \/>/.test(cardSource), 'J: the current stream card carries the check icon');
 }
 
 // ===========================================================================
@@ -412,16 +419,19 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   const aggregate = maveroPlayerSourceFromResolution({
     mediaType: 'movie', requestedMediaType: 'movie',
     sources: [
-      resolvedStreamFixture({ addonSlug: 'addon-a', addonName: 'Addon A', streamIndex: 0, url: 'https://a.example/1080.m3u8', quality: { label: '1080p', height: 1080 } }),
-      resolvedStreamFixture({ addonSlug: 'addon-a', addonName: 'Addon A', streamIndex: 1, url: 'https://a.example/720.m3u8', quality: { label: '720p', height: 720 } }),
-      resolvedStreamFixture({ addonSlug: 'addon-b', addonName: 'Addon B', streamIndex: 0, url: 'https://b.example/1080.mp4', protocol: 'mp4' }),
+      resolvedStreamFixture({ addonId: '00000000-0000-4000-8000-000000000001', addonSlug: 'addon-a', addonName: 'Addon A', streamIndex: 0, url: 'https://a.example/1080.m3u8', quality: { label: '1080p', height: 1080 } }),
+      resolvedStreamFixture({ addonId: '00000000-0000-4000-8000-000000000001', addonSlug: 'addon-a', addonName: 'Addon A', streamIndex: 1, url: 'https://a.example/720.m3u8', quality: { label: '720p', height: 720 } }),
+      resolvedStreamFixture({ addonId: '00000000-0000-4000-8000-000000000002', addonSlug: 'addon-b', addonName: 'Addon B', streamIndex: 0, url: 'https://b.example/1080.mp4', protocol: 'mp4' }),
     ],
     unsupported: [], diagnostics: [], consideredAddons: 2, elapsedMs: 1,
   });
   const urls = aggregate?.qualities?.map((quality) => quality.url) ?? [];
-  ok(JSON.stringify(urls) === JSON.stringify(['https://a.example/1080.m3u8', 'https://a.example/720.m3u8', 'https://b.example/1080.mp4']), 'K: the composer preserves the resolver\u2019s deterministic order');
+  // Phase 9: fair round-robin aggregation interleaves addon buckets — pass 1
+  // takes A[0] + B[0], pass 2 takes A[1]. Order stays deterministic (addon
+  // order + resolver order inside each pass); NO addon can be starved.
+  ok(JSON.stringify(urls) === JSON.stringify(['https://a.example/1080.m3u8', 'https://b.example/1080.mp4', 'https://a.example/720.m3u8']), 'K: the composer interleaves addon buckets deterministically (round-robin, Phase 9 starvation fix)');
   ok(!streamsSource.includes('.sort(') && !streamsSource.includes('.reverse('), 'K: the presentation layer never re-orders (grouping only)');
-  ok(composerSource.includes('if (playable.length >= MAVERO_PLAYER_MAX_STREAMS) break;') && MAVERO_PLAYER_MAX_STREAMS === 24, 'K: the Phase 4 payload cap and its position in the deterministic order are untouched');
+  ok(composerSource.includes('export function aggregateAddonStreams') && MAVERO_PLAYER_MAX_STREAMS === 100 && MAVERO_PLAYER_STREAMS_PER_ADDON === 40, 'K: the Phase 9 fair-bounded aggregation (per-addon 40 / total 100) replaced the starving global-24 break');
   ok(composerSource.includes('validatePlaybackUrl(source.url, \u0027direct\u0027)'), 'K: the existing playback URL boundary is still the composer\u2019s gate');
 }
 
@@ -504,7 +514,7 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 
 {
   const body = shellSource.slice(shellSource.indexOf('function selectMaveroStream'), shellSource.indexOf('type OrientationController'));
-  ok(body.includes('closeSourceSheet();'), 'P: selecting a stream closes the sheet through the EXISTING close path (focus restored)');
+  ok(body.includes('closeStreamsSheet();'), 'P: selecting a stream closes the DEDICATED streams sheet (Phase 9) through the EXISTING close path (focus restored)');
   ok(body.includes('setQuality(stream.url);'), 'P: selecting a stream rides the EXISTING quality-switch mechanism');
   ok(!body.includes('onSourceChange') && !body.includes('goto('), 'P: in-source stream switching never re-resolves the virtual source and never navigates');
   ok(!shellSource.includes('goto('), 'P: PlayerShell contains no navigation at all — the user cannot leave the player page by selecting streams');
@@ -569,8 +579,8 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 // ===========================================================================
 
 {
-  ok(/function setQuality\(url: string\) \{\s*\n\s*if \(url === selectedQuality\) return;\s*\n\s*pendingSeek = currentTime;/.test(shellSource), 'T: the existing quality switch captures the current position into pendingSeek');
-  ok(shellSource.includes('videoElement.currentTime = pendingSeek;'), 'T: the captured position is restored on the next loadedmetadata (existing mechanism)');
+  ok(/function setQuality\(url: string\) \{\s*\n\s*if \(url === selectedQuality\) return;[\s\S]*?capturePendingSeek\(pendingSeekState, currentTime, Date\.now\(\)\);/.test(shellSource), 'T: the quality switch captures the current position into the Phase 9 pending-seek controller');
+  ok(shellSource.includes('videoElement.currentTime = applied;'), 'T: the captured position is applied once the media has a usable range (pending-seek controller)');
   const body = shellSource.slice(shellSource.indexOf('function selectMaveroStream'));
   ok(body.includes('setQuality(stream.url);'), 'T: addon-stream switching inherits position preservation through setQuality');
   // Internal level switching never moves the media position by design.
@@ -604,11 +614,12 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 // ===========================================================================
 
 {
-  ok(shellSource.includes('.player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto;'), 'V: the portrait bottom-sheet contract is intact (the new section scrolls inside it — no horizontal overflow surface)');
-  ok(shellSource.includes('.sheet-option { display: flex; align-items: center; gap: 11px; min-height: 52px;'), 'V: stream rows reuse the existing 52px sheet-option touch target (>=44px)');
-  ok(shellSource.includes('.mavero-group-name { overflow: hidden;') && shellSource.includes('.mavero-group-name { overflow: hidden; padding: 6px 12px 2px; color: var(--ink-soft); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }'), 'V: long addon names truncate with ellipsis (never stretch the sheet)');
+  ok(shellSource.includes('.player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet, .player-shell:not(.landscape-mode) .mavero-streams-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto;'), 'V: the portrait bottom-sheet contract is intact and INCLUDES the new streams sheet (it scrolls inside it — no horizontal overflow surface)');
+  ok(cardSource.includes('min-height: 52px;'), 'V: stream cards keep the >=44px (52px) touch target');
+  ok(shellSource.includes('.mavero-group-name { overflow: hidden;') && shellSource.includes('.mavero-group-name { overflow: hidden; color: var(--ink-soft); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }'), 'V: long addon names truncate with ellipsis (never stretch the sheet)');
   ok(shellSource.includes('.mavero-quality-row { align-items: center; flex-wrap: wrap;'), 'V: the quality row wraps instead of overflowing narrow screens');
-  ok(shellSource.includes('.mavero-stream-option { width: 100%; }'), 'V: stream rows span the sheet width (no tiny buttons)');
+  ok(cardSource.includes('width: 100%;'), 'V: stream cards span the sheet width (no tiny buttons)');
+  ok(cardSource.includes('word-break: break-word') && cardSource.includes('-webkit-line-clamp: 2;'), 'V: long addon titles/descriptions wrap and clamp inside the card (no layout blowout)');
 }
 
 // ===========================================================================
@@ -618,7 +629,7 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   ok(shellSource.includes('@media (min-width: 769px)'), 'W: the desktop popover breakpoint is intact');
   ok(shellSource.includes('width: min(400px, calc(100% - 48px)); max-height: min(70dvh, 560px);'), 'W: the desktop source popover keeps its bounded size (the section cannot dominate the player)');
-  ok(!/\.mavero-section[^{]*\{[^}]*[^-]width:\s*\d/.test(shellSource), 'W: the MAVERO section adds no fixed width of its own (flows inside the sheet)');
+  ok(!/\.mavero-streams-sheet\s*\{[^}]*width:\s*\d/.test(shellSource.replace(/\.player-shell[^{]*mavero-streams-sheet[^{]*\{[^}]*\}/g, '')), 'W: the streams sheet adds no fixed width of its own outside the responsive contracts (flows inside the sheet)');
 }
 
 // ===========================================================================
@@ -628,8 +639,9 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   ok(/\.player-shell\.landscape-mode \.source-sheet \{[^}]*position: absolute[^}]*right: 0[^}]*width: min\(320px, 30vw\)/.test(shellSource), 'X: the landscape right-edge drawer contract is intact (position, anchoring, width)');
   ok(shellSource.includes('.player-shell.landscape-mode .source-sheet .sheet-list { max-height: 100%; overflow-y: auto;'), 'X: the landscape drawer list still scrolls — the new section lives inside that scroll');
-  ok(shellSource.includes('@media (prefers-reduced-motion: reduce)') && shellSource.includes('.player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet { animation: none; }'), 'X: reduced-motion landscape animation opt-out is intact');
-  ok(shellTemplate.indexOf('mavero-section') > shellTemplate.indexOf('sheet-list') && shellSource.includes('.player-shell.landscape-mode .source-sheet .sheet-list'), 'X: the section renders inside .sheet-list, so it inherits the landscape drawer scroll/safe-area handling');
+  ok(shellSource.includes('@media (prefers-reduced-motion: reduce)') && shellSource.includes('.player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet, .player-shell.landscape-mode .mavero-streams-sheet { animation: none; }'), 'X: reduced-motion landscape animation opt-out is intact (incl. the streams sheet)');
+  ok(/\.player-shell\.landscape-mode \.mavero-streams-sheet \{[^}]*position: absolute[^}]*right: 0/.test(shellSource), 'X: the streams sheet follows the landscape right-edge drawer contract (Phase 9)');
+  ok(shellSource.includes('.player-shell.landscape-mode .mavero-streams-sheet .sheet-list { max-height: 100%; overflow-y: auto;'), 'X: the landscape streams drawer list scrolls inside the drawer (scroll/safe-area handling inherited)');
 }
 
 // ===========================================================================
@@ -639,7 +651,8 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   ok(shellSource.includes('function handleSheetKeydown(event: KeyboardEvent)'), 'Y: the sheet keyboard handler is intact');
   ok(shellSource.includes("querySelectorAll<HTMLElement>('button, a, input, select, textarea, [tabindex]:not([tabindex=\"-1\"])')"), 'Y: the focus trap iterates real buttons — the new stream/quality buttons are included');
-  ok(shellTemplate.includes('<button class="sheet-option mavero-stream-option" type="button" role="option"'), 'Y: stream rows are real <button type="button"> elements (Enter/Space natively work)');
+  ok(cardSource.includes('<button\n  class="mavero-stream-card"') || /<button\s*\n?\s*class="mavero-stream-card"/.test(cardSource), 'Y: stream cards are real <button type="button"> elements (Enter/Space natively work)');
+  ok(cardSource.includes('type="button"') && cardSource.includes('role="option"'), 'Y: stream cards are button+option elements');
   ok(shellTemplate.includes('<button class="variant-button" class:active={engineQuality?.selected === option.id} type="button"'), 'Y: quality toggles are real buttons too');
 }
 
@@ -651,7 +664,7 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(shellSource.includes('function openSourceSheet(trigger: HTMLElement)') && shellSource.includes('setTimeout(() => focusSheetCloseButton(\u0027source\u0027), 0);'), 'Z: opening the sheet moves focus to the close button (existing behavior)');
   ok(shellSource.includes('function closeSourceSheet()') && shellSource.includes('restoreFocus(sourceSheetTrigger);'), 'Z: closing the sheet restores focus to the trigger (existing behavior)');
   ok(!shellSource.includes('autofocus'), 'Z: the new section adds no focus-stealing autofocus');
-  ok(shellSource.includes('function selectMaveroStream(stream: PlayerQualityOption) {\n    closeSourceSheet();'), 'Z: stream selection closes the sheet first — focus restore runs before playback switches');
+  ok(shellSource.includes('function selectMaveroStream(stream: PlayerQualityOption) {\n    closeStreamsSheet();'), 'Z: stream selection closes the streams sheet first — focus restore runs before playback switches');
 }
 
 // ===========================================================================
@@ -665,7 +678,8 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(shellTemplate.includes('role="group" aria-label="Playback quality"'), 'AA: the internal quality row is a labeled group');
   ok(shellTemplate.includes('aria-pressed={engineQuality?.selected === option.id}'), 'AA: quality mode uses aria-pressed (button selection state)');
   ok(shellTemplate.includes('aria-label="Close source list"'), 'AA: the sheet close button keeps its accessible name');
-  ok(shellTemplate.includes('<strong>{maveroStreamQualityLabel(stream)}</strong>'), 'AA: quality names come from the derived human-readable label (screen-reader understandable)');
+  ok(cardSource.includes('<strong class="card-quality">{maveroStreamQualityLabel(stream)}</strong>'), 'AA: quality names come from the derived human-readable label (screen-reader understandable)');
+  ok(shellTemplate.includes('aria-label="Close stream list"') && shellTemplate.includes('aria-label="Back to source list"'), 'AA: the streams sheet close + back buttons keep their accessible names (Phase 9)');
 }
 
 // ===========================================================================
@@ -688,7 +702,10 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   const aggregate = maveroPlayerSourceFromResolution({ mediaType: 'movie', requestedMediaType: 'movie', sources: [resolvedStreamFixture()], unsupported: [], diagnostics: [], consideredAddons: 1, elapsedMs: 1 });
   const optionKeys = Object.keys(aggregate?.qualities?.[0] ?? {}).sort();
-  ok(JSON.stringify(optionKeys) === JSON.stringify(['addonName', 'height', 'label', 'protocol', 'url']), 'AC: a quality option carries ONLY safe presentation fields');
+  // Phase 9: `title` joins the safe presentation set (addon-supplied stream
+  // title). Rich metadata fields appear ONLY when the addon supplied them —
+  // a plain fixture gains exactly one new key vs Phase 6.
+  ok(JSON.stringify(optionKeys) === JSON.stringify(['addonName', 'height', 'label', 'protocol', 'title', 'url']), 'AC: a quality option carries ONLY safe presentation fields (addon-supplied title now included)');
   const sourceKeys = Object.keys(aggregate ?? {}).sort().join(',');
   ok(sourceKeys === 'mediaType,metadata,providerId,qualities,sourceId,type,url', 'AC: the aggregate source top-level shape is unchanged (Phase 4 contract)');
   ok(!shellTemplate.includes('m3u8') && !shellTemplate.includes('manifestUrl'), 'AC: the rendered sheet template contains no manifest URL material');
@@ -965,10 +982,11 @@ function engineLevelsSnapshotForMp4(): boolean {
 // ===========================================================================
 
 {
-  const sectionSlice = shellTemplate.slice(shellTemplate.indexOf('mavero-section'), shellTemplate.indexOf('{/if}', shellTemplate.indexOf('mavero-quality-row')));
-  const onclickLines = sectionSlice.split('\n').filter((line) => line.includes('onclick='));
-  ok(onclickLines.length > 0 && onclickLines.every((line) => line.includes('<button')), 'AS: every clickable element in the MAVERO section is a real <button> (no clickable <div>)');
-  ok(onclickLines.every((line) => line.includes('type="button"')), 'AS: every clickable element is type="button" (no implicit submit)');
+  const sectionSlice = shellTemplate.slice(shellTemplate.indexOf('{#if streamsSheetOpen}'), shellTemplate.indexOf('{/if}', shellTemplate.indexOf('mavero-quality-row')));
+  const onclickLines = sectionSlice.split('\n').filter((line) => line.includes('onclick=') && !line.includes('sheet-overlay'));
+  ok(onclickLines.length > 0 && onclickLines.every((line) => line.includes('<button') || line.includes('<MaveroStreamCard')), 'AS: every clickable element in the streams sheet is a real <button> or the card component (no clickable <div>)');
+  const entrySlice = shellTemplate.slice(shellTemplate.indexOf('streams-entry-button'), shellTemplate.indexOf('streams-entry-button') + 600);
+  ok(entrySlice.includes('type="button"'), 'AS: the streams entry point is a real type="button" element (no implicit submit)');
 }
 
 // ===========================================================================

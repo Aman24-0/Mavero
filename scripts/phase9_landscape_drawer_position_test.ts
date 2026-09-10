@@ -131,7 +131,7 @@ assert.match(shell, /@keyframes sheet-up \{ from \{ transform: translateY\(100%\
 // ancestor so the rule does not match at all in landscape mode.
 assert.match(
   shell,
-  /\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet \{[^}]*position: fixed[^}]*bottom: 0[^}]*left: 0[^}]*right: 0[^}]*max-height: 60dvh/,
+  /\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet, \.player-shell:not\(\.landscape-mode\) \.mavero-streams-sheet \{[^}]*position: fixed[^}]*bottom: 0[^}]*left: 0[^}]*right: 0[^}]*max-height: 60dvh/,
   'portrait bottom-sheet rule is scoped to :not(.landscape-mode) and remains a bottom sheet'
 );
 
@@ -150,7 +150,7 @@ assert.doesNotMatch(
 
 assert.match(
   shell,
-  /@media \(min-width: 769px\) \{[\s\S]*?\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet \{[^}]*transform: translate\(-50%, -50%\)/,
+  /@media \(min-width: 769px\) \{[\s\S]*?\.player-shell:not\(\.landscape-mode\) \.source-sheet, \.player-shell:not\(\.landscape-mode\) \.episode-sheet, \.player-shell:not\(\.landscape-mode\) \.mavero-streams-sheet \{[^}]*transform: translate\(-50%, -50%\)/,
   'desktop popover rule is scoped to :not(.landscape-mode) — no centered popover in landscape'
 );
 

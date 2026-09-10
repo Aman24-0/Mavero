@@ -55,7 +55,7 @@ assert.match(shell, /if \(element instanceof HTMLElement && element\.isConnected
 assert.match(shell, /try \{ element\.focus\(\); \} catch/, 'restoreFocus wraps focus() in try/catch');
 
 // 2e. Focus sheet close button function exists.
-assert.match(shell, /function focusSheetCloseButton\(which: 'source' \| 'episode'\)/, 'focusSheetCloseButton function exists');
+assert.match(shell, /function focusSheetCloseButton\(which: 'source' \| 'episode' \| 'streams'\)/, 'focusSheetCloseButton function exists (Phase 9: streams sheet included)');
 
 // ============================================================
 // 3. Focus trap (Tab/Shift+Tab)
@@ -85,7 +85,7 @@ assert.match(shell, /if \(event\.key === 'Escape'\) \{[\s\S]*?if \(sourceMenuOpe
 assert.match(shell, /else if \(episodeMenuOpen\) closeEpisodeSheet\(\)/, 'Escape closes episode sheet');
 
 // 4b. Sheet keydown takes priority over player shortcuts.
-assert.match(shell, /if \(sourceMenuOpen \|\| episodeMenuOpen\) \{[\s\S]*?handleSheetKeydown\(event\);[\s\S]*?return;/, 'sheet keydown takes priority over player shortcuts');
+assert.match(shell, /if \(sourceMenuOpen \|\| episodeMenuOpen \|\| streamsSheetOpen\) \{[\s\S]*?handleSheetKeydown\(event\);[\s\S]*?return;/, 'sheet keydown takes priority over player shortcuts (Phase 9: streams sheet included)');
 
 // ============================================================
 // 5. Sheet open moves focus into sheet
