@@ -1,5 +1,6 @@
 import { identifierModes, integrationTypes, providerStatuses, sourceVisibilities, type IdentifierMode, type IntegrationType, type JsonObject, type ProviderStatus, type SourceVisibility } from './types';
 import { sandboxPolicies, withSandboxPolicy, type SandboxPolicy } from '$lib/shared/sandbox-policy';
+import { withPlaybackAdProtection } from '$lib/shared/playback-ad-protection';
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const adapterPattern = /^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
@@ -92,7 +93,12 @@ export function parseProviderForm(form: FormData) {
     enabled: booleanValue(form.get('enabled')),
     integration_type: enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType,
     adapter_id: adapterId,
-    capabilities: withSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities'), enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicies, 'required') as SandboxPolicy),
+    capabilities: withPlaybackAdProtection(
+      withSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities'), enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicies, 'required') as SandboxPolicy),
+      // Third-Party Playback Ad Protection toggle: provider-level default.
+      // Stored explicitly as a boolean; checkbox absent → OFF (system default).
+      booleanValue(form.get('playback_ad_protection')),
+    ),
     notes: text(form.get('notes'), 'Notes', 2000),
   };
 }
@@ -113,7 +119,12 @@ export function parseSourceForm(form: FormData) {
       const value = String(form.get('integration_type') ?? '').trim();
       return value ? enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType : null;
     })(),
-    capabilities: withSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities'), enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicies, 'required') as SandboxPolicy),
+    capabilities: withPlaybackAdProtection(
+      withSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities'), enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicies, 'required') as SandboxPolicy),
+      // Third-Party Playback Ad Protection toggle: source-level override.
+      // Stored explicitly as a boolean; checkbox absent → OFF (system default).
+      booleanValue(form.get('playback_ad_protection')),
+    ),
     movie_template: template(form.get('movie_template'), 'Movie template'),
     series_template: template(form.get('series_template'), 'Series template'),
     anime_template: template(form.get('anime_template'), 'Anime template'),

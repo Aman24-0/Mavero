@@ -1,23 +1,29 @@
 /**
  * Playback Ad / Redirect Policy
- * =============================
+ * ============================
  *
- * Application-level playback protection layer. Runs on every resolved
- * playback URL (direct stream or provider embed) AFTER the structural
- * `validatePlaybackUrl()` security checks (HTTPS-only, no credentials,
- * non-private hosts, embed origin allowlisting) and BEFORE a source is
- * returned to the player. A rejected URL behaves exactly like any other
- * failed source, so the existing resolver fallback, health ranking,
- * default-source ordering, and manual source switching are preserved.
+ * Third-Party Streaming Provider Playback Ad Protection — the URL
+ * classification engine. Runs on a resolved playback URL (direct stream or
+ * provider embed) AFTER the structural `validatePlaybackUrl()` security
+ * checks (HTTPS-only, no credentials, non-private hosts, embed origin
+ * allowlisting) and BEFORE a source is returned to the player — but ONLY
+ * for providers/sources whose admin explicitly enabled Ad Protection
+ * (see `$lib/shared/playback-ad-protection`). The resolver decides, per
+ * source attempt, whether this evaluator runs at all. With the setting OFF
+ * the evaluator is skipped entirely and playback behaves exactly as before
+ * this module existed.
  *
  * Scope and limits (intentional):
- * - This is NOT a browser-level adblocker. It cannot see or intercept
- *   traffic inside a cross-origin provider iframe, and it must not try.
+ * - This is NOT a browser-level adblocker and NOT a global switch. It
+ *   cannot see or intercept traffic inside a cross-origin provider iframe,
+ *   and it must not try. It never affects home/search/discover/catalog/
+ *   TMDB/admin traffic or Mavero's own (future) advertising.
  * - It only decides whether a playback URL is allowed to enter the
- *   playback pipeline at all.
+ *   playback pipeline for the provider/source being resolved.
  * - Popup/top-level navigation protection comes from the existing iframe
  *   sandbox (`$lib/shared/sandbox-policy`), which intentionally omits
- *   `allow-popups` and `allow-top-navigation*` for sandboxed embeds.
+ *   `allow-popups` and `allow-top-navigation*` for sandboxed embeds and
+ *   stays fully independent of this module.
  *
  * Conservatism contract:
  * - URL structural traits are NEVER signals here: query parameters, tokens
@@ -25,23 +31,27 @@
  *   signed CDN URLs, long/random pathnames, numeric segments, media
  *   extensions (`.m3u8`, `.mpd`, `.mp4`, `.m4v`, `.webm`), and
  *   provider-specific parameters are all legitimate streaming traits.
- * - There is NO keyword matching against the URL (no "ad", "ads", "banner",
- *   "track", "click", "redirect" path scanning). Some providers legitimately
- *   use download/redirect/bootstrap endpoints, and such words appear in
- *   fully legitimate playback paths.
+ * - There is NO keyword matching against the URL (no "ad", "ads", "advert",
+ *   "banner", "track", "click", "redirect", "download" path scanning). Some
+ *   providers legitimately use download/redirect/bootstrap endpoints, and
+ *   such words appear in fully legitimate playback paths.
  * - Blocking is hostname-classification based: a host is blocked only when
- *   it is (a) listed in the global sets of clearly dedicated ad / paid
- *   redirect infrastructure, or (b) listed by an explicit provider-specific
- *   rule. A host listed as `example-ad-network.com` blocks that domain and
- *   its SUBDOMAINS only — never sibling domains, never unrelated domains
- *   that merely contain a similar label, and never a whole parent domain
- *   unless the parent itself is classified.
+ *   (a) it is listed in the global sets of clearly dedicated ad / paid
+ *   redirect infrastructure, (b) it matches the enabled provider/source's
+ *   own scoped rules (capabilities or the curated registry), or (c) it hits
+ *   a structural navigation hazard. A host listed as
+ *   `example-ad-network.com` blocks that domain and its SUBDOMAINS only —
+ *   never sibling domains, never unrelated domains that merely contain a
+ *   similar label, and never a whole parent domain unless the parent itself
+ *   is classified.
  * - The global sets deliberately exclude every provider / embed / CDN
  *   domain currently configured in Mavero (audited against
  *   `supabase/migrations/*`). If a new provider is added whose domain
  *   collides with an entry below, the entry — not the provider — must be
  *   reconsidered by an admin before enabling that provider.
  */
+
+import type { PlaybackAdProtectionConfig } from '$lib/shared/playback-ad-protection';
 
 export type PlaybackPolicyCategory = 'ad-domain' | 'redirect' | 'unsafe-navigation' | 'provider-rule';
 
@@ -64,6 +74,17 @@ export type PlaybackPolicyContext = {
   sourceId?: string;
   providerName?: string;
   sourceName?: string;
+  /**
+   * The effective Ad Protection configuration for THIS provider/source,
+   * assembled by the resolver from trusted server-side capabilities (never
+   * from the playback request). When supplied with `enabled: false` the
+   * evaluator short-circuits to "allowed" — the resolver is expected to
+   * skip the evaluation entirely in that case, this guard keeps direct
+   * callers safe. When supplied with rules, they apply ONLY to this
+   * provider/source, unioned with any curated registry rules for the same
+   * provider id.
+   */
+  policy?: PlaybackAdProtectionConfig;
 };
 
 /**
@@ -143,7 +164,8 @@ const blockedRedirectHosts: ReadonlySet<string> = new Set<string>([
  * Provider-specific policies. Starts intentionally EMPTY: no currently
  * configured Mavero provider needs one, and inventing rules without
  * auditing the provider would risk false positives. Register rules at
- * startup via `registerProviderPlaybackPolicy`.
+ * startup via `registerProviderPlaybackPolicy`. Rules registered here are
+ * scoped to exactly one provider id and NEVER leak to other providers.
  */
 const providerPolicies = new Map<string, ProviderPlaybackPolicy>();
 
@@ -207,8 +229,10 @@ function blockedDecision(reason: string, category: PlaybackPolicyCategory, host?
  * Evaluate a resolved playback URL against the playback ad/redirect policy.
  *
  * Pure function: no logging, no side effects. The resolver integration in
- * `core.ts` is responsible for diagnostics logging and for turning a
- * rejection into a normal resolver failure so fallback can continue.
+ * `core.ts` is responsible for gating (it invokes this ONLY when the
+ * trusted per-source Ad Protection setting is ON), diagnostics logging,
+ * and for turning a rejection into a normal resolver failure so fallback
+ * can continue.
  *
  * The `type` parameter ('direct' | 'embed') is accepted for API symmetry
  * with `validatePlaybackUrl()`; current classification rules are
@@ -223,6 +247,13 @@ export function evaluatePlaybackUrl(
 ): PlaybackPolicyDecision {
   void type;
 
+  // Provider/source scoping: the resolver passes the effective config for
+  // the source being resolved. An explicit `enabled: false` short-circuits
+  // to "allowed" so a disabled provider/source can never be blocked by any
+  // rule channel, regardless of how the evaluator was invoked.
+  const scopedPolicy = options?.policy;
+  if (scopedPolicy && scopedPolicy.enabled === false) return { allowed: true, reason: 'protection-disabled-for-source' };
+
   const input = typeof rawUrl === 'string' ? rawUrl.trim() : '';
   if (!input) return blockedDecision('empty-url', 'unsafe-navigation');
 
@@ -231,11 +262,10 @@ export function evaluatePlaybackUrl(
     // routes; global host sets cannot (there is no remote host).
     const providerId = options?.providerId?.trim();
     const policy = providerId ? providerPolicies.get(providerId) : undefined;
-    if (policy?.blockedPathPrefixes) {
-      for (const prefix of policy.blockedPathPrefixes) {
-        if (prefix && input.startsWith(prefix)) {
-          return blockedDecision('provider-blocked-path', 'provider-rule');
-        }
+    const prefixes = [...(policy?.blockedPathPrefixes ?? []), ...(scopedPolicy?.blockedPathPrefixes ?? [])];
+    for (const prefix of prefixes) {
+      if (prefix && input.startsWith(prefix)) {
+        return blockedDecision('provider-blocked-path', 'provider-rule');
       }
     }
     return { allowed: true, reason: 'same-origin-bootstrap' };
@@ -261,19 +291,20 @@ export function evaluatePlaybackUrl(
   if (hostIsClassified(host, blockedAdHosts)) return blockedDecision('known-ad-host', 'ad-domain', host);
   if (hostIsClassified(host, blockedRedirectHosts)) return blockedDecision('known-redirect-host', 'redirect', host);
 
-  // Provider-specific rules (exact scope: only this provider's id).
+  // Provider-specific rules — scoped to exactly this provider: curated
+  // registry rules for the provider id, plus the runtime-supplied scoped
+  // config (capabilities-derived) passed by the resolver. Neither channel
+  // ever applies to a different provider.
   const providerId = options?.providerId?.trim();
-  const policy = providerId ? providerPolicies.get(providerId) : undefined;
-  if (policy) {
-    if (policy.blockedHosts && hostIsClassified(host, policy.blockedHosts)) {
-      return blockedDecision('provider-blocked-host', 'provider-rule', host);
-    }
-    if (policy.blockedPathPrefixes) {
-      for (const prefix of policy.blockedPathPrefixes) {
-        if (prefix && url.pathname.startsWith(prefix)) {
-          return blockedDecision('provider-blocked-path', 'provider-rule', host);
-        }
-      }
+  const registryPolicy = providerId ? providerPolicies.get(providerId) : undefined;
+  const scopedHosts = [...(registryPolicy?.blockedHosts ?? []), ...(scopedPolicy?.blockedHosts ?? [])];
+  const scopedPrefixes = [...(registryPolicy?.blockedPathPrefixes ?? []), ...(scopedPolicy?.blockedPathPrefixes ?? [])];
+  if (scopedHosts.length && hostIsClassified(host, scopedHosts)) {
+    return blockedDecision('provider-blocked-host', 'provider-rule', host);
+  }
+  for (const prefix of scopedPrefixes) {
+    if (prefix && url.pathname.startsWith(prefix)) {
+      return blockedDecision('provider-blocked-path', 'provider-rule', host);
     }
   }
 

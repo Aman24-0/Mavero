@@ -3,6 +3,7 @@
   import AdminShell from '$lib/components/AdminShell.svelte';
   import { integrationTypes, identifierModes, providerStatuses, sourceVisibilities } from '$lib/shared/streaming';
   import { sandboxPolicies, sandboxPolicyDescription, sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
+  import { playbackAdProtectionDescription, playbackAdProtectionFromCapabilities } from '$lib/shared/playback-ad-protection';
   import type { ActionData, PageData } from './$types';
 
   export let data: PageData;
@@ -14,6 +15,8 @@
   const identifierLabels = { tmdb_id: 'TMDB ID', anilist_id: 'AniList ID', imdb_id: 'IMDb ID', slug: 'Slug', custom: 'Custom' };
   const sandboxPolicyLabels = { required: 'Required — secure sandbox', optional: 'Optional — secure by default', unrestricted: 'Unrestricted — warning' };
   const sourceSandboxPolicy = (source: PageData['sources'][number]) => sandboxPolicyFromCapabilities(data.providers.find((provider) => provider.id === source.provider_id)?.capabilities, source.capabilities);
+  // Effective Ad Protection = source override → provider default → OFF.
+  const sourceAdProtection = (source: PageData['sources'][number]) => playbackAdProtectionFromCapabilities(data.providers.find((provider) => provider.id === source.provider_id)?.capabilities, source.capabilities).enabled;
   const providerName = (id: string) => data.providers.find((provider) => provider.id === id)?.name ?? 'Unknown provider';
 
   // Phase 7: source test state — per-source panel + result.
@@ -87,6 +90,8 @@
       <div class="form-grid two"><label class="check"><input type="checkbox" name="enabled" /> Enabled for public config</label><label class="check"><input type="checkbox" name="subtitle_capability" /> Subtitle capability</label></div>
       <label>Quality capability<input name="quality_capability" placeholder="HD, Full HD, 4K" /></label>
       <label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as policy}<option value={policy}>{sandboxPolicyLabels[policy]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription('required')}</small></label>
+      <label class="check"><input type="checkbox" name="playback_ad_protection" /> Ad Protection — overrides the provider default for this source only</label>
+      <small class="security-note">{playbackAdProtectionDescription(false)}</small>
       <div class="form-grid three"><label>Movie template<textarea name="movie_template" rows="2" placeholder="Configuration only"></textarea></label><label>Series template<textarea name="series_template" rows="2" placeholder="Configuration only"></textarea></label><label>Anime template<textarea name="anime_template" rows="2" placeholder="Configuration only"></textarea></label></div>
       <label>Capabilities JSON<textarea name="capabilities" rows="3" placeholder="JSON object, e.g. movies=true">&#123;&quot;movies&quot;:true&#125;</textarea></label>
       <label>Description<textarea name="description" maxlength="500" rows="2"></textarea></label><label>Admin notes<textarea name="notes" maxlength="2000" rows="2"></textarea></label>
@@ -96,7 +101,7 @@
 
   {#if data.sources.length === 0}<div class="empty"><SlidersHorizontal size={22} /><h2>No sources yet</h2><p>Create a source after defining at least one provider.</p></div>{:else}<div class="registry-list">{#each data.sources as source}
     <details class="record">
-      <summary><div class="record-main"><span class="source-icon">{source.name.slice(0, 1).toUpperCase()}</span><div><strong>{source.name}</strong><span>{source.slug} · {providerName(source.provider_id)}</span></div></div><div class="record-meta"><span class:good={source.enabled} class:warning={!source.enabled}>{source.enabled ? 'Enabled' : 'Disabled'}</span><span>{visibilityLabels[source.visibility as keyof typeof visibilityLabels]}</span><ChevronDown size={15} /></div></summary>
+      <summary><div class="record-main"><span class="source-icon">{source.name.slice(0, 1).toUpperCase()}</span><div><strong>{source.name}</strong><span>{source.slug} · {providerName(source.provider_id)}</span></div></div><div class="record-meta"><span class:good={source.enabled} class:warning={!source.enabled}>{source.enabled ? 'Enabled' : 'Disabled'}</span><span>{visibilityLabels[source.visibility as keyof typeof visibilityLabels]}</span><span>Ad Protection: {sourceAdProtection(source) ? 'ON' : 'OFF'}</span><ChevronDown size={15} /></div></summary>
       <form method="POST" action="?/updateSource" class="registry-form compact">
         <input type="hidden" name="id" value={source.id} />
         <div class="form-grid two"><label>Name<input name="name" required maxlength="120" value={source.name} /></label><label>Slug<input name="slug" required maxlength="120" value={source.slug} /></label></div>
@@ -106,6 +111,8 @@
         <div class="form-grid two"><label class="check"><input type="checkbox" name="enabled" checked={source.enabled} /> Enabled for public config</label><label class="check"><input type="checkbox" name="subtitle_capability" checked={source.subtitle_capability} /> Subtitle capability</label></div>
         <label>Quality capability<input name="quality_capability" value={source.quality_capability?.join(', ') ?? ''} /></label>
         {#if source.integration_type === 'embed' || data.providers.find((provider) => provider.id === source.provider_id)?.integration_type === 'embed'}<label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as candidate}<option value={candidate} selected={sourceSandboxPolicy(source) === candidate}>{sandboxPolicyLabels[candidate]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription(sourceSandboxPolicy(source))}</small></label>{/if}
+        <label class="check"><input type="checkbox" name="playback_ad_protection" checked={sourceAdProtection(source)} /> Ad Protection — overrides the provider default for this source only</label>
+        <small class="security-note">{playbackAdProtectionDescription(sourceAdProtection(source))}</small>
         <div class="form-grid three"><label>Movie template<textarea name="movie_template" rows="2">{source.movie_template ?? ''}</textarea></label><label>Series template<textarea name="series_template" rows="2">{source.series_template ?? ''}</textarea></label><label>Anime template<textarea name="anime_template" rows="2">{source.anime_template ?? ''}</textarea></label></div>
         <label>Capabilities JSON<textarea name="capabilities" rows="3">{JSON.stringify(source.capabilities ?? {}, null, 2)}</textarea></label>
         <label>Description<textarea name="description" maxlength="500" rows="2">{source.description ?? ''}</textarea></label><label>Admin notes<textarea name="notes" maxlength="2000" rows="2">{source.notes ?? ''}</textarea></label>
