@@ -783,3 +783,212 @@ gate · N source-level boundary pins).
 **Phase 4 complete. MAVERO Player integration is implemented.** Torrent/P2P,
 magnet/externalUrl playback, media proxying, admin addon UI and HLS.js
 remain excluded (later phases).
+
+## Phase 5 — Native HLS / direct playback engine (DONE)
+
+**Commit:** `feat: add native hls playback support` — the single focused
+Phase 5 commit on `main` (this section ships inside it; the exact SHA is the
+HEAD shown by `git log` after push). Phase 5 upgrades the EXISTING native/
+direct playback path so HTTP/HLS streams discovered through the Stremio
+integration play reliably. NO new player was built — PlayerShell,
+PlaybackManager, DirectPlayerAdapter, progress/resume, quality switching,
+fullscreen, PiP, Media Session and Wake Lock are untouched.
+
+### HLS.js version
+
+* **hls.js 1.7.2** — the current STABLE release from the `latest` dist-tag
+  at implementation time. Installed via `pnpm add hls.js@1.7.2` (package.json
+  pins `"hls.js": "1.7.2"` exactly; the lockfile resolves the same version).
+  No alpha/beta/canary/experimental build was used — the compromised-build
+  risk is limited to canary channels, which were explicitly avoided.
+
+### Import strategy (client-only boundary)
+
+* `src/lib/client/player/hls-engine.ts` is the ONLY module that references
+  hls.js. It is client-safe with **zero top-level side effects**: no browser
+  globals at module scope, so importing it during SSR is harmless.
+* hls.js is loaded through a **dynamic ESM import inside the async
+  `defaultHlsModuleLoader()`** — it can never execute during SvelteKit SSR,
+  server routes or server resolver code. No server module imports it
+  (pinned by tests).
+* The factory promise is memoized (`loadHlsFactory()`), so the browser
+  module system caches the import and repeated source switches do not
+  re-resolve it.
+* **Lazy by construction:** for MP4/direct sources the engine is never
+  created and the dynamic import never fires — hls.js is split into its own
+  client chunk and is not even downloaded for non-HLS playback.
+
+### Native HLS first (fallback order)
+
+1. **Protocol routing** (`isHlsMediaSource`): an explicit
+   `metadata.protocol` wins — `'hls'` → HLS; `'mp4' | 'file' | 'dash'` → the
+   existing direct path (a filename can never misclassify an MP4). Only when
+   the protocol is missing/`'unknown'` does `.m3u8` URL fallback detection
+   apply (case-insensitive, query-safe).
+2. **Native capability check** (`supportsNativeHls`): standard
+   `video.canPlayType('application/vnd.apple.mpegurl')` /
+   `('application/x-mpegURL')` probe.
+3. **Native HLS supported (Safari/iOS/Chromium-with-HLS builds)** → the
+   existing `<video src>` lifecycle is used unchanged; hls.js is never
+   loaded.
+4. **No native HLS (Chrome/Firefox desktop/Android)** → the HLS engine
+   attaches hls.js to the SAME `<video>` element via MediaSource.
+5. **Neither available** (hls.js import fails on a very old browser) → a
+   generic unsupported-media error surfaces through the EXISTING player
+   error path. No crash.
+
+### HLS lifecycle & ownership
+
+```
+PlaybackManager (no hls.js knowledge)
+  ↓
+PlayerShell (no hls.js knowledge)
+  ↓
+PlayerViewport — the single OWNER (owns the <video> element)
+  ↓ wireHlsEngine(mediaUrl, source, videoElement)
+HlsPlaybackEngine (src/lib/client/player/hls-engine.ts)
+  ↓ dynamic import → hls.js
+same <video> element
+```
+
+* ONE engine instance, therefore at most ONE live hls.js instance per
+  `<video>` element at any time. Every `attach()` destroys the previous
+  instance first; `destroy()` is called on source switches away from HLS
+  and on component unmount (`onDestroy`).
+* hls.js runs with its **DEFAULT configuration** — no option was overridden
+  in Phase 5 (no concrete Mavero requirement identified). No xhrSetup /
+  fetchSetup / custom Authorization headers of any kind.
+* Listeners: only the purposeful minimal set — `MANIFEST_LOADING`,
+  `MANIFEST_LOADED`, `MEDIA_ATTACHED`, `ERROR` — mapped to generic engine
+  states (`loading | manifest-loaded | attached | error`). The UI never
+  depends on hls.js event names; LEVEL_LOADED / FRAG_LOADING were
+  deliberately not needed. All listener cleanup is guaranteed by
+  `hls.destroy()` plus the engine's generation guards.
+
+### Source switching & race protection
+
+* Switch matrix supported and tested: **HLS→HLS, HLS→MP4, MP4→HLS,
+  MP4→MP4**. Every switch re-runs the wiring; the previous hls.js instance
+  is destroyed before the new attach, and no previous-source event can leak
+  into the new source.
+* Position capture/restore reuses the EXISTING shell mechanism:
+  `pendingSeek = currentTime` on source/quality change → restored on the
+  next `loadedmetadata` (which hls.js fires after MediaSource metadata is
+  parsed). Play-state parity with the existing direct path: playback does
+  not auto-resume on switch (existing behavior preserved exactly).
+* Two-level race protection: (1) the engine's generation token invalidates
+  in-flight attaches and stale hls.js events after any destroy/re-attach;
+  (2) the viewport wiring drops stale engines (`hlsEngine !== engine`) so a
+  superseded engine can never dispatch an error, and a same-URL reactive
+  re-run never duplicates an attach.
+
+### Error handling & recovery (bounded)
+
+* Non-fatal hls.js errors are left to hls.js internal handling.
+* Fatal **network** errors → `hls.startLoad()`, max 2 attempts.
+* Fatal **media** errors → `hls.recoverMediaError()`, max 1 attempt.
+* Any other fatal type (or exhausting the budget) → instance destroyed, a
+  generic "This stream could not be played." error surfaces via the
+  existing viewport `error` event → PlayerShell error state with
+  Try-again / Switch-source actions. No infinite retry loops; recovery
+  counters reset only on a fresh attach.
+* Per spec, an HLS failure does NOT auto-switch to another provider —
+  source-selection fallback strategy remains with the existing
+  architecture/later UX phases.
+* Native HLS path keeps using the existing `error`/`waiting`/`stalled`/
+  `canplay`/`playing`/`loadedmetadata`/`durationchange` video events —
+  direct MP4 error handling is unchanged.
+
+### Autoplay / seeking / progress / live-vs-VOD
+
+* **Autoplay:** unchanged — `video.play()` is only called from user intent
+  (play button / Media Session). A rejected `play()` keeps the existing
+  non-fatal paused state ("Playback is ready. Tap Play to start it.").
+* **Seeking:** the existing seek controls operate on the same element;
+  seek-before-metadata rides the pendingSeek mechanism; VOD HLS restores
+  the previous time after a switch.
+* **Progress:** the video element's own `timeupdate` events feed the
+  EXISTING progress writer — no second persistence mechanism. Completion
+  percentages are only computed for finite durations.
+* **Live streams:** duration stays 0/invalid → no invalid seeks, no
+  nonsense completion percentages, Media Session position state is skipped
+  (existing finite-duration guards). No live UI redesign (Phase 6 scope).
+
+### Quality levels decision
+
+* HLS.js internal ABR levels are left on **automatic selection** — no level
+  is forced, and NO second quality system was added. The Phase 4 aggregate
+  source already represents the Stremio per-stream list through the
+  existing `PlayerQualityOption` menu, which remains the only quality UI.
+  Internal hls.js level selection is explicitly **deferred to Phase 6**.
+
+### Browser compatibility
+
+* Chrome desktop / Chrome Android / Firefox / Chromium-based → hls.js
+  engine path. Safari / iOS Safari → native HLS via the existing path
+  (hls.js not loaded). Old browsers without MSE → graceful generic error.
+* Visibility/background: no new polling or background behavior was added;
+  hls.js cleanly survives normal visibility changes and the existing Wake
+  Lock visibility coordination is untouched.
+
+### Security decisions
+
+* No media proxy — manifest/segment/key requests are plain browser
+  requests subject to normal CORS; a CORS-blocked endpoint surfaces a
+  playback error instead of a proxy.
+* `validatePlaybackUrl()` / `isPlayablePlayerSource()` untouched — HLS URLs
+  pass the same HTTPS-only boundary as every direct source (plain-http HLS
+  stays excluded, pinned by tests).
+* No URL rewriting, no credential injection, no arbitrary headers, no
+  DRM/EME code — unsupported-DRM streams fail through the normal error
+  path. No torrent/P2P path exists in the client player modules.
+
+### Tests
+
+* `scripts/stremio_player_phase5_test.ts` — **128 checks**, sections A–AO:
+  dependency present + stable-version pins; client-only/SSR boundary; the
+  full routing matrix (protocol wins over filename, .m3u8 fallback, MP4
+  never misclassified); native-first; engine create-once/destroy; the
+  4-way source-switch matrix; stale-attach race protection; bounded
+  network/media recovery + unrecoverable surfacing; autoplay non-fatal;
+  metadata/duration/progress/seek propagation through the existing event
+  flow; live-duration safety; Media Session / PiP / fullscreen / Wake Lock
+  pins; no-proxy / no-headers / no-DRM / no-torrent pins; existing adapter
+  + embed + provider-resolver isolation pins; HTTPS-only HLS validation;
+  cleanup/listener-hygiene/unmount pins. All hls.js interactions run
+  against a FakeHls — no test touches a real browser or network.
+* Added to the `package.json` test chain after the Phase 4 test.
+
+### Commands / results
+
+- Full test chain (85 scripts from `package.json`, Phase 1 → Phase 5) →
+  **85/85 pass** (Phase 1: 111 · Phase 2: 202 · Phase 3: 158 · Phase 4: 130
+  · Phase 5: 128 checks)
+- `pnpm check` (svelte-check) → **0 errors / 41 warnings** (baseline unchanged)
+- `pnpm build` (vite + adapter-netlify) → **success**; hls.js exists only in
+  a lazy client chunk — the server bundle contains no hls.js code
+- `git diff --check` → clean
+
+### Explicit scope statements
+
+* **"Phase 6 source/quality UX redesign is NOT implemented."** No source
+  sheet, quality sheet, player-control, mobile-control, addon-grouping or
+  source-card redesign of any kind.
+* **Phase 7 admin addon management UI is NOT implemented.**
+* No admin addon UI, no new Stremio resolver/manifest logic, no torrent/P2P/
+  magnet/debrid, no scraping, no persistent stream caching.
+
+### Known limitations (deferred)
+
+* HLS.js internal quality-level selection is not surfaced (automatic ABR
+  only; per-level UI belongs to Phase 6 alongside the existing per-stream
+  quality list).
+* HLS streams requiring CORS-blocked endpoints or custom request headers
+  cannot play (by policy — no proxy, no header injection).
+* DRM-protected HLS (Widevine/FairPlay) is unsupported and fails gracefully.
+* Live HLS shows the existing duration-less playback behavior (no live-edge
+  UI in Phase 5).
+
+**Phase 5 complete. Native HLS playback is implemented.** Phase 6
+source/quality UX redesign and Phase 7 admin addon management UI remain
+excluded (later phases).

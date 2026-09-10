@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import type { PlayerPlaybackState, PlayerSource } from '$lib/shared/player';
   import { iframeSandboxAttribute } from '$lib/shared/sandbox-policy';
+  import { HlsPlaybackEngine, resolveDirectPlaybackMode } from '$lib/client/player/hls-engine';
 
   export let source: PlayerSource | null = null;
   export let mediaUrl: string | null = null;
@@ -56,13 +57,110 @@
     if (!videoElement || !('requestPictureInPicture' in videoElement)) return Promise.reject(new Error('Picture-in-Picture is unavailable.'));
     return videoElement.requestPictureInPicture();
   }
+
+  // ----- Phase 5: HLS playback engine wiring -----
+  //
+  // PlayerViewport owns the <video> element, so it also owns the ONLY hls.js
+  // instance (spec §7 — the engine lifecycle stays close to the <video>
+  // lifecycle). Routing decision per direct source:
+  //
+  //   non-HLS (MP4/WebM/file)  → 'native'  → existing <video src> path
+  //                             (unchanged — hls.js is never imported)
+  //   HLS + native support     → 'native'  → existing <video src> path
+  //                             (Safari/iOS — video.src = hlsUrl, spec §4)
+  //   HLS + no native support  → 'hls-js'  → engine drives the SAME <video>
+  //                             via MediaSource; the src attribute binding
+  //                             is released while the engine owns playback.
+  //
+  // Everything above the engine is untouched: the <video> element still
+  // fires loadedmetadata/timeupdate/play/pause/… (hls.js feeds the element
+  // through MediaSource), so PlayerShell's pendingSeek/position restore,
+  // progress reporting, Media Session, PiP, fullscreen and Wake Lock keep
+  // working unchanged. Source switching (HLS→HLS, HLS→MP4, MP4→HLS,
+  // MP4→MP4) re-runs this wiring: the previous hls.js instance is destroyed
+  // first, so at most ONE instance is ever attached to the video element,
+  // and the shell's pendingSeek mechanism restores the captured position
+  // on the next loadedmetadata. Player-level errors surface through the
+  // EXISTING generic 'error' event — the UI never sees hls.js event names.
+
+  let hlsEngine: HlsPlaybackEngine | null = null;
+  let hlsEngineUrl: string | null = null;
+  // When true the engine owns the media resource and the template must NOT
+  // bind `src` (the binding would fight hls.js' MediaSource objectURL).
+  let hlsEngineActive = false;
+
+  function teardownHlsEngine() {
+    if (hlsEngine) {
+      hlsEngine.destroy();
+      hlsEngine = null;
+    }
+    hlsEngineUrl = null;
+    hlsEngineActive = false;
+  }
+
+  async function wireHlsEngine(url: string | null, currentSource: PlayerSource | null, video: HTMLVideoElement | undefined) {
+    // SSR / embed / no video element → plain teardown (no hls.js ever loads).
+    if (!url || !video || currentSource?.type !== 'direct') {
+      teardownHlsEngine();
+      return;
+    }
+    let mode: 'native' | 'hls-js';
+    try {
+      mode = resolveDirectPlaybackMode(currentSource, url, video);
+    } catch {
+      teardownHlsEngine();
+      return;
+    }
+    if (mode !== 'hls-js') {
+      // Native path (MP4 or native-HLS browser) — the existing src binding
+      // keeps working exactly as before.
+      teardownHlsEngine();
+      return;
+    }
+    // Already wired to this exact URL (reactive re-runs must not re-attach
+    // and must not create duplicate hls.js listeners).
+    if (hlsEngineActive && hlsEngineUrl === url) return;
+    const wasEngineActive = hlsEngineActive;
+    teardownHlsEngine();
+    // If a native resource fetch may already have started from the initial
+    // src binding (e.g. the element was created with an .m3u8 src), reset it
+    // so the stale native load cannot race the engine's MediaSource attach.
+    if (!wasEngineActive) {
+      try {
+        video.removeAttribute('src');
+        video.load();
+      } catch { /* element already reset */ }
+    }
+    const engine = new HlsPlaybackEngine();
+    hlsEngine = engine;
+    hlsEngineUrl = url;
+    hlsEngineActive = true;
+    try {
+      await engine.attach(video, url, {
+        onFatalError: () => {
+          // Stale engines (a newer source took over) never surface errors.
+          if (hlsEngine !== engine) return;
+          dispatch('error');
+        },
+      });
+    } catch {
+      if (hlsEngine === engine) {
+        teardownHlsEngine();
+        dispatch('error');
+      }
+    }
+  }
+
+  $: void wireHlsEngine(mediaUrl, source, videoElement);
+
+  onDestroy(teardownHlsEngine);
 </script>
 
 <div class="viewport" class:embed={source?.type === 'embed'} class:direct={source?.type === 'direct'}>
   {#if source?.type === 'direct' && mediaUrl}
     <video
       bind:this={videoElement}
-      src={mediaUrl}
+      src={hlsEngineActive ? undefined : mediaUrl}
       poster={poster || undefined}
       preload="metadata"
       playsinline
