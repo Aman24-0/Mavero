@@ -182,14 +182,14 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const testScript: string = pkg.scripts.test;
   // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8;
   // Phase 10 appended stremio_player_phase10_test.ts — the chain still runs
-  // phase 7 before phase 8 before phase 9 and now ENDS with phase 12.
-  // (Phase 11/12 appended their suites to the chain — intentional extension.)
+  // phase 7 before phase 8 before phase 9 and now ENDS with phase 13.
+  // (Phase 11/12/13 appended their suites to the chain — intentional extension.)
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('stremio_player_phase12_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 12 suite (Phase 9/10/11/12 extension)',
+      testScript.trimEnd().endsWith('stremio_player_phase13_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 13 suite (Phase 9/10/11/12/13 extension)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');

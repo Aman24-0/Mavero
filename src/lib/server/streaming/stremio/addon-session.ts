@@ -1,9 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
-import { validatePlaybackUrl } from '$lib/server/resolver/safe-url';
+import { validateAddonStreamPlaybackUrl } from '$lib/server/resolver/safe-url';
 import type { PlayerQualityOption, PlayerSource } from '$lib/shared/player';
 import { classifyStreamCompatibility, needsCompatibilityPath, type StreamCompatibilityInput } from '$lib/shared/media-compat';
-import { MAVERO_AGGREGATE_STREAMS_PER_ADDON } from '$lib/shared/mavero-aggregate';
+import { selectAddonStreams, releaseClassFor, type StreamSelectionInput, type StreamUsability, type PlayClass } from '$lib/shared/stream-selection';
 import type { StreamingAddon } from '$lib/shared/streaming-addons';
 import type { ContentType } from '$lib/server/content/types';
 import { normalizeContentIdentifiers } from '$lib/server/resolver/identifiers';
@@ -324,35 +324,59 @@ export async function resolveAddonToken(client: SupabaseClient<Database>, input:
       return { request: parsed, result: { status: 'failed', addonName: display, addonOrdering: ordering, errorCode: 'INVALID_RESPONSE' } };
     }
     const streams: AddonResolvedStream[] = [];
-    // Phase 12 (GOAL E): structured loss-point diagnostics — a Stremio-visible
-    // addon resolving to 0 playable streams in MAVERO must be explainable
-    // from server logs alone. The log carries COUNTS and TYPED reasons only
-    // (never URLs, header values, manifest URLs or addon configuration).
+    // Phase 13: the resolution pipeline is RANK-THEN-SELECT, not
+    // first-come-first-served. EVERY boundary-valid stream is classified
+    // (usability + compatibility verdict), the shared selection engine picks
+    // the best few candidates per quality bucket (direct/HLS first, dual/
+    // multi audio preferred, heavy remux/download-only releases demoted or
+    // hidden), and ONLY the selected candidates are returned — the addon tab
+    // count IS the final usable count. Compat references are minted ONLY for
+    // SELECTED conversion candidates: discovery never creates worker jobs
+    // and hidden streams never consume signed tokens.
     const filterReasons = new Map<string, number>();
+    type Candidate = { quality: PlayerQualityOption; source: PlayerSource; verdict: ReturnType<typeof classifyStreamCompatibility> };
+    const candidates: Candidate[] = [];
     for (const stream of normalized.streams) {
       const resolved = resolvedStreamOf(addon, plan, streamType, stream);
       if (!resolved) {
         filterReasons.set('unresolved', (filterReasons.get('unresolved') ?? 0) + 1);
         continue;
       }
-      // Playback boundary FIRST (HTTPS-only direct policy) — a stream that
-      // cannot play directly never consumes budget or gets a compat ref.
+      // Playback boundary FIRST — a stream that cannot play directly never
+      // consumes selection budget or gets a compat reference. Addon streams
+      // use the ADDON boundary (http+https — the Pipe fix); every other
+      // policy dimension (credentials, private hosts, schemes) is unchanged.
       if (!resolved.source.url) {
         filterReasons.set('missing-url', (filterReasons.get('missing-url') ?? 0) + 1);
         continue;
       }
       try {
-        validatePlaybackUrl(resolved.source.url, 'direct');
+        validateAddonStreamPlaybackUrl(resolved.source.url);
       } catch {
         filterReasons.set('playback-boundary', (filterReasons.get('playback-boundary') ?? 0) + 1);
         continue;
       }
-      const compat = compatReferenceOf(resolved.quality, context, payload, deps);
-      streams.push({ source: resolved.source, quality: resolved.quality, ...(compat ? { compat } : {}) });
-      if (streams.length >= MAVERO_AGGREGATE_STREAMS_PER_ADDON) {
-        filterReasons.set('per-addon-cap', (filterReasons.get('per-addon-cap') ?? 0) + 1);
-        break;
-      }
+      const verdict = classifyStreamCompatibility(streamCompatibilityInputOf(resolved.quality));
+      candidates.push({ quality: resolved.quality, source: resolved.source, verdict });
+    }
+    // Shared selection engine (server-side — the client never re-ranks).
+    const selectionInputs: StreamSelectionInput[] = candidates.map((candidate) => ({ ...streamSelectionInputOf(candidate.quality), playClass: playClassOfVerdict(candidate.verdict) }));
+    const selection = selectAddonStreams(selectionInputs);
+    const selectedIndex = new Set(selection.map((entry) => entry.index));
+    for (const entry of selection) {
+      const candidate = candidates[entry.index];
+      const usability: StreamUsability = entry.usability;
+      const quality: PlayerQualityOption = { ...candidate.quality, usability };
+      // Compat reference: ONLY selected conversion candidates (the user can
+      // explicitly choose the fallback; discovery stays job-free).
+      const compat = usability.play === 'remux' || usability.play === 'transcode' ? compatReferenceOf(quality, context, payload, deps) : undefined;
+      streams.push({ source: candidate.source, quality, ...(compat ? { compat } : {}) });
+    }
+    // Diagnostics: WHY a boundary-valid candidate did not reach the user.
+    for (let index = 0; index < candidates.length; index++) {
+      if (selectedIndex.has(index)) continue;
+      const release = releaseClassOfSelectionInput(selectionInputs[index]);
+      filterReasons.set(release === 'heavy' ? 'heavy-filtered' : 'rank-filtered', (filterReasons.get(release === 'heavy' ? 'heavy-filtered' : 'rank-filtered') ?? 0) + 1);
     }
     // The per-addon endpoint answers `{ ok: true, result }` — the "return"
     // of the resolution is observable through the returned status below.
@@ -455,6 +479,49 @@ function compatSecretOf(deps: ResolveAddonTokenDeps): string | null {
   return typeof secret === 'string' && secret.length > 0 ? secret : null;
 }
 
+/** Builds the compatibility-classifier input from a quality option (Phase 12 rule: ALL addon text). */
+function streamCompatibilityInputOf(quality: PlayerQualityOption): StreamCompatibilityInput {
+  return {
+    protocol: quality.protocol,
+    container: quality.container,
+    codec: quality.codec,
+    filename: quality.filename,
+    title: quality.title,
+    description: quality.description,
+  };
+}
+
+/** Builds the selection-engine input from a quality option (Phase 13). */
+function streamSelectionInputOf(quality: PlayerQualityOption): StreamSelectionInput {
+  return {
+    url: quality.url,
+    protocol: quality.protocol,
+    container: quality.container,
+    codec: quality.codec,
+    filename: quality.filename,
+    title: quality.title,
+    description: quality.description,
+    ...(quality.audioLanguages?.length ? { audioLanguages: quality.audioLanguages } : {}),
+    ...(quality.subtitles?.length ? { subtitleCount: quality.subtitles.length } : {}),
+    ...(quality.videoSize !== undefined ? { videoSize: quality.videoSize } : {}),
+    ...(quality.height !== undefined ? { height: quality.height } : {}),
+  };
+}
+
+/** Maps a compatibility verdict onto the user-facing playback-path class. */
+function playClassOfVerdict(verdict: ReturnType<typeof classifyStreamCompatibility>): PlayClass {
+  if (verdict.tier === 'DIRECT_PLAYABLE') return 'direct';
+  if (verdict.tier === 'DIRECT_UNCERTAIN') return 'uncertain';
+  if (verdict.tier === 'REMUX_REQUIRED') return 'remux';
+  if (verdict.tier === 'TRANSCODE_REQUIRED') return 'transcode';
+  return 'unsupported';
+}
+
+/** The release class of an already-built selection input (diagnostics only). */
+function releaseClassOfSelectionInput(input: StreamSelectionInput): string {
+  return releaseClassFor(input);
+}
+
 /**
  * Issues a signed compatibility reference for streams the classifier routes
  * to remux/transcode (GOAL 11→12). Only for non-HLS candidates that already
@@ -472,15 +539,7 @@ function compatReferenceOf(quality: PlayerQualityOption, context: { contentId: s
   // whose stream title says "Dhurandhar The Revenge (2026).mkv" must classify
   // as MKV (remux) exactly like a .mkv filename would; a title mentioning
   // HEVC/10-bit must reach the transcode path.
-  const input: StreamCompatibilityInput = {
-    protocol: quality.protocol,
-    container: quality.container,
-    codec: quality.codec,
-    filename: quality.filename,
-    title: quality.title,
-    description: quality.description,
-  };
-  const verdict = classifyStreamCompatibility(input);
+  const verdict = classifyStreamCompatibility(streamCompatibilityInputOf(quality));
   if (!needsCompatibilityPath(verdict)) return null;
   const exp = Math.floor((deps.now ?? new Date()).getTime() / 1000) + ADDON_TOKEN_TTL_SECONDS;
   try {

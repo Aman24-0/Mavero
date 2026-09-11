@@ -133,7 +133,8 @@ function sectionB(): void {
   ok(needsCompatibilityPath(remuxVerdict) && needsCompatibilityPath(hevcVerdict), 'B: both MKV shapes qualify for a signed compat reference');
   // The badge on a REAL quality option (title carries .mkv, no filename).
   const badge = compatBadgeForStream({ url: 'https://provider.example/file/123456', title: 'Dhurandhar The Revenge (2026).mkv · 720p', container: 'MKV' } as PlayerQualityOption);
-  ok(badge === 'Needs conversion (remux)', 'B: the stream card badges the extensionless MKV honestly');
+  // Phase 13 UPDATE: jargon-free copy — the fallback badge says what it is.
+  ok(badge === 'Conversion fallback', 'B: the stream card badges the extensionless MKV honestly (Conversion fallback — Phase 13 copy)');
   ok(compatTierForStream({ url: 'https://provider.example/file/99', title: '1080p HEVC 10-bit Hindi 4.60 GB', container: 'MKV' } as PlayerQualityOption) === 'TRANSCODE_REQUIRED', 'B: HEVC 10-bit MKV card routes to the transcode tier');
 
   // Filename-derived codec hints keep working (Phase 9/10 pin parity).

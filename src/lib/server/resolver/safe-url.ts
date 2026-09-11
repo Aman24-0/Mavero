@@ -59,6 +59,32 @@ export function validatePlaybackUrl(raw: string, type: Exclude<ResolverResultTyp
   return url.toString();
 }
 
+/**
+ * Phase 13 (Pipe fix): the playback boundary for STREMIO ADDON DIRECT
+ * streams. Unlike `validatePlaybackUrl('direct')` — which stays HTTPS-only
+ * for MAVERO-managed provider sources — an addon stream URL is fetched by
+ * the USER'S BROWSER (the Mavero server never connects to it), and real
+ * Stremio addons (Pipe included) legitimately serve cleartext `http://`
+ * media. Rejecting every non-TLS addon URL silently emptied otherwise-valid
+ * addons ("request succeeds, 0 streams").
+ *
+ * The relaxation is deliberately NARROW:
+ *   * `http:` AND `https:` only (every other scheme is still rejected);
+ *   * credentials and private/loopback/link-local hosts are still rejected;
+ *   * the COMPATIBILITY path stays HTTPS-only (`validatePlaybackUrl` +
+ *     the worker's `validateJobUrl`): the worker DOES fetch server-side, so
+ *     the SSRF posture there is unchanged;
+ *   * the browser's own mixed-content policy governs cleartext playback on
+ *     the HTTPS app — if the provider refuses the upgrade, the stream fails
+ *     through the normal per-stream failure isolation (never a proxy).
+ */
+export function validateAddonStreamPlaybackUrl(raw: string): string {
+  const url = parseUrl(raw);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new ResolverError('INVALID_SOURCE_URL');
+  if (url.username || url.password || isPrivateHostname(url.hostname)) throw new ResolverError('INVALID_SOURCE_URL');
+  return url.toString();
+}
+
 export function allowedEmbedOriginsFromCapabilities(capabilities: Json): string[] {
   if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return [];
   const value = (capabilities as { [key: string]: Json | undefined }).allowed_embed_origins;

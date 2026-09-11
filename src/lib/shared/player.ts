@@ -55,6 +55,14 @@ export type PlayerQualityOption = {
    */
   compatToken?: string;
   compatKind?: 'remux' | 'transcode';
+  /**
+   * Phase 13: the usability verdict the SERVER's selection engine computed
+   * for this stream (quality bucket, audio class, release weight, playback
+   * path, composite rank). It travels with the stream so the client orders
+   * and presents candidates WITHOUT a second ranking implementation. Absent
+   * for non-addon sources and for streams resolved before Phase 13.
+   */
+  usability?: import('./stream-selection').StreamUsability;
 };
 
 /**

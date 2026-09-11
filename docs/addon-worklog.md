@@ -1898,3 +1898,81 @@ Validation: `pnpm check` 0 errors/41 warnings (baseline); `pnpm build`
 success; `git diff --check` clean; FULL chain 89 test commands exit 0
 (Phase 1→12, the new Phase 12 suite adds 124 checks covering A–I plus
 regressions); worker `tsc --noEmit` clean.
+
+## Phase 13 — quality-first stream selection, worker fallback discipline, Pipe http fix (DONE)
+
+Real-device testing after Phase 12 exposed a PRODUCT-level failure: the sheet
+behaved like a raw Stremio debugger (37 cards, conversion badges everywhere,
+"Preparing…" forever, dead repeats). The fix is a new selection LAYER, not
+patches: MAVERO now discovers and shows only the MAIN USABLE HTTP STREAMS.
+
+### The selection engine (`src/lib/shared/stream-selection.ts`)
+
+Pure, shared (server ranks, client presents — no second implementation).
+Every boundary-valid stream is classified on:
+* **quality buckets** — exactly four user-facing buckets (1080p/720p/480p/4K;
+  2160p/1440/UHD fold into 4K; sub-480p/unknown stay `auto`). Bucket display
+  order is 1080p → 720p → 480p → 4K.
+* **audio class** — Multi Audio / Dual Audio / "2 Audio" / "MULTI" /
+  "Hindi + English" / adjacent "Hindi English" outrank single-audio; a
+  filename that only says "Hindi" stays single (nothing invented).
+* **release class** — REMUX/BDRemux/BluRay-Remux markers and size ceilings
+  per bucket (1080p > 14 GB, 4K > 40 GB — generous, normal encodes survive)
+  are HEAVY: hidden whenever any streaming-class alternative exists, and
+  surfaced only as a last resort. Explicit "Download Only"/"10Gbps" entries
+  are NEVER candidates.
+* **play class** — direct < uncertain < remux < transcode (a fast remux
+  fallback outranks a full transcode) < unsupported, from the existing
+  compatibility classifier.
+Composite rank: play (1000s) > release (100s) > bucket (10s) > format (1s) >
+audio (0.1s) > transport (https over http). Deterministic tiebreaks.
+Selection: exclude download-only/unsupported → dedupe equivalent releases
+(same bucket+codec+container+audio, keep the best 2; auto-bucket never
+collapsed — no basis to call unknowns equivalent) → per-quality best 2 →
+per-addon ≤ 8. A 30–50 raw addon response becomes ≤ 8 ranked candidates.
+
+### Pipe fix — cleartext http:// addon streams
+
+`validateAddonStreamPlaybackUrl` (safe-url.ts): ADDON stream URLs may now be
+`http:` OR `https:` — the user's browser fetches them (the server never
+connects; no SSRF surface), real addons legitimately serve cleartext media,
+and the old https-only rule silently emptied otherwise-valid addons ("request
+succeeds, 0 streams"). Credentials/private hosts/schemes stay rejected; the
+COMPAT path is unchanged https-only (server-side fetch). http candidates rank
+below https but reach the final list and never get compat references.
+
+### Worker as CONTROLLED fallback (never discovery work)
+
+Discovery mints signed references ONLY for SELECTED conversion candidates;
+no worker fetch, no FFmpeg job at resolution (test-asserted with a fetch spy).
+Compat starts only on explicit selection of a fallback candidate. Auto-start
+plays the best-RANKED merged stream (direct HLS beats a conversion candidate
+that happened to arrive first — merge fix).
+
+### Retry determinism (the "Source not available" repeat bug)
+
+The worker keyed jobs by token hash and returned the DEAD failed job on
+re-presentation until TTL. Now a failed job + the same still-valid token
+creates a FRESH attempt (old job + partial output discarded); in-flight and
+playable jobs still dedupe (one live job per token).
+
+### Failure handling + UX
+
+Session-failed streams sink to the bottom of their addon tab (evidence-based,
+never poisoned — still selectable). Card headlines read "1080p • Dual Audio •
+HLS" from the usability verdict; conversion badges say "Conversion fallback"
+(no remux/transcode jargon); Download shows an immediate "Opening…" state,
+suppresses double-clicks and restores after 2.5 s (honest: provider 404/
+hotlink rejection is NOT detectable without a proxy — refused by spec). Tab
+counts equal FINAL usable counts (server post-selection). The admin source
+page exposes the sandbox control for EVERY source with explicit
+Configured/Effective lines and a "Source override is active" marker — the
+VidY-style hidden override is visible and clearable; runtime hierarchy
+unchanged.
+
+Validation: `pnpm check` 0 errors/41 warnings (baseline); `pnpm build`
+success; `git diff --check` clean; worker `tsc --noEmit` clean; FULL chain
+90 test commands exit 0 (Phase 1→13; the new Phase 13 suite adds 91
+behavioral checks A–N, incl. the worker-retry lifecycle and the
+no-worker-at-discovery fetch-spy proof). NOT yet verified on real devices —
+Android Chrome E2E against live addons is the next step.

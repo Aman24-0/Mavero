@@ -111,7 +111,24 @@ export class JobRegistry {
     const existingId = this.byTokenHash.get(tokenHash);
     if (existingId) {
       const existing = this.jobs.get(existingId);
-      if (existing) return { outcome: 'existing', job: { ...existing } };
+      if (existing) {
+        // Phase 13 (retry determinism): a FAILED job never blocks its own
+        // retry. Re-presenting the SAME still-valid signed token after a
+        // failure creates a FRESH attempt (the old failed job and its
+        // partial output are discarded) instead of returning the dead job
+        // until its TTL — the production "Source not available forever"
+        // bug. Playable jobs (ready / ended) and in-flight ones keep the
+        // dedupe behavior: one live job per signed token.
+        if (existing.status !== 'failed') return { outcome: 'existing', job: { ...existing } };
+        this.byTokenHash.delete(tokenHash);
+        this.jobs.delete(existing.id);
+        this.dirs.delete(existing.id);
+        try {
+          await rm(join(tmpdir(), 'mavero-media-worker', existing.id), { recursive: true, force: true });
+        } catch {
+          /* best-effort cleanup — the sweep still bounds the disk */
+        }
+      }
     }
 
     // Independent URL validation (defense in depth — the signature already

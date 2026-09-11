@@ -132,7 +132,9 @@ function sectionB1() {
   // 7. H.264 MKV → REMUX_REQUIRED (video must NOT be re-encoded)
   const h264mkv = verdictOf({ container: 'MKV', codec: 'H.264', filename: 'Movie.1080p.x264.AAC.mkv' });
   ok(h264mkv.tier === 'REMUX_REQUIRED' && h264mkv.action === 'remux', 'B1: H.264+MKV → REMUX_REQUIRED');
-  ok(compatibilityBadgeText(h264mkv.tier) === 'Needs conversion (remux)', 'B1: remux badge text preserved');
+  // Phase 13 UPDATE: user-facing copy no longer exposes remux/transcode jargon —
+  // conversion is presented as the fallback it is.
+  ok(compatibilityBadgeText(h264mkv.tier) === 'Conversion fallback', 'B1: remux badge reads as the Conversion fallback (Phase 13 copy)');
 
   // 8. HEVC MKV → TRANSCODE_REQUIRED
   const hevcMkv = verdictOf({ container: 'MKV', codec: 'HEVC', filename: 'Movie.1080p.HEVC.mkv' });
@@ -458,8 +460,13 @@ async function sectionC2(): Promise<void> {
   ok(fetchedUrls[0] === 'https://pipe-addon.example/stream/movie/tmdb:1094521.json', 'C2: MAVERO called Pipe with the exact Stremio stream endpoint (tmdb namespace it accepts)');
   ok(resolution.result.status === 'ok' && resolution.result.streams.length === 2, 'C2: Pipe resolves BOTH streams (direct file + HLS variant) through the hardened pipeline');
   if (resolution.result.status === 'ok') {
-    const direct = resolution.result.streams[0];
-    const hls = resolution.result.streams[1];
+    // Phase 13 UPDATE: the returned order is now the SELECTION RANK — the
+    // direct-playable HLS variant leads its quality bucket and the
+    // conversion-required HEVC MKV follows as the fallback (compat-first
+    // discovery would invert the product's "direct playable first" rule).
+    const hls = resolution.result.streams[0];
+    const direct = resolution.result.streams[1];
+    ok(hls?.quality.usability?.play === 'direct' && direct?.quality.usability?.play === 'transcode', 'C2: the selection rank orders DIRECT HLS before the conversion-required MKV (Phase 13; HEVC MKV = transcode class)');
     ok(direct?.source.url === 'https://pixeldrain.example/api/file/ab12cd', 'C2: the PixelDrain-style DIRECT https link survives normalization + the playback boundary');
     ok(direct?.source.metadata?.streamContainer === 'MKV', 'C2: addon container metadata travels');
     // Phase 12 UPDATE: the codec now ALSO derives from the addon FILENAME —

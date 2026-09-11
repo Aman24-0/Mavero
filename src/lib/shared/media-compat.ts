@@ -313,11 +313,15 @@ export function needsCompatibilityPath(verdict: StreamCompatibilityVerdict): boo
   return verdict.action === 'remux' || verdict.action === 'transcode';
 }
 
-/** Short, user-safe badge text for a tier (plain text, no internals). */
+/**
+ * Short, user-safe badge text for a tier (plain text, no internals).
+ * Phase 13 (product copy): the primary list should read like a STREAMING
+ * player — conversion is presented as the fallback it is, and jargon
+ * ("remux") never reaches the user.
+ */
 export function compatibilityBadgeText(tier: MediaCompatibilityTier): string | null {
   if (tier === 'DIRECT_PLAYABLE') return null;
-  if (tier === 'DIRECT_UNCERTAIN') return 'May not play in this browser';
-  if (tier === 'REMUX_REQUIRED') return 'Needs conversion (remux)';
-  if (tier === 'TRANSCODE_REQUIRED') return 'Needs conversion';
-  return 'Not playable in this browser';
+  if (tier === 'DIRECT_UNCERTAIN') return 'May not play';
+  if (tier === 'REMUX_REQUIRED' || tier === 'TRANSCODE_REQUIRED') return 'Conversion fallback';
+  return 'Not playable';
 }

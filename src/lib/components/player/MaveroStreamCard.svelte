@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, Copy, Download } from 'lucide-svelte';
   import type { PlayerQualityOption } from '$lib/shared/player';
-  import { formatMaveroStreamSize, maveroStreamDetailLabel, maveroStreamFormatLabel, maveroStreamQualityLabel, maveroStreamSubtitleLabel } from '$lib/client/player/mavero-streams';
+  import { formatMaveroStreamSize, maveroStreamDetailLabel, maveroStreamFormatLabel, maveroStreamHeadline, maveroStreamQualityLabel, maveroStreamSubtitleLabel } from '$lib/client/player/mavero-streams';
   import { compatBadgeForStream } from '$lib/client/player/mavero-compat';
   import { copyStreamUrl, downloadAttributesFor } from '$lib/client/player/stream-actions';
 
@@ -40,14 +40,23 @@
   $: detail = maveroStreamDetailLabel(stream);
   // Phase 10 GOAL 11: compatibility hint badge — derived ONLY from the
   // addon-supplied metadata (shared classifier). `null` renders nothing;
-  // uncertainty is phrased honestly ("May not play in this browser").
+  // Phase 13 copy: conversion is phrased as the fallback it is.
   $: compatBadge = compatBadgeForStream(stream);
+  // Phase 13 (quality-first UX): the headline reads "1080p • Dual Audio •
+  // HLS" from the server's usability verdict; the legacy quality label is
+  // the fallback for streams without a verdict.
+  $: headline = maveroStreamHeadline(stream) ?? maveroStreamQualityLabel(stream);
   // Phase 12 (GOAL H): the download anchor attributes — built from the
   // ORIGINAL addon URL (the card never sees the worker/compat URL).
   $: downloadAttrs = downloadAttributesFor(stream);
 
   let copied = false;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  // Phase 13 (GOAL 13): download click state — immediate "Opening…"
+  // feedback, duplicate rapid clicks suppressed, state restored after a
+  // bounded timeout. The browser's native navigation does the rest.
+  let openingDownload = false;
+  let openingTimer: ReturnType<typeof setTimeout> | undefined;
 
   async function handleCopy() {
     // GOAL H: stopPropagation is bound on the element; the copy itself
@@ -65,6 +74,10 @@
     // Native anchor navigation on the ORIGINAL addon URL — no proxy, no
     // transformation. Cross-origin servers may ignore the download hint.
     event.stopPropagation();
+    if (openingDownload) return; // duplicate rapid clicks suppressed
+    openingDownload = true;
+    if (openingTimer) clearTimeout(openingTimer);
+    openingTimer = setTimeout(() => { openingDownload = false; }, 2500);
   }
 </script>
 
@@ -83,7 +96,7 @@
     <span class="option-mark">{#if selected}<Check size={14} />{:else}<span></span>{/if}</span>
     <span class="card-body">
       <span class="card-title-row">
-        <strong class="card-quality">{maveroStreamQualityLabel(stream)}</strong>
+        <strong class="card-quality">{headline}</strong>
         {#if failed}<span class="card-failed" role="status">Failed — try another or retry</span>{/if}
       </span>
       {#if detail}<span class="card-detail">{detail}</span>{/if}
@@ -116,14 +129,15 @@
         <!-- svelte-ignore a11y_missing_attribute -->
         <a
           class="card-action"
+          class:opening={openingDownload}
           href={downloadAttrs.href}
           download={downloadAttrs.download}
           target={downloadAttrs.target}
           rel={downloadAttrs.rel}
-          aria-label="Download or open the original stream file"
-          title="Download / open original file"
+          aria-label={openingDownload ? 'Opening the original stream' : 'Download or open the original stream file'}
+          title={failed ? 'This source failed playback recently — the provider may reject it' : 'Download / open original file'}
           onclick={handleDownload}
-        ><Download size={14} /></a>
+        ><Download size={14} /><span class="card-action-note" role="status">{openingDownload ? 'Opening…' : ''}</span></a>
       {/if}
     </span>
   {/if}
@@ -148,6 +162,7 @@
   .card-action:hover, .card-action:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
   .card-action:active { transform: scale(.96); }
   .card-action.done { border-color: var(--accent); color: var(--accent); }
+  .card-action.opening { border-color: var(--accent); color: var(--accent); opacity: .7; pointer-events: none; }
   .card-action-note { position: absolute; top: -14px; right: 0; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .5rem; pointer-events: none; }
   @media (prefers-reduced-motion: reduce) { .mavero-stream-card, .card-action { transition: none; } }
 </style>

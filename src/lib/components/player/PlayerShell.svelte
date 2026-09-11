@@ -11,7 +11,7 @@
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
   // Phase 6: MAVERO Player stream presentation (addon grouping, labels,
   // dedupe, current-stream identity) — pure helpers, no second source model.
-  import { buildMaveroAddonTabs, dedupeMaveroStreams, defaultMaveroAddonTab, groupMaveroStreams, isMaveroAggregateSource, maveroStreamFormatLabel, maveroStreamQualityLabel } from '$lib/client/player/mavero-streams';
+  import { buildMaveroAddonTabs, dedupeMaveroStreams, defaultMaveroAddonTab, groupMaveroStreams, isMaveroAggregateSource, maveroStreamFormatLabel, maveroStreamQualityLabel, orderMaveroStreamsForSheet } from '$lib/client/player/mavero-streams';
   // Phase 9: robust pending-seek state machine (streaming VOD seeking) — pure,
   // unit-tested; the shell feeds it media snapshots and applies the result.
   import { applyPendingSeek, capturePendingSeek, createPendingSeek, type PendingSeekState } from '$lib/client/player/pending-seek';
@@ -1487,7 +1487,10 @@
             {#if activeMaveroTabGroup}
               <div class="mavero-groups" role="listbox" aria-label={`${activeMaveroTab.name} streams`}>
                 <div class="mavero-group" role="group" aria-label={`${activeMaveroTabGroup.addonName} streams`}>
-                  {#each activeMaveroTabGroup.streams as stream (stream.url)}
+                  <!-- Phase 13: ranked order with THIS session's failed streams
+                       sunk to the bottom (evidence-based demotion — they stay
+                       visible and selectable, never permanently poisoned). -->
+                  {#each orderMaveroStreamsForSheet(activeMaveroTabGroup.streams, failedStreamUrls) as stream (stream.url)}
                     <MaveroStreamCard {stream} selected={stream.url === mediaUrl} failed={failedStreamUrls.includes(stream.url)} onselect={selectMaveroStream} />
                   {/each}
                 </div>

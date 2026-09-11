@@ -127,6 +127,64 @@ export function maveroStreamFormatLabel(stream: PlayerQualityOption): string | n
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 13 — quality-first stream-card presentation.
+//
+// The headline reads like a STREAMING player ("1080p • Dual Audio • HLS"),
+// built from the SERVER's usability verdict when present. Single/unknown
+// audio is OMITTED (never "Single Audio" noise), and internal jargon
+// ("remux", "codec") never appears. Without a usability verdict the helper
+// yields null and the card falls back to the legacy quality label.
+// ---------------------------------------------------------------------------
+
+/** The bucket display label for a usability verdict ("1080p", "4K", "Auto"). */
+function bucketHeadlineLabel(stream: PlayerQualityOption, bucket: string): string {
+  if (bucket !== 'auto') return bucket === '4K' ? '4K' : bucket;
+  // Unknown bucket but a confident height (e.g. 360p) — show it honestly.
+  return maveroStreamQualityLabel(stream);
+}
+
+/** The format portion of the headline: protocol first, container fallback. */
+function headlineFormatLabel(stream: PlayerQualityOption): string | null {
+  const protocolLabel = maveroStreamFormatLabel(stream);
+  if (protocolLabel) return protocolLabel;
+  const container = typeof stream.container === 'string' ? stream.container.trim().toUpperCase() : '';
+  return container || null;
+}
+
+/**
+ * The quality-first headline for one stream card ("1080p • Dual Audio •
+ * HLS"), from the server-computed usability verdict. `null` when the stream
+ * carries no verdict (non-addon sources / pre-Phase-13 data) — the caller
+ * falls back to the legacy quality label.
+ */
+export function maveroStreamHeadline(stream: PlayerQualityOption): string | null {
+  const usability = stream.usability;
+  if (!usability) return null;
+  const parts: string[] = [bucketHeadlineLabel(stream, usability.bucket)];
+  if (usability.audio === 'dual') parts.push('Dual Audio');
+  else if (usability.audio === 'multi') parts.push('Multi Audio');
+  const format = headlineFormatLabel(stream);
+  if (format) parts.push(format);
+  return parts.join(' • ');
+}
+
+/**
+ * Sheet ordering for ONE addon's candidates (Phase 13 failure handling):
+ * ranked order (server order) with streams that FAILED in this session
+ * sunk to the bottom, so dead sources never sit between the user and a
+ * working one. The failed streams stay visible/selectable (failure
+ * isolation, no permanent poisoning) — they only lose their prime spots.
+ * Stable: equal keys keep the server's rank order.
+ */
+export function orderMaveroStreamsForSheet(streams: PlayerQualityOption[], failedUrls: readonly string[]): PlayerQualityOption[] {
+  const failed = new Set(failedUrls);
+  return streams
+    .map((stream, index) => ({ stream, index, failed: failed.has(stream.url) }))
+    .sort((a, b) => Number(a.failed) - Number(b.failed) || a.index - b.index)
+    .map((entry) => entry.stream);
+}
+
 /**
  * Per-stream protocol for the CURRENT media URL inside an aggregate source
  * (Phase 6 correctness fix for mixed-protocol aggregates).

@@ -1,5 +1,6 @@
 import type { PlayerQualityOption, PlayerSource } from '$lib/shared/player';
 import { MAVERO_AGGREGATE_MAX_STREAMS, aggregateMaveroBuckets } from '$lib/shared/mavero-aggregate';
+import type { StreamUsability } from '$lib/shared/stream-selection';
 
 /**
  * MAVERO Player — progressive addon resolution controller (Phase 10,
@@ -294,11 +295,19 @@ export function mergeMaveroResults(
   // Phase 10: compat references ride the URL → token map so the merged
   // quality options carry the signed references (the shell's compat path
   // needs them at selection time).
+  // Phase 13: the SERVER-computed usability verdict rides the same way —
+  // the client orders/presents with the server's ranking, never a second
+  // ranking implementation.
   const compatByUrl = new Map<string, { token: string; kind: 'remux' | 'transcode' }>();
+  const usabilityByUrl = new Map<string, StreamUsability>();
   for (const result of okResults) {
     for (const entry of result.streams) {
-      if (entry.compatToken && typeof entry.source.url === 'string' && !compatByUrl.has(entry.source.url)) {
+      if (typeof entry.source.url !== 'string') continue;
+      if (entry.compatToken && !compatByUrl.has(entry.source.url)) {
         compatByUrl.set(entry.source.url, { token: entry.compatToken, kind: entry.compatKind ?? 'transcode' });
+      }
+      if (entry.quality.usability && !usabilityByUrl.has(entry.source.url)) {
+        usabilityByUrl.set(entry.source.url, entry.quality.usability);
       }
     }
   }
@@ -308,14 +317,36 @@ export function mergeMaveroResults(
   const picked = aggregateMaveroBuckets(buckets, MAVERO_AGGREGATE_MAX_STREAMS);
   if (!picked.length) return null;
 
-  const primary = (currentUrl ? picked.find((source) => source.url === currentUrl) : undefined) ?? picked[0];
-  const qualities = picked.map((source) => {
+  // Phase 13 (quality-first UX): the FINAL pool order is the server's
+  // usability rank (bucket display order → rank → arrival), so the sheet
+  // and the auto-start stream follow "direct/HLS first, conversion last".
+  // The currently playing stream stays pinned FIRST (merge never retargets
+  // playback — GOAL 2); when NOTHING is playing yet, the auto-start lead is
+  // the BEST-RANKED candidate (never merely the first addon that answered —
+  // a conversion-required stream must not win the race against a direct one).
+  const rankOfPicked = (source: PlayerSource): number => usabilityByUrl.get(source.url as string)?.rank ?? Number.POSITIVE_INFINITY;
+  const primary = currentUrl
+    ? (picked.find((source) => source.url === currentUrl) ?? picked[0])
+    : picked.reduce((best, source, index) => (rankOfPicked(source) < rankOfPicked(best) ? source : best), picked[0]);
+  const rest = picked.filter((source) => source !== primary).map((source, index) => ({ source, index }));
+  rest.sort((a, b) => {
+    const usabilityA = usabilityByUrl.get(a.source.url as string);
+    const usabilityB = usabilityByUrl.get(b.source.url as string);
+    if (usabilityA && usabilityB && usabilityA.rank !== usabilityB.rank) return usabilityA.rank - usabilityB.rank;
+    if (usabilityA && !usabilityB) return -1;
+    if (!usabilityA && usabilityB) return 1;
+    return a.index - b.index;
+  });
+  const orderedPicked = [primary, ...rest.map((entry) => entry.source)];
+  const qualities = orderedPicked.map((source) => {
     const option = qualityOptionOfSource(source);
     const compat = typeof source.url === 'string' ? compatByUrl.get(source.url) : undefined;
     if (compat) {
       option.compatToken = compat.token;
       option.compatKind = compat.kind;
     }
+    const usability = typeof source.url === 'string' ? usabilityByUrl.get(source.url) : undefined;
+    if (usability) option.usability = usability;
     return option;
   });
   return {

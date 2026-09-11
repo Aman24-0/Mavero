@@ -356,7 +356,10 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(maveroStreamQualityLabel(qualityFixture({ height: undefined, label: undefined })) === 'Auto', 'F: nothing available → "Auto" (never fabricated)');
   ok(maveroStreamQualityLabel(qualityFixture({ height: undefined, label: 'Just a title' })) === 'Just a title', 'F: a label without the "·" separator is preserved as-is');
   ok(!/\d{5,}/.test(maveroStreamQualityLabel(qualityFixture({ height: undefined, bitrate: 1234567, label: undefined }))), 'F: raw bitrate is never displayed as a quality label');
-  ok(cardSource.includes('<strong class="card-quality">{maveroStreamQualityLabel(stream)}</strong>'), 'F: the stream card renders the derived quality label');
+  // Phase 13 UPDATE: the card headline is the quality-first label
+  // ("1080p • Dual Audio • HLS") from the usability verdict, with the
+  // derived quality label as the explicit fallback (same helper).
+  ok(cardSource.includes('maveroStreamHeadline(stream) ?? maveroStreamQualityLabel(stream)'), 'F: the stream card renders the quality-first headline with the derived quality label fallback');
 }
 
 // ===========================================================================
@@ -439,7 +442,12 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   // takes A[0] + B[0], pass 2 takes A[1]. Order stays deterministic (addon
   // order + resolver order inside each pass); NO addon can be starved.
   ok(JSON.stringify(urls) === JSON.stringify(['https://a.example/1080.m3u8', 'https://b.example/1080.mp4', 'https://a.example/720.m3u8']), 'K: the composer interleaves addon buckets deterministically (round-robin, Phase 9 starvation fix)');
-  ok(!streamsSource.includes('.sort(') && !streamsSource.includes('.reverse('), 'K: the presentation layer never re-orders (grouping only)');
+  // Phase 13 UPDATE: the presentation layer adds ONE deliberate re-ordering —
+  // `orderMaveroStreamsForSheet` sinks THIS session's failed streams (evidence-
+  // based demotion; they stay listed). Grouping itself still never re-orders,
+  // and no `.reverse(` exists anywhere.
+  ok(!streamsSource.includes('.reverse('), 'K: the presentation layer never reverses (grouping only)');
+  ok(streamsSource.includes('orderMaveroStreamsForSheet') && streamsSource.split('.sort(').length === 2, 'K: the ONLY presentation sort is the failed-last demotion (Phase 13 failure handling)');
   ok(composerSource.includes('export function aggregateAddonStreams') && MAVERO_PLAYER_MAX_STREAMS === 100 && MAVERO_PLAYER_STREAMS_PER_ADDON === 40, 'K: the Phase 9 fair-bounded aggregation (per-addon 40 / total 100) replaced the starving global-24 break');
   ok(composerSource.includes('validatePlaybackUrl(source.url, \u0027direct\u0027)'), 'K: the existing playback URL boundary is still the composer\u2019s gate');
 }
@@ -699,7 +707,9 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(shellTemplate.includes('role="group" aria-label="Playback quality"'), 'AA: the internal quality row is a labeled group');
   ok(shellTemplate.includes('aria-pressed={engineQuality?.selected === option.id}'), 'AA: quality mode uses aria-pressed (button selection state)');
   ok(shellTemplate.includes('aria-label="Close source list"'), 'AA: the sheet close button keeps its accessible name');
-  ok(cardSource.includes('<strong class="card-quality">{maveroStreamQualityLabel(stream)}</strong>'), 'AA: quality names come from the derived human-readable label (screen-reader understandable)');
+  // Phase 13 UPDATE: the headline (bucket • audio • format) is the primary
+  // human-readable name; the derived quality label remains the fallback.
+  ok(cardSource.includes('maveroStreamHeadline(stream) ?? maveroStreamQualityLabel(stream)'), 'AA: quality names come from the quality-first headline / derived human-readable label (screen-reader understandable)');
   ok(shellTemplate.includes('aria-label="Close stream list"') && shellTemplate.includes('aria-label="Back to source list"'), 'AA: the streams sheet close + back buttons keep their accessible names (Phase 9)');
 }
 

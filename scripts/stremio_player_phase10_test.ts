@@ -24,8 +24,8 @@ import { parseSourceForm, parseProviderForm } from '$lib/server/streaming/valida
 import {
   aggregateMaveroBuckets,
   MAVERO_AGGREGATE_MAX_STREAMS,
-  MAVERO_AGGREGATE_STREAMS_PER_ADDON,
 } from '$lib/shared/mavero-aggregate';
+import { MAX_EQUIVALENT_RELEASES, MAX_STREAMS_PER_QUALITY } from '$lib/shared/stream-selection';
 import {
   mergeMaveroResults,
   startMaveroProgressiveResolution,
@@ -273,24 +273,43 @@ function makeSessionClient(addons: FakeAddonRecord[]) {
   const skipped = await resolveAddonToken(makeSessionClient([disabledAddon]), { sessionId: 'sess-1', token: token2 }, { mediaType: 'movie', contentId: 'tt500' }, { secret: SECRET, fetcher, loadContent: contentLookup, loadAddonById: async () => disabledAddon, dnsResolver });
   ok(skipped.result.status === 'skipped', 'C: an addon disabled mid-session resolves as SKIPPED (admin state wins)');
 
-  // Per-addon cap: 60 offered streams → at most MAVERO_AGGREGATE_STREAMS_PER_ADDON.
-  const many = { streams: Array.from({ length: 60 }, (_, index) => ({ name: `${index}p`, title: `${index}p`, url: `https://media.example/s${index}.mp4` })) };
+  // Phase 13 UPDATE: the per-addon contribution is now RANK-THEN-SELECT, not
+  // first-come-first-served. 60 raw streams of ONE equivalence class (same
+  // bucket + codec + container + audio) collapse to the best
+  // MAX_EQUIVALENT_RELEASES entries; the selection then caps the bucket at
+  // MAX_STREAMS_PER_QUALITY. The noisy 40-stream dump is gone — the tab
+  // count is the FINAL usable count.
+  const many = { streams: Array.from({ length: 60 }, (_, index) => ({ name: '1080p', title: '1080p Dual Audio', url: `https://media.example/s${index}.mp4` })) };
   const capped = await resolveAddonToken(
     client,
     { sessionId: 'sess-1', token },
     { mediaType: 'movie', contentId: 'tt500' },
     { secret: SECRET, loadContent: contentLookup, loadAddonById, dnsResolver, fetcher: (async () => new Response(JSON.stringify(many), { status: 200 })) as typeof fetch },
   );
-  ok(capped.result.status === 'ok' && capped.result.streamCount === MAVERO_AGGREGATE_STREAMS_PER_ADDON, `C: the per-addon cap (${MAVERO_AGGREGATE_STREAMS_PER_ADDON}) bounds one addon\u2019s contribution (GOAL 4)`);
+  ok(
+    capped.result.status === 'ok' && capped.result.streamCount === Math.min(MAX_EQUIVALENT_RELEASES, MAX_STREAMS_PER_QUALITY),
+    `C: equivalent 1080p releases collapse to the best ${MAX_EQUIVALENT_RELEASES} and the per-quality cap (${MAX_STREAMS_PER_QUALITY}) bounds the bucket (Phase 13 selection)`,
+  );
 
-  // Plain-http streams are excluded by the playback boundary.
+  // Phase 13 UPDATE (Pipe fix): cleartext http:// ADDON stream URLs now pass
+  // the playback boundary (the browser — never the Mavero server — fetches
+  // them; real Stremio addons legitimately serve http media, and the old
+  // https-only rule emptied otherwise-valid addons). Credential/private-host
+  // rules are unchanged; the compat path stays https-only.
   const insecure = await resolveAddonToken(
     client,
     { sessionId: 'sess-1', token },
     { mediaType: 'movie', contentId: 'tt500' },
     { secret: SECRET, loadContent: contentLookup, loadAddonById, dnsResolver, fetcher: (async () => new Response(JSON.stringify(streamPayloadFixture('http://media.example/insecure.mp4', '720p')), { status: 200 })) as typeof fetch },
   );
-  ok(insecure.result.status === 'ok' && insecure.result.streamCount === 0, 'C: the HTTPS-only playback boundary still applies per addon');
+  ok(insecure.result.status === 'ok' && insecure.result.streamCount === 1, 'C: a cleartext http:// addon stream now passes the ADDON playback boundary (Phase 13 Pipe fix)');
+  const privateHost = await resolveAddonToken(
+    client,
+    { sessionId: 'sess-1', token },
+    { mediaType: 'movie', contentId: 'tt500' },
+    { secret: SECRET, loadContent: contentLookup, loadAddonById, dnsResolver, fetcher: (async () => new Response(JSON.stringify(streamPayloadFixture('http://192.168.1.10/video.mp4', '720p')), { status: 200 })) as typeof fetch },
+  );
+  ok(privateHost.result.status === 'ok' && privateHost.result.streamCount === 0, 'C: private-host addon URLs are still rejected by the playback boundary');
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +496,8 @@ function makeSessionClient(addons: FakeAddonRecord[]) {
   ok(needsCompatibilityPath(classifyStreamCompatibility({ container: 'MKV', codec: 'H.264' })), 'G: remux verdicts qualify for a compat reference');
   ok(!needsCompatibilityPath(classifyStreamCompatibility({ protocol: 'hls' })), 'G: HLS never needs the compat path');
   ok(compatibilityBadgeText('DIRECT_PLAYABLE') === null, 'G: playable streams carry NO badge');
-  ok(compatibilityBadgeText('DIRECT_UNCERTAIN') === 'May not play in this browser', 'G: uncertainty is phrased honestly');
+  // Phase 13 UPDATE: tightened copy for the primary streaming list.
+  ok(compatibilityBadgeText('DIRECT_UNCERTAIN') === 'May not play', 'G: uncertainty is phrased honestly (Phase 13 copy)');
   ok(codecHintsFromText('Movie.2023.1080p.HEVC.Hindi.10bit.WEB-DL.x265.mkv').codec === 'hevc', 'G: addon-supplied text yields codec hints (word-boundary lexicon)');
   ok(codecHintsFromText('Thriller.Night.2023.mkv').codec === null, 'G: prose never becomes a codec');
 }
@@ -540,7 +560,8 @@ function makeSessionClient(addons: FakeAddonRecord[]) {
   ok(!expired.ok && expired.code === 'SESSION_EXPIRED', 'I: expired references are surfaced distinctly');
 
   const mkvStream = { url: 'https://m.example/a.mkv', container: 'MKV', codec: 'H.264' } as PlayerQualityOption;
-  ok(compatBadgeForStream(mkvStream) === 'Needs conversion (remux)', 'I: stream cards show the compat badge from addon metadata only');
+  // Phase 13 UPDATE: jargon-free copy for the conversion fallback badge.
+  ok(compatBadgeForStream(mkvStream) === 'Conversion fallback', 'I: stream cards show the compat badge from addon metadata only (Phase 13 copy)');
   ok(compatTierForStream({ url: 'https://m.example/b.mp4', container: 'MP4', codec: 'H.264' } as PlayerQualityOption) === 'DIRECT_PLAYABLE', 'I: playable streams get no badge tier');
   // Phase 11 (GOAL B7) intentionally reworded the preparing status to the
   // shorter "Preparing stream…" while the compat session is prepared/polled.
