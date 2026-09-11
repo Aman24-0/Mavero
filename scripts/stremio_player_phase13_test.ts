@@ -31,12 +31,16 @@ import type { StreamingAddon } from '$lib/shared/streaming-addons';
  *       "Download Only" is excluded outright.
  *   F   Direct-playable outranks conversion-required; conversion stays a
  *       selectable fallback (never auto-started).
+ *       Phase 14 UPDATE: the PLAYER surface keeps ONLY addon HLS streams —
+ *       direct files are isolated to the Mavero Downloader (its companion
+ *       suite stremio_downloader_phase14_test.ts pins the download side).
  *   G   The compatibility worker is NOT invoked at discovery: resolving an
  *       addon mints signed references only — no worker fetch, no job.
  *   H   Retry determinism: a FAILED worker job + the same still-valid token
  *       creates a FRESH attempt (the Phase 12 "Source not available" bug).
  *   I   Pipe: a real Pipe-shaped manifest (multi idProperty + tt prefixes)
- *       serving cleartext http:// PixelDrain links reaches the FINAL list.
+ *       serving cleartext http:// PixelDrain links is retained — Phase 14:
+ *       on the DOWNLOAD surface (the player offers addon HLS only).
  *   J   Addon failure isolation: a failed addon never breaks the others.
  *   K   Tab counts equal the FINAL usable stream counts (post-selection).
  *   L   Sandbox: the source UI exposes the override + effective policy; the
@@ -333,39 +337,29 @@ async function sectionFG(): Promise<void> {
   ok(fetchedUrls.length === 1 && fetchedUrls[0] === 'https://pipe-addon.example/stream/movie/tt8633518.json', 'G: discovery fetched ONLY the addon stream endpoint (no worker, no media probing)');
   ok(fetchedUrls.every((url) => !url.includes('/compat/') && !url.includes('media-worker')), 'G: no compatibility-worker request happens at discovery');
 
-  const compatEntries = resolution.result.streams.filter((stream) => stream.compat);
-  ok(compatEntries.every((stream) => stream.compat?.kind === 'remux' || stream.compat?.kind === 'transcode'), 'G: selected conversion candidates carry a SIGNED reference (explicit selection enables the worker later)');
-  ok(resolution.result.streams.every((stream) => stream.quality.usability), 'G: every selected stream carries its server-computed usability verdict');
+  // Phase 14 (external-downloader architecture): the PLAYER surface keeps
+  // ONLY addon HLS streams. This PenguPlay-style payload (remux + HEVC +
+  // WEB-DL MKVs) contains no HLS at all → the player offers ZERO streams.
+  // Those direct files are NOT lost: the Mavero Downloader service ranks and
+  // serves them (pinned behaviorally in stremio_downloader_phase14_test.ts).
+  ok(resolution.result.streams.length === 0, 'F: the player offers ZERO direct-file streams (all isolated to the Mavero Downloader — Phase 14)');
+  ok(resolution.result.streams.every((stream) => !stream.compat), 'F: isolation also means NO conversion references are minted for the player');
 
-  // F: the returned order is rank order — WEB-DL (direct/uncertain) before
-  // the HEVC conversion candidate; remux and download-only are absent.
-  const urls = resolution.result.streams.map((stream) => stream.source.url);
-  ok(!urls.includes('https://pengu.example/get/remux1080') && !urls.includes('https://pengu.example/download/only'), 'F: remux and download-only never reach the final list');
-  ok(urls.indexOf('https://pengu.example/get/webdl1080') < urls.indexOf('https://pengu.example/get/hevc1080'), 'F: the H.264 WEB-DL outranks the HEVC conversion candidate');
-  const hevcStream = resolution.result.streams.find((stream) => stream.source.url === 'https://pengu.example/get/hevc1080');
-  ok(hevcStream?.compat?.kind === 'transcode', 'F: the HEVC candidate is a real fallback WITH a usable signed reference');
-
-  // F (client half): with nothing playing, the merged pool LEADS with the
-  // best-ranked stream and the fallbacks sink — auto-start never begins
-  // with a conversion candidate while a direct one exists.
-  const hubResult = { key: 'addon-0', addonName: 'HdHub', ordering: 0, status: 'ok' as const, streams: hubPayload().streams.map((stream, index) => {
-    const input = { url: stream.url, protocol: (stream.url.includes('.m3u8') ? 'hls' : 'mp4') as string, height: 1080 };
+  // F (client half): the merged pool still LEADS with the best-ranked HLS
+  // stream — the hub fixture (HLS + MP4) is filtered through the same
+  // player-only-HLS reality before the merge, so auto-start is never a
+  // conversion candidate (there are none anymore) and never a direct file.
+  const hubResult = { key: 'addon-0', addonName: 'HdHub', ordering: 0, status: 'ok' as const, streams: hubPayload().streams.filter((stream) => stream.url.includes('.m3u8')).map((stream, index) => {
+    const input = { url: stream.url, protocol: 'hls' as const, height: 1080 };
     return {
-      source: { type: 'direct' as const, url: stream.url, providerId: 'p1', sourceId: `s${index}`, mediaType: 'movie' as const, qualities: [{ url: stream.url, label: '1080p' }], metadata: { protocol: (stream.url.includes('.m3u8') ? 'hls' : 'mp4') as 'hls' | 'mp4', providerName: 'HdHub' } },
+      source: { type: 'direct' as const, url: stream.url, providerId: 'p1', sourceId: `s${index}`, mediaType: 'movie' as const, qualities: [{ url: stream.url, label: '1080p' }], metadata: { protocol: 'hls' as const, providerName: 'HdHub' } },
       quality: { url: stream.url, label: '1080p', addonName: 'HdHub', usability: rankOf(withPlay(input), index) },
     };
   }) };
-  // Map the server shape → the client MaveroResolvedStream shape (what
-  // resolveOne produces on the watch route: compat.token → compatToken).
-  const penguClientStreams = resolution.result.streams.map((stream) => ({
-    source: stream.source,
-    quality: stream.quality,
-    ...(stream.compat ? { compatToken: stream.compat.token, compatKind: stream.compat.kind } : {}),
-  }));
-  const penguResult = { key: 'addon-1', addonName: 'Pipe', ordering: 2, status: 'ok' as const, streams: penguClientStreams };
+  const penguResult = { key: 'addon-1', addonName: 'Pipe', ordering: 2, status: 'ok' as const, streams: [] };
   const merged = mergeMaveroResults([hubResult, penguResult], { sourceId: 'mavero', sourceName: 'MAVERO Player', mediaType: 'movie' }, null);
   ok(merged?.qualities[0]?.url === 'https://hub-cdn.example/hls/s1/index.m3u8?token=signed', 'F: the merged pool LEADS with the direct HLS stream (auto-start is never a conversion)');
-  ok(merged?.qualities[merged.qualities.length - 1]?.compatToken !== undefined, 'F: the conversion fallback sinks to the pool tail');
+  ok(merged?.qualities.every((quality) => quality.url !== 'https://hub-cdn.example/file/movie.mp4'), 'F: the MP4 direct file from the same addon stays OUT of the player pool (Phase 14)');
 }
 
 // ---------------------------------------------------------------------------
@@ -481,12 +475,13 @@ async function sectionI(): Promise<void> {
     }) as typeof fetch,
   });
   ok(requested[0] === 'https://pipe-addon.example/stream/movie/tt8633518.json', 'I: Pipe is called with the IMDb-namespaced endpoint (exactly what Stremio sends)');
-  ok(resolution.result.status === 'ok' && resolution.result.streams.length === 2, 'I: BOTH cleartext http:// PixelDrain streams reach the final selected list (the 0-streams bug is fixed)');
-  if (resolution.result.status === 'ok') {
-    ok(resolution.result.streams.every((stream) => stream.source.url.startsWith('http://')), 'I: the addon URLs are preserved verbatim (no silent rewrite, no proxy)');
-    ok(resolution.result.streams.every((stream) => stream.quality.usability), 'I: the http candidates carry usability verdicts (ranked, not hidden)');
-    ok(resolution.result.streams.every((stream) => stream.compat === undefined), 'I: cleartext-http candidates get NO compat reference (the worker path stays https-only)');
-  }
+  // Phase 14 (external-downloader architecture): Pipe's cleartext http
+  // streams ARE retained — in the MAVERO DOWNLOADER surface, not the native
+  // player. The player response stays an OK result with ZERO player streams
+  // (direct files isolated; the magnet/infoHash entry rejected at normalize).
+  // The downloader-side retention of BOTH http links is pinned behaviorally
+  // in stremio_downloader_phase14_test.ts (section I-mirror).
+  ok(resolution.result.status === 'ok' && resolution.result.streams.length === 0, 'I: Pipe resolves OK; its cleartext http DIRECT FILES are isolated from the native player (retained by the Mavero Downloader — Phase 14)');
   // Boundary precision: schemes/credentials/private hosts stay rejected.
   assert.throws(() => validateAddonStreamPlaybackUrl('ftp://x.example/a.mkv'), 'I: non-http schemes are still rejected');
   assert.throws(() => validateAddonStreamPlaybackUrl('https://user:pass@x.example/a.mkv'), 'I: credentialed URLs are still rejected');

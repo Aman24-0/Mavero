@@ -10,11 +10,13 @@
   import {
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
+    MAVERO_DOWNLOADER_PROVIDER_ID,
     providerUsesExternalServers,
     type DownloadMediaType,
     type DownloadUrlCandidate,
     type PublicDownloadProvider,
   } from '$lib/shared/downloader';
+  import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
 
   // ----- Props -----
   // Props are explicit per the spec. The parent (DetailPage) supplies the
@@ -26,6 +28,12 @@
   export let selectedProviderId: string | null = null;
   export let mediaType: DownloadMediaType = 'movie';
   export let tmdbId = '';
+  // Phase 14: the canonical app content id + ORIGINAL content type
+  // ('movie' | 'series' | 'anime') for the built-in Mavero Downloader panel.
+  // Optional: when absent the panel falls back to the mediaType mapping
+  // (tv → series) and a `${mediaType}-${tmdbId}` derived id.
+  export let contentId = '';
+  export let contentType: 'movie' | 'series' | 'anime' | '' = '';
   export let season: number | undefined = undefined;
   export let episode: number | undefined = undefined;
   // Optional release year, used ONLY to compute a Cineverse alternate URL
@@ -112,19 +120,33 @@
   // releaseYear is supplied, an ALTERNATE year-suffixed URL is computed
   // and offered as a manual fallback (the user can swap the iframe src
   // to it via the "Try with year" button in the fallback bar).
+  //
+  // Phase 14: the built-in Mavero Downloader provider renders its own
+  // addon-links panel INLINE (no iframe, no URL template) — candidate
+  // building is skipped for it entirely.
   $: if (activeProvider && open) {
-    urlCandidates = getDownloadUrlCandidates(activeProvider, { mediaType, tmdbId, title, season, episode, releaseYear });
-    alternateUrl = urlCandidates.length > 1 ? urlCandidates[1].url : null;
-    // Reset the useAlternate toggle whenever the active provider or media
-    // context changes — a fresh sheet open always starts with the primary
-    // URL (deterministic, no surprises).
-    useAlternate = false;
-    // Reset the external-server banner dismissal when the provider changes
-    // — the banner is provider-specific, so a new provider re-shows it.
-    externalBannerDismissed = false;
-    iframeUrl = urlCandidates.length > 0 ? urlCandidates[0].url : null;
-    iframeLoading = iframeUrl !== null;
-    iframeError = false;
+    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID) {
+      urlCandidates = [];
+      alternateUrl = null;
+      useAlternate = false;
+      externalBannerDismissed = false;
+      iframeUrl = null;
+      iframeLoading = false;
+      iframeError = false;
+    } else {
+      urlCandidates = getDownloadUrlCandidates(activeProvider, { mediaType, tmdbId, title, season, episode, releaseYear });
+      alternateUrl = urlCandidates.length > 1 ? urlCandidates[1].url : null;
+      // Reset the useAlternate toggle whenever the active provider or media
+      // context changes — a fresh sheet open always starts with the primary
+      // URL (deterministic, no surprises).
+      useAlternate = false;
+      // Reset the external-server banner dismissal when the provider changes
+      // — the banner is provider-specific, so a new provider re-shows it.
+      externalBannerDismissed = false;
+      iframeUrl = urlCandidates.length > 0 ? urlCandidates[0].url : null;
+      iframeLoading = iframeUrl !== null;
+      iframeError = false;
+    }
   } else if (!activeProvider) {
     urlCandidates = [];
     alternateUrl = null;
@@ -268,6 +290,14 @@
   $: sheetTitle = title ? `Download ${title}` : 'Download';
   $: iframeTitle = activeProvider ? `Download ${activeProvider.name} for ${title || 'this title'}` : 'Download';
   $: hasProviders = filteredProviders.length > 0;
+  // Phase 14: the built-in Mavero Downloader renders its addon panel INLINE.
+  $: isMaveroDownloader = activeProvider?.slug === MAVERO_DOWNLOADER_PROVIDER_ID;
+  // The addon API is content-type-shaped ('movie' | 'series' | 'anime'); the
+  // sheet's registry is downloader-shaped ('movie' | 'tv'). The ORIGINAL
+  // content type wins when the parent supplied it (preserves 'anime');
+  // otherwise tv maps to series.
+  $: maveroMediaType = contentType || (mediaType === 'tv' ? 'series' : 'movie');
+  $: maveroContentId = contentId || `${maveroMediaType}-${tmdbId}`;
 </script>
 
 <svelte:window onkeydown={handleKeydown} onclick={handleWindowClick} />
@@ -335,7 +365,22 @@
       </header>
 
       <div class="dl-body">
-        {#if !hasProviders}
+        {#if isMaveroDownloader}
+          <!-- Phase 14: the BUILT-IN Mavero Downloader — the addon-grouped
+               "best available links" panel rendered INLINE (no cross-origin
+               iframe, no URL template). The server ranks + filters; this
+               surface only presents states and the three link actions. -->
+          <div class="dl-mavero-panel">
+            <MaveroAddonDownload
+              contentId={maveroContentId}
+              mediaType={maveroMediaType}
+              {tmdbId}
+              {season}
+              {episode}
+              {title}
+            />
+          </div>
+        {:else if !hasProviders}
           <!-- Empty state: no enabled providers support this content type. -->
           <div class="dl-empty">
             <AlertTriangle size={26} />
@@ -624,6 +669,16 @@
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+  }
+
+  /* Phase 14: the built-in Mavero Downloader panel fills the body with its
+     own scroll (the addon panel is a normal in-flow component, not an
+     iframe) — same footprint the iframe area would take. */
+  .dl-mavero-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 16px 16px;
   }
 
   /* iframe area: occupies essentially all remaining sheet space. */

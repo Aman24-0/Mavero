@@ -458,27 +458,21 @@ async function sectionC2(): Promise<void> {
     }) as typeof fetch,
   });
   ok(fetchedUrls[0] === 'https://pipe-addon.example/stream/movie/tmdb:1094521.json', 'C2: MAVERO called Pipe with the exact Stremio stream endpoint (tmdb namespace it accepts)');
-  ok(resolution.result.status === 'ok' && resolution.result.streams.length === 2, 'C2: Pipe resolves BOTH streams (direct file + HLS variant) through the hardened pipeline');
+  // Phase 14 (external-downloader architecture): the PLAYER keeps only the
+  // addon HLS variant. The direct HEVC MKV file is ISOLATED from native
+  // playback — it is served by the Mavero Downloader surface (the
+  // downloader-side retention of this exact link is pinned in
+  // stremio_downloader_phase14_test.ts).
+  ok(resolution.result.status === 'ok' && resolution.result.streams.length === 1, 'C2: Pipe resolves through the hardened pipeline; the player keeps ONLY the HLS variant (the direct file is isolated to the Mavero Downloader — Phase 14)');
   if (resolution.result.status === 'ok') {
-    // Phase 13 UPDATE: the returned order is now the SELECTION RANK — the
-    // direct-playable HLS variant leads its quality bucket and the
-    // conversion-required HEVC MKV follows as the fallback (compat-first
-    // discovery would invert the product's "direct playable first" rule).
     const hls = resolution.result.streams[0];
-    const direct = resolution.result.streams[1];
-    ok(hls?.quality.usability?.play === 'direct' && direct?.quality.usability?.play === 'transcode', 'C2: the selection rank orders DIRECT HLS before the conversion-required MKV (Phase 13; HEVC MKV = transcode class)');
-    ok(direct?.source.url === 'https://pixeldrain.example/api/file/ab12cd', 'C2: the PixelDrain-style DIRECT https link survives normalization + the playback boundary');
-    ok(direct?.source.metadata?.streamContainer === 'MKV', 'C2: addon container metadata travels');
-    // Phase 12 UPDATE: the codec now ALSO derives from the addon FILENAME —
-    // this payload's behaviorHints.filename explicitly says "HEVC.10bit",
-    // so the codec is labeled (and the stream routes to the TRANSCODE path
-    // instead of a doomed video-copy remux of an HEVC stream).
-    ok(direct?.source.metadata?.streamCodec === 'HEVC', 'C2: the codec is labeled from the addon filename that explicitly names it (Phase 12)');
-    ok(typeof direct?.compat?.token === 'string' && direct?.compat?.kind === 'transcode', 'C2: the HEVC MKV (codec+bit-depth from the addon FILENAME hints) carries a SIGNED transcode reference');
+    ok(hls?.source.url === 'https://pipe-cdn.example/hls/session99/index.m3u8?token=signed', 'C2: the surviving player stream is the HLS variant');
+    ok(hls?.quality.usability?.play === 'direct', 'C2: the HLS variant is DIRECT playable (Phase 13 selection rank)');
+    ok(!JSON.stringify(resolution.result.streams).includes('pixeldrain.example/api/file/ab12cd'), 'C2: the PixelDrain-style direct https file is NOT offered to the native player anymore');
     ok(hls?.source.metadata?.protocol === 'hls', 'C2: Pipe HLS variant is protocol-labeled hls (plays via Video.js HlsJsVideo)');
     ok(hls?.compat === undefined, 'C2: the HLS variant gets NO compat reference (HLS is direct — never routed through FFmpeg)');
     // The metadata note never exposes the manifest URL / internals.
-    ok(!JSON.stringify(direct?.source).includes('pipe-addon.example/manifest'), 'C2: the resolved PlayerSource never leaks the addon manifest URL');
+    ok(!JSON.stringify(hls?.source).includes('pipe-addon.example/manifest'), 'C2: the resolved PlayerSource never leaks the addon manifest URL');
   }
 
   // 21. Pipe failure does not block other addons: a TIMEOUT on Pipe still
@@ -498,9 +492,9 @@ async function sectionC2(): Promise<void> {
     loadAddonById: addonById('x'),
     loadContent: loadContentOf(contentLookup),
     dnsResolver: (async (hostname: string) => [{ address: '93.184.216.34', family: 4 }]) as never,
-    fetcher: (async () => new Response(JSON.stringify({ streams: [{ name: '1080p', url: 'https://pengu-media.example/movie.mp4' }] }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
+    fetcher: (async () => new Response(JSON.stringify({ streams: [{ name: '1080p', url: 'https://pengu-media.example/movie.m3u8' }] }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch,
   });
-  ok(penguResolution.result.status === 'ok' && penguResolution.result.streams.length === 1, 'C2: Pipe failure does NOT affect PenguPlay (failure isolation)');
+  ok(penguResolution.result.status === 'ok' && penguResolution.result.streams.length === 1, 'C2: Pipe failure does NOT affect PenguPlay (failure isolation; Phase 14 fixture is HLS so the stream stays player-offered)');
 
   // 22. ok-with-zero-streams: Pipe answering an EMPTY stream list is a real
   // answer surfaced by the UI ("✓ Loaded — 0 streams"), never hidden.

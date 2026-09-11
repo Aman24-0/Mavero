@@ -35,6 +35,15 @@ export type DownloadPlaceholder = (typeof DOWNLOAD_PLACEHOLDERS)[number];
 export type DownloadMediaType = 'movie' | 'tv';
 
 /**
+ * The stable slug of the BUILT-IN "Mavero Downloader" provider (Phase 14).
+ * The public config endpoint injects this provider (see the server reader);
+ * the DownloadSheet recognizes it by slug and renders the addon-downloader
+ * panel INLINE instead of a cross-origin iframe. Kept here (shared, pure)
+ * so both the server injector and the client sheet reference ONE constant.
+ */
+export const MAVERO_DOWNLOADER_PROVIDER_ID = 'mavero-downloader';
+
+/**
  * Public downloader provider shape — exactly the fields the browser iframe
  * feature needs to render + build a URL. No admin-only metadata (notes,
  * status flags, raw admin row data) is ever included.

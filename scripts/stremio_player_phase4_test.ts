@@ -421,7 +421,8 @@ function makeDirectSource(overrides: Partial<PlayerSource> = {}): PlayerSource {
   );
   ok(calls.length === 1 && calls[0].url === 'https://addon.example/stream/movie/tt1234567.json', 'J: resolver invoked with the constructed movie endpoint');
   const movieSource = maveroPlayerSourceFromResolution(resolution, 'Example Movie');
-  ok(movieSource !== null && movieSource.qualities?.length === 2, 'J: movie resolution composes every stream');
+  ok(movieSource !== null && movieSource.qualities?.length === 1, 'J: movie resolution composes the HLS stream (the MP4 direct file is isolated to the Mavero Downloader — Phase 14)');
+  ok(!JSON.stringify(movieSource).includes('movie.mp4'), 'J: the isolated direct-file URL never reaches the player payload');
   ok(movieSource?.metadata?.title === 'Example Movie', 'J: aggregate title is the content title');
   ok(!JSON.stringify(movieSource).includes('addon.example'), 'J: the manifest URL NEVER appears in the composed source');
   ok(!JSON.stringify(movieSource).includes('manifest'), 'J: no manifest reference of any kind in the payload');

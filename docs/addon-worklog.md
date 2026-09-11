@@ -1976,3 +1976,69 @@ success; `git diff --check` clean; worker `tsc --noEmit` clean; FULL chain
 behavioral checks A–N, incl. the worker-retry lifecycle and the
 no-worker-at-discovery fetch-spy proof). NOT yet verified on real devices —
 Android Chrome E2E against live addons is the next step.
+
+## Phase 14 — Mavero Downloader / external-player architecture (2026-09-11)
+
+PRODUCT DECISION: Stremio HTTP addon DIRECT-FILE streams no longer play in
+Mavero's native browser player. They are served by a new built-in MAVERO
+DOWNLOADER surface (best-practical-links → ▶ external player / Copy URL /
+Download). Addon HLS keeps its existing native-HLS path (HdHub unchanged);
+VidSrc/VidY/embed providers, the native player, HLS.js and Video.js are
+untouched; the media-worker stays deployed but is now unreachable from the
+addon paths.
+
+Server:
+- stream-normalize.ts: preserves addon-specific `stream.type` (AIOStreams)
+  + standard `availability` + `tag`; P2P detection is now TYPE-AWARE — an
+  explicit `type:'http'` entry survives even with legacy infoHash fields
+  (untyped torrent shapes, `type:'p2p'` and torrentish URLs still rejected).
+- download-selection.ts (NEW): downloader-specific selection policy (max 4
+  per addon). Excludes HLS/DASH manifests, non-video files, private hosts
+  and download-only releases; ranks 1080p > 720p > 480p > practical-4K >
+  auto, H.264 > HEVC > AV1/VP9 (unknown middle), multi > dual > unknown >
+  single audio, size-aware (log2 over-preferred penalty + heavy/hard caps),
+  CAM/TS penalties, WEB-DL/BluRay preference, small https bonus, equivalent-
+  release dedupe (name-insensitive), 4K×1 / other×2 diversity caps,
+  deterministic, never fetches/proves/plays anything.
+- addon-download-service.ts (NEW): per-addon resolution for the downloader
+  via the EXISTING hardened pipeline (planAddonStreamRequest → SSRF-guarded
+  stream fetcher → shared normalizer). States: loaded / empty / failed +
+  closed error codes. NO worker, NO compat token, NO media fetch.
+- addon-session.ts + stream-resolver.ts: the PLAYER aggregate/progressive
+  paths now keep ONLY addon HLS streams; direct files are isolated
+  (diagnostics: player-hls-only / isolated-direct-file log lines).
+- /api/downloader/mavero (NEW): validated GET → grouped per-addon best
+  links (safe presentation view only: no manifest URLs, no header names,
+  no raw upstream errors, no internal score/index fields).
+- downloader config route: injects the built-in `mavero-downloader`
+  provider (helper in public-config.ts; ordering LAST, never default,
+  dedupe-safe; templates deep-link the current origin).
+
+Client:
+- external-player.ts (NEW, pure): mpv-android VIEW-intent launch
+  (`package=is.xyz.mpv` + `S.browser_fallback_url=<original verbatim>`),
+  graceful direct-URL fallback off-Android, honest hint strings
+  ("To play this source, install mpv." / "This source opens in an external
+  player.").
+- MaveroAddonDownload.svelte (NEW): addon-tab panel — Loading / N links /
+  0 links / Failed + Retry states, "Best available links" terminology
+  (never "guaranteed working"), per-link `1080p · H.264 · Multi · MKV ·
+  4.6 GB` label + [▶ Open Player] [Copy URL] [Download] on the ORIGINAL
+  URL (copy with success/error feedback, download Opening… state with
+  duplicate-click guard).
+- DownloadSheet.svelte: renders the panel INLINE for the built-in provider
+  (no iframe); DetailPage passes the canonical contentId + original
+  ContentType (anime preserved). /watch/mavero-downloader/{movie,tv}
+  standalone deep-link pages added.
+- PlayerShell: LOADED-ZERO addon state now explains "Direct files from
+  this addon are available in Mavero Downloader (Download sheet)" — the
+  Pipe "✓ 0" reading is a state, not a bug.
+
+Tests: stremio_downloader_phase14_test.ts (NEW, 84 checks: player-HLS
+isolation, downloader retention of Pipe http links, AIOStreams type-aware
+P2P, externalUrl/proxyHeaders exclusion, http+https allowed, max-4 +
+diversity + dedupe + determinism, state model, mpv intent + fallback,
+config injection, no-media-fetch/no-FFmpeg proof). Phase 3/4/8/9/10/11/12/13
+suites reconciled to the new contract (player fixtures use HLS where the
+surface matters; direct-file expectations moved to the Phase 14 suite).
+Chain now 91 commands, ends with Phase 14.

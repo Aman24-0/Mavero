@@ -576,6 +576,8 @@
   selectedProviderId={null}
   mediaType={downloadMediaType}
   tmdbId={downloadTmdbId}
+  contentId={item.id}
+  contentType={type}
   season={downloadMediaType === 'tv' ? downloadTargetSeason : undefined}
   episode={downloadMediaType === 'tv' ? downloadTargetEpisode : undefined}
   releaseYear={downloadReleaseYear}

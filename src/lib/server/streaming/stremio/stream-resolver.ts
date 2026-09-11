@@ -271,15 +271,20 @@ export async function resolveStremioStreams(client: StreamingClient, request: St
     const unsupported: StremioUnsupportedStream[] = [];
     for (const outcome of outcomes) {
       if (outcome.status === 'ok') {
-        diagnostics.push({
-          addonId: outcome.addon.id,
-          addonName: outcome.addon.name,
-          addonOrdering: outcome.addon.ordering,
-          status: 'ok',
-          streamCount: outcome.streams.length,
-          unsupportedCount: outcome.unsupported.length,
-        });
+        // Phase 14 (product decision): the native player keeps ONLY addon
+        // HLS streams. Direct-file candidates (MP4/MKV/extensionless) are
+        // ISOLATED from playback here — they are served by the MAVERO
+        // Downloader (external player / copy / download) instead. This is
+        // the aggregate-path half of the same rule `addon-session.ts`
+        // enforces on the progressive path.
+        let playerStreamCount = 0;
+        let isolatedDirectFiles = 0;
         for (const stream of outcome.streams) {
+          if (stream.protocol !== 'hls') {
+            isolatedDirectFiles += 1;
+            continue;
+          }
+          playerStreamCount += 1;
           sources.push({
             addonId: outcome.addon.id,
             addonSlug: outcome.addon.slug,
@@ -307,6 +312,19 @@ export async function resolveStremioStreams(client: StreamingClient, request: St
         }
         for (const entry of outcome.unsupported) {
           unsupported.push({ ...entry, addonId: outcome.addon.id, addonName: outcome.addon.name });
+        }
+        diagnostics.push({
+          addonId: outcome.addon.id,
+          addonName: outcome.addon.name,
+          addonOrdering: outcome.addon.ordering,
+          status: 'ok',
+          streamCount: playerStreamCount,
+          unsupportedCount: outcome.unsupported.length,
+        });
+        if (isolatedDirectFiles > 0) {
+          console.info(
+            `[StremioStreams] addon=${outcome.addon.slug} isolated ${isolatedDirectFiles} direct-file stream(s) from the native player (Mavero Downloader surface)`,
+          );
         }
       } else {
         diagnostics.push({ addonId: outcome.addon.id, addonName: outcome.addon.name, addonOrdering: outcome.addon.ordering, status: 'failed', errorCode: outcome.errorCode });

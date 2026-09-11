@@ -25,7 +25,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import type { PublicDownloadProvider } from '$lib/shared/downloader';
-import { sortPublicDownloadProviders } from '$lib/shared/downloader';
+import { MAVERO_DOWNLOADER_PROVIDER_ID, sortPublicDownloadProviders } from '$lib/shared/downloader';
 
 type DownloadClient = SupabaseClient<Database>;
 
@@ -145,4 +145,51 @@ export async function getPublicDownloadConfigOrEmpty(client: DownloadClient): Pr
     console.error('[Downloader] Public configuration failed', error);
     return EMPTY_CONFIG;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 — the built-in MAVERO Downloader surface.
+//
+// Mavero Downloader is NOT a DB-managed provider: it is the app's own
+// downloader (best direct links from the enabled Stremio HTTP addons,
+// rendered by MaveroAddonDownload). It is injected into the PUBLIC config
+// so the existing DownloadSheet dropdown can treat it like any other
+// downloader without hard-coding a production hostname: its URL templates
+// point back to the CURRENT request origin (deep-linkable standalone pages).
+// ---------------------------------------------------------------------------
+
+/** The stable id/slug of the built-in downloader provider (defined in $lib/shared/downloader). */
+export { MAVERO_DOWNLOADER_PROVIDER_ID };
+
+/**
+ * Builds the built-in Mavero Downloader provider entry for the public
+ * config. Pure — unit-testable. `ordering: Number.MAX_SAFE_INTEGER` keeps
+ * it LAST in the dropdown (external downloaders stay first); it is never
+ * the default and never overrides a DB-managed provider.
+ */
+export function builtinMaveroDownloaderProvider(origin: string): PublicDownloadProvider {
+  return {
+    id: MAVERO_DOWNLOADER_PROVIDER_ID,
+    name: 'Mavero Downloader',
+    slug: MAVERO_DOWNLOADER_PROVIDER_ID,
+    enabled: true,
+    isDefault: false,
+    ordering: Number.MAX_SAFE_INTEGER,
+    icon: null,
+    description: 'Best direct links from enabled Stremio HTTP addons.',
+    supportsMovie: true,
+    supportsTv: true,
+    movieUrlTemplate: `${origin}/watch/mavero-downloader/movie/{tmdbId}`,
+    tvUrlTemplate: `${origin}/watch/mavero-downloader/tv/{tmdbId}/{season}/{episode}`,
+  };
+}
+
+/**
+ * Appends the built-in provider to a public config (dedupe-safe: a DB row
+ * with the same slug would win — the built-in entry is skipped then).
+ */
+export function withMaveroDownloaderProvider(config: PublicDownloadConfig, origin: string): PublicDownloadConfig {
+  const builtin = builtinMaveroDownloaderProvider(origin);
+  if (config.providers.some((provider) => provider.slug === builtin.slug)) return config;
+  return { ...config, providers: [...config.providers, builtin] };
 }
