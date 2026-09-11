@@ -182,14 +182,14 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const testScript: string = pkg.scripts.test;
   // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8;
   // Phase 10 appended stremio_player_phase10_test.ts — the chain still runs
-  // phase 7 before phase 8 before phase 9 and now ENDS with phase 11.
-  // (Phase 11 appended its suite to the chain — intentional extension.)
+  // phase 7 before phase 8 before phase 9 and now ENDS with phase 12.
+  // (Phase 11/12 appended their suites to the chain — intentional extension.)
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('stremio_player_phase11_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 11 suite (Phase 9/10/11 extension)',
+      testScript.trimEnd().endsWith('stremio_player_phase12_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 12 suite (Phase 9/10/11/12 extension)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');
@@ -1042,7 +1042,12 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // skip-reason diagnostic (addon slug + typed reason ONLY, never the
   // manifest URL / identifiers / configuration), so a vanished addon is
   // always explainable from server logs.
-  ok(warnTotal === 5 && logTotal === 0, `T: stremio server modules log through exactly the 5 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, both in addon-session)`);
+  // Phase 12 (GOAL E): addon-session.ts adds TWO more sanctioned warns —
+  // the loss-point diagnostics (invalid response shape + typed fetch
+  // failure; slug/idProperty/videoId/typed reason ONLY — never URLs,
+  // header values or configuration), so a "0 streams" addon is explainable
+  // from server logs alone.
+  ok(warnTotal === 7 && logTotal === 0, `T: stremio server modules log through exactly the 7 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics — all in addon-session)`);
   // Phase 10: session-env.ts may REFERENCE the env-var NAME for the documented
   // signing-key derivation (one-way, domain-separated SHA-256 — the raw key is
   // never used as a credential nor leaves the server). Zero references in every

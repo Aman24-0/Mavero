@@ -4,11 +4,15 @@
  * TWO production conversion paths, chosen by the SIGNED job kind — never
  * by anything the client says:
  *
- *   remux (GOAL B1 — H.264/AAC-class video in MKV):
- *     -map 0:v:0 -map 0:a:0? -c:v copy -c:a copy -f hls
- *     VIDEO IS NEVER RE-ENCODED. The MKV container is repackaged into an
- *     HLS MPEG-TS segment stream the browser can play natively through
- *     MSE. Stream copy is minutes-fast on any healthy CPU.
+ *   remux (GOAL B1 — H.264/AAC-class video in MKV) — Phase 12 audio
+ *   normalization:
+ *     -map 0:v:0 -map 0:a:0? -c:v copy -c:a aac -b:a 160k -ac 2 -ar 48000
+ *     VIDEO IS NEVER RE-ENCODED (stream copy is minutes-fast on any healthy
+ *     CPU). `-c:a copy` is NOT safe for MKV sources: their audio is very
+ *     often DTS / TrueHD / E-AC-3 / multichannel — codecs MSE cannot play,
+ *     so a copied-audio "remux" produced an HLS stream that still failed in
+ *     the browser. The audio is therefore NORMALIZED to browser-safe AAC
+ *     160k stereo 48 kHz while the video bitstream stays untouched.
  *
  *   transcode (GOAL B2 — HEVC/H.265, 10-bit, legacy codecs, unsupported
  *   audio):
@@ -137,8 +141,18 @@ export function buildFfmpegArgs(options: FfmpegRunOptions): string[] {
     '-sn', '-dn', // no subtitle/data streams — browsers never consumed them
   ];
   if (options.kind === 'remux') {
-    // GOAL B1: stream copy — the video is NEVER re-encoded.
-    args.push('-c:v', 'copy', '-c:a', 'copy', '-avoid_negative_ts', 'make_zero');
+    // GOAL B1 + Phase 12: video STREAM COPY (never re-encoded) + audio
+    // NORMALIZED to browser-safe AAC stereo. A plain `-c:a copy` preserved
+    // MKV-native DTS/TrueHD/E-AC-3/multichannel audio that MSE cannot
+    // decode — the #1 reason remuxed MKV HLS "still would not play".
+    args.push(
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '160k',
+      '-ac', '2',
+      '-ar', '48000',
+      '-avoid_negative_ts', 'make_zero',
+    );
   } else {
     // GOAL B2: broad-compatibility target — H.264 8-bit + AAC stereo.
     args.push(

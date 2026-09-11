@@ -1791,3 +1791,110 @@ run, exactly the class of drift the full-chain requirement exists for).
 environment — the sandbox inheritance migration is scoped/narrow and the
 admin can re-apply explicit overrides from the Phase 10 UI after applying
 it.
+
+## Phase 12 — production playback & source-UX repairs (DONE)
+
+Nine production findings fixed end-to-end. All detection/planning work stays
+network-free and addon-text-scoped; no P2P/torrent/debrid/proxy/DRM surface
+was introduced; the worker still accepts ONLY signed compatibility jobs.
+
+### GOAL A — HLS discovery kept INTACT (priority ladder pinned)
+
+The Phase 11 priority ladder is now regression-pinned end-to-end: explicit
+addon metadata (full MIME values such as `application/vnd.apple.mpegurl`
+count in query references too) → pathname `.m3u8` (signed token queries
+included) → query/hash format references → unknown (never guessed). The
+protocol survives normalize → PlayerSource → quality option → live merge,
+and an HLS verdict NEVER routes through the compatibility worker (an
+HEVC-labeled HLS stays direct-uncertain for the runtime probe to refine —
+never a conversion action).
+
+### GOAL B — MKV/codec classification from ALL addon text
+
+Extensionless URLs (`https://provider.example/file/123456`) whose addon text
+carries the container (`name: "Dhurandhar The Revenge (2026).mkv"`) or a
+codec token (`title: "1080p HEVC 10-bit"`) now classify exactly like the
+filename-equivalent: the classifier reads filename/name/title/description
+(word-boundary-safe container detection — `.mkvpass` never matches), the
+server normalizer labels container/codec from the same text, and the stream
+card badges it honestly. Only addon-supplied text is consumed; nothing is
+guessed from content titles.
+
+### GOAL C — H.264 MKV remux with audio NORMALIZATION
+
+Remux args are now `-map 0:v:0 -map 0:a:0? -c:v copy -c:a aac -b:a 160k
+-ac 2 -ar 48000` (video NEVER re-encoded). The plain `-c:a copy` produced
+HLS whose DTS/TrueHD/E-AC-3/multichannel MKV audio MSE cannot decode — the
+"#1 reason remuxed MKV still would not play". Audio is normalized to
+browser-safe AAC 160k stereo 48 kHz while the video bitstream stays
+untouched.
+
+### GOAL D — HEVC/10-bit transcode is REAL
+
+`-c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 160k -ac 2 -ar 48000` → HLS,
+with the signed compatibility reference flowing selection → worker →
+playlist playback. The classifier (GOAL B) routes HEVC/10-bit MKVs —
+including extensionless ones — to this path instead of a doomed video-copy
+remux; the "Needs conversion" badge is now an actionable path, not a
+terminal state.
+
+### GOALS E — Pipe multi-idProperty planning + loss-point diagnostics
+
+`idPrefixes` filtering moved INTO candidate selection: the planner walks
+candidates in the addon's declared order and accepts the first whose id
+BOTH exists and passes the prefixes the addon itself declared. A
+`idProperty: ["tmdb_id","imdb_id"]` + `idPrefixes: ["tt"]` addon now gets
+the IMDb id (exactly what Stremio sends) instead of being skipped as
+`id-prefix-mismatch`. Series ids construct `tt…:1:1` and inherit the base
+prefix decision. Structured server diagnostics (counts + typed reasons
+only — slug/idProperty/videoId, never URLs or configuration) make a
+"Loaded — 0 streams" addon explainable from logs alone.
+
+### GOAL F — sandbox configured-vs-effective made visible
+
+The runtime already resolves the EFFECTIVE policy (source override →
+provider → system default) and the viewport renders the iframe sandbox
+attribute from that effective policy only; Phase 12 adds the admin-side
+truth-telling: the provider console lists explicit SOURCE-level overrides
+that outrank the provider's policy (the exact "admin says Unrestricted but
+the player still sandboxes" mismatch), with a pointer to clear the
+override.
+
+### GOAL G — horizontal addon tabs in the streams sheet
+
+The sheet renders ONE horizontal, scrollable tab per session addon
+(`HdHub | PenguPlay | Pipe | DesiFlix`) with live per-tab state (Loading… /
+✓ N / Failed / ✓ 0); the body shows ONLY the active addon's streams. The
+default tab is the addon owning the playing stream, else the first tab
+with streams; a manual tap pins the selection; later addon completions
+update the strip without restarting playback (Phase 10 parallel architecture
+preserved). Retry retries ONLY the failed addon via the existing per-addon
+hook.
+
+### GOAL H — per-card Copy URL / Download on the ORIGINAL url
+
+Every HTTP/direct stream card carries two icon actions: Copy
+(`navigator.clipboard.writeText` with a legacy fallback, "Copied"
+affordance) and Download (a native anchor on the ORIGINAL addon URL —
+filename hint when supplied, else the URL's last segment; never proxied or
+transformed; for HLS it operates on the original `.m3u8`). Both stop
+propagation so an action click never selects the stream.
+
+### GOAL I — worker EARLY-READY lifecycle
+
+A job becomes `ready` the moment the output playlist + first playable
+segment exist — FFmpeg keeps encoding the remaining segments in the
+background (the Phase 11 wait-for-the-whole-movie behavior is gone). A
+failure BEFORE any playable segment is a typed `failed`; a failure AFTER
+readiness flips the phase to `ended` while `ready` and the produced
+segments stay served (playback state is never destroyed mid-watch). The
+status endpoint reports the full vocabulary
+`queued/processing/ready/completed/ended/failed`, and the compat gateway
+maps worker failures to a typed `CONVERSION_FAILED` so the client stops
+polling immediately. Polling now reads the ready URL from BOTH payload
+shapes (top-level and nested `status.playback`).
+
+Validation: `pnpm check` 0 errors/41 warnings (baseline); `pnpm build`
+success; `git diff --check` clean; FULL chain 89 test commands exit 0
+(Phase 1→12, the new Phase 12 suite adds 124 checks covering A–I plus
+regressions); worker `tsc --noEmit` clean.

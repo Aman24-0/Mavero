@@ -318,30 +318,60 @@ export async function resolveAddonToken(client: SupabaseClient<Database>, input:
     });
     const normalized = normalizeStremioStreamResponse(body);
     if (!normalized.valid) {
+      // Phase 12 (GOAL E): a non-`{streams:[]}` shape is a real loss point —
+      // log it (shape only, never the body) before the typed failure.
+      console.warn(`[StremioAddon] invalid response shape addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId}`);
       return { request: parsed, result: { status: 'failed', addonName: display, addonOrdering: ordering, errorCode: 'INVALID_RESPONSE' } };
     }
     const streams: AddonResolvedStream[] = [];
+    // Phase 12 (GOAL E): structured loss-point diagnostics — a Stremio-visible
+    // addon resolving to 0 playable streams in MAVERO must be explainable
+    // from server logs alone. The log carries COUNTS and TYPED reasons only
+    // (never URLs, header values, manifest URLs or addon configuration).
+    const filterReasons = new Map<string, number>();
     for (const stream of normalized.streams) {
       const resolved = resolvedStreamOf(addon, plan, streamType, stream);
-      if (!resolved) continue;
+      if (!resolved) {
+        filterReasons.set('unresolved', (filterReasons.get('unresolved') ?? 0) + 1);
+        continue;
+      }
       // Playback boundary FIRST (HTTPS-only direct policy) — a stream that
       // cannot play directly never consumes budget or gets a compat ref.
-      if (!resolved.source.url) continue;
+      if (!resolved.source.url) {
+        filterReasons.set('missing-url', (filterReasons.get('missing-url') ?? 0) + 1);
+        continue;
+      }
       try {
         validatePlaybackUrl(resolved.source.url, 'direct');
       } catch {
+        filterReasons.set('playback-boundary', (filterReasons.get('playback-boundary') ?? 0) + 1);
         continue;
       }
       const compat = compatReferenceOf(resolved.quality, context, payload, deps);
       streams.push({ source: resolved.source, quality: resolved.quality, ...(compat ? { compat } : {}) });
-      if (streams.length >= MAVERO_AGGREGATE_STREAMS_PER_ADDON) break;
+      if (streams.length >= MAVERO_AGGREGATE_STREAMS_PER_ADDON) {
+        filterReasons.set('per-addon-cap', (filterReasons.get('per-addon-cap') ?? 0) + 1);
+        break;
+      }
     }
+    // The per-addon endpoint answers `{ ok: true, result }` — the "return"
+    // of the resolution is observable through the returned status below.
+    const unsupportedReasons = normalized.unsupported.reduce<Map<string, number>>((counts, entry) => {
+      counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+      return counts;
+    }, new Map());
+    console.info(
+      `[StremioAddon] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} mediaType=${streamType} returned=${normalized.streams.length} playable=${streams.length} unsupported=${normalized.unsupported.length} filtered=${[...filterReasons.entries()].map(([reason, count]) => `${reason}:${count}`).join(',') || 'none'} unsupportedReasons=${[...unsupportedReasons.entries()].map(([reason, count]) => `${reason}:${count}`).join(',') || 'none'}`,
+    );
     return { request: parsed, result: { status: 'ok', addonName: display, addonOrdering: ordering, streamCount: streams.length, streams } };
   } catch (error) {
     const serviceError = asStreamServiceError(error);
     if (serviceError.code === 'UNEXPECTED') {
       console.warn('[StremioAddon] unexpected addon stream failure', serviceError.code);
     }
+    // Phase 12 (GOAL E): every typed per-addon failure is a potential
+    // "Pipe shows 0 streams" loss point — one structured line per failure.
+    console.warn(`[StremioAddon] fetch failed addon=${addon?.slug ?? 'unknown'} reason=${serviceError.code}`);
     return { request: parsed, result: { status: 'failed', addonName: display, addonOrdering: ordering, errorCode: serviceError.code } };
   }
 }
@@ -437,11 +467,18 @@ function compatReferenceOf(quality: PlayerQualityOption, context: { contentId: s
   if (!secret) return null;
   const url = quality.url;
   if (typeof url !== 'string' || !url.startsWith('https://') || url.length > 2048) return null;
+  // Phase 12 (GOAL B): the classifier receives EVERY addon-supplied text the
+  // quality option carries — not just the filename. An extensionless URL
+  // whose stream title says "Dhurandhar The Revenge (2026).mkv" must classify
+  // as MKV (remux) exactly like a .mkv filename would; a title mentioning
+  // HEVC/10-bit must reach the transcode path.
   const input: StreamCompatibilityInput = {
     protocol: quality.protocol,
     container: quality.container,
     codec: quality.codec,
     filename: quality.filename,
+    title: quality.title,
+    description: quality.description,
   };
   const verdict = classifyStreamCompatibility(input);
   if (!needsCompatibilityPath(verdict)) return null;

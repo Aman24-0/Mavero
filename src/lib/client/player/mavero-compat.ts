@@ -61,11 +61,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function playbackUrlOf(payload: { playback?: unknown } | null): string | null {
-  if (!payload || !isRecord(payload.playback)) return null;
-  const playback = payload.playback as { kind?: unknown; url?: unknown };
-  if (playback.kind !== 'hls' || typeof playback.url !== 'string' || !playback.url.startsWith('https://')) return null;
-  return playback.url;
+/**
+ * Extracts the playable HLS URL from BOTH payload shapes the endpoints
+ * produce (Phase 12, GOAL 6):
+ *   * top-level `payload.playback` (the manifest response), and
+ *   * nested `payload.status.playback` (the polling status response).
+ * The historical implementation read ONLY the top-level shape, so a status
+ * response carrying the ready URL in its nested `status.playback` object
+ * lost the URL and the client kept polling despite `ready: true`.
+ * Requires `kind === 'hls'` and an https URL — a worker session URL is
+ * always https (the worker's `publicBaseUrl` is validated at boot).
+ */
+function playbackUrlOf(payload: unknown): string | null {
+  if (!isRecord(payload)) return null;
+  const candidates: unknown[] = [payload.playback];
+  if (isRecord(payload.status)) candidates.push(payload.status.playback);
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) continue;
+    if (candidate.kind !== 'hls' || typeof candidate.url !== 'string' || !candidate.url.startsWith('https://')) continue;
+    return candidate.url;
+  }
+  return null;
+}
+
+/**
+ * True when the payload reports a TERMINAL failed session — either a typed
+ * error envelope (the status gateway now maps a worker-reported conversion
+ * failure to `CONVERSION_FAILED`) or a status object whose phase/status
+ * says failed. Polling stops on the FIRST terminal answer.
+ */
+function isTerminalFailure(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  if (isRecord(payload.error)) {
+    const code = payload.error.code;
+    if (code === 'CONVERSION_FAILED' || code === 'COMPAT_UNAVAILABLE' || code === 'SESSION_EXPIRED') return true;
+  }
+  if (isRecord(payload.status)) {
+    const status = payload.status;
+    if (status.phase === 'failed' || status.status === 'failed') return true;
+  }
+  return false;
 }
 
 /**
@@ -108,9 +143,10 @@ export async function requestMaveroCompatStream(token: string, kind: 'remux' | '
 
   // The session exists but is still encoding — poll the status endpoint
   // with the SAME signed reference until ready or deadline (GOAL B7).
-  const readyUrl = payload?.ok === true && isRecord(payload.playback) && typeof (payload.playback as { url?: unknown }).url === 'string' && String((payload.playback as { url?: unknown }).url).startsWith('https://')
-    ? String((payload.playback as { url?: unknown }).url)
-    : null;
+  // Phase 12 (GOAL 6): the ready URL is re-read from EVERY status payload
+  // (top-level OR nested `status.playback`) — the first terminal answer
+  // (ready or failed) stops the loop; a single failed poll never aborts.
+  const readyUrl = payload?.ok === true ? playbackUrlOf(payload) : null;
   while (Date.now() - startedAt < timeoutMs) {
     await delay(pollIntervalMs, deps.signal);
     if (deps.signal?.aborted) return { ok: false, code: 'NETWORK', message: COMPAT_UNAVAILABLE_MESSAGE };
@@ -122,15 +158,18 @@ export async function requestMaveroCompatStream(token: string, kind: 'remux' | '
         ...(deps.signal ? { signal: deps.signal } : {}),
       });
       const statusPayload = (await statusResponse.json().catch(() => null)) as CompatStatusPayload | null;
-      if (statusPayload?.ok === true && isRecord(statusPayload.status)) {
-        const status = statusPayload.status as { ready?: unknown; playback?: { kind?: unknown; url?: unknown } };
-        const readyUrlNow = readyUrl ?? playbackUrlOf(statusPayload as unknown as CompatPayload);
-        if (status.ready === true && readyUrlNow) return { ok: true, kind, workerUrl: readyUrlNow };
-      } else if (statusPayload && statusPayload.ok !== true) {
+      if (!statusPayload) continue; // malformed poll answer — keep waiting
+      if (statusPayload.ok !== true) {
+        // Typed rejection: SESSION_EXPIRED / CONVERSION_FAILED /
+        // COMPAT_UNAVAILABLE are all terminal — stop polling.
         const code = isRecord(statusPayload.error) && typeof statusPayload.error.code === 'string' ? statusPayload.error.code : 'COMPAT_UNAVAILABLE';
         if (code === 'SESSION_EXPIRED') return { ok: false, code: 'SESSION_EXPIRED', message: COMPAT_EXPIRED_MESSAGE };
-        if (code === 'COMPAT_UNAVAILABLE') return { ok: false, code: 'COMPAT_UNAVAILABLE', message: COMPAT_UNAVAILABLE_MESSAGE };
+        return { ok: false, code: 'COMPAT_UNAVAILABLE', message: COMPAT_UNAVAILABLE_MESSAGE };
       }
+      const urlNow = readyUrl ?? playbackUrlOf(statusPayload);
+      const readyNow = isRecord(statusPayload.status) && statusPayload.status.ready === true;
+      if (readyNow && urlNow) return { ok: true, kind, workerUrl: urlNow };
+      if (isTerminalFailure(statusPayload)) return { ok: false, code: 'COMPAT_UNAVAILABLE', message: COMPAT_UNAVAILABLE_MESSAGE };
     } catch {
       // A single failed poll must never abort the wait — keep polling.
     }
@@ -141,7 +180,10 @@ export async function requestMaveroCompatStream(token: string, kind: 'remux' | '
 /**
  * The compatibility badge for one stream card (GOAL 11 presentation):
  * derived ONLY from addon-supplied metadata through the shared classifier.
- * `null` when the stream needs no badge — badges are never fabricated.
+ * Phase 12 (GOAL B): ALL supplied text fields feed the classifier — an
+ * extensionless URL whose title/name/description carries ".mkv" or
+ * "HEVC"/"10-bit" must badge exactly like the filename-equivalent.
+ * `null` renders nothing; badges are never fabricated.
  */
 export function compatBadgeForStream(stream: PlayerQualityOption): string | null {
   const verdict = classifyStreamCompatibility({
@@ -149,6 +191,8 @@ export function compatBadgeForStream(stream: PlayerQualityOption): string | null
     container: stream.container,
     codec: stream.codec,
     filename: stream.filename,
+    title: stream.title,
+    description: stream.description,
   });
   return compatibilityBadgeText(verdict.tier);
 }
@@ -160,5 +204,7 @@ export function compatTierForStream(stream: PlayerQualityOption): MediaCompatibi
     container: stream.container,
     codec: stream.codec,
     filename: stream.filename,
+    title: stream.title,
+    description: stream.description,
   }).tier;
 }

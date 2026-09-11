@@ -383,7 +383,9 @@ function streamFixture(overrides: Record<string, unknown> = {}): Record<string, 
   ok(shellSource.includes('streamsSheetReturnToSource') && shellTemplate.includes('aria-label="Back to source list"'), '14: back navigation returns to the source sheet when entered from it');
   ok(shellTemplate.includes('aria-label={`Open ${streamCount} MAVERO Player streams`}') === false && controlsSource.includes('aria-label={`Open ${streamCount} MAVERO Player streams`}') === true, '14: the controls expose a direct streams entry point (no forced detour through the source sheet)');
   ok(shellTemplate.includes('{MAVERO_PLAYER_SOURCE_NAME} · {maveroStreams.length} stream'), '15: the streams sheet header shows the exact aggregated count');
-  ok(shellTemplate.includes('{group.streams.length} stream'), '17: each addon section shows ITS OWN real stream count');
+  // Phase 12 UPDATE: the per-addon count now rides the TAB state chip
+  // (`{tab.streamCount}`) — each addon still shows ITS OWN real count.
+  ok(shellTemplate.includes('{tab.streamCount}'), '17: each addon TAB shows ITS OWN real stream count');
   ok(shellTemplate.includes('selected={stream.url === mediaUrl}'), '17: the current stream is identified by the stable mediaUrl identity');
   // Phase 10: re-selection is allowed while a compat session is live (the
   // worker url owns mediaUrl) — direct re-selection stays a no-op.
@@ -603,7 +605,8 @@ function loaderOf(factory: HlsFactory) {
   ok(shellSource.includes('engineQuality = null;') === false || shellSource.includes('engineQuality = null;'), '34: internal quality state is reset per source session');
   ok(viewportSource.includes('if (!engine || !hlsEngineActive) return;'), '34: no engine → no quality dispatch (MP4 sources show no rendition controls)');
   // 34: addon stream selection vs rendition selection are distinct concepts.
-  ok(shellTemplate33().includes('role="listbox" aria-label="MAVERO Player addon streams"') && shellTemplate33().includes('role="group" aria-label="Playback quality"'), '34: stream selection (listbox) and rendition selection (group) are separate UI concepts');
+  // Phase 12 UPDATE: the listbox is the ACTIVE ADDON's stream list now.
+  ok(shellTemplate33().includes('role="listbox" aria-label={`${activeMaveroTab.name} streams`}') && shellTemplate33().includes('role="group" aria-label="Playback quality"'), '34: stream selection (listbox) and rendition selection (group) are separate UI concepts');
 
   function shellTemplate33(): string {
     return shellSource.slice(shellSource.indexOf('</script>'));

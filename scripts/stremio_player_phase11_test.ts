@@ -109,7 +109,11 @@ function sectionA() {
   ok(response.valid && response.streams.length === 4, 'A: realistic mixed addon response normalizes without losses');
   ok(response.streams[0]?.protocol === 'hls', 'A: signed .m3u8 HLS entry normalizes as hls');
   ok(response.streams[1]?.protocol === 'hls', 'A: extensionless entry with explicit HLS title metadata normalizes as hls');
-  ok(response.streams[2]?.protocol === 'unknown' && response.streams[2]?.codec === undefined && response.streams[2]?.container === 'MKV', 'A: Pipe-style entry keeps honest metadata (no codec text in name/title → no codec claim; container from filename)');
+  // Phase 12 UPDATE: the codec now ALSO derives from the addon filename —
+  // this entry's behaviorHints.filename explicitly says "HEVC.10bit", so a
+  // codec claim exists (it never came from name/title alone; unchanged for
+  // streams whose filename carries no codec token either).
+  ok(response.streams[2]?.protocol === 'unknown' && response.streams[2]?.codec === 'HEVC' && response.streams[2]?.container === 'MKV', 'A: Pipe-style entry keeps honest metadata (codec from the filename that explicitly names it; container from the filename)');
   ok(response.streams[2]?.audioLanguages?.includes('Hindi') === true, 'A: Hindi audio language comes from the addon text only (never invented)');
   ok(response.streams[3]?.protocol === 'mp4', 'A: direct MP4 entry normalizes as mp4');
 }
@@ -199,7 +203,10 @@ function sectionB2() {
   const base = { ffmpegPath: 'ffmpeg', outDir: '/tmp/job', timeoutMs: 1000, maxOutputBytes: 1024, durationSeconds: 600, maxDurationSeconds: 21600 } as const;
   const remuxArgs = buildFfmpegArgs({ ...base, kind: 'remux', inputUrl: new URL('https://m.example/f.mkv') });
   ok(remuxArgs.includes('-c:v') && remuxArgs[remuxArgs.indexOf('-c:v') + 1] === 'copy', 'B: remux pipeline uses VIDEO STREAM COPY (never re-encodes H.264 MKV — GOAL B1)');
-  ok(remuxArgs.includes('-c:a') && remuxArgs[remuxArgs.indexOf('-c:a') + 1] === 'copy', 'B: remux pipeline copies compatible audio');
+  // Phase 12 UPDATE: the remux audio pipeline is now AAC NORMALIZATION
+  // (video copy + `-c:a aac -b:a 160k -ac 2 -ar 48000`) — a plain audio
+  // copy preserved MKV-native DTS/TrueHD/E-AC-3 that browsers cannot play.
+  ok(remuxArgs.includes('-c:a') && remuxArgs[remuxArgs.indexOf('-c:a') + 1] === 'aac', 'B: remux pipeline NORMALIZES audio to AAC (Phase 12 — copied DTS/TrueHD/E-AC-3 audio was still unplayable)');
   ok(remuxArgs.includes('-f') && remuxArgs.includes('hls'), 'B: remux output is an HLS stream');
   const transcodeArgs = buildFfmpegArgs({ ...base, kind: 'transcode', inputUrl: new URL('https://m.example/f.mkv') });
   ok(transcodeArgs.includes('libx264') && transcodeArgs.includes('yuv420p'), 'B: transcode targets H.264 8-bit (HEVC/10-bit path — GOAL B2)');
@@ -454,7 +461,12 @@ async function sectionC2(): Promise<void> {
     const direct = resolution.result.streams[0];
     const hls = resolution.result.streams[1];
     ok(direct?.source.url === 'https://pixeldrain.example/api/file/ab12cd', 'C2: the PixelDrain-style DIRECT https link survives normalization + the playback boundary');
-    ok(direct?.source.metadata?.streamContainer === 'MKV' && direct?.source.metadata?.streamCodec === undefined, 'C2: addon container metadata travels; codec stays unlabeled when the addon text never named one (Phase 9 no-invention rule)');
+    ok(direct?.source.metadata?.streamContainer === 'MKV', 'C2: addon container metadata travels');
+    // Phase 12 UPDATE: the codec now ALSO derives from the addon FILENAME —
+    // this payload's behaviorHints.filename explicitly says "HEVC.10bit",
+    // so the codec is labeled (and the stream routes to the TRANSCODE path
+    // instead of a doomed video-copy remux of an HEVC stream).
+    ok(direct?.source.metadata?.streamCodec === 'HEVC', 'C2: the codec is labeled from the addon filename that explicitly names it (Phase 12)');
     ok(typeof direct?.compat?.token === 'string' && direct?.compat?.kind === 'transcode', 'C2: the HEVC MKV (codec+bit-depth from the addon FILENAME hints) carries a SIGNED transcode reference');
     ok(hls?.source.metadata?.protocol === 'hls', 'C2: Pipe HLS variant is protocol-labeled hls (plays via Video.js HlsJsVideo)');
     ok(hls?.compat === undefined, 'C2: the HLS variant gets NO compat reference (HLS is direct — never routed through FFmpeg)');

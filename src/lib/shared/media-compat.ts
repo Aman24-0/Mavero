@@ -60,6 +60,18 @@ export type StreamCompatibilityInput = {
   codec?: string;
   /** Addon-provided filename (behaviorHints.filename), when supplied. */
   filename?: string;
+  /**
+   * Phase 12 (GOAL B): the addon's OTHER supplied text fields. An
+   * extensionless URL stream whose addon text carries the container
+   * (`name: "Movie (2026).mkv"`) or a codec/quality token
+   * (`title: "1080p HEVC 10-bit"`) must classify exactly like the
+   * filename-equivalent — the addon WROTE those facts. Only addon-supplied
+   * text is ever accepted here; nothing is guessed from content titles or
+   * addon display names by the CALLERS' contract.
+   */
+  name?: string;
+  title?: string;
+  description?: string;
   /** Bit depth hint derived from ADDON-SUPPLIED text (e.g. 10 for "10-bit"). */
   bitDepth?: number;
   /** Addon/manifest-provided resolution hints (runtime probe refinement). */
@@ -178,26 +190,66 @@ export function codecHintsFromText(text: string | undefined): { codec: string | 
 }
 
 /**
+ * Phase 12 (GOAL B): container detection from ANY reliable addon-supplied
+ * text. A stream named `Dhurandhar The Revenge (2026).mkv` served from an
+ * extensionless URL (`https://provider.example/file/123456`) must classify
+ * as MKV — the addon WROTE the container into its own text. The extension
+ * must appear at a word-ish boundary (".mkv" followed by end/separator,
+ * never ".mkvpass"), and only recognized container extensions count.
+ * Returns the canonical container alias, or null.
+ */
+const CONTAINER_TEXT_EXTENSIONS: ReadonlyMap<string, string> = new Map([
+  ['mkv', 'mkv'], ['mp4', 'mp4'], ['webm', 'webm'], ['avi', 'avi'],
+  ['mov', 'mov'], ['m4v', 'mp4'], ['ts', 'ts'], ['flv', 'flv'], ['wmv', 'wmv'],
+]);
+
+export function containerFromAddonText(texts: Array<string | undefined>): string | null {
+  for (const text of texts) {
+    if (!text) continue;
+    for (const [extension, canonical] of CONTAINER_TEXT_EXTENSIONS) {
+      if (new RegExp(`\\.${extension}(?![a-z0-9])`, 'i').test(text)) return canonical;
+    }
+  }
+  return null;
+}
+
+/**
  * The core static classification (GOAL 11 examples). Input order of
  * precedence: protocol (HLS is segmented/fMP4 by definition) → container →
  * codec. Missing information degrades to DIRECT_UNCERTAIN, never to a
  * hard tier.
+ *
+ * Phase 12 (GOAL B): codec/container/bit-depth hints are derived from ALL
+ * addon-supplied text (filename, name, title, description) — never from the
+ * URL shape alone. Explicit structured fields (container/codec/bitDepth)
+ * still win over text-derived hints.
  */
 export function classifyStreamCompatibility(input: StreamCompatibilityInput): StreamCompatibilityVerdict {
   const protocol = typeof input.protocol === 'string' ? input.protocol : 'unknown';
-  const hints = codecHintsFromText(input.filename);
+  const addonTexts = [input.filename, input.name, input.title, input.description];
+  const allHints = addonTexts.reduce(
+    (combined, text) => {
+      const textHints = codecHintsFromText(text);
+      return {
+        codec: combined.codec ?? textHints.codec,
+        audio: combined.audio ?? textHints.audio,
+        bitDepth: combined.bitDepth ?? textHints.bitDepth,
+      };
+    },
+    { codec: null as string | null, audio: null as string | null, bitDepth: null as number | null },
+  );
   const container = (() => {
     const raw = typeof input.container === 'string' ? input.container.trim().toLowerCase() : '';
     if (raw) return CONTAINER_ALIASES[raw] ?? raw;
-    return firstContainerFrom(input.filename);
+    return firstContainerFrom(input.filename) ?? containerFromAddonText([input.name, input.title, input.description]);
   })();
   const codec = (() => {
     const raw = typeof input.codec === 'string' ? input.codec.trim().toLowerCase() : '';
     if (raw) return CODEC_ALIASES[raw] ?? raw;
-    return hints.codec;
+    return allHints.codec;
   })();
-  const audio = hints.audio;
-  const bitDepth = input.bitDepth ?? hints.bitDepth;
+  const audio = allHints.audio;
+  const bitDepth = input.bitDepth ?? allHints.bitDepth;
 
   // HLS: the browser/engine plays segmented media. Codecs inside fMP4
   // segments still matter, so an explicit HEVC/10-bit label stays UNCERTAIN

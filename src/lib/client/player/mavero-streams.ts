@@ -1,5 +1,6 @@
 import type { PlayerProtocol, PlayerQualityOption, PlayerSource } from '$lib/shared/player';
 import { MAVERO_PLAYER_SOURCE_ID } from '$lib/shared/mavero-player';
+import type { MaveroAddonStatus } from '$lib/client/player/mavero-progressive';
 
 /**
  * MAVERO Player — client-side stream presentation helpers (Phase 6).
@@ -154,6 +155,88 @@ export function sourceForStreamUrl(source: PlayerSource, url: string): PlayerSou
   const protocol = protocolForStreamUrl(source, url);
   if (protocol === source.metadata?.protocol) return source;
   return { ...source, metadata: { ...source.metadata, protocol } };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 (GOAL G) — horizontal addon-tab presentation model.
+//
+// The streams sheet renders ONE horizontal, scrollable tab per session
+// addon (`HdHub | PenguPlay | Pipe | DesiFlix`); the body below shows ONLY
+// the selected addon's streams. The tab model is PURE so it is unit-testable:
+// it merges the LIVE per-addon session statuses (mavero-progressive) with
+// the resolved stream groups (this module) and never mutates either.
+// ---------------------------------------------------------------------------
+
+/** One addon tab in the streams sheet (presentation state only). */
+export type MaveroAddonTab = {
+  /** Stable session key — the retry hook's identity (null when merged). */
+  key: string | null;
+  /** Addon display name — the tab identity (groups are keyed by name). */
+  name: string;
+  ordering: number;
+  /** Tab lifecycle: pending/loading → ok | failed | skipped. */
+  status: MaveroAddonStatus['status'];
+  /** Number of PLAYABLE streams this addon currently contributes. */
+  streamCount: number;
+  /** True when this tab's group currently holds at least one stream. */
+  hasStreams: boolean;
+};
+
+/**
+ * Builds the ordered addon-tab model from the session statuses (order =
+ * session ordering) and the resolved groups (by display name). Every
+ * session addon gets EXACTLY ONE tab — a failed or zero-stream addon stays
+ * visible with its state (Loading / Failed / ✓ 0), never hidden.
+ * Two session addons sharing a display name coalesce into one tab (the
+ * stream grouping already coalesces by name; the first session key wins
+ * for retry).
+ */
+export function buildMaveroAddonTabs(addons: MaveroAddonStatus[], groups: MaveroAddonStreamGroup[]): MaveroAddonTab[] {
+  const streamsByName = new Map<string, number>();
+  for (const group of groups) streamsByName.set(group.addonName, group.streams.length);
+  const tabs: MaveroAddonTab[] = [];
+  const seen = new Set<string>();
+  // The caller supplies the SESSION-ORDERED statuses (the progressive
+  // controller preserves session order) — the tab order is the session
+  // order, never a re-ordering of the addon's streams.
+  for (const addon of addons) {
+    if (seen.has(addon.addonName)) continue;
+    seen.add(addon.addonName);
+    const streamCount = streamsByName.get(addon.addonName) ?? 0;
+    tabs.push({
+      key: addon.key,
+      name: addon.addonName,
+      ordering: addon.ordering,
+      status: streamCount > 0 ? 'ok' : addon.status,
+      streamCount,
+      hasStreams: streamCount > 0,
+    });
+  }
+  // A group without a session row (safety net — should not happen) still
+  // gets a tab so its streams are reachable.
+  for (const group of groups) {
+    if (seen.has(group.addonName)) continue;
+    seen.add(group.addonName);
+    tabs.push({ key: null, name: group.addonName, ordering: Number.MAX_SAFE_INTEGER, status: 'ok', streamCount: group.streams.length, hasStreams: true });
+  }
+  return tabs;
+}
+
+/**
+ * The DEFAULT active tab (Phase 12 GOAL G):
+ *   1. the addon that owns the currently PLAYING stream (the sheet opens
+ *      on what the user is watching);
+ *   2. else the first tab that already has playable streams;
+ *   3. else the first tab (all pending — the sheet still renders states).
+ */
+export function defaultMaveroAddonTab(tabs: MaveroAddonTab[], playingAddonName: string | null): string | null {
+  if (!tabs.length) return null;
+  if (playingAddonName) {
+    const playing = tabs.find((tab) => tab.name === playingAddonName);
+    if (playing) return playing.name;
+  }
+  const firstWithStreams = tabs.find((tab) => tab.hasStreams);
+  return (firstWithStreams ?? tabs[0]).name;
 }
 
 // ---------------------------------------------------------------------------

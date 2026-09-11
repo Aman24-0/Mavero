@@ -684,9 +684,12 @@ function makeSessionClient(addons: FakeAddonRecord[]) {
   ok(watchSource.includes('maveroAddons={maveroAddonStatuses}'), 'M: live addon statuses flow to the shell');
   ok(watchSource.includes('maveroLoadStarted'), 'M: playback starts from the FIRST playable result (no waiting for all addons)');
   ok(shellSource.includes('export let maveroAddons: MaveroAddonStatus[] = []'), 'M: the shell accepts live addon statuses');
-  ok(shellSource.includes('onMaveroRetry(addon.key)'), 'M: the sheet renders a Retry action for failed addons');
+  // Phase 12 UPDATE: Retry moved into the active TAB row (same hook).
+  ok(shellSource.includes('retryActiveAddonTab') && shellSource.includes('onMaveroRetry(key)'), 'M: the sheet renders a Retry action for the failed addon tab');
   ok(shellSource.includes('Loading…'), 'M: loading addons stay visible (Loading…)');
-  ok(shellSource.includes('maveroPendingAddons'), 'M: session addons without streams still render (never hidden)');
+  // Phase 12 UPDATE: every session addon keeps exactly ONE TAB (the pure
+  // buildMaveroAddonTabs model) — a zero-stream addon still renders (✓ 0).
+  ok(shellSource.includes('buildMaveroAddonTabs(maveroAddons, maveroStreamGroups)'), 'M: session addons without streams still render (never hidden — one tab each)');
   ok(cardSource.includes('compatBadgeForStream'), 'M: stream cards surface the compatibility badge');
   ok(watchSource.includes('mergeMaveroResults(maveroResults, mergeContext, playingUrl)'), 'M: every merge pins the currently playing stream');
 }

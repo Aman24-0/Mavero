@@ -13,6 +13,12 @@
   const integrationLabels = { template: 'Template', api: 'API', direct: 'Direct', embed: 'Embed', custom: 'Custom' };
   const sandboxPolicyLabels = { required: 'Required — secure sandbox', optional: 'Optional — secure by default', unrestricted: 'Unrestricted — warning' };
   const providerSandboxPolicy = (provider: PageData['providers'][number]) => sandboxPolicyFromCapabilities(provider.capabilities);
+  // Phase 12 (GOAL F): explicit SOURCE-level sandbox overrides that outrank
+  // this provider's policy (source > provider > system default). When the
+  // admin sets provider=Unrestricted but a source still carries an explicit
+  // override, the runtime applies the OVERRIDE — the console must say so
+  // instead of silently contradicting the player.
+  const sourceOverridesFor = (providerId: string) => data.sourceSandboxOverrides?.[providerId] ?? [];
   const healthStateLabels = { healthy: 'Healthy', degraded: 'Degraded', unhealthy: 'Unhealthy', cooldown: 'Cooldown', unknown: 'Unknown' } as const;
   const healthFor = (providerId: string) => data.health?.[providerId];
   const healthChecked = (providerId: string) => healthFor(providerId)?.lastCheckedAt ? new Date(healthFor(providerId)!.lastCheckedAt!).toLocaleString() : 'Not checked';
@@ -64,6 +70,12 @@
         <div class="form-grid two"><label>Icon / display token<input name="icon" maxlength="120" value={provider.icon ?? ''} /></label><label>Adapter ID<input name="adapter_id" maxlength="80" value={provider.adapter_id ?? ''} /></label></div>
         <label>Description<textarea name="description" maxlength="500" rows="2">{provider.description ?? ''}</textarea></label>
         <label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as candidate}<option value={candidate} selected={providerSandboxPolicy(provider) === candidate}>{sandboxPolicyLabels[candidate]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription(providerSandboxPolicy(provider))}</small></label>
+        {#if sourceOverridesFor(provider.id).length}
+          <div class="sandbox-override-warning" role="alert">
+            <ShieldCheck size={14} />
+            <span>{sourceOverridesFor(provider.id).length} source{sourceOverridesFor(provider.id).length === 1 ? '' : 's'} of this provider carr{sourceOverridesFor(provider.id).length === 1 ? 'ies' : 'y'} an explicit sandbox override ({sourceOverridesFor(provider.id).map((override) => `${override.name}: ${override.policy}`).join(', ')}), which outranks the provider policy at runtime. Clear it on the source (choose “Provider default — inherit”) if the provider choice should apply.</span>
+          </div>
+        {/if}
         <label>Capabilities JSON<textarea name="capabilities" rows="3">{JSON.stringify(provider.capabilities ?? {}, null, 2)}</textarea></label>
         <label>Admin notes<textarea name="notes" maxlength="2000" rows="2">{provider.notes ?? ''}</textarea></label>
         <div class="form-actions"><button class="btn btn-primary" type="submit">Save changes</button></div>
@@ -146,6 +158,10 @@
   .record-meta .health-warn { color: #ffb020; }
   .record-meta .health-bad { color: #ff8a8a; }
   .empty { margin-top: 15px; padding: 45px 20px; text-align: center; border: 1px dashed var(--line); border-radius: 14px; } .security-note { color: #ffb020; font-size: .55rem; line-height: 1.45; }
+  /* Phase 12 (GOAL F): source-override warning under the provider sandbox
+     policy — makes the configured-vs-effective hierarchy visible. */
+  .sandbox-override-warning { display: flex; align-items: flex-start; gap: 8px; margin: -6px 0 10px; border: 1px solid rgba(255, 176, 32, 0.45); border-radius: 8px; padding: 8px 10px; color: #ffb020; font-size: .55rem; line-height: 1.45; }
+  .sandbox-override-warning :global(svg) { flex: 0 0 auto; margin-top: 1px; }
   .empty h2 { margin: 10px 0 5px; font-size: 1rem; }
   .empty p { margin: 0; color: var(--muted); font-size: .72rem; }
   @media (max-width: 700px) { .heading-row { align-items: start; flex-direction: column; } .form-grid.two, .form-grid.three { grid-template-columns: 1fr; } .record-meta span:nth-child(2) { display: none; } }

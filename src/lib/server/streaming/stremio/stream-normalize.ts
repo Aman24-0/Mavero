@@ -232,6 +232,27 @@ export function detectContainer(filename: string | undefined, url: string): stri
 }
 
 /**
+ * Phase 12 (GOAL B): container label derived from ANY addon-supplied text.
+ * Real scraper addons frequently serve extensionless URLs
+ * (`https://provider.example/download/123`) while writing the container into
+ * the stream's own text — `name: "Dhurandhar The Revenge (2026).mkv"`,
+ * `title: "... WEB-DL ... .mkv"`, `description: "... .mkv ..."`. The addon
+ * WROTE that fact, so it is a reliable container signal even though neither
+ * the filename nor the URL carries an extension. The extension must appear
+ * at a word-ish boundary (`.mkv` not followed by an alphanumeric) and only
+ * recognized container extensions count — ordinary words never match.
+ */
+export function detectContainerFromTexts(texts: Array<string | undefined>): string | undefined {
+  for (const text of texts) {
+    if (!text) continue;
+    for (const [extension, label] of CONTAINER_EXTENSIONS) {
+      if (new RegExp(`\\.${extension}(?![a-z0-9])`, 'i').test(text)) return label;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Shape-checks one addon-provided subtitle entry: http(s) URL (no
  * credentials, bounded length), optional language/label text. Anything
  * malformed is dropped silently — subtitle entries never fail the stream.
@@ -401,9 +422,14 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
   // Phase 9 metadata derivation — strictly from ADDON-SUPPLIED text
   // (name/title/description/filename/URL). Language is never derived from
   // the addon display name, the content title or anything else.
+  // Phase 12 (GOAL B): the codec lexicon ALSO reads the addon filename, and
+  // the container ALSO falls back to an extension reference written in the
+  // addon's own text — an extensionless URL whose name/title/description
+  // carries ".mkv" must normalize with container MKV so the compatibility
+  // classifier routes it to the remux path instead of a doomed direct play.
   const audioLanguages = detectAudioLanguages([name, title, description, filename]);
-  const codec = detectVideoCodec([name, title, description]);
-  const container = detectContainer(filename, normalizedUrl);
+  const codec = detectVideoCodec([filename, name, title, description]);
+  const container = detectContainer(filename, normalizedUrl) ?? detectContainerFromTexts([filename, name, title, description]);
   streams.push({
     index,
     name,

@@ -11,7 +11,7 @@
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
   // Phase 6: MAVERO Player stream presentation (addon grouping, labels,
   // dedupe, current-stream identity) — pure helpers, no second source model.
-  import { dedupeMaveroStreams, groupMaveroStreams, isMaveroAggregateSource, maveroStreamFormatLabel, maveroStreamQualityLabel } from '$lib/client/player/mavero-streams';
+  import { buildMaveroAddonTabs, dedupeMaveroStreams, defaultMaveroAddonTab, groupMaveroStreams, isMaveroAggregateSource, maveroStreamFormatLabel, maveroStreamQualityLabel } from '$lib/client/player/mavero-streams';
   // Phase 9: robust pending-seek state machine (streaming VOD seeking) — pure,
   // unit-tested; the shell feeds it media snapshots and applies the result.
   import { applyPendingSeek, capturePendingSeek, createPendingSeek, type PendingSeekState } from '$lib/client/player/pending-seek';
@@ -159,6 +159,10 @@
   // True when the streams sheet was entered FROM the source sheet, so its
   // back button returns there (GOAL 16 flow) instead of closing outright.
   let streamsSheetReturnToSource = false;
+  // Phase 12 (GOAL G): the ACTIVE addon tab (addon display name) and
+  // whether the user pinned it manually. A manual tap never auto-switches.
+  let activeAddonTab: string | null = null;
+  let addonTabTouched = false;
   // Phase 9: stream failure isolation — URLs that failed playback in THIS
   // session. A failed stream never removes any other stream; its card shows
   // a failed marker and every other card stays selectable.
@@ -219,19 +223,39 @@
   // presentation layer by stable URL identity.
   $: maveroStreams = isMaveroAggregateSource(source) ? dedupeMaveroStreams(qualities) : [];
   $: maveroStreamGroups = groupMaveroStreams(maveroStreams);
-  // Phase 10: per-addon resolution state. Groups with streams get a ✓ when
-  // their session status is ok; session addons WITHOUT a visible group
-  // (pending/loading/failed/skipped, or ok with 0 streams) render as status
-  // rows so a late or failed addon is never hidden (GOAL 3).
-  // Phase 11 (GOAL C2): an OK addon with ZERO streams renders
-  // "✓ Loaded — 0 streams" instead of disappearing — an addon that resolved
-  // successfully but found nothing is a REAL answer ("Pipe returned no
-  // streams for this title"), never rendered as if it were never queried.
-  $: maveroStatusByName = new Map(maveroAddons.map((addon) => [addon.addonName, addon]));
-  $: maveroPendingAddons = maveroAddons.filter((addon) => {
-    const grouped = maveroStreamGroups.some((group) => group.addonName === addon.addonName);
-    return !grouped;
-  });
+  // Phase 12 (GOAL G): horizontal addon-tab model. ONE tab per session
+  // addon (`HdHub | PenguPlay | Pipe | DesiFlix`); the sheet body shows
+  // ONLY the selected addon's streams. Tabs update LIVE as later addon
+  // requests finish (Phase 10 parallel architecture — nothing serialized).
+  $: maveroTabs = buildMaveroAddonTabs(maveroAddons, maveroStreamGroups);
+  $: playingAddonName = maveroStreamGroups.find((group) => group.streams.some((stream) => stream.url === mediaUrl))?.addonName ?? null;
+  $: activeMaveroTab = maveroTabs.find((tab) => tab.name === activeAddonTab) ?? null;
+  $: activeMaveroTabGroup = activeAddonTab ? maveroStreamGroups.find((group) => group.addonName === activeAddonTab) ?? null : null;
+  // Auto-selection (reads ONLY the tab model + the raw selection — never
+  // `activeMaveroTab`, which would create a reactive cycle):
+  //   * on the FIRST render (no selection yet, or the selected addon
+  //     vanished from the session) pick the default — the addon the user
+  //     is watching, else the first tab with streams;
+  //   * while the user has NOT manually chosen a tab and the auto-selected
+  //     one has no streams yet, follow the first tab that DOES (the
+  //     "first playable addon stays selected" behavior) — a manual tap
+  //     pins the selection permanently.
+  $: if (streamsSheetOpen && maveroTabs.length) {
+    const current = maveroTabs.find((tab) => tab.name === activeAddonTab);
+    if (!activeAddonTab || !current) {
+      activeAddonTab = defaultMaveroAddonTab(maveroTabs, playingAddonName);
+      addonTabTouched = false;
+    } else if (!addonTabTouched && !current.hasStreams) {
+      const candidate = defaultMaveroAddonTab(maveroTabs, playingAddonName);
+      const candidateTab = maveroTabs.find((tab) => tab.name === candidate);
+      if (candidate && candidateTab?.hasStreams) activeAddonTab = candidate;
+    }
+  }
+  // Phase 12 (GOAL G): per-addon resolution state lives in the TAB model
+  // above (buildMaveroAddonTabs) — every session addon keeps exactly one
+  // visible tab (Loading / ✓ N / Failed + Retry / ✓ 0 streams), so a late
+  // or failed addon is never hidden and a completed EMPTY result is an
+  // honest "✓ Loaded — 0 streams" (GOAL 3 / C2 preserved).
   // Phase 9: the MAVERO Player source option (provider selection) — the
   // source sheet shows ONE "X Streams →" entry point for it.
   $: maveroSourceOption = sourceOptions.find((option) => option.id === MAVERO_PLAYER_SOURCE_ID);
@@ -755,9 +779,12 @@
     const selectionSeq = ++compatSelectionSeq;
     void (async () => {
       // Runtime capability refinement (never filename-only guessing).
+      // Phase 12 (GOAL B): ALL addon-supplied text feeds the decision —
+      // an extensionless URL whose title says ".mkv"/"HEVC"/"10-bit" must
+      // route exactly like the filename-equivalent.
       let decision: MediaCompatibilityDecision;
       try {
-        decision = await checkMediaCompatibility({ protocol: stream.protocol, container: stream.container, codec: stream.codec, filename: stream.filename });
+        decision = await checkMediaCompatibility({ protocol: stream.protocol, container: stream.container, codec: stream.codec, filename: stream.filename, title: stream.title, description: stream.description });
       } catch {
         decision = { supported: true, needsRemux: false, needsTranscode: false, reason: 'probe-unavailable', tier: 'DIRECT_UNCERTAIN' };
       }
@@ -996,8 +1023,28 @@
     sourceMenuOpen = false; // only one sheet at a time
     episodeMenuOpen = false;
     streamsSheetReturnToSource = fromSourceSheet;
+    // Phase 12 (GOAL G): re-derive the default tab each open — the addon
+    // owning the playing stream, else the first tab with streams.
+    activeAddonTab = null;
+    addonTabTouched = false;
     streamsSheetOpen = true;
     setTimeout(() => focusSheetCloseButton('streams'), 0);
+  }
+
+  /** Phase 12 (GOAL G): pin ONE addon tab — its streams render alone. */
+  function selectAddonTab(name: string) {
+    addonTabTouched = true;
+    activeAddonTab = name;
+  }
+
+  /**
+   * Phase 12 (GOAL G): retry ONLY the failed addon of the active tab —
+   * the existing per-addon retry hook (no other addon is refetched, the
+   * video is untouched).
+   */
+  function retryActiveAddonTab() {
+    const key = activeMaveroTab?.key;
+    if (key) onMaveroRetry(key);
   }
 
   function closeSourceSheet() {
@@ -1394,13 +1441,16 @@
   {#if streamsSheetOpen}
     <!-- Phase 9: the dedicated MAVERO streams sheet — provider selection
          (source sheet) and stream selection (here) are SEPARATE acts.
-         Streams are grouped by addon display name in the resolver's
-         deterministic order; each card renders ONLY addon-supplied
-         metadata via Svelte auto-escaping (no raw-HTML rendering, no raw URLs, no
-         manifest/db identifiers, no admin controls). The current stream
-         carries the check icon + aria-selected (never color alone);
-         failed streams keep their card with a marker while every other
-         stream stays selectable (failure isolation). -->
+         Phase 12 (GOAL G): STREMIO-STYLE HORIZONTAL ADDON TABS — one
+         scrollable tab per session addon (`HdHub | PenguPlay | Pipe |
+         DesiFlix`); the body below shows ONLY the selected addon's streams
+         (never all addons mixed). Each tab carries its live state
+         (Loading / ✓ N / Failed + Retry / ✓ 0 streams); Retry refetches
+         ONLY that addon. Cards render ONLY addon-supplied metadata via
+         Svelte auto-escaping (no raw-HTML rendering, no raw URLs, no
+         manifest/db identifiers, no admin controls); failed streams keep
+         their card with a marker while every other stream stays selectable
+         (failure isolation). -->
     <div class="sheet-overlay" role="presentation" onclick={() => closeStreamsSheet()}></div>
     <div class="mavero-streams-sheet" role="dialog" aria-modal="true" aria-label="MAVERO Player streams">
       <div class="sheet-handle" aria-hidden="true"></div>
@@ -1410,43 +1460,51 @@
         <button class="close-button" type="button" aria-label="Close stream list" onclick={() => closeStreamsSheet()}><X size={17} /></button>
       </div>
       <div class="sheet-list streams-list">
-        {#if maveroStreamGroups.length || maveroPendingAddons.length}
-          <div class="mavero-groups" role="listbox" aria-label="MAVERO Player addon streams">
-            {#each maveroStreamGroups as group (group.addonName)}
-              <div class="mavero-group" role="group" aria-label={`${group.addonName} streams`}>
-                <div class="mavero-group-head" role="presentation">
-                  <span class="mavero-group-name" title={group.addonName}>{group.addonName}</span>
-                  <small class="mavero-group-count">{group.streams.length} stream{group.streams.length === 1 ? '' : 's'}</small>
-                  {#if maveroStatusByName.get(group.addonName)?.status === 'ok'}<span class="mavero-group-state" role="presentation">✓</span>{/if}
-                </div>
-                {#each group.streams as stream (stream.url)}
-                  <MaveroStreamCard {stream} selected={stream.url === mediaUrl} failed={failedStreamUrls.includes(stream.url)} onselect={selectMaveroStream} />
-                {/each}
-              </div>
-            {/each}
-            {#each maveroPendingAddons as addon (addon.key)}
-              <!-- Phase 10 GOAL 3: addons still resolving, failed, or skipped
-                   stay VISIBLE — a late/failed addon is never hidden.
-                   Phase 11 GOAL C2: an OK addon with 0 streams renders as
-                   "✓ Loaded — 0 streams" — a completed EMPTY result is an
-                   honest answer, never rendered as "never loaded". -->
-              <div class="mavero-group mavero-addon-status" role="group" aria-label={`${addon.addonName} resolution status`}>
-                <div class="mavero-group-head" role="presentation">
-                  <span class="mavero-group-name" title={addon.addonName}>{addon.addonName}</span>
-                  {#if addon.status === 'pending' || addon.status === 'loading'}
-                    <small class="mavero-group-state loading" role="status">Loading…</small>
-                  {:else if addon.status === 'failed'}
-                    <small class="mavero-group-state failed" role="status">Failed</small>
-                    <button class="mavero-retry" type="button" onclick={() => onMaveroRetry(addon.key)}>Retry</button>
-                  {:else if addon.status === 'ok'}
-                    <small class="mavero-group-state" role="status">✓ Loaded — 0 streams</small>
-                  {:else}
-                    <small class="mavero-group-state" role="status">Unavailable</small>
-                  {/if}
-                </div>
-              </div>
+        {#if maveroTabs.length}
+          <!-- Phase 12 (GOAL G): horizontal, scrollable addon tab strip.
+               role=tablist/tab keeps the contract legible; the ACTIVE tab
+               is highlighted (accent border) and its state chip updates
+               live as the parallel per-addon requests land. -->
+          <div class="addon-tabs" role="tablist" aria-label="Addons">
+            {#each maveroTabs as tab (tab.name)}
+              <button class="addon-tab" class:active={tab.name === activeAddonTab} type="button" role="tab" aria-selected={tab.name === activeAddonTab} onclick={() => selectAddonTab(tab.name)}>
+                <span class="addon-tab-name">{tab.name}</span>
+                {#if tab.status === 'pending' || tab.status === 'loading'}
+                  <span class="addon-tab-state loading" role="status">Loading…</span>
+                {:else if tab.status === 'failed'}
+                  <span class="addon-tab-state failed" role="status">Failed</span>
+                {:else if tab.hasStreams}
+                  <span class="addon-tab-state ok" role="status">{tab.streamCount}</span>
+                {:else if tab.status === 'ok'}
+                  <span class="addon-tab-state" role="status">✓ 0</span>
+                {:else}
+                  <span class="addon-tab-state" role="status">—</span>
+                {/if}
+              </button>
             {/each}
           </div>
+          {#if activeMaveroTab}
+            {#if activeMaveroTabGroup}
+              <div class="mavero-groups" role="listbox" aria-label={`${activeMaveroTab.name} streams`}>
+                <div class="mavero-group" role="group" aria-label={`${activeMaveroTabGroup.addonName} streams`}>
+                  {#each activeMaveroTabGroup.streams as stream (stream.url)}
+                    <MaveroStreamCard {stream} selected={stream.url === mediaUrl} failed={failedStreamUrls.includes(stream.url)} onselect={selectMaveroStream} />
+                  {/each}
+                </div>
+              </div>
+            {:else if activeMaveroTab.status === 'pending' || activeMaveroTab.status === 'loading'}
+              <div class="mavero-addon-status" role="status"><span class="mavero-group-state loading">Loading {activeMaveroTab.name}…</span></div>
+            {:else if activeMaveroTab.status === 'failed'}
+              <div class="mavero-addon-status" role="status">
+                <span class="mavero-group-state failed">Failed to load {activeMaveroTab.name}</span>
+                <button class="mavero-retry" type="button" onclick={retryActiveAddonTab}>Retry</button>
+              </div>
+            {:else if activeMaveroTab.status === 'ok'}
+              <div class="mavero-addon-status" role="status"><span class="mavero-group-state">✓ Loaded — 0 streams</span></div>
+            {:else}
+              <div class="mavero-addon-status" role="status"><span class="mavero-group-state">Unavailable</span></div>
+            {/if}
+          {/if}
           {#if engineQuality && engineQuality.audioTracks.length > 1}
             <!-- Phase 10 GOAL 18: audio selector ONLY for streams whose
                  manifest really carries multiple audio renditions; labels
@@ -1619,13 +1677,26 @@
      ellipsis; cards wrap badges instead of overflowing narrow screens. */
   .streams-eyebrow { display: inline-flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .streams-list { display: grid; gap: 6px; }
+  /* Phase 12 (GOAL G): horizontal addon tab strip — scrollable, compact,
+     no wrap, no layout overlap on mobile. Tabs keep 40px+ touch targets;
+     the ACTIVE tab is highlighted with the accent border. */
+  .addon-tabs { display: flex; gap: 6px; max-width: 100%; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .addon-tabs::-webkit-scrollbar { display: none; }
+  .addon-tab { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; max-width: 46%; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 13px; color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; }
+  .addon-tab:hover, .addon-tab:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  .addon-tab.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .addon-tab-name { overflow: hidden; font-size: .64rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+  .addon-tab-state { flex: 0 0 auto; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }
+  .addon-tab-state.ok { color: var(--accent); }
+  .addon-tab-state.failed { color: #ffb020; }
   .mavero-groups { display: grid; gap: 10px; }
   .mavero-group { display: grid; gap: 2px; }
-  .mavero-group-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 6px 12px 2px; }
-  .mavero-group-name { overflow: hidden; color: var(--ink-soft); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-  .mavero-group-count { flex: 0 0 auto; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
+  .mavero-addon-status { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 12px; }
   /* Phase 10: per-addon resolution state — Loading…/✓/Failed + Retry. */
   .mavero-group-state { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
+  /* Phase 12: inside the addon-status row the state sits LEFT and the
+     Retry action RIGHT (the tab already carries the compact state chip). */
+  .mavero-addon-status .mavero-group-state { flex: 1 1 auto; margin-left: 0; }
   .mavero-group-state.loading { color: var(--muted); }
   .mavero-group-state.failed { color: #ffb020; }
   .mavero-retry { flex: 0 0 auto; min-height: 26px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 2px 9px; color: var(--ink); background: transparent; cursor: pointer; font: inherit; font-size: .55rem; }

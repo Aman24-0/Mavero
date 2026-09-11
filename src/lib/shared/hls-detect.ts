@@ -47,9 +47,18 @@ const HLS_TOKENS: readonly string[] = ['hls', 'm3u8', 'mpegurl', 'x-mpegurl', 'v
  * (`format=m3u8`, `type=m3u8`, `ext=m3u8`). The parameter NAME is not
  * restricted — addons use a zoo of names (format/f/ext/type/extension/
  * playlist_format/…) and a false positive would require the value to be
- * exactly an HLS token anyway.
+ * exactly an HLS token anyway. Phase 12 (GOAL A): FULL MIME-type values
+ * (`type=application/vnd.apple.mpegurl`) count too — the task's example
+ * shape, and the exact MIME an addon is documented to declare.
  */
-const HLS_FORMAT_VALUES: ReadonlySet<string> = new Set(['m3u8', 'mpegurl', 'x-mpegurl', 'vnd.apple.mpegurl']);
+const HLS_FORMAT_VALUES: ReadonlySet<string> = new Set([
+  'm3u8',
+  'mpegurl',
+  'x-mpegurl',
+  'vnd.apple.mpegurl',
+  'application/vnd.apple.mpegurl',
+  'application/x-mpegurl',
+]);
 
 /** True when `token` appears in `text` at a word-ish boundary. */
 function containsHlsToken(text: string): boolean {

@@ -1,7 +1,16 @@
 /**
- * MAVERO media worker — job registry (Phase 11, GOAL B5).
+ * MAVERO media worker — job registry (Phase 11, GOAL B5; Phase 12 GOAL I).
  *
- * Lifecycle: queued → preparing (probe) → encoding → ready | failed.
+ * Lifecycle (Phase 12 — streaming readiness):
+ *   queued → preparing (probe) → encoding → READY (first playlist + first
+ *   playable segment on disk) → completed (ffmpeg exited cleanly) | ended
+ *   (ffmpeg failed after playback was already possible) | failed.
+ *
+ * The job becomes `ready` AS SOON AS the output playlist and at least one
+ * playable segment exist — FFmpeg KEEPS RUNNING in the background to
+ * produce subsequent segments (Phase 11 waited for the ENTIRE movie to
+ * finish before exposing the URL, which meant "Preparing stream…" for the
+ * whole transcode).
  *
  * Policies enforced HERE (structural, not advisory):
  *   * concurrency cap — at most `maxConcurrentJobs` FFmpeg processes;
@@ -27,7 +36,6 @@ import { assertResolvablePublicHost, validateJobUrl } from './validate.js';
 import { probeInput, runFfmpeg, type FfmpegEvent } from './ffmpeg.js';
 
 export type JobStatus = 'queued' | 'preparing' | 'encoding' | 'ready' | 'failed';
-
 export type Job = {
   id: string;
   tokenHash: string;
@@ -62,6 +70,8 @@ export class JobRegistry {
   private readonly running = new Set<string>();
   private readonly waiting: string[] = [];
   private readonly killers = new Map<string, () => void>();
+  /** Poll cadence for the first-segment readiness watcher (ms). */
+  private readonly readyPollMs = 500;
   private sweepTimer: NodeJS.Timeout | null = null;
   private encoder: ((job: Job, outDir: string) => { promise: Promise<void>; kill: () => void }) | null = null;
 
@@ -178,6 +188,7 @@ export class JobRegistry {
   private async runJob(job: Job): Promise<void> {
     job.status = 'preparing';
     job.phase = 'probing';
+    let readyWatcher: NodeJS.Timeout | null = null;
     try {
       const probe = await probeInput(this.config.ffprobePath, new URL(job.url), this.config.maxInputDurationSeconds);
       if (probe.ok) {
@@ -202,21 +213,45 @@ export class JobRegistry {
       };
       const run = this.encoder(job, outDir);
       this.killers.set(job.id, run.kill);
+      // Phase 12 (GOAL I): readiness watcher. While FFmpeg encodes, poll the
+      // job directory for the output playlist + a first playable segment;
+      // the moment they exist the job becomes READY and the player may start
+      // — FFmpeg continues producing subsequent segments in the background.
+      // The watcher is cleared when the run settles (finally) and is a no-op
+      // for jobs that already reached ready/failed.
+      readyWatcher = setInterval(() => {
+        if (job.status !== 'encoding') return;
+        void this.playlistReady(outDir).then((ready) => {
+          // Re-read the (mutable) status AFTER the async stat — TS's
+          // narrowing of `job.status` does not survive the await.
+          const statusNow: JobStatus = job.status;
+          if (ready && statusNow === 'encoding') this.markReady(job);
+        });
+      }, this.readyPollMs);
+      readyWatcher.unref();
       await run.promise;
       const statusAfterRun = job.status as JobStatus; // callbacks may have failed it
       if (statusAfterRun === 'failed') return;
-      // Job "ready" = playlist exists and has at least one playable entry.
-      // The sweep keeps enforcing the disk budget afterwards.
+      // Encode exited: verify the playlist exists and has at least one
+      // playable entry. A failure BEFORE any playable segment → failed.
       const playlist = await this.playlistReady(outDir);
       if (!playlist) {
         this.fail(job, 'FFMPEG_FAILED', 'no playlist produced');
         return;
       }
-      job.status = 'ready';
-      job.phase = 'ready';
+      // Explicit widened re-reads — TS cannot see the encoder callbacks'
+      // mutations of `job.status`, so its narrowing here is stale; the
+      // `as JobStatus` cast restores the full union for the comparisons.
+      const statusAfterPlaylist = job.status as JobStatus;
+      if (statusAfterPlaylist !== 'ready') this.markReady(job);
+      // The whole file is packaged now — expose the completed phase while
+      // `ready` stays true (the URL keeps serving until the job TTL).
+      const statusForPhase = job.status as JobStatus;
+      if (statusForPhase === 'ready') job.phase = 'completed';
     } catch {
       this.fail(job, 'FFMPEG_FAILED');
     } finally {
+      if (readyWatcher) clearInterval(readyWatcher);
       this.running.delete(job.id);
       this.pump();
     }
@@ -236,12 +271,46 @@ export class JobRegistry {
     }
   }
 
+  /**
+   * Flips a job to READY exactly once. A failed job is NEVER upgraded
+   * (failure before the first playable segment is terminal).
+   */
+  private markReady(job: Job): void {
+    if (job.status === 'failed' || job.status === 'ready') return;
+    job.status = 'ready';
+    job.phase = 'ready';
+  }
+
+  /**
+   * Marks a job failed — unless playback already became possible
+   * (`status === 'ready'`, Phase 12 GOAL I): a late FFmpeg failure (crash
+   * after the first segments, wall-clock timeout) must NOT destroy the
+   * already-created playback state. The produced segments stay served until
+   * the job TTL; the condition is exposed through the `ended` phase while
+   * `ready` remains true, so an in-progress playback can surface an
+   * appropriate state instead of losing the stream mid-watch.
+   */
   private fail(job: Job, code: string, message?: string): void {
     if (job.status === 'failed') return;
+    const error = message ? `${code}: ${message.slice(0, 200)}` : code;
+    if (job.status === 'ready') {
+      job.phase = 'ended';
+      job.error = error;
+      return;
+    }
     job.status = 'failed';
     job.phase = 'failed';
-    job.error = message ? `${code}: ${message.slice(0, 200)}` : code;
+    job.error = error;
     this.kill(job);
+  }
+
+  /**
+   * Encoder-reported failure (wired from server.ts). Routed through the
+   * SAME ready-aware policy as internal failures so a post-ready FFmpeg
+   * event can never downgrade a playable job to `failed`.
+   */
+  reportEncoderFailure(job: Job, code: string, message?: string): void {
+    this.fail(job, code, message);
   }
 
   dirFor(jobId: string): string | null {

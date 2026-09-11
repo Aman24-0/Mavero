@@ -258,19 +258,44 @@ export function planAddonStreamRequest(
   // namespaces has an id — never because the FIRST accepted namespace
   // happened to be unavailable (the historical single-property behavior
   // that made Stremio-visible addons disappear from MAVERO).
+  //
+  // Phase 12 (GOAL E — the remaining Pipe loss point): the idPrefixes
+  // filter is now part of CANDIDATE SELECTION, not a post-selection gate.
+  // The historical behavior picked the FIRST candidate whose id existed
+  // (e.g. `tmdb_id` when the content carries a TMDB id), constructed
+  // `tmdb:…`, and only THEN ran the prefix check — an addon declaring
+  // `idProperty: ["tmdb_id","imdb_id"]` + `idPrefixes: ["tt"]` was skipped
+  // as `id-prefix-mismatch` even though its SECOND accepted property
+  // (`imdb_id` → `tt…`) satisfies the very prefixes IT declared. Stremio
+  // sends the IMDb id for exactly this addon; MAVERO must too.
+  //
+  // Selection now walks the candidates IN ORDER and accepts the first one
+  // whose constructed id BOTH exists and passes the prefix filter. A
+  // candidate with an id that fails the prefixes is remembered as a
+  // mismatch (diagnostics) and the walk continues — the addon is skipped
+  // as `id-prefix-mismatch` only when a candidate existed but NONE passed,
+  // and as `missing-identifier` only when no accepted namespace had an id
+  // at all. No ID is ever guessed.
   const candidates = resolveAddonIdPropertyCandidates(addon);
   if (!candidates.length) return { ok: false, reason: 'unsupported-id-property' };
+  const prefixes = effectiveStreamIdPrefixes(addon);
   let property: SupportedStremioIdProperty | null = null;
   let baseId: string | null = null;
+  let sawIdButPrefixMismatch = false;
   for (const candidate of candidates) {
     const id = baseIdFor(candidate, identifiers);
-    if (id) {
-      property = candidate;
-      baseId = id;
-      break;
+    if (!id) continue;
+    if (prefixes.length && !prefixes.some((prefix) => id.startsWith(prefix))) {
+      sawIdButPrefixMismatch = true;
+      continue;
     }
+    property = candidate;
+    baseId = id;
+    break;
   }
-  if (!property || !baseId) return { ok: false, reason: 'missing-identifier' };
+  if (!property || !baseId) {
+    return { ok: false, reason: sawIdButPrefixMismatch ? 'id-prefix-mismatch' : 'missing-identifier' };
+  }
 
   let videoId = baseId;
   if (streamType === 'series') {
@@ -283,13 +308,11 @@ export function planAddonStreamRequest(
     return { ok: false, reason: 'missing-identifier' };
   }
 
-  // Prefix filtering (spec §3): an addon declaring idPrefixes is called only
-  // when the CONSTRUCTED id matches one of them. No prefixes → no invented
-  // restriction (protocol semantics).
-  const prefixes = effectiveStreamIdPrefixes(addon);
-  if (prefixes.length && !prefixes.some((prefix) => videoId.startsWith(prefix))) {
-    return { ok: false, reason: 'id-prefix-mismatch' };
-  }
+  // The constructed SERIES id (`tt…:1:1`) satisfies the same prefix filter:
+  // the prefix applies to the BASE id, which already passed above. No
+  // second filter runs here — a base id that passed cannot fail on its own
+  // episode suffix (the historical post-selection gate is gone; the check
+  // is integrated into candidate selection).
 
   const endpointUrl = buildStremioStreamUrl(addon.manifestUrl, streamType, videoId);
   if (!endpointUrl) return { ok: false, reason: 'invalid-endpoint' };

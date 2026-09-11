@@ -102,6 +102,20 @@ function jobPayloadOf(job: Job, config: WorkerConfig): { kind: 'hls'; url: strin
   };
 }
 
+/**
+ * Phase 12 (GOAL I): the required lifecycle vocabulary the status endpoint
+ * reports — `queued` → `processing` → `ready` → `completed` (or `ended`
+ * when FFmpeg failed after playback was already possible) / `failed`.
+ * `ready` and `completed`/`ended` all keep `playback.ready === true`.
+ */
+function lifecycleStatusOf(job: Job): 'queued' | 'processing' | 'ready' | 'completed' | 'ended' | 'failed' {
+  if (job.status === 'queued' || job.status === 'preparing' || job.status === 'encoding') return job.status === 'queued' ? 'queued' : 'processing';
+  if (job.status === 'failed') return 'failed';
+  if (job.phase === 'completed') return 'completed';
+  if (job.phase === 'ended') return 'ended';
+  return 'ready';
+}
+
 export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) {
   registry.registerEncoder((job, outDir) =>
     runFfmpeg({
@@ -116,9 +130,11 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
       onEvent: (event) => {
         if (event.type === 'progress') job.progressSeconds = event.seconds;
         if (event.type === 'failed') {
-          job.status = 'failed';
-          job.phase = 'failed';
-          job.error = event.code;
+          // Phase 12 (GOAL I): routed through the registry's ready-aware
+          // policy — a failure AFTER the job already became playable marks
+          // the `ended` phase and keeps the produced segments served; only
+          // a failure before the first playable segment fails the job.
+          registry.reportEncoderFailure(job, event.code, event.message);
         }
       },
     }),
@@ -179,11 +195,13 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
       return sendJson(response, 404, { ok: false, error: { code: 'NOT_FOUND', message: 'No conversion session exists for this reference.' } });
     }
     if (job.status === 'failed') {
-      return sendJson(response, 200, { ok: true, status: { ready: false, phase: 'failed', progress: null, error: 'CONVERSION_FAILED' } });
+      return sendJson(response, 200, { ok: true, status: { status: 'failed', ready: false, phase: 'failed', progress: null, error: 'CONVERSION_FAILED' } });
     }
+    const lifecycle = lifecycleStatusOf(job);
     return sendJson(response, 200, {
       ok: true,
       status: {
+        status: lifecycle,
         ready: job.status === 'ready',
         phase: job.phase,
         progress: job.inputDurationSeconds ? Math.min(0.99, job.progressSeconds / job.inputDurationSeconds) : null,

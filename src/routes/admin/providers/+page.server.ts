@@ -2,15 +2,21 @@ import { fail, redirect } from '@sveltejs/kit';
 import { isRedirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
-import { createProvider, deleteProvider, listAdminProviders, listProviderHealthSummaries, updateProvider } from '$lib/server/streaming/admin-service';
+import { createProvider, deleteProvider, listAdminProviders, listAdminSources, listProviderHealthSummaries, updateProvider } from '$lib/server/streaming/admin-service';
 import { parseId, parseProviderForm } from '$lib/server/streaming/validation';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
+import { configuredSandboxPolicy, type SandboxPolicy } from '$lib/shared/sandbox-policy';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin/providers' });
-  const [providers, health] = await Promise.all([
+  // Phase 12 (GOAL F): sources ride along so the provider console can warn
+  // when an explicit SOURCE-level sandbox override outranks the provider's
+  // policy (the exact configured-vs-effective mismatch that made an admin
+  // "Unrestricted" choice appear to be ignored at runtime).
+  const [providers, health, sources] = await Promise.all([
     listAdminProviders(locals.supabase),
     listProviderHealthSummaries(locals.supabase),
+    listAdminSources(locals.supabase),
   ]);
   // Phase 7: build a capability map keyed by adapter_id for the UI matrix.
   // lookupProviderCapabilities returns null for unknown adapters (display "Unknown").
@@ -28,7 +34,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       };
     }
   }
-  return { providers, health, capabilityMap, notice: url.searchParams.get('notice') };
+  // Per-provider source sandbox overrides (source EXPLICIT policy ≠ null).
+  const sourceSandboxOverrides: Record<string, Array<{ id: string; name: string; policy: SandboxPolicy }>> = {};
+  for (const source of sources) {
+    const policy = configuredSandboxPolicy(source.capabilities);
+    if (!policy) continue;
+    (sourceSandboxOverrides[source.provider_id] ??= []).push({ id: source.id, name: source.name, policy });
+  }
+  return { providers, health, capabilityMap, sourceSandboxOverrides, notice: url.searchParams.get('notice') };
 };
 
 export const actions: Actions = {

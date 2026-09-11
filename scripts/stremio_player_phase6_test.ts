@@ -256,7 +256,11 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(!shellTemplate.includes('mavero-section'), 'A: Phase 9 — the source sheet no longer embeds the raw stream list (provider selection only)');
   ok(shellTemplate.includes('streams-entry-button') && shellTemplate.includes('openStreamsSheet'), 'A: the source sheet carries ONE "X Streams →" entry point that opens the dedicated streams sheet');
   ok(shellTemplate.includes('mavero-streams-sheet') && shellTemplate.includes('aria-label="MAVERO Player streams"'), 'A: the dedicated MAVERO streams sheet exists as its own dialog');
-  ok(shellSource.includes('maveroStreamGroups.length') && !shellSource.includes('sourceOptions.push'), 'A: the sheet is presentation-only — the source OPTIONS list is never mutated');
+  // Phase 12 UPDATE: the streams sheet now renders the ADDON-TAB model
+  // (`maveroTabs`/`activeMaveroTabGroup`, built from the same pure
+  // `maveroStreamGroups` grouping) instead of a bare `.length` pin — the
+  // PRESENTATION-ONLY rule itself (never mutating sourceOptions) is unchanged.
+  ok(shellSource.includes('maveroStreamGroups') && !shellSource.includes('sourceOptions.push'), 'A: the sheet is presentation-only — the source OPTIONS list is never mutated');
 }
 
 // ===========================================================================
@@ -317,7 +321,10 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   const groups = groupMaveroStreams([qualityFixture({ addonName: 'HTTP Streams Plus' })]);
   ok(groups[0].addonName === 'HTTP Streams Plus', 'D: the group name IS the addon display name');
-  ok(cardSource.includes('<span class="mavero-group-name"') === false && shellTemplate.includes('<span class="mavero-group-name" title={group.addonName}>{group.addonName}</span>'), 'D: the streams sheet renders the addon display name as the group header');
+  // Phase 12 UPDATE: the addon display name now renders in the horizontal
+  // TAB strip (`addon-tab-name`) and the per-addon listbox label — cards
+  // still never render a group header themselves.
+  ok(cardSource.includes('<span class="mavero-group-name"') === false && shellTemplate.includes('<span class="addon-tab-name">{tab.name}</span>') && shellTemplate.includes('aria-label={`${activeMaveroTab.name} streams`}'), 'D: the streams sheet renders the addon display name (tab strip + listbox label)');
   ok(shellTemplate.includes('{MAVERO_PLAYER_SOURCE_NAME}'), 'D: the section header shows the stable MAVERO Player display name');
   const unnamed = groupMaveroStreams([qualityFixture({ addonName: undefined, label: '480p' })]);
   ok(unnamed.length === 1 && unnamed[0].addonName === 'Addon', 'D: a stream without a name falls into one stable "Addon" group (never dropped, never fabricated)');
@@ -481,7 +488,9 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   const noStreamsMessage = /const NO_STREAMS_MESSAGE = '([^']*)';/.exec(clientHelper)?.[1] ?? '';
   const networkMessage = /const NETWORK_MESSAGE = '([^']*)';/.exec(clientHelper)?.[1] ?? '';
   ok(!/manifest|http|addon|error/i.test(noStreamsMessage + networkMessage), 'M: the user-facing zero-stream/network messages expose no addon, manifest or transport internals');
-  ok(shellTemplate.includes('{#if maveroStreamGroups.length || maveroPendingAddons.length}'), 'M: with no aggregate source the stream section simply does not render — the provider rows stay usable (Phase 10: pending addon rows extend the condition)');
+  // Phase 12 UPDATE: the sheet body now keys on the TAB model — with no
+  // session addons (no aggregate source) it renders the empty state only.
+  ok(shellTemplate.includes('{#if maveroTabs.length}') && shellTemplate.includes('No streams are available right now.'), 'M: with no aggregate source the stream section simply does not render — the provider rows stay usable');
 }
 
 // ===========================================================================
@@ -622,7 +631,9 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   ok(shellSource.includes('.player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet, .player-shell:not(.landscape-mode) .mavero-streams-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto;'), 'V: the portrait bottom-sheet contract is intact and INCLUDES the new streams sheet (it scrolls inside it — no horizontal overflow surface)');
   ok(cardSource.includes('min-height: 52px;'), 'V: stream cards keep the >=44px (52px) touch target');
-  ok(shellSource.includes('.mavero-group-name { overflow: hidden;') && shellSource.includes('.mavero-group-name { overflow: hidden; color: var(--ink-soft); font-size: .66rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }'), 'V: long addon names truncate with ellipsis (never stretch the sheet)');
+  // Phase 12 UPDATE: addon names now live in the horizontal TAB chips —
+  // each chip truncates with ellipsis (never stretches the strip/sheet).
+  ok(shellSource.includes('.addon-tab-name { overflow: hidden;') && shellSource.includes('text-overflow: ellipsis; white-space: nowrap; }'), 'V: long addon names truncate with ellipsis (never stretch the sheet)');
   ok(shellSource.includes('.mavero-quality-row { align-items: center; flex-wrap: wrap;'), 'V: the quality row wraps instead of overflowing narrow screens');
   ok(cardSource.includes('width: 100%;'), 'V: stream cards span the sheet width (no tiny buttons)');
   ok(cardSource.includes('word-break: break-word') && cardSource.includes('-webkit-line-clamp: 2;'), 'V: long addon titles/descriptions wrap and clamp inside the card (no layout blowout)');
@@ -657,7 +668,9 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 {
   ok(shellSource.includes('function handleSheetKeydown(event: KeyboardEvent)'), 'Y: the sheet keyboard handler is intact');
   ok(shellSource.includes("querySelectorAll<HTMLElement>('button, a, input, select, textarea, [tabindex]:not([tabindex=\"-1\"])')"), 'Y: the focus trap iterates real buttons — the new stream/quality buttons are included');
-  ok(cardSource.includes('<button\n  class="mavero-stream-card"') || /<button\s*\n?\s*class="mavero-stream-card"/.test(cardSource), 'Y: stream cards are real <button type="button"> elements (Enter/Space natively work)');
+  // Phase 12 UPDATE: the card is a flex row whose SELECTION surface is a
+  // real <button type="button" role="option"> (the action icons are siblings).
+  ok(cardSource.includes('class="card-main"') && cardSource.includes('type="button"') && cardSource.includes('role="option"'), 'Y: stream cards select through a real <button type="button"> element (Enter/Space natively work)');
   ok(cardSource.includes('type="button"') && cardSource.includes('role="option"'), 'Y: stream cards are button+option elements');
   ok(shellTemplate.includes('<button class="variant-button" class:active={engineQuality?.selected === option.id} type="button"'), 'Y: quality toggles are real buttons too');
 }
@@ -679,8 +692,10 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 
 {
   ok(shellTemplate.includes('<div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">'), 'AA: the sheet dialog contract is byte-identical (Phase 8 pin preserved)');
-  ok(shellTemplate.includes('role="listbox" aria-label="MAVERO Player addon streams"'), 'AA: the stream list is a labeled listbox');
-  ok(shellTemplate.includes('aria-label={`${group.addonName} streams`}'), 'AA: each addon group is labeled with the addon display name (screen-reader understandable)');
+  // Phase 12 UPDATE: the labeled listbox is now the ACTIVE ADDON's stream list.
+  ok(shellTemplate.includes('role="listbox" aria-label={`${activeMaveroTab.name} streams`}') && shellTemplate.includes('role="tablist" aria-label="Addons"'), 'AA: the stream list is a labeled listbox alongside a labeled tablist');
+  // Phase 12 UPDATE: the group/section labels now derive from the ACTIVE tab.
+  ok(shellTemplate.includes('aria-label={`${activeMaveroTabGroup.addonName} streams`}') && shellTemplate.includes('aria-label={`${activeMaveroTab.name} streams`}'), 'AA: each addon section is labeled with the addon display name (screen-reader understandable)');
   ok(shellTemplate.includes('role="group" aria-label="Playback quality"'), 'AA: the internal quality row is a labeled group');
   ok(shellTemplate.includes('aria-pressed={engineQuality?.selected === option.id}'), 'AA: quality mode uses aria-pressed (button selection state)');
   ok(shellTemplate.includes('aria-label="Close source list"'), 'AA: the sheet close button keeps its accessible name');

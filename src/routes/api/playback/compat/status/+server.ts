@@ -56,7 +56,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       method: 'GET',
       signal: AbortSignal.timeout(10_000),
     });
-    const workerPayload = (await workerResponse.json().catch(() => null)) as { ok?: boolean; status?: { ready?: unknown; phase?: unknown; progress?: unknown; playback?: { kind?: unknown; url?: unknown; expiresAt?: unknown } }; error?: { code?: string; message?: string } } | null;
+    const workerPayload = (await workerResponse.json().catch(() => null)) as { ok?: boolean; status?: { ready?: unknown; status?: unknown; phase?: unknown; progress?: unknown; playback?: { kind?: unknown; url?: unknown; expiresAt?: unknown } }; error?: { code?: string; message?: string } } | null;
     if (!workerResponse.ok || !workerPayload?.ok || !workerPayload.status) {
       return json(
         { ok: false, error: { code: 'COMPAT_UNAVAILABLE', message: 'This stream could not be converted right now. Try another stream.' } },
@@ -67,11 +67,22 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     const playback = status.playback && status.playback.kind === 'hls' && typeof status.playback.url === 'string' && status.playback.url.startsWith('https://')
       ? { kind: 'hls' as const, url: status.playback.url, ...(typeof status.playback.expiresAt === 'string' ? { expiresAt: status.playback.expiresAt } : {}), ready: true }
       : undefined;
+    // Phase 12 (GOAL 6): a worker-reported CONVERSION FAILURE passes through
+    // as a typed error so the client can STOP polling immediately instead of
+    // burning its whole bounded deadline on a job that already failed.
+    const failed = status.phase === 'failed' || status.status === 'failed';
+    if (failed && !playback) {
+      return json(
+        { ok: false, error: { code: 'CONVERSION_FAILED', message: 'This stream could not be converted right now. Try another stream.' } },
+        { headers: NO_STORE },
+      );
+    }
     return json(
       {
         ok: true,
         status: {
           ready: status.ready === true,
+          ...(typeof status.status === 'string' ? { status: status.status } : {}),
           ...(typeof status.phase === 'string' ? { phase: status.phase } : {}),
           ...(typeof status.progress === 'number' && Number.isFinite(status.progress) ? { progress: status.progress } : {}),
           ...(playback ? { playback } : {}),
