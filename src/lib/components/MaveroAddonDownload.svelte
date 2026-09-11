@@ -6,21 +6,35 @@
 
   /**
    * MAVERO Downloader — the addon-grouped "best available links" panel
-   * (Phase 14).
+   * (Phase 14, progressive independent flow in Phase 15).
    *
    * Rendered inside the EXISTING DownloadSheet (when the built-in
    * "Mavero Downloader" provider is selected) and on the standalone
    * /watch/mavero-downloader deep-link pages. One surface, two hosts.
    *
-   * PRODUCT CONTRACT (task §3/§4/§7/§8/§9/§10):
-   *   * The server already ranked + filtered everything: ≤4 BEST links per
+   * PHASE 15 PROGRESSIVE FLOW (task §1/§2/§3):
+   *   1. onMount: fetch the addon TAB list from `/api/downloader/mavero/tabs`
+   *      (NO stream fetches — fast). Render every tab in `loading` state.
+   *   2. For EACH tab: fire an INDEPENDENT fetch to
+   *      `/api/downloader/mavero/addon?...&addon=<id>` with its OWN
+   *      AbortController + lifecycle. Successful tabs update IN PLACE —
+   *      they never reset other tabs. Slow tabs keep loading in the
+   *      background. A failed tab never disturbs successful tabs.
+   *   3. The server does bounded retry/backoff for transient failures
+   *      (TIMEOUT/NETWORK/HTTP_ERROR) internally; the frontend sees the
+   *      final result (loaded/empty/unavailable).
+   *   4. A per-tab Retry button re-fires ONLY that tab's request — it does
+   *      NOT touch other tabs and does NOT reset global state.
+   *
+   * PRODUCT CONTRACT (task §3/§4/§7/§8/§9/§10/§14/§15):
+   *   * The server already ranked + filtered everything: ≤10 BEST links per
    *     addon arrive here — never the raw 30–50 addon streams.
-   *   * The addon tabs carry the EXACT state model: Loading / N links /
-   *     0 links / Failed + Retry. A per-link problem never renders as an
-   *     addon failure (and vice versa).
+   *   * The addon tabs carry the FIVE-state model: Loading / Retrying / N
+   *     links / 0 links / Unavailable + Retry. A per-link problem never
+   *     renders as an addon failure (and vice versa).
    *   * Links are labelled "Best available links" — NEVER "guaranteed
    *     working": the backend ranks metadata, it does not open the URLs.
-   *   * Open Player hands the ORIGINAL addon URL to an EXTERNAL player
+   *   * Play opens the ORIGINAL addon URL in an EXTERNAL player
    *     (mpv on Android through the VIEW-intent mechanism; a plain
    *     external link everywhere else). Copy copies the ORIGINAL URL.
    *     Download navigates the ORIGINAL URL — no proxy, no FFmpeg, no
@@ -50,20 +64,26 @@
     protocol: 'http' | 'https';
     confidence: 'high' | 'medium' | 'low';
   };
-  type Group = {
+  /** Phase 15 five-state model (task §3). */
+  type TabStatus = 'loading' | 'retrying' | 'loaded' | 'empty' | 'unavailable';
+  type Tab = {
     addonId: string;
     addonName: string;
     addonSlug: string;
     addonOrdering: number;
-    status: 'loaded' | 'empty' | 'failed';
+    status: TabStatus;
     streams: StreamView[];
     errorCode?: string;
+    /** Per-tab abort controller (independent lifecycle). */
+    abort?: AbortController;
+    /** Per-tab retry attempt count (for the retrying state). */
+    attempts?: number;
   };
 
-  let groups: Group[] = [];
-  let loading = true;
-  let failed = false;
-  let activeTab: string | null = null;
+  let tabs: Tab[] = [];
+  let tabsLoading = true;
+  let tabsFailed = false;
+  let activeTabId: string | null = null;
 
   // Per-link action states (bounded, self-restoring — the MaveroStreamCard
   // pattern: immediate feedback, duplicate rapid clicks suppressed).
@@ -73,7 +93,8 @@
   let openingKey = '';
   let openingTimer: ReturnType<typeof setTimeout> | undefined;
 
-  $: activeGroup = groups.find((group) => group.addonName === activeTab) ?? null;
+  $: activeTab = tabs.find((tab) => tab.addonId === activeTabId) ?? null;
+  $: tabsReady = !tabsLoading && !tabsFailed && tabs.length > 0;
 
   function formatSize(bytes?: number): string | undefined {
     if (!bytes || bytes <= 0) return undefined;
@@ -106,40 +127,120 @@
   }
 
   /** Default active tab: the first addon with links, else the first addon. */
-  function defaultTab(list: Group[]): string | null {
+  function defaultTabId(list: Tab[]): string | null {
     if (!list.length) return null;
-    return (list.find((group) => group.streams.length > 0) ?? list[0]).addonName;
+    return (list.find((tab) => tab.status === 'loaded' && tab.streams.length > 0) ?? list[0]).addonId;
   }
 
-  async function load() {
-    loading = true;
-    failed = false;
+  function buildParams(): URLSearchParams {
     const params = new URLSearchParams({ contentId, mediaType, tmdbId });
     if (season !== undefined) params.set('season', String(season));
     if (episode !== undefined) params.set('episode', String(episode));
+    return params;
+  }
+
+  /** Phase 15 task §1/§2: load the addon TAB list (no streams). */
+  async function loadTabs(): Promise<void> {
+    tabsLoading = true;
+    tabsFailed = false;
     try {
-      const response = await fetch(`/api/downloader/mavero?${params.toString()}`, { headers: { accept: 'application/json' } });
-      const payload = await response.json() as { ok?: boolean; groups?: Group[] };
+      const response = await fetch(`/api/downloader/mavero/tabs?${buildParams().toString()}`, { headers: { accept: 'application/json' } });
+      const payload = await response.json() as { ok?: boolean; tabs?: Array<{ addonId: string; addonName: string; addonSlug: string; addonOrdering: number }> };
       if (!response.ok || !payload.ok) throw new Error('unavailable');
-      groups = payload.groups ?? [];
-      activeTab = defaultTab(groups);
-      failed = false;
+      tabs = (payload.tabs ?? []).map((tab) => ({ ...tab, status: 'loading' as TabStatus, streams: [] }));
+      activeTabId = defaultTabId(tabs);
+      tabsFailed = false;
     } catch {
-      failed = true;
-      groups = [];
-      activeTab = null;
+      tabsFailed = true;
+      tabs = [];
+      activeTabId = null;
     } finally {
-      loading = false;
+      tabsLoading = false;
     }
   }
 
-  function retry() {
-    if (loading) return;
+  /**
+   * Phase 15 task §1: fire ONE independent per-addon resolution. Successful
+   * tabs update IN PLACE — they never reset other tabs. The server does
+   * bounded retry/backoff for transient failures internally.
+   */
+  async function loadAddon(tab: Tab): Promise<void> {
+    // Abort any previous in-flight request for this tab (Retry re-fires cleanly).
+    tab.abort?.abort();
+    const abort = new AbortController();
+    tab.abort = abort;
+    tab.status = tab.status === 'unavailable' ? 'loading' : tab.status === 'retrying' ? 'retrying' : 'loading';
+    tab.errorCode = undefined;
+    tab.streams = [];
+    tabs = [...tabs]; // trigger reactivity
+
+    const params = buildParams();
+    params.set('addon', tab.addonId);
+    try {
+      const response = await fetch(`/api/downloader/mavero/addon?${params.toString()}`, {
+        headers: { accept: 'application/json' },
+        signal: abort.signal,
+      });
+      if (abort.signal.aborted) return; // a newer Retry superseded this request
+      const payload = await response.json() as {
+        ok?: boolean;
+        group?: { status: TabStatus; streams: StreamView[]; errorCode?: string; attempts?: number };
+      };
+      if (!response.ok || !payload.ok || !payload.group) throw new Error('unavailable');
+      tab.status = payload.group.status;
+      tab.streams = payload.group.streams ?? [];
+      tab.errorCode = payload.group.errorCode;
+      tab.attempts = payload.group.attempts;
+    } catch (error) {
+      if (abort.signal.aborted) return; // user retried / navigated away
+      tab.status = 'unavailable';
+      tab.streams = [];
+      tab.errorCode = 'NETWORK';
+      console.warn('[MaveroDownloader] tab fetch failed', tab.addonSlug, error);
+    } finally {
+      if (!abort.signal.aborted) {
+        tabs = [...tabs]; // trigger reactivity with the final state
+        // Auto-select the first loaded tab if the active tab is empty/failed.
+        if (activeTabId === tab.addonId && tab.status !== 'loaded' && tab.streams.length === 0) {
+          const firstLoaded = tabs.find((candidate) => candidate.status === 'loaded' && candidate.streams.length > 0);
+          if (firstLoaded && firstLoaded.addonId !== activeTabId) {
+            activeTabId = firstLoaded.addonId;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Phase 15 task §1/§2: on mount, fetch the tab list then fire ONE
+   * independent per-addon request for each tab. Each tab has its OWN
+   * lifecycle — a successful tab never resets when another tab loads or
+   * retries.
+   */
+  async function load(): Promise<void> {
+    await loadTabs();
+    if (tabs.length === 0) return;
+    // Fire all per-addon requests in parallel; each resolves independently.
+    // We do NOT await Promise.all before rendering — the reactive `tabs`
+    // array updates each tab in place as it completes.
+    for (const tab of tabs) {
+      void loadAddon(tab);
+    }
+  }
+
+  /** Phase 15 task §2: retry ONLY the selected tab — others stay untouched. */
+  function retryTab(tab: Tab): void {
+    if (tab.status === 'loading' || tab.status === 'retrying') return;
+    void loadAddon(tab);
+  }
+
+  function retryAll(): void {
+    if (tabsLoading) return;
     void load();
   }
 
-  function selectTab(name: string) {
-    activeTab = name;
+  function selectTab(id: string): void {
+    activeTabId = id;
   }
 
   async function handleCopy(stream: StreamView, key: string) {
@@ -184,7 +285,7 @@
   onMount(load);
 </script>
 
-<div class="mad" aria-busy={loading}>
+<div class="mad" aria-busy={tabsLoading}>
   <div class="mad-intro">
     <div class="mad-intro-copy">
       <span class="mad-eyebrow">MAVERO Downloader</span>
@@ -193,32 +294,34 @@
     <span class="mad-hint"><ExternalLink size={11} /> Best available links</span>
   </div>
 
-  {#if loading}
-    <div class="mad-state" role="status"><span class="mad-spin"><Loader2 size={18} /></span><span>Finding the best links…</span></div>
-  {:else if failed}
+  {#if tabsLoading}
+    <div class="mad-state" role="status"><span class="mad-spin"><Loader2 size={18} /></span><span>Finding addons…</span></div>
+  {:else if tabsFailed}
     <div class="mad-state mad-state-error" role="status">
       <AlertTriangle size={18} />
-      <span>Couldn't load addon links.</span>
-      <button type="button" class="mad-retry" onclick={retry}><RotateCw size={12} /> Retry</button>
+      <span>Couldn't load addon tabs.</span>
+      <button type="button" class="mad-retry" onclick={retryAll}><RotateCw size={12} /> Retry</button>
     </div>
-  {:else if groups.length === 0}
+  {:else if tabs.length === 0}
     <div class="mad-state" role="status"><Info size={18} /><span>No Stremio addons are enabled. Enable addons to see direct links here.</span></div>
   {:else}
     <div class="mad-tabs" role="tablist" aria-label="Addons">
-      {#each groups as group (group.addonId)}
+      {#each tabs as tab (tab.addonId)}
         <button
           class="mad-tab"
-          class:active={group.addonName === activeTab}
+          class:active={tab.addonId === activeTabId}
           type="button"
           role="tab"
-          aria-selected={group.addonName === activeTab}
-          onclick={() => selectTab(group.addonName)}
+          aria-selected={tab.addonId === activeTabId}
+          onclick={() => selectTab(tab.addonId)}
         >
-          <span class="mad-tab-name">{group.addonName}</span>
-          {#if group.status === 'failed'}
+          <span class="mad-tab-name">{tab.addonName}</span>
+          {#if tab.status === 'loading' || tab.status === 'retrying'}
+            <span class="mad-tab-state loading" role="status"><span class="mad-tab-spin"><Loader2 size={10} /></span></span>
+          {:else if tab.status === 'unavailable'}
             <span class="mad-tab-state failed" role="status">Failed</span>
-          {:else if group.streams.length > 0}
-            <span class="mad-tab-state ok" role="status">{group.streams.length}</span>
+          {:else if tab.status === 'loaded' && tab.streams.length > 0}
+            <span class="mad-tab-state ok" role="status">{tab.streams.length}</span>
           {:else}
             <span class="mad-tab-state" role="status">0</span>
           {/if}
@@ -226,11 +329,28 @@
       {/each}
     </div>
 
-    {#if activeGroup}
-      {#if activeGroup.streams.length}
-        <div class="mad-list" role="list" aria-label={`${activeGroup.addonName} best links`}>
-          {#each activeGroup.streams as stream, index (stream.url)}
-            {@const key = `${activeGroup.addonSlug}-${index}`}
+    {#if activeTab}
+      {#if activeTab.status === 'loading' || activeTab.status === 'retrying'}
+        <div class="mad-state" role="status">
+          <span class="mad-spin"><Loader2 size={18} /></span>
+          <span>{activeTab.status === 'retrying' ? 'Trying again…' : `Finding links from ${activeTab.addonName}…`}</span>
+        </div>
+      {:else if activeTab.status === 'unavailable'}
+        <div class="mad-state mad-state-error" role="status">
+          <AlertTriangle size={16} />
+          <span>{activeTab.addonName} is unavailable right now.</span>
+          <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={12} /> Retry</button>
+        </div>
+      {:else if activeTab.streams.length === 0}
+        <div class="mad-state" role="status">
+          <Info size={16} />
+          <span>No eligible direct file links from {activeTab.addonName} for this title.</span>
+          <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={12} /> Retry</button>
+        </div>
+      {:else}
+        <div class="mad-list" role="list" aria-label={`${activeTab.addonName} best links`}>
+          {#each activeTab.streams as stream, index (stream.url)}
+            {@const key = `${activeTab.addonSlug}-${index}`}
             <article class="mad-row" role="listitem">
               <div class="mad-row-main">
                 <span class="mad-row-label">{streamLabel(stream)}</span>
@@ -273,14 +393,6 @@
           {/each}
         </div>
         <p class="mad-note"><ExternalLink size={11} /> {playerNote} Links open or download with the provider's original address.</p>
-      {:else if activeGroup.status === 'failed'}
-        <div class="mad-state" role="status">
-          <AlertTriangle size={16} />
-          <span>Failed to load {activeGroup.addonName}.</span>
-          <button type="button" class="mad-retry" onclick={retry}><RotateCw size={12} /> Retry</button>
-        </div>
-      {:else}
-        <div class="mad-state" role="status"><Info size={16} /><span>No eligible direct file links from {activeGroup.addonName} for this title.</span></div>
       {/if}
     {/if}
   {/if}
@@ -304,9 +416,11 @@
   .mad-tab:hover { border-color: var(--line-strong); color: var(--ink); }
   .mad-tab.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
   .mad-tab-name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-tab-state { min-width: 18px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 1px 6px; font-size: 0.55rem; font-weight: 700; text-align: center; }
+  .mad-tab-state { min-width: 18px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 1px 6px; font-size: 0.55rem; font-weight: 700; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
   .mad-tab-state.ok { color: var(--accent); }
   .mad-tab-state.failed { color: #d48a64; }
+  .mad-tab-state.loading { background: transparent; padding: 1px 2px; }
+  .mad-tab-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
   .mad-list { display: flex; flex-direction: column; gap: 6px; }
   .mad-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.025); padding: 9px 10px; }
   .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; min-width: 0; }
@@ -322,5 +436,5 @@
   .mad-action-play { color: var(--ink); }
   .mad-note { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--muted); font-size: 0.55rem; }
   @keyframes mad-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .mad-spin { animation: none; } .mad-action { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action { transition: none; } }
 </style>

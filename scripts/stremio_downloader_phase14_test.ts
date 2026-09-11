@@ -256,8 +256,15 @@ async function sectionHI(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// J/K — max 4 per addon, diversity, never first-four-by-arrival, dedupe
+// J/K — max per addon, diversity, never first-N-by-arrival, dedupe
 // ---------------------------------------------------------------------------
+// Phase 15 (task §8): MAX_DOWNLOAD_STREAMS_PER_ADDON raised 4 → 10. The
+// 7-stream pengu payload now collapses to 6 selected (the download-only
+// entry stays hard-excluded; the heavy remux makes the cut because max=10
+// has room, but ranks LAST among the practical 1080p links — heavy
+// demotion, never heavy exclusion). The diversity caps (4K ≤ 2, others
+// ≤ 4) replace the old 4K ≤ 1 / 1080p ≤ 2 Phase 14 caps so the 10 slots
+// can hold a useful quality spread without one bucket flooding.
 
 async function sectionJK(): Promise<void> {
   const result = await resolveAddonDownloads({} as never, movieRequest, {
@@ -267,14 +274,23 @@ async function sectionJK(): Promise<void> {
     fetcher: fetcherFor({ 'https://hdhub.example/stream/movie/tt8633518.json': new Response(JSON.stringify(penguDirectPayload()), { status: 200, headers: { 'content-type': 'application/json' } }) }, []),
   });
   const hub = result.groups[0];
-  ok(hub?.status === 'loaded' && hub.streams.length === MAX_DOWNLOAD_STREAMS_PER_ADDON, `J: the 7-stream direct-file payload collapses to exactly ${MAX_DOWNLOAD_STREAMS_PER_ADDON} BEST links`);
+  ok(hub?.status === 'loaded' && hub.streams.length <= MAX_DOWNLOAD_STREAMS_PER_ADDON, `J: the direct-file payload collapses to at most ${MAX_DOWNLOAD_STREAMS_PER_ADDON} BEST links`);
+  ok((hub?.streams.length ?? 0) >= 5, 'J: the 7-stream payload (minus download-only) yields at least 5 candidates — max=10 does NOT fabricate or over-collapse');
   const urls = hub?.streams.map((stream) => stream.url) ?? [];
-  ok(!urls.includes('https://pengu.example/get/remux1080') && !urls.includes('https://pengu.example/download/only'), 'Q: the 45.7 GB remux and the download-only entry do not make the cut when better links exist');
+  ok(!urls.includes('https://pengu.example/download/only'), 'Q: the download-only entry NEVER makes the cut (hard exclusion, not a ranking decision)');
   ok(urls.includes('https://pengu.example/get/webdl1080'), 'J: the 4.4 GB dual-audio 1080p WEB-DL (the most practical link) leads');
+  // Heavy demotion: with max=10 the 45.7 GB remux makes the cut, but every
+  // practical 1080p link ranks ABOVE it (heavy releases never outrank
+  // practical ones at the same quality — the Phase 14 contract preserved).
+  if (urls.includes('https://pengu.example/get/remux1080')) {
+    const remuxIndex = urls.indexOf('https://pengu.example/get/remux1080');
+    const webdlIndex = urls.indexOf('https://pengu.example/get/webdl1080');
+    ok(webdlIndex < remuxIndex, 'Q: the 45.7 GB remux ranks BELOW the practical 1080p WEB-DL (heavy demotion, not heavy exclusion)');
+  }
   ok(new Set(urls).size === urls.length, 'K: no duplicate URLs in the selection');
   const qualities = hub?.streams.map((stream) => stream.quality) ?? [];
-  ok(qualities.filter((quality) => quality === '4K').length <= 1, 'J: 4K is capped at ONE link (a 4K dump never floods the list)');
-  ok(qualities.filter((quality) => quality === '1080p').length <= 2, 'J: per-quality cap keeps useful diversity');
+  ok(qualities.filter((quality) => quality === '4K').length <= 2, 'J: 4K is capped at TWO links (Phase 15 diversity — a 4K dump never floods the list)');
+  ok(qualities.filter((quality) => quality === '1080p').length <= 4, 'J: per-quality cap keeps useful diversity (Phase 15: 1080p cap raised to 4)');
 
   // Equivalent-release dedupe: same bucket+codec+container+audio+release text.
   const twins = buildDownloadCandidates(normalizeStreams({

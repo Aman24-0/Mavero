@@ -640,10 +640,16 @@ function makeDirectSource(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(!/stremio\/(stream|manifest)-/.test(clientHelper), 'N: the client helper imports no server Stremio modules');
 
   const watchPage = readFileSync('src/routes/watch/[type]/[id]/+page.svelte', 'utf8');
-  ok(watchPage.includes('maveroPlayerSourceOption()'), 'N: the watch route appends the virtual option');
-  ok(watchPage.includes('data.maveroPlayerAvailable'), 'N: the virtual option is server-gated');
-  ok(watchPage.includes('isMaveroPlayerSourceId(sourceId)'), 'N: the route branches to the MAVERO Player path by identity');
-  ok(watchPage.includes('prepareMaveroPlayerSource'), 'N: the route implements the MAVERO Player resolution branch');
+  // Phase 15 (task §16): the MAVERO Player virtual source is NO LONGER
+  // APPENDED to the source selector — the downloader is now the dedicated
+  // surface for Stremio addon direct files. The deep-link backward-compat
+  // path (isMaveroPlayerSourceId + prepareMaveroPlayerSource) stays for
+  // historical /watch/...?source=mavero-player URLs, but the option is
+  // never listed in the embed/source selector UI.
+  ok(!watchPage.includes('maveroPlayerSourceOption()'), 'N (Phase 15): the watch route no longer appends the virtual option to sourceOptions');
+  ok(!/\.\.\.\(data\.maveroPlayerAvailable\s*\?\s*\[maveroPlayerSourceOption\(\)\]/.test(watchPage), 'N (Phase 15): the virtual option is not conditionally appended');
+  ok(watchPage.includes('isMaveroPlayerSourceId(sourceId)'), 'N: the route branches to the MAVERO Player path by identity (deep-link backward compat)');
+  ok(watchPage.includes('prepareMaveroPlayerSource'), 'N: the route implements the MAVERO Player resolution branch (deep-link backward compat)');
   // Phase 10: the aggregate source loads through the manager from the
   // PROGRESSIVELY MERGED result (first playable stream → live merges) —
   // same presetSource mechanism, now fed by mergeMaveroResults.

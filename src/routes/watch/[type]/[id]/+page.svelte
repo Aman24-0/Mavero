@@ -17,7 +17,7 @@
   // per-addon requests merged live (GOALS 1–6). The aggregate endpoint stays
   // available for backward compatibility but is no longer on this path.
   import { mergeMaveroResults, startMaveroProgressiveResolution, type MaveroAddonResult, type MaveroAddonStatus, type ProgressiveSession } from '$lib/client/player/mavero-progressive';
-  import { isMaveroPlayerSourceId, MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME, maveroPlayerSourceOption } from '$lib/shared/mavero-player';
+  import { isMaveroPlayerSourceId, MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME } from '$lib/shared/mavero-player';
 
   export let data: PageData;
 
@@ -42,11 +42,13 @@
   // MegaPlay-style SUB/DUB variant toggle was removed alongside the Yenime
   // anime provider — all sources are now opaque options selected by name.
   //
-  // Phase 4: the MAVERO Player virtual source is APPENDED (never replacing
-  // or reordering the provider sources) when the server-side availability
-  // gate (`data.maveroPlayerAvailable`) reports at least one eligible
-  // enabled Stremio addon. It is ONE aggregate option — individual addon
-  // streams never become source options or `streaming_sources` rows.
+  // Phase 15 (task §16): the MAVERO Player virtual source is NO LONGER
+  // APPENDED to the source selector. The downloader is now the dedicated
+  // surface for Stremio addon direct files (external player / download);
+  // the native player keeps addon HLS through the unchanged aggregate
+  // resolution path, but it is not surfaced as a separate "MAVERO Player"
+  // entry in the embed/source selector. The underlying HLS implementation
+  // and the addon resolution pipeline are untouched.
   $: sourceOptions = [
     ...data.streamingConfig.sources.map((source) => {
       const provider = data.streamingConfig.providers.find((provider) => provider.id === source.provider_id);
@@ -64,7 +66,6 @@
       };
       return option;
     }),
-    ...(data.maveroPlayerAvailable ? [maveroPlayerSourceOption()] : [])
   ];
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
   $: playerContent = ({ id: item.id, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
