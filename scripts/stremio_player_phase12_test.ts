@@ -506,11 +506,15 @@ async function sectionE2(): Promise<void> {
       }) as typeof fetch,
     });
     ok(requestedUrl === 'https://pipe-addon.example/stream/movie/tt8633518.json', 'E2: MAVERO requested the IMDb-namespaced stream endpoint (the id Stremio itself sends)');
-    ok(resolution.result.status === 'ok' && resolution.result.streams.length === 1, 'E2: the valid https stream is PLAYABLE (returned), not silently dropped');
-    const stream = resolution.result.status === 'ok' ? resolution.result.streams[0] : null;
-    ok(stream?.source.url === 'https://pixeldrain.example/api/file/ab12cd', 'E2: the original addon URL survives the pipeline verbatim');
+    // Phase 14 (external-downloader architecture): the valid https stream is a
+    // DIRECT FILE — it is not dropped by validation (it normalizes + passes the
+    // addon playback boundary) but it IS isolated from the native player by
+    // design and served by the Mavero Downloader surface instead. The outcome
+    // is still an OK addon response — never a failure.
+    ok(resolution.result.status === 'ok' && resolution.result.streams.length === 0, 'E2: the addon resolves OK; the valid https DIRECT FILE is isolated from the player (Phase 14 — the Mavero Downloader offers it instead)');
     const structured = logs.find((line) => line.includes('[StremioAddon] resolved'));
-    ok(typeof structured === 'string' && structured.includes('videoId=tt8633518') && structured.includes('returned=1') && structured.includes('playable=1'), 'E2: structured diagnostics log the selected video id, returned + playable counts');
+    ok(typeof structured === 'string' && structured.includes('videoId=tt8633518') && structured.includes('returned=1') && structured.includes('playable=0'), 'E2: structured diagnostics log the selected video id, returned + playable counts');
+    ok(Boolean(structured?.includes('player-hls-only:1')), 'E2: the diagnostics name the isolation reason (player-hls-only:1 — the direct file)');
     ok(Boolean(structured?.includes('torrent:1')), 'E2: the diagnostics name the per-reason exclusion counts (torrent:1 — the magnet/infoHash stream)');
   } finally {
     console.info = originalInfo;

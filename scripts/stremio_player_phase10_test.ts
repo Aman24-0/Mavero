@@ -278,8 +278,9 @@ function makeSessionClient(addons: FakeAddonRecord[]) {
   // bucket + codec + container + audio) collapse to the best
   // MAX_EQUIVALENT_RELEASES entries; the selection then caps the bucket at
   // MAX_STREAMS_PER_QUALITY. The noisy 40-stream dump is gone — the tab
-  // count is the FINAL usable count.
-  const many = { streams: Array.from({ length: 60 }, (_, index) => ({ name: '1080p', title: '1080p Dual Audio', url: `https://media.example/s${index}.mp4` })) };
+  // count is the FINAL usable count. (Phase 14: the fixture streams are HLS —
+  // the player surface keeps only addon HLS; direct files are isolated.)
+  const many = { streams: Array.from({ length: 60 }, (_, index) => ({ name: '1080p', title: '1080p Dual Audio', url: `https://media.example/s${index}.m3u8` })) };
   const capped = await resolveAddonToken(
     client,
     { sessionId: 'sess-1', token },
@@ -295,14 +296,15 @@ function makeSessionClient(addons: FakeAddonRecord[]) {
   // the playback boundary (the browser — never the Mavero server — fetches
   // them; real Stremio addons legitimately serve http media, and the old
   // https-only rule emptied otherwise-valid addons). Credential/private-host
-  // rules are unchanged; the compat path stays https-only.
+  // rules are unchanged; the compat path stays https-only. (Phase 14: the
+  // fixture is cleartext http HLS so the stream ALSO stays player-offered.)
   const insecure = await resolveAddonToken(
     client,
     { sessionId: 'sess-1', token },
     { mediaType: 'movie', contentId: 'tt500' },
-    { secret: SECRET, loadContent: contentLookup, loadAddonById, dnsResolver, fetcher: (async () => new Response(JSON.stringify(streamPayloadFixture('http://media.example/insecure.mp4', '720p')), { status: 200 })) as typeof fetch },
+    { secret: SECRET, loadContent: contentLookup, loadAddonById, dnsResolver, fetcher: (async () => new Response(JSON.stringify(streamPayloadFixture('http://media.example/insecure.m3u8', '720p')), { status: 200 })) as typeof fetch },
   );
-  ok(insecure.result.status === 'ok' && insecure.result.streamCount === 1, 'C: a cleartext http:// addon stream now passes the ADDON playback boundary (Phase 13 Pipe fix)');
+  ok(insecure.result.status === 'ok' && insecure.result.streamCount === 1, 'C: a cleartext http:// addon stream now passes the ADDON playback boundary (Phase 13 Pipe fix; HLS stays player-offered — Phase 14)');
   const privateHost = await resolveAddonToken(
     client,
     { sessionId: 'sess-1', token },

@@ -1503,7 +1503,13 @@
                 <button class="mavero-retry" type="button" onclick={retryActiveAddonTab}>Retry</button>
               </div>
             {:else if activeMaveroTab.status === 'ok'}
-              <div class="mavero-addon-status" role="status"><span class="mavero-group-state">✓ Loaded — 0 streams</span></div>
+              <div class="mavero-addon-status" role="status">
+                <span class="mavero-group-state">✓ Loaded — 0 streams</span>
+                <!-- Phase 14: a LOADED-ZERO addon is NOT a failure. Direct-file
+                     candidates are served by the Mavero Downloader (Download
+                     sheet) — say so, so "✓ 0" never reads as broken. -->
+                <span class="mavero-group-hint">Direct files from this addon are available in Mavero Downloader (Download sheet)</span>
+              </div>
             {:else}
               <div class="mavero-addon-status" role="status"><span class="mavero-group-state">Unavailable</span></div>
             {/if}
@@ -1700,6 +1706,8 @@
   /* Phase 12: inside the addon-status row the state sits LEFT and the
      Retry action RIGHT (the tab already carries the compact state chip). */
   .mavero-addon-status .mavero-group-state { flex: 1 1 auto; margin-left: 0; }
+  /* Phase 14: the LOADED-ZERO hint — direct files live in the Mavero Downloader. */
+  .mavero-group-hint { flex: 1 1 100%; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; line-height: 1.5; }
   .mavero-group-state.loading { color: var(--muted); }
   .mavero-group-state.failed { color: #ffb020; }
   .mavero-retry { flex: 0 0 auto; min-height: 26px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 2px 9px; color: var(--ink); background: transparent; cursor: pointer; font: inherit; font-size: .55rem; }

@@ -182,14 +182,15 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const testScript: string = pkg.scripts.test;
   // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8;
   // Phase 10 appended stremio_player_phase10_test.ts — the chain still runs
-  // phase 7 before phase 8 before phase 9 and now ENDS with phase 13.
-  // (Phase 11/12/13 appended their suites to the chain — intentional extension.)
+  // phase 7 before phase 8 before phase 9 and now ENDS with phase 14
+  // (the Mavero Downloader suite). (Phase 11/12/13/14 appended their suites
+  // to the chain — intentional extension.)
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('stremio_player_phase13_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 13 suite (Phase 9/10/11/12/13 extension)',
+      testScript.trimEnd().endsWith('stremio_downloader_phase14_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 14 downloader suite (Phase 9–14 extension)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');
@@ -638,11 +639,13 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const endpointOf = (manifestUrl: string) => buildStremioStreamUrl(manifestUrl, 'movie', 'tt123')!;
 
   // Deterministic ordering follows the loader contract (DB: ordering → name).
+  // Phase 14: fixtures use HLS URLs — the player keeps only addon HLS
+  // streams (direct files are isolated to the Mavero Downloader).
   const first = addonFixture({ id: 'a', manifestUrl: 'https://a.example/manifest.json', ordering: 0 });
   const second = addonFixture({ id: 'b', manifestUrl: 'https://b.example/manifest.json', ordering: 2 });
   const orderingRoutes: Record<string, RouteHandler> = {
-    [endpointOf('https://a.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/a.mp4' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
-    [endpointOf('https://b.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/b.mp4' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    [endpointOf('https://a.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/a.m3u8' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    [endpointOf('https://b.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/b.m3u8' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
   };
   const orderedCalls: Array<{ url: string }> = [];
   const ordered = await resolveStremioStreams({} as never, request, {
@@ -650,7 +653,7 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     fetcher: createFetcher(orderingRoutes, orderedCalls),
     dnsResolver: publicResolver,
   });
-  ok(ordered.sources.length === 2 && ordered.sources[0].url === 'https://cdn.example/a.mp4', 'K: sources follow deterministic loader order (ordering → name)');
+  ok(ordered.sources.length === 2 && ordered.sources[0].url === 'https://cdn.example/a.m3u8', 'K: sources follow deterministic loader order (ordering → name)');
   const resolverSource = readRepoFile('src/lib/server/streaming/stremio/stream-resolver.ts');
   ok(resolverSource.includes(".order('ordering'") && resolverSource.includes(".order('name'"), 'K: default loader orders by (ordering, name) in SQL');
 
@@ -660,13 +663,13 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     fetcher: createFetcher(
       {
         [endpointOf('https://a.example/manifest.json')]: () => new Response('boom', { status: 500 }),
-        [endpointOf('https://b.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/b.mp4' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+        [endpointOf('https://b.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/b.m3u8' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
       },
       [],
     ),
     dnsResolver: publicResolver,
   });
-  ok(isolated.sources.length === 1 && isolated.sources[0].url === 'https://cdn.example/b.mp4', 'K: per-addon failure is isolated; healthy addon still resolves');
+  ok(isolated.sources.length === 1 && isolated.sources[0].url === 'https://cdn.example/b.m3u8', 'K: per-addon failure is isolated; healthy addon still resolves');
 
   // Bounded concurrency: in-flight requests never exceed the cap.
   let inFlight = 0;
@@ -715,8 +718,8 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     loadAddons: async () => [first, second],
     fetcher: createFetcher(
       {
-        [endpointOf('https://a.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/same.mp4' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
-        [endpointOf('https://b.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/same.mp4' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+        [endpointOf('https://a.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/same.m3u8' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+        [endpointOf('https://b.example/manifest.json')]: () => new Response(JSON.stringify({ streams: [{ url: 'https://cdn.example/same.m3u8' }] }), { status: 200, headers: { 'content-type': 'application/json' } }),
       },
       [],
     ),
@@ -1047,7 +1050,11 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // failure; slug/idProperty/videoId/typed reason ONLY — never URLs,
   // header values or configuration), so a "0 streams" addon is explainable
   // from server logs alone.
-  ok(warnTotal === 7 && logTotal === 0, `T: stremio server modules log through exactly the 7 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics — all in addon-session)`);
+  // Phase 14: addon-download-service.ts adds TWO sanctioned warns — the
+  // same loss-point pattern (invalid shape + typed fetch failure; slug and
+  // closed error code ONLY) so a downloader "0 links / Failed" addon is
+  // explainable from server logs alone.
+  ok(warnTotal === 9 && logTotal === 0, `T: stremio server modules log through exactly the 9 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics, Phase 14 +2 downloader loss-point diagnostics)`);
   // Phase 10: session-env.ts may REFERENCE the env-var NAME for the documented
   // signing-key derivation (one-way, domain-separated SHA-256 — the raw key is
   // never used as a credential nor leaves the server). Zero references in every
@@ -1080,9 +1087,11 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const stremioDir = 'src/lib/server/streaming/stremio';
   const inventory = readdirSync(stremioDir).sort();
   const expected = [
+    'addon-download-service.ts', // Phase 14: Mavero Downloader per-addon resolution
     'addon-session.ts', // Phase 10: progressive addon resolution service
     'admin-addons.ts',
     'connect-guard.ts',
+    'download-selection.ts', // Phase 14: downloader-specific selection policy
     'errors.ts',
     'manifest-cache.ts',
     'manifest-fetch.ts',

@@ -283,7 +283,8 @@ function streamFixture(overrides: Record<string, unknown> = {}): Record<string, 
   const calls: Array<{ url: string }> = [];
   const fetcher = createFetcher({
     'https://broken.example/stream/movie/tt1234567.json': streamRoute([], 500),
-    'https://healthy.example/stream/movie/tt1234567.json': streamRoute([streamFixture(), streamFixture({ url: 'https://cdn.example/second.mp4', name: '720p' })]),
+    // Phase 14: both healthy-addon streams are HLS so they stay player-offered.
+    'https://healthy.example/stream/movie/tt1234567.json': streamRoute([streamFixture(), streamFixture({ url: 'https://cdn.example/second.m3u8', name: '720p' })]),
   }, calls);
   const { client } = fakeAddonClient([
     addonRowFixture({ id: '00000000-0000-4000-8000-0000000000b1', name: 'Broken', slug: 'broken', manifestUrl: 'https://broken.example/manifest.json', ordering: 1 }),

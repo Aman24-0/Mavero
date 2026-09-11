@@ -356,6 +356,16 @@ export async function resolveAddonToken(client: SupabaseClient<Database>, input:
         filterReasons.set('playback-boundary', (filterReasons.get('playback-boundary') ?? 0) + 1);
         continue;
       }
+      // Phase 14 (product decision): Stremio HTTP addon DIRECT-FILE streams
+      // no longer play in the native player — the browser <video> path is
+      // retired for addons. Those candidates are handled by the MAVERO
+      // Downloader (external player / copy / download; see
+      // addon-download-service.ts). The player keeps ONLY addon HLS streams,
+      // which flow through the UNCHANGED native HLS engine (HdHub et al.).
+      if (stream.protocol !== 'hls') {
+        filterReasons.set('player-hls-only', (filterReasons.get('player-hls-only') ?? 0) + 1);
+        continue;
+      }
       const verdict = classifyStreamCompatibility(streamCompatibilityInputOf(resolved.quality));
       candidates.push({ quality: resolved.quality, source: resolved.source, verdict });
     }

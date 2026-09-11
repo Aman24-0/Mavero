@@ -12,9 +12,16 @@ import type { PlaybackProtocol } from '$lib/server/resolver/types';
  * Hard HTTP/HLS-only policy (spec §11, §14–§16):
  *   * non-http(s) URL schemes are rejected (magnet:, javascript:, data:,
  *     blob:, file:, chrome-extension:, …)
- *   * torrent/P2P/debrid signals (infoHash fields, legacy `sources`/`peers`
- *     torrent fields, `.torrent` paths, torrent/debrid URL tokens) are
- *     rejected — torrent metadata is never transformed into a URL
+ *   * torrent/P2P streams are rejected — torrent metadata is never
+ *     transformed into a URL. Phase 14 (downloader reconciliation): the
+ *     addon-supplied explicit stream `type` is the AUTHORITATIVE P2P signal
+ *     (AIOStreams exposes `stream.type`): `type: 'http'` entries are direct
+ *     HTTP streams EVEN when legacy torrent-shaped fields (infoHash) are
+ *     also present — only the URL is ever used. `type: 'p2p'` (or any other
+ *     explicit non-'http' type) and legacy torrent-shaped entries WITHOUT an
+ *     explicit type remain rejected. URL-shaped torrent tokens (.torrent
+ *     paths, torrent/debrid hostnames) are always rejected regardless of
+ *     the claimed type.
  *   * `externalUrl` entries are "open elsewhere" links by protocol — never
  *     playable media — and are skipped
  *   * streams requiring custom request headers
@@ -77,6 +84,17 @@ export type NormalizedStremioStream = {
   title?: string;
   /** Addon-provided stream description (Phase 9, plain text). */
   description?: string;
+  /**
+   * Addon-specific stream type when the addon declares one (Phase 14:
+   * `stream.type` — AIOStreams exposes 'http' | 'p2p' | …). Preserved
+   * verbatim so downstream ranking can trust the addon's own protocol
+   * claim instead of guessing from field shapes.
+   */
+  streamType?: string;
+  /** Standard Stremio `availability` number when the addon supplied one. */
+  availability?: number;
+  /** Standard Stremio `tag` text when the addon supplied one. */
+  tag?: string;
   /** Validated DIRECT http(s) media URL — preserved verbatim (never rewritten). */
   url: string;
   protocol: PlaybackProtocol;
@@ -341,6 +359,19 @@ function behaviorHintsOf(entry: Record<string, unknown>): Record<string, unknown
   return hints && typeof hints === 'object' && !Array.isArray(hints) ? (hints as Record<string, unknown>) : undefined;
 }
 
+/**
+ * Phase 14: the addon's explicit stream-type claim. Returns
+ * `{ declared: true, http: boolean }` when the entry carries a `type`, and
+ * `{ declared: false }` when it does not (legacy field-shape detection
+ * applies). Only the EXACT value 'http' counts as a direct HTTP stream —
+ * every other declared value ('p2p', 'tor', …) is treated as non-HTTP.
+ */
+function declaredStreamType(record: Record<string, unknown>): { declared: boolean; http: boolean; value?: string } {
+  const value = textField(record.type)?.slice(0, 40);
+  if (!value) return { declared: false, http: false };
+  return { declared: true, http: value.toLowerCase() === 'http', value };
+}
+
 function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedStremioStream[], unsupported: UnsupportedStremioStream[]): void {
   const name = entry && typeof entry === 'object' && !Array.isArray(entry) ? textField((entry as Record<string, unknown>).name) : undefined;
   const title = entry && typeof entry === 'object' && !Array.isArray(entry) ? textField((entry as Record<string, unknown>).title) : undefined;
@@ -349,6 +380,7 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
     return;
   }
   const record = entry as Record<string, unknown>;
+  const streamType = declaredStreamType(record);
 
   // externalUrl = "open this elsewhere" by protocol — never playable media
   // for Mavero (spec §14). Skipped regardless of any other fields.
@@ -358,11 +390,18 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
     return;
   }
 
-  // Torrent/P2P stream shapes (spec §15): rejected outright — torrent
-  // metadata is never transformed into a URL, even when a direct URL also
-  // happens to be present (conservative: Mavero never accepts
-  // torrent-tagged streams).
-  if ([...TORRENT_STREAM_FIELDS].some((field) => record[field] !== undefined && record[field] !== null)) {
+  // Torrent/P2P classification (spec §15 + Phase 14): the addon's EXPLICIT
+  // `type` is the authoritative signal. An explicit 'p2p' (or any other
+  // non-'http') claim rejects the entry. Without an explicit type, legacy
+  // torrent-shaped fields (infoHash/sources/peers/…) reject it. WITH an
+  // explicit 'http' claim the entry is a direct stream even when a legacy
+  // infoHash field is also present (AIOStreams shape) — only the URL is
+  // ever read; torrent metadata is never transformed into anything.
+  if (streamType.declared && !streamType.http) {
+    unsupported.push({ index, name, title, reason: 'torrent' });
+    return;
+  }
+  if (!streamType.declared && [...TORRENT_STREAM_FIELDS].some((field) => record[field] !== undefined && record[field] !== null)) {
     unsupported.push({ index, name, title, reason: 'torrent' });
     return;
   }
@@ -416,6 +455,10 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
   // Phase 9: preserve the addon's own description text (plain text, bounded).
   const description = textField(record.description);
   const subtitles = normalizeSubtitleTracks(record.subtitles);
+  // Phase 14: standard Stremio availability + tag, preserved when supplied.
+  const rawAvailability = record.availability;
+  const availability = typeof rawAvailability === 'number' && Number.isFinite(rawAvailability) ? rawAvailability : undefined;
+  const tag = textField(record.tag)?.slice(0, 120);
 
   // Preserve the URL exactly (spec §13): no silent http→https rewrite.
   const normalizedUrl = parsed.toString();
@@ -435,6 +478,9 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
     name,
     title,
     ...(description ? { description } : {}),
+    ...(streamType.declared && streamType.value ? { streamType: streamType.value } : {}),
+    ...(availability !== undefined ? { availability } : {}),
+    ...(tag ? { tag } : {}),
     url: normalizedUrl,
     // Phase 11 (GOAL A): the protocol classifier receives the ADDON-SUPPLIED
     // text as well — an extensionless/signed HLS URL whose addon text

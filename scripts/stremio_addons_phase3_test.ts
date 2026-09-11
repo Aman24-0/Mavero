@@ -390,9 +390,13 @@ function failedWith(resolution: StremioStreamResolution, addonId: string, errorC
   }, []);
   const { client } = fakeAddonClient([addonRowFixture()]);
   const resolution = await resolveStremioStreams(client, movieRequest, { fetcher, dnsResolver: publicResolver });
-  ok(resolution.sources.length === 3, 'K: all three streams returned');
-  ok(resolution.sources.map((source) => source.streamIndex).join(',') === '0,1,2', 'K: stream order preserved within the addon');
-  ok(resolution.sources[1].protocol === 'mp4', 'K: mixed protocols detected per stream');
+  // Phase 14 (external-downloader architecture): the native player keeps
+  // ONLY addon HLS streams. The MP4 direct file is ISOLATED from playback —
+  // it is served by the Mavero Downloader surface instead.
+  ok(resolution.sources.length === 2, 'K: the two HLS streams are returned (direct files are isolated to the Mavero Downloader)');
+  ok(resolution.sources.map((source) => source.streamIndex).join(',') === '0,2', 'K: stream order preserved within the addon (isolated entry skipped)');
+  ok(resolution.sources.every((source) => source.protocol === 'hls'), 'K: every player source is HLS');
+  ok(resolution.diagnostics.find((entry) => entry.status === 'ok')?.streamCount === 2, 'K: the addon diagnostic counts the PLAYER-offered streams');
 }
 
 // ---------------------------------------------------------------------------
@@ -408,8 +412,11 @@ function failedWith(resolution: StremioStreamResolution, addonId: string, errorC
     addonRowFixture({ id: '00000000-0000-4000-8000-0000000000l1', name: 'Other Addon', slug: 'other-addon', manifest_url: 'https://other.example/manifest.json', ordering: 2 }),
   ]);
   const resolution = await resolveStremioStreams(client, movieRequest, { fetcher, dnsResolver: publicResolver });
-  ok(resolution.sources.length === 2, 'L: both addons contribute');
-  ok(new Set(resolution.sources.map((source) => source.addonId)).size === 2, 'L: addon identity retained per source');
+  // Phase 14: both addons RESOLVE ok, but the second addon's only stream is
+  // an MP4 direct file — isolated from the native player (Mavero Downloader
+  // surface). The aggregate keeps the first addon's HLS stream.
+  ok(resolution.sources.length === 1, 'L: HLS sources from both resolving addons are kept (direct files isolated)');
+  ok(new Set(resolution.diagnostics.filter((entry) => entry.status === 'ok').map((entry) => entry.addonId)).size === 2, 'L: both addons still report ok (isolation is not a failure)');
   ok(resolution.diagnostics.filter((entry) => entry.status === 'ok').length === 2, 'L: both addons report ok');
 }
 
@@ -563,7 +570,10 @@ function failedWith(resolution: StremioStreamResolution, addonId: string, errorC
   const fetcher = createFetcher({ 'https://addon.example/stream/movie/tt1234567.json': streamRoute([streamFixture({ url: 'http://cdn.example/video.mp4' })]) }, calls);
   const { client } = fakeAddonClient([addonRowFixture()]);
   const resolution = await resolveStremioStreams(client, movieRequest, { fetcher, dnsResolver: publicResolver });
-  ok(resolution.sources[0].url === 'http://cdn.example/video.mp4', 'T: resolver output preserves the http URL verbatim');
+  // Phase 14: the http direct file is preserved VERBATIM by normalization
+  // (assertions above) but isolated from the player aggregate — the Mavero
+  // Downloader surface serves it with the exact same untouched URL.
+  ok(resolution.sources.length === 0, 'T: the http direct file is isolated from the player aggregate (its verbatim URL is pinned by normalization + the Phase 14 downloader suite)');
 }
 
 // ---------------------------------------------------------------------------
@@ -668,9 +678,11 @@ function failedWith(resolution: StremioStreamResolution, addonId: string, errorC
     addonRowFixture({ id: '00000000-0000-4000-8000-0000000000ae1', name: 'Other Addon', slug: 'other-addon', manifest_url: 'https://other.example/manifest.json', ordering: 2 }),
   ]);
   const resolution = await resolveStremioStreams(client, movieRequest, { fetcher, dnsResolver: publicResolver });
-  ok(resolution.sources.length === 2, 'AE: equivalent URLs (host-case/default-port variants) deduplicated');
+  // Phase 14: the two HLS variants dedupe to ONE player source; the unique
+  // MP4 direct file is isolated from the player aggregate (Mavero Downloader
+  // surface). Dedupe identity itself is unchanged (host-case + default port).
+  ok(resolution.sources.length === 1, 'AE: equivalent URLs (host-case/default-port variants) deduplicated (the unique MP4 direct file is isolated — Phase 14)');
   ok(resolution.sources[0].url === 'https://cdn.example/shared.m3u8', 'AE: first occurrence (deterministic order) wins — WHATWG hostname normalization is expected');
-  ok(resolution.sources[1].url === 'https://cdn.example/unique.mp4', 'AE: different URL with the same title is NOT merged');
 }
 
 // ---------------------------------------------------------------------------
