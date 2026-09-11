@@ -1,45 +1,51 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Check, Copy, Download, ExternalLink, Info, Loader2, Play, RotateCw } from 'lucide-svelte';
-  import { copyStreamUrl, downloadAttributesFor } from '$lib/client/player/stream-actions';
-  import { externalPlayerHint, externalPlayerLaunchFor, isAndroidUserAgent } from '$lib/shared/external-player';
+  import { AlertTriangle, Download, ExternalLink, Info, Loader2, RotateCw, Share2, Check } from 'lucide-svelte';
+  import { downloadAttributesFor } from '$lib/client/player/stream-actions';
 
   /**
-   * MAVERO Downloader — the addon-grouped "best available links" panel
-   * (Phase 14, progressive independent flow in Phase 15).
+   * MAVERO Downloader — the addon-grouped "available links" panel
+   * (Phase 14 → Phase 15 progressive → Phase 16 diagnostic parity + Share).
    *
    * Rendered inside the EXISTING DownloadSheet (when the built-in
    * "Mavero Downloader" provider is selected) and on the standalone
    * /watch/mavero-downloader deep-link pages. One surface, two hosts.
    *
-   * PHASE 15 PROGRESSIVE FLOW (task §1/§2/§3):
+   * PHASE 16 CONTRACT (task §1/§3/§4/§5/§11/§15/§16):
+   *   * Stream cards have EXACTLY TWO actions: Download + Share. The previous
+   *     Play/Watch and Copy actions have been COMPLETELY REMOVED.
+   *   * Download keeps its existing behavior — navigates the ORIGINAL addon
+   *     URL through the browser's anchor mechanism (no proxy, no FFmpeg, no
+   *     rewrite). If the provider serves the file inline, that is the honest
+   *     browser outcome.
+   *   * Share uses navigator.share() with the EXACT ORIGINAL addon URL (the
+   *     same URL the old Copy button copied). On Android, this opens the
+   *     native Android share sheet — the user can copy the URL, send it to
+   *     mpv/VLC/another player, or share via WhatsApp/Telegram/etc. If
+   *     navigator.share is unavailable, a clipboard fallback is used.
+   *   * There is NO artificial maximum number of streams. Every eligible
+   *     direct HTTP(S) stream the addon returned is shown — 3 → 3, 10 → 10,
+   *     30 → 30. The previous max=10 cap has been REMOVED.
+   *   * Addon tabs carry the FIVE-state model: Loading / Retrying / N links /
+   *     0 links / Unavailable + Retry. Loaded-zero is distinct from request
+   *     failure (Task 11).
+   *   * Links are labelled "available links" — NEVER "guaranteed working":
+   *     the backend ranks metadata, it does not open the URLs.
+   *
+   * PROGRESSIVE FLOW (Phase 15, preserved):
    *   1. onMount: fetch the addon TAB list from `/api/downloader/mavero/tabs`
    *      (NO stream fetches — fast). Render every tab in `loading` state.
    *   2. For EACH tab: fire an INDEPENDENT fetch to
    *      `/api/downloader/mavero/addon?...&addon=<id>` with its OWN
    *      AbortController + lifecycle. Successful tabs update IN PLACE —
    *      they never reset other tabs. Slow tabs keep loading in the
-   *      background. A failed tab never disturbs successful tabs.
+   *      background (per-addon timeout = 30s — Task 13).
    *   3. The server does bounded retry/backoff for transient failures
    *      (TIMEOUT/NETWORK/HTTP_ERROR) internally; the frontend sees the
    *      final result (loaded/empty/unavailable).
    *   4. A per-tab Retry button re-fires ONLY that tab's request — it does
-   *      NOT touch other tabs and does NOT reset global state.
-   *
-   * PRODUCT CONTRACT (task §3/§4/§7/§8/§9/§10/§14/§15):
-   *   * The server already ranked + filtered everything: ≤10 BEST links per
-   *     addon arrive here — never the raw 30–50 addon streams.
-   *   * The addon tabs carry the FIVE-state model: Loading / Retrying / N
-   *     links / 0 links / Unavailable + Retry. A per-link problem never
-   *     renders as an addon failure (and vice versa).
-   *   * Links are labelled "Best available links" — NEVER "guaranteed
-   *     working": the backend ranks metadata, it does not open the URLs.
-   *   * Play opens the ORIGINAL addon URL in an EXTERNAL player
-   *     (mpv on Android through the VIEW-intent mechanism; a plain
-   *     external link everywhere else). Copy copies the ORIGINAL URL.
-   *     Download navigates the ORIGINAL URL — no proxy, no FFmpeg, no
-   *     rewrite; if the provider serves the file inline instead of a
-   *     download, that is the honest browser outcome.
+   *      NOT touch other tabs and does NOT reset global state. Retry is
+   *      fallback recovery, NOT required for healthy addons (Task 14).
    */
 
   export let contentId = '';
@@ -64,7 +70,7 @@
     protocol: 'http' | 'https';
     confidence: 'high' | 'medium' | 'low';
   };
-  /** Phase 15 five-state model (task §3). */
+  /** Phase 16 five-state model (Task 11). */
   type TabStatus = 'loading' | 'retrying' | 'loaded' | 'empty' | 'unavailable';
   type Tab = {
     addonId: string;
@@ -85,13 +91,14 @@
   let tabsFailed = false;
   let activeTabId: string | null = null;
 
-  // Per-link action states (bounded, self-restoring — the MaveroStreamCard
-  // pattern: immediate feedback, duplicate rapid clicks suppressed).
-  let copiedKey = '';
-  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
-  let copyFailedKey = '';
+  // Per-link action states (bounded, self-restoring).
+  // Download click feedback (the existing mechanism — unchanged).
   let openingKey = '';
   let openingTimer: ReturnType<typeof setTimeout> | undefined;
+  // Share feedback: 'sharing' (in-flight) / 'shared' (success) / 'failed'.
+  let shareKey = '';
+  let shareState: 'sharing' | 'shared' | 'failed' | '' = '';
+  let shareTimer: ReturnType<typeof setTimeout> | undefined;
 
   $: activeTab = tabs.find((tab) => tab.addonId === activeTabId) ?? null;
   $: tabsReady = !tabsLoading && !tabsFailed && tabs.length > 0;
@@ -124,6 +131,14 @@
     }
     const firstLine = (stream.description ?? '').split('\n').map((line) => line.trim()).find(Boolean);
     return firstLine;
+  }
+
+  /** A safe title for the share sheet — falls back to addon + quality. */
+  function shareTitle(stream: StreamView, addonName: string): string {
+    const fromStream = stream.title || stream.name || stream.filename;
+    if (fromStream && fromStream.trim()) return fromStream.trim().slice(0, 120);
+    const quality = stream.quality === 'auto' ? 'Auto' : stream.quality;
+    return `${addonName} · ${quality}`;
   }
 
   /** Default active tab: the first addon with links, else the first addon. */
@@ -162,7 +177,8 @@
   /**
    * Phase 15 task §1: fire ONE independent per-addon resolution. Successful
    * tabs update IN PLACE — they never reset other tabs. The server does
-   * bounded retry/backoff for transient failures internally.
+   * bounded retry/backoff for transient failures internally (30s per-attempt
+   * timeout — Task 13).
    */
   async function loadAddon(tab: Tab): Promise<void> {
     // Abort any previous in-flight request for this tab (Retry re-fires cleanly).
@@ -215,14 +231,13 @@
    * Phase 15 task §1/§2: on mount, fetch the tab list then fire ONE
    * independent per-addon request for each tab. Each tab has its OWN
    * lifecycle — a successful tab never resets when another tab loads or
-   * retries.
+   * retries. Phase 16 (Task 13): per-addon timeout = 30s — healthy addons
+   * do NOT need a manual Retry.
    */
   async function load(): Promise<void> {
     await loadTabs();
     if (tabs.length === 0) return;
     // Fire all per-addon requests in parallel; each resolves independently.
-    // We do NOT await Promise.all before rendering — the reactive `tabs`
-    // array updates each tab in place as it completes.
     for (const tab of tabs) {
       void loadAddon(tab);
     }
@@ -243,20 +258,7 @@
     activeTabId = id;
   }
 
-  async function handleCopy(stream: StreamView, key: string) {
-    const result = await copyStreamUrl(stream.url); // the ORIGINAL addon URL — never rewritten
-    if (copiedTimer) clearTimeout(copiedTimer);
-    if (result === 'copied') {
-      copiedKey = key;
-      copyFailedKey = '';
-      copiedTimer = setTimeout(() => { copiedKey = ''; }, 2000);
-    } else {
-      copiedKey = '';
-      copyFailedKey = key;
-      copiedTimer = setTimeout(() => { copyFailedKey = ''; }, 2000);
-    }
-  }
-
+  /** Download click feedback — the existing mechanism, unchanged (Task 2). */
   function handleDownload(event: MouseEvent, key: string) {
     event.stopPropagation();
     if (openingKey) return; // duplicate rapid clicks suppressed
@@ -265,22 +267,79 @@
     openingTimer = setTimeout(() => { openingKey = ''; }, 2500);
   }
 
-  function openHref(stream: StreamView): string | null {
-    return externalPlayerLaunchFor(stream.url)?.href ?? stream.url;
+  /**
+   * Phase 16 (Task 3/§16): Share the EXACT ORIGINAL addon URL via
+   * navigator.share(). On Android this opens the native Android share
+   * sheet — the user can copy the URL, send it to mpv/VLC/another player,
+   * or share via WhatsApp/Telegram/etc. Falls back to clipboard copy when
+   * navigator.share is unavailable (desktop browsers without Web Share API).
+   *
+   * The URL shared is `stream.url` — the EXACT same value the old Copy
+   * button copied. NO Mavero URL, NO downloader page URL, NO API URL, NO
+   * proxy URL, NO transformed URL.
+   */
+  async function handleShare(stream: StreamView, addonName: string, key: string): Promise<void> {
+    if (shareKey === key && shareState === 'sharing') return; // dedupe rapid clicks
+    const url = stream.url; // the ORIGINAL addon URL — preserved verbatim
+    if (!url) return;
+    shareKey = key;
+    shareState = 'sharing';
+    if (shareTimer) clearTimeout(shareTimer);
+    try {
+      // Primary path: native share sheet (Android, iOS, desktop-Chrome-with-flag).
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({
+          title: shareTitle(stream, addonName),
+          url,
+        });
+        shareState = 'shared';
+      } else if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        // Fallback 1: async clipboard API (non-Android desktops).
+        await navigator.clipboard.writeText(url);
+        shareState = 'shared';
+      } else {
+        // Fallback 2: legacy textarea + execCommand (old WebViews).
+        const copied = legacyCopy(url);
+        shareState = copied ? 'shared' : 'failed';
+      }
+    } catch (error) {
+      // navigator.share rejects when the user dismisses the sheet — that's NOT
+      // a failure. Only treat actual errors as failed.
+      if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'NotAllowedError')) {
+        shareState = ''; // user dismissed — no visible feedback
+      } else {
+        shareState = 'failed';
+      }
+    } finally {
+      if (shareState === 'shared' || shareState === 'failed') {
+        shareTimer = setTimeout(() => { shareKey = ''; shareState = ''; }, 2000);
+      } else if (shareState === '') {
+        shareKey = '';
+      }
+    }
   }
 
-  function openTarget(stream: StreamView): string | null {
-    const launch = externalPlayerLaunchFor(stream.url);
-    return launch?.kind === 'direct' ? '_blank' : null;
+  /** Legacy clipboard fallback (old WebViews without navigator.clipboard). */
+  function legacyCopy(url: string): boolean {
+    if (typeof document === 'undefined') return false;
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = url;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand('copy');
+      textarea.remove();
+      return copied;
+    } catch {
+      return false;
+    }
   }
 
-  function openTitle(stream: StreamView): string {
-    const launch = externalPlayerLaunchFor(stream.url);
-    return externalPlayerHint(launch ?? { kind: 'direct' });
-  }
-
-  /** The footer hint depends only on the DEVICE (kind), not on any URL. */
-  $: playerNote = externalPlayerHint({ kind: typeof navigator !== 'undefined' && isAndroidUserAgent(navigator.userAgent) ? 'android-intent' : 'direct' });
+  /** The footer hint — honest about the Download + Share behavior. */
+  $: footerNote = 'Download and Share use the provider\'s original address. Share opens your device\'s share sheet.';
 
   onMount(load);
 </script>
@@ -291,7 +350,7 @@
       <span class="mad-eyebrow">MAVERO Downloader</span>
       {#if title}<span class="mad-title">{title}</span>{/if}
     </div>
-    <span class="mad-hint"><ExternalLink size={11} /> Best available links</span>
+    <span class="mad-hint"><ExternalLink size={11} /> Available links</span>
   </div>
 
   {#if tabsLoading}
@@ -348,7 +407,7 @@
           <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={12} /> Retry</button>
         </div>
       {:else}
-        <div class="mad-list" role="list" aria-label={`${activeTab.addonName} best links`}>
+        <div class="mad-list" role="list" aria-label={`${activeTab.addonName} available links`}>
           {#each activeTab.streams as stream, index (stream.url)}
             {@const key = `${activeTab.addonSlug}-${index}`}
             <article class="mad-row" role="listitem">
@@ -358,15 +417,9 @@
                 {#if stream.audioLanguages?.length}<span class="mad-row-sub">{stream.audioLanguages.join(' + ')} audio</span>{/if}
               </div>
               <div class="mad-row-actions">
-                <a
-                  class="mad-action mad-action-play"
-                  href={openHref(stream)}
-                  target={openTarget(stream)}
-                  rel="noopener noreferrer"
-                  aria-label="Open in external player"
-                  title={openTitle(stream)}
-                  onclick={(event) => event.stopPropagation()}
-                ><Play size={14} fill="currentColor" /></a>
+                <!-- Phase 16 (Task 1/§2/§15): Download — UNCHANGED. Navigates
+                     the ORIGINAL addon URL through the browser's anchor
+                     mechanism. No proxy, no FFmpeg, no rewrite. -->
                 <a
                   class="mad-action"
                   class:opening={openingKey === key}
@@ -378,21 +431,30 @@
                   title="Download (original URL)"
                   onclick={(event) => handleDownload(event, key)}
                 ><Download size={14} /></a>
+                <!-- Phase 16 (Task 3/§3/§16): Share — uses navigator.share()
+                     with the EXACT ORIGINAL addon URL. On Android this opens
+                     the native share sheet (mpv/VLC/WhatsApp/Telegram/etc).
+                     Falls back to clipboard copy when Web Share API is
+                     unavailable. -->
                 <button
-                  class="mad-action"
-                  class:done={copiedKey === key}
+                  class="mad-action mad-action-share"
+                  class:done={shareKey === key && shareState === 'shared'}
+                  class:failed={shareKey === key && shareState === 'failed'}
                   type="button"
-                  aria-label={copiedKey === key ? 'URL copied' : copyFailedKey === key ? 'Copy failed' : 'Copy URL'}
-                  title={copiedKey === key ? 'Copied' : 'Copy URL'}
-                  onclick={(event) => { event.stopPropagation(); void handleCopy(stream, key); }}
+                  aria-label={shareKey === key && shareState === 'shared' ? 'URL shared' : shareKey === key && shareState === 'failed' ? 'Share failed' : 'Share original URL'}
+                  title="Share (original URL)"
+                  onclick={(event) => { event.stopPropagation(); void handleShare(stream, activeTab.addonName, key); }}
                 >
-                  {#if copiedKey === key}<Check size={14} />{:else if copyFailedKey === key}<AlertTriangle size={14} />{:else}<Copy size={14} />{/if}
+                  {#if shareKey === key && shareState === 'sharing'}<Loader2 size={14} class="mad-spin" />
+                  {:else if shareKey === key && shareState === 'shared'}<Check size={14} />
+                  {:else if shareKey === key && shareState === 'failed'}<AlertTriangle size={14} />
+                  {:else}<Share2 size={14} />{/if}
                 </button>
               </div>
             </article>
           {/each}
         </div>
-        <p class="mad-note"><ExternalLink size={11} /> {playerNote} Links open or download with the provider's original address.</p>
+        <p class="mad-note"><ExternalLink size={11} /> {footerNote}</p>
       {/if}
     {/if}
   {/if}
@@ -432,8 +494,9 @@
   .mad-action:hover, .mad-action:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
   .mad-action:active { transform: scale(0.96); }
   .mad-action.done { border-color: var(--accent); color: var(--accent); }
+  .mad-action.failed { border-color: #d48a64; color: #d48a64; }
   .mad-action.opening { border-color: var(--accent); color: var(--accent); opacity: 0.7; pointer-events: none; }
-  .mad-action-play { color: var(--ink); }
+  .mad-action-share { color: var(--ink); }
   .mad-note { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--muted); font-size: 0.55rem; }
   @keyframes mad-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action { transition: none; } }

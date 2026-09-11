@@ -210,8 +210,12 @@ function sectionDE(): void {
   ok(normalized.length === 1, 'D: the explicit type:"http" entry survives normalization');
   ok(normalized[0]?.streamType === 'http', 'D: the addon-specific stream type is preserved on the normalized model');
   ok(normalized[0]?.url === 'https://aio-cdn.example/dl/one?h=abc', 'D: the AIOStreams http URL is preserved verbatim (infoHash field ignored — type is authoritative)');
-  const { candidates, dropped } = buildDownloadCandidates(normalized);
-  ok(candidates.length === 1 && dropped['download-only'] === 0, 'D: the AIOStreams http stream becomes a download candidate');
+  const { candidates } = buildDownloadCandidates(normalized);
+  // Phase 16 (task §4/§5): no max cap, no over-filtering — the AIOStreams
+  // http stream is an eligible direct HTTP(S) link and survives as a
+  // candidate. The old `download-only` skip reason was REMOVED (it silently
+  // dropped legitimate streams that Stremio shows).
+  ok(candidates.length === 1, 'D: the AIOStreams http stream becomes a download candidate (Phase 16: no over-filtering)');
 
   const p2p = normalizeStreams({ streams: [{ type: 'p2p', name: 'x', url: 'https://x.example/a.mkv' }] });
   ok(p2p.length === 0, 'E: an explicit type:"p2p" stream is excluded');
@@ -256,15 +260,15 @@ async function sectionHI(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// J/K — max per addon, diversity, never first-N-by-arrival, dedupe
+// J/K — Phase 16: NO max cap, NO diversity cap, ALL eligible streams survive
 // ---------------------------------------------------------------------------
-// Phase 15 (task §8): MAX_DOWNLOAD_STREAMS_PER_ADDON raised 4 → 10. The
-// 7-stream pengu payload now collapses to 6 selected (the download-only
-// entry stays hard-excluded; the heavy remux makes the cut because max=10
-// has room, but ranks LAST among the practical 1080p links — heavy
-// demotion, never heavy exclusion). The diversity caps (4K ≤ 2, others
-// ≤ 4) replace the old 4K ≤ 1 / 1080p ≤ 2 Phase 14 caps so the 10 slots
-// can hold a useful quality spread without one bucket flooding.
+// Phase 16 (task §4/§5): the previous MAX_DOWNLOAD_STREAMS_PER_ADDON=10
+// cap and per-quality diversity caps (4K≤2, others≤4) have been REMOVED.
+// The downloader is now a diagnostic surface for comparing MAVERO's stream
+// discovery against Stremio — every eligible direct HTTP(S) stream the
+// addon returned is preserved. The 7-stream pengu payload now yields ALL 6
+// eligible candidates (the download-only entry is ALSO preserved — it is
+// an eligible direct HTTP(S) link, even if its text says "Download Only").
 
 async function sectionJK(): Promise<void> {
   const result = await resolveAddonDownloads({} as never, movieRequest, {
@@ -274,25 +278,35 @@ async function sectionJK(): Promise<void> {
     fetcher: fetcherFor({ 'https://hdhub.example/stream/movie/tt8633518.json': new Response(JSON.stringify(penguDirectPayload()), { status: 200, headers: { 'content-type': 'application/json' } }) }, []),
   });
   const hub = result.groups[0];
-  ok(hub?.status === 'loaded' && hub.streams.length <= MAX_DOWNLOAD_STREAMS_PER_ADDON, `J: the direct-file payload collapses to at most ${MAX_DOWNLOAD_STREAMS_PER_ADDON} BEST links`);
-  ok((hub?.streams.length ?? 0) >= 5, 'J: the 7-stream payload (minus download-only) yields at least 5 candidates — max=10 does NOT fabricate or over-collapse');
+  // Phase 16: NO truncation — the 7-stream payload yields ALL eligible
+  // candidates (the download-only entry is preserved too — it is a direct
+  // HTTP(S) link). The HLS manifest stays excluded (it is a playlist, not
+  // a movie file — the existing security boundary).
+  ok(hub?.status === 'loaded', 'J: the direct-file payload is loaded');
+  ok((hub?.streams.length ?? 0) >= 6, 'J: Phase 16 — at least 6 of the 7 pengu streams survive (no max=10 truncation, no download-only filter)');
   const urls = hub?.streams.map((stream) => stream.url) ?? [];
-  ok(!urls.includes('https://pengu.example/download/only'), 'Q: the download-only entry NEVER makes the cut (hard exclusion, not a ranking decision)');
   ok(urls.includes('https://pengu.example/get/webdl1080'), 'J: the 4.4 GB dual-audio 1080p WEB-DL (the most practical link) leads');
-  // Heavy demotion: with max=10 the 45.7 GB remux makes the cut, but every
-  // practical 1080p link ranks ABOVE it (heavy releases never outrank
-  // practical ones at the same quality — the Phase 14 contract preserved).
+  // Phase 16: the "Download Only" entry is NOW PRESERVED (it is a direct
+  // HTTP(S) link — the user decides, not the pipeline). The old hard-
+  // exclusion was silently dropping streams that Stremio shows.
+  ok(urls.includes('https://pengu.example/download/only'), 'J: Phase 16 — the download-only entry is PRESERVED (no over-filtering)');
+  // Heavy demotion (preserved): the 45.7 GB remux still ranks BELOW the
+  // practical 1080p WEB-DL (heavy penalty in the scoring, never exclusion).
   if (urls.includes('https://pengu.example/get/remux1080')) {
     const remuxIndex = urls.indexOf('https://pengu.example/get/remux1080');
     const webdlIndex = urls.indexOf('https://pengu.example/get/webdl1080');
     ok(webdlIndex < remuxIndex, 'Q: the 45.7 GB remux ranks BELOW the practical 1080p WEB-DL (heavy demotion, not heavy exclusion)');
   }
-  ok(new Set(urls).size === urls.length, 'K: no duplicate URLs in the selection');
+  ok(new Set(urls).size === urls.length, 'K: no duplicate URLs in the selection (true-duplicate-URL dedup preserved)');
+  // Phase 16: NO diversity cap. The 4K and 1080p buckets can hold as many
+  // candidates as the addon returned.
   const qualities = hub?.streams.map((stream) => stream.quality) ?? [];
-  ok(qualities.filter((quality) => quality === '4K').length <= 2, 'J: 4K is capped at TWO links (Phase 15 diversity — a 4K dump never floods the list)');
-  ok(qualities.filter((quality) => quality === '1080p').length <= 4, 'J: per-quality cap keeps useful diversity (Phase 15: 1080p cap raised to 4)');
+  ok(qualities.filter((quality) => quality === '4K').length >= 1, 'J: Phase 16 — 4K candidates are preserved (no 4K≤2 cap)');
+  ok(qualities.filter((quality) => quality === '1080p').length >= 1, 'J: Phase 16 — 1080p candidates are preserved (no 1080p≤4 cap)');
 
-  // Equivalent-release dedupe: same bucket+codec+container+audio+release text.
+  // True-duplicate-URL dedup (Phase 16: the ONLY dedup that remains — same
+  // scheme + host + path + query = the same stream offered twice). Two
+  // DIFFERENT URLs with the same release text stay distinct.
   const twins = buildDownloadCandidates(normalizeStreams({
     streams: [
       { name: 'a', title: 'Movie 1080p WEB-DL H.264 Dual Audio', url: 'https://x.example/a.mkv' },
@@ -300,12 +314,12 @@ async function sectionJK(): Promise<void> {
       { name: 'c', title: 'Movie 720p WEB-DL H.264 Dual Audio', url: 'https://x.example/c.mkv' },
     ],
   })).candidates;
-  const selected = selectDownloadStreams(twins, 4);
-  ok(selected.length === 2, 'K: equivalent releases deduplicate (2 distinct releases remain)');
-  ok(selected.some((entry) => entry.quality === '720p'), 'K: the distinct release survives');
+  const selected = selectDownloadStreams(twins);
+  ok(selected.length === 3, 'K: Phase 16 — three DISTINCT URLs survive (no equivalent-release dedup, only true-duplicate-URL dedup)');
+  ok(selected.some((entry) => entry.quality === '720p'), 'K: the distinct 720p release survives');
 
   // Determinism: identical input → identical output (run twice).
-  const again = selectDownloadStreams(twins, 4);
+  const again = selectDownloadStreams(twins);
   ok(JSON.stringify(again.map((entry) => entry.url)) === JSON.stringify(selected.map((entry) => entry.url)), 'J: the selection is deterministic (same input, same order)');
 }
 
@@ -344,14 +358,22 @@ async function sectionL(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function sectionMNO(): void {
-  // The component wires Copy/Download/Open to the ORIGINAL url field only.
+  // Phase 16 (task §1/§3/§15/§16): the downloader card now has exactly TWO
+  // actions — Download + Share. The previous Play/Watch + Copy actions
+  // have been REMOVED. Share uses navigator.share() with the EXACT ORIGINAL
+  // addon URL (the same URL the old Copy button copied).
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('copyStreamUrl(stream.url)'), 'M: Copy uses the ORIGINAL addon URL');
-  ok(component.includes('href={stream.url}'), 'N: Download navigates the ORIGINAL addon URL');
+  ok(!component.includes('copyStreamUrl'), 'M (Phase 16): Copy action is REMOVED from the downloader card');
+  ok(!component.includes('Play size='), 'M (Phase 16): Play/Watch action is REMOVED from the downloader card');
+  ok(!component.includes('mad-action-play'), 'M (Phase 16): the mad-action-play CSS class is gone (no Play button)');
+  ok(component.includes('href={stream.url}'), 'N: Download navigates the ORIGINAL addon URL (unchanged)');
+  ok(component.includes('navigator.share'), 'M (Phase 16): Share uses navigator.share() with the original URL');
+  ok(component.includes('Share2 size='), 'M (Phase 16): the Share button is present (lucide Share2 icon)');
   ok(!component.includes('/api/playback/compat') && !component.includes('media-worker'), 'M/N: the downloader UI references NO compat/worker path');
-  ok(component.includes('Best available links'), 'M: the honest "Best available links" terminology is used (never "guaranteed working")');
+  ok(component.includes('available links'), 'M: the honest "available links" terminology is used (never "guaranteed working")');
 
-  // External player launch (pure helper).
+  // External player launch (pure helper — preserved for back-compat, used
+  // by the standalone deep-link pages and the /api/downloader/mavero flow).
   const httpsUrl = 'https://provider.example/dl/Movie.1080p.mkv?token=x';
   const android = externalPlayerLaunchFor(httpsUrl, { android: true });
   ok(android?.kind === 'android-intent' && android.href.startsWith('intent://provider.example/dl/Movie.1080p.mkv?token=x#Intent;scheme=https;'), 'O: the Android launch is a VIEW intent carrying the ORIGINAL host/path/query');
@@ -391,7 +413,7 @@ function sectionPQ(): void {
   // Size parsing + scoring policy.
   ok(sizeFromTexts(['Dhurandhar 1080p 45.70 GB']) === Math.round(45.7 * 1024 ** 3), 'Q: "45.70 GB" text parses to bytes');
   ok(sizeFromTexts(['4.40 GB']) === Math.round(4.4 * 1024 ** 3), 'Q: decimal GB text parses (the shared helper requires ≥10 GB — downloads parse any size)');
-  const base = { index: 0, audio: 'unknown' as const, codec: 'H.264' as const, quality: '1080p' as const, protocol: 'https' as const };
+  const base = { index: 0, audio: 'unknown' as const, codec: 'H.264' as const, quality: '1080p' as const, protocol: 'https' as const, hostClass: 'known' as const, releaseKey: '' };
   const mk = (over: Partial<DownloadStreamCandidate>): DownloadStreamCandidate => ({ ...base, url: 'https://x.example/a', ...over });
   ok(scoreDownloadCandidate(mk({ title: '1080p WEB-DL Dual Audio', sizeBytes: 4_724_904_960 })) < scoreDownloadCandidate(mk({ title: '1080p BluRay REMUX Dual Audio', sizeBytes: 49_073_043_456 })), 'Q: a 4.4 GB WEB-DL outranks a 45.7 GB REMUX at 1080p');
   ok(scoreDownloadCandidate(mk({ title: '1080p WEB-DL', sizeBytes: 4_724_904_960 })) < scoreDownloadCandidate(mk({ title: '1080p CAM', sizeBytes: 4_724_904_960 })), 'Q: CAM releases are penalized');
@@ -401,18 +423,20 @@ function sectionPQ(): void {
   ok(scoreDownloadCandidate(mk({ title: '1080p', quality: 'auto' })) > scoreDownloadCandidate(mk({ title: '1080p', quality: '480p' })), 'Q: auto/unknown ranks below every known bucket');
 
   // No over-filtering: HEVC-only / 4K-only / http-only addons still surface.
-  const hevcOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '1080p HEVC 10-bit', url: 'https://x.example/hevc.mkv' }] })).candidates, 4);
+  const hevcOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '1080p HEVC 10-bit', url: 'https://x.example/hevc.mkv' }] })).candidates);
   ok(hevcOnly.length === 1 && hevcOnly[0]?.codec === 'HEVC', 'Q: an HEVC-only addon still offers its link');
-  const fourKOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '2160p UHD', url: 'https://x.example/uhd.mkv' }] })).candidates, 4);
+  const fourKOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '2160p UHD', url: 'https://x.example/uhd.mkv' }] })).candidates);
   ok(fourKOnly.length === 1 && fourKOnly[0]?.quality === '4K', 'Q: a 4K-only addon still offers its link');
-  const httpOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '1080p', url: 'http://x.example/a.mkv' }] })).candidates, 4);
+  const httpOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '1080p', url: 'http://x.example/a.mkv' }] })).candidates);
   ok(httpOnly.length === 1 && httpOnly[0]?.protocol === 'http', 'Q: an http-only addon still offers its link (HTTPS is a preference, never a requirement)');
 
-  // Download-only NEVER surfaces — even as the sole candidate.
+  // Phase 16 (task §5): the "Download Only" entry is NOW PRESERVED — it is
+  // a direct HTTP(S) link and the user decides, not the pipeline. The old
+  // hard-exclusion was silently dropping streams that Stremio shows.
   const onlyDownload = buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '10Gbps Download Only', url: 'https://x.example/dl.mkv' }] }));
-  ok(onlyDownload.candidates.length === 0 && onlyDownload.dropped['download-only'] === 1, 'Q: a download-only-only addon resolves to NO candidates');
-  // …but a heavy remux-only addon still surfaces its (single) honest choice.
-  const heavyOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '1080p BluRay REMUX', url: 'https://x.example/remux.mkv', behaviorHints: { videoSize: 49_073_043_456 } }] })).candidates, 4);
+  ok(onlyDownload.candidates.length === 1, 'Q (Phase 16): a download-only-marked addon STILL resolves to a candidate (no over-filtering)');
+  // A heavy remux-only addon still surfaces its (single) honest choice.
+  const heavyOnly = selectDownloadStreams(buildDownloadCandidates(normalizeStreams({ streams: [{ name: 'a', title: '1080p BluRay REMUX', url: 'https://x.example/remux.mkv', behaviorHints: { videoSize: 49_073_043_456 } }] })).candidates);
   ok(heavyOnly.length === 1, 'Q: a heavy-only addon still surfaces its fallback choice (no over-filtering)');
 }
 

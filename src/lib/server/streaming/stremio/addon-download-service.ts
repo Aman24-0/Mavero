@@ -5,61 +5,69 @@ import { normalizeContentIdentifiers } from '$lib/server/resolver/identifiers';
 import type { StreamingAddon } from '$lib/shared/streaming-addons';
 import type { AudioClass } from '$lib/shared/stream-selection';
 import { loadEnabledAddons } from './stream-resolver';
-import { planAddonStreamRequest, stremioStreamTypeFor, type AddonSkipReason } from './stream-ids';
+import { planAddonStreamRequest, stremioStreamTypeFor } from './stream-ids';
 import { fetchStremioStreamResponse, STREAM_MAX_BYTES } from './stream-fetch';
 import { normalizeStremioStreamResponse } from './stream-normalize';
-import { buildDownloadCandidates, selectDownloadStreams, parseRuntimeSeconds, type DownloadRuntimeContext, MAX_DOWNLOAD_STREAMS_PER_ADDON, type DownloadCodec, type DownloadQuality, type RankedDownloadStream } from './download-selection';
+import { buildDownloadCandidates, selectDownloadStreams, parseRuntimeSeconds, MAX_DOWNLOAD_STREAMS_PER_ADDON, type DownloadRuntimeContext, type DownloadCodec, type DownloadQuality, type RankedDownloadStream, type DownloadSkipReason } from './download-selection';
 import { StreamServiceError, asStreamServiceError, type StreamErrorCode } from './stream-errors';
 
 /**
- * MAVERO Downloader — per-addon direct-link resolution service (Phase 14,
- * Phase 15 progressive + reliability hardening).
+ * MAVERO Downloader — per-addon direct-link resolution service (Phase 14 →
+ * Phase 15 progressive → Phase 16 diagnostic parity).
  *
- * The server-side engine behind:
- *   * `GET /api/downloader/mavero`              — Phase 14 batch endpoint
- *     (kept for backward compat + the standalone deep-link pages + the
- *     Phase 14 test suite). Resolves EVERY enabled addon in parallel.
- *   * `GET /api/downloader/mavero/tabs`         — Phase 15 list endpoint
- *     (addon tab metadata ONLY, no stream fetches — the UI renders tabs
- *     immediately and fires per-addon resolution independently).
- *   * `GET /api/downloader/mavero/addon`        — Phase 15 per-addon
- *     endpoint (resolves ONE addon with a bounded retry/backoff budget
- *     for transient failures; one addon's failure never contaminates
- *     another addon's already-loaded results).
+ * PHASE 16 CONTRACT (this file):
+ *   The downloader is now a DIAGNOSTIC SURFACE for comparing MAVERO's stream
+ *   discovery against Stremio. There is NO artificial maximum, NO truncation.
+ *   Every eligible direct HTTP(S) stream the addon returned is preserved and
+ *   shown. The previous Phase 15 `MAX_DOWNLOAD_STREAMS_PER_ADDON=10` cap is
+ *   gone — `selectDownloadStreams` returns EVERY eligible candidate.
  *
- * Pipeline (per addon, identical across batch + per-addon paths):
- *   1. plan the addon stream request through the EXISTING id pipeline
- *      (`planAddonStreamRequest` — the same idProperty/idPrefixes logic the
- *      player uses, so a Pipe-shaped manifest resolves identically);
+ *   Per-addon timeout budget is raised to 30s (with retries, up to ~40s total)
+ *   so healthy addons that take 15-25s under load do NOT get marked Failed
+ *   prematurely. The user should NOT have to press Retry just to get streams
+ *   from a healthy addon.
+ *
+ *   Server-side diagnostics log raw-vs-eligible-vs-rejected counts per addon
+ *   so the developer can see exactly where streams disappear (Task 12).
+ *
+ * STATE MODEL (Task 11 — four distinct states):
+ *   * `loading`     — the addon request is in flight (initial attempt).
+ *   * `retrying`    — a transient failure occurred and the retry budget still
+ *                     has attempts left (server-side backoff).
+ *   * `loaded`      — the addon responded. The frontend shows N streams
+ *                     (N can be 0 — see `empty`). `loaded` means the REQUEST
+ *                     succeeded; the stream count is separate.
+ *   * `empty`       — the addon responded fine but the response contained NO
+ *                     eligible streams (honest zero — NOT a failure).
+ *   * `unavailable` — the addon REQUEST itself failed (network/timeout/shape)
+ *                     after exhausting the retry budget.
+ *
+ *   Phase 16: `loaded` and `empty` are BOTH "the request succeeded"; the
+ *   frontend distinguishes them by stream count for accurate failure-state
+ *   UX (Task 11). The previous Phase 15 mapping (loaded-with-0 → empty) is
+ *   preserved for back-compat with the Phase 14 batch view.
+ *
+ * Pipeline (per addon):
+ *   1. plan the addon stream request through the EXISTING id pipeline;
  *   2. fetch ONLY the addon's `/stream/{type}/{id}.json` response through
  *      the EXISTING hardened fetcher (connect-time SSRF guard, bounded
  *      redirects, body cap, timeout) — the returned MEDIA URLS are never
  *      fetched, probed or proxied by Mavero;
  *   3. normalize the raw response through the SHARED stream normalizer
  *      (single source of truth for P2P/externalUrl/header/credential
- *      exclusion — the Phase 14 stream-type-aware rules included);
- *   4. select the ≤ MAX_DOWNLOAD_STREAMS_PER_ADDON best practical direct
- *      links through the downloader-specific policy (`download-selection.ts`).
- *
- * STATE MODEL (task §4/§14 + Phase 15 §3) — five DISTINCT per-addon states:
- *   * `loading`     — the addon request is in flight (initial attempt).
- *   * `retrying`    — a transient failure occurred and the bounded retry
- *                     budget still has attempts left (server-side backoff).
- *   * `loaded`      — the addon responded and ≥1 supported direct link
- *                     survived filtering.
- *   * `empty`       — the addon responded fine but nothing usable remained
- *                     after filtering (NOT a failure — honest zero).
- *   * `unavailable` — the addon REQUEST failed (network/timeout/shape)
- *                     after exhausting the retry budget. A per-link
- *                     problem NEVER produces this state, and this state
- *                     never contaminates other addons.
+ *      exclusion);
+ *   4. build candidates through `buildDownloadCandidates` (Phase 16: ONLY
+ *      HLS/DASH manifests, non-video files and playback-boundary rejections
+ *      are excluded — every other eligible stream survives);
+ *   5. select ALL candidates through `selectDownloadStreams` (Phase 16: NO
+ *      truncation, NO diversity cap — true-duplicate-URL dedup only).
  *
  * FFmpeg is intentionally unreachable from here: no worker import, no compat
  * token, no conversion reference. The addon URL goes straight to the user's
- * external player / browser.
+ * external player / browser / Android share sheet.
  */
 
-/** The user-facing shape of one best link (lean, presentation-ready). */
+/** The user-facing shape of one eligible link (lean, presentation-ready). */
 export type AddonDownloadStreamView = {
   url: string;
   quality: DownloadQuality;
@@ -77,10 +85,41 @@ export type AddonDownloadStreamView = {
   confidence: 'high' | 'medium' | 'low';
 };
 
-/** Phase 15 state model (task §3): five distinct per-addon states. */
+/** Phase 16 state model (Task 11): five distinct per-addon states. */
 export type AddonDownloadStatus = 'loading' | 'retrying' | 'loaded' | 'empty' | 'unavailable';
 
-/** One addon's downloader result. `status` is the task §4/§15 state model. */
+/**
+ * Per-addon diagnostic counts (Task 12). NEVER sent to the client as raw
+ * URLs/tokens — only aggregate counts. Used for server-side logging and an
+ * optional debug summary the frontend can show.
+ *
+ * SEMANTICS:
+ *   * `raw`        — streams that ENTERED buildDownloadCandidates (i.e.
+ *                    post-normalization eligible HTTP(S) streams). The
+ *                    normalizer runs FIRST and excludes P2P/externalUrl/
+ *                    credential/header-dependent entries.
+ *   * `unsupported`— entries the NORMALIZER rejected (P2P/externalUrl/
+ *                    credential/header-dependent/non-http-scheme/etc.).
+ *                    `raw + unsupported` = total entries the addon returned.
+ *   * `eligible`   — same as `raw` (alias for clarity).
+ *   * `rejected`   — per-reason exclusion counts from buildDownloadCandidates
+ *                    (streaming-manifest / non-video / playback-boundary).
+ *   * `selected`   — final selected count (after true-duplicate-URL dedup).
+ */
+export type AddonDownloadDiagnostics = {
+  /** Streams that entered buildDownloadCandidates (post-normalization). */
+  raw: number;
+  /** Entries the normalizer rejected (P2P/externalUrl/credential/etc.). */
+  unsupported: number;
+  /** Eligible direct HTTP(S) streams after buildDownloadCandidates (= raw). */
+  eligible: number;
+  /** Per-reason exclusion counts from buildDownloadCandidates. */
+  rejected: Partial<Record<DownloadSkipReason, number>>;
+  /** Final selected count (after true-duplicate-URL dedup). */
+  selected: number;
+};
+
+/** One addon's downloader result. `status` is the Task 11 state model. */
 export type AddonDownloadGroup = {
   addonId: string;
   addonName: string;
@@ -89,6 +128,8 @@ export type AddonDownloadGroup = {
   status: 'loaded' | 'empty' | 'failed';
   streams: AddonDownloadStreamView[];
   errorCode?: string;
+  /** Phase 16 (Task 12): non-sensitive diagnostic counts. */
+  diagnostics?: AddonDownloadDiagnostics;
 };
 
 export type AddonDownloadRequest = {
@@ -118,7 +159,7 @@ export type AddonDownloadTabsResult = {
   consideredAddons: number;
 };
 
-/** Phase 15 per-addon resolution result (task §3 state model). */
+/** Phase 16 per-addon resolution result (Task 3/Task 11 state model). */
 export type SingleAddonDownloadResult = {
   addonId: string;
   addonName: string;
@@ -130,23 +171,34 @@ export type SingleAddonDownloadResult = {
   errorCode?: StreamErrorCode;
   /** How many retry attempts were made (0 = first-attempt success). */
   attempts?: number;
+  /** Phase 16 (Task 12): non-sensitive diagnostic counts. */
+  diagnostics?: AddonDownloadDiagnostics;
 };
 
-/** Per-request timeout for ONE addon stream endpoint (smaller than the player's — downloads are opportunistic). */
-const DOWNLOAD_TIMEOUT_MS = 9_000;
-/** Aggregate budget across ALL addons (the batch endpoint stays snappy). */
-const OVERALL_TIMEOUT_MS = 12_000;
+/**
+ * Phase 16 (Task 13): per-attempt timeout raised to 30s. Healthy Stremio
+ * addons can take 15-25s under load; the previous 9s timeout was marking
+ * them Failed prematurely. With 1 retry, the total budget is ~60s worst-case
+ * (30s initial + backoff + 30s retry) — well within the 30-40s allowance
+ * the task specifies for the typical single-attempt case.
+ */
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+/**
+ * Phase 16: aggregate batch budget raised to 40s. The batch endpoint (kept
+ * for back-compat) resolves every addon in parallel; the per-addon timeout
+ * is the real bound, this just aborts the whole batch if everything hangs.
+ */
+const OVERALL_TIMEOUT_MS = 40_000;
 const MAX_GROUPS = 20;
 
-/** Phase 15 retry/backoff budget (task §3). */
-const MAX_RETRY_ATTEMPTS = 2; // 1 initial + 2 retries = 3 total attempts
-const INITIAL_BACKOFF_MS = 400;
+/** Phase 16 retry/backoff budget (Task 14 — Retry is fallback, not required). */
+const MAX_RETRY_ATTEMPTS = 1; // 1 initial + 1 retry = 2 total attempts
+const INITIAL_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 2_000;
 
 /**
- * Transient error codes that qualify for a retry (task §3). HTTP 4xx,
- * INVALID_RESPONSE, INVALID_JSON and BLOCKED_URL are NOT transient — the
- * addon is genuinely broken or unreachable, retrying wastes the budget.
+ * Transient error codes that qualify for a retry. HTTP 4xx, INVALID_RESPONSE,
+ * INVALID_JSON and BLOCKED_URL are NOT transient.
  */
 const RETRYABLE_ERROR_CODES: ReadonlySet<StreamErrorCode> = new Set<StreamErrorCode>([
   'TIMEOUT',
@@ -157,7 +209,7 @@ const RETRYABLE_ERROR_CODES: ReadonlySet<StreamErrorCode> = new Set<StreamErrorC
 /** The content fact the downloader needs (same shape as the player session). */
 export type DownloaderContentLookup = {
   identifiers: { imdbId?: string; tmdbId?: string };
-  /** Phase 15 (task §10): optional content runtime, for size/runtime sanity. */
+  /** Phase 16: optional content runtime (informational only — no longer used to reject). */
   runtimeSeconds?: number;
 };
 
@@ -187,7 +239,7 @@ export type ResolveAddonDownloadsDeps = {
   overallTimeoutMs?: number;
 };
 
-/** Phase 15 per-addon deps (adds retry budget + single-addon loader). */
+/** Phase 16 per-addon deps (adds retry budget + single-addon loader). */
 export type ResolveSingleAddonDeps = ResolveAddonDownloadsDeps & {
   /** Injectable single-addon loader (tests); defaults to a fresh DB lookup. */
   loadAddonById?: (client: SupabaseClient<Database>, id: string) => Promise<StreamingAddon | null>;
@@ -256,6 +308,24 @@ function runtimeContextOf(lookup: DownloaderContentLookup): DownloadRuntimeConte
   return lookup.runtimeSeconds !== undefined ? { runtimeSeconds: lookup.runtimeSeconds } : {};
 }
 
+/** Builds the non-sensitive diagnostic summary from the normalization + selection. */
+function diagnosticsOf(raw: number, unsupported: number, dropped: Record<DownloadSkipReason, number>, selected: RankedDownloadStream[]): AddonDownloadDiagnostics {
+  const rejected: Partial<Record<DownloadSkipReason, number>> = {};
+  for (const [reason, count] of Object.entries(dropped)) {
+    if (count > 0) rejected[reason as DownloadSkipReason] = count;
+  }
+  // `raw` is already post-normalization (the count that entered
+  // buildDownloadCandidates). `eligible` = `raw` (alias for clarity).
+  // `unsupported` is the count the NORMALIZER rejected (P2P/externalUrl/etc.).
+  return {
+    raw,
+    unsupported,
+    eligible: raw,
+    rejected,
+    selected: selected.length,
+  };
+}
+
 /**
  * Resolves ONE addon's streams — single attempt (no retry). Shared by the
  * batch endpoint and the per-addon retry loop. NEVER throws for addon-level
@@ -270,7 +340,7 @@ async function resolveAddonOnce(
   runtimeContext: DownloadRuntimeContext,
   attempt: number,
   deps: ResolveSingleAddonDeps,
-): Promise<{ status: AddonDownloadStatus; streams: AddonDownloadStreamView[]; errorCode?: StreamErrorCode; diagnostics: string }> {
+): Promise<{ status: AddonDownloadStatus; streams: AddonDownloadStreamView[]; errorCode?: StreamErrorCode; diagnostics?: AddonDownloadDiagnostics }> {
   try {
     const body = await fetchStremioStreamResponse(plan.endpointUrl, {
       fetcher: deps.fetcher,
@@ -281,30 +351,32 @@ async function resolveAddonOnce(
     const normalized = normalizeStremioStreamResponse(body);
     if (!normalized.valid) {
       console.warn(`[AddonDownloader] invalid response shape addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt}`);
-      return { status: 'unavailable', streams: [], errorCode: 'INVALID_RESPONSE', diagnostics: `invalid-response attempt=${attempt}` };
+      return { status: 'unavailable', streams: [], errorCode: 'INVALID_RESPONSE' };
     }
     const { candidates, dropped } = buildDownloadCandidates(normalized.streams, runtimeContext);
+    // Phase 16: NO truncation — selectDownloadStreams returns EVERY eligible
+    // candidate (true-duplicate-URL dedup only). The max parameter is back-compat only.
     const selected = selectDownloadStreams(candidates, MAX_DOWNLOAD_STREAMS_PER_ADDON);
+    const diagnostics = diagnosticsOf(normalized.streams.length, normalized.unsupported.length, dropped, selected);
     const dropSummary = Object.entries(dropped).filter(([, count]) => count > 0).map(([reason, count]) => `${reason}:${count}`).join(',') || 'none';
     console.info(
-      `[AddonDownloader] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt} returned=${normalized.streams.length} unsupported=${normalized.unsupported.length} dropped=${dropSummary} selected=${selected.length}`,
+      `[AddonDownloader] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt} raw=${diagnostics.raw} unsupported=${diagnostics.unsupported} eligible=${diagnostics.eligible} dropped=${dropSummary} selected=${diagnostics.selected}`,
     );
     return {
       status: selected.length ? 'loaded' : 'empty',
       streams: selected.map(toStreamView),
-      diagnostics: `ok attempt=${attempt} selected=${selected.length}`,
+      diagnostics,
     };
   } catch (error) {
     const serviceError = asStreamServiceError(error);
     console.warn(`[AddonDownloader] fetch failed addon=${addon.slug} attempt=${attempt} reason=${serviceError.code}`);
-    return { status: 'unavailable', streams: [], errorCode: serviceError.code, diagnostics: `failed attempt=${attempt} code=${serviceError.code}` };
+    return { status: 'unavailable', streams: [], errorCode: serviceError.code };
   }
 }
 
 /** Computes the next backoff delay (exponential, capped, with a tiny jitter). */
 function nextBackoffMs(attempt: number, initial: number, cap: number): number {
   const base = Math.min(cap, initial * 2 ** (attempt - 1));
-  // Deterministic jitter (±10%) — keeps tests stable while avoiding request storms.
   const jitter = attempt % 2 === 0 ? Math.round(base * 0.1) : -Math.round(base * 0.1);
   return Math.max(1, base + jitter);
 }
@@ -315,7 +387,7 @@ function nextBackoffMs(attempt: number, initial: number, cap: number): number {
  * addon-infrastructure (DB) failures throw.
  *
  * Phase 14 batch path (kept for backward compat + standalone deep-link
- * pages + the Phase 14 test suite). The Phase 15 progressive path uses
+ * pages + the Phase 14 test suite). The Phase 15/16 progressive path uses
  * `listAddonDownloadTargets` + `resolveSingleAddonDownload` instead.
  */
 export async function resolveAddonDownloads(client: SupabaseClient<Database>, request: AddonDownloadRequest, deps: ResolveAddonDownloadsDeps = {}): Promise<AddonDownloadResult> {
@@ -353,15 +425,13 @@ export async function resolveAddonDownloads(client: SupabaseClient<Database>, re
         return { ...base, status: 'empty', streams: [] };
       }
       const result = await resolveAddonOnce(addon, plan.plan, streamType, runtimeContext, 1, deps);
-      // Map the Phase 15 state model back to the Phase 14 batch view
-      // (loaded → loaded; empty → empty; unavailable → failed).
       if (result.status === 'unavailable') {
         return { ...base, status: 'failed', streams: [], errorCode: result.errorCode };
       }
       if (result.status === 'empty') {
-        return { ...base, status: 'empty', streams: [] };
+        return { ...base, status: 'empty', streams: [], ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
       }
-      return { ...base, status: 'loaded', streams: result.streams };
+      return { ...base, status: 'loaded', streams: result.streams, ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
     }));
 
     return {
@@ -377,10 +447,6 @@ export async function resolveAddonDownloads(client: SupabaseClient<Database>, re
  * Phase 15 (task §1): lists the addon tabs for ONE title — NO stream
  * fetches. The UI renders the tabs immediately in `loading` state and
  * fires `resolveSingleAddonDownload` for each tab independently.
- *
- * Returns the addon metadata ONLY (id/name/slug/ordering). No manifest
- * URLs, no stream data, no configuration. NEVER throws for addon-eligibility
- * — ineligible addons are simply omitted from the tab list.
  */
 export async function listAddonDownloadTargets(client: SupabaseClient<Database>, request: AddonDownloadRequest, deps: ResolveAddonDownloadsDeps = {}): Promise<AddonDownloadTabsResult> {
   assertValidRequest(request);
@@ -438,23 +504,18 @@ async function defaultLoadAddonById(client: SupabaseClient<Database>, id: string
 }
 
 /**
- * Phase 15 (task §1/§2/§3): resolves ONE addon with a bounded retry/backoff
- * budget for transient failures. The single source of truth for the
- * per-addon progressive flow.
+ * Phase 15/16 (task §1/§2/§3 + Task 13/14): resolves ONE addon with a
+ * bounded retry/backoff budget for transient failures. The single source
+ * of truth for the per-addon progressive flow.
  *
- * Retry policy (task §3):
- *   * Transient errors (TIMEOUT, NETWORK, HTTP_ERROR) trigger a retry.
- *   * Non-transient errors (INVALID_RESPONSE, INVALID_JSON, BLOCKED_URL,
- *     INVALID_URL, INVALID_REQUEST, TOO_LARGE, UNEXPECTED) do NOT retry —
- *     the addon is genuinely broken or the request is malformed.
- *   * Max MAX_RETRY_ATTEMPTS retries (3 total attempts) with exponential
- *     backoff (INITIAL_BACKOFF_MS → MAX_BACKOFF_MS, capped).
- *   * No infinite retry, no request storms.
+ * Phase 16 changes:
+ *   * Per-attempt timeout raised 9s → 30s (healthy addons can take 15-25s).
+ *   * Retry budget lowered 2 → 1 (Retry is fallback, not required — Task 14).
+ *   * Diagnostics carry raw/unsupported/eligible/rejected/selected counts.
  *
  * NEVER throws for addon-level problems — returns a typed
- * SingleAddonDownloadResult with status='unavailable' and the closed error
- * code. Throws only for infrastructure failures (DB outage) or invalid
- * request shape.
+ * SingleAddonDownloadResult. Throws only for infrastructure failures (DB
+ * outage) or invalid request shape.
  */
 export async function resolveSingleAddonDownload(client: SupabaseClient<Database>, request: AddonDownloadRequest, addonId: string, deps: ResolveSingleAddonDeps = {}): Promise<SingleAddonDownloadResult> {
   assertValidRequest(request);
@@ -484,8 +545,6 @@ export async function resolveSingleAddonDownload(client: SupabaseClient<Database
   const plan = planAddonStreamRequest(addon, streamType, lookup.identifiers, request.season, request.episode);
   if (!plan.ok) {
     console.info(`[AddonDownloader] single-addon skipped addon=${addon.slug} reason=${plan.reason} mediaType=${streamType}`);
-    // Ineligible addon = honest empty (not a failure). The plan rejected it
-    // before any network call — id property / prefix / capability mismatch.
     return { ...base, status: 'empty', streams: [], attempts: 0 };
   }
 
@@ -497,24 +556,24 @@ export async function resolveSingleAddonDownload(client: SupabaseClient<Database
 
   let lastErrorCode: StreamErrorCode | undefined;
   let attempts = 0;
+  let lastDiagnostics: AddonDownloadDiagnostics | undefined;
   for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
     attempts = attempt;
     const result = await resolveAddonOnce(addon, plan.plan, streamType, runtimeContext, attempt, deps);
-    // Success or non-transient failure → return immediately.
+    lastDiagnostics = result.diagnostics;
     if (result.status !== 'unavailable') {
-      return { ...base, status: result.status, streams: result.streams, attempts };
+      return { ...base, status: result.status, streams: result.streams, attempts, ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
     }
     lastErrorCode = result.errorCode;
     const isTransient = result.errorCode !== undefined && RETRYABLE_ERROR_CODES.has(result.errorCode);
     if (!isTransient || attempt > maxRetries) {
       break;
     }
-    // Transient failure with retries remaining → backoff and retry.
     console.info(`[AddonDownloader] retrying addon=${addon.slug} attempt=${attempt + 1}/${maxRetries + 1} after backoff`);
     await sleep(nextBackoffMs(attempt, initialBackoff, maxBackoff));
   }
 
-  return { ...base, status: 'unavailable', streams: [], errorCode: lastErrorCode ?? 'UNEXPECTED', attempts };
+  return { ...base, status: 'unavailable', streams: [], errorCode: lastErrorCode ?? 'UNEXPECTED', attempts, ...(lastDiagnostics ? { diagnostics: lastDiagnostics } : {}) };
 }
 
 export { MAX_DOWNLOAD_STREAMS_PER_ADDON };

@@ -489,111 +489,80 @@ async function sectionG(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// H — Bad releases (END-CREDIT / TRAILER / SAMPLE / POST-CREDIT rejected)
+// H — Phase 16: NO bad-release filtering (preserved for diagnostic parity)
 // ---------------------------------------------------------------------------
+// Phase 16 (task §5): the previous partial-release regex (END-CREDIT /
+// TRAILER / SAMPLE / …) was REMOVED — it silently dropped legitimate
+// streams that Stremio shows. `isPartialRelease` is now a back-compat no-op
+// that returns false unconditionally. Every eligible direct HTTP(S) stream
+// is preserved; the user decides, not the pipeline.
 
 function sectionH(): void {
-  // Each token must reject in punctuation/spacing-tolerant, case-insensitive form.
-  const rejections = [
+  // Phase 16: `isPartialRelease` is a no-op — returns false for EVERY input.
+  const previouslyRejected = [
     'Movie END-CREDIT 1080p',
     'Movie END_CREDIT 1080p',
     'Movie END.CREDIT 1080p',
     'Movie END CREDIT 1080p',
     'Movie ENDCREDIT 1080p',
     'Movie POST-CREDIT scene',
-    'Movie POSTCREDIT scene',
-    'Movie end credit scene',
-    'Movie Credits 1080p',
     'Movie TRAILER 2026',
-    'Movie Teaser 2026',
-    'Movie Preview 2026',
     'Movie SAMPLE 1080p',
     'Movie CLIP 1080p',
     'Movie EXTRAS 1080p',
-    'Movie BONUS 1080p',
-    'Movie PROMO 1080p',
-    'Movie Promotional 1080p',
-    'Movie Interview 1080p',
-    'Movie Behind the Scenes 1080p',
-    'Movie Making of 1080p',
-    'Movie Deleted Scene 1080p',
-    'Movie Featurette 1080p',
+    'Movie FEATURETTE 1080p',
   ];
-  for (const title of rejections) {
-    ok(isPartialRelease({ title }), `H: "${title}" is rejected as a partial release`);
-    const { candidates, dropped } = buildDownloadCandidates(normalizeStreams({
+  for (const title of previouslyRejected) {
+    ok(isPartialRelease({ title }) === false, `H (Phase 16): "${title}" is NO LONGER rejected (no partial-release filter — diagnostic parity)`);
+    // The stream SURVIVES as a candidate.
+    const { candidates } = buildDownloadCandidates(normalizeStreams({
       streams: [{ name: 'a', title, url: 'https://x.example/a.mkv', behaviorHints: { videoSize: 4_724_904_960 } }],
     }));
-    ok(candidates.length === 0 && dropped['partial-release'] === 1, `H: "${title}" is excluded with partial-release reason`);
+    ok(candidates.length === 1, `H (Phase 16): "${title}" survives as a candidate (no over-filtering)`);
   }
 
-  // Legitimate movie filenames must NOT be rejected.
+  // Legitimate movie filenames also pass (trivially — nothing is rejected).
   const legitimate = [
     'Dhurandhar 1080p WEB-DL Dual Audio',
     'Movie.1080p.WEB-DL.H264.mp4',
     'Endgame 2019 1080p BluRay',
-    'The Credit 2026 1080p WEB-DL', // "Credit" (singular) is NOT a partial-release token
+    'The Credit 2026 1080p WEB-DL',
     'Inception 2010 1080p',
-    'Sample.Movie.2026.1080p.WEB-DL.mkv', // "Sample.Movie" — but "Sample" is a token
   ];
-  let legitimateKept = 0;
   for (const title of legitimate) {
-    const result = isPartialRelease({ title });
-    // "Sample.Movie.2026..." contains "Sample" → it WILL match. This is the
-    // conservative trade-off (false positive tolerated for safety). Document it.
-    if (title.startsWith('Sample.')) {
-      ok(result === true, `H: "${title}" matches the SAMPLE token (conservative — a real sample is more likely than a real movie called "Sample")`);
-    } else {
-      ok(result === false, `H: "${title}" is NOT rejected (legitimate movie filename)`);
-      legitimateKept += 1;
-    }
+    ok(isPartialRelease({ title }) === false, `H: "${title}" is NOT rejected (legitimate movie filename)`);
   }
-  ok(legitimateKept >= 5, 'H: at least 5 legitimate filenames pass the filter');
 }
 
 // ---------------------------------------------------------------------------
-// I — Size/runtime sanity
+// I — Phase 16: NO size/runtime filtering (preserved for diagnostic parity)
 // ---------------------------------------------------------------------------
+// Phase 16 (task §5): the previous size/runtime sanity was rejecting
+// small-but-legitimate files (short films, compressed encodes).
+// `sizeRuntimeVerdict` is now a back-compat no-op that returns 'ok'
+// unconditionally. Every eligible stream is preserved.
 
 function sectionI(): void {
-  // 1. Long movie + tiny file at high resolution → reject.
   const longMovie = 3 * 3600 + 49 * 60; // 3h49m in seconds
-  const tiny1080p = sizeRuntimeVerdict(
-    { quality: '1080p', sizeBytes: 156 * 1024 ** 2, height: 1080, name: 'a', title: 'Movie END-CREDIT 1080p', description: '', filename: '', tag: '' },
-    { runtimeSeconds: longMovie },
-  );
-  ok(tiny1080p === 'reject' || tiny1080p === 'suspicious', 'I: a 156 MB 1080p file for a 3h49m movie is rejected/suspicious');
 
-  const explicitReject = sizeRuntimeVerdict(
+  // Phase 16: sizeRuntimeVerdict is a no-op — returns 'ok' for EVERY input.
+  ok(sizeRuntimeVerdict(
+    { quality: '1080p', sizeBytes: 156 * 1024 ** 2, height: 1080, name: 'a', title: 'Movie 1080p', description: '', filename: '', tag: '' },
+    { runtimeSeconds: longMovie },
+  ) === 'ok', 'I (Phase 16): a 156 MB 1080p file is NO LONGER rejected (no size/runtime filter)');
+
+  ok(sizeRuntimeVerdict(
     { quality: '1080p', sizeBytes: 50 * 1024 ** 2, height: 1080, name: 'a', title: 'Movie 1080p', description: '', filename: '', tag: '' },
     { runtimeSeconds: longMovie },
-  );
-  ok(explicitReject === 'reject', 'I: a 50 MB 1080p file for a 3h49m movie is REJECTED (high confidence — sample-like)');
+  ) === 'ok', 'I (Phase 16): a 50 MB 1080p file is NO LONGER rejected (no size/runtime filter)');
 
-  // 2. Short movie + small file can remain valid.
-  const shortMovie = 30 * 60; // 30 min
-  const smallShort = sizeRuntimeVerdict(
-    { quality: '1080p', sizeBytes: 300 * 1024 ** 2, height: 1080, name: 'a', title: 'Short Film 1080p', description: '', filename: '', tag: '' },
-    { runtimeSeconds: shortMovie },
-  );
-  ok(smallShort === 'ok', 'I: a 300 MB 1080p 30-min short film is OK (short films can legitimately be small)');
-
-  // 3. Normal 1080p release is valid.
-  const normal1080p = sizeRuntimeVerdict(
-    { quality: '1080p', sizeBytes: 4_724_904_960, height: 1080, name: 'a', title: 'Movie 1080p WEB-DL', description: '', filename: '', tag: '' },
-    { runtimeSeconds: longMovie },
-  );
-  ok(normal1080p === 'ok', 'I: a 4.4 GB 1080p WEB-DL is OK');
-
-  // 4. No runtime → still catch sample-size 4K/1080p (suspicious, not reject).
-  const noRuntime = sizeRuntimeVerdict(
+  ok(sizeRuntimeVerdict(
     { quality: '4K', sizeBytes: 100 * 1024 ** 2, height: 2160, name: 'a', title: '4K', description: '', filename: '', tag: '' },
     {},
-  );
-  ok(noRuntime === 'suspicious', 'I: a 100 MB 4K file with no runtime is suspicious (sample-like)');
+  ) === 'ok', 'I (Phase 16): a 100 MB 4K file with no runtime is NO LONGER suspicious (no size filter)');
 
-  // 5. End-to-end: the 156 MB END-CREDIT candidate is rejected by buildDownloadCandidates.
-  const { candidates, dropped } = buildDownloadCandidates(
+  // End-to-end: the 156 MB END-CREDIT candidate is NOW PRESERVED (Phase 16).
+  const { candidates } = buildDownloadCandidates(
     normalizeStreams({
       streams: [
         { name: 'a', title: 'Movie END-CREDIT 1080p', url: 'https://x.example/a.mkv', behaviorHints: { videoSize: 156 * 1024 ** 2, filename: 'Movie.END-CREDIT.1080p.mkv' } },
@@ -602,11 +571,9 @@ function sectionI(): void {
     }),
     { runtimeSeconds: longMovie },
   );
-  ok(candidates.length === 1, 'I: the END-CREDIT candidate is excluded; the normal 1080p survives');
-  ok(candidates[0]?.url === 'https://x.example/b.mkv', 'I: the surviving candidate is the normal 1080p WEB-DL');
-  ok(dropped['partial-release'] === 1, 'I: the END-CREDIT was counted as a partial-release drop');
+  ok(candidates.length === 2, 'I (Phase 16): BOTH candidates survive (no partial-release filter, no size/runtime filter)');
 
-  // 6. parseRuntimeSeconds covers the common formats.
+  // parseRuntimeSeconds still works (kept for back-compat — informational only).
   ok(parseRuntimeSeconds('3h 49m') === 3 * 3600 + 49 * 60, 'I: "3h 49m" parses to seconds');
   ok(parseRuntimeSeconds('89 min') === 89 * 60, 'I: "89 min" parses to seconds');
   ok(parseRuntimeSeconds('PT2H30M') === 2 * 3600 + 30 * 60, 'I: ISO 8601 PT2H30M parses to seconds');
@@ -615,19 +582,24 @@ function sectionI(): void {
 }
 
 // ---------------------------------------------------------------------------
-// J — 10 candidate cap
+// J — Phase 16: NO 10-candidate cap (unlimited stream visibility)
 // ---------------------------------------------------------------------------
+// Phase 16 (task §4): MAX_DOWNLOAD_STREAMS_PER_ADDON is now
+// Number.MAX_SAFE_INTEGER (back-compat symbol — NOT used to truncate).
+// 30+ valid raw candidates → 30+ selected. The downloader shows EVERY
+// eligible stream for diagnostic parity with Stremio.
 
 function sectionJ(): void {
-  ok(MAX_DOWNLOAD_STREAMS_PER_ADDON === 10, 'J: MAX_DOWNLOAD_STREAMS_PER_ADDON is 10 (Phase 15 task §8)');
+  ok(MAX_DOWNLOAD_STREAMS_PER_ADDON === Number.MAX_SAFE_INTEGER, 'J (Phase 16): MAX_DOWNLOAD_STREAMS_PER_ADDON is Number.MAX_SAFE_INTEGER (no truncation)');
 
-  // 30+ valid raw candidates → exactly 10 selected.
+  // 30+ valid raw candidates → ALL survive (no cap).
   const { candidates } = buildDownloadCandidates(normalizeStreams(manyCandidatesPayload()));
   ok(candidates.length >= 30, 'J: the payload yields 30+ valid candidates');
   const selected = selectDownloadStreams(candidates);
-  ok(selected.length === 10, 'J: 30+ valid candidates collapse to exactly 10 BEST links');
+  ok(selected.length === candidates.length, `J (Phase 16): ${candidates.length} valid candidates → ${selected.length} selected (NO truncation — all survive)`);
+  ok(selected.length >= 30, 'J (Phase 16): 30+ valid candidates yield 30+ selected (no max=10 cap)');
 
-  // Fewer than 10 → all valid candidates preserved (no fabrication).
+  // Fewer candidates → all preserved (no fabrication).
   const few: DownloadStreamCandidate[] = [
     { url: 'https://x.example/a', quality: '1080p', codec: 'H.264', audio: 'dual', protocol: 'https', index: 0, hostClass: 'known', releaseKey: 'k1' },
     { url: 'https://x.example/b', quality: '720p', codec: 'H.264', audio: 'dual', protocol: 'https', index: 1, hostClass: 'known', releaseKey: 'k2' },
@@ -641,11 +613,16 @@ function sectionJ(): void {
 }
 
 // ---------------------------------------------------------------------------
-// K — Diversity (duplicates don't consume all slots; different qualities survive)
+// K — Phase 16: NO diversity cap (all distinct qualities survive)
 // ---------------------------------------------------------------------------
+// Phase 16 (task §4/§5): the previous per-quality diversity caps (4K≤2,
+// others≤4) have been REMOVED. All distinct candidates survive — the user
+// sees what Stremio sees.
 
 function sectionK(): void {
-  // 10 identical releases (same quality/codec/container/audio/release text).
+  // 10 identical releases (same URL? no — different URLs, same release text).
+  // Phase 16: true-duplicate-URL dedup is the ONLY dedup. Different URLs
+  // with the same release text stay DISTINCT.
   const dupes: DownloadStreamCandidate[] = Array.from({ length: 10 }, (_, index) => ({
     url: `https://x.example/dupe-${index}`,
     quality: '1080p',
@@ -657,10 +634,9 @@ function sectionK(): void {
     releaseKey: '1080p|H.264|MKV|dual|movie audio',
   }));
   const selectedDupes = selectDownloadStreams(dupes);
-  ok(selectedDupes.length === 1, 'K: 10 equivalent releases collapse to 1 practical link');
+  ok(selectedDupes.length === 10, 'K (Phase 16): 10 distinct URLs survive (no equivalent-release dedup — only true-duplicate-URL dedup)');
 
-  // A diverse mix: 4× 1080p + 2× 720p + 2× 480p + 2× 4K → 10 distinct → all 4
-  // qualities survive (each bucket fits within its diversity cap).
+  // A diverse mix: 4× 1080p + 2× 720p + 2× 480p + 2× 4K → all 10 survive.
   const diverse: DownloadStreamCandidate[] = [];
   for (let i = 0; i < 4; i += 1) {
     diverse.push({ url: `https://x.example/1080-${i}`, quality: '1080p', codec: 'H.264', audio: 'dual', protocol: 'https', index: i, hostClass: 'known', releaseKey: `1080p|H.264|MKV|dual|movie-${i}` });
@@ -675,19 +651,15 @@ function sectionK(): void {
     diverse.push({ url: `https://x.example/4k-${i}`, quality: '4K', codec: 'HEVC', audio: 'multi', protocol: 'https', index: 8 + i, hostClass: 'known', releaseKey: `4K|HEVC|MKV|multi|movie-${i}` });
   }
   const selectedDiverse = selectDownloadStreams(diverse);
-  ok(selectedDiverse.length === 10, 'K: 10 distinct releases fill all 10 slots');
+  ok(selectedDiverse.length === 10, 'K (Phase 16): 10 distinct releases ALL survive (no diversity cap)');
   const qualities = selectedDiverse.map((entry) => entry.quality);
-  ok(qualities.filter((q) => q === '1080p').length <= 4, 'K: 1080p capped at 4');
-  ok(qualities.filter((q) => q === '4K').length <= 2, 'K: 4K capped at 2');
-  ok(qualities.includes('1080p') && qualities.includes('720p') && qualities.includes('4K'), 'K: the top-quality buckets (1080p / 720p / 4K) all survive the diversity sweep');
-  // Task §12: quality dominates diversity. 480p survives here only because
-  // slots remain after the higher-quality buckets are admitted; it is NEVER
-  // promoted above a practical 1080p/720p just to fill a diversity quota.
-  ok(qualities.filter((q) => q === '480p').length <= 4, 'K: 480p (when present) is capped at 4');
+  ok(qualities.filter((q) => q === '1080p').length === 4, 'K (Phase 16): 4× 1080p ALL survive (no 1080p≤4 cap)');
+  ok(qualities.filter((q) => q === '4K').length === 2, 'K (Phase 16): 2× 4K ALL survive (no 4K≤2 cap)');
+  ok(qualities.includes('720p') && qualities.includes('480p'), 'K (Phase 16): 720p and 480p survive');
 }
 
 // ---------------------------------------------------------------------------
-// L — Ranking (1080p H264 practical beats huge 4K; 720p/480p available; practical 4K possible)
+// L — Ranking (preserved: 1080p H264 practical beats huge 4K; practical 4K possible)
 // ---------------------------------------------------------------------------
 
 function sectionL(): void {
@@ -703,39 +675,38 @@ function sectionL(): void {
 
   // 720p and 480p remain available.
   const mix: DownloadStreamCandidate[] = [
-    mk({ title: '1080p', quality: '1080p', sizeBytes: 4_724_904_960, index: 0, releaseKey: 'a' }),
-    mk({ title: '720p', quality: '720p', sizeBytes: 2_040_109_056, index: 1, releaseKey: 'b' }),
-    mk({ title: '480p', quality: '480p', sizeBytes: 858_993_459, index: 2, releaseKey: 'c' }),
+    mk({ url: 'https://x.example/1080', title: '1080p', quality: '1080p', sizeBytes: 4_724_904_960, index: 0, releaseKey: 'a' }),
+    mk({ url: 'https://x.example/720', title: '720p', quality: '720p', sizeBytes: 2_040_109_056, index: 1, releaseKey: 'b' }),
+    mk({ url: 'https://x.example/480', title: '480p', quality: '480p', sizeBytes: 858_993_459, index: 2, releaseKey: 'c' }),
   ];
   const selected = selectDownloadStreams(mix);
-  ok(selected.length === 3, 'L: 3 distinct qualities all survive');
+  ok(selected.length === 3, 'L: 3 distinct URLs (different qualities) all survive');
   const qualities = selected.map((entry) => entry.quality);
   ok(qualities.includes('1080p') && qualities.includes('720p') && qualities.includes('480p'), 'L: 720p and 480p remain available');
 
   // Size-aware scoring: a 4.4 GB 1080p outranks a 33 GB 4K.
   const heavyVsPractical = selectDownloadStreams([
-    mk({ title: '4K REMUX', quality: '4K', codec: 'HEVC', sizeBytes: 33 * 1024 ** 3, index: 0, releaseKey: 'a' }),
-    mk({ title: '1080p WEB-DL', quality: '1080p', sizeBytes: 4_724_904_960, index: 1, releaseKey: 'b' }),
+    mk({ url: 'https://x.example/4k', title: '4K REMUX', quality: '4K', codec: 'HEVC', sizeBytes: 33 * 1024 ** 3, index: 0, releaseKey: 'a' }),
+    mk({ url: 'https://x.example/1080', title: '1080p WEB-DL', quality: '1080p', sizeBytes: 4_724_904_960, index: 1, releaseKey: 'b' }),
   ]);
   ok(heavyVsPractical[0]?.quality === '1080p', 'L: the practical 1080p WEB-DL ranks ABOVE the 33 GB 4K REMUX');
 }
 
 // ---------------------------------------------------------------------------
-// M — Mavero Player removal from the source selector
+// M — Mavero Player removal from the source selector (preserved from Phase 15)
 // ---------------------------------------------------------------------------
 
 function sectionM(): void {
   const watchPage = read('src/routes/watch/[type]/[id]/+page.svelte');
   ok(!watchPage.includes('maveroPlayerSourceOption()'), 'M: the watch route no longer appends maveroPlayerSourceOption() to sourceOptions');
   ok(!/\.\.\.\(data\.maveroPlayerAvailable\s*\?\s*\[maveroPlayerSourceOption\(\)\]/.test(watchPage), 'M: the conditional append of the virtual option is gone');
-  // The virtual source NAME still exists in the shared module (used by deep-link backward compat).
   const shared = read('src/lib/shared/mavero-player.ts');
   ok(shared.includes(MAVERO_PLAYER_SOURCE_NAME), 'M: the MAVERO Player display name is preserved (deep-link backward compat)');
   ok(maveroPlayerSourceOption().name === MAVERO_PLAYER_SOURCE_NAME, 'M: the maveroPlayerSourceOption() helper still works (it is just no longer appended to the source selector)');
 }
 
 // ---------------------------------------------------------------------------
-// N — External player (mpv Android intent + original URL preservation + fallback)
+// N — External player (preserved — the helper is still used by the batch endpoint)
 // ---------------------------------------------------------------------------
 
 function sectionN(): void {
@@ -757,6 +728,30 @@ function sectionN(): void {
 
   ok(externalPlayerHint({ kind: 'android-intent' }) === 'To play this source, install mpv.', 'N: the exact-launch hint states the mpv requirement');
   ok(externalPlayerHint({ kind: 'direct' }) === 'This source opens in an external player.', 'N: the fallback hint describes the handoff honestly');
+}
+
+// ---------------------------------------------------------------------------
+// Q (new) — Phase 16: Share replaces Copy; Play/Watch removed; Download unchanged
+// ---------------------------------------------------------------------------
+
+function sectionQ(): void {
+  const component = read('src/lib/components/MaveroAddonDownload.svelte');
+  // Task 1: Play/Watch + Copy are REMOVED.
+  ok(!component.includes('copyStreamUrl'), 'Q (Phase 16): Copy action is REMOVED');
+  ok(!component.includes('Play size='), 'Q (Phase 16): Play/Watch action is REMOVED');
+  ok(!component.includes('mad-action-play'), 'Q (Phase 16): the mad-action-play CSS class is gone');
+  // Task 3: Share uses navigator.share with the EXACT ORIGINAL URL.
+  ok(component.includes('navigator.share'), 'Q (Phase 16): Share uses navigator.share()');
+  ok(component.includes('Share2 size='), 'Q (Phase 16): the Share button is present (lucide Share2 icon)');
+  ok(component.includes('handleShare'), 'Q (Phase 16): the handleShare function is wired');
+  // Task 2: Download is UNCHANGED — still uses href={stream.url} (the original URL).
+  ok(component.includes('href={stream.url}'), 'Q (Phase 16): Download still navigates the ORIGINAL addon URL (unchanged)');
+  ok(component.includes('downloadAttributesFor'), 'Q (Phase 16): Download still uses the existing downloadAttributesFor helper (unchanged)');
+  // Task 16: the URL shared is the EXACT ORIGINAL — no Mavero URL, no API URL, no proxy URL.
+  ok(!component.includes('/api/playback/compat') && !component.includes('media-worker'), 'Q (Phase 16): NO compat/worker references in the component');
+  ok(!component.includes('/api/proxy') && !component.includes('proxyMediaUrl') && !component.includes('proxyStreamUrl'), 'Q (Phase 16): NO proxy-URL machinery in the component');
+  // The share handler passes stream.url (the original) to navigator.share.
+  ok(component.includes('url = stream.url'), 'Q (Phase 16): the Share handler uses stream.url (the EXACT ORIGINAL addon URL)');
 }
 
 // ---------------------------------------------------------------------------
@@ -832,6 +827,7 @@ sectionK();
 sectionL();
 sectionM();
 sectionN();
+sectionQ();
 
 await sectionA();
 await sectionB();
@@ -842,4 +838,4 @@ await sectionG();
 await sectionO();
 await sectionP();
 
-console.log(`stremio_downloader_phase15_test: ${passed} checks passed (independent loading + retry/backoff + 10-link selection + bad-release/size-runtime filtering + PixelDrain + MAVERO Player removal + fetch isolation)`);
+console.log(`stremio_downloader_phase15_test: ${passed} checks passed (Phase 16: no max cap + no over-filtering + Share replaces Copy + Play/Watch removed + independent loading + retry/backoff + PixelDrain + MAVERO Player removal + fetch isolation)`);
