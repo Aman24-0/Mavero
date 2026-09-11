@@ -27,6 +27,7 @@
   // uncertain formats.
   import { COMPAT_PREPARING_MESSAGE, requestMaveroCompatStream } from '$lib/client/player/mavero-compat';
   import { checkMediaCompatibility, type MediaCompatibilityDecision } from '$lib/client/player/media-capabilities';
+  import type { SandboxPolicy } from '$lib/shared/sandbox-policy';
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -96,6 +97,11 @@
   let sourceIdentity = '';
   let sandboxEnabled = true;
   let sandboxSourceIdentity = '';
+  // Phase 11 (GOAL D): the EFFECTIVE sandbox policy the viewport renders.
+  // Server-resolved (`sandboxRuntime.effectiveSandboxPolicy` — configured
+  // vs effective are NEVER conflated); the dev toggle can override it for
+  // the current source session.
+  let sandboxPolicyOverride: SandboxPolicy | null = null;
   // Phase 6: episode identity tracker for the episode-switch reactive block.
   let episodeIdentity = '';
   // Phase 6 audit fix: sequence counter for embed playback events. Used by
@@ -217,12 +223,14 @@
   // their session status is ok; session addons WITHOUT a visible group
   // (pending/loading/failed/skipped, or ok with 0 streams) render as status
   // rows so a late or failed addon is never hidden (GOAL 3).
+  // Phase 11 (GOAL C2): an OK addon with ZERO streams renders
+  // "✓ Loaded — 0 streams" instead of disappearing — an addon that resolved
+  // successfully but found nothing is a REAL answer ("Pipe returned no
+  // streams for this title"), never rendered as if it were never queried.
   $: maveroStatusByName = new Map(maveroAddons.map((addon) => [addon.addonName, addon]));
   $: maveroPendingAddons = maveroAddons.filter((addon) => {
     const grouped = maveroStreamGroups.some((group) => group.addonName === addon.addonName);
-    if (grouped) return false;
-    // ok-with-zero-streams needs no row (nothing to retry, nothing loading).
-    return addon.status !== 'ok';
+    return !grouped;
   });
   // Phase 9: the MAVERO Player source option (provider selection) — the
   // source sheet shows ONE "X Streams →" entry point for it.
@@ -241,8 +249,17 @@
   $: if (source?.sourceId && source.sourceId !== sandboxSourceIdentity) {
     sandboxSourceIdentity = source.sourceId;
     sandboxEnabled = source.sandboxPolicy !== 'unrestricted';
+    sandboxPolicyOverride = null;
   }
-  $: effectiveSandboxEnabled = source?.type === 'embed' ? sandboxEnabled : true;
+  // Phase 11 (GOAL D): the runtime applies the EFFECTIVE policy resolved
+  // SERVER-side (source override → provider default → system default) and
+  // carried on the resolved source (`sandboxRuntime`) — the client never
+  // guesses. An intentionally unrestricted embed therefore renders NO
+  // sandbox attribute, and the provider's own "sandbox" warning can no
+  // longer contradict the admin configuration.
+  $: sourceEffectiveSandboxPolicy = source ? source.sandboxRuntime?.effectiveSandboxPolicy ?? source.sandboxPolicy ?? (sandboxEnabled ? 'required' : 'unrestricted') : 'required';
+  $: effectiveSandboxPolicy = sandboxPolicyOverride ?? (source?.type === 'embed' ? sourceEffectiveSandboxPolicy : 'required');
+  $: effectiveSandboxEnabled = effectiveSandboxPolicy !== 'unrestricted';
   // Phase 6 audit fix: reactive watcher for embed playback events. The watch
   // route pushes { type, _seq } into the embedPlaybackEvent prop whenever the
   // PlaybackManager receives a normalized provider play/pause/ended event.
@@ -266,6 +283,9 @@
     // source session — the new session starts direct.
     compatOverrideUrl = null;
     compatPreparing = false;
+    // Phase 11 (GOAL B7): a pending compat POLL from the old session is
+    // invalidated too — its result can never touch the new session.
+    compatSelectionSeq += 1;
     // Phase 9: failure markers are per-source-session — a stream that failed
     // for a previous source/aggregate must not mark the new one.
     failedStreamUrls = [];
@@ -629,7 +649,8 @@
 
   function toggleSandbox() {
     if (source?.type !== 'embed') return;
-    sandboxEnabled = !sandboxEnabled;
+    sandboxPolicyOverride = effectiveSandboxPolicy === 'unrestricted' ? 'required' : 'unrestricted';
+    sandboxEnabled = sandboxPolicyOverride !== 'unrestricted';
     state = 'embed-loading';
     errorMessage = '';
     revealControls();
@@ -719,12 +740,19 @@
    *   4. compat endpoint degradation → per-stream error state, every other
    *      stream stays selectable (GOAL 8).
    */
+  // Phase 11 (GOAL B7): compat sessions can now POLL for minutes (transcode
+  // preparation). A monotonic selection sequence invalidates superseded
+  // selections — the newest stream choice always wins, a slow prepare for an
+  // older stream can never hijack the newer one.
+  let compatSelectionSeq = 0;
+
   function selectMaveroStream(stream: PlayerQualityOption) {
     closeStreamsSheet();
     if (!stream.url || (stream.url === mediaUrl && !compatOverrideUrl)) return;
     const compatToken = typeof stream.compatToken === 'string' ? stream.compatToken : null;
     const compatKind = stream.compatKind === 'remux' || stream.compatKind === 'transcode' ? stream.compatKind : null;
     const sourceAtSelection = source;
+    const selectionSeq = ++compatSelectionSeq;
     void (async () => {
       // Runtime capability refinement (never filename-only guessing).
       let decision: MediaCompatibilityDecision;
@@ -743,9 +771,9 @@
         capturePendingSeek(pendingSeekState, currentTime, Date.now());
         const result = await requestMaveroCompatStream(compatToken, kind);
         compatPreparing = false;
-        // Stale guard: a source/episode switch since selection started
-        // invalidates the outcome (the new session must not be touched).
-        if (source !== sourceAtSelection) return;
+        // Stale guards: a source/episode switch OR a newer stream selection
+        // since selection started invalidates the outcome.
+        if (source !== sourceAtSelection || selectionSeq !== compatSelectionSeq) return;
         if (result.ok) {
           // Play the signed worker session — identity stays the stream's url
           // so the sheet's selected-state and progress keys are unchanged.
@@ -1305,7 +1333,7 @@
   {/if}
 
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} {statusNote} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} {statusNote} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
@@ -1398,7 +1426,10 @@
             {/each}
             {#each maveroPendingAddons as addon (addon.key)}
               <!-- Phase 10 GOAL 3: addons still resolving, failed, or skipped
-                   stay VISIBLE — a late/failed addon is never hidden. -->
+                   stay VISIBLE — a late/failed addon is never hidden.
+                   Phase 11 GOAL C2: an OK addon with 0 streams renders as
+                   "✓ Loaded — 0 streams" — a completed EMPTY result is an
+                   honest answer, never rendered as "never loaded". -->
               <div class="mavero-group mavero-addon-status" role="group" aria-label={`${addon.addonName} resolution status`}>
                 <div class="mavero-group-head" role="presentation">
                   <span class="mavero-group-name" title={addon.addonName}>{addon.addonName}</span>
@@ -1407,6 +1438,8 @@
                   {:else if addon.status === 'failed'}
                     <small class="mavero-group-state failed" role="status">Failed</small>
                     <button class="mavero-retry" type="button" onclick={() => onMaveroRetry(addon.key)}>Retry</button>
+                  {:else if addon.status === 'ok'}
+                    <small class="mavero-group-state" role="status">✓ Loaded — 0 streams</small>
                   {:else}
                     <small class="mavero-group-state" role="status">Unavailable</small>
                   {/if}

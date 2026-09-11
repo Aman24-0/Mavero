@@ -84,6 +84,38 @@ export function iframeSandboxAttribute(policy: SandboxPolicy = defaultSandboxPol
   return policy === 'unrestricted' ? undefined : 'allow-forms allow-presentation allow-same-origin allow-scripts';
 }
 
+/**
+ * Phase 11 (GOAL D): the FULL sandbox resolution provenance for one embed
+ * source — what the admin CONFIGURED at each level versus what the runtime
+ * must actually apply. The playback runtime consumes
+ * `effectiveSandboxPolicy`; `configured`/`provider` exist so admin-facing
+ * surfaces (and tests) can never conflate a stored override with the
+ * applied policy again.
+ */
+export type SandboxPolicyRuntime = {
+  /** The source-level EXPLICIT policy, or `null` when the source inherits. */
+  configuredSandboxPolicy: SandboxPolicy | null;
+  /** The provider-level policy (the inheritance target of `null`). */
+  providerSandboxPolicy: SandboxPolicy | null;
+  /** The policy the runtime MUST apply (source > provider > system default). */
+  effectiveSandboxPolicy: SandboxPolicy;
+};
+
+/**
+ * Phase 11 (GOAL D): resolves the complete configured-vs-effective runtime
+ * picture from the two capability records. Pure — the server embeds this on
+ * every resolved embed PlayerSource so the client never has to guess, and
+ * `effectiveSandboxPolicy` is ALWAYS the value `sandboxPolicyFromCapabilities`
+ * computes (single source of truth for the hierarchy).
+ */
+export function resolveSandboxRuntime(providerCapabilities: unknown, sourceCapabilities?: unknown): SandboxPolicyRuntime {
+  return {
+    configuredSandboxPolicy: configuredSandboxPolicy(sourceCapabilities),
+    providerSandboxPolicy: configuredSandboxPolicy(providerCapabilities),
+    effectiveSandboxPolicy: sandboxPolicyFromCapabilities(providerCapabilities, sourceCapabilities),
+  };
+}
+
 export function sandboxPolicyDescription(policy: SandboxPolicy) {
   if (policy === 'unrestricted') return 'Sandbox disabled for this embed. Use only when the provider explicitly requires it.';
   if (policy === 'optional') return 'Sandbox remains enabled by default; the provider may be reviewed for a different policy later.';

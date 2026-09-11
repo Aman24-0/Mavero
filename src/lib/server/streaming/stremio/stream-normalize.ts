@@ -410,7 +410,13 @@ function classifyStreamEntry(entry: unknown, index: number, streams: NormalizedS
     title,
     ...(description ? { description } : {}),
     url: normalizedUrl,
-    protocol: protocolForUrl(normalizedUrl),
+    // Phase 11 (GOAL A): the protocol classifier receives the ADDON-SUPPLIED
+    // text as well — an extensionless/signed HLS URL whose addon text
+    // explicitly says HLS/m3u8 must normalize as `hls` (and later route to
+    // the HLS engine) instead of `unknown` (native path → guaranteed
+    // playback failure on non-Safari browsers). Only addon-supplied text is
+    // eligible; nothing is guessed from the content title or addon name.
+    protocol: protocolForUrl(normalizedUrl, { ...(name ? { name } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}), ...(filename ? { filename } : {}) }),
     transport: parsed.protocol === 'https:' ? 'https' : 'http',
     quality: extractQuality(name, title, filename),
     bingeGroup,

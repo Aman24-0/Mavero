@@ -1,4 +1,13 @@
-# MAVERO Compatibility Worker — Production Architecture (Phase 10)
+# MAVERO Compatibility Worker — Production Architecture (Phase 10, implemented Phase 11)
+
+> **Phase 11 update (GOAL B5): the reference worker is now IMPLEMENTED in
+> this repository at `apps/media-worker/`** — a zero-runtime-dependency
+> Node/TypeScript service with its own Dockerfile, health endpoint, signed-job
+> verification (byte-compatible `cv1` tokens), remux (`-c copy`) and
+> transcode (`libx264`/`aac`) pipelines, bounded queue/concurrency/disk/TTL
+> policies and structured logging. See `apps/media-worker/README.md` for
+> configuration and deployment. This document remains the architecture
+> contract.
 
 ## Why a separate worker
 

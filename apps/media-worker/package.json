@@ -1,0 +1,20 @@
+{
+  "name": "@mavero/media-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MAVERO compatibility media worker — FFmpeg remux/transcode for browser-incompatible streams. Accepts ONLY signed compatibility jobs minted by the MAVERO app; never acts as a proxy.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

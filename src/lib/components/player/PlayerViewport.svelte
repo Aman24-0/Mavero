@@ -2,7 +2,8 @@
   import { createEventDispatcher, onDestroy } from 'svelte';
   import type { PlayerInternalQualityOption, PlayerPlaybackState, PlayerSource, PlayerSubtitleTrack } from '$lib/shared/player';
   import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
-  import { iframeSandboxAttribute } from '$lib/shared/sandbox-policy';
+  import { iframeSandboxAttribute, type SandboxPolicy } from '$lib/shared/sandbox-policy';
+  import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
   import { sourceForStreamUrl } from '$lib/client/player/mavero-streams';
 
@@ -24,8 +25,19 @@
   // unchanged (their sources never populate per-stream subtitles).
   export let subtitles: PlayerSubtitleTrack[] = [];
   $: activeSubtitles = subtitles.length ? subtitles : source?.subtitles ?? [];
-  $: sandboxAttribute = sandboxEnabled ? iframeSandboxAttribute('required') : undefined;
-  $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${sandboxEnabled ? 'sandbox-on' : 'sandbox-off'}`;
+  // Phase 11 (GOAL D): the iframe sandbox attribute is rendered from the
+  // EFFECTIVE policy — never from a client-side guess. The shell passes the
+  // server-resolved policy (`sandboxRuntime.effectiveSandboxPolicy`, falling
+  // back to the resolved source's `sandboxPolicy`):
+  //   * unrestricted → NO sandbox attribute at all (an intentionally
+  //     unrestricted embed must never carry the attribute);
+  //   * required/optional → the attribute with MAVERO's allow tokens.
+  // The legacy `sandboxEnabled` boolean remains as the fallback path when no
+  // explicit policy is supplied (and feeds the iframe cache key).
+  export let sandboxPolicy: SandboxPolicy | undefined = undefined;
+  $: effectiveSandbox = sandboxPolicy ?? (sandboxEnabled ? 'required' : 'unrestricted');
+  $: sandboxAttribute = iframeSandboxAttribute(effectiveSandbox);
+  $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${effectiveSandbox}`;
 
   const dispatch = createEventDispatcher<{
     loadedmetadata: void;
@@ -117,9 +129,7 @@
   function dispatchEngineQuality() {
     const engine = hlsEngine;
     if (!engine || !hlsEngineActive) return;
-    // Phase 10 (GOAL 18): audio tracks ride the same signature-guarded
-    // payload — the UI may offer track selection ONLY when the manifest
-    // actually carries more than one audio rendition.
+    // Phase 10 (GOAL 18): audio tracks ride the same signature-guarded payload — the UI may offer track selection ONLY when the manifest actually carries more than one audio rendition.
     const payload = { options: engine.getQualityOptions(), selected: engine.getQualitySelection(), audioTracks: engine.getAudioTracks(), selectedAudioTrack: engine.getSelectedAudioTrack() };
     const signature = JSON.stringify(payload);
     if (signature === engineQualitySignature) return;
@@ -189,6 +199,11 @@
     hlsEngine = engine;
     hlsEngineUrl = url;
     hlsEngineActive = true;
+    // Phase 11 (GOAL A): an ambiguous (non-.m3u8-path) HLS URL always
+    // carries the EXPLICIT HLS MIME type — Video.js' declared type takes
+    // precedence over its extension inference, so signed/extensionless
+    // manifests load correctly. Plain .m3u8 paths keep extension inference.
+    const mimeType = urlPathIsM3u8(url) ? undefined : 'application/vnd.apple.mpegurl';
     try {
       await engine.attach(video, url, {
         onFatalError: () => {
@@ -207,7 +222,7 @@
           if (hlsEngine !== engine) return;
           dispatchEngineQuality();
         },
-      });
+      }, { ...(mimeType ? { mimeType } : {}) });
       if (hlsEngine === engine) dispatchEngineQuality();
     } catch {
       if (hlsEngine === engine) {

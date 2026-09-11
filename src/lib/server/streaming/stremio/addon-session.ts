@@ -153,7 +153,14 @@ export async function createAddonSession(client: SupabaseClient<Database>, reque
     // Ineligible addons are skipped WITHOUT a token — the client never sees
     // them (they cannot resolve for this content; listing them would imply
     // a playable opportunity that does not exist).
-    if (!plan.ok) continue;
+    if (!plan.ok) {
+      // Phase 11 (GOAL C) — loss-point diagnostics: a Stremio-visible addon
+      // disappearing from MAVERO must be explainable from server logs. The
+      // log carries the typed skip reason and the addon's display identity
+      // ONLY — never the manifest URL, identifiers or addon configuration.
+      console.warn(`[StremioSession] addon skipped addon=${addon.slug} reason=${plan.reason} mediaType=${streamType}`);
+      continue;
+    }
     addonsOut.push({
       token: signAddonToken(
         {

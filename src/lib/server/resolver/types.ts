@@ -1,5 +1,5 @@
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
-import type { SandboxPolicy } from '$lib/shared/sandbox-policy';
+import type { SandboxPolicy, SandboxPolicyRuntime } from '$lib/shared/sandbox-policy';
 import type { IntegrationType, StreamingProviderRow, StreamingSourceRow } from '$lib/server/streaming/types';
 
 export type ResolverMediaType = ContentType;
@@ -115,6 +115,8 @@ export type SourceResult = {
   headers?: SafePlaybackHeaders;
   expiresAt?: string;
   sandboxPolicy?: SandboxPolicy;
+  /** Phase 11 (GOAL D): full configured-vs-effective sandbox provenance. */
+  sandboxRuntime?: SandboxPolicyRuntime;
   metadata?: SafeSourceMetadata;
   error?: ResolverErrorShape;
 };

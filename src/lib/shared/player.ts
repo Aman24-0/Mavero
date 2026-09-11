@@ -1,5 +1,5 @@
 export type PlayerSourceType = 'direct' | 'embed' | 'unavailable' | 'error';
-import type { SandboxPolicy } from './sandbox-policy';
+import type { SandboxPolicy, SandboxPolicyRuntime } from './sandbox-policy';
 
 export type PlayerProtocol = 'hls' | 'dash' | 'mp4' | 'file' | 'unknown';
 
@@ -94,6 +94,13 @@ export type PlayerSource = {
   qualities?: PlayerQualityOption[];
   headers?: { referer?: string; origin?: string };
   sandboxPolicy?: SandboxPolicy;
+  /**
+   * Phase 11 (GOAL D): the FULL sandbox resolution provenance for embed
+   * sources — configured (source-level, null = inherit) + provider-level +
+   * EFFECTIVE policy. The playback runtime applies ONLY
+   * `effectiveSandboxPolicy`; absent for direct/Stremio sources (no iframe).
+   */
+  sandboxRuntime?: SandboxPolicyRuntime;
   expiresAt?: string;
   metadata?: {
     title?: string;

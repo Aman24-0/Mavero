@@ -4,7 +4,7 @@ import { normalizeContentIdentifiers } from './identifiers';
 import { allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, isValidExpiry, validatePlaybackUrl } from './safe-url';
 import type { ContentType, NormalizedMediaItem } from '$lib/server/content/types';
 import type { ProviderAdapter, ResolverDependencies, ResolverRequest, SourceResult, TrustedResolutionConfig } from './types';
-import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
+import { sandboxPolicyFromCapabilities, resolveSandboxRuntime } from '$lib/shared/sandbox-policy';
 import type { IntegrationType } from '$lib/server/streaming/types';
 
 const activeProviderStatuses = new Set(['active']);
@@ -62,6 +62,13 @@ function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']
     headers: result.headers,
     expiresAt: result.expiresAt,
     sandboxPolicy: sandboxPolicyFromCapabilities(context.config.provider.capabilities, context.config.source.capabilities),
+    // Phase 11 (GOAL D): the full configured-vs-effective provenance. The
+    // runtime (PlayerShell/PlayerViewport) applies ONLY
+    // `effectiveSandboxPolicy` — a provider-level "unrestricted" now
+    // reaches the iframe even when the admin console is read at the
+    // provider level — while `configured`/`provider` keep the audit trail
+    // (null = inherit) for admin surfaces and tests.
+    sandboxRuntime: resolveSandboxRuntime(context.config.provider.capabilities, context.config.source.capabilities),
     metadata: { ...result.metadata, sourceName: context.config.source.name, providerName: context.config.provider.name },
   };
 }

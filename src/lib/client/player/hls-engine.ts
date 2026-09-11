@@ -1,4 +1,5 @@
 import { PLAYER_AUTO_QUALITY_ID, type PlayerInternalQualityOption, type PlayerSource } from '$lib/shared/player';
+import { hasLegitimateHlsSignal } from '$lib/shared/hls-detect';
 
 /**
  * HLS playback engine — Phase 5, Phase 10 (Video.js ownership).
@@ -101,7 +102,13 @@ export type HlsLevelLike = {
  * effect) — `nextLevel` covers both AUTO and manual switching.
  */
 export type HlsLike = {
-  loadSource(url: string): void;
+  /**
+   * Phase 11 (GOAL A): the optional second argument is the EXPLICIT source
+   * MIME type (e.g. `application/vnd.apple.mpegurl`) for URLs whose
+   * extension is ambiguous — Video.js documents that the declared type
+   * takes precedence over extension inference.
+   */
+  loadSource(url: string, mimeType?: string): void;
   attachMedia(media: HTMLMediaElement): void;
   destroy(): void;
   startLoad(startPosition?: number): void;
@@ -154,9 +161,22 @@ export type VideoJsAdapterLike = {
   detach(): void;
   destroy(): void;
   src: string;
+  /**
+   * Phase 11 (GOAL A): the structured source ({ src, type }) — the
+   * documented way to hand Video.js an EXPLICIT MIME type. Optional so
+   * existing structural test doubles keep compiling; the facade falls
+   * back to the plain `src` assignment when a double lacks it.
+   */
+  source?: HlsJsSourceLike | null;
   readonly engine: HlsLike | null;
   addEventListener(type: string, listener: (event: Event) => void): void;
   removeEventListener(type: string, listener: (event: Event) => void): void;
+};
+
+/** Phase 11 (GOAL A): the structured Video.js source (explicit MIME). */
+export type HlsJsSourceLike = {
+  src: string;
+  type?: string;
 };
 
 /**
@@ -256,7 +276,7 @@ class VideoJsHlsFacade implements HlsLike {
     this.video = media;
   }
 
-  loadSource(url: string): void {
+  loadSource(url: string, mimeType?: string): void {
     if (!this.video) return;
     // Video.js decides MSE-vs-native itself; Mavero only reaches this path
     // for browsers without native HLS (PlayerViewport routing). A browser
@@ -267,9 +287,19 @@ class VideoJsHlsFacade implements HlsLike {
       return;
     }
     this.adapter.attach(this.video);
-    // Documented contract: assigning src triggers the load request
-    // (async microtask) — the `loadstart` hook then exposes `engine`.
-    this.adapter.src = url;
+    // Phase 11 (GOAL A): when the caller supplies an EXPLICIT MIME type
+    // (ambiguous/extensionless signed HLS URL), it travels through the
+    // documented structured `source` setter — the declared type takes
+    // precedence over Video.js' extension inference. Plain URLs keep the
+    // documented `src` assignment contract (and test doubles without the
+    // structured setter keep working).
+    if (mimeType && this.adapter.source !== undefined) {
+      this.adapter.source = { src: url, type: mimeType };
+    } else {
+      // Documented contract: assigning src triggers the load request
+      // (async microtask) — the `loadstart` hook then exposes `engine`.
+      this.adapter.src = url;
+    }
   }
 
   destroy(): void {
@@ -454,16 +484,19 @@ export function resetHlsFactoryCache(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * True when the URL path ends with `.m3u8` (case-insensitive, query/hash
- * safe). Used ONLY as fallback detection when the normalized source carries
- * no usable protocol metadata — an explicit protocol always wins.
+ * True when the URL itself carries a legitimate HLS signal (Phase 11,
+ * GOAL A). Phase 10 checked ONLY the pathname suffix — signed/extensionless
+ * HLS URLs (`/playlist?file=file.m3u8`, `format=m3u8`, token URLs) fell
+ * through to the native path and could never play on non-Safari browsers.
+ * The fallback now uses the SHARED network-free signal pipeline
+ * (pathname `.m3u8` + query/hash `.m3u8`/format references); explicit
+ * addon-metadata signals are handled upstream through
+ * `metadata.protocol === 'hls'` (priority 1) and need no re-check here.
+ * Used ONLY as fallback detection when the normalized source carries no
+ * usable protocol metadata — an explicit protocol always wins.
  */
 export function looksLikeHlsUrl(url: string): boolean {
-  try {
-    return new URL(url).pathname.toLowerCase().endsWith('.m3u8');
-  } catch {
-    return false;
-  }
+  return hasLegitimateHlsSignal(url);
 }
 
 /**
@@ -749,7 +782,7 @@ export class HlsPlaybackEngine {
    * adapter is always destroyed first, so exactly ONE hls.js instance is
    * ever attached to the video element.
    */
-  async attach(video: HTMLMediaElement, url: string, callbacks: HlsEngineCallbacks = {}): Promise<void> {
+  async attach(video: HTMLMediaElement, url: string, callbacks: HlsEngineCallbacks = {}, options: { mimeType?: string } = {}): Promise<void> {
     this.generation += 1;
     const generation = this.generation;
     // Never allow two instances on the same video element.
@@ -810,7 +843,10 @@ export class HlsPlaybackEngine {
     });
 
     instance.attachMedia(video);
-    instance.loadSource(url);
+    // Phase 11 (GOAL A): pass the explicit MIME type through when supplied
+    // (ambiguous/extensionless HLS URL) — never rely on extension inference
+    // inside the engine alone.
+    instance.loadSource(url, options.mimeType);
   }
 
   /**

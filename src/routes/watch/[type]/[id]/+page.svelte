@@ -5,7 +5,7 @@
   import { onDestroy, onMount } from 'svelte';
   import PlayerShell from '$lib/components/player/PlayerShell.svelte';
   import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
-  import { sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
+  import { resolveSandboxRuntime } from '$lib/shared/sandbox-policy';
   import { appendReturnTo, safeReturnTo } from '$lib/shared/navigation';
   import type { PageData } from './$types';
   import { createProgressWriter, getLocalPersistenceState, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
@@ -55,7 +55,12 @@
         name: source.name,
         status: source.status,
         integrationType: source.integration_type ?? undefined,
-        sandboxPolicy: sandboxPolicyFromCapabilities(provider?.capabilities, source.capabilities)
+        // Phase 11 (GOAL D): the option carries the EFFECTIVE policy resolved
+        // server-side from the public config (source override → provider
+        // default → system default). `resolveSandboxRuntime` exposes the
+        // configured-vs-effective provenance in one place; the option and
+        // the resolved source always agree.
+        sandboxPolicy: resolveSandboxRuntime(provider?.capabilities, source.capabilities).effectiveSandboxPolicy
       };
       return option;
     }),

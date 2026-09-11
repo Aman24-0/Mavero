@@ -81,20 +81,42 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     // Forward the SIGNED job — the worker independently verifies the token
     // with the shared secret (docs/compat-worker.md). Nothing client-
     // supplied is forwarded except the token itself.
+    //
+    // Phase 11 (GOAL B7): the worker answers as soon as the conversion job
+    // is accepted and, when it can within its bounded wait, once the first
+    // HLS segment is playable. `ready:false` means the job is still
+    // encoding — the client keeps polling the status endpoint
+    // (`/api/playback/compat/status`) with the SAME token; the playback URL
+    // is stable and expires with the job either way.
     const workerResponse = await fetch(`${worker}/api/v1/compat/manifest`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: parsed.value?.token }),
-      signal: AbortSignal.timeout(10_000),
+      // 9.5s — bounded BELOW the default 10s serverless function cap; the
+      // worker's bounded first-segment wait (default 8s) fits inside it, and
+      // anything longer is handled by the ready:false + status polling flow.
+      signal: AbortSignal.timeout(9_500),
     });
-    const workerPayload = (await workerResponse.json().catch(() => null)) as { ok?: boolean; playback?: { kind?: unknown; url?: unknown }; error?: { code?: string; message?: string } } | null;
+    const workerPayload = (await workerResponse.json().catch(() => null)) as { ok?: boolean; playback?: { kind?: unknown; url?: unknown; expiresAt?: unknown; ready?: unknown }; error?: { code?: string; message?: string } } | null;
     if (!workerResponse.ok || !workerPayload?.ok || workerPayload.playback?.kind !== 'hls' || typeof workerPayload.playback?.url !== 'string' || !workerPayload.playback.url.startsWith('https://')) {
       return json(
         { ok: false, error: { code: 'COMPAT_UNAVAILABLE', message: 'This stream could not be converted right now. Try another stream.' } },
         { status: 503, headers: NO_STORE },
       );
     }
-    return json({ ok: true, playback: { kind: 'hls', url: workerPayload.playback.url } }, { headers: NO_STORE });
+    const ready = workerPayload.playback.ready !== false;
+    return json(
+      {
+        ok: true,
+        playback: {
+          kind: 'hls',
+          url: workerPayload.playback.url,
+          ...(typeof workerPayload.playback.expiresAt === 'string' ? { expiresAt: workerPayload.playback.expiresAt } : {}),
+          ready,
+        },
+      },
+      { headers: NO_STORE },
+    );
   } catch {
     return json(
       { ok: false, error: { code: 'COMPAT_UNAVAILABLE', message: 'This stream could not be converted right now. Try another stream.' } },

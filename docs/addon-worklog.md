@@ -1675,3 +1675,119 @@ Provider default via the form (the stale key is removed on save).
   gateway contract, the full sandbox matrix incl. admin UI pins, Video.js
   ownership (incl. the REAL production loader + facade behavioral path),
   audio-track UI contract, security re-pins, chain registration.
+
+---
+
+## Phase 11 — HLS discovery, REAL compatibility pipeline, Pipe eligibility, sandbox inheritance (DONE)
+
+### GOAL A — HLS discovery restored
+
+Root cause of the "HLS links stopped appearing/playing" regression: protocol
+detection (`protocolForUrl` + the engine's `looksLikeHlsUrl` fallback) only
+recognized `pathname.endsWith('.m3u8')`. Real signed addon HLS URLs
+(`/playlist?file=file.m3u8`, `format=m3u8`, token URLs, extensionless
+builder endpoints) normalized as `unknown`, which (a) hid the HLS label and
+(b) routed them to the native `<video src>` path — a guaranteed failure on
+every non-Safari browser. Fix: a shared, network-free detection pipeline
+(`src/lib/shared/hls-detect.ts`) with the agreed priority — explicit addon
+metadata (stream name/title/description/filename carrying an unambiguous
+HLS/m3u8/mpegurl token) → pathname `.m3u8` → query/hash `.m3u8`/format
+reference → unknown (never guessed from unrelated words). Server
+normalization passes the ADDON-SUPPLIED text into detection; the client
+engine fallback shares the same helper; PlayerViewport hands Video.js the
+EXPLICIT `application/vnd.apple.mpegurl` MIME through the documented
+structured `source` setter whenever the URL path is not `.m3u8`.
+
+### GOAL B — the compatibility path is REAL now
+
+`apps/media-worker/` (new): a zero-runtime-dependency Node/TypeScript
+service (Dockerfile included) that accepts ONLY signed `cv1` compatibility
+references (byte-compatible with the app's HMAC format, independently
+verified), re-validates the bound URL (https-only, credential-free,
+non-private host, DNS answers re-checked at job start), then runs FFmpeg:
+
+* remux (`-c:v copy -c:a copy` → HLS MPEG-TS) — H.264/AAC MKV is NEVER
+  re-encoded (verified structurally AND with a real ffmpeg run);
+* transcode (`libx264` 8-bit `yuv420p` + `aac` 160k stereo, bounded
+  maxrate) — HEVC/H.265, 10-bit, legacy codecs, DTS/TrueHD/E-AC-3 audio.
+
+Output is an unguessable expiring HLS session URL; the manifest endpoint
+answers inside the serverless budget (`ready:false` + polling via the new
+`/api/playback/compat/status` gateway when encoding needs longer). Job
+policies: bounded concurrency/queue, per-disk budget, duration probe cap,
+TTL sweeper (kills + deletes), idempotence per reference, strict filename
+allowlist for /hls/ serving, structured JSON logging, no client URL field,
+no header forwarding, no generic routes. The app relays `ready`/status;
+the client (`mavero-compat.ts`) polls with bounded deadlines (150s remux /
+540s transcode) while the shell shows "Preparing stream…" with a
+stale-selection sequence guard.
+
+### GOAL C — Pipe eligibility fixed (live Supabase unavailable)
+
+"Live Supabase inspection unavailable in this environment." — the pipeline
+was audited stage-by-stage instead, and the deterministic loss points fixed:
+
+1. `idProperty` ARRAYS: the manifest sync now persists the full ordered list
+   (`capabilities.idProperties`); the planner picks the first CONSTRUCTIBLE
+   entry instead of pinning the (possibly unsupported) first one.
+2. Availability-aware planning: an addon is skipped as `missing-identifier`
+   only when NONE of its accepted namespaces has an id on the content item
+   (declared array → scalar → prefix inference → protocol default, in
+   order). The single-property planner previously dropped Stremio-visible
+   addons whenever the FIRST accepted namespace was unavailable.
+3. Loss-point diagnostics: session skips are logged server-side with the
+   typed reason (addon slug + reason only).
+4. The sheet now renders "✓ Loaded — 0 streams" for an ok/empty addon — an
+   empty result is an answer, never rendered as "never loaded".
+
+A Pipe-shaped integration test (realistic manifest + PixelDrain-style
+streams + HLS variant) reproduces the full path: session token → exact
+Stremio stream endpoint → normalization → playback boundary → signed
+transcode reference on the HEVC/MKV entry → progressive merge. No policy
+was weakened: torrent/magnet/externalUrl/header-dependent streams remain
+rejected; the planner never calls an addon with a fabricated id.
+
+### GOAL D — sandbox configured vs effective, end to end
+
+Root cause of the live mismatch (provider=Unrestricted yet the embed stays
+sandboxed): migration `20260921030000` force-stamped
+`capabilities.sandbox_policy="required"` into EVERY embed source row and the
+pre-Phase-10 form re-stamped it on every save; Phase 10 fixed the FORM but
+left existing rows overriding the provider at runtime (source override >
+provider). Fix: migration `20260919000000_phase11_sandbox_inheritance.sql`
+removes ONLY the legacy `"required"` stamps on embed sources (the value both
+the stamp and the old form default wrote — non-default choices stay);
+`resolveSandboxRuntime()` now carries the full provenance
+(configured/provider/effective) on every resolved embed PlayerSource; the
+watch page, PlayerShell and PlayerViewport apply the EFFECTIVE policy — an
+intentionally unrestricted embed renders NO sandbox attribute. The full
+4-matrix + runtime + migration pins live in the Phase 11 suite.
+
+### Tests
+
+`scripts/stremio_player_phase11_test.ts` — 159 checks (A–Z): HLS detection
+matrix, REAL ffmpeg remux/transcode runs, app⇄worker token contract,
+registry caps/idempotence, live worker HTTP contract, Pipe planning +
+session + progressive UX, sandbox matrix + migration, regression re-pins.
+Phase 8's chain-end pin and Phase 10's preparing-wording pin were updated
+for the intentional Phase 11 changes.
+
+### Final verification pass (Phase 11 sign-off run)
+
+The full chain was re-run from the working tree (98 scripts, all phases
+1→11, exit 0) after three resource-policy hardening fixes in the worker
+that the audit surfaced — the per-job disk budget is now enforced at BOTH
+the encode-exit point (`runFfmpeg` totals the output dir and fails
+`OUTPUT_LIMIT` before the job is ever served) and DURING the encode (the
+sweep refreshes in-flight job sizes and kills over-budget jobs), and the
+previously-declared-but-unwired `minFreeDiskBytes` floor is now a real
+gate in `JobRegistry.submit` (a full disk answers typed BUSY, never
+writes). Phase 8's sanctioned-warn count pin was corrected to 5 (the
+previous session had updated the assertion MESSAGE for the Phase 11
+skip-diagnostic warn but not the count itself — caught by the real chain
+run, exactly the class of drift the full-chain requirement exists for).
+`pnpm check` 0 errors/41 warnings (baseline); `pnpm build` success;
+`git diff --check` clean. Live Supabase inspection unavailable in this
+environment — the sandbox inheritance migration is scoped/narrow and the
+admin can re-apply explicit overrides from the Phase 10 UI after applying
+it.

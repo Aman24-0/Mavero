@@ -542,7 +542,9 @@ function makeSessionClient(addons: FakeAddonRecord[]) {
   const mkvStream = { url: 'https://m.example/a.mkv', container: 'MKV', codec: 'H.264' } as PlayerQualityOption;
   ok(compatBadgeForStream(mkvStream) === 'Needs conversion (remux)', 'I: stream cards show the compat badge from addon metadata only');
   ok(compatTierForStream({ url: 'https://m.example/b.mp4', container: 'MP4', codec: 'H.264' } as PlayerQualityOption) === 'DIRECT_PLAYABLE', 'I: playable streams get no badge tier');
-  ok(COMPAT_PREPARING_MESSAGE.includes('Preparing compatible stream'), 'I: the preparing message matches GOAL 14 wording');
+  // Phase 11 (GOAL B7) intentionally reworded the preparing status to the
+  // shorter "Preparing stream…" while the compat session is prepared/polled.
+  ok(COMPAT_PREPARING_MESSAGE.includes('Preparing stream'), 'I: the preparing message matches the Phase 11 GOAL B7 wording (updated from Phase 10 intentionally)');
 }
 
 // ---------------------------------------------------------------------------

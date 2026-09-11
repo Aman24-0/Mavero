@@ -1,4 +1,5 @@
 import { ResolverError } from './errors';
+import { hasLegitimateHlsSignal } from '$lib/shared/hls-detect';
 import type { Json } from '$lib/server/supabase/database.types';
 import type { PlaybackProtocol, ResolverResultType } from './types';
 
@@ -78,9 +79,30 @@ export function allowDynamicEmbedOriginsFromCapabilities(capabilities: Json): bo
   return value === true;
 }
 
-export function protocolForUrl(raw: string): PlaybackProtocol {
+/**
+ * Phase 11 (GOAL A): robust protocol detection for an (addon-supplied) URL.
+ *
+ * The Phase 10 implementation detected HLS ONLY from `pathname.endsWith
+ * ('.m3u8')` — real signed/extensionless HLS URLs (token queries, `format=
+ * m3u8` parameters, playlist references in the query/hash) normalized as
+ * `unknown` and then routed to the native `<video>` path, where browsers
+ * without native HLS (all Chromium/Android) cannot play them. The detection
+ * pipeline now follows the shared, network-free signal priority from
+ * `$lib/shared/hls-detect`:
+ *
+ *   1. explicit addon metadata carrying an HLS signal (addon-supplied text
+ *      — never the content title, never the addon display name);
+ *   2. pathname `.m3u8`;
+ *   3. query/hash `.m3u8`/format reference;
+ *   4. (covered by 1) addon name/title/description/filename HLS signal;
+ *   5. otherwise `unknown` — unrelated words NEVER become HLS.
+ *
+ * The optional metadata argument is additive: every existing call site
+ * (protocol-only contexts) keeps its exact Phase 10 behavior.
+ */
+export function protocolForUrl(raw: string, metadata?: { name?: string; title?: string; description?: string; filename?: string }): PlaybackProtocol {
+  if (hasLegitimateHlsSignal(raw, metadata)) return 'hls';
   const pathname = new URL(raw).pathname.toLowerCase();
-  if (pathname.endsWith('.m3u8')) return 'hls';
   if (pathname.endsWith('.mpd')) return 'dash';
   if (/\.(mp4|m4v|webm|mov)$/.test(pathname)) return 'mp4';
   return 'unknown';

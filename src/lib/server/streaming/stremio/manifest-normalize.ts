@@ -68,6 +68,8 @@ export type NormalizedStremioManifest = {
   idPrefixes: string[];
   /** Primary idProperty when the manifest declares one. */
   idProperty?: string;
+  /** Phase 11: ALL declared idProperty entries (arrays), in declared order. */
+  idProperties: string[];
   /** Types declared on the stream resource itself (may be narrower than `types`). */
   streamTypes: string[];
   /** ID prefixes declared on the stream resource itself. */
@@ -174,6 +176,14 @@ function normalizeIdProperty(value: unknown): string | undefined {
   }
   if (Array.isArray(value)) {
     if (value.length === 0) throw invalid('Manifest idProperty is not a supported value.');
+    // Phase 11 (GOAL C): the Stremio protocol allows `idProperty` ARRAYS
+    // (an addon's accepted-id preference list, e.g. `["kitsu_id",
+    // "imdb_id"]`). The historical behavior pinned the FIRST parsable entry
+    // — an addon whose first entry Mavero cannot construct was rejected by
+    // the planner even though a later entry (`imdb_id`) is constructible.
+    // The normalized manifest therefore keeps the first VALID entry as the
+    // scalar `idProperty` (backward-compatible) and the FULL ordered list
+    // as `idProperties` for the planner's availability-aware fallback.
     for (const entry of value) {
       if (typeof entry !== 'string') continue;
       const trimmed = entry.trim();
@@ -182,6 +192,24 @@ function normalizeIdProperty(value: unknown): string | undefined {
     throw invalid('Manifest idProperty is not a supported value.');
   }
   throw invalid('Manifest idProperty is not a supported value.');
+}
+
+/**
+ * Phase 11 (GOAL C): ALL valid idProperty entries of an `idProperty` ARRAY
+ * declaration, in the addon's declared preference order. Empty for scalar
+ * or absent declarations.
+ */
+function normalizeIdPropertyList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const entries: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const trimmed = entry.trim();
+    if (trimmed && MANIFEST_ID_PROPERTY_PATTERN.test(trimmed) && trimmed.length <= MANIFEST_ARRAY_ITEM_MAX_LENGTH && !entries.includes(trimmed)) {
+      entries.push(trimmed);
+    }
+  }
+  return entries;
 }
 
 function optionalTextField(value: unknown, label: string, maxLength: number): string | undefined {
@@ -269,6 +297,7 @@ export function validateStremioManifest(value: unknown): NormalizedStremioManife
   }
 
   const idProperty = normalizeIdProperty(manifest.idProperty);
+  const idProperties = normalizeIdPropertyList(manifest.idProperty);
 
   return {
     id,
@@ -279,7 +308,8 @@ export function validateStremioManifest(value: unknown): NormalizedStremioManife
     resources,
     types,
     idPrefixes,
-    idProperty,
+    ...(idProperty ? { idProperty } : {}),
+    idProperties,
     streamTypes,
     streamIdPrefixes,
   };
@@ -328,6 +358,10 @@ export function persistableCapabilities(manifest: NormalizedStremioManifest, nor
   // `streamTypes` / `streamIdPrefixes` (Phase 3, additive): the stream
   // resource's OWN narrower declarations, so the Phase 3 resolver can filter
   // eligibility from the persisted metadata without re-fetching manifests.
+  // `idProperties` (Phase 11, GOAL C, additive): the full ordered list of
+  // declared idProperty entries so the planner can fall back to a later
+  // CONSTRUCTIBLE property when the first accepted one has no id on the
+  // content item.
   return {
     supportsStream: capabilities.supportsStream,
     manifestId: manifest.id,
@@ -335,5 +369,6 @@ export function persistableCapabilities(manifest: NormalizedStremioManifest, nor
     normalizedAt,
     streamTypes: manifest.streamTypes,
     streamIdPrefixes: manifest.streamIdPrefixes,
+    ...(manifest.idProperties.length ? { idProperties: manifest.idProperties } : {}),
   };
 }

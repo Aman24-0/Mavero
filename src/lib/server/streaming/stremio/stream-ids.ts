@@ -118,20 +118,66 @@ export function addonSupportsStreamResource(addon: StreamingAddon): boolean {
  * construct (the addon is then skipped, never called with a guessed ID).
  */
 export function resolveAddonIdProperty(addon: StreamingAddon): SupportedStremioIdProperty | null {
+  return resolveAddonIdPropertyCandidates(addon)[0] ?? null;
+}
+
+/**
+ * Phase 11 (GOAL C — the Pipe loss point): ALL constructible ID properties
+ * the addon accepts, in the addon's own preference order. The historical
+ * planner resolved ONE property and skipped the addon when the content had
+ * no id for it (`missing-identifier`) — a Stremio-visible addon therefore
+ * vanished from MAVERO whenever:
+ *
+ *   * its manifest declared an `idProperty` ARRAY whose first entry MAVERO
+ *     cannot construct (`["kitsu_id","imdb_id"]` — one entry later is
+ *     constructible), or
+ *   * it accepted BOTH id namespaces via its prefixes (`idPrefixes:
+ *     ["tt","tmdb"]` / stream-scoped equivalents) but the content item only
+ *     carried one of the two ids.
+ *
+ * Candidate order (deduplicated):
+ *   1. the declared scalar `idProperty` (highest precedence);
+ *   2. every declared `idProperties` array entry (capabilities — Phase 11
+ *      manifest sync persists the full list) in declared order;
+ *   3. prefix-inferred properties (`tt…` → imdb, `tmdb…` → tmdb) — only
+ *      when the addon did NOT explicitly declare an idProperty, mirroring
+ *      the historical inference rule;
+ *   4. the protocol default (`imdb_id`) when the addon declares nothing.
+ * Only properties MAVERO can construct (imdb/tmdb) are ever returned — an
+ * addon accepting exclusively unsupported namespaces still yields an empty
+ * list (unsupported-id-property skip, unchanged).
+ */
+export function resolveAddonIdPropertyCandidates(addon: StreamingAddon): SupportedStremioIdProperty[] {
+  const candidates: SupportedStremioIdProperty[] = [];
+  const push = (property: SupportedStremioIdProperty) => {
+    if (!candidates.includes(property)) candidates.push(property);
+  };
+
   const declared = addon.idProperty?.trim();
-  if (declared) {
-    return (SUPPORTED_STREMIO_ID_PROPERTIES as readonly string[]).includes(declared)
-      ? (declared as SupportedStremioIdProperty)
-      : null;
+  const declaredList = capabilityStringArray(addon.capabilities, 'idProperties');
+  const hasExplicitDeclaration = Boolean(declared) || declaredList.length > 0;
+
+  if (declared && (SUPPORTED_STREMIO_ID_PROPERTIES as readonly string[]).includes(declared)) {
+    push(declared as SupportedStremioIdProperty);
   }
-  const prefixes = effectiveStreamIdPrefixes(addon);
-  if (prefixes.length) {
-    const lowered = prefixes.map((prefix) => prefix.toLowerCase());
-    if (lowered.some((prefix) => prefix.startsWith('tt'))) return 'imdb_id';
-    if (lowered.some((prefix) => prefix.startsWith('tmdb'))) return 'tmdb_id';
-    return null;
+  for (const entry of declaredList) {
+    if ((SUPPORTED_STREMIO_ID_PROPERTIES as readonly string[]).includes(entry)) push(entry as SupportedStremioIdProperty);
   }
-  return DEFAULT_STREMIO_ID_PROPERTY;
+
+  if (!hasExplicitDeclaration) {
+    // No explicit declaration — infer from the (effective) idPrefixes. Both
+    // namespaces may be accepted; the inference order mirrors the protocol
+    // default precedence (imdb first) and stays deterministic.
+    const prefixes = effectiveStreamIdPrefixes(addon);
+    if (prefixes.length) {
+      const lowered = prefixes.map((prefix) => prefix.toLowerCase());
+      if (lowered.some((prefix) => prefix.startsWith('tt'))) push('imdb_id');
+      if (lowered.some((prefix) => prefix.startsWith('tmdb'))) push('tmdb_id');
+      return candidates;
+    }
+    push(DEFAULT_STREMIO_ID_PROPERTY);
+  }
+  return candidates;
 }
 
 function baseIdFor(property: SupportedStremioIdProperty, identifiers: Pick<ContentIdentifiers, 'imdbId' | 'tmdbId'>): string | null {
@@ -205,11 +251,26 @@ export function planAddonStreamRequest(
   const types = effectiveStreamTypes(addon);
   if (!types.includes(streamType)) return { ok: false, reason: 'unsupported-media-type' };
 
-  const property = resolveAddonIdProperty(addon);
-  if (!property) return { ok: false, reason: 'unsupported-id-property' };
-
-  const baseId = baseIdFor(property, identifiers);
-  if (!baseId) return { ok: false, reason: 'missing-identifier' };
+  // Phase 11 (GOAL C): availability-aware planning. Every constructible
+  // property the addon accepts is tried in the addon's preference order;
+  // the first one whose id EXISTS on the content item wins. An addon is
+  // skipped as `missing-identifier` only when NONE of its accepted
+  // namespaces has an id — never because the FIRST accepted namespace
+  // happened to be unavailable (the historical single-property behavior
+  // that made Stremio-visible addons disappear from MAVERO).
+  const candidates = resolveAddonIdPropertyCandidates(addon);
+  if (!candidates.length) return { ok: false, reason: 'unsupported-id-property' };
+  let property: SupportedStremioIdProperty | null = null;
+  let baseId: string | null = null;
+  for (const candidate of candidates) {
+    const id = baseIdFor(candidate, identifiers);
+    if (id) {
+      property = candidate;
+      baseId = id;
+      break;
+    }
+  }
+  if (!property || !baseId) return { ok: false, reason: 'missing-identifier' };
 
   let videoId = baseId;
   if (streamType === 'series') {
