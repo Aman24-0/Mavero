@@ -211,8 +211,8 @@ async function sectionA(): Promise<void> {
       fetcher: fetcherFor({ 'https://hdhub.example/stream/movie/tt8633518.json': slowHub }, calls),
     }),
   ]);
-  ok(pipeResult.status === 'loaded' && pipeResult.streams.length === 2, 'A: Pipe resolves independently with both PixelDrain links');
-  ok(hubResult.status === 'loaded' && hubResult.streams.length === 1, 'A: HdHub resolves independently with the MP4 direct file');
+  ok(pipeResult.status === 'loaded' && pipeResult.streams.length === 3, 'A (Phase 17): Pipe resolves independently with ALL 3 streams (2 HTTP PixelDrain + 1 P2P/magnet — no filtering)');
+  ok(hubResult.status === 'loaded' && hubResult.streams.length === 2, 'A (Phase 17): HdHub resolves independently with BOTH streams (MP4 + HLS — no format filtering)');
   ok(hubResponded, 'A: HdHub was actually fetched (the slow addon was called)');
   // Each per-addon call fetched ONLY its own endpoint — no cross-contamination.
   ok(calls.every((url) => !url.includes('aio.example') && !url.includes('pengu.example')), 'A: each per-addon call fetches ONLY its own endpoint');
@@ -254,14 +254,14 @@ async function sectionB(): Promise<void> {
     resolveSingleAddonDownload({} as never, movieRequest, AIO.id, deps),
   ]);
   ok(pipe1.status === 'unavailable', 'B: Pipe is unavailable after the retry budget (HTTP 500 every time)');
-  ok(hub1.status === 'loaded' && hub1.streams.length === 1, 'B: HdHub loaded successfully');
-  ok(aio1.status === 'loaded' && aio1.streams.length === 1, 'B: AIO loaded successfully');
+  ok(hub1.status === 'loaded' && hub1.streams.length === 2, 'B (Phase 17): HdHub loaded successfully with BOTH streams (MP4 + HLS)');
+  ok(aio1.status === 'loaded' && aio1.streams.length === 2, 'B (Phase 17): AIO loaded successfully with BOTH streams (http + p2p — p2p is PRESERVED in Phase 17)');
 
   // Now retry ONLY Pipe — HdHub and AIO must NOT be re-fetched.
   calls.length = 0;
   pipeShouldFail = false; // Pipe recovers now
   const pipe2 = await resolveSingleAddonDownload({} as never, movieRequest, PIPE.id, deps);
-  ok(pipe2.status === 'loaded' && pipe2.streams.length === 2, 'B: Pipe succeeds on the retry (after the recovery)');
+  ok(pipe2.status === 'loaded' && pipe2.streams.length === 3, 'B (Phase 17): Pipe succeeds on the retry with ALL 3 streams (2 HTTP + 1 magnet — no filtering)');
   ok(calls.every((url) => !url.includes('hdhub.example') && !url.includes('aio.example')), 'B: retrying Pipe did NOT re-fetch HdHub or AIO (independent retry)');
   ok(calls.includes('https://pipe.example/stream/movie/tt8633518.json'), 'B: retrying Pipe re-fetched ONLY Pipe');
 }
@@ -324,7 +324,7 @@ async function sectionC(): Promise<void> {
     maxRetries: 2,
     fetcher: fetcherFor({ 'https://hdhub.example/stream/movie/tt8633518.json': recovery }, []),
   });
-  ok(result3.status === 'loaded' && result3.streams.length === 1, 'C: a transient failure recovers within the retry budget');
+  ok(result3.status === 'loaded' && result3.streams.length === 2, 'C (Phase 17): a transient failure recovers within the retry budget — HdHub returns BOTH streams (MP4 + HLS)');
   ok(result3.attempts === 2 && recoveryAttempts === 2, 'C: the recovery happened on the 2nd attempt (1 initial + 1 retry)');
 
   // 4. Backoff respects the cap (no request storms).
@@ -355,23 +355,22 @@ async function sectionC(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function sectionD(): Promise<void> {
+  // Phase 17: "empty" now means the addon genuinely returned zero streams
+  // (NOT that MAVERO filtered them out — P2P/torrent/magnet/header-dependent
+  // entries are ALL PRESERVED in Phase 17). To test the empty state we use
+  // an actual empty streams array.
   const result = await resolveSingleAddonDownload({} as never, movieRequest, PIPE.id, {
     loadAddons: loadAddonsOf([PIPE]),
     loadAddonById: loadAddonByIdOf([PIPE]),
     loadContent: loadContentOf(CONTENT),
     dnsResolver: publicDns,
     fetcher: fetcherFor({
-      'https://pipe.example/stream/movie/tt8633518.json': json({
-        streams: [
-          { name: 'Torrent', infoHash: 'deadbeef', url: 'https://pipe.example/a.mkv' },
-          { name: 'Headered', url: 'https://pipe.example/b.mkv', behaviorHints: { proxyHeaders: { Referer: 'https://pipe.example/' } } },
-        ],
-      }),
+      'https://pipe.example/stream/movie/tt8633518.json': json({ streams: [] }),
     }, []),
   });
-  ok(result.status === 'empty', 'D: a valid addon response with zero usable candidates is LOADED ZERO (NOT unavailable)');
-  ok(result.streams.length === 0, 'D: no streams survive filtering');
-  ok(result.errorCode === undefined, 'D: loaded-zero has NO error code (it is not a failure)');
+  ok(result.status === 'empty', 'D (Phase 17): an addon that genuinely returns zero streams → status=empty (NOT unavailable)');
+  ok(result.streams.length === 0, 'D: 0 streams shown');
+  ok(result.errorCode === undefined, 'D: empty has NO error code (it is not a failure)');
 }
 
 // ---------------------------------------------------------------------------
@@ -463,9 +462,13 @@ async function sectionG(): Promise<void> {
     dnsResolver: publicDns,
     fetcher: fetcherFor({ 'https://pipe.example/stream/movie/tt8633518.json': json(pipeHttpPayload()) }, []),
   });
-  ok(result.status === 'loaded' && result.streams.length === 2, 'G: PixelDrain candidates are NOT globally rejected');
-  ok(result.streams.every((stream) => stream.url.includes('pixeldrain.com')), 'G: the PixelDrain URLs are preserved verbatim');
-  ok(result.streams.every((stream) => stream.url.startsWith('http://') || stream.url.startsWith('https://')), 'G: the original URL scheme is preserved (no rewrite)');
+  ok(result.status === 'loaded' && result.streams.length === 3, 'G (Phase 17): PixelDrain candidates are NOT globally rejected — Pipe returns ALL 3 streams (2 HTTP + 1 magnet)');
+  const pixelDrainStreams = result.streams.filter((s) => s.url.includes('pixeldrain.com'));
+  ok(pixelDrainStreams.length === 2, 'G: the 2 PixelDrain URLs are preserved verbatim');
+  ok(pixelDrainStreams.every((stream) => stream.url.startsWith('http://') || stream.url.startsWith('https://')), 'G: the original URL scheme is preserved (no rewrite)');
+  // The torrent entry is preserved as a magnet URI.
+  const magnetStreams = result.streams.filter((s) => s.url.startsWith('magnet:'));
+  ok(magnetStreams.length === 1, 'G (Phase 17): the torrent entry is preserved as a magnet URI');
 
   // Host classification works.
   const candidates = buildDownloadCandidates(normalizeStreams({

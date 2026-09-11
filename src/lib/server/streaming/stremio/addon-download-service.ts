@@ -7,8 +7,8 @@ import type { AudioClass } from '$lib/shared/stream-selection';
 import { loadEnabledAddons } from './stream-resolver';
 import { planAddonStreamRequest, stremioStreamTypeFor } from './stream-ids';
 import { fetchStremioStreamResponse, STREAM_MAX_BYTES } from './stream-fetch';
-import { normalizeStremioStreamResponse } from './stream-normalize';
-import { buildDownloadCandidates, selectDownloadStreams, parseRuntimeSeconds, MAX_DOWNLOAD_STREAMS_PER_ADDON, type DownloadRuntimeContext, type DownloadCodec, type DownloadQuality, type RankedDownloadStream, type DownloadSkipReason } from './download-selection';
+import { normalizeStremioStreamResponseForDownloader, type DownloaderStreamKind } from './stream-normalize-downloader';
+import { buildDownloadCandidatesAll, selectDownloadStreamsAll, parseRuntimeSeconds, MAX_DOWNLOAD_STREAMS_PER_ADDON, type DownloadRuntimeContext, type DownloadCodec, type DownloadQuality, type DownloadSkipReason, type DownloadStreamViewAll } from './download-selection';
 import { StreamServiceError, asStreamServiceError, type StreamErrorCode } from './stream-errors';
 
 /**
@@ -67,9 +67,15 @@ import { StreamServiceError, asStreamServiceError, type StreamErrorCode } from '
  * external player / browser / Android share sheet.
  */
 
-/** The user-facing shape of one eligible link (lean, presentation-ready). */
+/**
+ * The user-facing shape of one discovery entry (Phase 17 — complete discovery).
+ * Preserves EVERY stream type: HTTP, HTTPS, HLS, DASH, P2P, Magnet, External.
+ * The `kind` field drives the UI type filter (task §12 FILTER 1).
+ */
 export type AddonDownloadStreamView = {
   url: string;
+  /** Phase 17: the classified stream kind (http/https/hls/dash/p2p/magnet/external). */
+  kind: DownloaderStreamKind;
   quality: DownloadQuality;
   codec: DownloadCodec;
   audio: AudioClass;
@@ -80,7 +86,12 @@ export type AddonDownloadStreamView = {
   name?: string;
   description?: string;
   sizeBytes?: number;
-  protocol: 'http' | 'https';
+  /** Transport: http / https / magnet / external. */
+  transport: 'http' | 'https' | 'magnet' | 'external';
+  /** The addon-supplied stream type when declared ('http'|'p2p'|…). */
+  streamType?: string;
+  availability?: number;
+  tag?: string;
   /** Metadata-completeness confidence — NEVER a playback guarantee. */
   confidence: 'high' | 'medium' | 'low';
 };
@@ -93,30 +104,35 @@ export type AddonDownloadStatus = 'loading' | 'retrying' | 'loaded' | 'empty' | 
  * URLs/tokens — only aggregate counts. Used for server-side logging and an
  * optional debug summary the frontend can show.
  *
- * SEMANTICS:
- *   * `raw`        — streams that ENTERED buildDownloadCandidates (i.e.
- *                    post-normalization eligible HTTP(S) streams). The
- *                    normalizer runs FIRST and excludes P2P/externalUrl/
- *                    credential/header-dependent entries.
- *   * `unsupported`— entries the NORMALIZER rejected (P2P/externalUrl/
- *                    credential/header-dependent/non-http-scheme/etc.).
- *                    `raw + unsupported` = total entries the addon returned.
- *   * `eligible`   — same as `raw` (alias for clarity).
- *   * `rejected`   — per-reason exclusion counts from buildDownloadCandidates
- *                    (streaming-manifest / non-video / playback-boundary).
- *   * `selected`   — final selected count (after true-duplicate-URL dedup).
+ * SEMANTICS (Phase 17 — complete discovery):
+ *   * `raw`        — EVERY entry the addon returned that has a usable
+ *                    identifier (url/externalUrl/infoHash/magnet). P2P,
+ *                    torrent, magnet, HLS, DASH, external — ALL counted.
+ *   * `malformed`  — entries with NO usable identifier (no url, no
+ *                    externalUrl, no infoHash, no magnet). The ONLY
+ *                    "unsupported" in Phase 17.
+ *   * `unsupported`— alias for `malformed` (back-compat with Phase 16 tests).
+ *   * `eligible`   — same as `raw` (Phase 17: ALL non-malformed entries are
+ *                    eligible — no format filtering).
+ *   * `rejected`   — empty in Phase 17 (no format-based rejections).
+ *   * `selected`   — final selected count (= raw in Phase 17 — no dedup).
+ *   * `kindCounts` — per-kind breakdown (http/https/hls/dash/p2p/magnet/external).
  */
 export type AddonDownloadDiagnostics = {
-  /** Streams that entered buildDownloadCandidates (post-normalization). */
+  /** EVERY entry the addon returned that has a usable identifier. */
   raw: number;
-  /** Entries the normalizer rejected (P2P/externalUrl/credential/etc.). */
+  /** Entries with NO usable identifier (no url/externalUrl/infoHash/magnet). */
+  malformed: number;
+  /** Alias for malformed (back-compat with Phase 16 tests). */
   unsupported: number;
-  /** Eligible direct HTTP(S) streams after buildDownloadCandidates (= raw). */
+  /** All non-malformed entries (= raw in Phase 17). */
   eligible: number;
-  /** Per-reason exclusion counts from buildDownloadCandidates. */
+  /** Empty in Phase 17 (no format-based rejections). */
   rejected: Partial<Record<DownloadSkipReason, number>>;
-  /** Final selected count (after true-duplicate-URL dedup). */
+  /** Final selected count (= raw in Phase 17 — no dedup). */
   selected: number;
+  /** Phase 17: per-kind breakdown (http/https/hls/dash/p2p/magnet/external). */
+  kindCounts?: Record<DownloaderStreamKind, number>;
 };
 
 /** One addon's downloader result. `status` is the Task 11 state model. */
@@ -255,10 +271,11 @@ export type ResolveSingleAddonDeps = ResolveAddonDownloadsDeps & {
   sleep?: (ms: number) => Promise<void>;
 };
 
-/** Trims the ranked candidate into the safe, presentation-ready view. */
-function toStreamView(stream: RankedDownloadStream): AddonDownloadStreamView {
+/** Phase 17: trims the ALL-streams view into the safe, presentation-ready shape. */
+function toStreamViewAll(stream: DownloadStreamViewAll): AddonDownloadStreamView {
   return {
     url: stream.url,
+    kind: stream.kind,
     quality: stream.quality,
     codec: stream.codec,
     audio: stream.audio,
@@ -269,8 +286,30 @@ function toStreamView(stream: RankedDownloadStream): AddonDownloadStreamView {
     ...(stream.name ? { name: stream.name } : {}),
     ...(stream.description ? { description: stream.description } : {}),
     ...(stream.sizeBytes !== undefined ? { sizeBytes: stream.sizeBytes } : {}),
-    protocol: stream.protocol,
+    transport: stream.transport,
+    ...(stream.streamType ? { streamType: stream.streamType } : {}),
+    ...(stream.availability !== undefined ? { availability: stream.availability } : {}),
+    ...(stream.tag ? { tag: stream.tag } : {}),
     confidence: stream.confidence,
+  };
+}
+
+/** Phase 17: builds the diagnostics summary for the ALL-streams path. */
+function diagnosticsOfAll(
+  raw: number,
+  malformed: number,
+  kindCounts: Record<DownloaderStreamKind, number>,
+  selected: number,
+  _malformedFromBuild: number,
+): AddonDownloadDiagnostics {
+  return {
+    raw,
+    malformed,
+    unsupported: malformed,
+    eligible: raw,
+    rejected: {},
+    selected,
+    kindCounts,
   };
 }
 
@@ -309,20 +348,18 @@ function runtimeContextOf(lookup: DownloaderContentLookup): DownloadRuntimeConte
 }
 
 /** Builds the non-sensitive diagnostic summary from the normalization + selection. */
-function diagnosticsOf(raw: number, unsupported: number, dropped: Record<DownloadSkipReason, number>, selected: RankedDownloadStream[]): AddonDownloadDiagnostics {
-  const rejected: Partial<Record<DownloadSkipReason, number>> = {};
-  for (const [reason, count] of Object.entries(dropped)) {
-    if (count > 0) rejected[reason as DownloadSkipReason] = count;
-  }
-  // `raw` is already post-normalization (the count that entered
-  // buildDownloadCandidates). `eligible` = `raw` (alias for clarity).
-  // `unsupported` is the count the NORMALIZER rejected (P2P/externalUrl/etc.).
+// Phase 17: the old diagnosticsOf is removed — diagnosticsOfAll is the only
+// path now (the downloader normalizer preserves EVERY entry; there are no
+// format-based rejections to count). Kept as a back-compat no-op for any
+// external caller that still imports the name.
+function diagnosticsOf(raw: number, unsupported: number, _dropped: Record<DownloadSkipReason, number>, selected: number): AddonDownloadDiagnostics {
   return {
     raw,
+    malformed: unsupported,
     unsupported,
     eligible: raw,
-    rejected,
-    selected: selected.length,
+    rejected: {},
+    selected,
   };
 }
 
@@ -348,23 +385,27 @@ async function resolveAddonOnce(
       timeoutMs: deps.retryTimeoutMs ?? deps.timeoutMs ?? DOWNLOAD_TIMEOUT_MS,
       maxBytes: deps.maxBytes ?? STREAM_MAX_BYTES,
     });
-    const normalized = normalizeStremioStreamResponse(body);
+    // Phase 17: use the DOWNLOADER-SPECIFIC normalizer that preserves EVERY
+    // stream type (HTTP/HTTPS/HLS/DASH/P2P/Magnet/External). The player's
+    // normalizer (which rejects P2P/torrent/magnet/externalUrl) is NOT used
+    // here — the downloader is a discovery surface, not a playback path.
+    const normalized = normalizeStremioStreamResponseForDownloader(body);
     if (!normalized.valid) {
       console.warn(`[AddonDownloader] invalid response shape addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt}`);
       return { status: 'unavailable', streams: [], errorCode: 'INVALID_RESPONSE' };
     }
-    const { candidates, dropped } = buildDownloadCandidates(normalized.streams, runtimeContext);
-    // Phase 16: NO truncation — selectDownloadStreams returns EVERY eligible
-    // candidate (true-duplicate-URL dedup only). The max parameter is back-compat only.
-    const selected = selectDownloadStreams(candidates, MAX_DOWNLOAD_STREAMS_PER_ADDON);
-    const diagnostics = diagnosticsOf(normalized.streams.length, normalized.unsupported.length, dropped, selected);
-    const dropSummary = Object.entries(dropped).filter(([, count]) => count > 0).map(([reason, count]) => `${reason}:${count}`).join(',') || 'none';
+    // Phase 17: buildDownloadCandidatesAll preserves EVERY entry — no max cap,
+    // no diversity cap, no format filter, no quality filter, no size filter.
+    const { entries, kindCounts, malformed } = buildDownloadCandidatesAll(normalized.entries);
+    const selected = selectDownloadStreamsAll(entries, MAX_DOWNLOAD_STREAMS_PER_ADDON);
+    const diagnostics = diagnosticsOfAll(normalized.entries.length, normalized.malformed, kindCounts, selected.length, malformed);
+    const kindSummary = Object.entries(kindCounts).filter(([, count]) => count > 0).map(([kind, count]) => `${kind}:${count}`).join(',') || 'none';
     console.info(
-      `[AddonDownloader] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt} raw=${diagnostics.raw} unsupported=${diagnostics.unsupported} eligible=${diagnostics.eligible} dropped=${dropSummary} selected=${diagnostics.selected}`,
+      `[AddonDownloader] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt} raw=${diagnostics.raw} malformed=${diagnostics.malformed} kinds=${kindSummary} selected=${diagnostics.selected}`,
     );
     return {
       status: selected.length ? 'loaded' : 'empty',
-      streams: selected.map(toStreamView),
+      streams: selected.map(toStreamViewAll),
       diagnostics,
     };
   } catch (error) {

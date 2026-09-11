@@ -548,3 +548,162 @@ function canonicalUrlKey(url: string): string {
     return url;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 17 — COMPLETE DISCOVERY: preserve EVERY stream type (incl P2P/magnet/HLS/DASH/external)
+// ---------------------------------------------------------------------------
+
+import type { DownloaderStreamEntry, DownloaderStreamKind } from './stream-normalize-downloader';
+
+/**
+ * Phase 17 (task §1/§2/§3): a downloader stream view that preserves EVERY
+ * entry the addon returned — regardless of stream kind. HTTP, HTTPS, HLS,
+ * DASH, P2P, Magnet and External entries are ALL represented. The UI type
+ * filter (task §12 FILTER 1) uses `kind` to let the user filter by type.
+ *
+ * The `url` field is the ORIGINAL URI (HTTP/HTTPS URL, magnet URI, or
+ * externalUrl) — preserved verbatim, never rewritten. Download + Share
+ * operate on this exact URI.
+ */
+export type DownloadStreamViewAll = {
+  /** The ORIGINAL URI — HTTP/HTTPS URL, magnet URI, or externalUrl. */
+  url: string;
+  /** The classified stream kind (task §12 FILTER 1). */
+  kind: DownloaderStreamKind;
+  name?: string;
+  title?: string;
+  description?: string;
+  filename?: string;
+  container?: string;
+  /** Canonicalized codec label (H.264 / HEVC / AV1 / VP9 / unknown). */
+  codec: DownloadCodec;
+  audio: AudioClass;
+  audioLanguages?: string[];
+  quality: DownloadQuality;
+  height?: number;
+  sizeBytes?: number;
+  /** Transport: http / https / magnet / external. */
+  transport: 'http' | 'https' | 'magnet' | 'external';
+  /** The addon-supplied stream type when declared ('http'|'p2p'|…). */
+  streamType?: string;
+  availability?: number;
+  tag?: string;
+  hostClass: DownloadHostClass;
+  /** Position inside the addon's raw stream list (stable tiebreaker). */
+  index: number;
+  /** Presentation rank — LOWER IS BETTER (never excludes). */
+  score: number;
+  /** Metadata-completeness confidence — NEVER a playback guarantee. */
+  confidence: 'high' | 'medium' | 'low';
+};
+
+export type BuildAllResult = {
+  /** EVERY entry the addon returned that has a usable identifier. */
+  entries: DownloadStreamViewAll[];
+  /** Per-kind count (for diagnostics + the UI type filter). */
+  kindCounts: Record<DownloaderStreamKind, number>;
+  /** Entries that were structurally malformed (no url/externalUrl/infoHash/magnet). */
+  malformed: number;
+};
+
+/**
+ * Phase 17 (task §3): builds the COMPLETE discovery view from the downloader
+ * normalizer's output. PRESERVES EVERY entry — no max cap, no diversity cap,
+ * no format filter, no quality filter, no size filter, no partial-release
+ * filter. The ONLY entries that are NOT here are structurally malformed ones
+ * (counted in `malformed` for diagnostics).
+ *
+ * Ranking (the `score` field) is for PRESENTATION ORDER ONLY — it NEVER
+ * removes an entry. The UI shows entries sorted by score (best first), but
+ * the addon chip count reflects the RAW fetched count, not the filtered count.
+ */
+export function buildDownloadCandidatesAll(entries: DownloaderStreamEntry[]): BuildAllResult {
+  const kindCounts: Record<DownloaderStreamKind, number> = {
+    http: 0,
+    https: 0,
+    hls: 0,
+    dash: 0,
+    p2p: 0,
+    magnet: 0,
+    external: 0,
+  };
+  const views: DownloadStreamViewAll[] = entries.map((entry) => {
+    kindCounts[entry.kind] += 1;
+    const candidateTexts = [entry.title, entry.name, entry.description, entry.filename];
+    const sizeBytes = entry.videoSize ?? sizeFromTexts(candidateTexts);
+    const height = entry.quality.height;
+    const audio = audioClassFor({
+      audioLanguages: entry.audioLanguages,
+      title: entry.title,
+      name: entry.name,
+      description: entry.description,
+      filename: entry.filename,
+    });
+    const hostClass = hostClassFor(entry.url);
+    // Build a candidate shape for scoring (the score function reads quality/
+    // codec/audio/size/protocol/hostClass — all of which are present here).
+    const candidateForScore: DownloadStreamCandidate = {
+      url: entry.url,
+      ...(entry.name ? { name: entry.name } : {}),
+      ...(entry.title ? { title: entry.title } : {}),
+      ...(entry.description ? { description: entry.description } : {}),
+      ...(entry.filename ? { filename: entry.filename } : {}),
+      ...(entry.container ? { container: entry.container } : {}),
+      codec: codecClassFor(entry.codec),
+      audio,
+      ...(entry.audioLanguages?.length ? { audioLanguages: entry.audioLanguages } : {}),
+      quality: bucketForHeight(height),
+      ...(height !== undefined ? { height } : {}),
+      sizeBytes,
+      protocol: entry.transport === 'https' ? 'https' : 'http',
+      ...(entry.streamType ? { streamType: entry.streamType } : {}),
+      ...(entry.availability !== undefined ? { availability: entry.availability } : {}),
+      ...(entry.tag ? { tag: entry.tag } : {}),
+      index: entry.index,
+      hostClass,
+      releaseKey: '',
+    };
+    const score = scoreDownloadCandidate(candidateForScore);
+    return {
+      url: entry.url,
+      kind: entry.kind,
+      ...(entry.name ? { name: entry.name } : {}),
+      ...(entry.title ? { title: entry.title } : {}),
+      ...(entry.description ? { description: entry.description } : {}),
+      ...(entry.filename ? { filename: entry.filename } : {}),
+      ...(entry.container ? { container: entry.container } : {}),
+      codec: codecClassFor(entry.codec),
+      audio,
+      ...(entry.audioLanguages?.length ? { audioLanguages: entry.audioLanguages } : {}),
+      quality: bucketForHeight(height),
+      ...(height !== undefined ? { height } : {}),
+      sizeBytes,
+      transport: entry.transport,
+      ...(entry.streamType ? { streamType: entry.streamType } : {}),
+      ...(entry.availability !== undefined ? { availability: entry.availability } : {}),
+      ...(entry.tag ? { tag: entry.tag } : {}),
+      hostClass,
+      index: entry.index,
+      score,
+      confidence: confidenceFor(candidateForScore, score),
+    };
+  });
+  // Sort by score (presentation rank), then by original index. NO truncation.
+  views.sort((a, b) => a.score - b.score || a.index - b.index);
+  return { entries: views, kindCounts, malformed: 0 };
+}
+
+/**
+ * Phase 17 (task §3): selects ALL discovery entries — NO truncation, NO
+ * dedup (the same magnet URI offered twice stays as 2 entries — the user
+ * can see both). The `max` parameter is accepted for back-compat but is
+ * NEVER used to truncate.
+ *
+ * True-duplicate dedup is intentionally DISABLED for the discovery path —
+ * the goal is faithful parity with Stremio. If Stremio shows 15 entries,
+ * MAVERO shows 15 entries (even if 2 are the same URL).
+ */
+export function selectDownloadStreamsAll(entries: DownloadStreamViewAll[], _max: number = MAX_DOWNLOAD_STREAMS_PER_ADDON): DownloadStreamViewAll[] {
+  // Already sorted by buildDownloadCandidatesAll. Return as-is — NO truncation.
+  return entries;
+}

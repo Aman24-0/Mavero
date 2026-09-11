@@ -160,7 +160,7 @@
   // My List avoids the same trap by declaring its records with $state.
   let localContinueLoaded = $state(false);
   let localContinueItems = $state<MediaItem[]>([]);
-  let heroTrack: HTMLElement;
+  let heroTrack = $state<HTMLElement>();
   let galleryPaused = false;
   let reducedMotion = false;
   let galleryRotationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -402,7 +402,8 @@
 
 <div class="discover-page">
   {#if featuredItems.length > 0}
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <section
       class="hero"
       aria-roledescription="carousel"
@@ -645,22 +646,6 @@
   .quick-chips a:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
   .quick-chips a:active { transform: scale(.98); }
 
-  .genre-section { margin-top: 28px; padding: 0 var(--d-gutter); }
-  .genre-head { margin-bottom: 10px; }
-  .genre-title { color: var(--d-ink); font-size: clamp(1rem, 2vw, 1.25rem); font-weight: 700; letter-spacing: -.02em; }
-  .genre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
-  .genre-tile {
-    position: relative; display: flex; align-items: center; justify-content: center; height: 64px;
-    border-radius: 10px; overflow: hidden; text-decoration: none; background: var(--d-surface-2);
-    border: 1px solid var(--d-line);
-    transition: transform 220ms var(--d-ease), border-color 220ms var(--d-ease);
-  }
-  .genre-tile:hover { transform: translateY(-2px); border-color: var(--d-line-strong); }
-  .genre-tile:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
-  .genre-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .5; }
-  .genre-overlay { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(0,0,0,.45), rgba(0,0,0,.15)); }
-  .genre-label { position: relative; z-index: 1; color: var(--d-ink); font-size: .76rem; font-weight: 700; letter-spacing: .02em; }
-
   .catalog-warning { margin: 16px var(--d-gutter) 0; padding: 10px 12px; border: 1px solid rgba(255,176,32,.3); border-radius: 6px; color: var(--warning); font-size: .7rem; }
 
   @media (max-width: 900px) {
@@ -679,14 +664,12 @@
     .hero-play { flex: 1; justify-content: center; }
     .hero-nav-btn { display: none; }
     .hero-nav { right: 50%; transform: translateX(50%); bottom: 10px; }
-    .genre-grid { grid-template-columns: repeat(2, 1fr); }
-    .genre-tile { height: 56px; }
     /* Quick chips keep equal-width split on every mobile viewport. */
     .quick-chips { gap: 6px; }
     .quick-chips a { height: 38px; font-size: .72rem; padding: 0 6px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .hero-track { scroll-behavior: auto; }
-    .hero-nav-btn, .hero-dot::after, .quick-chips a, .genre-tile, .hero-play, .hero-btn { transition: none; }
+    .hero-nav-btn, .hero-dot::after, .quick-chips a, .hero-play, .hero-btn { transition: none; }
   }
 </style>

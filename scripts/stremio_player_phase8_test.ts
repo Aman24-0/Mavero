@@ -182,15 +182,15 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const testScript: string = pkg.scripts.test;
   // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8;
   // Phase 10 appended stremio_player_phase10_test.ts — the chain still runs
-  // phase 7 before phase 8 before phase 9 and now ENDS with phase 16
-  // (the Mavero Downloader suite, extended in Phase 16). (Phase 11/12/13/14/15/16
+  // phase 7 before phase 8 before phase 9 and now ENDS with phase 17
+  // (the Mavero Downloader suite, extended in Phase 17). (Phase 11–17
   // appended their suites to the chain — intentional extension.)
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('stremio_downloader_phase16_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 16 downloader suite (Phase 9–16 extension)',
+      testScript.trimEnd().endsWith('stremio_downloader_phase17_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 17 downloader suite (Phase 9–17 extension)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');
@@ -1104,6 +1104,7 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     'stream-errors.ts',
     'stream-fetch.ts',
     'stream-ids.ts',
+    'stream-normalize-downloader.ts', // Phase 17: downloader-specific normalizer (preserves ALL stream types)
     'stream-normalize.ts',
     'stream-player-source.ts',
     'stream-resolver.ts',

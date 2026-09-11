@@ -126,7 +126,7 @@
     border-color: rgba(255, 255, 255, .32);
     background: rgba(255, 255, 255, .06);
   }
-  .input-icon { color: #969696; flex: 0 0 auto; }
+  :global(.input-icon) { color: #969696; flex: 0 0 auto; }
   .input-wrap input {
     width: 100%; min-width: 0;
     border: 0; outline: 0;

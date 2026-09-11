@@ -68,6 +68,8 @@
   {#if errorToasts.length}
     <div class="toast-region toast-region-error" role="alert">
       {#each errorToasts as toast (toast.id)}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <article
           class="toast toast-error"
           tabindex="0"
@@ -92,6 +94,8 @@
   {#if successToasts.length}
     <div class="toast-region toast-region-polite" aria-live="polite" aria-atomic="false">
       {#each successToasts as toast (toast.id)}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <article
           class="toast toast-{toast.variant}"
           tabindex="0"

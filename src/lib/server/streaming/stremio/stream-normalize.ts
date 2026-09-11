@@ -345,7 +345,7 @@ function extractHeight(text: string): number | undefined {
  * `Auto` — no resolution is ever fabricated. Bitrate is only kept when the
  * addon states it; Mavero never derives one.
  */
-function extractQuality(name: string | undefined, title: string | undefined, filename: string | undefined): StremioStreamQuality {
+export function extractQuality(name: string | undefined, title: string | undefined, filename: string | undefined): StremioStreamQuality {
   for (const text of [filename, title, name]) {
     if (!text) continue;
     const height = extractHeight(text);

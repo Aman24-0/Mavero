@@ -18,7 +18,7 @@
 
   let visible = $state(false);
   let progress = $state(0); // 0..1
-  let fabEl: HTMLButtonElement | undefined;
+  let fabEl = $state<HTMLButtonElement | undefined>();
   let rafId: number | undefined;
 
   const CIRCUMFERENCE = 2 * Math.PI * 18; // r=18 → matches the SVG circle

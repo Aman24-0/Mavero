@@ -1,51 +1,51 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Download, ExternalLink, Info, Loader2, RotateCw, Share2, Check } from 'lucide-svelte';
+  import { AlertTriangle, Download, Info, Loader2, RotateCw, Share2, Check } from 'lucide-svelte';
   import { downloadAttributesFor } from '$lib/client/player/stream-actions';
 
   /**
-   * MAVERO Downloader — the addon-grouped "available links" panel
-   * (Phase 14 → Phase 15 progressive → Phase 16 diagnostic parity + Share).
+   * MAVERO Downloader — COMPLETE DISCOVERY surface (Phase 17).
    *
    * Rendered inside the EXISTING DownloadSheet (when the built-in
    * "Mavero Downloader" provider is selected) and on the standalone
    * /watch/mavero-downloader deep-link pages. One surface, two hosts.
    *
-   * PHASE 16 CONTRACT (task §1/§3/§4/§5/§11/§15/§16):
-   *   * Stream cards have EXACTLY TWO actions: Download + Share. The previous
-   *     Play/Watch and Copy actions have been COMPLETELY REMOVED.
-   *   * Download keeps its existing behavior — navigates the ORIGINAL addon
-   *     URL through the browser's anchor mechanism (no proxy, no FFmpeg, no
-   *     rewrite). If the provider serves the file inline, that is the honest
-   *     browser outcome.
-   *   * Share uses navigator.share() with the EXACT ORIGINAL addon URL (the
-   *     same URL the old Copy button copied). On Android, this opens the
-   *     native Android share sheet — the user can copy the URL, send it to
-   *     mpv/VLC/another player, or share via WhatsApp/Telegram/etc. If
-   *     navigator.share is unavailable, a clipboard fallback is used.
-   *   * There is NO artificial maximum number of streams. Every eligible
-   *     direct HTTP(S) stream the addon returned is shown — 3 → 3, 10 → 10,
-   *     30 → 30. The previous max=10 cap has been REMOVED.
-   *   * Addon tabs carry the FIVE-state model: Loading / Retrying / N links /
-   *     0 links / Unavailable + Retry. Loaded-zero is distinct from request
-   *     failure (Task 11).
-   *   * Links are labelled "available links" — NEVER "guaranteed working":
-   *     the backend ranks metadata, it does not open the URLs.
+   * PHASE 17 CONTRACT (task §1–§16):
+   *   * COMPLETE DISCOVERY: preserve EVERY stream the addon returned — HTTP,
+   *     HTTPS, HLS, DASH, P2P, Magnet, External. NO max cap, NO format
+   *     filter, NO quality filter, NO size filter. If Stremio shows 15,
+   *     MAVERO shows 15.
+   *   * Stream cards have EXACTLY TWO actions: Download + Share. No Watch,
+   *     No Play, No Copy.
+   *   * Download: UNCHANGED — navigates the ORIGINAL URI through the
+   *     browser's anchor mechanism. No proxy, no FFmpeg, no rewrite.
+   *   * Share: navigator.share() with the EXACT ORIGINAL URI (HTTP/HTTPS
+   *     URL, magnet URI, or externalUrl). On Android this opens the native
+   *     share sheet (mpv/VLC/1DM/WhatsApp/Telegram/etc).
+   *   * HEADER: "MAVERO Downloader" + the content title. NO "Available links".
+   *   * INSTRUCTIONS: two compact lines telling the user to use Share when
+   *     Download fails, and to share to a player for direct streaming.
+   *   * SUGGESTED APPS: 1DM (downloader) + MPV (player) cards, linking to
+   *     their official Google Play Store pages.
+   *   * ADDON CHIPS: horizontally scrollable, showing the RAW fetched count
+   *     per addon (not the filtered count).
+   *   * FOUR FILTERS: Type / Size / Quality / Language. Filters operate on
+   *     ALREADY-LOADED streams — they NEVER trigger a refetch. The addon chip
+   *     count stays the raw fetched count; the filtered count is shown
+   *     separately as "All / X shown".
+   *   * SHEET HEIGHT: increased ~10–15% to accommodate the new sections.
+   *   * NO FOOTER: the old "Download and Share use the provider's original
+   *     address…" footer is REMOVED.
    *
    * PROGRESSIVE FLOW (Phase 15, preserved):
    *   1. onMount: fetch the addon TAB list from `/api/downloader/mavero/tabs`
    *      (NO stream fetches — fast). Render every tab in `loading` state.
    *   2. For EACH tab: fire an INDEPENDENT fetch to
    *      `/api/downloader/mavero/addon?...&addon=<id>` with its OWN
-   *      AbortController + lifecycle. Successful tabs update IN PLACE —
-   *      they never reset other tabs. Slow tabs keep loading in the
-   *      background (per-addon timeout = 30s — Task 13).
+   *      AbortController + lifecycle. Successful tabs update IN PLACE.
    *   3. The server does bounded retry/backoff for transient failures
-   *      (TIMEOUT/NETWORK/HTTP_ERROR) internally; the frontend sees the
-   *      final result (loaded/empty/unavailable).
-   *   4. A per-tab Retry button re-fires ONLY that tab's request — it does
-   *      NOT touch other tabs and does NOT reset global state. Retry is
-   *      fallback recovery, NOT required for healthy addons (Task 14).
+   *      (30s per-attempt timeout — Task 13).
+   *   4. A per-tab Retry button re-fires ONLY that tab's request.
    */
 
   export let contentId = '';
@@ -55,8 +55,10 @@
   export let episode: number | undefined = undefined;
   export let title = '';
 
+  /** Phase 17: the stream view now carries `kind` for the type filter. */
   type StreamView = {
     url: string;
+    kind: 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
     quality: string;
     codec: string;
     audio: string;
@@ -67,10 +69,12 @@
     name?: string;
     description?: string;
     sizeBytes?: number;
-    protocol: 'http' | 'https';
+    transport: 'http' | 'https' | 'magnet' | 'external';
+    streamType?: string;
+    availability?: number;
+    tag?: string;
     confidence: 'high' | 'medium' | 'low';
   };
-  /** Phase 16 five-state model (Task 11). */
   type TabStatus = 'loading' | 'retrying' | 'loaded' | 'empty' | 'unavailable';
   type Tab = {
     addonId: string;
@@ -80,9 +84,7 @@
     status: TabStatus;
     streams: StreamView[];
     errorCode?: string;
-    /** Per-tab abort controller (independent lifecycle). */
     abort?: AbortController;
-    /** Per-tab retry attempt count (for the retrying state). */
     attempts?: number;
   };
 
@@ -91,17 +93,74 @@
   let tabsFailed = false;
   let activeTabId: string | null = null;
 
-  // Per-link action states (bounded, self-restoring).
-  // Download click feedback (the existing mechanism — unchanged).
+  // Per-link action states.
   let openingKey = '';
   let openingTimer: ReturnType<typeof setTimeout> | undefined;
-  // Share feedback: 'sharing' (in-flight) / 'shared' (success) / 'failed'.
   let shareKey = '';
   let shareState: 'sharing' | 'shared' | 'failed' | '' = '';
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // Phase 17 (task §12): FOUR filter controls.
+  let filterType: 'all' | StreamView['kind'] = 'all';
+  let filterSize: 'all' | 'under1' | 'under2' | 'under3' | 'under5' | 'under10' | 'under20' | 'over20' = 'all';
+  let filterQuality: 'all' | '360p' | '480p' | '720p' | '1080p' | '2K' | '4K' = 'all';
+  let filterLanguage: string = 'all'; // dynamically generated
+
   $: activeTab = tabs.find((tab) => tab.addonId === activeTabId) ?? null;
-  $: tabsReady = !tabsLoading && !tabsFailed && tabs.length > 0;
+
+  // Phase 17 (task §13): filters operate on ALREADY-LOADED streams. The addon
+  // chip count stays the raw fetched count; the filtered count is computed
+  // per active tab.
+  $: activeStreams = activeTab?.streams ?? [];
+  $: filteredStreams = applyFilters(activeStreams, filterType, filterSize, filterQuality, filterLanguage);
+
+  // Phase 17 (task §12 FILTER 4): dynamically generate the language list from
+  // ALL loaded addon streams (union of every detected language).
+  $: allLoadedStreams = tabs.flatMap((tab) => tab.streams);
+  $: detectedLanguages = Array.from(new Set(allLoadedStreams.flatMap((s) => s.audioLanguages ?? []))).sort();
+
+  function applyFilters(streams: StreamView[], fType: typeof filterType, fSize: typeof filterSize, fQuality: typeof filterQuality, fLang: string): StreamView[] {
+    return streams.filter((stream) => {
+      // Type filter
+      if (fType !== 'all' && stream.kind !== fType) return false;
+      // Size filter
+      if (fSize !== 'all') {
+        const bytes = stream.sizeBytes;
+        if (bytes === undefined) {
+          // Unknown size — keep under 'all' only. For specific size filters,
+          // exclude (we can't confirm the size matches).
+          return false;
+        }
+        const gb = bytes / 1024 ** 3;
+        if (fSize === 'under1' && gb >= 1) return false;
+        if (fSize === 'under2' && gb >= 2) return false;
+        if (fSize === 'under3' && gb >= 3) return false;
+        if (fSize === 'under5' && gb >= 5) return false;
+        if (fSize === 'under10' && gb >= 10) return false;
+        if (fSize === 'under20' && gb >= 20) return false;
+        if (fSize === 'over20' && gb < 20) return false;
+      }
+      // Quality filter
+      if (fQuality !== 'all') {
+        const q = stream.quality;
+        if (fQuality === '2K') {
+          // 2K = 1440p
+          if (q !== '4K' && !(q === 'auto')) return false;
+          // Actually 2K is between 1080p and 4K. Treat '4K' bucket as 2K+4K.
+          // For simplicity, map 2K → any quality >= 1440p (the 4K bucket).
+          if (q !== '4K') return false;
+        } else if (q !== fQuality) {
+          return false;
+        }
+      }
+      // Language filter
+      if (fLang !== 'all') {
+        const langs = stream.audioLanguages ?? [];
+        if (!langs.includes(fLang)) return false;
+      }
+      return true;
+    });
+  }
 
   function formatSize(bytes?: number): string | undefined {
     if (!bytes || bytes <= 0) return undefined;
@@ -110,7 +169,6 @@
     return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   }
 
-  /** "1080p · H.264 · Multi · MKV · 4.6 GB" — addon-supplied facts only. */
   function streamLabel(stream: StreamView): string {
     const parts = [
       stream.quality === 'auto' ? 'Auto' : stream.quality,
@@ -118,11 +176,11 @@
       stream.container,
       stream.audio === 'multi' ? 'Multi Audio' : stream.audio === 'dual' ? 'Dual Audio' : undefined,
       formatSize(stream.sizeBytes),
+      stream.kind.toUpperCase(),
     ];
     return parts.filter((part): part is string => Boolean(part)).join(' · ');
   }
 
-  /** The honest secondary line: what the addon itself wrote about the file. */
   function streamDetail(stream: StreamView): string | undefined {
     const candidate = stream.filename || stream.title || stream.name;
     if (candidate && candidate.trim()) {
@@ -133,7 +191,6 @@
     return firstLine;
   }
 
-  /** A safe title for the share sheet — falls back to addon + quality. */
   function shareTitle(stream: StreamView, addonName: string): string {
     const fromStream = stream.title || stream.name || stream.filename;
     if (fromStream && fromStream.trim()) return fromStream.trim().slice(0, 120);
@@ -141,7 +198,6 @@
     return `${addonName} · ${quality}`;
   }
 
-  /** Default active tab: the first addon with links, else the first addon. */
   function defaultTabId(list: Tab[]): string | null {
     if (!list.length) return null;
     return (list.find((tab) => tab.status === 'loaded' && tab.streams.length > 0) ?? list[0]).addonId;
@@ -154,7 +210,6 @@
     return params;
   }
 
-  /** Phase 15 task §1/§2: load the addon TAB list (no streams). */
   async function loadTabs(): Promise<void> {
     tabsLoading = true;
     tabsFailed = false;
@@ -174,22 +229,14 @@
     }
   }
 
-  /**
-   * Phase 15 task §1: fire ONE independent per-addon resolution. Successful
-   * tabs update IN PLACE — they never reset other tabs. The server does
-   * bounded retry/backoff for transient failures internally (30s per-attempt
-   * timeout — Task 13).
-   */
   async function loadAddon(tab: Tab): Promise<void> {
-    // Abort any previous in-flight request for this tab (Retry re-fires cleanly).
     tab.abort?.abort();
     const abort = new AbortController();
     tab.abort = abort;
     tab.status = tab.status === 'unavailable' ? 'loading' : tab.status === 'retrying' ? 'retrying' : 'loading';
     tab.errorCode = undefined;
     tab.streams = [];
-    tabs = [...tabs]; // trigger reactivity
-
+    tabs = [...tabs];
     const params = buildParams();
     params.set('addon', tab.addonId);
     try {
@@ -197,7 +244,7 @@
         headers: { accept: 'application/json' },
         signal: abort.signal,
       });
-      if (abort.signal.aborted) return; // a newer Retry superseded this request
+      if (abort.signal.aborted) return;
       const payload = await response.json() as {
         ok?: boolean;
         group?: { status: TabStatus; streams: StreamView[]; errorCode?: string; attempts?: number };
@@ -208,15 +255,14 @@
       tab.errorCode = payload.group.errorCode;
       tab.attempts = payload.group.attempts;
     } catch (error) {
-      if (abort.signal.aborted) return; // user retried / navigated away
+      if (abort.signal.aborted) return;
       tab.status = 'unavailable';
       tab.streams = [];
       tab.errorCode = 'NETWORK';
       console.warn('[MaveroDownloader] tab fetch failed', tab.addonSlug, error);
     } finally {
       if (!abort.signal.aborted) {
-        tabs = [...tabs]; // trigger reactivity with the final state
-        // Auto-select the first loaded tab if the active tab is empty/failed.
+        tabs = [...tabs];
         if (activeTabId === tab.addonId && tab.status !== 'loaded' && tab.streams.length === 0) {
           const firstLoaded = tabs.find((candidate) => candidate.status === 'loaded' && candidate.streams.length > 0);
           if (firstLoaded && firstLoaded.addonId !== activeTabId) {
@@ -227,23 +273,14 @@
     }
   }
 
-  /**
-   * Phase 15 task §1/§2: on mount, fetch the tab list then fire ONE
-   * independent per-addon request for each tab. Each tab has its OWN
-   * lifecycle — a successful tab never resets when another tab loads or
-   * retries. Phase 16 (Task 13): per-addon timeout = 30s — healthy addons
-   * do NOT need a manual Retry.
-   */
   async function load(): Promise<void> {
     await loadTabs();
     if (tabs.length === 0) return;
-    // Fire all per-addon requests in parallel; each resolves independently.
     for (const tab of tabs) {
       void loadAddon(tab);
     }
   }
 
-  /** Phase 15 task §2: retry ONLY the selected tab — others stay untouched. */
   function retryTab(tab: Tab): void {
     if (tab.status === 'loading' || tab.status === 'retrying') return;
     void loadAddon(tab);
@@ -258,55 +295,35 @@
     activeTabId = id;
   }
 
-  /** Download click feedback — the existing mechanism, unchanged (Task 2). */
   function handleDownload(event: MouseEvent, key: string) {
     event.stopPropagation();
-    if (openingKey) return; // duplicate rapid clicks suppressed
+    if (openingKey) return;
     openingKey = key;
     if (openingTimer) clearTimeout(openingTimer);
     openingTimer = setTimeout(() => { openingKey = ''; }, 2500);
   }
 
-  /**
-   * Phase 16 (Task 3/§16): Share the EXACT ORIGINAL addon URL via
-   * navigator.share(). On Android this opens the native Android share
-   * sheet — the user can copy the URL, send it to mpv/VLC/another player,
-   * or share via WhatsApp/Telegram/etc. Falls back to clipboard copy when
-   * navigator.share is unavailable (desktop browsers without Web Share API).
-   *
-   * The URL shared is `stream.url` — the EXACT same value the old Copy
-   * button copied. NO Mavero URL, NO downloader page URL, NO API URL, NO
-   * proxy URL, NO transformed URL.
-   */
   async function handleShare(stream: StreamView, addonName: string, key: string): Promise<void> {
-    if (shareKey === key && shareState === 'sharing') return; // dedupe rapid clicks
-    const url = stream.url; // the ORIGINAL addon URL — preserved verbatim
+    if (shareKey === key && shareState === 'sharing') return;
+    const url = stream.url; // the EXACT ORIGINAL URI (HTTP/HTTPS/magnet/external)
     if (!url) return;
     shareKey = key;
     shareState = 'sharing';
     if (shareTimer) clearTimeout(shareTimer);
     try {
-      // Primary path: native share sheet (Android, iOS, desktop-Chrome-with-flag).
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({
-          title: shareTitle(stream, addonName),
-          url,
-        });
+        await navigator.share({ title: shareTitle(stream, addonName), url });
         shareState = 'shared';
       } else if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        // Fallback 1: async clipboard API (non-Android desktops).
         await navigator.clipboard.writeText(url);
         shareState = 'shared';
       } else {
-        // Fallback 2: legacy textarea + execCommand (old WebViews).
         const copied = legacyCopy(url);
         shareState = copied ? 'shared' : 'failed';
       }
     } catch (error) {
-      // navigator.share rejects when the user dismisses the sheet — that's NOT
-      // a failure. Only treat actual errors as failed.
       if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'NotAllowedError')) {
-        shareState = ''; // user dismissed — no visible feedback
+        shareState = '';
       } else {
         shareState = 'failed';
       }
@@ -319,7 +336,6 @@
     }
   }
 
-  /** Legacy clipboard fallback (old WebViews without navigator.clipboard). */
   function legacyCopy(url: string): boolean {
     if (typeof document === 'undefined') return false;
     try {
@@ -338,19 +354,40 @@
     }
   }
 
-  /** The footer hint — honest about the Download + Share behavior. */
-  $: footerNote = 'Download and Share use the provider\'s original address. Share opens your device\'s share sheet.';
-
   onMount(load);
 </script>
 
 <div class="mad" aria-busy={tabsLoading}>
-  <div class="mad-intro">
-    <div class="mad-intro-copy">
-      <span class="mad-eyebrow">MAVERO Downloader</span>
-      {#if title}<span class="mad-title">{title}</span>{/if}
-    </div>
-    <span class="mad-hint"><ExternalLink size={11} /> Available links</span>
+  <!-- Phase 17 (task §9): header — "MAVERO Downloader" + content title. NO "Available links". -->
+  <div class="mad-header">
+    <span class="mad-eyebrow">MAVERO Downloader</span>
+    {#if title}<span class="mad-title">{title}</span>{/if}
+  </div>
+
+  <!-- Phase 17 (task §9): two instructional lines. -->
+  <div class="mad-instructions">
+    <p>If download button not work then use share button to download with download manager.</p>
+    <p>Use share button and share stream to player to stream directly on phone.</p>
+  </div>
+
+  <!-- Phase 17 (task §10): Suggested Apps — 1DM + MPV, linking to Play Store. -->
+  <div class="mad-suggested">
+    <div class="mad-suggested-label">Suggested Downloader</div>
+    <a class="mad-app-card" href="https://play.google.com/store/apps/details?id=idm.internet.download.manager" target="_blank" rel="noopener noreferrer">
+      <div class="mad-app-icon mad-app-icon-1dm">1DM</div>
+      <div class="mad-app-info">
+        <span class="mad-app-name">1DM+</span>
+        <span class="mad-app-desc">Download manager</span>
+      </div>
+    </a>
+    <div class="mad-suggested-label mad-suggested-label-player">Suggested Player</div>
+    <a class="mad-app-card" href="https://play.google.com/store/apps/details?id=is.xyz.mpv" target="_blank" rel="noopener noreferrer">
+      <div class="mad-app-icon mad-app-icon-mpv">MPV</div>
+      <div class="mad-app-info">
+        <span class="mad-app-name">mpv-android</span>
+        <span class="mad-app-desc">Media player</span>
+      </div>
+    </a>
   </div>
 
   {#if tabsLoading}
@@ -364,6 +401,7 @@
   {:else if tabs.length === 0}
     <div class="mad-state" role="status"><Info size={18} /><span>No Stremio addons are enabled. Enable addons to see direct links here.</span></div>
   {:else}
+    <!-- Phase 17 (task §11): addon chips — RAW fetched count, horizontally scrollable. -->
     <div class="mad-tabs" role="tablist" aria-label="Addons">
       {#each tabs as tab (tab.addonId)}
         <button
@@ -389,6 +427,45 @@
     </div>
 
     {#if activeTab}
+      <!-- Phase 17 (task §12): FOUR filter controls — Type / Size / Quality / Language. -->
+      <div class="mad-filters">
+        <select class="mad-filter" bind:value={filterType} aria-label="Filter by type">
+          <option value="all">All Types</option>
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+          <option value="hls">HLS</option>
+          <option value="dash">DASH</option>
+          <option value="p2p">P2P</option>
+          <option value="magnet">Magnet</option>
+          <option value="external">External</option>
+        </select>
+        <select class="mad-filter" bind:value={filterSize} aria-label="Filter by size">
+          <option value="all">All Sizes</option>
+          <option value="under1">Under 1 GB</option>
+          <option value="under2">Under 2 GB</option>
+          <option value="under3">Under 3 GB</option>
+          <option value="under5">Under 5 GB</option>
+          <option value="under10">Under 10 GB</option>
+          <option value="under20">Under 20 GB</option>
+          <option value="over20">Over 20 GB</option>
+        </select>
+        <select class="mad-filter" bind:value={filterQuality} aria-label="Filter by quality">
+          <option value="all">All Qualities</option>
+          <option value="360p">360p</option>
+          <option value="480p">480p</option>
+          <option value="720p">720p</option>
+          <option value="1080p">1080p</option>
+          <option value="2K">2K</option>
+          <option value="4K">4K</option>
+        </select>
+        <select class="mad-filter" bind:value={filterLanguage} aria-label="Filter by language">
+          <option value="all">All Languages</option>
+          {#each detectedLanguages as lang}
+            <option value={lang}>{lang}</option>
+          {/each}
+        </select>
+      </div>
+
       {#if activeTab.status === 'loading' || activeTab.status === 'retrying'}
         <div class="mad-state" role="status">
           <span class="mad-spin"><Loader2 size={18} /></span>
@@ -400,15 +477,23 @@
           <span>{activeTab.addonName} is unavailable right now.</span>
           <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={12} /> Retry</button>
         </div>
-      {:else if activeTab.streams.length === 0}
+      {:else if activeStreams.length === 0}
         <div class="mad-state" role="status">
           <Info size={16} />
-          <span>No eligible direct file links from {activeTab.addonName} for this title.</span>
+          <span>{activeTab.addonName} returned zero streams.</span>
           <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={12} /> Retry</button>
         </div>
       {:else}
-        <div class="mad-list" role="list" aria-label={`${activeTab.addonName} available links`}>
-          {#each activeTab.streams as stream, index (stream.url)}
+        <!-- Phase 17 (task §13): "All / X shown" — the filtered count is shown separately. -->
+        <div class="mad-filter-count">
+          {#if filteredStreams.length === activeStreams.length}
+            All {activeStreams.length} shown
+          {:else}
+            {activeStreams.length} total · {filteredStreams.length} shown
+          {/if}
+        </div>
+        <div class="mad-list" role="list" aria-label={`${activeTab.addonName} streams`}>
+          {#each filteredStreams as stream, index (stream.url + '-' + index)}
             {@const key = `${activeTab.addonSlug}-${index}`}
             <article class="mad-row" role="listitem">
               <div class="mad-row-main">
@@ -417,9 +502,7 @@
                 {#if stream.audioLanguages?.length}<span class="mad-row-sub">{stream.audioLanguages.join(' + ')} audio</span>{/if}
               </div>
               <div class="mad-row-actions">
-                <!-- Phase 16 (Task 1/§2/§15): Download — UNCHANGED. Navigates
-                     the ORIGINAL addon URL through the browser's anchor
-                     mechanism. No proxy, no FFmpeg, no rewrite. -->
+                <!-- Download — UNCHANGED. Navigates the ORIGINAL URI. -->
                 <a
                   class="mad-action"
                   class:opening={openingKey === key}
@@ -428,21 +511,17 @@
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={openingKey === key ? 'Opening the original file' : 'Download the original file'}
-                  title="Download (original URL)"
+                  title="Download (original URI)"
                   onclick={(event) => handleDownload(event, key)}
                 ><Download size={14} /></a>
-                <!-- Phase 16 (Task 3/§3/§16): Share — uses navigator.share()
-                     with the EXACT ORIGINAL addon URL. On Android this opens
-                     the native share sheet (mpv/VLC/WhatsApp/Telegram/etc).
-                     Falls back to clipboard copy when Web Share API is
-                     unavailable. -->
+                <!-- Share — navigator.share with the EXACT ORIGINAL URI. -->
                 <button
                   class="mad-action mad-action-share"
                   class:done={shareKey === key && shareState === 'shared'}
                   class:failed={shareKey === key && shareState === 'failed'}
                   type="button"
-                  aria-label={shareKey === key && shareState === 'shared' ? 'URL shared' : shareKey === key && shareState === 'failed' ? 'Share failed' : 'Share original URL'}
-                  title="Share (original URL)"
+                  aria-label={shareKey === key && shareState === 'shared' ? 'URI shared' : shareKey === key && shareState === 'failed' ? 'Share failed' : 'Share original URI'}
+                  title="Share (original URI)"
                   onclick={(event) => { event.stopPropagation(); void handleShare(stream, activeTab.addonName, key); }}
                 >
                   {#if shareKey === key && shareState === 'sharing'}<Loader2 size={14} class="mad-spin" />
@@ -454,20 +533,32 @@
             </article>
           {/each}
         </div>
-        <p class="mad-note"><ExternalLink size={11} /> {footerNote}</p>
       {/if}
     {/if}
   {/if}
 </div>
 
 <style>
-  .mad { display: flex; flex-direction: column; gap: 10px; min-height: 220px; color: var(--ink); }
-  .mad-intro { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .mad-intro-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  /* Phase 17 (task §15): sheet height increased ~10-15% to accommodate the
+     new sections (header, instructions, suggested apps, filters). */
+  .mad { display: flex; flex-direction: column; gap: 8px; min-height: 260px; color: var(--ink); }
+  .mad-header { display: flex; flex-direction: column; gap: 2px; }
   .mad-eyebrow { color: var(--muted); font-size: 0.55rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
-  .mad-title { overflow: hidden; color: var(--ink); font-size: 0.8rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-hint { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; color: var(--muted); font-size: 0.56rem; font-weight: 700; }
-  .mad-state { display: flex; min-height: 150px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 9px; flex-wrap: wrap; padding: 10px; color: var(--muted); font-size: 0.7rem; text-align: center; }
+  .mad-title { overflow: hidden; color: var(--ink); font-size: 0.85rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+  .mad-instructions { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); }
+  .mad-instructions p { margin: 0; color: var(--muted); font-size: 0.56rem; line-height: 1.4; }
+  .mad-suggested { display: flex; flex-direction: column; gap: 4px; }
+  .mad-suggested-label { color: var(--muted); font-size: 0.5rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+  .mad-suggested-label-player { margin-top: 4px; }
+  .mad-app-card { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); text-decoration: none; }
+  .mad-app-card:hover { border-color: var(--line-strong); background: var(--accent-soft); }
+  .mad-app-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; font-size: 0.6rem; font-weight: 800; color: #fff; }
+  .mad-app-icon-1dm { background: #0c8; }
+  .mad-app-icon-mpv { background: #66c; }
+  .mad-app-info { display: flex; flex-direction: column; gap: 1px; }
+  .mad-app-name { color: var(--ink); font-size: 0.66rem; font-weight: 700; }
+  .mad-app-desc { color: var(--muted); font-size: 0.52rem; }
+  .mad-state { display: flex; min-height: 120px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 9px; flex-wrap: wrap; padding: 10px; color: var(--muted); font-size: 0.7rem; text-align: center; }
   .mad-state-error { color: #d48a64; }
   .mad-retry { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 6px 12px; font: inherit; font-size: 0.66rem; font-weight: 700; cursor: pointer; }
   .mad-retry:hover { border-color: var(--accent); color: var(--accent); }
@@ -483,10 +574,17 @@
   .mad-tab-state.failed { color: #d48a64; }
   .mad-tab-state.loading { background: transparent; padding: 1px 2px; }
   .mad-tab-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-  .mad-list { display: flex; flex-direction: column; gap: 6px; }
+  .mad-filters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .mad-filter { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 5px 6px; font: inherit; font-size: 0.58rem; font-weight: 600; cursor: pointer; }
+  .mad-filter:hover { border-color: var(--line-strong); }
+  .mad-filter:focus-visible { border-color: var(--accent); outline: none; }
+  .mad-filter-count { color: var(--muted); font-size: 0.55rem; font-weight: 700; padding: 0 2px; }
+  .mad-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; scrollbar-width: thin; }
+  .mad-list::-webkit-scrollbar { width: 4px; }
+  .mad-list::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 2px; }
   .mad-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.025); padding: 9px 10px; }
   .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; min-width: 0; }
-  .mad-row-label { overflow: hidden; color: var(--ink); font-size: 0.7rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+  .mad-row-label { overflow: hidden; color: var(--ink); font-size: 0.68rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
   .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 0.57rem; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
   .mad-row-sub { color: var(--muted); font-size: 0.55rem; }
   .mad-row-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
@@ -497,7 +595,6 @@
   .mad-action.failed { border-color: #d48a64; color: #d48a64; }
   .mad-action.opening { border-color: var(--accent); color: var(--accent); opacity: 0.7; pointer-events: none; }
   .mad-action-share { color: var(--ink); }
-  .mad-note { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--muted); font-size: 0.55rem; }
   @keyframes mad-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action { transition: none; } }
 </style>

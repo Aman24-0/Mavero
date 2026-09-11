@@ -16,9 +16,13 @@
   // snapshots). The cursor is a small continuation token the server
   // validates against the active filters — it never carries item
   // payloads, so the URL stays small for every filter combination. ----
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
   let allItems = $state<UpcomingItem[]>([...data.items]);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
   let currentPage = $state(data.page ?? 1);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
   let hasNextPage = $state(data.hasNextPage ?? false);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
   let nextCursor = $state<string>(data.cursor ?? '');
   let loadingMore = $state(false);
   // Filter change in flight (skeleton replaces the stale list so old
@@ -110,8 +114,11 @@
     (data.yearOptions ?? []).map((y: number) => ({ value: String(y), label: String(y) }))
   );
 
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
   let selectedMonth = $state(String(data.filters.month));
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
   let selectedYear = $state(String(data.filters.year));
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
   let selectedType = $state<'all' | UpcomingType>(data.filters.type);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
   let selectedLanguage = $state(String(data.filters.language ?? 'all'));

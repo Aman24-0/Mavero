@@ -351,28 +351,24 @@ async function sectionK(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function sectionL(): Promise<void> {
+  // Phase 17: "empty" now means the addon genuinely returned zero streams
+  // (NOT that MAVERO filtered them out — P2P/torrent/magnet/header-dependent
+  // entries are ALL PRESERVED in Phase 17). To test the empty state we use
+  // an actual empty streams array.
   const result = await resolveSingleAddonDownload({} as never, movieRequest, PIPE.id, {
     loadAddons: loadAddonsOf([PIPE]),
     loadAddonById: loadAddonByIdOf([PIPE]),
     loadContent: loadContentOf(CONTENT),
     dnsResolver: publicDns,
     fetcher: fetcherFor({
-      'https://pipe.example/stream/movie/tt8633518.json': json({
-        streams: [
-          { name: 'Torrent', infoHash: 'deadbeef', url: 'https://pipe.example/a.mkv' },
-          { name: 'Headered', url: 'https://pipe.example/b.mkv', behaviorHints: { proxyHeaders: { Referer: 'https://pipe.example/' } } },
-        ],
-      }),
+      'https://pipe.example/stream/movie/tt8633518.json': json({ streams: [] }),
     }, []),
   });
-  ok(result.status === 'empty', `L: addon with 0 eligible streams → status='empty' (got ${result.status}) — NOT 'unavailable'`);
+  ok(result.status === 'empty', `L (Phase 17): addon genuinely returns zero streams → status='empty' (got ${result.status}) — NOT 'unavailable'`);
   ok(result.streams.length === 0, 'L: 0 streams shown');
   ok(result.errorCode === undefined, 'L: NO error code (empty ≠ failure)');
-  // diagnostics.raw = the count of streams that ENTERED buildDownloadCandidates
-  // (post-normalization eligible streams). Both entries were rejected by the
-  // normalizer (P2P + header-dependent), so raw = 0, unsupported = 2.
-  ok(result.diagnostics?.raw === 0, `L: diagnostics.raw = 0 (both entries rejected by the normalizer before buildDownloadCandidates) (got ${result.diagnostics?.raw})`);
-  ok(result.diagnostics?.unsupported === 2, `L: diagnostics.unsupported = 2 (torrent + header-dependent) (got ${result.diagnostics?.unsupported})`);
+  ok(result.diagnostics?.raw === 0, `L: diagnostics.raw = 0 (the addon returned zero streams) (got ${result.diagnostics?.raw})`);
+  ok(result.diagnostics?.unsupported === 0, `L: diagnostics.unsupported = 0 (got ${result.diagnostics?.unsupported})`);
   ok(result.diagnostics?.selected === 0, 'L: diagnostics.selected = 0');
 }
 
@@ -496,16 +492,25 @@ async function sectionQ(): Promise<void> {
       }),
     }, []),
   });
-  // diagnostics.raw = streams that ENTERED buildDownloadCandidates (post-
-  // normalization). The addon returned 5 entries; 2 were rejected by the
-  // normalizer (torrent + magnet) → raw = 3.
-  ok(result.diagnostics?.raw === 3, `Q: diagnostics.raw = 3 (5 returned - 2 normalizer-rejected) (got ${result.diagnostics?.raw})`);
-  ok(result.diagnostics?.unsupported === 2, `Q: diagnostics.unsupported = 2 (torrent + magnet) (got ${result.diagnostics?.unsupported})`);
-  ok(result.diagnostics?.eligible === 3, `Q: diagnostics.eligible = 3 (= raw) (got ${result.diagnostics?.eligible})`);
-  // 1 streaming-manifest drop (the .m3u8) + 0 playback-boundary drops.
-  ok((result.diagnostics?.rejected?.['streaming-manifest'] ?? 0) === 1, 'Q: 1 streaming-manifest drop (the .m3u8)');
-  ok(result.diagnostics?.selected === 2, `Q: diagnostics.selected = 2 (eligible - manifest = 3 - 1) (got ${result.diagnostics?.selected})`);
-  ok(result.streams.length === 2, 'Q: 2 streams shown to the user');
+  // Phase 17: ALL 5 entries are PRESERVED (no filtering). The downloader
+  // normalizer preserves P2P/torrent/magnet/HLS/DASH/external entries.
+  // raw = 5 (every entry), unsupported = 0 (no malformed entries),
+  // selected = 5 (no truncation, no dedup).
+  ok(result.diagnostics?.raw === 5, `Q (Phase 17): diagnostics.raw = 5 (ALL entries preserved — no filtering) (got ${result.diagnostics?.raw})`);
+  ok(result.diagnostics?.unsupported === 0, `Q (Phase 17): diagnostics.unsupported = 0 (no malformed entries) (got ${result.diagnostics?.unsupported})`);
+  ok(result.diagnostics?.eligible === 5, `Q (Phase 17): diagnostics.eligible = 5 (= raw) (got ${result.diagnostics?.eligible})`);
+  ok(result.diagnostics?.selected === 5, `Q (Phase 17): diagnostics.selected = 5 (no truncation, no dedup) (got ${result.diagnostics?.selected})`);
+  ok(result.streams.length === 5, 'Q (Phase 17): ALL 5 streams shown to the user (2 http + 1 p2p + 1 magnet + 1 hls)');
+  // Per-kind breakdown: the test payload has 5 entries:
+  //   - https://pipe.example/a.mkv → https
+  //   - https://pipe.example/b.mkv → https
+  //   - infoHash + https://pipe.example/c.mkv → https (the URL is usable; the
+  //     infoHash is preserved as metadata but the entry is classified by its URL)
+  //   - magnet:?xt=urn:btih:deadbeef → magnet
+  //   - https://pipe.example/playlist.m3u8 → hls
+  // So: https:3 + hls:1 + magnet:1 = 5.
+  const kc = result.diagnostics?.kindCounts;
+  ok(kc?.https === 3 && kc?.hls === 1 && kc?.magnet === 1, `Q (Phase 17): kindCounts = https:3 hls:1 magnet:1 (got ${JSON.stringify(kc)})`);
 }
 
 // ---------------------------------------------------------------------------

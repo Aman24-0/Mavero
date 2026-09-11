@@ -41,10 +41,10 @@
   } = $props();
 
   let open = $state(false);
-  let triggerEl: HTMLButtonElement | undefined;
-  let listEl: HTMLUListElement | undefined;
+  let triggerEl = $state<HTMLButtonElement | undefined>();
+  let listEl = $state<HTMLUListElement | undefined>();
   let activeIndex = $state(-1);
-  let containerEl: HTMLDivElement | undefined;
+  let containerEl = $state<HTMLDivElement | undefined>();
 
   let selectedLabel = $derived(options.find((o) => o.value === value)?.label ?? label);
 

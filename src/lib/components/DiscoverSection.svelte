@@ -66,7 +66,9 @@
   let errorMessage = $state('');
   let page = $state(1);
   let hasNextPage = $state(false);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; initialLanguage is a prop snapshot
   let language = $state<DiscoverLanguage>(initialLanguage);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; initialProvider is a prop snapshot
   let provider = $state<string>(initialProvider);
   let requestSequence = 0;
   let requestController: AbortController | undefined;

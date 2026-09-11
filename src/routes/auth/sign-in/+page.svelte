@@ -13,7 +13,9 @@
   const nextPath = page.url.searchParams.get('next') ?? '/account';
 
   let showPassword = $state(false);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; form is a server snapshot
   let emailValue = $state(form?.email ?? '');
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; form is a server snapshot
   let resetEmailValue = $state(form?.email ?? '');
   let resetOpen = $state(false);
 </script>
@@ -162,7 +164,7 @@
     border-color: rgba(255, 255, 255, .32);
     background: rgba(255, 255, 255, .06);
   }
-  .input-icon { color: #969696; flex: 0 0 auto; }
+  :global(.input-icon) { color: #969696; flex: 0 0 auto; }
   .input-wrap input {
     width: 100%; min-width: 0;
     border: 0; outline: 0;

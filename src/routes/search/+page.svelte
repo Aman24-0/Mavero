@@ -13,7 +13,7 @@
   // navigation helpers). By deferring the import, the Search route chunk
   // is smaller and the empty Search page becomes interactive faster.
   // The import fires on first render where visibleResults.length > 0.
-  let MediaCardComponent: any = null;
+  let MediaCardComponent = $state<any>(null);
   async function loadMediaCard() {
     if (MediaCardComponent) return;
     const mod = await import('$components/MediaCard.svelte');
@@ -30,12 +30,16 @@
   // mis-route.
   type TypeFilter = 'All' | 'Movie' | 'TV Show';
 
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
   let query = $state(data.query);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
   let type = $state<TypeFilter>(
     data.type === 'movie' ? 'Movie' : data.type === 'series' ? 'TV Show' : 'All'
   );
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
   let results = $state<MediaItem[]>(data.items);
   let loading = $state(false);
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
   let errorMessage = $state(data.errorMessage ?? '');
   let timer: ReturnType<typeof setTimeout> | undefined;
   let requestController: AbortController | undefined;

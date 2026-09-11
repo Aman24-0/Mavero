@@ -193,10 +193,17 @@ async function sectionBC(): Promise<void> {
   ok(result.consideredAddons === 2 && result.groups.length === 2, 'B: every enabled addon gets a group');
   const pipe = result.groups.find((group) => group.addonName === 'Pipe');
   const hub = result.groups.find((group) => group.addonName === 'HdHub');
-  ok(pipe?.status === 'loaded' && pipe.streams.length === 2, 'C: Pipe is LOADED with BOTH cleartext http PixelDrain links (the ✓0 bug cannot recur on the download surface)');
-  ok(pipe?.streams.every((stream) => stream.url.startsWith('http://')), 'C: the addon URLs are preserved verbatim (no silent https rewrite, no proxy)');
-  ok(hub?.status === 'loaded' && hub.streams.length === 1 && hub.streams[0]?.url === 'https://hub-cdn.example/file/movie.mp4', 'B: the downloader offers the MP4 direct file (the exact stream the player isolated)');
-  ok(hub?.streams.every((stream) => !stream.url.includes('.m3u8')), 'B/P: the HLS manifest from the same addon is NOT a download link');
+  // Phase 17 (task §1/§2): P2P/torrent streams are PRESERVED as magnet entries.
+  // Pipe now returns 3 streams: 2 HTTP PixelDrain + 1 P2P (magnet from infoHash).
+  ok(pipe?.status === 'loaded' && pipe.streams.length === 3, 'C (Phase 17): Pipe is LOADED with ALL 3 streams (2 HTTP PixelDrain + 1 P2P/magnet — no filtering)');
+  const pipeHttp = pipe?.streams.filter((s) => s.url.startsWith('http://')) ?? [];
+  ok(pipeHttp.length === 2 && pipeHttp.every((s) => s.url.startsWith('http://')), 'C: the 2 cleartext http PixelDrain URLs are preserved verbatim (no silent https rewrite, no proxy)');
+  const pipeP2p = pipe?.streams.filter((s) => s.kind === 'p2p' || s.kind === 'magnet') ?? [];
+  ok(pipeP2p.length === 1 && pipeP2p[0]?.url.startsWith('magnet:'), 'C (Phase 17): the torrent entry is PRESERVED as a magnet URI (infoHash → magnet construction)');
+  // HdHub: 1 HLS + 1 MP4. Phase 17: BOTH preserved (HLS is no longer filtered).
+  ok(hub?.status === 'loaded' && hub.streams.length === 2, 'B (Phase 17): HdHub offers BOTH streams (MP4 + HLS — no format filtering)');
+  ok(hub?.streams.some((s) => s.url === 'https://hub-cdn.example/file/movie.mp4'), 'B: the MP4 direct file is preserved');
+  ok(hub?.streams.some((s) => s.url.includes('.m3u8')), 'B (Phase 17): the HLS manifest is ALSO preserved (HLS is no longer filtered — task §1)');
   ok(hub?.streams[0]?.container === 'MP4' || hub?.streams[0]?.filename === 'Movie.1080p.WEB-DL.H264.mp4', 'B: addon-supplied metadata travels with the link');
   ok(calls.every((url) => url.includes('/stream/movie/tt8633518.json')), 'R: the service fetched ONLY addon stream-list endpoints');
 }
@@ -207,7 +214,7 @@ async function sectionBC(): Promise<void> {
 
 function sectionDE(): void {
   const normalized = normalizeStreams(aioTypedHttpPayload());
-  ok(normalized.length === 1, 'D: the explicit type:"http" entry survives normalization');
+  ok(normalized.length === 1, 'D: the explicit type:"http" entry survives normalization (the player normalizer)');
   ok(normalized[0]?.streamType === 'http', 'D: the addon-specific stream type is preserved on the normalized model');
   ok(normalized[0]?.url === 'https://aio-cdn.example/dl/one?h=abc', 'D: the AIOStreams http URL is preserved verbatim (infoHash field ignored — type is authoritative)');
   const { candidates } = buildDownloadCandidates(normalized);
@@ -217,14 +224,16 @@ function sectionDE(): void {
   // dropped legitimate streams that Stremio shows).
   ok(candidates.length === 1, 'D: the AIOStreams http stream becomes a download candidate (Phase 16: no over-filtering)');
 
+  // Phase 17: the player normalizer STILL excludes P2P/torrent/magnet (the
+  // player path is unchanged). The DOWNLOADER normalizer preserves them.
   const p2p = normalizeStreams({ streams: [{ type: 'p2p', name: 'x', url: 'https://x.example/a.mkv' }] });
-  ok(p2p.length === 0, 'E: an explicit type:"p2p" stream is excluded');
+  ok(p2p.length === 0, 'E (player normalizer): an explicit type:"p2p" stream is excluded from the PLAYER path (unchanged)');
   const untypedInfoHash = normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', infoHash: 'deadbeef' }] });
-  ok(untypedInfoHash.length === 0, 'E: an UNTYPED torrent-shaped entry (infoHash) is still excluded');
+  ok(untypedInfoHash.length === 0, 'E (player normalizer): an UNTYPED torrent-shaped entry (infoHash) is excluded from the PLAYER path (unchanged)');
   const magnet = normalizeStreams({ streams: [{ name: 'x', url: 'magnet:?xt=urn:btih:deadbeef' }] });
-  ok(magnet.length === 0, 'E: magnet URLs are excluded (non-http scheme)');
+  ok(magnet.length === 0, 'E (player normalizer): magnet URLs are excluded from the PLAYER path (non-http scheme)');
   const torrentUrl = normalizeStreams({ streams: [{ type: 'http', name: 'x', url: 'https://tracker.example/file.torrent' }] });
-  ok(torrentUrl.length === 0, 'E: a .torrent URL is excluded even when the addon claims type http (URL tokens always win)');
+  ok(torrentUrl.length === 0, 'E (player normalizer): a .torrent URL is excluded even when the addon claims type http (URL tokens always win)');
   const availability = normalizeStreams({ streams: [{ name: 'x', tag: 'CAM', availability: 1, url: 'https://x.example/a.mkv' }] });
   ok(availability[0]?.availability === 1 && availability[0]?.tag === 'CAM', 'D: standard Stremio availability + tag are preserved');
 }
@@ -234,10 +243,12 @@ function sectionDE(): void {
 // ---------------------------------------------------------------------------
 
 function sectionFG(): void {
+  // Phase 17: the PLAYER normalizer still excludes externalUrl + proxyHeaders.
+  // The DOWNLOADER normalizer preserves them (Phase 17 task §1/§2).
   const external = normalizeStreams({ streams: [{ name: 'x', externalUrl: 'https://opens-elsewhere.example/page' }] });
-  ok(external.length === 0, 'F: externalUrl-only entries are excluded');
+  ok(external.length === 0, 'F (player normalizer): externalUrl-only entries are excluded from the PLAYER path (unchanged)');
   const headered = normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', behaviorHints: { proxyHeaders: { Referer: 'https://x.example/' } } }] });
-  ok(headered.length === 0, 'G: proxyHeaders (header-dependent) streams are excluded — the external-player contract cannot attach arbitrary headers');
+  ok(headered.length === 0, 'G (player normalizer): proxyHeaders (header-dependent) streams are excluded from the PLAYER path (unchanged)');
   const clean = normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv' }] });
   ok(clean.length === 1, 'F/G: clean entries pass (no over-filtering)');
 }
@@ -335,20 +346,19 @@ async function sectionL(): Promise<void> {
     fetcher: fetcherFor({
       // HdHub: request-level failure (HTTP 500).
       'https://hdhub.example/stream/movie/tt8633518.json': new Response('boom', { status: 500 }),
-      // Pipe: responds fine but EVERY entry is filtered (untyped torrent + headers).
-      'https://pipe.example/stream/movie/tt8633518.json': new Response(JSON.stringify({
-        streams: [
-          { name: 'Torrent', infoHash: 'deadbeef', url: 'https://pipe.example/a.mkv' },
-          { name: 'Headered', url: 'https://pipe.example/b.mkv', behaviorHints: { proxyHeaders: { Referer: 'https://pipe.example/' } } },
-        ],
-      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      // Pipe: responds fine with a GENUINELY EMPTY streams array (Phase 17:
+      // "empty" now means the addon returned zero streams — not that MAVERO
+      // filtered them out. P2P/torrent/magnet/header-dependent entries are
+      // all PRESERVED in Phase 17, so to test the empty state we use an
+      // actual empty array).
+      'https://pipe.example/stream/movie/tt8633518.json': new Response(JSON.stringify({ streams: [] }), { status: 200, headers: { 'content-type': 'application/json' } }),
     }, []),
   });
   const hub = result.groups.find((group) => group.addonName === 'HdHub');
   const pipe = result.groups.find((group) => group.addonName === 'Pipe');
   ok(hub?.status === 'failed' && typeof hub.errorCode === 'string' && hub.streams.length === 0, 'L: REQUEST FAILED is its own state (typed closed error code, no stream data)');
   ok(hub?.errorCode === 'HTTP_ERROR', 'L: the failure code uses the closed vocabulary (HTTP_ERROR)');
-  ok(pipe?.status === 'empty' && pipe.streams.length === 0 && pipe.errorCode === undefined, 'L: LOADED ZERO is distinct from failure (addon responded; nothing survived filtering)');
+  ok(pipe?.status === 'empty' && pipe.streams.length === 0 && pipe.errorCode === undefined, 'L (Phase 17): LOADED ZERO = the addon genuinely returned zero streams (NOT that MAVERO filtered them)');
   ok(hub?.status === 'failed' && pipe?.status === 'empty', 'L: one addon failure never breaks the other addon group');
   ok(!JSON.stringify(result.groups).includes('boom'), 'T: raw upstream error text never reaches the response');
 }
@@ -370,7 +380,7 @@ function sectionMNO(): void {
   ok(component.includes('navigator.share'), 'M (Phase 16): Share uses navigator.share() with the original URL');
   ok(component.includes('Share2 size='), 'M (Phase 16): the Share button is present (lucide Share2 icon)');
   ok(!component.includes('/api/playback/compat') && !component.includes('media-worker'), 'M/N: the downloader UI references NO compat/worker path');
-  ok(component.includes('available links'), 'M: the honest "available links" terminology is used (never "guaranteed working")');
+  ok(component.includes('MAVERO Downloader'), 'M (Phase 17): the header shows "MAVERO Downloader" (no "Available links")');
 
   // External player launch (pure helper — preserved for back-compat, used
   // by the standalone deep-link pages and the /api/downloader/mavero flow).
