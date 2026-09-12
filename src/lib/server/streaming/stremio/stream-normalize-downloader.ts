@@ -3,47 +3,39 @@ import { protocolForUrl } from '$lib/server/resolver/safe-url';
 import type { PlaybackProtocol } from '$lib/server/resolver/types';
 
 /**
- * MAVERO Downloader — COMPLETE DISCOVERY normalizer (Phase 17).
+ * MAVERO Downloader — COMPLETE DISCOVERY normalizer (Phase 17 → Phase 18).
  *
  * The player's `stream-normalize.ts` enforces a HARD HTTP/HLS-only policy
  * (P2P/torrent/magnet/externalUrl/header-dependent/non-http-scheme entries
- * are REJECTED). That boundary is CORRECT for the native player — the
- * browser `<video>` element cannot play torrent URIs and Mavero builds no
- * proxy. This module is the DOWNLOADER-SPECIFIC counterpart: it preserves
- * EVERY entry the addon returned, classifying each by `streamKind` so the
- * UI can render a type filter (HTTP / HLS / DASH / P2P / Magnet / External)
- * and the user can decide.
+ * are REJECTED). That boundary is CORRECT for the native player. This module
+ * is the DOWNLOADER-SPECIFIC counterpart: it preserves EVERY non-external
+ * entry the addon returned, classifying each by `streamKind` so the UI can
+ * render a type filter (HTTP / HLS / DASH / P2P / Magnet) and the user can
+ * decide.
  *
- * PHASE 17 CONTRACT (task §1/§2/§3):
- *   * NO stream is silently discarded for format reasons. The downloader is
- *     a DIAGNOSTIC / DISCOVERY surface — its job is to faithfully expose
- *     what the addon returned so the user can compare MAVERO against
- *     Stremio. If Stremio shows 15 streams, MAVERO shows 15 streams.
+ * PHASE 18 CONTRACT (task §6/§8/§9/§10/§11/§12):
+ *   * External streams (kind='external') are CLASSIFIED but the UI HIDES
+ *     them. They are NOT shown as stream cards and "External" is NOT a Type
+ *     filter option. The addon chip count reflects NON-EXTERNAL streams only.
+ *   * PRIORITY FIX: when an entry has BOTH a usable `url` (http/https/magnet)
+ *     AND an `externalUrl`, the `url` wins. The old Phase 17 priority
+ *     (externalUrl before url) caused entries with both fields to be
+ *     misclassified as external and hidden — a real root cause of addons
+ *     showing 0 streams.
+ *   * `externalUris` (plural array) is also recognized — when an addon
+ *     provides `externalUris` instead of `externalUrl`, the first usable
+ *     entry is used. These are still classified as external (hidden).
+ *   * HLS / DASH / header-dependent (proxyHeaders) entries are PRESERVED.
  *   * P2P / torrent / magnet / infoHash / sources / peers entries are
- *     PRESERVED with their original torrent/magnet URI when one exists.
- *     If Stremio provides enough info to construct a magnet URI, a
- *     deterministic conversion is implemented below (infoHash + trackers
- *     → magnet:?xt=urn:btih:…&dn=…&tr=…).
- *   * externalUrl entries are PRESERVED as their original externalUrl.
- *   * HLS / DASH manifests are PRESERVED (the user may share them to an
- *     external player that supports them).
- *   * header-dependent streams (behaviorHints.proxyHeaders) are PRESERVED
- *     with their original URL — the receiving external app may attach the
- *     required headers itself.
+ *     PRESERVED with their original torrent/magnet URI.
  *   * The ONLY entries that are NOT preserved are structurally malformed
  *     ones (not-an-object, or an entry with no usable identifier at all —
- *     no url, no externalUrl, no infoHash, no magnet). Those are counted
- *     in `malformed` for diagnostics but never shown.
+ *     no url, no externalUrl, no infoHash, no magnet).
  *
- * SECURITY BOUNDARY (UNCHANGED — task §17):
+ * SECURITY BOUNDARY (UNCHANGED):
  *   * The existing player normalizer (`stream-normalize.ts`) is UNTOUCHED.
- *     The native player, HLS engine, embed providers, VidSrc/VidY, the
- *     resolver and PlaybackManager keep their hard HTTP/HLS-only policy.
  *   * The Mavero SERVER never fetches media URLs — only addon stream LIST
- *     endpoints. The downloader shares that boundary: it fetches the addon
- *     response, preserves the URLs/URIs, and hands them to the user's
- *     external app via Download/Share.
- *   * No proxy. No FFmpeg. No server-side media streaming.
+ *     endpoints. No proxy. No FFmpeg. No server-side media streaming.
  *
  * Pure synchronous code — no I/O.
  */
@@ -217,14 +209,26 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
   // The display name for magnet `dn=` — prefer filename, then title, then name.
   const displayName = filename ?? title ?? name;
 
-  // Determine the URL/URI for this entry. Priority:
+  // Determine the URL/URI for this entry. PRIORITY (Phase 18 fix):
   //   1. explicit magnetUri → magnet
   //   2. url field that is a magnet: URI → magnet
-  //   3. externalUrl → external
-  //   4. url field that is http(s) → http/https (with protocol classification)
-  //   5. infoHash (+ optional sources) → construct a magnet URI
+  //   3. url field that is http(s) → http/https (with protocol classification)
+  //   4. infoHash (+ optional sources) → construct a magnet URI
+  //   5. externalUrl / externalUris → external (HIDDEN by the UI — task §6)
   //   6. type:'p2p'/'torrent' with no infoHash/url → malformed (no usable URI)
+  //
+  // Phase 18 fix: the OLD Phase 17 priority checked externalUrl BEFORE the
+  // http(s) url. When an addon provided BOTH fields (common for Stremio
+  // addons that offer a fallback page), the entry was misclassified as
+  // external and hidden — a real root cause of addons showing 0 streams.
+  // Now the usable `url` (http/https/magnet) wins; externalUrl is only used
+  // when there is NO usable url/infoHash.
   const externalUrl = textField(record.externalUrl);
+  const externalUrisRaw = record.externalUris;
+  const externalUrisFirst = Array.isArray(externalUrisRaw)
+    ? externalUrisRaw.find((u): u is string => typeof u === 'string' && u.trim().length > 0)
+    : undefined;
+  const externalUri = externalUrl ?? (externalUrisFirst ? externalUrisFirst.trim() : undefined);
   const rawUrl = typeof record.url === 'string' ? record.url.trim() : '';
 
   let url: string | undefined;
@@ -240,10 +244,6 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
     url = rawUrl;
     kind = 'magnet';
     transport = 'magnet';
-  } else if (externalUrl) {
-    url = externalUrl;
-    kind = 'external';
-    transport = 'external';
   } else if (rawUrl) {
     // Parse the URL to classify http vs https vs magnet-in-url.
     let parsed: URL;
@@ -251,13 +251,13 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
       parsed = new URL(rawUrl.length > 2048 ? rawUrl.slice(0, 2048) : rawUrl);
     } catch {
       // Malformed URL — but if there's also an infoHash, fall through to the
-      // magnet-construction branch. Otherwise the entry is malformed.
+      // magnet-construction branch. Otherwise fall through to external.
       parsed = undefined as unknown as URL;
     }
     if (parsed && (parsed.protocol === 'http:' || parsed.protocol === 'https:')) {
       url = rawUrl;
       transport = parsed.protocol === 'https:' ? 'https' : 'http';
-      // Protocol classification (hls/dash/mp4/unknown) for the player path.
+      // Protocol classification (hls/dash/mp4/unknown).
       const addonText = { ...(name ? { name } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}), ...(filename ? { filename } : {}) };
       protocol = protocolForUrl(rawUrl, addonText);
       if (protocol === 'hls') kind = 'hls';
@@ -268,6 +268,11 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
       url = buildMagnetUri(infoHash, sources, displayName);
       kind = 'p2p';
       transport = 'magnet';
+    } else if (externalUri) {
+      // No usable url, but there IS an externalUrl/externalUris → external (hidden).
+      url = externalUri;
+      kind = 'external';
+      transport = 'external';
     } else {
       // No usable URI at all.
       return null;
@@ -277,6 +282,11 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
     url = buildMagnetUri(infoHash, sources, displayName);
     kind = 'p2p';
     transport = 'magnet';
+  } else if (externalUri) {
+    // No url, no infoHash, but there IS an externalUrl/externalUris → external (hidden).
+    url = externalUri;
+    kind = 'external';
+    transport = 'external';
   } else if (streamType.declared && !streamType.http) {
     // type:'p2p'/'torrent' with NO infoHash and NO url → no usable URI.
     return null;

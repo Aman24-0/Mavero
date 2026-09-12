@@ -183,11 +183,11 @@ function sectionStreamTypes(): void {
 
 function sectionO(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('href={stream.url}'), 'O: Download anchor href = stream.url (the ORIGINAL URI — unchanged)');
-  ok(component.includes('downloadAttributesFor'), 'O: Download uses downloadAttributesFor (unchanged)');
-  ok(component.includes('target="_blank"'), 'O: Download target = _blank (unchanged)');
-  ok(component.includes('rel="noopener noreferrer"'), 'O: Download rel = noopener noreferrer (unchanged)');
-  ok(component.includes('handleDownload'), 'O: handleDownload is wired (unchanged)');
+  // Phase 18 (task §7): Download button is REMOVED. Only Share remains.
+  ok(!component.includes('downloadAttributesFor'), 'O (Phase 18): downloadAttributesFor is REMOVED (no Download button)');
+  ok(!component.includes('href={stream.url}'), 'O (Phase 18): href={stream.url} is REMOVED (no Download anchor)');
+  ok(component.includes('handleShare'), 'O (Phase 18): handleShare is present (Share is the only action)');
+  ok(component.includes('navigator.share'), 'O (Phase 18): navigator.share is present');
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ function sectionP(): void {
   ok(component.includes('url = stream.url'), 'P: the Share handler binds url = stream.url (the EXACT ORIGINAL URI)');
   ok(component.includes('await navigator.share({'), 'P: navigator.share is AWAITED');
   ok(component.includes('title: shareTitle('), 'P: navigator.share receives a title');
-  ok(component.includes('url,'), 'P: navigator.share receives the url field');
+  ok(component.includes('url })') || component.includes('url,'), 'P: navigator.share receives the url field');
   ok(component.includes('navigator.clipboard.writeText'), 'P: clipboard fallback present');
   ok(component.includes('legacyCopy'), 'P: legacy clipboard fallback present');
 }
@@ -222,11 +222,12 @@ function sectionQRS(): void {
 
   ok(!component.includes('aria-label="Watch') && !component.includes('>Watch<'), 'S (no Watch): no Watch button/label');
 
-  // The card actions container has exactly 2 actions.
-  const actionsMatch = component.match(/<div class="mad-row-actions">([\s\S]*?)<\/div>/);
-  if (actionsMatch) {
-    const allActions = (actionsMatch[1].match(/<(?:a|button)[^>]*class="mad-action/g) ?? []).length;
-    ok(allActions === 2, `S: exactly TWO action elements (Download + Share) (got ${allActions})`);
+  // Phase 18 (task §7): ONLY Share — Download removed. The row-actions div
+  // may not exist; check the mad-row for the Share button only.
+  const rowMatch = component.match(/<article class="mad-row"[^>]*>([\s\S]*?)<\/article>/);
+  if (rowMatch) {
+    const allActions = (rowMatch[1].match(/<(?:a|button)[^>]*class="mad-action/g) ?? []).length;
+    ok(allActions === 1, `S (Phase 18): exactly ONE action element (Share only) (got ${allActions})`);
   }
 }
 
@@ -238,16 +239,18 @@ function sectionT(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   // Type filter
   ok(component.includes('filterType'), 'T: filterType state exists');
-  ok(component.includes('All Types'), 'T: Type filter has "All Types" option');
-  ok(component.includes('HTTP') && component.includes('HLS') && component.includes('DASH'), 'T: Type filter includes HTTP/HLS/DASH');
-  ok(component.includes('P2P') && component.includes('Magnet') && component.includes('External'), 'T: Type filter includes P2P/Magnet/External');
+  ok(component.includes('value="all"'), 'T: Type filter has an "all" option');
+  ok(component.includes('value="http"') && component.includes('value="hls"') && component.includes('value="dash"'), 'T: Type filter includes HTTP/HLS/DASH');
+  ok(component.includes('value="p2p"') && component.includes('value="magnet"'), 'T: Type filter includes P2P/Magnet');
+  // Phase 18 (task §5): External is NOT a Type filter option.
+  ok(!component.includes('value="external"'), 'T (Phase 18): External is NOT a Type filter option');
 }
 
 function sectionU(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   ok(component.includes('filterSize'), 'U: filterSize state exists');
-  ok(component.includes('Under 1 GB') && component.includes('Under 2 GB') && component.includes('Under 5 GB'), 'U: Size filter includes Under 1/2/5 GB');
-  ok(component.includes('Over 20 GB'), 'U: Size filter includes Over 20 GB');
+  ok(component.includes('under1') && component.includes('under2') && component.includes('under5'), 'U: Size filter includes under1/under2/under5 values');
+  ok(component.includes('over20'), 'U: Size filter includes over20 value');
 }
 
 function sectionV(): void {
@@ -261,7 +264,7 @@ function sectionW(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   ok(component.includes('filterLanguage'), 'W: filterLanguage state exists');
   ok(component.includes('detectedLanguages'), 'W: language list is DYNAMICALLY generated from loaded streams');
-  ok(component.includes('All Languages'), 'W: Language filter has "All Languages" option');
+  ok(component.includes('value="all"'), 'W: Language filter has an "all" option');
 }
 
 // ---------------------------------------------------------------------------
@@ -367,12 +370,18 @@ async function sectionAC(): Promise<void> {
       }),
     }, []),
   });
-  // Phase 17: ALL 6 entries preserved (no filtering).
-  ok(result.diagnostics?.raw === 6, `AC: diagnostics.raw = 6 (ALL entries preserved) (got ${result.diagnostics?.raw})`);
+  // Phase 18: ALL 6 entries classified by the normalizer (raw=6), but the
+  // external entry (externalUrl) is HIDDEN from the UI (task §6). So
+  // selected=5 (6 - 1 external).
+  ok(result.diagnostics?.raw === 6, `AC: diagnostics.raw = 6 (ALL entries classified by the normalizer) (got ${result.diagnostics?.raw})`);
   ok(result.diagnostics?.malformed === 0, `AC: diagnostics.malformed = 0 (got ${result.diagnostics?.malformed})`);
-  ok(result.diagnostics?.selected === 6, `AC: diagnostics.selected = 6 (no truncation) (got ${result.diagnostics?.selected})`);
+  ok(result.diagnostics?.externalCount === 1, `AC (Phase 18): diagnostics.externalCount = 1 (the externalUrl entry is hidden) (got ${result.diagnostics?.externalCount})`);
+  ok(result.diagnostics?.selected === 5, `AC (Phase 18): diagnostics.selected = 5 (6 raw - 1 external hidden) (got ${result.diagnostics?.selected})`);
+  // kindCounts reflects the NON-EXTERNAL streams (external is filtered before
+  // buildDownloadCandidatesAll). So: https:2 + hls:1 + p2p:1 + magnet:1 = 5.
+  // The external entry is counted in `externalCount` (diagnostics), not kindCounts.
   const kc = result.diagnostics?.kindCounts;
-  ok(kc?.https === 2 && kc?.p2p === 1 && kc?.magnet === 1 && kc?.hls === 1 && kc?.external === 1, `AC: kindCounts = https:2 p2p:1 magnet:1 hls:1 external:1 (got ${JSON.stringify(kc)})`);
+  ok(kc?.https === 2 && kc?.p2p === 1 && kc?.magnet === 1 && kc?.hls === 1 && kc?.external === 0, `AC (Phase 18): kindCounts = https:2 p2p:1 magnet:1 hls:1 external:0 (external filtered before build) (got ${JSON.stringify(kc)})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -381,21 +390,26 @@ async function sectionAC(): Promise<void> {
 
 function sectionAD(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // Header: "MAVERO Downloader" + content title. NO "Available links".
-  ok(component.includes('MAVERO Downloader'), 'AD: header shows "MAVERO Downloader"');
-  ok(!component.includes('>Available links<') && !component.includes('Available links</span>'), 'AD: "Available links" is REMOVED from the rendered header');
-  // Instructions.
-  ok(component.includes('download button not work then use share button'), 'AD: instruction 1 present');
-  ok(component.includes('share stream to player to stream directly on phone'), 'AD: instruction 2 present');
-  // Suggested Apps.
-  ok(component.includes('Suggested Downloader'), 'AD: "Suggested Downloader" label present');
-  ok(component.includes('Suggested Player'), 'AD: "Suggested Player" label present');
+  // Phase 18 (task §1): NO redundant heading inside the downloader content.
+  ok(!component.includes('mad-header'), 'AD (Phase 18): the mad-header section is REMOVED');
+  ok(!component.includes('>MAVERO Downloader<'), 'AD (Phase 18): the MAVERO Downloader heading is REMOVED from inner content');
+  ok(!component.includes('>Available links<') && !component.includes('Available links</span>'), 'AD: "Available links" is REMOVED');
+  // Phase 18 (task §2): new compact instructions.
+  ok(component.includes('Share the link to download manager to download'), 'AD (Phase 18): instruction 1 present (new wording)');
+  ok(component.includes('Share the link to stream supported player to Play'), 'AD (Phase 18): instruction 2 present (new wording)');
+  // Phase 18 (task §3): suggested apps in ONE compact row.
+  ok(component.includes('mad-apps'), 'AD (Phase 18): the mad-apps container exists (one row)');
   ok(component.includes('idm.internet.download.manager'), 'AD: 1DM Play Store link present');
   ok(component.includes('is.xyz.mpv'), 'AD: MPV Play Store link present');
-  // NO footer disclaimer.
+  // Phase 18 (task §4): filters in ONE horizontally scrollable row, ABOVE addon chips.
+  ok(component.includes('mad-filters'), 'AD (Phase 18): the mad-filters container exists (one row)');
+  ok(component.includes('overflow-x: auto') || component.includes('overflow-x:auto'), 'AD (Phase 18): the filter row is horizontally scrollable');
+  // Phase 18 (task §5): Type filter does NOT include External.
+  ok(!component.includes('value="external"'), 'AD (Phase 18): External is NOT a Type filter option');
+  // Phase 18 (task §17): NO footer disclaimer.
   ok(!component.includes("Download and Share use the provider's original address"), 'AD: the old footer disclaimer is REMOVED');
-  // Sheet height increased (min-height).
-  ok(component.includes('min-height: 260px') || component.includes('min-height:260px'), 'AD: sheet min-height increased (260px)');
+  // Sheet height preserved.
+  ok(component.includes('min-height: 260px') || component.includes('min-height:260px'), 'AD: sheet min-height preserved (260px)');
 }
 
 // ---------------------------------------------------------------------------

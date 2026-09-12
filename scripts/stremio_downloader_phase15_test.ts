@@ -739,22 +739,22 @@ function sectionN(): void {
 
 function sectionQ(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // Task 1: Play/Watch + Copy are REMOVED.
-  ok(!component.includes('copyStreamUrl'), 'Q (Phase 16): Copy action is REMOVED');
-  ok(!component.includes('Play size='), 'Q (Phase 16): Play/Watch action is REMOVED');
-  ok(!component.includes('mad-action-play'), 'Q (Phase 16): the mad-action-play CSS class is gone');
-  // Task 3: Share uses navigator.share with the EXACT ORIGINAL URL.
-  ok(component.includes('navigator.share'), 'Q (Phase 16): Share uses navigator.share()');
-  ok(component.includes('Share2 size='), 'Q (Phase 16): the Share button is present (lucide Share2 icon)');
-  ok(component.includes('handleShare'), 'Q (Phase 16): the handleShare function is wired');
-  // Task 2: Download is UNCHANGED — still uses href={stream.url} (the original URL).
-  ok(component.includes('href={stream.url}'), 'Q (Phase 16): Download still navigates the ORIGINAL addon URL (unchanged)');
-  ok(component.includes('downloadAttributesFor'), 'Q (Phase 16): Download still uses the existing downloadAttributesFor helper (unchanged)');
-  // Task 16: the URL shared is the EXACT ORIGINAL — no Mavero URL, no API URL, no proxy URL.
-  ok(!component.includes('/api/playback/compat') && !component.includes('media-worker'), 'Q (Phase 16): NO compat/worker references in the component');
-  ok(!component.includes('/api/proxy') && !component.includes('proxyMediaUrl') && !component.includes('proxyStreamUrl'), 'Q (Phase 16): NO proxy-URL machinery in the component');
+  // Phase 18: Play/Watch + Copy + Download are ALL REMOVED. Only Share remains.
+  ok(!component.includes('copyStreamUrl'), 'Q (Phase 18): Copy action is REMOVED');
+  ok(!component.includes('Play size='), 'Q (Phase 18): Play/Watch action is REMOVED');
+  ok(!component.includes('mad-action-play'), 'Q (Phase 18): the mad-action-play CSS class is gone');
+  // Phase 18 (task §7): Download button REMOVED.
+  ok(!component.includes('downloadAttributesFor'), 'Q (Phase 18): Download action is REMOVED (no downloadAttributesFor)');
+  ok(!component.includes('href={stream.url}'), 'Q (Phase 18): Download anchor is REMOVED');
+  // Share uses navigator.share with the EXACT ORIGINAL URL.
+  ok(component.includes('navigator.share'), 'Q (Phase 18): Share uses navigator.share()');
+  ok(component.includes('Share2 size='), 'Q (Phase 18): the Share button is present (lucide Share2 icon)');
+  ok(component.includes('handleShare'), 'Q (Phase 18): the handleShare function is wired');
+  // The URL shared is the EXACT ORIGINAL — no Mavero URL, no API URL, no proxy URL.
+  ok(!component.includes('/api/playback/compat') && !component.includes('media-worker'), 'Q (Phase 18): NO compat/worker references in the component');
+  ok(!component.includes('/api/proxy') && !component.includes('proxyMediaUrl') && !component.includes('proxyStreamUrl'), 'Q (Phase 18): NO proxy-URL machinery in the component');
   // The share handler passes stream.url (the original) to navigator.share.
-  ok(component.includes('url = stream.url'), 'Q (Phase 16): the Share handler uses stream.url (the EXACT ORIGINAL addon URL)');
+  ok(component.includes('url = stream.url'), 'Q (Phase 18): the Share handler uses stream.url (the EXACT ORIGINAL addon URL)');
 }
 
 // ---------------------------------------------------------------------------

@@ -1,51 +1,30 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Download, Info, Loader2, RotateCw, Share2, Check } from 'lucide-svelte';
-  import { downloadAttributesFor } from '$lib/client/player/stream-actions';
+  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check } from 'lucide-svelte';
 
   /**
-   * MAVERO Downloader — COMPLETE DISCOVERY surface (Phase 17).
+   * MAVERO Downloader — Compact discovery surface (Phase 18).
    *
-   * Rendered inside the EXISTING DownloadSheet (when the built-in
-   * "Mavero Downloader" provider is selected) and on the standalone
-   * /watch/mavero-downloader deep-link pages. One surface, two hosts.
+   * PHASE 18 CONTRACT (task §1-§17):
+   *   * NO redundant heading — the parent DownloadSheet already shows the title.
+   *   * Compact 2-line instruction block.
+   *   * Suggested apps (1DM + MPV) in ONE compact horizontal row.
+   *   * FOUR filters (Type/Size/Quality/Language) in ONE horizontally scrollable
+   *     row, ABOVE the addon chips.
+   *   * Addon chips (horizontally scrollable, non-external count).
+   *   * Stream cards with ONLY a Share action (no Download button).
+   *   * NO footer.
+   *   * MAXIMIZED vertical space for stream links.
    *
-   * PHASE 17 CONTRACT (task §1–§16):
-   *   * COMPLETE DISCOVERY: preserve EVERY stream the addon returned — HTTP,
-   *     HTTPS, HLS, DASH, P2P, Magnet, External. NO max cap, NO format
-   *     filter, NO quality filter, NO size filter. If Stremio shows 15,
-   *     MAVERO shows 15.
-   *   * Stream cards have EXACTLY TWO actions: Download + Share. No Watch,
-   *     No Play, No Copy.
-   *   * Download: UNCHANGED — navigates the ORIGINAL URI through the
-   *     browser's anchor mechanism. No proxy, no FFmpeg, no rewrite.
-   *   * Share: navigator.share() with the EXACT ORIGINAL URI (HTTP/HTTPS
-   *     URL, magnet URI, or externalUrl). On Android this opens the native
-   *     share sheet (mpv/VLC/1DM/WhatsApp/Telegram/etc).
-   *   * HEADER: "MAVERO Downloader" + the content title. NO "Available links".
-   *   * INSTRUCTIONS: two compact lines telling the user to use Share when
-   *     Download fails, and to share to a player for direct streaming.
-   *   * SUGGESTED APPS: 1DM (downloader) + MPV (player) cards, linking to
-   *     their official Google Play Store pages.
-   *   * ADDON CHIPS: horizontally scrollable, showing the RAW fetched count
-   *     per addon (not the filtered count).
-   *   * FOUR FILTERS: Type / Size / Quality / Language. Filters operate on
-   *     ALREADY-LOADED streams — they NEVER trigger a refetch. The addon chip
-   *     count stays the raw fetched count; the filtered count is shown
-   *     separately as "All / X shown".
-   *   * SHEET HEIGHT: increased ~10–15% to accommodate the new sections.
-   *   * NO FOOTER: the old "Download and Share use the provider's original
-   *     address…" footer is REMOVED.
+   * EXTERNAL STREAMS (task §6):
+   *   * kind === 'external' streams are HIDDEN from the UI (filtered server-side).
+   *   * "External" is NOT a Type filter option.
+   *   * The addon chip count reflects NON-EXTERNAL streams only.
    *
-   * PROGRESSIVE FLOW (Phase 15, preserved):
-   *   1. onMount: fetch the addon TAB list from `/api/downloader/mavero/tabs`
-   *      (NO stream fetches — fast). Render every tab in `loading` state.
-   *   2. For EACH tab: fire an INDEPENDENT fetch to
-   *      `/api/downloader/mavero/addon?...&addon=<id>` with its OWN
-   *      AbortController + lifecycle. Successful tabs update IN PLACE.
-   *   3. The server does bounded retry/backoff for transient failures
-   *      (30s per-attempt timeout — Task 13).
-   *   4. A per-tab Retry button re-fires ONLY that tab's request.
+   * SHARE (task §7/§8):
+   *   * navigator.share({ title, url }) with the EXACT ORIGINAL URI.
+   *   * HTTP/HTTPS/HLS/DASH/magnet/P2P — all shared verbatim.
+   *   * No Mavero URL, no proxy, no rewrite.
    */
 
   export let contentId = '';
@@ -53,9 +32,9 @@
   export let tmdbId = '';
   export let season: number | undefined = undefined;
   export let episode: number | undefined = undefined;
+  // svelte-ignore export_let_unused -- accepted by the parent DownloadSheet for API compatibility; the title is displayed in the parent sheet header, not duplicated here (Phase 18 task §1)
   export let title = '';
 
-  /** Phase 17: the stream view now carries `kind` for the type filter. */
   type StreamView = {
     url: string;
     kind: 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
@@ -93,44 +72,32 @@
   let tabsFailed = false;
   let activeTabId: string | null = null;
 
-  // Per-link action states.
-  let openingKey = '';
-  let openingTimer: ReturnType<typeof setTimeout> | undefined;
+  // Share action state.
   let shareKey = '';
   let shareState: 'sharing' | 'shared' | 'failed' | '' = '';
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // Phase 17 (task §12): FOUR filter controls.
+  // Phase 18 (task §4/§12): FOUR filter controls.
+  // Phase 18 (task §5): Type filter does NOT include "External".
   let filterType: 'all' | StreamView['kind'] = 'all';
   let filterSize: 'all' | 'under1' | 'under2' | 'under3' | 'under5' | 'under10' | 'under20' | 'over20' = 'all';
   let filterQuality: 'all' | '360p' | '480p' | '720p' | '1080p' | '2K' | '4K' = 'all';
-  let filterLanguage: string = 'all'; // dynamically generated
+  let filterLanguage: string = 'all';
 
   $: activeTab = tabs.find((tab) => tab.addonId === activeTabId) ?? null;
-
-  // Phase 17 (task §13): filters operate on ALREADY-LOADED streams. The addon
-  // chip count stays the raw fetched count; the filtered count is computed
-  // per active tab.
   $: activeStreams = activeTab?.streams ?? [];
   $: filteredStreams = applyFilters(activeStreams, filterType, filterSize, filterQuality, filterLanguage);
 
-  // Phase 17 (task §12 FILTER 4): dynamically generate the language list from
-  // ALL loaded addon streams (union of every detected language).
+  // Phase 18 (task §12 FILTER 4): dynamically generate the language list.
   $: allLoadedStreams = tabs.flatMap((tab) => tab.streams);
   $: detectedLanguages = Array.from(new Set(allLoadedStreams.flatMap((s) => s.audioLanguages ?? []))).sort();
 
   function applyFilters(streams: StreamView[], fType: typeof filterType, fSize: typeof filterSize, fQuality: typeof filterQuality, fLang: string): StreamView[] {
     return streams.filter((stream) => {
-      // Type filter
       if (fType !== 'all' && stream.kind !== fType) return false;
-      // Size filter
       if (fSize !== 'all') {
         const bytes = stream.sizeBytes;
-        if (bytes === undefined) {
-          // Unknown size — keep under 'all' only. For specific size filters,
-          // exclude (we can't confirm the size matches).
-          return false;
-        }
+        if (bytes === undefined) return false;
         const gb = bytes / 1024 ** 3;
         if (fSize === 'under1' && gb >= 1) return false;
         if (fSize === 'under2' && gb >= 2) return false;
@@ -140,20 +107,14 @@
         if (fSize === 'under20' && gb >= 20) return false;
         if (fSize === 'over20' && gb < 20) return false;
       }
-      // Quality filter
       if (fQuality !== 'all') {
         const q = stream.quality;
         if (fQuality === '2K') {
-          // 2K = 1440p
-          if (q !== '4K' && !(q === 'auto')) return false;
-          // Actually 2K is between 1080p and 4K. Treat '4K' bucket as 2K+4K.
-          // For simplicity, map 2K → any quality >= 1440p (the 4K bucket).
           if (q !== '4K') return false;
         } else if (q !== fQuality) {
           return false;
         }
       }
-      // Language filter
       if (fLang !== 'all') {
         const langs = stream.audioLanguages ?? [];
         if (!langs.includes(fLang)) return false;
@@ -185,7 +146,7 @@
     const candidate = stream.filename || stream.title || stream.name;
     if (candidate && candidate.trim()) {
       const trimmed = candidate.trim();
-      return trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed;
+      return trimmed.length > 120 ? `${trimmed.slice(0, 120)}…` : trimmed;
     }
     const firstLine = (stream.description ?? '').split('\n').map((line) => line.trim()).find(Boolean);
     return firstLine;
@@ -295,17 +256,9 @@
     activeTabId = id;
   }
 
-  function handleDownload(event: MouseEvent, key: string) {
-    event.stopPropagation();
-    if (openingKey) return;
-    openingKey = key;
-    if (openingTimer) clearTimeout(openingTimer);
-    openingTimer = setTimeout(() => { openingKey = ''; }, 2500);
-  }
-
   async function handleShare(stream: StreamView, addonName: string, key: string): Promise<void> {
     if (shareKey === key && shareState === 'sharing') return;
-    const url = stream.url; // the EXACT ORIGINAL URI (HTTP/HTTPS/magnet/external)
+    const url = stream.url; // the EXACT ORIGINAL URI (HTTP/HTTPS/magnet/P2P)
     if (!url) return;
     shareKey = key;
     shareState = 'sharing';
@@ -358,50 +311,78 @@
 </script>
 
 <div class="mad" aria-busy={tabsLoading}>
-  <!-- Phase 17 (task §9): header — "MAVERO Downloader" + content title. NO "Available links". -->
-  <div class="mad-header">
-    <span class="mad-eyebrow">MAVERO Downloader</span>
-    {#if title}<span class="mad-title">{title}</span>{/if}
-  </div>
+  <!-- Phase 18 (task §1): NO redundant heading. The parent DownloadSheet
+       already shows "MAVERO / DOWNLOAD" + the movie title. -->
 
-  <!-- Phase 17 (task §9): two instructional lines. -->
+  <!-- Phase 18 (task §2): compact 2-line instruction block. -->
   <div class="mad-instructions">
-    <p>If download button not work then use share button to download with download manager.</p>
-    <p>Use share button and share stream to player to stream directly on phone.</p>
+    <p>Share the link to download manager to download</p>
+    <p>Share the link to stream supported player to Play.</p>
   </div>
 
-  <!-- Phase 17 (task §10): Suggested Apps — 1DM + MPV, linking to Play Store. -->
-  <div class="mad-suggested">
-    <div class="mad-suggested-label">Suggested Downloader</div>
-    <a class="mad-app-card" href="https://play.google.com/store/apps/details?id=idm.internet.download.manager" target="_blank" rel="noopener noreferrer">
-      <div class="mad-app-icon mad-app-icon-1dm">1DM</div>
-      <div class="mad-app-info">
-        <span class="mad-app-name">1DM+</span>
-        <span class="mad-app-desc">Download manager</span>
-      </div>
+  <!-- Phase 18 (task §3): suggested apps in ONE compact horizontal row. -->
+  <div class="mad-apps">
+    <a class="mad-app" href="https://play.google.com/store/apps/details?id=idm.internet.download.manager" target="_blank" rel="noopener noreferrer" aria-label="1DM+ download manager on Google Play">
+      <span class="mad-app-icon mad-app-icon-1dm">1DM</span>
+      <span class="mad-app-name">1DM+</span>
     </a>
-    <div class="mad-suggested-label mad-suggested-label-player">Suggested Player</div>
-    <a class="mad-app-card" href="https://play.google.com/store/apps/details?id=is.xyz.mpv" target="_blank" rel="noopener noreferrer">
-      <div class="mad-app-icon mad-app-icon-mpv">MPV</div>
-      <div class="mad-app-info">
-        <span class="mad-app-name">mpv-android</span>
-        <span class="mad-app-desc">Media player</span>
-      </div>
+    <a class="mad-app" href="https://play.google.com/store/apps/details?id=is.xyz.mpv" target="_blank" rel="noopener noreferrer" aria-label="mpv media player on Google Play">
+      <span class="mad-app-icon mad-app-icon-mpv">MPV</span>
+      <span class="mad-app-name">mpv</span>
     </a>
   </div>
 
   {#if tabsLoading}
-    <div class="mad-state" role="status"><span class="mad-spin"><Loader2 size={18} /></span><span>Finding addons…</span></div>
+    <div class="mad-state" role="status"><span class="mad-spin"><Loader2 size={16} /></span><span>Finding addons…</span></div>
   {:else if tabsFailed}
     <div class="mad-state mad-state-error" role="status">
-      <AlertTriangle size={18} />
-      <span>Couldn't load addon tabs.</span>
-      <button type="button" class="mad-retry" onclick={retryAll}><RotateCw size={12} /> Retry</button>
+      <AlertTriangle size={16} />
+      <span>Couldn't load addons.</span>
+      <button type="button" class="mad-retry" onclick={retryAll}><RotateCw size={11} /> Retry</button>
     </div>
   {:else if tabs.length === 0}
-    <div class="mad-state" role="status"><Info size={18} /><span>No Stremio addons are enabled. Enable addons to see direct links here.</span></div>
+    <div class="mad-state" role="status"><Info size={16} /><span>No Stremio addons enabled.</span></div>
   {:else}
-    <!-- Phase 17 (task §11): addon chips — RAW fetched count, horizontally scrollable. -->
+    <!-- Phase 18 (task §4): FILTER ROW — one horizontally scrollable row,
+         ABOVE the addon chips. Order: Type · Size · Quality · Language. -->
+    <div class="mad-filters">
+      <select class="mad-filter" bind:value={filterType} aria-label="Filter by type">
+        <option value="all">Type</option>
+        <option value="http">HTTP</option>
+        <option value="https">HTTPS</option>
+        <option value="hls">HLS</option>
+        <option value="dash">DASH</option>
+        <option value="p2p">P2P</option>
+        <option value="magnet">Magnet</option>
+      </select>
+      <select class="mad-filter" bind:value={filterSize} aria-label="Filter by size">
+        <option value="all">Size</option>
+        <option value="under1">&lt; 1 GB</option>
+        <option value="under2">&lt; 2 GB</option>
+        <option value="under3">&lt; 3 GB</option>
+        <option value="under5">&lt; 5 GB</option>
+        <option value="under10">&lt; 10 GB</option>
+        <option value="under20">&lt; 20 GB</option>
+        <option value="over20">&gt; 20 GB</option>
+      </select>
+      <select class="mad-filter" bind:value={filterQuality} aria-label="Filter by quality">
+        <option value="all">Quality</option>
+        <option value="360p">360p</option>
+        <option value="480p">480p</option>
+        <option value="720p">720p</option>
+        <option value="1080p">1080p</option>
+        <option value="2K">2K</option>
+        <option value="4K">4K</option>
+      </select>
+      <select class="mad-filter" bind:value={filterLanguage} aria-label="Filter by language">
+        <option value="all">Language</option>
+        {#each detectedLanguages as lang}
+          <option value={lang}>{lang}</option>
+        {/each}
+      </select>
+    </div>
+
+    <!-- Phase 18 (task §4): addon chips come AFTER the filter row. -->
     <div class="mad-tabs" role="tablist" aria-label="Addons">
       {#each tabs as tab (tab.addonId)}
         <button
@@ -414,7 +395,7 @@
         >
           <span class="mad-tab-name">{tab.addonName}</span>
           {#if tab.status === 'loading' || tab.status === 'retrying'}
-            <span class="mad-tab-state loading" role="status"><span class="mad-tab-spin"><Loader2 size={10} /></span></span>
+            <span class="mad-tab-state loading" role="status"><span class="mad-tab-spin"><Loader2 size={9} /></span></span>
           {:else if tab.status === 'unavailable'}
             <span class="mad-tab-state failed" role="status">Failed</span>
           {:else if tab.status === 'loaded' && tab.streams.length > 0}
@@ -427,69 +408,30 @@
     </div>
 
     {#if activeTab}
-      <!-- Phase 17 (task §12): FOUR filter controls — Type / Size / Quality / Language. -->
-      <div class="mad-filters">
-        <select class="mad-filter" bind:value={filterType} aria-label="Filter by type">
-          <option value="all">All Types</option>
-          <option value="http">HTTP</option>
-          <option value="https">HTTPS</option>
-          <option value="hls">HLS</option>
-          <option value="dash">DASH</option>
-          <option value="p2p">P2P</option>
-          <option value="magnet">Magnet</option>
-          <option value="external">External</option>
-        </select>
-        <select class="mad-filter" bind:value={filterSize} aria-label="Filter by size">
-          <option value="all">All Sizes</option>
-          <option value="under1">Under 1 GB</option>
-          <option value="under2">Under 2 GB</option>
-          <option value="under3">Under 3 GB</option>
-          <option value="under5">Under 5 GB</option>
-          <option value="under10">Under 10 GB</option>
-          <option value="under20">Under 20 GB</option>
-          <option value="over20">Over 20 GB</option>
-        </select>
-        <select class="mad-filter" bind:value={filterQuality} aria-label="Filter by quality">
-          <option value="all">All Qualities</option>
-          <option value="360p">360p</option>
-          <option value="480p">480p</option>
-          <option value="720p">720p</option>
-          <option value="1080p">1080p</option>
-          <option value="2K">2K</option>
-          <option value="4K">4K</option>
-        </select>
-        <select class="mad-filter" bind:value={filterLanguage} aria-label="Filter by language">
-          <option value="all">All Languages</option>
-          {#each detectedLanguages as lang}
-            <option value={lang}>{lang}</option>
-          {/each}
-        </select>
-      </div>
-
       {#if activeTab.status === 'loading' || activeTab.status === 'retrying'}
         <div class="mad-state" role="status">
-          <span class="mad-spin"><Loader2 size={18} /></span>
+          <span class="mad-spin"><Loader2 size={16} /></span>
           <span>{activeTab.status === 'retrying' ? 'Trying again…' : `Finding links from ${activeTab.addonName}…`}</span>
         </div>
       {:else if activeTab.status === 'unavailable'}
         <div class="mad-state mad-state-error" role="status">
-          <AlertTriangle size={16} />
-          <span>{activeTab.addonName} is unavailable right now.</span>
-          <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={12} /> Retry</button>
+          <AlertTriangle size={14} />
+          <span>{activeTab.addonName} is unavailable.</span>
+          <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={11} /> Retry</button>
         </div>
       {:else if activeStreams.length === 0}
         <div class="mad-state" role="status">
-          <Info size={16} />
+          <Info size={14} />
           <span>{activeTab.addonName} returned zero streams.</span>
-          <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={12} /> Retry</button>
+          <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={11} /> Retry</button>
         </div>
       {:else}
-        <!-- Phase 17 (task §13): "All / X shown" — the filtered count is shown separately. -->
+        <!-- Phase 18 (task §13): "X shown" indicator. -->
         <div class="mad-filter-count">
           {#if filteredStreams.length === activeStreams.length}
-            All {activeStreams.length} shown
+            {activeStreams.length} links
           {:else}
-            {activeStreams.length} total · {filteredStreams.length} shown
+            {filteredStreams.length} of {activeStreams.length}
           {/if}
         </div>
         <div class="mad-list" role="list" aria-label={`${activeTab.addonName} streams`}>
@@ -499,37 +441,22 @@
               <div class="mad-row-main">
                 <span class="mad-row-label">{streamLabel(stream)}</span>
                 {#if streamDetail(stream)}<span class="mad-row-detail">{streamDetail(stream)}</span>{/if}
-                {#if stream.audioLanguages?.length}<span class="mad-row-sub">{stream.audioLanguages.join(' + ')} audio</span>{/if}
               </div>
-              <div class="mad-row-actions">
-                <!-- Download — UNCHANGED. Navigates the ORIGINAL URI. -->
-                <a
-                  class="mad-action"
-                  class:opening={openingKey === key}
-                  href={stream.url}
-                  download={downloadAttributesFor({ url: stream.url, filename: stream.filename })?.download ?? 'stream'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={openingKey === key ? 'Opening the original file' : 'Download the original file'}
-                  title="Download (original URI)"
-                  onclick={(event) => handleDownload(event, key)}
-                ><Download size={14} /></a>
-                <!-- Share — navigator.share with the EXACT ORIGINAL URI. -->
-                <button
-                  class="mad-action mad-action-share"
-                  class:done={shareKey === key && shareState === 'shared'}
-                  class:failed={shareKey === key && shareState === 'failed'}
-                  type="button"
-                  aria-label={shareKey === key && shareState === 'shared' ? 'URI shared' : shareKey === key && shareState === 'failed' ? 'Share failed' : 'Share original URI'}
-                  title="Share (original URI)"
-                  onclick={(event) => { event.stopPropagation(); void handleShare(stream, activeTab.addonName, key); }}
-                >
-                  {#if shareKey === key && shareState === 'sharing'}<Loader2 size={14} class="mad-spin" />
-                  {:else if shareKey === key && shareState === 'shared'}<Check size={14} />
-                  {:else if shareKey === key && shareState === 'failed'}<AlertTriangle size={14} />
-                  {:else}<Share2 size={14} />{/if}
-                </button>
-              </div>
+              <!-- Phase 18 (task §7): ONLY Share. No Download button. -->
+              <button
+                class="mad-action mad-action-share"
+                class:done={shareKey === key && shareState === 'shared'}
+                class:failed={shareKey === key && shareState === 'failed'}
+                type="button"
+                aria-label={shareKey === key && shareState === 'shared' ? 'URI shared' : shareKey === key && shareState === 'failed' ? 'Share failed' : 'Share original URI'}
+                title="Share (original URI)"
+                onclick={(event) => { event.stopPropagation(); void handleShare(stream, activeTab.addonName, key); }}
+              >
+                {#if shareKey === key && shareState === 'sharing'}<Loader2 size={13} class="mad-spin" />
+                {:else if shareKey === key && shareState === 'shared'}<Check size={13} />
+                {:else if shareKey === key && shareState === 'failed'}<AlertTriangle size={13} />
+                {:else}<Share2 size={13} />{/if}
+              </button>
             </article>
           {/each}
         </div>
@@ -539,61 +466,55 @@
 </div>
 
 <style>
-  /* Phase 17 (task §15): sheet height increased ~10-15% to accommodate the
-     new sections (header, instructions, suggested apps, filters). */
-  .mad { display: flex; flex-direction: column; gap: 8px; min-height: 260px; color: var(--ink); }
-  .mad-header { display: flex; flex-direction: column; gap: 2px; }
-  .mad-eyebrow { color: var(--muted); font-size: 0.55rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
-  .mad-title { overflow: hidden; color: var(--ink); font-size: 0.85rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-instructions { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); }
-  .mad-instructions p { margin: 0; color: var(--muted); font-size: 0.56rem; line-height: 1.4; }
-  .mad-suggested { display: flex; flex-direction: column; gap: 4px; }
-  .mad-suggested-label { color: var(--muted); font-size: 0.5rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
-  .mad-suggested-label-player { margin-top: 4px; }
-  .mad-app-card { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); text-decoration: none; }
-  .mad-app-card:hover { border-color: var(--line-strong); background: var(--accent-soft); }
-  .mad-app-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; font-size: 0.6rem; font-weight: 800; color: #fff; }
+  /* Phase 18 (task §15): MAXIMIZE stream area. Compact everything else. */
+  .mad { display: flex; flex-direction: column; gap: 6px; min-height: 260px; color: var(--ink); }
+  .mad-instructions { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); }
+  .mad-instructions p { margin: 0; color: var(--muted); font-size: 0.54rem; line-height: 1.35; }
+  /* Phase 18 (task §3): ONE compact horizontal row for suggested apps. */
+  .mad-apps { display: flex; gap: 6px; }
+  .mad-app { display: flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); text-decoration: none; flex: 1 1 0; min-width: 0; }
+  .mad-app:hover { border-color: var(--line-strong); background: var(--accent-soft); }
+  .mad-app-icon { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; font-size: 0.5rem; font-weight: 800; color: #fff; flex: 0 0 auto; }
   .mad-app-icon-1dm { background: #0c8; }
   .mad-app-icon-mpv { background: #66c; }
-  .mad-app-info { display: flex; flex-direction: column; gap: 1px; }
-  .mad-app-name { color: var(--ink); font-size: 0.66rem; font-weight: 700; }
-  .mad-app-desc { color: var(--muted); font-size: 0.52rem; }
-  .mad-state { display: flex; min-height: 120px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 9px; flex-wrap: wrap; padding: 10px; color: var(--muted); font-size: 0.7rem; text-align: center; }
+  .mad-app-name { color: var(--ink); font-size: 0.6rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mad-state { display: flex; min-height: 100px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 8px; color: var(--muted); font-size: 0.66rem; text-align: center; }
   .mad-state-error { color: #d48a64; }
-  .mad-retry { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 6px 12px; font: inherit; font-size: 0.66rem; font-weight: 700; cursor: pointer; }
+  .mad-retry { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 4px 10px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; }
   .mad-retry:hover { border-color: var(--accent); color: var(--accent); }
   .mad-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-  .mad-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  /* Phase 18 (task §4): FILTER ROW — one horizontally scrollable row. */
+  .mad-filters { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
+  .mad-filters::-webkit-scrollbar { display: none; }
+  .mad-filter { flex: 0 0 auto; min-width: 64px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 4px 6px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; }
+  .mad-filter:hover { border-color: var(--line-strong); }
+  .mad-filter:focus-visible { border-color: var(--accent); outline: none; }
+  .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; }
   .mad-tabs::-webkit-scrollbar { display: none; }
-  .mad-tab { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 6px 11px; font: inherit; font-size: 0.66rem; font-weight: 700; cursor: pointer; }
+  .mad-tab { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; }
   .mad-tab:hover { border-color: var(--line-strong); color: var(--ink); }
   .mad-tab.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
-  .mad-tab-name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-tab-state { min-width: 18px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 1px 6px; font-size: 0.55rem; font-weight: 700; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
+  .mad-tab-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mad-tab-state { min-width: 16px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 1px 5px; font-size: 0.52rem; font-weight: 700; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
   .mad-tab-state.ok { color: var(--accent); }
   .mad-tab-state.failed { color: #d48a64; }
   .mad-tab-state.loading { background: transparent; padding: 1px 2px; }
   .mad-tab-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-  .mad-filters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
-  .mad-filter { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 5px 6px; font: inherit; font-size: 0.58rem; font-weight: 600; cursor: pointer; }
-  .mad-filter:hover { border-color: var(--line-strong); }
-  .mad-filter:focus-visible { border-color: var(--accent); outline: none; }
-  .mad-filter-count { color: var(--muted); font-size: 0.55rem; font-weight: 700; padding: 0 2px; }
-  .mad-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; scrollbar-width: thin; }
-  .mad-list::-webkit-scrollbar { width: 4px; }
+  .mad-filter-count { color: var(--muted); font-size: 0.52rem; font-weight: 700; padding: 0 1px; }
+  /* Phase 18 (task §15): stream list gets MAXIMUM vertical space. */
+  .mad-list { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; overflow-y: auto; scrollbar-width: thin; min-height: 0; }
+  .mad-list::-webkit-scrollbar { width: 3px; }
   .mad-list::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 2px; }
-  .mad-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.025); padding: 9px 10px; }
-  .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; min-width: 0; }
-  .mad-row-label { overflow: hidden; color: var(--ink); font-size: 0.68rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 0.57rem; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
-  .mad-row-sub { color: var(--muted); font-size: 0.55rem; }
-  .mad-row-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
-  .mad-action { position: relative; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255, 255, 255, 0.03); cursor: pointer; text-decoration: none; }
+  .mad-row { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.025); padding: 6px 8px; }
+  .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+  .mad-row-label { overflow: hidden; color: var(--ink); font-size: 0.64rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+  .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 0.54rem; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; }
+  /* Phase 18 (task §16): compact Share button. */
+  .mad-action { position: relative; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255, 255, 255, 0.03); cursor: pointer; text-decoration: none; flex: 0 0 auto; }
   .mad-action:hover, .mad-action:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
   .mad-action:active { transform: scale(0.96); }
   .mad-action.done { border-color: var(--accent); color: var(--accent); }
   .mad-action.failed { border-color: #d48a64; color: #d48a64; }
-  .mad-action.opening { border-color: var(--accent); color: var(--accent); opacity: 0.7; pointer-events: none; }
   .mad-action-share { color: var(--ink); }
   @keyframes mad-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action { transition: none; } }

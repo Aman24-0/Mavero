@@ -243,30 +243,29 @@ function sectionF(): void {
   // The Share handler reads stream.url — the EXACT ORIGINAL addon URL.
   ok(component.includes('url = stream.url'), 'F: the Share handler binds url = stream.url (the EXACT ORIGINAL addon URL)');
   ok(component.includes('navigator.share'), 'F: navigator.share is the primary share mechanism');
-  // NO Mavero URL / API URL / downloader page URL / proxy URL is shared.
-  ok(!component.includes('navigator.share({') || component.includes('url,'), 'F: navigator.share receives the url field');
+  // navigator.share receives the url field.
+  ok(component.includes('url })') || component.includes('url,'), 'F: navigator.share receives the url field');
   // The share title is derived from addon-supplied text (stream.title/name/filename) — never a Mavero URL.
   ok(component.includes('shareTitle'), 'F: a shareTitle helper derives a safe title from addon-supplied text');
 }
 
 // ---------------------------------------------------------------------------
-// G — UI has exactly TWO actions: Download + Share
+// G — Phase 18: UI has exactly ONE action: Share (Download removed)
 // ---------------------------------------------------------------------------
 
 function sectionG(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // Count the action elements in the mad-row-actions container.
+  // Phase 18 (task §7): ONLY Share — Download button is REMOVED.
   const actionsMatch = component.match(/<div class="mad-row-actions">([\s\S]*?)<\/div>/);
-  ok(actionsMatch !== null, 'G: the mad-row-actions container exists');
-  if (actionsMatch) {
-    const actionsBlock = actionsMatch[1];
-    const downloadAnchor = (actionsBlock.match(/<a[^>]*class="mad-action"/g) ?? []).length;
-    const shareButton = (actionsBlock.match(/<button[^>]*class="mad-action mad-action-share"/g) ?? []).length;
-    ok(downloadAnchor === 1, `G: exactly ONE Download anchor in the actions (got ${downloadAnchor})`);
-    ok(shareButton === 1, `G: exactly ONE Share button in the actions (got ${shareButton})`);
-    // NO other action elements.
-    const allActions = (actionsBlock.match(/<(?:a|button)[^>]*class="mad-action/g) ?? []).length;
-    ok(allActions === 2, `G: exactly TWO action elements total (Download + Share) (got ${allActions})`);
+  // The row-actions div may not exist in Phase 18 (the Share button is
+  // directly in the mad-row). Check the mad-row instead.
+  const rowMatch = component.match(/<article class="mad-row"[^>]*>([\s\S]*?)<\/article>/);
+  if (rowMatch) {
+    const rowBlock = rowMatch[1];
+    const shareButton = (rowBlock.match(/<button[^>]*class="mad-action mad-action-share"/g) ?? []).length;
+    const downloadAnchor = (rowBlock.match(/<a[^>]*class="mad-action"/g) ?? []).length;
+    ok(shareButton === 1, `G (Phase 18): exactly ONE Share button in the row (got ${shareButton})`);
+    ok(downloadAnchor === 0, `G (Phase 18): NO Download anchor in the row (got ${downloadAnchor})`);
   }
 }
 
@@ -311,7 +310,7 @@ function sectionJ(): void {
   ok(component.includes('typeof navigator.share === \'function\''), 'J: navigator.share is feature-detected');
   ok(component.includes('await navigator.share({'), 'J: navigator.share is AWAITED (the primary path)');
   ok(component.includes('title: shareTitle('), 'J: navigator.share receives a title');
-  ok(component.includes('url,'), 'J: navigator.share receives the url field');
+  ok(component.includes('url })') || component.includes('url,'), 'J: navigator.share receives the url field');
   // Fallback: clipboard API when navigator.share is unavailable.
   ok(component.includes('navigator.clipboard.writeText'), 'J: clipboard API fallback is present');
   // Fallback: legacy textarea + execCommand for old WebViews.
@@ -519,16 +518,14 @@ async function sectionQ(): Promise<void> {
 
 function sectionR(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // Download still uses href={stream.url} — the EXACT ORIGINAL addon URL.
-  ok(component.includes('href={stream.url}'), 'R: Download anchor href = stream.url (the ORIGINAL addon URL — unchanged)');
-  // Download still uses downloadAttributesFor — the existing helper.
-  ok(component.includes('downloadAttributesFor'), 'R: Download still uses downloadAttributesFor (the existing helper — unchanged)');
-  // Download still has target="_blank" + rel="noopener noreferrer".
-  ok(component.includes('target="_blank"'), 'R: Download still has target="_blank" (unchanged)');
-  ok(component.includes('rel="noopener noreferrer"'), 'R: Download still has rel="noopener noreferrer" (unchanged)');
-  // Download click feedback is preserved.
-  ok(component.includes('handleDownload'), 'R: handleDownload is preserved (the existing click-feedback mechanism)');
-  ok(component.includes('openingKey'), 'R: openingKey state is preserved (the existing click-feedback state)');
+  // Phase 18 (task §7): Download button is REMOVED. Only Share remains.
+  ok(!component.includes('downloadAttributesFor'), 'R (Phase 18): downloadAttributesFor is REMOVED (no Download button)');
+  ok(!component.includes('href={stream.url}'), 'R (Phase 18): href={stream.url} is REMOVED (no Download anchor)');
+  ok(!component.includes('handleDownload'), 'R (Phase 18): handleDownload is REMOVED');
+  ok(!component.includes('openingKey'), 'R (Phase 18): openingKey state is REMOVED');
+  // Share is preserved.
+  ok(component.includes('handleShare'), 'R (Phase 18): handleShare is preserved');
+  ok(component.includes('navigator.share'), 'R (Phase 18): navigator.share is preserved');
 }
 
 // ---------------------------------------------------------------------------

@@ -133,6 +133,8 @@ export type AddonDownloadDiagnostics = {
   selected: number;
   /** Phase 17: per-kind breakdown (http/https/hls/dash/p2p/magnet/external). */
   kindCounts?: Record<DownloaderStreamKind, number>;
+  /** Phase 18: count of external streams (hidden from the UI — task §6). */
+  externalCount?: number;
 };
 
 /** One addon's downloader result. `status` is the Task 11 state model. */
@@ -294,13 +296,14 @@ function toStreamViewAll(stream: DownloadStreamViewAll): AddonDownloadStreamView
   };
 }
 
-/** Phase 17: builds the diagnostics summary for the ALL-streams path. */
+/** Phase 18: builds the diagnostics summary for the ALL-streams path. */
 function diagnosticsOfAll(
   raw: number,
   malformed: number,
   kindCounts: Record<DownloaderStreamKind, number>,
   selected: number,
   _malformedFromBuild: number,
+  externalCount = 0,
 ): AddonDownloadDiagnostics {
   return {
     raw,
@@ -310,6 +313,7 @@ function diagnosticsOfAll(
     rejected: {},
     selected,
     kindCounts,
+    externalCount,
   };
 }
 
@@ -394,14 +398,18 @@ async function resolveAddonOnce(
       console.warn(`[AddonDownloader] invalid response shape addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt}`);
       return { status: 'unavailable', streams: [], errorCode: 'INVALID_RESPONSE' };
     }
-    // Phase 17: buildDownloadCandidatesAll preserves EVERY entry — no max cap,
-    // no diversity cap, no format filter, no quality filter, no size filter.
-    const { entries, kindCounts, malformed } = buildDownloadCandidatesAll(normalized.entries);
+    // Phase 18 (task §6/§18): HIDE external streams. The normalizer CLASSIFIES
+    // externalUrl/externalUris entries as kind='external' (for diagnostics),
+    // but the UI must NOT show them. Filter them out BEFORE building the view
+    // so the addon chip count reflects NON-EXTERNAL streams only.
+    const nonExternalEntries = normalized.entries.filter((e) => e.kind !== 'external');
+    const { entries, kindCounts, malformed } = buildDownloadCandidatesAll(nonExternalEntries);
     const selected = selectDownloadStreamsAll(entries, MAX_DOWNLOAD_STREAMS_PER_ADDON);
-    const diagnostics = diagnosticsOfAll(normalized.entries.length, normalized.malformed, kindCounts, selected.length, malformed);
+    const externalCount = normalized.entries.length - nonExternalEntries.length;
+    const diagnostics = diagnosticsOfAll(normalized.entries.length, normalized.malformed, kindCounts, selected.length, malformed, externalCount);
     const kindSummary = Object.entries(kindCounts).filter(([, count]) => count > 0).map(([kind, count]) => `${kind}:${count}`).join(',') || 'none';
     console.info(
-      `[AddonDownloader] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt} raw=${diagnostics.raw} malformed=${diagnostics.malformed} kinds=${kindSummary} selected=${diagnostics.selected}`,
+      `[AddonDownloader] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt} raw=${diagnostics.raw} external=${externalCount} malformed=${diagnostics.malformed} kinds=${kindSummary} selected=${diagnostics.selected}`,
     );
     return {
       status: selected.length ? 'loaded' : 'empty',
