@@ -44,6 +44,14 @@ export type DownloadMediaType = 'movie' | 'tv';
 export const MAVERO_DOWNLOADER_PROVIDER_ID = 'mavero-downloader';
 
 /**
+ * The stable slug of the "4K Downloader" provider (Phase 19).
+ * Backed by the downloads.shegu.st JSON API. The DownloadSheet recognizes
+ * this slug and renders the FourKDownload panel INLINE (no iframe — the
+ * 4K API returns JSON, not HTML).
+ */
+export const FOURK_DOWNLOADER_PROVIDER_ID = '4k-downloader';
+
+/**
  * Public downloader provider shape — exactly the fields the browser iframe
  * feature needs to render + build a URL. No admin-only metadata (notes,
  * status flags, raw admin row data) is ever included.

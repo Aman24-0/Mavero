@@ -347,10 +347,10 @@ function section26(): void {
 function section27(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   ok(component.includes('mad-filters'), '27: mad-filters container exists');
-  // The filter row uses flex + overflow-x: auto (horizontally scrollable, ONE row).
+  // Phase 19 (task §11): the filter row uses flex + width: 100% (full width, NO horizontal scroll).
   const filtersStyle = component.match(/\.mad-filters\s*\{([^}]*)\}/);
   if (filtersStyle) {
-    ok(filtersStyle[1].includes('overflow-x: auto') || filtersStyle[1].includes('overflow-x:auto'), '27: mad-filters uses overflow-x: auto (horizontally scrollable)');
+    ok(filtersStyle[1].includes('width: 100%') || filtersStyle[1].includes('width:100%'), '27 (Phase 19): mad-filters uses width: 100% (full available width)');
     ok(filtersStyle[1].includes('display: flex'), '27: mad-filters uses display: flex (one row)');
   }
 }

@@ -321,14 +321,15 @@
   </div>
 
   <!-- Phase 18 (task §3): suggested apps in ONE compact horizontal row. -->
+  <!-- Phase 19 (task §10): labels updated to "1DM+ Downloader" + "MPV Player". -->
   <div class="mad-apps">
-    <a class="mad-app" href="https://play.google.com/store/apps/details?id=idm.internet.download.manager" target="_blank" rel="noopener noreferrer" aria-label="1DM+ download manager on Google Play">
+    <a class="mad-app" href="https://play.google.com/store/apps/details?id=idm.internet.download.manager" target="_blank" rel="noopener noreferrer" aria-label="1DM+ Downloader on Google Play">
       <span class="mad-app-icon mad-app-icon-1dm">1DM</span>
-      <span class="mad-app-name">1DM+</span>
+      <span class="mad-app-name">1DM+ Downloader</span>
     </a>
-    <a class="mad-app" href="https://play.google.com/store/apps/details?id=is.xyz.mpv" target="_blank" rel="noopener noreferrer" aria-label="mpv media player on Google Play">
+    <a class="mad-app" href="https://play.google.com/store/apps/details?id=is.xyz.mpv" target="_blank" rel="noopener noreferrer" aria-label="MPV Player on Google Play">
       <span class="mad-app-icon mad-app-icon-mpv">MPV</span>
-      <span class="mad-app-name">mpv</span>
+      <span class="mad-app-name">MPV Player</span>
     </a>
   </div>
 
@@ -483,10 +484,10 @@
   .mad-retry { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 4px 10px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; }
   .mad-retry:hover { border-color: var(--accent); color: var(--accent); }
   .mad-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-  /* Phase 18 (task §4): FILTER ROW — one horizontally scrollable row. */
-  .mad-filters { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
-  .mad-filters::-webkit-scrollbar { display: none; }
-  .mad-filter { flex: 0 0 auto; min-width: 64px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 4px 6px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; }
+  /* Phase 19 (task §11): filter row occupies the FULL available width.
+     The four filters use flex: 1 so they distribute evenly — no blank right-side area. */
+  .mad-filters { display: flex; gap: 4px; width: 100%; }
+  .mad-filter { flex: 1 1 0; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 4px 4px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; text-align: center; }
   .mad-filter:hover { border-color: var(--line-strong); }
   .mad-filter:focus-visible { border-color: var(--accent); outline: none; }
   .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; }

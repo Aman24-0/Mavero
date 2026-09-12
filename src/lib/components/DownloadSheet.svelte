@@ -11,12 +11,14 @@
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
     MAVERO_DOWNLOADER_PROVIDER_ID,
+    FOURK_DOWNLOADER_PROVIDER_ID,
     providerUsesExternalServers,
     type DownloadMediaType,
     type DownloadUrlCandidate,
     type PublicDownloadProvider,
   } from '$lib/shared/downloader';
   import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
+  import FourKDownload from '$components/FourKDownload.svelte';
 
   // ----- Props -----
   // Props are explicit per the spec. The parent (DetailPage) supplies the
@@ -125,7 +127,7 @@
   // addon-links panel INLINE (no iframe, no URL template) — candidate
   // building is skipped for it entirely.
   $: if (activeProvider && open) {
-    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID) {
+    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID) {
       urlCandidates = [];
       alternateUrl = null;
       useAlternate = false;
@@ -287,11 +289,14 @@
     }
   }
 
-  $: sheetTitle = title ? `Download ${title}` : 'Download';
-  $: iframeTitle = activeProvider ? `Download ${activeProvider.name} for ${title || 'this title'}` : 'Download';
+  // Phase 19 (task §9): sheet header shows ONLY the content title (not "Download Mutiny").
+  $: sheetTitle = title || 'Download';
+  $: iframeTitle = activeProvider ? `${activeProvider.name} for ${title || 'this title'}` : 'Download';
   $: hasProviders = filteredProviders.length > 0;
   // Phase 14: the built-in Mavero Downloader renders its addon panel INLINE.
   $: isMaveroDownloader = activeProvider?.slug === MAVERO_DOWNLOADER_PROVIDER_ID;
+  // Phase 19: the 4K Downloader renders its panel INLINE (no iframe — JSON API).
+  $: is4kDownloader = activeProvider?.slug === FOURK_DOWNLOADER_PROVIDER_ID;
   // The addon API is content-type-shaped ('movie' | 'series' | 'anime'); the
   // sheet's registry is downloader-shaped ('movie' | 'tv'). The ORIGINAL
   // content type wins when the parent supplied it (preserves 'anime');
@@ -375,6 +380,19 @@
               contentId={maveroContentId}
               mediaType={maveroMediaType}
               {tmdbId}
+              {season}
+              {episode}
+              {title}
+            />
+          </div>
+        {:else if is4kDownloader}
+          <!-- Phase 19: the 4K Downloader — fetches the downloads.shegu.st
+               JSON API via /api/downloader/4k and renders compact result
+               cards (title/format/quality/size + Download + Share). -->
+          <div class="dl-mavero-panel">
+            <FourKDownload
+              {tmdbId}
+              mediaType={maveroMediaType}
               {season}
               {episode}
               {title}

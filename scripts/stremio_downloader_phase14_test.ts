@@ -488,8 +488,10 @@ function sectionS(): void {
   const injected = withMaveroDownloaderProvider(config as never, origin);
   ok(injected.providers.length === 2 && injected.providers[injected.providers.length - 1]?.slug === 'mavero-downloader', 'S: the built-in provider is appended to the public config');
   ok(withMaveroDownloaderProvider(injected as never, origin).providers.length === 2, 'S: injection is dedupe-safe (idempotent)');
+  // Phase 19: the config endpoint NO LONGER calls withMaveroDownloaderProvider
+  // (Mavero is now DB-managed). It calls rewriteMaveroOrigins instead.
   const routeSource = read('src/routes/api/downloader/config/+server.ts');
-  ok(routeSource.includes('withMaveroDownloaderProvider'), 'S: the public config endpoint actually injects the built-in provider');
+  ok(routeSource.includes('rewriteMaveroOrigins'), 'S (Phase 19): the public config endpoint rewrites Mavero origins (DB-managed)');
 }
 
 // ---------------------------------------------------------------------------

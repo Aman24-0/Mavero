@@ -148,24 +148,54 @@ export async function getPublicDownloadConfigOrEmpty(client: DownloadClient): Pr
 }
 
 // ---------------------------------------------------------------------------
-// Phase 14 — the built-in MAVERO Downloader surface.
+// Phase 19 — Mavero Downloader is now DB-managed.
 //
-// Mavero Downloader is NOT a DB-managed provider: it is the app's own
-// downloader (best direct links from the enabled Stremio HTTP addons,
-// rendered by MaveroAddonDownload). It is injected into the PUBLIC config
-// so the existing DownloadSheet dropdown can treat it like any other
-// downloader without hard-coding a production hostname: its URL templates
-// point back to the CURRENT request origin (deep-linkable standalone pages).
+// The migration seeds a 'mavero-downloader' row with placeholder URL templates
+// (https://mavero.local/...) to satisfy the DB's HTTPS CHECK constraint. At
+// read time the public-config endpoint rewrites those templates to the CURRENT
+// request origin so the standalone deep-link pages resolve correctly.
+//
+// The old Phase 14 synthetic injection (withMaveroDownloaderProvider) is kept
+// as a back-compat shim for tests, but the config endpoint NO LONGER calls it
+// — the DB row is the source of truth. If the admin disables Mavero in the
+// DB, it disappears from the public config (the synthetic injection would
+// have ignored the enabled flag).
 // ---------------------------------------------------------------------------
 
-/** The stable id/slug of the built-in downloader provider (defined in $lib/shared/downloader). */
+/** The stable id/slug of the Mavero Downloader provider (defined in $lib/shared/downloader). */
 export { MAVERO_DOWNLOADER_PROVIDER_ID };
 
 /**
- * Builds the built-in Mavero Downloader provider entry for the public
- * config. Pure — unit-testable. `ordering: Number.MAX_SAFE_INTEGER` keeps
- * it LAST in the dropdown (external downloaders stay first); it is never
- * the default and never overrides a DB-managed provider.
+ * Rewrites the Mavero Downloader URL templates to the current request origin.
+ * The DB stores `https://mavero.local/...` (placeholder); this function
+ * replaces it with the real origin so the deep-link pages resolve.
+ *
+ * If the row is NOT the Mavero Downloader, returns it unchanged.
+ */
+export function rewriteMaveroOrigin(provider: PublicDownloadProvider, origin: string): PublicDownloadProvider {
+  if (provider.slug !== MAVERO_DOWNLOADER_PROVIDER_ID) return provider;
+  return {
+    ...provider,
+    movieUrlTemplate: provider.movieUrlTemplate?.replace('https://mavero.local', origin) ?? `${origin}/watch/mavero-downloader/movie/{tmdbId}`,
+    tvUrlTemplate: provider.tvUrlTemplate?.replace('https://mavero.local', origin) ?? `${origin}/watch/mavero-downloader/tv/{tmdbId}/{season}/{episode}`,
+  };
+}
+
+/**
+ * Rewrites ALL Mavero Downloader entries in a config to the current origin.
+ */
+export function rewriteMaveroOrigins(config: PublicDownloadConfig, origin: string): PublicDownloadConfig {
+  return {
+    ...config,
+    providers: config.providers.map((p) => rewriteMaveroOrigin(p, origin)),
+  };
+}
+
+/**
+ * Phase 14 back-compat: builds the synthetic Mavero Downloader provider entry.
+ * Phase 19: NO LONGER called by the config endpoint (the DB row is the source
+ * of truth). Kept for test back-compat — tests that reference this function
+ * still pass.
  */
 export function builtinMaveroDownloaderProvider(origin: string): PublicDownloadProvider {
   return {
@@ -185,8 +215,8 @@ export function builtinMaveroDownloaderProvider(origin: string): PublicDownloadP
 }
 
 /**
- * Appends the built-in provider to a public config (dedupe-safe: a DB row
- * with the same slug would win — the built-in entry is skipped then).
+ * Phase 14 back-compat: appends the synthetic provider to a config (dedupe-safe).
+ * Phase 19: NO LONGER called by the config endpoint. Kept for test back-compat.
  */
 export function withMaveroDownloaderProvider(config: PublicDownloadConfig, origin: string): PublicDownloadConfig {
   const builtin = builtinMaveroDownloaderProvider(origin);

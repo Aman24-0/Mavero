@@ -403,7 +403,7 @@ function sectionAD(): void {
   ok(component.includes('is.xyz.mpv'), 'AD: MPV Play Store link present');
   // Phase 18 (task §4): filters in ONE horizontally scrollable row, ABOVE addon chips.
   ok(component.includes('mad-filters'), 'AD (Phase 18): the mad-filters container exists (one row)');
-  ok(component.includes('overflow-x: auto') || component.includes('overflow-x:auto'), 'AD (Phase 18): the filter row is horizontally scrollable');
+  ok(component.includes('width: 100%') || component.includes('width:100%'), 'AD (Phase 19): the filter row uses width: 100% (full available width)');
   // Phase 18 (task §5): Type filter does NOT include External.
   ok(!component.includes('value="external"'), 'AD (Phase 18): External is NOT a Type filter option');
   // Phase 18 (task §17): NO footer disclaimer.
