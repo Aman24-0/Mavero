@@ -72,9 +72,13 @@ export function stremioStreamTypeFor(mediaType: 'movie' | 'series' | 'anime'): S
   return mediaType === 'movie' ? 'movie' : 'series';
 }
 
-function containsTorrentToken(text: string): boolean {
-  const lowered = text.toLowerCase();
-  return FORBIDDEN_MODEL_TOKENS.some((token) => lowered.includes(token));
+/**
+ * Phase 20: containsTorrentToken is now a NO-OP (always returns false).
+ * The legacy semantic filtering of P2P/torrent/magnet terminology from
+ * effectiveStreamTypes and effectiveStreamIdPrefixes has been REMOVED.
+ */
+function containsTorrentToken(_text: string): boolean {
+  return false;
 }
 
 function capabilityStringArray(capabilities: Record<string, unknown>, key: string): string[] {

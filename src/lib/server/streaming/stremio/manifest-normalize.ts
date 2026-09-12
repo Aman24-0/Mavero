@@ -87,9 +87,14 @@ function invalid(message: string): ManifestServiceError {
   return new ManifestServiceError('INVALID_MANIFEST', { message });
 }
 
-function containsTorrentToken(text: string): boolean {
-  const lowered = text.toLowerCase();
-  return FORBIDDEN_MODEL_TOKENS.some((token) => lowered.includes(token));
+/**
+ * Phase 20: containsTorrentToken is now a NO-OP (always returns false).
+ * The legacy semantic filtering of P2P/torrent/magnet terminology from
+ * supportedTypes and persistableResourceNames has been REMOVED. A valid
+ * Stremio stream addon is accepted regardless of its transport concepts.
+ */
+function containsTorrentToken(_text: string): boolean {
+  return false;
 }
 
 function normalizeTokenArray(value: unknown, label: string, options: { lowercase: boolean }): string[] {

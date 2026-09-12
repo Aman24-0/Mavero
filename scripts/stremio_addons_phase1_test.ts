@@ -132,15 +132,25 @@ const VALID_DRAFT = {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Torrent-related configuration is NOT introduced
+// 7. Torrent-related configuration is NOT introduced in the DB schema
+//    (Phase 20: addon VALIDATION no longer rejects P2P/torrent terminology —
+//    a valid stream addon is accepted regardless of transport concepts.
+//    The DB schema still carries no torrent-specific columns.)
 // ---------------------------------------------------------------------------
 {
   const draft: AddonDraft = validateAddonDraft(VALID_DRAFT);
   const modelKeys = Object.keys(draft);
+  // Phase 20: the model KEYS themselves still don't carry torrent concepts
+  // (the model fields are name/slug/manifestUrl/etc. — none are torrent-specific).
   const forbidden = ['torrent', 'p2p', 'magnet', 'tracker', 'peer', 'debrid', 'rtorrent', 'announce', 'infohash'];
   for (const key of modelKeys) ok(!forbidden.some((token) => key.toLowerCase().includes(token)), `model field "${key}" carries no torrent/P2P concept`);
-  throwsStreamingValidation(() => validateAddonDraft({ ...VALID_DRAFT, capabilities: { torrent: true } }), 'torrent capability key rejected');
-  throwsStreamingValidation(() => validateAddonDraft({ ...VALID_DRAFT, capabilities: { debridProvider: 'x' } }), 'debrid capability key rejected');
+  // Phase 20: capabilities with torrent/P2P keys are NOW ACCEPTED (not rejected).
+  // A valid stream addon with P2P/torrent capabilities must pass validation.
+  const p2pDraft = validateAddonDraft({ ...VALID_DRAFT, capabilities: { torrent: true, p2pSupport: true } });
+  ok(p2pDraft.capabilities.torrent === true, 'Phase 20: torrent capability key is ACCEPTED (not rejected)');
+  ok(p2pDraft.capabilities.p2pSupport === true, 'Phase 20: p2pSupport capability key is ACCEPTED');
+  const debridDraft = validateAddonDraft({ ...VALID_DRAFT, capabilities: { debridProvider: 'x' } });
+  ok(debridDraft.capabilities.debridProvider === 'x', 'Phase 20: debridProvider capability key is ACCEPTED');
 
   const migration = readFileSync(new URL('../supabase/migrations/20260918000000_phase1_stremio_addons.sql', import.meta.url), 'utf8');
   // Scan the executable DDL (SQL comments stripped) — the header documents

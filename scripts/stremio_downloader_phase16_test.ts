@@ -308,7 +308,7 @@ function sectionI(): void {
 function sectionJ(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   ok(component.includes('typeof navigator.share === \'function\''), 'J: navigator.share is feature-detected');
-  ok(component.includes('await navigator.share({'), 'J: navigator.share is AWAITED (the primary path)');
+  ok(component.includes('await navigator.share('), 'J: navigator.share is AWAITED');
   ok(component.includes('title: shareTitle('), 'J: navigator.share receives a title');
   ok(component.includes('url })') || component.includes('url,'), 'J: navigator.share receives the url field');
   // Fallback: clipboard API when navigator.share is unavailable.

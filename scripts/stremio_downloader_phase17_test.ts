@@ -197,7 +197,7 @@ function sectionO(): void {
 function sectionP(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   ok(component.includes('url = stream.url'), 'P: the Share handler binds url = stream.url (the EXACT ORIGINAL URI)');
-  ok(component.includes('await navigator.share({'), 'P: navigator.share is AWAITED');
+  ok(component.includes('await navigator.share('), 'P: navigator.share is AWAITED');
   ok(component.includes('title: shareTitle('), 'P: navigator.share receives a title');
   ok(component.includes('url })') || component.includes('url,'), 'P: navigator.share receives the url field');
   ok(component.includes('navigator.clipboard.writeText'), 'P: clipboard fallback present');

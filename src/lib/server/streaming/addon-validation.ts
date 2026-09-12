@@ -10,9 +10,13 @@ import { StreamingValidationError, validateSlug } from './validation';
  *     NEVER fetches the URL, never inspects manifest contents, and therefore
  *     introduces no SSRF surface. Fetching + manifest-content validation
  *     belong to Phase 2 and must run server-side in a trusted context.
- *   * No torrent/P2P/peer/debrid configuration exists in this model; the
- *     addon branch only ever carries HTTP/S configuration for the future
- *     server-side resolver.
+ *
+ * Phase 20 (FINAL ADDON PHASE): the legacy FORBIDDEN_MODEL_TOKENS semantic
+ * rejection has been REMOVED. A valid Stremio stream addon must be accepted
+ * regardless of whether its manifest/metadata contains P2P/torrent/magnet/
+ * tracker/peer/debrid terminology — these are legitimate Stremio stream-addon
+ * concepts. The constant is kept as an empty array for back-compat with
+ * imports; rejectForbiddenTokens is now a no-op.
  */
 
 const MANIFEST_URL_MAX_LENGTH = 2048;
@@ -26,12 +30,13 @@ const MAX_ARRAY_ITEMS = 40;
 const MAX_ARRAY_ITEM_LENGTH = 120;
 
 /**
- * Strings that must never appear as fields of the addon model. Exported so
- * the Phase 2 manifest service reuses the SAME torrent/P2P exclusion list
- * when normalizing manifests (single source of truth for the HTTP-only
- * addon contract).
+ * Phase 20: the legacy FORBIDDEN_MODEL_TOKENS list is now EMPTY. A valid
+ * Stremio stream addon must be accepted regardless of P2P/torrent/magnet
+ * terminology in its name/description/capabilities. The constant is kept
+ * (exported, empty) for back-compat with imports in manifest-normalize.ts
+ * and stream-ids.ts.
  */
-export const FORBIDDEN_MODEL_TOKENS = ['torrent', 'p2p', 'magnet', 'tracker', 'peer', 'debrid', 'rtorrent'] as const;
+export const FORBIDDEN_MODEL_TOKENS: readonly string[] = [];
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== 'string') throw new StreamingValidationError(`${label} must be a string.`);
@@ -46,10 +51,13 @@ function optionalString(value: unknown, label: string, maxLength: number): strin
   return normalized;
 }
 
-function rejectForbiddenTokens(text: string, label: string): void {
-  const lowered = text.toLowerCase();
-  const hit = FORBIDDEN_MODEL_TOKENS.find((token) => lowered.includes(token));
-  if (hit) throw new StreamingValidationError(`${label} must not contain ${hit} configuration; torrent/P2P support is out of scope.`);
+/**
+ * Phase 20: rejectForbiddenTokens is now a NO-OP. The legacy semantic
+ * rejection of P2P/torrent/magnet terminology has been removed — a valid
+ * stream addon is accepted regardless of its transport concepts.
+ */
+function rejectForbiddenTokens(_text: string, _label: string): void {
+  // No-op — Phase 20: valid stream addons with P2P/torrent/magnet terminology are accepted.
 }
 
 export function validateAddonName(name: unknown): string {

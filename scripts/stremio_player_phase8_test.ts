@@ -189,8 +189,8 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('stremio_downloader_phase19_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 19 downloader suite (Phase 9–19 extension)',
+      testScript.trimEnd().endsWith('stremio_downloader_phase20_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 20 downloader suite (Phase 9–20 extension)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');

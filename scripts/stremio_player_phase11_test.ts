@@ -658,7 +658,7 @@ function sectionR() {
   ok(torrentResponse.streams.length === 0 && torrentResponse.unsupported.length === 3, 'R: torrent/infoHash/magnet/externalUrl streams are still rejected (Phase 3 policy unchanged)');
   const torrentUrl = normalizeStremioStreamResponse({ streams: [{ name: 'X', url: 'https://torrent.example/file.mkv' }] });
   ok(torrentUrl.streams.length === 0 && torrentUrl.unsupported[0]?.reason === 'torrent', 'R: torrent-ish URLs are still rejected');
-  ok(read('src/lib/server/streaming/addon-validation.ts').includes('FORBIDDEN_MODEL_TOKENS'), 'R: the addon model token policy remains in force');
+  ok(read('src/lib/server/streaming/addon-validation.ts').includes('FORBIDDEN_MODEL_TOKENS'), 'R: the FORBIDDEN_MODEL_TOKENS constant remains (Phase 20: now empty — semantic rejection removed)');
 
   // 38. no arbitrary proxy regression — the compat gateway + worker accept ONLY tokens.
   const compatRoute = read('src/routes/api/playback/compat/manifest/+server.ts');

@@ -265,7 +265,21 @@
     if (shareTimer) clearTimeout(shareTimer);
     try {
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({ title: shareTitle(stream, addonName), url });
+        // Phase 20 (task §4): FIX P2P/magnet Share bug.
+        // navigator.share({ url }) can FAIL for non-http(s) URIs (magnet:?xt=...)
+        // on some browsers/Android — the `url` field expects an http(s) URL.
+        // For non-http(s) URIs (magnet, etc.), use the `text` field instead,
+        // which carries any string and reliably invokes the native share sheet.
+        // The user can then choose 1DM / torrent-capable player / another app.
+        const isHttpUrl = url.startsWith('http://') || url.startsWith('https://');
+        const shareData: { title: string; url?: string; text?: string } = { title: shareTitle(stream, addonName) };
+        if (isHttpUrl) {
+          shareData.url = url;
+        } else {
+          // magnet:/non-http URIs: use text field (universally accepted).
+          shareData.text = url;
+        }
+        await navigator.share(shareData);
         shareState = 'shared';
       } else if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         await navigator.clipboard.writeText(url);
