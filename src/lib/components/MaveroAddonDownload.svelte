@@ -321,14 +321,14 @@
   </div>
 
   <!-- Phase 18 (task §3): suggested apps in ONE compact horizontal row. -->
-  <!-- Phase 19 (task §10): labels updated to "1DM+ Downloader" + "MPV Player". -->
+  <!-- Phase 19 (task §10): labels "1DM+ Downloader" + "MPV Player" with REAL icons. -->
   <div class="mad-apps">
     <a class="mad-app" href="https://play.google.com/store/apps/details?id=idm.internet.download.manager" target="_blank" rel="noopener noreferrer" aria-label="1DM+ Downloader on Google Play">
-      <span class="mad-app-icon mad-app-icon-1dm">1DM</span>
+      <img src="/icons/1DM.png" alt="" class="mad-app-icon" width="24" height="24" loading="lazy" />
       <span class="mad-app-name">1DM+ Downloader</span>
     </a>
     <a class="mad-app" href="https://play.google.com/store/apps/details?id=is.xyz.mpv" target="_blank" rel="noopener noreferrer" aria-label="MPV Player on Google Play">
-      <span class="mad-app-icon mad-app-icon-mpv">MPV</span>
+      <img src="/icons/MPV.png" alt="" class="mad-app-icon" width="24" height="24" loading="lazy" />
       <span class="mad-app-name">MPV Player</span>
     </a>
   </div>
@@ -475,9 +475,7 @@
   .mad-apps { display: flex; gap: 6px; }
   .mad-app { display: flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); text-decoration: none; flex: 1 1 0; min-width: 0; }
   .mad-app:hover { border-color: var(--line-strong); background: var(--accent-soft); }
-  .mad-app-icon { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; font-size: 0.5rem; font-weight: 800; color: #fff; flex: 0 0 auto; }
-  .mad-app-icon-1dm { background: #0c8; }
-  .mad-app-icon-mpv { background: #66c; }
+  .mad-app-icon { width: 24px; height: 24px; border-radius: 5px; object-fit: cover; flex: 0 0 auto; }
   .mad-app-name { color: var(--ink); font-size: 0.6rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mad-state { display: flex; min-height: 100px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 8px; color: var(--muted); font-size: 0.66rem; text-align: center; }
   .mad-state-error { color: #d48a64; }
