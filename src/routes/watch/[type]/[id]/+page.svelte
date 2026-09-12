@@ -357,7 +357,11 @@
       sourceRuntimes = { [resume.record.selectedSourceId]: { duration: resume.record.duration, updatedAt: resume.record.updatedAt } };
     }
     const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot, initialCurrentTime: resume.record?.currentTime ?? 0 });
+    // Phase 20 fix: pass initialDuration from the existing record so the
+    // ProgressWriter's lastKnownDuration is initialized correctly. This
+    // prevents a later update() call with duration=0/undefined from
+    // overwriting a previously persisted valid duration.
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot, initialCurrentTime: resume.record?.currentTime ?? 0, initialDuration: resume.record?.duration ?? 0 });
     localState = state.status === 'indexeddb' ? 'Local progress on this device' : 'Temporary local progress only';
     progressReady = true;
   }
@@ -374,7 +378,9 @@
     // Phase 9 fix: pass the accumulated sourceRuntimes + knownCurrentTime
     // into the new writer so per-source runtimes survive source switches
     // within the same episode, and the known position is never reset to 0.
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime });
+    // Phase 20 fix: also pass the last known duration.
+    const knownDuration = duration;
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime, initialDuration: knownDuration });
   }
 
   /**

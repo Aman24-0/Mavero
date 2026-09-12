@@ -408,7 +408,7 @@ export async function getLocalPersistenceState() {
   return getLocalProgressState();
 }
 
-export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime' | 'duration'> & { initialCurrentTime?: number }, flushInterval = DEFAULT_FLUSH_INTERVAL) {
+export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime' | 'duration'> & { initialCurrentTime?: number; initialDuration?: number }, flushInterval = DEFAULT_FLUSH_INTERVAL) {
   let latest: SaveProgressInput | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -417,6 +417,14 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   // Phase 9 fix: initialize knownCurrentTime from existing progress so
   // updateRuntime() never resets it to 0 over an existing resume position.
   let knownCurrentTime = Math.max(0, Number.isFinite(base.initialCurrentTime) ? (base.initialCurrentTime ?? 0) : 0);
+  // Phase 20 fix: track the last known valid duration so that a later update()
+  // call with duration=0/undefined cannot overwrite a previously received
+  // valid duration. This is the root cause of the Viduki progress bug:
+  // MEDIA_DATA arrives with a valid duration, but a subsequent update() call
+  // (e.g., from a seeked event or a non-MEDIA_DATA timeupdate) passes
+  // duration=0/undefined, which overwrites latest.duration, causing the
+  // persisted record to have duration=0 → "Resume" with no progress bar.
+  let lastKnownDuration = Math.max(0, Number.isFinite(base.initialDuration) ? (base.initialDuration ?? 0) : 0);
 
   // Phase 9 fix (race-safe): register this writer in the title-level
   // registry so removeFavoriteFromMyList() can invalidate it. The
@@ -489,19 +497,27 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
     update(currentTime: number, duration?: number, completed = false) {
       if (disposed) return; // Phase 9 fix: no-op if invalidated.
       knownCurrentTime = currentTime;
-      if (duration && duration > 0 && base.selectedSourceId) {
-        sourceRuntimes[base.selectedSourceId] = { duration, updatedAt: Date.now() };
+      // Phase 20 fix: preserve the last known valid duration. A later update()
+      // call with duration=0/undefined must NOT overwrite a previously received
+      // valid duration. This is the root cause of the Viduki progress bug.
+      const effectiveDuration = duration && duration > 0 ? duration : lastKnownDuration;
+      if (duration && duration > 0) lastKnownDuration = duration;
+      if (effectiveDuration > 0 && base.selectedSourceId) {
+        sourceRuntimes[base.selectedSourceId] = { duration: effectiveDuration, updatedAt: Date.now() };
       }
-      latest = { ...base, currentTime, duration, completed, sourceRuntimes: { ...sourceRuntimes } };
+      latest = { ...base, currentTime, duration: effectiveDuration, completed, sourceRuntimes: { ...sourceRuntimes } };
       schedule();
     },
     updateRuntime(sourceId: string, duration: number) {
       if (disposed || !Number.isFinite(duration) || duration <= 0) return;
       sourceRuntimes[sourceId] = { duration, updatedAt: Date.now() };
+      if (duration > 0) lastKnownDuration = duration; // Phase 20 fix: track duration.
       if (latest) {
         latest.sourceRuntimes = { ...sourceRuntimes };
       } else {
-        latest = { ...base, currentTime: knownCurrentTime, sourceRuntimes: { ...sourceRuntimes } };
+        // Phase 20 fix: use lastKnownDuration so the persisted record has a
+        // valid duration instead of undefined/0.
+        latest = { ...base, currentTime: knownCurrentTime, duration: lastKnownDuration, sourceRuntimes: { ...sourceRuntimes } };
         schedule();
       }
     },
@@ -511,7 +527,9 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
     complete(currentTime: number, duration?: number) {
       if (disposed) return Promise.resolve(); // Phase 9 fix: no-op if invalidated.
       knownCurrentTime = currentTime;
-      latest = { ...base, currentTime, duration, completed: true, sourceRuntimes: { ...sourceRuntimes } };
+      // Phase 20 fix: use effectiveDuration to preserve the last known duration.
+      const effectiveDuration = duration && duration > 0 ? duration : lastKnownDuration;
+      latest = { ...base, currentTime, duration: effectiveDuration, completed: true, sourceRuntimes: { ...sourceRuntimes } };
       return flush();
     },
     flush,

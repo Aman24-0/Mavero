@@ -1,6 +1,6 @@
 import { listFavoriteDeletions, listFavorites, listProgress, putFavorite, putFavoriteDeletion, putProgress, removeFavorite, removeFavoriteDeletion } from './database';
 import { mergeFavoriteDeletions, mergeFavorites, mergeFavoritesWithProgress, mergeProgress } from '$lib/shared/progress-merge';
-import type { FavoriteDeletionRecord, FavoriteRecord, WatchProgressRecord } from './types';
+import { favoriteKey, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord } from './types';
 import type { FutureCloudProgressAdapter } from './service';
 
 export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'offline' | 'error';
@@ -67,7 +67,14 @@ async function runAuthenticatedState(fetcher: typeof fetch = fetch): Promise<Syn
     }
 
     const favoriteDeletions = mergeFavoriteDeletions(localFavoriteDeletions, cloud.favoriteDeletions ?? []);
-    const progress = mergeProgress(localProgress, cloud.progress);
+    const mergedProgress = mergeProgress(localProgress, cloud.progress);
+    // Phase 20 fix: filter out progress records whose favorite has been deleted.
+    // Deletion tombstones are AUTHORITATIVE — stale cloud watch_progress for a
+    // title removed from My List must NOT be resurrected by sync.
+    const deletedKeys = new Set(favoriteDeletions.map((d) => d.key));
+    const progress = deletedKeys.size > 0
+      ? mergedProgress.filter((record) => !deletedKeys.has(favoriteKey(record.contentType, record.contentId)))
+      : mergedProgress;
     const favorites = mergeFavoritesWithProgress(mergeFavorites(localFavorites, cloud.favorites, favoriteDeletions), progress, favoriteDeletions);
     const effectiveDeletions = favoriteDeletions.filter((deletion) => {
       const favorite = favorites.find((record) => record.key === deletion.key);
