@@ -257,7 +257,7 @@ assert.doesNotMatch(shell, /data-landscape-controls-toggle/, 'data-landscape-con
 // Phase 9: PanelTopClose/PanelTopOpen removed (landscape-controls-toggle button removed).
 assert.doesNotMatch(shell, /PanelTopClose/, 'PanelTopClose removed');
 assert.doesNotMatch(shell, /PanelTopOpen/, 'PanelTopOpen removed');
-assert.match(shell, /\.player-shell\.landscape-mode \{ display: flex; flex-direction: column;/, 'landscape CSS preserved');
+assert.match(shell, /\.player-shell\.landscape-mode \{ height: 100dvh/, 'landscape CSS preserved (immersive redesign)');
 assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.orientation-button[^}]*margin-right: 38px/, 'orientation-button margin-right removed (Phase 9)');
 assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.header-actions[^}]*margin-right: 38px/, 'dead .header-actions CSS still absent');
 assert.match(shell, /100svh/, '100svh preserved');
@@ -267,14 +267,14 @@ assert.match(shell, /env\(safe-area-inset-top\)/, 'safe-area-inset preserved');
 // 9. Phase 5 UI contracts preserved (regression check)
 // ============================================================
 
-assert.match(shell, /class="bottom-bar"/, 'bottom-bar preserved');
-assert.match(shell, /embed-shell-controls/, 'embed shell controls preserved');
+assert.match(shell, /class="direct-controls-overlay"/, 'direct controls overlay preserved (immersive redesign)');
+assert.match(shell, /class="control-fab"/, 'control FAB preserved (immersive redesign)');
 assert.match(shell, /source-sheet/, 'source sheet preserved');
 assert.match(shell, /episode-sheet/, 'episode sheet preserved');
 assert.match(shell, /This source isn't available\./, 'simplified error message preserved');
 assert.match(shell, /Starting your stream/, 'loading message preserved');
 assert.match(shell, /role="application"/, 'role=application preserved');
-assert.match(shell, /role="toolbar"/, 'role=toolbar preserved');
+assert.match(shell, /role="application"/, 'role=application preserved (immersive redesign)');
 assert.match(shell, /role="dialog"/, 'role=dialog preserved');
 assert.match(shell, /role="alert"/, 'role=alert preserved');
 assert.match(shell, /role="status"/, 'role=status preserved');

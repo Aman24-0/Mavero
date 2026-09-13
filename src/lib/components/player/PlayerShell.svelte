@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Clapperboard, Info, ListVideo, Maximize2, RotateCcw, Settings2, ShieldCheck, ShieldOff, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Clapperboard, Info, ListVideo, Maximize2, Menu, RotateCcw, Settings2, ShieldCheck, ShieldOff, Smartphone, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import MaveroStreamCard from './MaveroStreamCard.svelte';
@@ -39,6 +39,7 @@
   export let onSourceChange: (sourceId: string, variant?: string) => void = () => {};
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
   export let onClose: () => void = () => {};
+  // svelte-ignore export_let_unused -- accepted by the watch route for API compatibility; the immersive redesign uses a Back FAB instead of a Details button
   export let onDetails: () => void = () => {};
   export let onIframeReady: (iframe: HTMLIFrameElement) => void = () => {};
   // Phase 6 audit fix 2: embed playback event sink. The watch route sets this
@@ -87,6 +88,13 @@
   let episodeMenuOpen = false;
   let controlsVisible = true;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  // Immersive redesign: control menu FAB state.
+  let menuOpen = false;
+  // Responsive viewport detection: compact (portrait mobile) → bottom sheet;
+  // wide (landscape/desktop/TV) → right drawer. Based on actual viewport,
+  // NOT on landscapeMode toggle.
+  let isWideViewport = false;
+  let viewportMediaQuery: MediaQueryList | undefined;
   // Phase 9: the pending seek is a STATE MACHINE, not a bare number. It is
   // retained until the media has a usable seekable range/duration (adaptive VOD
   // readiness), retried from bounded media lifecycle events, and stamped
@@ -407,6 +415,15 @@
 
   onMount(() => {
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
+    // Immersive redesign: responsive viewport detection for source sheet placement.
+    // compact (portrait) → bottom sheet; wide (landscape/desktop/TV) → right drawer.
+    // Based on actual viewport width, NOT on landscapeMode toggle.
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      viewportMediaQuery = window.matchMedia('(min-width: 769px)');
+      isWideViewport = viewportMediaQuery.matches;
+      const handleViewportChange = (e: MediaQueryListEvent) => { isWideViewport = e.matches; };
+      viewportMediaQuery.addEventListener('change', handleViewportChange);
+    }
     // Phase 6: detect Wake Lock + Media Session support at mount, matching the
     // existing pictureInPictureSupported pattern (Boolean coercion, no try/catch,
     // optional chaining on every API call).
@@ -435,6 +452,12 @@
         handleSheetKeydown(event);
         return;
       }
+      // Immersive redesign: Escape closes menu before leaving player.
+      if (event.key === 'Escape' && menuOpen) {
+        event.preventDefault();
+        closeMenu();
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, select, textarea, button, [contenteditable="true"]')) return;
       if (source?.type !== 'direct') return;
@@ -443,12 +466,19 @@
       else if (event.key === 'ArrowRight') { event.preventDefault(); seekBy(10); }
       else if (event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); }
       else if (event.key.toLowerCase() === 'f') { event.preventDefault(); void toggleFullscreen(); }
-      else if (event.key === 'Escape') { sourceMenuOpen = false; episodeMenuOpen = false; streamsSheetOpen = false; }
+      else if (event.key === 'Escape') { menuOpen = false; sourceMenuOpen = false; episodeMenuOpen = false; streamsSheetOpen = false; }
     };
     const showControls = () => {
       controlsVisible = true;
       if (hideTimer) clearTimeout(hideTimer);
-      if (playing && !landscapeMode) hideTimer = setTimeout(() => { controlsVisible = false; }, 2600);
+      // Immersive redesign: 10s auto-hide in all modes.
+      if (playing && !menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
+        hideTimer = setTimeout(() => {
+          if (!menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
+            controlsVisible = false;
+          }
+        }, 10_000);
+      }
     };
     document.addEventListener('fullscreenchange', handleFullscreen);
     window.addEventListener('keydown', handleKeydown);
@@ -917,7 +947,45 @@
   function revealControls() {
     controlsVisible = true;
     if (hideTimer) clearTimeout(hideTimer);
-    if (playing && !landscapeMode) hideTimer = setTimeout(() => { controlsVisible = false; }, 2600);
+    // Immersive redesign: 10s auto-hide, applies in all modes (portrait + landscape).
+    // Menu/source sheet open prevents auto-hide (checked in the timer callback).
+    if (playing && !menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
+      hideTimer = setTimeout(() => {
+        if (!menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
+          controlsVisible = false;
+        }
+      }, 10_000);
+    }
+  }
+
+  /** Immersive redesign: toggle the control menu FAB. */
+  function toggleMenu() {
+    menuOpen = !menuOpen;
+    if (menuOpen) {
+      revealControls();
+    } else {
+      revealControls();
+    }
+  }
+
+  /** Immersive redesign: close menu and restart inactivity timer. */
+  function closeMenu() {
+    if (!menuOpen) return;
+    menuOpen = false;
+    revealControls();
+  }
+
+  /** Open source sheet from the menu — closes menu first. */
+  function openSourceFromMenu() {
+    closeMenu();
+    // Use the playerRoot as the trigger for focus restoration.
+    openSourceSheet(playerRoot ?? document.activeElement as HTMLElement);
+  }
+
+  /** Open episode sheet from the menu — closes menu first. */
+  function openEpisodeFromMenu() {
+    closeMenu();
+    openEpisodeSheet(playerRoot ?? document.activeElement as HTMLElement);
   }
 
   function retry() {
@@ -1363,22 +1431,9 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); handleVisibilityChangeForWakeLock(); }} />
 
-  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
-  {#if !landscapeMode}
-  <header class="player-header">
-    <div class="header-title-row">
-      <button class="header-button header-nav" type="button" aria-label="Close player" onclick={onClose}><ArrowLeft size={18} /><span>Back</span></button>
-      <div class="header-title"><strong>{content.title}</strong>{#if currentEpisode}<span>S{String(currentEpisode.season).padStart(2, '0')} · E{String(currentEpisode.episode).padStart(2, '0')}{#if currentEpisode.title} · {currentEpisode.title}{/if}</span>{/if}</div>
-      <button class="header-button compact orientation-button" class:active={landscapeMode} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={17} /><span>{landscapeMode ? 'Portrait' : 'Landscape'}</span></button>
-    </div>
-  </header>
-  {:else}
-  <div class="landscape-controls-overlay">
-    {#if sourceOptions.length}<button class="landscape-overlay-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={20} /></button>{/if}
-    <button class="landscape-overlay-button" type="button" aria-label="Exit landscape player" aria-pressed={landscapeMode} onclick={() => void toggleLandscape()}><Maximize2 size={20} /></button>
-  </div>
-  {/if}
+  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} class:menu-open={menuOpen} role="application" aria-label="MAVERO video player">
 
+  <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
     <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} {statusNote} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
@@ -1386,52 +1441,74 @@
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
         <div><strong>This source isn't available.</strong><p>{resolutionError || errorMessage || 'Choose another source or try again.'}</p></div>
-        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={(e) => openSourceSheet(e.currentTarget as HTMLElement)}><Settings2 size={14} /> Switch source</button>{/if}</div>
+        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={openSourceFromMenu}><Settings2 size={14} /> Switch source</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
     {:else if effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading'}
       <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching source…' : effectiveState === 'embed-loading' ? 'Starting your stream…' : 'Loading player…'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
     {/if}
-
   </section>
 
-  <!-- Bottom controls area: direct sources get full PlayerControls; embed sources get shell controls.
-       Phase 9: In landscape mode, the bottom-bar is completely hidden — the provider's own controls
-       are inside the iframe, and Mavero only shows the minimal header overlay (title + exit + source). -->
-  {#if !landscapeMode}
-  <div class="bottom-bar" class:visible={controlsVisible}>
-    {#if source?.type === 'direct'}
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} streamCount={maveroStreams.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={() => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(document.activeElement as HTMLElement); }} onStreams={() => { if (streamsSheetOpen) closeStreamsSheet(); else openStreamsSheet(document.activeElement as HTMLElement); }} />
-    {:else if source?.type === 'embed' || effectiveState === 'embed-loading' || effectiveState === 'switching-source'}
-      <!-- Phase 5: Embed source shell controls bar — Mavero-owned controls for embed playback -->
-      <div class="embed-shell-controls" role="toolbar" aria-label="Embed playback controls">
-        <div class="shell-info">
-          <span class="shell-source-name">{sourceOptions.find((o) => o.id === source?.sourceId)?.name ?? 'Loading…'}</span>
-        </div>
-        <div class="shell-actions">
-          {#if sourceOptions.length}<button class="shell-button" type="button" aria-label="Switch source" aria-expanded={sourceMenuOpen} onclick={(e) => { if (sourceMenuOpen) closeSourceSheet(); else openSourceSheet(e.currentTarget as HTMLElement); }}><Settings2 size={16} /></button>{/if}
-          {#if episodes.length}<button class="shell-button" type="button" aria-label="Open episode list" aria-expanded={episodeMenuOpen} onclick={(e) => { if (episodeMenuOpen) closeEpisodeSheet(); else openEpisodeSheet(e.currentTarget as HTMLElement); }}><ListVideo size={16} /></button>{/if}
-          <button class="shell-button" type="button" aria-label={`Open details for ${content.title}`} onclick={onDetails}><Info size={16} /></button>
-          {#if source?.type === 'embed'}<button class="shell-button" class:active={effectiveSandboxEnabled} type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={toggleSandbox}>{#if effectiveSandboxEnabled}<ShieldCheck size={16} />{:else}<ShieldOff size={16} />{/if}</button>{/if}
-        </div>
-      </div>
-    {/if}
-  </div>
+  <!-- Immersive redesign: Back FAB — top-left overlay, translucent, safe-area aware. -->
+  <button class="back-fab" type="button" aria-label="Close player" onclick={onClose}>
+    <ArrowLeft size={20} />
+  </button>
+
+  <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding). -->
+  {#if source?.type === 'direct'}
+    <div class="direct-controls-overlay" class:visible={controlsVisible}>
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} streamCount={maveroStreams.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={openSourceFromMenu} onStreams={() => { if (streamsSheetOpen) closeStreamsSheet(); else openStreamsSheet(playerRoot ?? document.activeElement as HTMLElement); }} />
+    </div>
   {/if}
 
+  <!-- Immersive redesign: Control Menu FAB — bottom-right overlay.
+       When clicked, unfolds Orientation / Source / Episodes / Sandbox vertically. -->
+  <div class="control-fab-group" class:visible={controlsVisible}>
+    {#if menuOpen}
+      <!-- Menu items unfold vertically above the FAB with staggered animation. -->
+      <button class="fab-item" style="--fab-delay: 0ms" type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); closeMenu(); }}>
+        <Maximize2 size={18} />
+        <span class="fab-item-label">{landscapeMode ? 'Portrait' : 'Landscape'}</span>
+      </button>
+      {#if sourceOptions.length}
+        <button class="fab-item" style="--fab-delay: 50ms" type="button" aria-label="Switch source" onclick={openSourceFromMenu}>
+          <Settings2 size={18} />
+          <span class="fab-item-label">Source</span>
+        </button>
+      {/if}
+      {#if episodes.length}
+        <button class="fab-item" style="--fab-delay: 100ms" type="button" aria-label="Open episode list" onclick={openEpisodeFromMenu}>
+          <ListVideo size={18} />
+          <span class="fab-item-label">Episodes</span>
+        </button>
+      {/if}
+      {#if maveroStreams.length}
+        <button class="fab-item" style="--fab-delay: 150ms" type="button" aria-label={`Open ${maveroStreams.length} streams`} onclick={() => { closeMenu(); if (streamsSheetOpen) closeStreamsSheet(); else openStreamsSheet(playerRoot ?? document.activeElement as HTMLElement); }}>
+          <Clapperboard size={18} />
+          <span class="fab-item-label">{maveroStreams.length} Streams</span>
+        </button>
+      {/if}
+      {#if source?.type === 'embed'}
+        <button class="fab-item" style="--fab-delay: 200ms" type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={() => { toggleSandbox(); closeMenu(); }}>
+          {#if effectiveSandboxEnabled}<ShieldCheck size={18} />{:else}<ShieldOff size={18} />{/if}
+          <span class="fab-item-label">Sandbox {effectiveSandboxEnabled ? 'ON' : 'OFF'}</span>
+        </button>
+      {/if}
+    {/if}
+    <!-- The main FAB button: Menu icon when closed, X when open. -->
+    <button class="control-fab" type="button" aria-label={menuOpen ? 'Close menu' : 'Open player menu'} aria-expanded={menuOpen} onclick={toggleMenu}>
+      {#if menuOpen}<X size={22} />{:else}<Menu size={22} />{/if}
+    </button>
+  </div>
+
   {#if sourceMenuOpen}
-    <!-- Phase 5: Compact source sheet — bottom-anchored sheet, not full-screen drawer -->
+    <!-- Source sheet — responsive: bottom sheet on compact, right drawer on wide. -->
     <div class="sheet-overlay" role="presentation" onclick={() => closeSourceSheet()}></div>
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
       <div class="sheet-list">{#each sourceOptions as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}{#if option.id === MAVERO_PLAYER_SOURCE_ID && maveroStreams.length}
-          <!-- Phase 9: the ONLY stream entry point in the source sheet — ONE
-               "X Streams →" button under the MAVERO Player provider row.
-               The individual addon streams no longer render here; they live
-               in the dedicated streams sheet (provider selection and stream
-               selection are separate acts). -->
           <button class="streams-entry-button" type="button" aria-label={`Open the ${maveroStreams.length} MAVERO Player streams`} onclick={(e) => { e.stopPropagation(); openStreamsSheet(e.currentTarget as HTMLElement, true); }}><Clapperboard size={14} aria-hidden="true" /><strong>{maveroStreams.length} Stream{maveroStreams.length === 1 ? '' : 's'}</strong><ArrowRight size={14} aria-hidden="true" /></button>
         {/if}</div>{/each}
       </div>
@@ -1439,18 +1516,6 @@
   {/if}
 
   {#if streamsSheetOpen}
-    <!-- Phase 9: the dedicated MAVERO streams sheet — provider selection
-         (source sheet) and stream selection (here) are SEPARATE acts.
-         Phase 12 (GOAL G): STREMIO-STYLE HORIZONTAL ADDON TABS — one
-         scrollable tab per session addon (`HdHub | PenguPlay | Pipe |
-         DesiFlix`); the body below shows ONLY the selected addon's streams
-         (never all addons mixed). Each tab carries its live state
-         (Loading / ✓ N / Failed + Retry / ✓ 0 streams); Retry refetches
-         ONLY that addon. Cards render ONLY addon-supplied metadata via
-         Svelte auto-escaping (no raw-HTML rendering, no raw URLs, no
-         manifest/db identifiers, no admin controls); failed streams keep
-         their card with a marker while every other stream stays selectable
-         (failure isolation). -->
     <div class="sheet-overlay" role="presentation" onclick={() => closeStreamsSheet()}></div>
     <div class="mavero-streams-sheet" role="dialog" aria-modal="true" aria-label="MAVERO Player streams">
       <div class="sheet-handle" aria-hidden="true"></div>
@@ -1461,10 +1526,6 @@
       </div>
       <div class="sheet-list streams-list">
         {#if maveroTabs.length}
-          <!-- Phase 12 (GOAL G): horizontal, scrollable addon tab strip.
-               role=tablist/tab keeps the contract legible; the ACTIVE tab
-               is highlighted (accent border) and its state chip updates
-               live as the parallel per-addon requests land. -->
           <div class="addon-tabs" role="tablist" aria-label="Addons">
             {#each maveroTabs as tab (tab.name)}
               <button class="addon-tab" class:active={tab.name === activeAddonTab} type="button" role="tab" aria-selected={tab.name === activeAddonTab} onclick={() => selectAddonTab(tab.name)}>
@@ -1487,9 +1548,6 @@
             {#if activeMaveroTabGroup}
               <div class="mavero-groups" role="listbox" aria-label={`${activeMaveroTab.name} streams`}>
                 <div class="mavero-group" role="group" aria-label={`${activeMaveroTabGroup.addonName} streams`}>
-                  <!-- Phase 13: ranked order with THIS session's failed streams
-                       sunk to the bottom (evidence-based demotion — they stay
-                       visible and selectable, never permanently poisoned). -->
                   {#each orderMaveroStreamsForSheet(activeMaveroTabGroup.streams, failedStreamUrls) as stream (stream.url)}
                     <MaveroStreamCard {stream} selected={stream.url === mediaUrl} failed={failedStreamUrls.includes(stream.url)} onselect={selectMaveroStream} />
                   {/each}
@@ -1505,9 +1563,6 @@
             {:else if activeMaveroTab.status === 'ok'}
               <div class="mavero-addon-status" role="status">
                 <span class="mavero-group-state">✓ Loaded — 0 streams</span>
-                <!-- Phase 14: a LOADED-ZERO addon is NOT a failure. Direct-file
-                     candidates are served by the Mavero Downloader (Download
-                     sheet) — say so, so "✓ 0" never reads as broken. -->
                 <span class="mavero-group-hint">Direct files from this addon are available in Mavero Downloader (Download sheet)</span>
               </div>
             {:else}
@@ -1515,9 +1570,6 @@
             {/if}
           {/if}
           {#if engineQuality && engineQuality.audioTracks.length > 1}
-            <!-- Phase 10 GOAL 18: audio selector ONLY for streams whose
-                 manifest really carries multiple audio renditions; labels
-                 are the manifest's own name/lang (never invented). -->
             <div class="variant-row mavero-quality-row" role="group" aria-label="Audio track">
               <span class="mavero-quality-title">Audio</span>
               {#each engineQuality.audioTracks as track (track.id)}
@@ -1526,11 +1578,6 @@
             </div>
           {/if}
           {#if engineQuality && engineQuality.options.length > 1}
-            <!-- Phase 6: internal quality of the ACTIVE engine-driven
-                 manifest (AUTO + levels). Lives with the ACTIVE stream's
-                 context in the streams sheet; the desktop controls select
-                 mirrors this exact state — there is never a second
-                 competing quality menu. -->
             <div class="variant-row mavero-quality-row" role="group" aria-label="Playback quality">
               <span class="mavero-quality-title">Quality</span>
               {#each engineQuality.options as option (option.id)}
@@ -1546,7 +1593,6 @@
   {/if}
 
   {#if episodeMenuOpen}
-    <!-- Phase 5: Compact episode sheet — matching the source sheet style -->
     <div class="sheet-overlay" role="presentation" onclick={() => closeEpisodeSheet()}></div>
     <div class="episode-sheet" role="dialog" aria-modal="true" aria-label="Episode list">
       <div class="sheet-handle" aria-hidden="true"></div>
@@ -1558,79 +1604,46 @@
 </div>
 
 <style>
-  .player-shell { --player-bg: var(--base); position: relative; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); display: flex; flex-direction: column; }
-  .player-shell.landscape-mode { display: flex; flex-direction: column; height: 100dvh; min-height: 100svh; min-height: 100dvh; overflow: hidden; }
-  /* Phase 9 fix: landscape controls overlay — two buttons top-right only. */
-  .landscape-controls-overlay { position: absolute; z-index: 14; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); display: flex; gap: 6px; }
-  .landscape-overlay-button { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.74); cursor: pointer; box-shadow: var(--shadow-sm); backdrop-filter: blur(12px); }
-  .landscape-overlay-button:hover, .landscape-overlay-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
-  .landscape-overlay-button:active { transform: scale(.96); }
-  .player-shell.landscape-mode .header-button span { display: none; }
-  /* Phase 9: stage-wrap fills the ENTIRE viewport in landscape — no header/footer space. */
-  .player-shell.landscape-mode .stage-wrap { display: flex; flex: 1 1 auto; align-items: stretch; justify-content: stretch; min-height: 0; padding: 0; width: 100%; height: 100%; }
-  .player-shell.landscape-mode .stage-wrap :global(.viewport), .player-shell.landscape-mode .stage-wrap :global(.viewport.embed) { flex: 1 1 auto; width: 100%; max-width: none; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
-  .player-shell.landscape-mode .stage-wrap :global(.viewport iframe), .player-shell.landscape-mode .stage-wrap :global(.viewport video) { min-height: 0; width: 100%; height: 100%; }
-  /* Phase 9 fix: landscape source sheet is player-local (absolute, not fixed).
-     .player-shell has position: relative, so absolute anchors to the player
-     viewport — not the browser page. This prevents the drawer from floating
-     detached at the page edge.
+  /* Immersive redesign: player owns the ENTIRE viewport.
+     No persistent header/footer — controls are overlays. */
+  .player-shell { --player-bg: var(--base); position: relative; width: 100%; height: 100dvh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell.landscape-mode { height: 100dvh; }
 
-     IMPORTANT: The portrait bottom-sheet rule (.source-sheet, .episode-sheet)
-     and the desktop @media (min-width: 769px) centered-popover rule both set
-     `position: fixed` and `transform`/`bottom`/`left`/`right`/`max-height`/
-     `animation` that conflict with this landscape rule. To make the
-     landscape rule deterministically win, we explicitly RESET every
-     conflicting property here (transform, animation, bottom, left, right,
-     max-height, border-radius, border-top) and scope the desktop popover
-     rule to non-landscape via :not(.landscape-mode) below. Without these
-     resets, on a landscape phone whose viewport is ≥769px wide the desktop
-     popover rule (transform: translate(-50%, -50%)) would override the
-     landscape rule and the drawer would float as a small centered popup
-     near the top of the player instead of a full-height right-edge drawer. */
-  .player-shell.landscape-mode .source-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(320px, 30vw); height: 100%; max-height: 100%; margin: 0; transform: none; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
-  .player-shell.landscape-mode .source-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-  .player-shell.landscape-mode .episode-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(340px, 32vw); height: 100%; max-height: 100%; margin: 0; transform: none; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
-  .player-shell.landscape-mode .episode-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-  /* Phase 9: the streams sheet follows the same right-edge drawer contract
-     in landscape (slightly wider — it hosts the rich stream cards). */
-  .player-shell.landscape-mode .mavero-streams-sheet { position: absolute; z-index: 21; top: 0; right: 0; bottom: 0; left: auto; width: min(400px, 38vw); height: 100%; max-height: 100%; margin: 0; transform: none; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); animation: slide-right var(--motion-normal) var(--ease-out); }
-  .player-shell.landscape-mode .mavero-streams-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-  /* Phase 9 fix: landscape backdrop is player-local (absolute, not fixed).
-     Anchored to .player-shell via position: relative. Does NOT cover the
-     page viewport — only the player area. Drawer z-index (21) sits above
-     backdrop z-index (20) so the drawer is always visible above the scrim. */
-  .player-shell.landscape-mode .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.35); backdrop-filter: none; }
-  @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
-  /* Portrait header: compact top bar */
-  .player-header { position: relative; z-index: 8; flex: 0 0 auto; display: flex; align-items: center; padding: calc(10px + env(safe-area-inset-top)) clamp(12px, 4vw, 32px) 10px; background: rgba(0,0,0,.6); backdrop-filter: blur(12px); }
-  .header-title-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; width: 100%; min-height: 40px; }
-  .header-title-row .header-nav { justify-self: start; }
-  .header-title-row .orientation-button { justify-self: end; }
-  /* Phase 9 fix: header-actions-right removed — landscape uses .landscape-controls-overlay instead. */
-  .header-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 11px; color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; font: inherit; font-size: .68rem; transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .header-button:hover, .header-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
-  .header-button:disabled { cursor: not-allowed; opacity: .3; }
-  .header-button:active { transform: scale(.97); }
-  .header-title { display: grid; justify-items: center; gap: 2px; min-width: 0; color: var(--ink); text-align: center; }
-  .header-title strong { max-width: min(56vw, 600px); overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
-  .header-title span { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  /* Stage: fills remaining space between header and bottom bar */
-  .stage-wrap { position: relative; flex: 1 1 auto; display: grid; place-items: center; min-height: 0; padding: 0; overflow: hidden; }
+  /* Stage: fills the ENTIRE shell — no header/footer space consumed. */
+  .stage-wrap { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
   .stage-wrap :global(.viewport) { width: 100%; height: 100%; min-height: 0; max-height: none; border-radius: 0; box-shadow: none; }
   .stage-wrap :global(.viewport.embed) { width: 100%; }
-  /* Bottom bar: always rendered for both direct and embed sources */
-  .bottom-bar { position: relative; z-index: 6; flex: 0 0 auto; opacity: 1; transition: opacity var(--motion-normal) var(--ease-out); pointer-events: auto; padding-bottom: env(safe-area-inset-bottom); }
-  .bottom-bar:not(.visible) { opacity: 0; pointer-events: none; }
-  /* Embed shell controls */
-  .embed-shell-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px clamp(12px, 4vw, 32px); background: rgba(0,0,0,.6); backdrop-filter: blur(12px); border-top: 1px solid var(--line); }
-  .shell-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .shell-source-name { color: var(--ink-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .68rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .shell-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-  .shell-button { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: transparent; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .shell-button:hover, .shell-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
-  .shell-button:active { transform: scale(.96); }
-  .shell-button.active { border-color: var(--line-strong); color: var(--ink); }
-  /* Overlay cards */
+  .stage-wrap :global(.viewport iframe), .stage-wrap :global(.viewport video) { width: 100%; height: 100%; }
+
+  /* Back FAB — top-left overlay, translucent, safe-area aware. */
+  .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .back-fab:hover, .back-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
+  .back-fab:active { transform: scale(.94); }
+  .player-shell.controls-hidden:not(.menu-open) .back-fab { opacity: 0; pointer-events: none; }
+
+  /* Direct source controls overlay — auto-hiding bottom bar. */
+  .direct-controls-overlay { position: absolute; z-index: 10; bottom: 0; left: 0; right: 0; padding-bottom: env(safe-area-inset-bottom); opacity: 1; transition: opacity var(--motion-normal) var(--ease-out); pointer-events: auto; }
+  .direct-controls-overlay:not(.visible) { opacity: 0; pointer-events: none; }
+
+  /* Control Menu FAB group — bottom-right overlay. */
+  .control-fab-group { position: absolute; z-index: 12; bottom: max(16px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; transition: opacity var(--motion-normal) var(--ease-out); }
+  .control-fab-group:not(.visible) { opacity: 0; pointer-events: none; }
+  .player-shell.controls-hidden .control-fab-group { opacity: 0; pointer-events: none; }
+  .player-shell.menu-open .control-fab-group { opacity: 1; pointer-events: auto; }
+
+  /* Main FAB button. */
+  .control-fab { display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,.4); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .control-fab:hover, .control-fab:focus-visible { background: rgba(0,0,0,.85); border-color: var(--accent); }
+  .control-fab:active { transform: scale(.93); }
+
+  /* Menu items — staggered unfold animation. */
+  .fab-item { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 2px 10px rgba(0,0,0,.3); font: inherit; font-size: .62rem; font-weight: 600; white-space: nowrap; opacity: 0; transform: translateY(8px) scale(0.9); animation: fab-unfold 200ms var(--ease-out) var(--fab-delay, 0ms) forwards; }
+  .fab-item:hover, .fab-item:focus-visible { background: rgba(0,0,0,.85); border-color: var(--accent); }
+  .fab-item:active { transform: scale(.95); }
+  .fab-item-label { color: var(--ink-soft); }
+  @keyframes fab-unfold { to { opacity: 1; transform: translateY(0) scale(1); } }
+
+  /* Overlay cards (error/loading/completion) — centered in viewport. */
   .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 15px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
   .message-card strong { display: block; font-size: .75rem; }
   .message-card p { margin: 5px 0 0; color: var(--muted); font-size: .66rem; line-height: 1.45; }
@@ -1646,12 +1659,12 @@
   .loading-copy strong { color: var(--ink); font-size: .72rem; }
   .loading-copy small { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }
   :global(.spin) { animation: spin 1s linear infinite; }
-  /* Phase 5/9: Compact source/streams/episode sheets — bottom-anchored, not full-screen.
-     Scoped to non-landscape so the landscape rule above deterministically
-     wins, even on wide landscape phones (viewport ≥769px wide) that would
-     otherwise also match the desktop @media below. */
-  .sheet-overlay { position: fixed; z-index: 20; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
-  .player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet, .player-shell:not(.landscape-mode) .mavero-streams-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
+
+  /* Source/episode/streams sheets — responsive:
+     compact viewport → bottom sheet; wide viewport → right drawer.
+     Based on actual viewport width (matchMedia), NOT landscapeMode. */
+  .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.4); backdrop-filter: blur(2px); }
+  .source-sheet, .episode-sheet, .mavero-streams-sheet { position: absolute; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
   .episode-sheet { max-height: 65dvh; }
   .mavero-streams-sheet { max-height: 70dvh; }
   .sheet-handle { width: 36px; height: 4px; margin: 8px auto 4px; border-radius: 999px; background: var(--line-strong); }
@@ -1664,10 +1677,6 @@
   .sheet-option strong, .sheet-option small { display: block; }
   .sheet-option strong { color: var(--ink); font-size: .72rem; }
   .sheet-option small { margin-top: 4px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
-  /* Phase 7F (MegaPlay): source option row wraps the base button + optional
-     variant toggle row. The variant row renders SUB/DUB buttons inline so
-     the user can see both variants belong to the SAME provider — they are
-     NOT separate source entries. Touch targets remain >= 44px. */
   .sheet-option-row { display: flex; flex-direction: column; gap: 6px; }
   .variant-row { display: flex; gap: 6px; padding: 0 12px 6px; }
   .variant-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; min-width: 56px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; font-size: .58rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
@@ -1675,20 +1684,12 @@
   .variant-button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .option-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
   .option-mark > span { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-deep); }
-  /* Phase 9: "X Streams →" entry point under the MAVERO Player provider row
-     inside the source sheet. Compact, full-width, 44px touch target. */
   .streams-entry-button { display: flex; align-items: center; gap: 8px; width: calc(100% - 24px); min-height: 44px; margin: 2px 12px 4px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 8px 12px; color: var(--ink-soft); background: rgba(255,255,255,.03); cursor: pointer; font: inherit; font-size: .62rem; }
   .streams-entry-button strong { color: var(--ink); font-size: .66rem; }
   .streams-entry-button:last-child { margin-left: auto; color: var(--muted); }
   .streams-entry-button:hover, .streams-entry-button:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
-  /* Phase 9: dedicated MAVERO streams sheet — grouped addon sections with
-     rich stream cards. Groups stack vertically; addon names truncate with
-     ellipsis; cards wrap badges instead of overflowing narrow screens. */
   .streams-eyebrow { display: inline-flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .streams-list { display: grid; gap: 6px; }
-  /* Phase 12 (GOAL G): horizontal addon tab strip — scrollable, compact,
-     no wrap, no layout overlap on mobile. Tabs keep 40px+ touch targets;
-     the ACTIVE tab is highlighted with the accent border. */
   .addon-tabs { display: flex; gap: 6px; max-width: 100%; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .addon-tabs::-webkit-scrollbar { display: none; }
   .addon-tab { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; max-width: 46%; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 13px; color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; }
@@ -1701,12 +1702,8 @@
   .mavero-groups { display: grid; gap: 10px; }
   .mavero-group { display: grid; gap: 2px; }
   .mavero-addon-status { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 12px; }
-  /* Phase 10: per-addon resolution state — Loading…/✓/Failed + Retry. */
   .mavero-group-state { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
-  /* Phase 12: inside the addon-status row the state sits LEFT and the
-     Retry action RIGHT (the tab already carries the compact state chip). */
   .mavero-addon-status .mavero-group-state { flex: 1 1 auto; margin-left: 0; }
-  /* Phase 14: the LOADED-ZERO hint — direct files live in the Mavero Downloader. */
   .mavero-group-hint { flex: 1 1 100%; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; line-height: 1.5; }
   .mavero-group-state.loading { color: var(--muted); }
   .mavero-group-state.failed { color: #ffb020; }
@@ -1718,35 +1715,34 @@
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-  /* Desktop: source/streams/episode sheets become centered popovers.
-     Scoped to non-landscape so a wide landscape phone (≥769px wide) does
-     NOT pick up this centered-popover rule — the landscape right-edge
-     drawer rule above must win in landscape mode. */
+
+  /* Wide viewport (landscape/desktop/TV): source/episode/streams sheets
+     become right-edge drawers. Based on viewport width, NOT landscapeMode. */
   @media (min-width: 769px) {
-    .player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet, .player-shell:not(.landscape-mode) .mavero-streams-sheet { bottom: auto; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); width: min(400px, calc(100% - 48px)); max-height: min(70dvh, 560px); border-radius: var(--radius-lg); border: 1px solid var(--line-strong); animation: none; }
-    .player-shell:not(.landscape-mode) .episode-sheet { width: min(440px, calc(100% - 48px)); }
-    .player-shell:not(.landscape-mode) .mavero-streams-sheet { width: min(460px, calc(100% - 48px)); }
+    .source-sheet, .episode-sheet, .mavero-streams-sheet { top: 0; right: 0; bottom: 0; left: auto; width: min(360px, 32vw); height: 100%; max-height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); animation: slide-right var(--motion-normal) var(--ease-out); }
+    .source-sheet .sheet-list, .episode-sheet .sheet-list, .mavero-streams-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+    .episode-sheet { width: min(380px, 34vw); }
+    .mavero-streams-sheet { width: min(420px, 38vw); }
+    @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   }
-  /* Mobile: compact header, no label text */
+
+  /* Mobile: compact FAB sizing. */
   @media (max-width: 640px) {
-    .player-header { padding: calc(8px + env(safe-area-inset-top)) 8px 8px; }
-    .header-title-row { gap: 8px; min-height: 38px; }
-    .header-button span { display: none; }
-    .header-button { min-width: 38px; min-height: 38px; padding: 0; }
-    .header-title strong { max-width: 52vw; font-size: .72rem; }
-    .header-title span { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .stage-wrap :global(.viewport), .stage-wrap :global(.viewport.embed) { width: 100%; max-height: none; border-radius: 0; }
     .message-card { bottom: 50%; flex-wrap: wrap; }
     .message-actions { width: 100%; margin-left: 46px; }
-    .embed-shell-controls { padding: 6px 8px; }
-    .shell-source-name { font-size: .62rem; }
   }
-  /* Landscape phone */
-  @media (orientation: landscape) and (max-height: 560px) {
-    .player-header { padding-top: 6px; padding-bottom: 6px; }
-    .header-title-row { min-height: 32px; gap: 8px; }
-    .header-button { min-height: 32px; min-width: 34px; padding: 0 8px; }
-    .header-button span { display: none; }
+
+  /* Landscape phone — compact FAB positioning. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    .back-fab { width: 40px; height: 40px; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
+    .control-fab { width: 46px; height: 46px; }
+    .fab-item { height: 40px; font-size: .58rem; }
   }
-  @media (prefers-reduced-motion: reduce) { .loading-ring, :global(.spin) { animation: none; } .header-button, .bottom-bar { transition: none; } .source-sheet, .episode-sheet, .mavero-streams-sheet { animation: none; } .player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet, .player-shell.landscape-mode .mavero-streams-sheet { animation: none; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .loading-ring, :global(.spin) { animation: none; }
+    .back-fab, .control-fab, .control-fab-group, .direct-controls-overlay { transition: none; }
+    .fab-item { animation: none; opacity: 1; transform: none; }
+    .source-sheet, .episode-sheet, .mavero-streams-sheet { animation: none; }
+  }
 </style>
