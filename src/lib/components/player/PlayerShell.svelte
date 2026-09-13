@@ -468,21 +468,16 @@
       else if (event.key.toLowerCase() === 'f') { event.preventDefault(); void toggleFullscreen(); }
       else if (event.key === 'Escape') { menuOpen = false; sourceMenuOpen = false; episodeMenuOpen = false; streamsSheetOpen = false; }
     };
-    const showControls = () => {
-      controlsVisible = true;
-      if (hideTimer) clearTimeout(hideTimer);
-      // Immersive redesign: 10s auto-hide in all modes.
-      if (playing && !menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
-        hideTimer = setTimeout(() => {
-          if (!menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
-            controlsVisible = false;
-          }
-        }, 10_000);
-      }
-    };
+    // Immersive redesign: ONE authoritative inactivity timer. All interaction
+    // signals (pointer move, pointer down, touch) route through `revealControls`
+    // — there is no duplicate timer body here. `revealControls` clears any
+    // pending hideTimer and starts a fresh 10s countdown, gated by the
+    // menu/sheet-open guards so an open menu or sheet is never auto-hidden.
+    const showControls = () => { revealControls(); };
     document.addEventListener('fullscreenchange', handleFullscreen);
     window.addEventListener('keydown', handleKeydown);
     playerRoot?.addEventListener('pointermove', showControls);
+    playerRoot?.addEventListener('pointerdown', showControls, { passive: true });
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
     return () => {
       if (hideTimer) clearTimeout(hideTimer);
@@ -492,6 +487,7 @@
       detachPictureInPictureListeners();
       window.removeEventListener('keydown', handleKeydown);
       playerRoot?.removeEventListener('pointermove', showControls);
+      playerRoot?.removeEventListener('pointerdown', showControls);
       playerRoot?.removeEventListener('touchstart', showControls);
       // Phase 6: explicit teardown of shell-level playback features. The browser
       // auto-exits fullscreen/PiP when playerRoot leaves the DOM, but explicit
@@ -875,8 +871,10 @@
         await playerRoot?.requestFullscreen?.();
         try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
         landscapeMode = true;
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = undefined;
+        // FAB auto-hide: portrait↔landscape must NOT break the inactivity
+        // timer. Restart the 10s countdown cleanly via revealControls() so
+        // the FABs remain visible now and auto-hide after 10s of inactivity.
+        revealControls();
       } else {
         try { orientation?.unlock?.(); } catch { /* unsupported */ }
         landscapeMode = false;
@@ -1119,6 +1117,8 @@
     sourceMenuOpen = false;
     restoreFocus(sourceSheetTrigger);
     sourceSheetTrigger = null;
+    // FAB auto-hide: closing a sheet restarts the 10s inactivity countdown.
+    revealControls();
   }
 
   function closeStreamsSheet() {
@@ -1135,12 +1135,16 @@
     }
     restoreFocus(streamsSheetTrigger);
     streamsSheetTrigger = null;
+    // FAB auto-hide: closing a sheet restarts the 10s inactivity countdown.
+    revealControls();
   }
 
   function closeEpisodeSheet() {
     episodeMenuOpen = false;
     restoreFocus(episodeSheetTrigger);
     episodeSheetTrigger = null;
+    // FAB auto-hide: closing a sheet restarts the 10s inactivity countdown.
+    revealControls();
   }
 
   function restoreFocus(element: HTMLElement | null) {
@@ -1616,20 +1620,24 @@
   .stage-wrap :global(.viewport iframe), .stage-wrap :global(.viewport video) { width: 100%; height: 100%; }
 
   /* Back FAB — top-left overlay, translucent, safe-area aware. */
-  .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
   .back-fab:hover, .back-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
   .back-fab:active { transform: scale(.94); }
-  .player-shell.controls-hidden:not(.menu-open) .back-fab { opacity: 0; pointer-events: none; }
+  /* FAB auto-hide: hidden state is opacity:0 + visibility:hidden + pointer-events:none.
+     The visibility transition has a delay matching the opacity fade so the FAB
+     stays visible during the fade-out, then becomes invisible + non-interactive
+     after the fade completes. When revealing, visibility flips back instantly. */
+  .player-shell.controls-hidden:not(.menu-open) .back-fab { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear var(--motion-normal); }
 
   /* Direct source controls overlay — auto-hiding bottom bar. */
   .direct-controls-overlay { position: absolute; z-index: 10; bottom: 0; left: 0; right: 0; padding-bottom: env(safe-area-inset-bottom); opacity: 1; transition: opacity var(--motion-normal) var(--ease-out); pointer-events: auto; }
   .direct-controls-overlay:not(.visible) { opacity: 0; pointer-events: none; }
 
   /* Control Menu FAB group — bottom-right overlay. */
-  .control-fab-group { position: absolute; z-index: 12; bottom: max(16px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; transition: opacity var(--motion-normal) var(--ease-out); }
-  .control-fab-group:not(.visible) { opacity: 0; pointer-events: none; }
-  .player-shell.controls-hidden .control-fab-group { opacity: 0; pointer-events: none; }
-  .player-shell.menu-open .control-fab-group { opacity: 1; pointer-events: auto; }
+  .control-fab-group { position: absolute; z-index: 12; bottom: max(16px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear 0s; }
+  .control-fab-group:not(.visible) { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
+  .player-shell.controls-hidden .control-fab-group { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
+  .player-shell.menu-open .control-fab-group { opacity: 1; visibility: visible; pointer-events: auto; }
 
   /* Main FAB button. */
   .control-fab { display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,.4); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
