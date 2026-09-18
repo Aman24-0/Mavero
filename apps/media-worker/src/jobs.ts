@@ -474,4 +474,40 @@ export class JobRegistry {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = null;
   }
+
+  /**
+   * Phase 3-G (audit MW-4): kills ALL in-flight FFmpeg processes.
+   *
+   * Called from the SIGTERM/SIGINT shutdown handler so the worker does
+   * NOT leave orphaned ffmpeg processes when the container/function is
+   * terminating. Without this, a SIGTERM during an active encode leaves
+   * the ffmpeg child process running until the OS kills it or it
+   * finishes — which can be up to JOB_TIMEOUT_MS (4 hours).
+   *
+   * The kill is best-effort: each killer is wrapped in try/catch (kill
+   * must never throw). The sweep's orphaned-directory cleanup handles
+   * the partial output files on the NEXT start.
+   *
+   * This is NOT a graceful drain — in-flight jobs are KILLED. The signed
+   * token's idempotency means a re-presented token after restart creates
+   * a FRESH attempt (Phase 13 retry determinism), so killing is safe.
+   */
+  killAll(): void {
+    for (const [jobId, killer] of this.killers) {
+      try {
+        killer();
+      } catch {
+        /* kill must never throw — best-effort */
+      }
+      // Mark the job as failed so a status-poll sees the right state.
+      const job = this.jobs.get(jobId);
+      if (job && job.status !== 'failed' && job.status !== 'ready') {
+        job.status = 'failed';
+        job.phase = 'failed';
+        job.error = 'WORKER_SHUTDOWN';
+      }
+    }
+    this.killers.clear();
+    this.running.clear();
+  }
 }

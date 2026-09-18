@@ -296,12 +296,20 @@ export function main(): void {
   });
   const shutdown = () => {
     logger.info('media-worker shutting down');
+    // Phase 3-G (audit MW-4): kill in-flight FFmpeg processes so the
+    // worker does NOT leave orphaned processes when the container is
+    // terminating. Without this, a SIGTERM during an active encode
+    // leaves ffmpeg running until the OS kills it or it finishes.
+    registry.killAll();
     registry.stopSweeper();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5_000).unref();
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  // Phase 3-G: also handle SIGQUIT (Docker's default stop signal sends
+  // SIGTERM, but some orchestrators send SIGQUIT). Same shutdown path.
+  process.on('SIGQUIT', shutdown);
 }
 
 // Boot only when executed directly (imported by tests without side effects).
