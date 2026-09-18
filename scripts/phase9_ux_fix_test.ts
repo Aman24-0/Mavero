@@ -105,24 +105,29 @@ function createProgressStoreMock() {
 }
 
 // ============================================================
-// 3. Landscape: only two buttons (Source + Exit)
+// 3. Landscape: unified FAB control group (immersive redesign)
 // ============================================================
 
-// Landscape uses .landscape-controls-overlay with two buttons.
-assert.match(shell, /class="landscape-controls-overlay"/, 'landscape controls overlay exists');
-assert.match(shell, /landscape-overlay-button.*aria-label="Switch source"/, 'landscape source button exists');
-assert.match(shell, /landscape-overlay-button.*aria-label="Exit landscape player"/, 'landscape exit button exists');
+// Immersive redesign: the old landscape overlay with exactly two buttons was
+// replaced by ONE FAB control group serving portrait and landscape. The same
+// affordances (landscape toggle/exit, source, episodes) are FAB items, and
+// the shell has no portrait-only header/bottom chrome at all. Intent —
+// minimal landscape chrome, exit + source always reachable — is preserved.
 
-// Landscape does NOT contain header-title in landscape.
-assert.match(shell, /\{#if !landscapeMode\}/, 'portrait header gated on !landscapeMode');
-assert.match(shell, /\{#if !landscapeMode\}[\s\S]*?header-title/, 'header-title only in portrait');
+// Landscape affordances live in the unified FAB group.
+assert.match(shell, /class="control-fab-group"/, 'unified FAB control group exists');
+assert.match(shell, /class="fab-item"[^>]*aria-pressed=\{landscapeMode\}/, 'landscape FAB item (toggle/exit) exists');
+assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}/, 'landscape exit affordance exists');
+assert.match(shell, /class="fab-item"[^>]*aria-label="Switch source"/, 'source FAB item exists');
+assert.match(shell, /class="fab-item"[^>]*aria-label="Open episode list"/, 'episode FAB item exists');
 
-// Landscape does NOT contain bottom bar.
-assert.match(shell, /\{#if !landscapeMode\}[\s\S]*?bottom-bar/, 'bottom-bar only in portrait');
+// No portrait-only header/bottom chrome remains in the immersive shell.
+assert.doesNotMatch(shell, /header-title/, 'no portrait-only header title');
+assert.doesNotMatch(shell, /bottom-bar/, 'no bottom bar');
 
-// Portrait bottom bar does NOT contain landscape/orientation button.
-// The embed shell controls should NOT have a toggleLandscape button.
-assert.doesNotMatch(shell, /shell-button.*aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}.*toggleLandscape/, 'no landscape button in embed shell controls');
+// The playback controls bar does NOT contain an orientation control
+// (landscape toggling belongs to the FAB menu only).
+assert.doesNotMatch(shell, /shell-button.*aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}.*toggleLandscape/, 'no landscape button in playback controls');
 
 // ============================================================
 // 4. Continue Watching: total minutes display
@@ -157,4 +162,4 @@ assert.strictEqual(formatRemainingTime(120), '2h left', '120 → 2h left');
 assert.strictEqual(formatRemainingTime(125), '2h 5m left', '125 → 2h 5m left');
 assert.strictEqual(formatRemainingTime(205), '3h 25m left', '205 → 3h 25m left');
 
-console.log('Phase 9 final UX fix tests passed: My List removal deletes progress (4 contract checks); cloud progress deletion (2 checks); behavioral progress deletion tests 1-4 (4 tests); landscape two-button overlay (5 checks); portrait bottom bar no landscape button (1 check); Continue Watching total minutes (2 contract + 5 behavioral checks).');
+console.log('Phase 9 final UX fix tests passed: My List removal deletes progress (4 contract checks); cloud progress deletion (2 checks); behavioral progress deletion tests 1-4 (4 tests); unified FAB landscape controls (8 checks); no orientation control in playback controls (1 check); Continue Watching total minutes (2 contract + 5 behavioral checks).');

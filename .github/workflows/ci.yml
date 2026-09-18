@@ -1,0 +1,72 @@
+name: CI
+
+# Phase 1 closure (audit BL-7): blocking quality gates for every change to
+# main. A red gate blocks the merge/push — no continue-on-error, no `|| true`,
+# no suppressed failures. The pnpm version is the repository's packageManager
+# pin in package.json (pnpm@10.30.3), enforced — not assumed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gates:
+    name: Check / Test / Build (Node 22, pnpm 10.30.3)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable corepack (packageManager pin: pnpm@10.30.3)
+        run: corepack enable
+
+      - name: Verify pinned pnpm version
+        run: |
+          version="$(corepack pnpm --version)"
+          echo "pnpm ${version}"
+          if [ "${version}" != "10.30.3" ]; then
+            echo "::error::pnpm version mismatch — expected 10.30.3 (package.json packageManager pin), got ${version}"
+            exit 1
+          fi
+
+      - name: Install root dependencies (frozen lockfile)
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Type and Svelte validation (pnpm check)
+        run: corepack pnpm check
+
+      - name: Test suites (pnpm test)
+        run: corepack pnpm test
+
+      - name: Production build (pnpm build)
+        run: corepack pnpm build
+
+  media-worker:
+    name: Media worker typecheck (Node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install media-worker dependencies (frozen lockfile)
+        working-directory: apps/media-worker
+        run: npm ci
+
+      - name: TypeScript typecheck (no emit)
+        working-directory: apps/media-worker
+        run: npx tsc -p tsconfig.json --noEmit

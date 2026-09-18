@@ -98,8 +98,12 @@ The application uses public Supabase runtime configuration for browser-safe valu
 | `HOST` | Local host binding | Runtime configuration |
 | `PORT` | Local server port where applicable | Runtime configuration |
 | `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` | Server-only privileged registry/resolver access | Secret; never public |
-| `TMDB_READ_ACCESS_TOKEN` | Optional server-side TMDB credential | Secret; never public |
-| `TMDB_API_KEY` | Optional server-side TMDB fallback credential | Secret; never public |
+| `TMDB_READ_ACCESS_TOKEN` | Server-side TMDB credential (v4 token); one of the two TMDB credentials is required for TMDB-backed content | Secret; never public |
+| `TMDB_API_KEY` | Server-side TMDB fallback credential (v3 key) | Secret; never public |
+| `MAVERO_ADULT_COOKIE_SECRET` | HMAC signing secret for the guest Adult Mode cookie (required in production; missing secret fails closed) | Secret; never public |
+| `MAVERO_STREMIO_SESSION_SECRET` | HMAC signing secret for Stremio addon session tokens (optional; safe derivation default) | Secret; never public |
+| `MAVERO_COMPAT_SESSION_SECRET` | Optional independent signing secret for compatibility references (must match the media worker's value when set) | Secret; never public |
+| `MAVERO_MEDIA_WORKER_URL` | Optional HTTPS base URL of the FFmpeg compatibility media worker (absent → typed COMPAT_UNAVAILABLE degradation) | Runtime configuration; never a secret |
 
 Only variable names are documented here. Values belong in local ignored files or Netlify’s encrypted environment-variable store. Never prefix server-only credentials with `PUBLIC_` or return them through client-facing APIs.[1] [8]
 

@@ -14,7 +14,10 @@ const resolverService = readFileSync(new URL('../src/lib/server/resolver/service
 
 // replaceProgressSource must call getSourceRuntimes and pass to new writer.
 assert.match(watchRoute, /const sourceRuntimes = writer\.getSourceRuntimes\(\)/, 'replaceProgressSource captures sourceRuntimes from old writer');
-assert.match(watchRoute, /writer = createProgressWriter\(\{ \.\.\.playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime \}\)/, 'new writer receives sourceRuntimes + initialCurrentTime');
+// Current contract adds initialDuration alongside initialCurrentTime (duration
+// resume hardening); the Phase 9 intent — runtimes + known position carried
+// into the replacement writer — is unchanged.
+assert.match(watchRoute, /writer = createProgressWriter\(\{ \.\.\.playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime, initialDuration: knownDuration \}\)/, 'new writer receives sourceRuntimes + initialCurrentTime');
 
 // setupProgressContext must load progress BEFORE creating writer (BLOCKER 2).
 assert.match(watchRoute, /getResumeProgress\(playbackContext\)[\s\S]*?writer = createProgressWriter/, 'getResumeProgress called BEFORE createProgressWriter');
@@ -164,28 +167,41 @@ function createWriterMock(sourceId: string, existingRuntimes?: Record<string, { 
 
 const shell = readFileSync(new URL('../src/lib/components/player/PlayerShell.svelte', import.meta.url), 'utf8');
 
-// Test 15: Landscape has source + exit overlay (no title/header).
-assert.match(shell, /class="landscape-controls-overlay"/, 'Test 15: landscape has overlay controls');
+// Immersive-player redesign (portrait + landscape unified): the dedicated
+// landscape overlay/header/bottom-bar were replaced by one FAB control group
+// that serves both orientations, a full-viewport landscape shell, and
+// viewport-driven right drawers for sheets. The intent of every original
+// check — landscape usability, single back affordance, right-anchored drawer,
+// escape/focus semantics — is preserved against the CURRENT structure.
 
-// Test 16: Landscape overlay has exactly two buttons (source + exit).
-assert.match(shell, /class="landscape-overlay-button"[^>]*aria-label="Switch source"/, 'Test 16: landscape source button in overlay');
-assert.match(shell, /class="landscape-overlay-button"[^>]*aria-label="Exit landscape player"/, 'Test 16: landscape exit button in overlay');
+// Test 15: Landscape is an immersive full-viewport shell driven by the same
+// FAB control group (no separate overlay needed).
+assert.match(shell, /\.player-shell\.landscape-mode \{ height: 100dvh; \}/, 'Test 15: landscape shell is full-viewport');
+assert.match(shell, /class="control-fab-group"/, 'Test 15: unified FAB control group present');
 
-// Test 17: No Back button in landscape — Back is inside {#if !landscapeMode} block.
-assert.match(shell, /\{#if !landscapeMode\}[\s\S]*?header-nav/, 'Test 17: Back button gated on !landscapeMode');
+// Test 16: Landscape toggle exposes pressed state and exit affordance.
+assert.match(shell, /class="fab-item"[^>]*aria-pressed=\{landscapeMode\}/, 'Test 16: landscape FAB item exposes aria-pressed');
+assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}/, 'Test 16: landscape exit label preserved');
 
-// Test 18: No bottom bar in landscape.
-assert.match(shell, /\{#if !landscapeMode\}/, 'Test 18: bottom-bar gated on !landscapeMode');
+// Test 17: Single Back affordance — the back FAB auto-hides with controls
+// (replaces the old {#if !landscapeMode} header gating; one back button in
+// every orientation, no duplicates).
+assert.match(shell, /class="back-fab"/, 'Test 17: single back FAB present');
+assert.match(shell, /\.player-shell\.controls-hidden:not\(\.menu-open\) \.back-fab \{ opacity: 0; visibility: hidden;/, 'Test 17: back FAB auto-hides with controls');
+assert.doesNotMatch(shell, /landscape-controls-overlay/, 'Test 17: no legacy landscape overlay');
+
+// Test 18: No legacy landscape-specific chrome in any orientation.
+assert.doesNotMatch(shell, /bottom-bar/, 'Test 18: no bottom bar');
+assert.doesNotMatch(shell, /embed-shell-controls/, 'Test 18: no embed shell controls');
 
 // Test 19: No landscape-controls-toggle.
 assert.doesNotMatch(shell, /landscape-controls-toggle/, 'Test 19: no landscape-controls-toggle');
 
-// Test 20: No duplicate landscape button in embed shell controls (bottom bar is hidden in landscape).
-// The embed shell controls are inside {#if !landscapeMode} so they can't appear in landscape.
-assert.match(shell, /\{#if !landscapeMode\}[\s\S]*?embed-shell-controls/, 'Test 20: embed shell controls hidden in landscape');
+// Test 20 (merged into 18).
 
-// Test 21: Source drawer right anchored.
-assert.match(shell, /\.player-shell\.landscape-mode \.source-sheet \{[\s\S]*?right: 0/, 'Test 21: source sheet right: 0');
+// Test 21: Source drawer right-anchored on wide viewports (landscape/desktop/
+// TV) — viewport media query, not a landscapeMode class selector.
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet, \.mavero-streams-sheet \{ top: 0; right: 0; bottom: 0; left: auto;/, 'Test 21: source drawer right-anchored on wide viewports');
 
 // Test 22: Source drawer uses translateX.
 assert.match(shell, /@keyframes slide-right \{ from \{ transform: translateX\(100\%\)/, 'Test 22: slide-right uses translateX');

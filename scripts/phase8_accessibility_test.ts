@@ -146,8 +146,13 @@ assert.match(shell, /function openEpisodeSheet[\s\S]*?sourceMenuOpen = false/, '
 // 8a. role="application" on player shell.
 assert.match(shell, /role="application"/, 'role=application preserved');
 
-// 8b. role="toolbar" on embed shell controls.
-assert.match(shell, /role="toolbar"/, 'role=toolbar preserved');
+// 8b. Playback controls surface is exposed to assistive tech.
+//     Immersive-player redesign: the old embed toolbar (role="toolbar") was
+//     replaced by the PlayerControls bar — aria-label="Playback controls" —
+//     plus the shell's FAB overlay control group. Same AT exposure, new
+//     structure; the assertion tracks the CURRENT contract.
+assert.match(controls, /<div class="controls" aria-label="Playback controls">/, 'playback controls surface exposed to AT (redesigned controls bar)');
+assert.match(shell, /<div class="control-fab-group"/, 'FAB overlay control group present in shell');
 
 // 8c. role="alert" on error card.
 assert.match(shell, /role="alert"/, 'role=alert preserved');
@@ -160,9 +165,13 @@ assert.match(shell, /aria-label="Close player"/, 'aria-label on Back button pres
 assert.match(shell, /aria-label="Switch source"/, 'aria-label on Switch source button preserved');
 assert.match(shell, /aria-label="Open episode list"/, 'aria-label on episode list button preserved');
 
-// 8f. aria-expanded on sheet toggle buttons.
-assert.match(shell, /aria-expanded=\{sourceMenuOpen\}/, 'aria-expanded on source toggle preserved');
-assert.match(shell, /aria-expanded=\{episodeMenuOpen\}/, 'aria-expanded on episode toggle preserved');
+// 8f. aria-expanded on the menu toggle.
+//     Immersive redesign: sheets are no longer toggled by persistent buttons
+//     carrying per-sheet aria-expanded; the single FAB menu toggle exposes the
+//     expanded state (aria-expanded={menuOpen}) and sheets open as modal
+//     dialogs (focus moves in, close restores) — equivalent AT semantics.
+assert.match(shell, /aria-expanded=\{menuOpen\}/, 'aria-expanded on FAB menu toggle preserved');
+assert.match(shell, /aria-label=\{menuOpen \? 'Close menu' : 'Open player menu'\}/, 'menu toggle exposes dynamic state label');
 
 // 8g. aria-pressed on stateful toggles.
 assert.match(shell, /aria-pressed=\{landscapeMode\}/, 'aria-pressed on landscape toggle preserved');
@@ -179,13 +188,16 @@ assert.match(controls, /aria-label=\{pictureInPicture \? 'Exit Picture-in-Pictur
 // 9. Trigger elements pass themselves to open functions
 // ============================================================
 
-// 9a. Embed shell source button passes currentTarget.
-assert.match(shell, /onclick=\{\(e\) => \{ if \(sourceMenuOpen\) closeSourceSheet\(\); else openSourceSheet\(e\.currentTarget as HTMLElement\); \}\}/, 'embed shell source button passes currentTarget');
+// 9a. Menu entry points route through the focus-managed sheet openers.
+//     Immersive redesign: triggers live inside the FAB menu; the open-from-menu
+//     helpers pass the player root (or the active element) as the focus-restore
+//     trigger — the same contract the old currentTarget passing served.
+assert.match(shell, /function openSourceFromMenu\(\) \{[\s\S]*?openSourceSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'source menu entry passes a focus-restore trigger');
 
-// 9b. Embed shell episode button passes currentTarget.
-assert.match(shell, /onclick=\{\(e\) => \{ if \(episodeMenuOpen\) closeEpisodeSheet\(\); else openEpisodeSheet\(e\.currentTarget as HTMLElement\); \}\}/, 'embed shell episode button passes currentTarget');
+// 9b. Episode menu entry routes through the focus-managed opener.
+assert.match(shell, /function openEpisodeFromMenu\(\) \{[\s\S]*?openEpisodeSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'episode menu entry passes a focus-restore trigger');
 
-// 9c. Error card "Switch source" button passes currentTarget.
-assert.match(shell, /onclick=\{\(e\) => openSourceSheet\(e\.currentTarget as HTMLElement\)\}/, 'error card Switch source button passes currentTarget');
+// 9c. Streams menu entry routes through the focus-managed opener.
+assert.match(shell, /openStreamsSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'streams menu entry passes a focus-restore trigger');
 
-console.log('Phase 8 accessibility tests passed: aria-modal on source sheet (1); aria-modal on episode sheet (1); backdrop role=presentation (2); focus management functions (5); trigger state variables (2); restoreFocus isConnected guard (2); focus trap Tab/Shift+Tab (3); escape closes sheet (2); sheet keydown priority (1); focus moves into sheet on open (2); only one sheet at a time (2); focus restoration on close (4); source/episode focus independence (3); existing ARIA preserved (8); PlayerControls aria-labels preserved (5); trigger elements pass currentTarget (3).');
+console.log('Phase 8 accessibility tests passed: aria-modal on source sheet (1); aria-modal on episode sheet (1); backdrop role=presentation (2); focus management functions (5); trigger state variables (2); restoreFocus isConnected guard (2); focus trap Tab/Shift+Tab (3); escape closes sheet (2); sheet keydown priority (1); focus moves into sheet on open (2); only one sheet at a time (2); focus restoration on close (4); source/episode focus independence (3); existing ARIA preserved (9, redesigned controls/menu contract); PlayerControls aria-labels preserved (5); menu entries pass focus-restore triggers (3).');

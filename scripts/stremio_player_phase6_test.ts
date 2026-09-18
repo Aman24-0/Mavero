@@ -637,14 +637,20 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 // ===========================================================================
 
 {
-  ok(shellSource.includes('.player-shell:not(.landscape-mode) .source-sheet, .player-shell:not(.landscape-mode) .episode-sheet, .player-shell:not(.landscape-mode) .mavero-streams-sheet { position: fixed; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto;'), 'V: the portrait bottom-sheet contract is intact and INCLUDES the new streams sheet (it scrolls inside it — no horizontal overflow surface)');
+  // Immersive redesign: the sheets are player-local ABSOLUTE surfaces now
+  // (never position: fixed), and the orientation scoping was replaced by a
+  // viewport contract. The portrait bottom-sheet guarantee is intact — one
+  // shared base rule covers source + episode + streams sheets (it scrolls
+  // inside — no horizontal overflow surface).
+  ok(shellSource.includes('.source-sheet, .episode-sheet, .mavero-streams-sheet { position: absolute; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto;'), 'V: the portrait bottom-sheet contract is intact and INCLUDES the new streams sheet (it scrolls inside it — no horizontal overflow surface)');
+  ok(!shellSource.includes('position: fixed'), 'V: no sheet surface is viewport-fixed (player-local by construction)');
   ok(cardSource.includes('min-height: 52px;'), 'V: stream cards keep the >=44px (52px) touch target');
   // Phase 12 UPDATE: addon names now live in the horizontal TAB chips —
   // each chip truncates with ellipsis (never stretches the strip/sheet).
   ok(shellSource.includes('.addon-tab-name { overflow: hidden;') && shellSource.includes('text-overflow: ellipsis; white-space: nowrap; }'), 'V: long addon names truncate with ellipsis (never stretch the sheet)');
   ok(shellSource.includes('.mavero-quality-row { align-items: center; flex-wrap: wrap;'), 'V: the quality row wraps instead of overflowing narrow screens');
   ok(cardSource.includes('width: 100%;'), 'V: stream cards span the sheet width (no tiny buttons)');
-  ok(cardSource.includes('word-break: break-word') && cardSource.includes('-webkit-line-clamp: 2;'), 'V: long addon titles/descriptions wrap and clamp inside the card (no layout blowout)');
+  ok(cardSource.includes('word-break: break-word') && cardSource.includes('-webkit-line-clamp: 2;'), 'V: long addon titles/descriptions wrap and clamp inside the card (no layout blowout');
 }
 
 // ===========================================================================
@@ -652,21 +658,27 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
 // ===========================================================================
 
 {
-  ok(shellSource.includes('@media (min-width: 769px)'), 'W: the desktop popover breakpoint is intact');
-  ok(shellSource.includes('width: min(400px, calc(100% - 48px)); max-height: min(70dvh, 560px);'), 'W: the desktop source popover keeps its bounded size (the section cannot dominate the player)');
-  ok(!/\.mavero-streams-sheet\s*\{[^}]*width:\s*\d/.test(shellSource.replace(/\.player-shell[^{]*mavero-streams-sheet[^{]*\{[^}]*\}/g, '')), 'W: the streams sheet adds no fixed width of its own outside the responsive contracts (flows inside the sheet)');
+  ok(shellSource.includes('@media (min-width: 769px)'), 'W: the desktop breakpoint is intact');
+  // Immersive redesign: the centered popover was REMOVED. On wide viewports
+  // the source/episode/streams sheets become right-edge drawers with a
+  // bounded width — the section still cannot dominate the player.
+  ok(shellSource.includes('width: min(360px, 32vw); height: 100%; max-height: 100%;'), 'W: the wide-viewport source drawer keeps a bounded size (the section cannot dominate the player)');
+  ok(!shellSource.includes('translate(-50%, -50%)'), 'W: no centered popover transform remains (replaced by the right-edge drawer)');
+  ok(shellSource.includes('.mavero-streams-sheet { width: min(420px, 38vw); }'), 'W: the streams drawer has a bounded width of its own inside the responsive contract');
 }
 
 // ===========================================================================
 // X — landscape behavior
 // ===========================================================================
 
+// Immersive redesign: landscape shares the wide-viewport drawer contract
+// (@media min-width: 769px) with desktop/TV — no landscape-class overrides.
 {
-  ok(/\.player-shell\.landscape-mode \.source-sheet \{[^}]*position: absolute[^}]*right: 0[^}]*width: min\(320px, 30vw\)/.test(shellSource), 'X: the landscape right-edge drawer contract is intact (position, anchoring, width)');
-  ok(shellSource.includes('.player-shell.landscape-mode .source-sheet .sheet-list { max-height: 100%; overflow-y: auto;'), 'X: the landscape drawer list still scrolls — the new section lives inside that scroll');
-  ok(shellSource.includes('@media (prefers-reduced-motion: reduce)') && shellSource.includes('.player-shell.landscape-mode .source-sheet, .player-shell.landscape-mode .episode-sheet, .player-shell.landscape-mode .mavero-streams-sheet { animation: none; }'), 'X: reduced-motion landscape animation opt-out is intact (incl. the streams sheet)');
-  ok(/\.player-shell\.landscape-mode \.mavero-streams-sheet \{[^}]*position: absolute[^}]*right: 0/.test(shellSource), 'X: the streams sheet follows the landscape right-edge drawer contract (Phase 9)');
-  ok(shellSource.includes('.player-shell.landscape-mode .mavero-streams-sheet .sheet-list { max-height: 100%; overflow-y: auto;'), 'X: the landscape streams drawer list scrolls inside the drawer (scroll/safe-area handling inherited)');
+  ok(/@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet, \.mavero-streams-sheet \{ top: 0; right: 0; bottom: 0; left: auto;/.test(shellSource), 'X: the wide/landscape right-edge drawer contract is intact (position, anchoring)');
+  ok(shellSource.includes('.source-sheet .sheet-list, .episode-sheet .sheet-list, .mavero-streams-sheet .sheet-list { max-height: 100%; overflow-y: auto;'), 'X: the wide/landscape drawer list still scrolls — the new section lives inside that scroll');
+  ok(shellSource.includes('@media (prefers-reduced-motion: reduce)') && shellSource.includes('.source-sheet, .episode-sheet, .mavero-streams-sheet { animation: none; }'), 'X: reduced-motion animation opt-out is intact (incl. the streams sheet)');
+  ok(/@media \(min-width: 769px\) \{[\s\S]*?\.mavero-streams-sheet \{ width: min\(420px, 38vw\); \}/.test(shellSource), 'X: the streams sheet follows the wide/landscape right-edge drawer contract (Phase 9)');
+  ok(shellSource.includes('.mavero-streams-sheet { width: min(420px, 38vw); }') && shellSource.includes('.source-sheet .sheet-list, .episode-sheet .sheet-list, .mavero-streams-sheet .sheet-list { max-height: 100%; overflow-y: auto;'), 'X: the streams drawer list scrolls inside the drawer (scroll/safe-area handling inherited)');
 }
 
 // ===========================================================================
@@ -1003,8 +1015,12 @@ function engineLevelsSnapshotForMp4(): boolean {
 // ===========================================================================
 
 {
-  ok(shellTemplate.split('aria-label="Switch source"').length === 4, 'AR: exactly the existing three source controls remain (message card, landscape overlay, embed bar — plus the split artifact)');
-  ok(controlsSource.split('Choose source, ${sourceCount} available').length === 2, 'AR: the desktop controls keep their single source button');
+  // Immersive redesign: the old three surfaces (message card, landscape
+  // overlay, embed bar) collapsed into TWO persistent entry points — the
+  // error-card action and the unified FAB menu item (the embed bar and
+  // landscape overlay are gone).
+  ok(shellTemplate.split('aria-label="Switch source"').length === 3, 'AR: exactly the current two source entry points remain (message card action + FAB menu item)');
+  ok(controlsSource.split('Choose source, ${sourceCount} available').length === 2, 'AR: the playback controls keep their single source button');
   ok(shellTemplate.split('{#each sourceOptions as option}').length === 2, 'AR: still exactly one source-options list (streams never become source options)');
 }
 

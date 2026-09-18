@@ -535,8 +535,15 @@ const staleTargets: AddonManifestTarget[] = [];
 }
 
 // ---------------------------------------------------------------------------
-// X. Torrent/P2P content is never accepted as a streaming capability
+// X. Torrent/P2P tokens never create a streaming capability (Phase 20 contract)
 // ---------------------------------------------------------------------------
+// Phase 20 ("accept P2P/torrent addons") REMOVED the legacy semantic filtering
+// of torrent/magnet/p2p tokens: declared torrent-ish types and resource names
+// now persist like any other token. The SECURITY boundary is unchanged and is
+// structural, not lexical: `supportsStream` comes ONLY from an explicitly
+// declared `stream` resource — Mavero never calls /stream/{type}/{id}.json on
+// an addon that did not advertise it, whatever transport concepts its
+// manifest mentions.
 {
   const torrentish = validateStremioManifest(manifestFixture({
     types: ['movie', 'torrent'],
@@ -545,19 +552,21 @@ const staleTargets: AddonManifestTarget[] = [];
   }));
   ok(supportsStreamResource(torrentish) === true, 'X: stream capability comes only from the declared stream resource');
   const capabilities = getManifestCapabilities(torrentish);
-  ok(!capabilities.supportedTypes.includes('torrent'), 'X: torrent type excluded from supportedTypes');
-  ok(capabilities.supportedTypes.join(',') === 'movie', 'X: clean types survive filtering');
-  ok(persistableResourceNames(torrentish).join(',') === 'stream', 'X: torrent resource name dropped from persisted resources');
+  ok(capabilities.supportedTypes.includes('torrent'), 'X: torrent type persists under the Phase 20 accepted-P2P contract');
+  ok(capabilities.supportedTypes.join(',') === 'movie,torrent', 'X: clean types survive alongside torrent tokens');
+  ok(persistableResourceNames(torrentish).join(',') === 'stream,torrent', 'X: torrent resource name persists (Phase 20), stream resource intact');
   const persisted = persistableCapabilities(torrentish, '2026-09-10T15:00:00.000Z');
-  ok(JSON.stringify(persisted).toLowerCase().includes('torrent') === false, 'X: persisted capabilities carry no torrent tokens');
+  ok(JSON.stringify(persisted).toLowerCase().includes('torrent') === false, 'X: stream-capability payload scopes streamTypes to the stream resource (no torrent tokens)');
   ok(torrentish.description?.includes('torrent') === true, 'X: descriptive text mentioning torrents does not invalidate the manifest');
 
   const torrentOnly = validateStremioManifest(manifestFixture({ resources: ['torrent'] }));
   ok(supportsStreamResource(torrentOnly) === false, 'X: torrent-only addon gains no stream capability');
-  ok(persistableResourceNames(torrentOnly).length === 0, 'X: torrent-only addon persists no resources');
+  ok(persistableResourceNames(torrentOnly).join(',') === 'torrent', 'X: torrent-only addon persists its declared resource');
+  ok(!persistableResourceNames(torrentOnly).includes('stream'), 'X: torrent-only addon never gains the stream resource');
 
   const p2pType = validateStremioManifest(manifestFixture({ types: ['p2p-tv'], resources: ['stream'] }));
-  ok(!getManifestCapabilities(p2pType).supportedTypes.includes('p2p-tv'), 'X: P2P-ish type token never becomes a streaming capability');
+  const p2pCaps = getManifestCapabilities(p2pType);
+  ok(p2pCaps.supportsStream === true && p2pCaps.supportedTypes.includes('p2p-tv'), 'X: P2P-labeled type with an explicit stream resource is accepted (Phase 20), capability scope unchanged');
 }
 
 // ---------------------------------------------------------------------------
