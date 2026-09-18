@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
+import { readJsonBody } from '$lib/server/http/body';
 import { updateAdminAdultPolicy, getPublicAdultModeSettings } from '$lib/server/content/adult-policy';
 import type { RequestHandler } from './$types';
 
@@ -30,7 +31,12 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
-  const body = await request.json().catch(() => ({}));
+  // Phase 1 (audit SEC-010): the shared bounded JSON-body parser (256 KiB
+  // cap), consistent with the rest of the application. Auth, validation and
+  // error conventions are unchanged.
+  const parsed = await readJsonBody<Record<string, unknown>>(request);
+  if (!parsed.ok) return json({ ok: false, error: { message: parsed.message } }, { status: parsed.status });
+  const body = parsed.value;
   const updates: { allowLoggedIn?: boolean; allowGuest?: boolean } = {};
   if (typeof body.allowLoggedIn === 'boolean') updates.allowLoggedIn = body.allowLoggedIn;
   if (typeof body.allowGuest === 'boolean') updates.allowGuest = body.allowGuest;

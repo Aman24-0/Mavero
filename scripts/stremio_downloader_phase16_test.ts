@@ -138,8 +138,8 @@ function thirtyStreamsPayload() {
 function aioTypedHttpPayload() {
   return {
     streams: [
-      { type: 'http', name: '1080p', title: 'AIO 1080p WEB-DL\nHindi English\n4.40 GB', url: 'https://aio-cdn.example/dl/one?h=abc', infoHash: 'cafebeef', behaviorHints: { videoSize: 4_724_904_960, filename: 'AIO.1080p.WEB-DL.H264.mkv' } },
-      { type: 'p2p', name: '2160p', title: 'AIO 2160p', url: 'https://aio-cdn.example/dl/two', infoHash: 'feedface' },
+      { type: 'http', name: '1080p', title: 'AIO 1080p WEB-DL\nHindi English\n4.40 GB', url: 'https://aio-cdn.example/dl/one?h=abc', infoHash: 'cafebeef0123456789abcdef0123456789abcdef', behaviorHints: { videoSize: 4_724_904_960, filename: 'AIO.1080p.WEB-DL.H264.mkv' } },
+      { type: 'p2p', name: '2160p', title: 'AIO 2160p', url: 'https://aio-cdn.example/dl/two', infoHash: 'feedface0123456789abcdef0123456789abcdef' },
     ],
   };
 }
@@ -213,8 +213,8 @@ function sectionC(): void {
 function sectionD(): void {
   ok(normalizeStreams({ streams: [{ type: 'p2p', name: 'x', url: 'https://x.example/a.mkv' }] }).length === 0, 'D: explicit type:"p2p" is excluded');
   ok(normalizeStreams({ streams: [{ type: 'torrent', name: 'x', url: 'https://x.example/a.mkv' }] }).length === 0, 'D: explicit type:"torrent" is excluded');
-  ok(normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', infoHash: 'deadbeef' }] }).length === 0, 'D: UNTYPED torrent-shaped entry (infoHash) is excluded');
-  ok(normalizeStreams({ streams: [{ name: 'x', url: 'magnet:?xt=urn:btih:deadbeef' }] }).length === 0, 'D: magnet URLs are excluded (non-http scheme)');
+  ok(normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', infoHash: 'deadbeef0123456789abcdef0123456789abcdef' }] }).length === 0, 'D: UNTYPED torrent-shaped entry (infoHash) is excluded');
+  ok(normalizeStreams({ streams: [{ name: 'x', url: 'magnet:?xt=urn:btih:deadbeef0123456789abcdef0123456789abcdef' }] }).length === 0, 'D: magnet URLs are excluded (non-http scheme)');
 }
 
 // ---------------------------------------------------------------------------
@@ -484,8 +484,8 @@ async function sectionQ(): Promise<void> {
         streams: [
           { name: 'ok1', title: '1080p', url: 'https://pipe.example/a.mkv' },
           { name: 'ok2', title: '720p', url: 'https://pipe.example/b.mkv' },
-          { name: 'torrent', infoHash: 'deadbeef', url: 'https://pipe.example/c.mkv' },
-          { name: 'magnet', url: 'magnet:?xt=urn:btih:deadbeef' },
+          { name: 'torrent', infoHash: 'deadbeef0123456789abcdef0123456789abcdef', url: 'https://pipe.example/c.mkv' },
+          { name: 'magnet', url: 'magnet:?xt=urn:btih:deadbeef0123456789abcdef0123456789abcdef' },
           { name: 'hls', url: 'https://pipe.example/playlist.m3u8' },
         ],
       }),
@@ -505,7 +505,7 @@ async function sectionQ(): Promise<void> {
   //   - https://pipe.example/b.mkv → https
   //   - infoHash + https://pipe.example/c.mkv → https (the URL is usable; the
   //     infoHash is preserved as metadata but the entry is classified by its URL)
-  //   - magnet:?xt=urn:btih:deadbeef → magnet
+  //   - magnet:?xt=urn:btih:deadbeef0123456789abcdef0123456789abcdef → magnet
   //   - https://pipe.example/playlist.m3u8 → hls
   // So: https:3 + hls:1 + magnet:1 = 5.
   const kc = result.diagnostics?.kindCounts;

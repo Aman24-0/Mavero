@@ -96,6 +96,7 @@ export type ResolverErrorCode =
   | 'PROVIDER_RESPONSE_INVALID'
   | 'SOURCE_EXPIRED'
   | 'RESOLUTION_UNAVAILABLE'
+  | 'RESOLUTION_TIMEOUT'
   | 'INTERNAL_RESOLUTION_ERROR';
 
 export type ResolverErrorShape = {
@@ -165,4 +166,11 @@ export type ResolverDependencies = {
    * without polluting production health state.
    */
   skipHealthMutation?: boolean;
+  /**
+   * Phase 1 (audit PRV-09): overall resolver deadline in ms. When omitted,
+   * the resolver uses `RESOLVER_OVERALL_DEADLINE_MS` (20s). The deadline is
+   * typed (`RESOLUTION_TIMEOUT`, 504) and complements — never replaces —
+   * the existing per-operation timeouts. Injectable for tests.
+   */
+  deadlineMs?: number;
 };

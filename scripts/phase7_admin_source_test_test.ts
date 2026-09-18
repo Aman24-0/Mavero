@@ -66,12 +66,20 @@ assert.match(diagBody, /No onSuccess\/onFailure → no health mutation/, 'commen
 const resolveStart = service.indexOf('export async function resolveSource(');
 const resolveEnd = service.indexOf('\n}', service.indexOf('return resolved.result;', resolveStart));
 const resolveBody = service.slice(resolveStart, resolveEnd);
-assert.match(resolveBody, /onSuccess: skipHealthMutation \? undefined : async/, 'production resolveSource gates onSuccess on skipHealthMutation');
-assert.match(resolveBody, /onFailure: skipHealthMutation \? undefined : async/, 'production resolveSource gates onFailure on skipHealthMutation');
+// Phase 1 (BL-6/PRV-01): health writes moved OFF the critical path — the
+// production path builds a bounded scheduler ONLY when health mutation is
+// allowed, and the fallback callbacks enqueue (never await) writes.
+assert.match(resolveBody, /const health: BoundedHealthScheduler \| null = skipHealthMutation \? null : createBoundedHealthScheduler\(trustedClient\)/, 'production resolveSource gates health scheduling on skipHealthMutation');
+assert.match(resolveBody, /onSuccess: health\s*\n?\s*\? \(candidate\)/, 'production resolveSource wires the non-blocking onSuccess scheduler');
+assert.match(resolveBody, /onFailure: health\s*\n?\s*\? \(candidate, error\)/, 'production resolveSource wires the non-blocking onFailure scheduler');
 assert.match(resolveBody, /const skipHealthMutation = dependencies\.skipHealthMutation === true/, 'production reads skipHealthMutation flag');
-// Default behavior (skipHealthMutation false/undefined) still calls recordRuntimeSuccess/Failure.
-assert.match(resolveBody, /recordRuntimeSuccess\(trustedClient/, 'production still calls recordRuntimeSuccess by default');
-assert.match(resolveBody, /recordRuntimeFailure\(trustedClient/, 'production still calls recordRuntimeFailure by default');
+// Default behavior (skipHealthMutation false/undefined) still issues recordRuntimeSuccess/Failure —
+// Phase 1 moved the CALLS into the bounded scheduler (same functions, same
+// inputs, non-blocking).
+const healthService = readFileSync(new URL('../src/lib/server/streaming/health-service.ts', import.meta.url), 'utf8');
+assert.match(healthService, /export function createBoundedHealthScheduler\(client: HealthClient/, 'the bounded scheduler lives in the (tested) health-service module');
+assert.match(healthService, /recordRuntimeSuccess\(client, providerId, sourceId\)/, 'the bounded scheduler still calls recordRuntimeSuccess');
+assert.match(healthService, /recordRuntimeFailure\(client, providerId, sourceId, error\)/, 'the bounded scheduler still calls recordRuntimeFailure');
 
 // ============================================================
 // 7. Response shape — safe diagnostics, no secrets

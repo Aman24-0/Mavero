@@ -1,7 +1,9 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { fetchFourKLinks } from '$lib/server/downloader/fourk-service';
+import { assertAdultDownloadAllowed, downloaderContentId } from '$lib/server/content/adult-guard';
 import type { ContentType } from '$lib/server/content/types';
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 
 /**
  * MAVERO 4K Downloader — public endpoint (Phase 19).
@@ -27,7 +29,19 @@ function validMediaType(value: string | null): value is ContentType {
   return value === 'movie' || value === 'series' || value === 'anime';
 }
 
-export const GET: RequestHandler = async ({ url }) => {
+/**
+ * Season/episode bounds (Phase 1, audit API-17): positive integers with a
+ * sensible upper bound, consistent with the existing route contract
+ * (parseStremioPlaybackRequest accepts the same 1..10000 range). Previously
+ * season/episode <= 0 passed this endpoint and failed inside the service,
+ * producing a misleading 503 instead of a client validation error.
+ */
+function validEpisodeContext(value: number | undefined): boolean {
+  if (value === undefined) return true;
+  return Number.isSafeInteger(value) && value >= 1 && value <= 10000;
+}
+
+export const GET: RequestHandler = async ({ url, request, locals, cookies }) => {
   const mediaType = url.searchParams.get('mediaType');
   const tmdbId = url.searchParams.get('tmdbId')?.trim() ?? '';
   const seasonRaw = url.searchParams.get('season');
@@ -41,12 +55,25 @@ export const GET: RequestHandler = async ({ url }) => {
       { status: 400, headers: NO_STORE },
     );
   }
-  if ((season !== undefined && !Number.isSafeInteger(season)) || (episode !== undefined && !Number.isSafeInteger(episode))) {
+  if (!validEpisodeContext(season) || !validEpisodeContext(episode)) {
     return json(
       { ok: false, error: { code: 'INVALID_REQUEST', message: 'The 4K Downloader request is invalid.' } },
       { status: 400, headers: NO_STORE },
     );
   }
+
+
+  // Phase 1 (audit SEC-003/DL-5/STM-11): bounded per-identity rate limit —
+  // this endpoint drives real upstream work (30-40s addon budgets / 4K API).
+  const rateVerdict = checkRateLimit('downloader4k', clientIdentity(request.headers, locals.user?.id));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'cache-control': 'no-store', 'retry-after': String(rateVerdict.retryAfterSeconds) } });
+  }
+  // Phase 1 (audit BL-5/DL-1): Adult Mode enforced at the server boundary.
+  // The 4K adapter only ever sees the TMDB id, so the guard classifies the
+  // title through the canonical content pipeline (cached detail path) and
+  // blocks adult titles with the non-disclosing 404 before any fetch.
+  await assertAdultDownloadAllowed(locals.supabase, locals.user, cookies, mediaType, downloaderContentId(mediaType, tmdbId));
 
   try {
     const result = await fetchFourKLinks({ mediaType, tmdbId, ...(season !== undefined ? { season } : {}), ...(episode !== undefined ? { episode } : {}) });

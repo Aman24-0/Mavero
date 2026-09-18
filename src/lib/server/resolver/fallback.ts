@@ -47,7 +47,16 @@ export async function resolveWithBoundedFallback(
   options: Partial<FallbackOptions> = {},
 ): Promise<FallbackResolution> {
   const allowFallback = options.allowFallback ?? true;
-  const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? candidates.length, candidates.length || 1));
+  // Phase 1 (audit BL-6 / PRV-01): restore a GENUINE bounded attempt policy.
+  // The default is the small DEFAULT_FALLBACK_MAX_ATTEMPTS cap — NOT the
+  // candidate count (which used to scale with the provider table, up to
+  // ~200 sequential attempts each with awaited health bookkeeping). An
+  // explicit options.maxAttempts still wins for callers that deliberately
+  // want a different budget (tests, admin diagnostics); the cap can never
+  // exceed the candidate list, and skipped candidates do not consume the
+  // budget (deterministic ordering, duplicate-provider skipping, eligibility
+  // filtering and manual source selection are all preserved unchanged).
+  const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? DEFAULT_FALLBACK_MAX_ATTEMPTS, candidates.length || 1));
   const attempts: FallbackAttempt[] = [];
   const attemptedSourceIds = new Set<string>();
   const attemptedProviderIds = new Set<string>();

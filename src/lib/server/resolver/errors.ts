@@ -15,6 +15,7 @@ const publicMessages: Record<ResolverErrorCode, string> = {
   PROVIDER_RESPONSE_INVALID: 'The provider returned an invalid source.',
   SOURCE_EXPIRED: 'This playback source has expired.',
   RESOLUTION_UNAVAILABLE: 'This source is not available yet.',
+  RESOLUTION_TIMEOUT: 'This source is taking too long to respond. Please try again.',
   INTERNAL_RESOLUTION_ERROR: 'Playback resolution failed temporarily.',
 };
 
@@ -33,6 +34,7 @@ const statusByCode: Record<ResolverErrorCode, number> = {
   PROVIDER_RESPONSE_INVALID: 502,
   SOURCE_EXPIRED: 410,
   RESOLUTION_UNAVAILABLE: 503,
+  RESOLUTION_TIMEOUT: 504,
   INTERNAL_RESOLUTION_ERROR: 500,
 };
 

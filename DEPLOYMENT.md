@@ -50,6 +50,20 @@ The application reads public Supabase values through SvelteKit’s runtime publi
 
 The `PRIVATE_` service-role credential must never be prefixed with `PUBLIC_`, placed in client code, committed to Git, or returned by the resolver API.
 
+## Rate limiting and abuse protection (Phase 1, audit SEC-003)
+
+Application-level rate limiting (`src/lib/server/http/rate-limit.ts`) protects the highest-risk public endpoints (`/api/playback/resolve`, the downloader endpoints, `/api/content/search`, `/api/playback/stremio/session`). It is a BOUNDED per-instance fixed-window counter.
+
+**This is not a global guarantee.** Netlify function instances do not share memory, so per-instance counters are a per-instance protection only. The authoritative global layer MUST be deployment-level — configure at least one of:
+
+1. **Netlify Edge Functions / middleware rate limiting** — a per-IP token or fixed window at the edge (shared across all instances), applied to `/api/*`.
+2. **Netlify WAF / firewall rules** (available on paid plans) — per-IP request-rate rules on the same path prefixes, with a 429 response.
+3. A CDN/edge provider (Cloudflare or equivalent) in front of the site with per-IP rate-limiting rules for `/api/*`.
+
+Recommended edge budgets (match the application rules, see `RATE_LIMIT_RULES`): resolve 30/min/IP, downloader batch 10/min/IP, downloader addon+tabs 30/min/IP, 4K 20/min/IP, search 30/min/IP, Stremio session 20/min/IP. Exceeding a budget should return `429` with a `retry-after` header so the client surfaces the same degraded state the application limit produces.
+
+Application-level limits remain valuable as defense in depth (they cap the per-instance fan-out even if the edge rule is misconfigured), and they distinguish authenticated users from anonymous clients, which pure edge rules cannot.
+
 ## Supabase Auth production preparation
 
 After Netlify provides the production URL, set the Supabase project Site URL to that HTTPS origin and add only the required production redirect URLs to the Auth allowlist. Set `PUBLIC_SUPABASE_AUTH_REDIRECT_URL` to the same approved production origin or callback path. Keep localhost values only in local development files.

@@ -7,13 +7,15 @@ import type { NormalizedMediaItem } from '$lib/server/content/types';
 import { resolveSourceFromConfig } from './core';
 import { ResolverError } from './errors';
 import { parseResolverRequest } from './identifiers';
-import { resolveWithBoundedFallback, type FallbackAttempt, type FallbackCandidate } from './fallback';
+import { DEFAULT_FALLBACK_MAX_ATTEMPTS, resolveWithBoundedFallback, type FallbackAttempt, type FallbackCandidate } from './fallback';
+import { createResolutionDeadline, RESOLVER_OVERALL_DEADLINE_MS } from './deadline';
 import { rankProviderSourceList } from './ranking';
-import { loadSourceHealthMap, recordRuntimeFailure, recordRuntimeSuccess } from '$lib/server/streaming/health-service';
+import { createBoundedHealthScheduler, loadSourceHealthMap, type BoundedHealthScheduler } from '$lib/server/streaming/health-service';
 import { applyDefaultSourceOrdering } from './default-source';
 import type { ResolverDependencies, ResolverRequest, TrustedResolutionConfig } from './types';
 
 export { applyDefaultSourceOrdering } from './default-source';
+export { RESOLVER_OVERALL_DEADLINE_MS } from './deadline';
 
 export type ResolverClient = SupabaseClient<Database>;
 
@@ -90,69 +92,118 @@ async function loadContent(request: ResolverRequest): Promise<NormalizedMediaIte
 
 export async function resolveSource(client: ResolverClient, input: unknown, dependencies: ResolverDependencies = {}, sourceList?: TrustedResolutionConfig[]) {
   const request = parseResolverRequest(input);
-  const config = await (dependencies.loadConfig ?? ((value: ResolverRequest) => loadTrustedConfig(client, value)))(request);
-  const content = await (dependencies.loadContent ?? loadContent)(request);
-  if (request.allowFallback === false) return resolveSourceFromConfig(request, config, content, dependencies);
 
-  const orderedConfigs = sourceList?.length
-    ? sourceList
-    : dependencies.loadConfig
-      ? [config]
-      : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
+  // Phase 1 (audit PRV-09): ONE overall resolver deadline. It complements
+  // (never replaces) the existing per-operation timeouts: automatic
+  // fallback cannot run indefinitely, every expensive phase is raced
+  // against the deadline, expiry produces the TYPED RESOLUTION_TIMEOUT
+  // error (504 — the existing resolver error convention, never a generic
+  // exception), and losing operations are drained so stale results can
+  // never overwrite later source results. Explicit source selection keeps
+  // its deterministic ordering — the deadline bounds only its duration.
+  const deadline = createResolutionDeadline(dependencies.deadlineMs ?? RESOLVER_OVERALL_DEADLINE_MS);
 
-  // Phase 9: Default-first resolver policy.
-  // If an admin default source is configured AND it's in the candidate list,
-  // attempt it FIRST before health-ranked fallback. If the default succeeds,
-  // return immediately. If it fails, continue with health-ranked fallback
-  // from the remaining candidates (excluding the already-attempted default).
-  const trustedClient = serviceClient();
-  const skipHealthMutation = dependencies.skipHealthMutation === true;
-  const defaultId = request.defaultSourceId;
+  try {
+    const config = await deadline.guard((dependencies.loadConfig ?? ((value: ResolverRequest) => loadTrustedConfig(client, value)))(request));
+    const content = await deadline.guard((dependencies.loadContent ?? loadContent)(request));
+    if (request.allowFallback === false) {
+      // Manual explicit source selection: deterministic, uncapped in
+      // ordering — but still bounded by the overall deadline.
+      const result = await deadline.guard(resolveSourceFromConfig(request, config, content, dependencies));
+      return result;
+    }
 
-  // Build the full candidate list with ranking for fallback.
-  const sortedConfigs = applyDefaultSourceOrdering(orderedConfigs, defaultId);
-  const healthMap = await loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id));
-  const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
+    const orderedConfigs = sourceList?.length
+      ? sourceList
+      : dependencies.loadConfig
+        ? [config]
+        : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
 
-  // Phase 9 fix: If there's a valid default, attempt it FIRST before fallback ranking.
-  let defaultAttempted = false;
-  if (defaultId) {
-    const defaultConfig = sortedConfigs.find((c) => c.source.id === defaultId);
-    const defaultRanked = ranking.eligible.find((r) => r.config.source.id === defaultId);
-    if (defaultConfig && defaultRanked) {
-      defaultAttempted = true;
-      try {
-        const defaultResult = await resolveSourceFromConfig(request, defaultConfig, content, dependencies);
-        if (defaultResult.type === 'direct' || defaultResult.type === 'embed') {
-          // Default succeeded — record health and return.
-          if (!skipHealthMutation) {
-            try { await recordRuntimeSuccess(trustedClient, defaultConfig.provider.id, defaultConfig.source.id); } catch { /* health mutation must never throw */ }
+    // Phase 9: Default-first resolver policy.
+    // If an admin default source is configured AND it's in the candidate list,
+    // attempt it FIRST before health-ranked fallback. If the default succeeds,
+    // return immediately. If it fails, continue with health-ranked fallback
+    // from the remaining candidates (excluding the already-attempted default).
+    const trustedClient = serviceClient();
+    const skipHealthMutation = dependencies.skipHealthMutation === true;
+    const defaultId = request.defaultSourceId;
+
+    // Phase 1 (audit BL-6 / PRV-01): health bookkeeping is OFF the critical
+    // path — writes are issued but no longer awaited per attempt, and the
+    // final flush is bounded (see createBoundedHealthScheduler).
+    const health: BoundedHealthScheduler | null = skipHealthMutation ? null : createBoundedHealthScheduler(trustedClient);
+
+    try {
+      // Build the full candidate list with ranking for fallback.
+      const sortedConfigs = applyDefaultSourceOrdering(orderedConfigs, defaultId);
+      const healthMap = await deadline.guard(loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id)));
+      const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
+
+      // Phase 9 fix: If there's a valid default, attempt it FIRST before fallback ranking.
+      let defaultAttempted = false;
+      if (defaultId) {
+        const defaultConfig = sortedConfigs.find((c) => c.source.id === defaultId);
+        const defaultRanked = ranking.eligible.find((r) => r.config.source.id === defaultId);
+        if (defaultConfig && defaultRanked) {
+          defaultAttempted = true;
+          try {
+            const defaultResult = await deadline.guard(resolveSourceFromConfig(request, defaultConfig, content, dependencies));
+            if (defaultResult.type === 'direct' || defaultResult.type === 'embed') {
+              // Default succeeded — record health (non-blocking) and return.
+              health?.recordSuccess(defaultConfig.provider.id, defaultConfig.source.id);
+              return defaultResult;
+            }
+          } catch (error) {
+            if (deadline.expired) throw error;
+            // Default failed — fall through to health-ranked fallback.
+            health?.recordFailure(defaultConfig.provider.id, defaultConfig.source.id, error);
           }
-          return defaultResult;
-        }
-      } catch {
-        // Default failed — fall through to health-ranked fallback.
-        if (!skipHealthMutation) {
-          try { await recordRuntimeFailure(trustedClient, defaultConfig.provider.id, defaultConfig.source.id, new Error('default source failed')); } catch { /* health mutation must never throw */ }
         }
       }
-    }
-  }
 
-  // Phase 9 fix: Health-ranked fallback EXCLUDING the default if it was already
-  // attempted and failed. Do not give the default a second chance via fallback.
-  const candidates: FallbackCandidate[] = ranking.eligible
-    .filter((ranked) => !(defaultAttempted && ranked.config.source.id === defaultId))
-    .map((ranked) => ({ config: ranked.config, eligible: true }));
-  const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
-    allowFallback: true,
-    maxAttempts: candidates.length,
-    avoidDuplicateProviders: true,
-    isEligible: async (candidate) => candidate.eligible !== false,
-    onSuccess: skipHealthMutation ? undefined : async (candidate) => recordRuntimeSuccess(trustedClient, candidate.config.provider.id, candidate.config.source.id),
-    onFailure: skipHealthMutation ? undefined : async (candidate, error) => recordRuntimeFailure(trustedClient, candidate.config.provider.id, candidate.config.source.id, error),
-  });
-  return resolved.result;
+      // Phase 9 fix: Health-ranked fallback EXCLUDING the default if it was already
+      // attempted and failed. Do not give the default a second chance via fallback.
+      const candidates: FallbackCandidate[] = ranking.eligible
+        .filter((ranked) => !(defaultAttempted && ranked.config.source.id === defaultId))
+        .map((ranked) => ({ config: ranked.config, eligible: true }));
+      const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
+        allowFallback: true,
+        // Phase 1 (audit BL-6): automatic fallback is BOUNDED by the small
+        // default cap — the candidate count (up to ~200 sources) no longer
+        // scales the attempt budget. Manual explicit selection never
+        // reaches this loop (handled above) and keeps its deterministic
+        // single-source behavior.
+        maxAttempts: DEFAULT_FALLBACK_MAX_ATTEMPTS,
+        avoidDuplicateProviders: true,
+        isEligible: async (candidate) => {
+          // Deadline checkpoint between attempts: once the overall budget
+          // expires, no further attempt starts (typed error, loop aborts).
+          deadline.throwIfExpired();
+          return candidate.eligible !== false;
+        },
+        onSuccess: health
+          ? (candidate) => {
+              health.recordSuccess(candidate.config.provider.id, candidate.config.source.id);
+              // Non-async on purpose: the write starts but does NOT block
+              // the fallback loop (Phase 1, audit BL-6 / PRV-01).
+            }
+          : undefined,
+        onFailure: health
+          ? (candidate, error) => {
+              health.recordFailure(candidate.config.provider.id, candidate.config.source.id, error);
+            }
+          : undefined,
+      });
+      return resolved.result;
+    } finally {
+      // Bounded final flush — health updates are durable (not fire-and-
+      // forget) without unbounded critical-path cost. Safe on serverless:
+      // no post-response execution is relied upon.
+      await health?.flush();
+    }
+  } finally {
+    deadline.dispose();
+  }
 }
 
 /**

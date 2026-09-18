@@ -2,6 +2,7 @@ import { createServerClient, type SetAllCookies } from '@supabase/ssr';
 import { env as publicEnv } from '$env/dynamic/public';
 import { error, type Handle } from '@sveltejs/kit';
 import type { Database } from '$lib/server/supabase/database.types';
+import { isEnvironmentFreePath } from '$lib/server/route-policy';
 
 // Server hook.
 //
@@ -15,6 +16,20 @@ import type { Database } from '$lib/server/supabase/database.types';
 //     affected request, and log a safe diagnostic so the operator can
 //     see the configuration gap. Subsequent requests may succeed once
 //     the env is available.
+//   - DEFAULT-DENY (Phase 1, audit BL-2): when the environment is
+//     missing, the 503 applies to EVERY environment-dependent route.
+//     The previous allowlist let unprotected paths (e.g. /watch,
+//     /upcoming, /account, /admin) fall through to `resolve(event)`
+//     with `locals.supabase` / `locals.safeGetSession` unassigned —
+//     the root server layout then crashed on `locals.safeGetSession()`
+//     with a raw TypeError → generic 500. Route classification lives
+//     in the pure `route-policy.ts` (behaviorally tested): only paths
+//     that genuinely function without the environment (static shell
+//     assets, /sitemap.xml — static-data handler, no `locals` reads)
+//     pass through. Protected routes remain protected (fail closed
+//     with the same intentional 503), no fake Supabase clients are
+//     created, and no configuration failure becomes a partially
+//     functional security-sensitive environment.
 //   - safeGetSession is wrapped in try/catch so a Supabase auth
 //     initialization exception becomes a null session (guest) rather
 //     than a function crash. A user with a broken session is treated
@@ -38,10 +53,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   // operator fixes the env. We only log a safe, static message.
   if (!supabaseUrl || !publishableKey) {
     console.error('[Auth] Supabase public configuration is missing.');
-    // Allow static asset / prerendered requests to pass through so the
-    // app shell + CSS still load; only fail data-bearing routes.
-    const path = event.url.pathname;
-    if (path.startsWith('/auth/') || path === '/' || path.startsWith('/discover') || path.startsWith('/search') || path.startsWith('/my-list') || path.startsWith('/profile') || path.startsWith('/settings') || path.startsWith('/movie/') || path.startsWith('/series/') || path.startsWith('/anime/') || path.startsWith('/api/')) {
+    // DEFAULT-DENY: fail closed with the intentional 503 for every
+    // environment-dependent route (pages resolve through the root server
+    // layout; API endpoints read `locals`). Only paths that genuinely
+    // function without the environment pass through — see route-policy.ts.
+    if (!isEnvironmentFreePath(event.url.pathname)) {
       throw error(503, 'MAVERO is temporarily unavailable. Please try again in a moment.');
     }
     return resolve(event);

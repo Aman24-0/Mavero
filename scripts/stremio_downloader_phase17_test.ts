@@ -141,8 +141,8 @@ function sectionStreamTypes(): void {
       { name: 'hevc', title: 'HEVC', url: 'https://x.example/hevc.mkv' }, // https + codec
       { name: 'dolby', title: 'Dolby Atmos DTS TrueHD', url: 'https://x.example/dolby.mkv' }, // https + audio metadata
       { name: 'p2p', type: 'p2p', infoHash: 'abc123', url: 'https://x.example/p2p.mkv' }, // p2p (explicit type)
-      { name: 'torrent', infoHash: 'deadbeef', sources: ['udp://tracker.example:1337'] }, // p2p → magnet
-      { name: 'magnet', url: 'magnet:?xt=urn:btih:feedface' }, // magnet
+      { name: 'torrent', infoHash: 'deadbeef0123456789abcdef0123456789abcdef', sources: ['udp://tracker.example:1337'] }, // p2p → magnet
+      { name: 'magnet', url: 'magnet:?xt=urn:btih:feedface0123456789abcdef0123456789abcdef' }, // magnet
       { name: 'external', externalUrl: 'https://opens-elsewhere.example/page' }, // external
       { name: 'headered', url: 'https://x.example/h.mkv', behaviorHints: { proxyHeaders: { Referer: 'https://x.example/' } } }, // https (header-dependent PRESERVED)
     ],
@@ -169,7 +169,7 @@ function sectionStreamTypes(): void {
 
   // The torrent entry (infoHash + sources) becomes a magnet URI.
   const torrent = result.entries.find((e) => e.name === 'torrent');
-  ok(torrent?.url.startsWith('magnet:?xt=urn:btih:deadbeef'), 'M: torrent entry → magnet URI constructed from infoHash');
+  ok(torrent?.url.startsWith('magnet:?xt=urn:btih:deadbeef0123456789abcdef0123456789abcdef'), 'M: torrent entry → magnet URI constructed from infoHash');
   ok(torrent?.url.includes('tr='), 'M: magnet URI includes tracker (sources → tr=)');
 
   // The explicit type:'p2p' entry WITH an https URL is classified as p2p.
@@ -299,7 +299,7 @@ async function sectionZ(): Promise<void> {
   const calls: string[] = [];
   const sharedFetcher = fetcherFor({
     'https://hdhub.example/stream/movie/tt8633518.json': json({ streams: [{ name: 'a', title: '1080p', url: 'https://hub.example/a.mkv' }] }),
-    'https://peerflix.example/stream/movie/tt8633518.json': json({ streams: [{ name: 'a', infoHash: 'deadbeef', sources: ['udp://tracker.example:1337'] }] }),
+    'https://peerflix.example/stream/movie/tt8633518.json': json({ streams: [{ name: 'a', infoHash: 'deadbeef0123456789abcdef0123456789abcdef', sources: ['udp://tracker.example:1337'] }] }),
   }, calls);
   const sharedDeps = {
     loadAddons: loadAddonsOf([HUB, PEERFLIX]),
@@ -362,8 +362,8 @@ async function sectionAC(): Promise<void> {
         streams: [
           { name: 'a', title: '1080p', url: 'https://pipe.example/a.mkv' },
           { name: 'b', title: '720p', url: 'https://pipe.example/b.mkv' },
-          { name: 'c', infoHash: 'deadbeef', sources: ['udp://tracker.example:1337'] },
-          { name: 'd', url: 'magnet:?xt=urn:btih:feedface' },
+          { name: 'c', infoHash: 'deadbeef0123456789abcdef0123456789abcdef', sources: ['udp://tracker.example:1337'] },
+          { name: 'd', url: 'magnet:?xt=urn:btih:feedface0123456789abcdef0123456789abcdef' },
           { name: 'e', url: 'https://pipe.example/playlist.m3u8' },
           { name: 'f', externalUrl: 'https://opens-elsewhere.example/page' },
         ],

@@ -49,6 +49,32 @@ export type FfmpegEvent =
 
 const PROBE_TIMEOUT_MS = 30_000;
 
+/**
+ * Phase 1 (audit MW-1): ffmpeg/ffprobe INPUT PROTOCOL WHITELIST.
+ *
+ * A malicious nested playlist (HLS allows URI chaining) can introduce
+ * protocol handlers that bypass the application's initial URL validation
+ * (e.g. `file://`, `data:`, plain `http:` to a metadata endpoint). The
+ * whitelist restricts ffmpeg to the MINIMUM protocol set the worker's
+ * legitimate workflow needs:
+ *
+ *   * https input (the only accepted network input — validate.ts is
+ *     https-only): `https` + `tls`/`tcp` (transport) + `crypto` (AES-128
+ *     HLS segment decryption, required by real protected streams).
+ *
+ * Every other protocol (file, http, data, pipe, concat, rtmp, udp, …) is
+ * refused by ffmpeg itself — even for URIs found INSIDE a nested playlist.
+ * The `file` entry exists ONLY for the documented local-test helper
+ * (`fileUrlFor`, never used in production — production inputs are https).
+ */
+export const HTTPS_PROTOCOL_WHITELIST = 'https,tcp,tls,crypto';
+export const FILE_PROTOCOL_WHITELIST = 'file';
+
+export function protocolWhitelistFor(url: URL): string {
+  if (url.protocol === 'file:') return FILE_PROTOCOL_WHITELIST;
+  return HTTPS_PROTOCOL_WHITELIST;
+}
+
 function ffmpegInputArg(url: URL): string {
   // http(s) input goes through as-is; this module is only ever called with
   // a validated https URL (validate.ts + tokens.ts ran before it).
@@ -72,6 +98,7 @@ export function probeInput(ffprobePath: string, url: URL, maxDurationSeconds: nu
 
     const child = spawn(ffprobePath, [
       '-v', 'error',
+      '-protocol_whitelist', protocolWhitelistFor(url),
       '-show_entries', 'format=duration',
       '-of', 'json',
       ffmpegInputArg(url),
@@ -135,6 +162,9 @@ export function buildFfmpegArgs(options: FfmpegRunOptions): string[] {
     '-nostdin',
     '-hide_banner',
     '-loglevel', 'warning',
+    // Phase 1 (audit MW-1): nested playlists cannot re-open protocols
+    // outside this whitelist (see protocolWhitelistFor).
+    '-protocol_whitelist', protocolWhitelistFor(options.inputUrl),
     '-i', ffmpegInputArg(options.inputUrl),
     '-map', '0:v:0',
     '-map', '0:a:0?',

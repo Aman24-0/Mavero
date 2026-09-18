@@ -29,6 +29,8 @@ export const FOURK_API_ORIGIN = 'https://downloads.shegu.st';
 export const FOURK_API_TIMEOUT_MS = 15_000;
 /** Maximum response body size (1 MiB — the links[] array is small). */
 export const FOURK_API_MAX_BYTES = 1_048_576;
+/** Phase 1 (audit SEC-009): bounded redirect hops, each re-validated. */
+export const FOURK_MAX_REDIRECTS = 3;
 
 /** One parsed 4K API link entry. */
 export type FourKLink = {
@@ -164,9 +166,55 @@ function parseLink(entry: unknown): FourKLink | null {
 }
 
 /**
+ * Phase 1 (audit DL-3 / SEC-009): reads the response body as text under a
+ * hard byte cap — the cap is enforced WHILE STREAMING (on every chunk),
+ * aborting the in-flight request on overflow. The previous implementation
+ * awaited `response.text()` FIRST and checked the size afterwards, so a
+ * huge/chunked response was fully buffered in function memory before the
+ * limit ever applied (the same streamed-cap pattern already exists in
+ * `stream-fetch.ts` — this mirrors it).
+ */
+async function readBodyWithLimit(response: Response, maxBytes: number, controller: AbortController): Promise<string> {
+  const contentLength = Number(response.headers.get('content-length') ?? '');
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    controller.abort();
+    throw new Error('FOURK_TOO_LARGE');
+  }
+  if (!response.body) return '';
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = '';
+  try {
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.byteLength;
+      if (total > maxBytes) {
+        controller.abort();
+        throw new Error('FOURK_TOO_LARGE');
+      }
+      text += decoder.decode(chunk, { stream: true });
+    }
+    text += decoder.decode();
+  } catch (error) {
+    if (error instanceof Error && error.message === 'FOURK_TOO_LARGE') throw error;
+    if (controller.signal.aborted) throw new Error('FOURK_ABORTED');
+    throw error;
+  }
+  return text;
+}
+
+/**
  * Fetches the 4K API and parses the response. NEVER throws for API-level
  * problems — returns an empty result with a typed error. Throws only for
  * invalid request shapes.
+ *
+ * Phase 1 hardening (audit SEC-009 / DL-3):
+ *   * `redirect: 'manual'` with a bounded loop — EVERY redirect hop is
+ *     re-validated to stay on the fixed trusted origin before being
+ *     followed (redirects are new destinations; a compromised origin can
+ *     no longer bounce the fetch to arbitrary/internal targets);
+ *   * the response size limit is enforced WHILE STREAMING (see
+ *     readBodyWithLimit) — oversized bodies abort in-flight instead of
+ *     being fully buffered.
  */
 export async function fetchFourKLinks(request: FourKRequest, deps: FourKFetchDeps = {}): Promise<FourKResult> {
   const apiUrl = buildApiUrl(request);
@@ -177,26 +225,48 @@ export async function fetchFourKLinks(request: FourKRequest, deps: FourKFetchDep
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetcher(apiUrl, {
-      signal: controller.signal,
-      headers: { accept: 'application/json' },
-      redirect: 'follow',
-    });
-    if (!response.ok) {
-      console.warn(`[4KDownloader] API returned HTTP ${response.status}`);
+    let currentUrl = new URL(apiUrl);
+    let response: Response | undefined;
+    for (let redirectCount = 0; ; redirectCount += 1) {
+      response = await fetcher(currentUrl.toString(), {
+        signal: controller.signal,
+        headers: { accept: 'application/json' },
+        redirect: 'manual',
+      });
+      if (!response || response.status < 300 || response.status >= 400) break;
+      const location = response.headers.get('location');
+      if (!location) {
+        console.warn('[4KDownloader] API returned a redirect without a destination');
+        return { links: [], malformed: 0 };
+      }
+      if (redirectCount >= FOURK_MAX_REDIRECTS) {
+        console.warn('[4KDownloader] API redirected too many times');
+        return { links: [], malformed: 0 };
+      }
+      let redirectUrl: URL;
+      try {
+        redirectUrl = new URL(location, currentUrl);
+      } catch {
+        console.warn('[4KDownloader] API returned an invalid redirect');
+        return { links: [], malformed: 0 };
+      }
+      // Trusted-origin preservation: every hop MUST stay on the fixed API
+      // origin. Anything else (including private/internal hosts) is refused
+      // without following it.
+      if (redirectUrl.origin !== FOURK_API_ORIGIN) {
+        console.warn('[4KDownloader] API redirect left the trusted origin — refused');
+        return { links: [], malformed: 0 };
+      }
+      currentUrl = redirectUrl;
+    }
+
+    const finalResponse = response as Response;
+    if (!finalResponse.ok) {
+      console.warn(`[4KDownloader] API returned HTTP ${finalResponse.status}`);
       return { links: [], malformed: 0 };
     }
-    // Read the body with a size limit.
-    const contentLength = Number(response.headers.get('content-length') ?? '');
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-      console.warn(`[4KDownloader] API response too large (${contentLength} bytes)`);
-      return { links: [], malformed: 0 };
-    }
-    const text = await response.text();
-    if (text.length > maxBytes) {
-      console.warn(`[4KDownloader] API response body too large (${text.length} bytes)`);
-      return { links: [], malformed: 0 };
-    }
+    // Read the body with the size limit enforced while streaming.
+    const text = await readBodyWithLimit(finalResponse, maxBytes, controller);
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);

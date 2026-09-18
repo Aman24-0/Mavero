@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { readJsonBody } from '$lib/server/http/body';
 import { getPublicAdultModeSettings, updateUserAdultPreference, updateGuestAdultPreference, getGuestCookieClearHeader } from '$lib/server/content/adult-policy';
 import type { RequestHandler } from './$types';
 
@@ -21,7 +22,12 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
 
 export const PUT: RequestHandler = async ({ request, locals, cookies }) => {
   const { user } = await locals.safeGetSession();
-  const body = await request.json().catch(() => ({}));
+  // Phase 1 (audit SEC-010): the shared bounded JSON-body parser (256 KiB
+  // cap) — this unauthenticated route previously parsed the raw body with
+  // with no size limit, inconsistent with the rest of the application.
+  const parsed = await readJsonBody<{ enabled?: unknown }>(request);
+  if (!parsed.ok) return json({ ok: false, error: { message: parsed.message } }, { status: parsed.status });
+  const body = parsed.value;
   if (typeof body.enabled !== 'boolean') {
     return json({ ok: false, error: { message: 'The `enabled` field must be a boolean.' } }, { status: 400 });
   }

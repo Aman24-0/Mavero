@@ -124,7 +124,7 @@ function pipeHttpPayload() {
     streams: [
       { name: '1080p', title: 'Dhurandhar 1080p WEB-DL Dual Audio\nHindi + English\n4.40 GB\nPixelDrain', url: 'http://pixeldrain.com/api/file/ab12cd', behaviorHints: { videoSize: 4_724_904_960 } },
       { name: '720p', title: 'Dhurandhar 720p WEB-DL Dual Audio\nHindi + English\n1.90 GB\nPixelDrain', url: 'https://pixeldrain.com/api/file/cd34ef', behaviorHints: { videoSize: 2_040_109_056 } },
-      { name: 'Torrent', title: 'magnet edition', infoHash: 'deadbeef' },
+      { name: 'Torrent', title: 'magnet edition', infoHash: 'deadbeef0123456789abcdef0123456789abcdef' },
     ],
   };
 }
@@ -133,8 +133,8 @@ function pipeHttpPayload() {
 function aioTypedHttpPayload() {
   return {
     streams: [
-      { type: 'http', name: '1080p', title: 'AIO 1080p WEB-DL\nHindi English\n4.40 GB', url: 'https://aio-cdn.example/dl/one?h=abc', infoHash: 'cafebeef', behaviorHints: { videoSize: 4_724_904_960, filename: 'AIO.1080p.WEB-DL.H264.mkv' } },
-      { type: 'p2p', name: '2160p', title: 'AIO 2160p', url: 'https://aio-cdn.example/dl/two', infoHash: 'feedface' },
+      { type: 'http', name: '1080p', title: 'AIO 1080p WEB-DL\nHindi English\n4.40 GB', url: 'https://aio-cdn.example/dl/one?h=abc', infoHash: 'cafebeef0123456789abcdef0123456789abcdef', behaviorHints: { videoSize: 4_724_904_960, filename: 'AIO.1080p.WEB-DL.H264.mkv' } },
+      { type: 'p2p', name: '2160p', title: 'AIO 2160p', url: 'https://aio-cdn.example/dl/two', infoHash: 'feedface0123456789abcdef0123456789abcdef' },
     ],
   };
 }
@@ -445,8 +445,8 @@ function sectionF(): void {
   // P2P / torrent / magnet always rejected.
   ok(normalizeStreams({ streams: [{ type: 'p2p', name: 'x', url: 'https://x.example/a.mkv' }] }).length === 0, 'F: explicit type:"p2p" is excluded');
   ok(normalizeStreams({ streams: [{ type: 'torrent', name: 'x', url: 'https://x.example/a.mkv' }] }).length === 0, 'F: explicit type:"torrent" is excluded');
-  ok(normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', infoHash: 'deadbeef' }] }).length === 0, 'F: UNTYPED torrent-shaped entry (infoHash) is excluded');
-  ok(normalizeStreams({ streams: [{ name: 'x', url: 'magnet:?xt=urn:btih:deadbeef' }] }).length === 0, 'F: magnet URLs are excluded (non-http scheme)');
+  ok(normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', infoHash: 'deadbeef0123456789abcdef0123456789abcdef' }] }).length === 0, 'F: UNTYPED torrent-shaped entry (infoHash) is excluded');
+  ok(normalizeStreams({ streams: [{ name: 'x', url: 'magnet:?xt=urn:btih:deadbeef0123456789abcdef0123456789abcdef' }] }).length === 0, 'F: magnet URLs are excluded (non-http scheme)');
   ok(normalizeStreams({ streams: [{ type: 'http', name: 'x', url: 'https://tracker.example/file.torrent' }] }).length === 0, 'F: a .torrent URL is excluded even when the addon claims type http');
 }
 

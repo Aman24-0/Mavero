@@ -107,6 +107,67 @@ export async function loadSourceHealthMap(client: HealthClient, sourceIds: strin
   return new Map((data ?? []).map((row) => [row.source_id, row]));
 }
 
+// ============================================================
+// Phase 1 (audit BL-6 / PRV-01) — bounded health scheduler
+// ============================================================
+
+/**
+ * Maximum wall-clock budget the health flush may add to the user's
+ * response. Per-attempt health writes no longer sit ON the critical path
+ * (they are issued immediately but not awaited by the resolver loop); the
+ * final flush is bounded so a pathological DB can extend the response by
+ * at most this budget — and never indefinitely.
+ */
+export const HEALTH_FLUSH_BUDGET_MS = 2_000;
+
+export type BoundedHealthScheduler = {
+  /** Starts the success write without blocking the caller. */
+  recordSuccess(providerId: string, sourceId: string): void;
+  /** Starts the failure write without blocking the caller. */
+  recordFailure(providerId: string, sourceId: string, error: unknown): void;
+  /** Awaits the in-flight batch under the hard flush budget. */
+  flush(): Promise<void>;
+};
+
+/**
+ * Bounded health-bookkeeping scheduler.
+ *
+ * Previously EVERY fallback attempt awaited its two health DB round-trips
+ * (loadRow + upsert) BEFORE the next attempt — provider bookkeeping sat
+ * directly on the user-facing resolve latency.
+ *
+ * Guarantees:
+ *   * record*() ISSUES the write immediately (the DB call starts) but does
+ *     NOT block the caller — resolution continues while writes are in flight;
+ *   * the pending queue is BOUNDED by construction: the resolver's fallback
+ *     loop is capped (DEFAULT_FALLBACK_MAX_ATTEMPTS) plus at most the
+ *     default-source attempt, so only a handful of writes can ever be pending;
+ *   * recordRuntimeSuccess/recordRuntimeFailure never reject (they catch
+ *     internally and log a safe warning), so detached writes can never
+ *     become unhandled rejections and updates are never lost silently;
+ *   * flush() awaits the in-flight batch under a hard wall-clock budget —
+ *     durable (not fire-and-forget) and safe under serverless semantics:
+ *     no post-response execution is relied upon;
+ *   * health semantics preserved EXACTLY: same functions, same inputs,
+ *     same success/failure accounting, cooldowns and ranking inputs.
+ */
+export function createBoundedHealthScheduler(client: HealthClient, budgetMs: number = HEALTH_FLUSH_BUDGET_MS): BoundedHealthScheduler {
+  const pending: Promise<void>[] = [];
+  return {
+    recordSuccess(providerId: string, sourceId: string): void {
+      pending.push(recordRuntimeSuccess(client, providerId, sourceId));
+    },
+    recordFailure(providerId: string, sourceId: string, error: unknown): void {
+      pending.push(recordRuntimeFailure(client, providerId, sourceId, error));
+    },
+    async flush(): Promise<void> {
+      if (!pending.length) return;
+      const batch = pending.splice(0, pending.length);
+      await Promise.race([Promise.allSettled(batch), new Promise<void>((resolve) => setTimeout(resolve, budgetMs))]);
+    },
+  };
+}
+
 export async function listProviderHealth(client: HealthClient, providerIds?: string[]): Promise<RuntimeHealthRow[]> {
   let query = client.from('streaming_provider_health').select('*').order('updated_at', { ascending: false }).limit(2000);
   if (providerIds?.length) query = query.in('provider_id', providerIds);

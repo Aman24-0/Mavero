@@ -209,6 +209,14 @@ const DOWNLOAD_TIMEOUT_MS = 30_000;
 const OVERALL_TIMEOUT_MS = 40_000;
 const MAX_GROUPS = 20;
 
+/**
+ * Phase 1 (audit STM-01): the batch path previously ran an UNBOUNDED
+ * `Promise.all` over the configured addon set. A small bounded concurrency
+ * pool replaces it — same per-addon isolation and ordering, but the batch
+ * can no longer open `considered.length` simultaneous upstream fetches.
+ */
+const ADDON_CONCURRENCY = 4;
+
 /** Phase 16 retry/backoff budget (Task 14 — Retry is fallback, not required). */
 const MAX_RETRY_ATTEMPTS = 1; // 1 initial + 1 retry = 2 total attempts
 const INITIAL_BACKOFF_MS = 500;
@@ -255,6 +263,8 @@ export type ResolveAddonDownloadsDeps = {
   timeoutMs?: number;
   maxBytes?: number;
   overallTimeoutMs?: number;
+  /** Override the bounded concurrency pool size (tests; default 4). */
+  addonConcurrency?: number;
 };
 
 /** Phase 16 per-addon deps (adds retry budget + single-addon loader). */
@@ -373,6 +383,13 @@ function diagnosticsOf(raw: number, unsupported: number, _dropped: Record<Downlo
  * problems — returns a typed SingleAddonDownloadResult.
  *
  * `attempt` is 1-indexed for diagnostics.
+ *
+ * Phase 1 (audit STM-01): `overallSignal` is the AGGREGATE batch budget.
+ * It is forwarded to the actual outbound fetch — when the batch budget
+ * expires, in-flight addon requests abort immediately instead of running
+ * out their full per-request timeout (previously the aggregate
+ * AbortController existed but the signal never reached the network layer,
+ * making the 40s budget dead code).
  */
 async function resolveAddonOnce(
   addon: StreamingAddon,
@@ -381,6 +398,7 @@ async function resolveAddonOnce(
   runtimeContext: DownloadRuntimeContext,
   attempt: number,
   deps: ResolveSingleAddonDeps,
+  overallSignal?: AbortSignal,
 ): Promise<{ status: AddonDownloadStatus; streams: AddonDownloadStreamView[]; errorCode?: StreamErrorCode; diagnostics?: AddonDownloadDiagnostics }> {
   try {
     const body = await fetchStremioStreamResponse(plan.endpointUrl, {
@@ -388,6 +406,7 @@ async function resolveAddonOnce(
       dnsResolver: deps.dnsResolver,
       timeoutMs: deps.retryTimeoutMs ?? deps.timeoutMs ?? DOWNLOAD_TIMEOUT_MS,
       maxBytes: deps.maxBytes ?? STREAM_MAX_BYTES,
+      ...(overallSignal ? { overallSignal } : {}),
     });
     // Phase 17: use the DOWNLOADER-SPECIFIC normalizer that preserves EVERY
     // stream type (HTTP/HTTPS/HLS/DASH/P2P/Magnet/External). The player's
@@ -466,14 +485,16 @@ export async function resolveAddonDownloads(client: SupabaseClient<Database>, re
     const considered = addons.slice(0, MAX_GROUPS);
     const runtimeContext = runtimeContextOf(lookup);
 
-    const groups = await Promise.all(considered.map(async (addon): Promise<AddonDownloadGroup> => {
+    const resolveGroupFor = async (addon: StreamingAddon): Promise<AddonDownloadGroup> => {
       const base = addonBase(addon);
       const plan = planAddonStreamRequest(addon, streamType, lookup.identifiers, request.season, request.episode);
       if (!plan.ok) {
         console.info(`[AddonDownloader] addon skipped addon=${addon.slug} reason=${plan.reason} mediaType=${streamType}`);
         return { ...base, status: 'empty', streams: [] };
       }
-      const result = await resolveAddonOnce(addon, plan.plan, streamType, runtimeContext, 1, deps);
+      // Phase 1 (audit STM-01): the aggregate signal REACHES the fetch —
+      // the batch budget actually aborts in-flight addon requests.
+      const result = await resolveAddonOnce(addon, plan.plan, streamType, runtimeContext, 1, deps, controller.signal);
       if (result.status === 'unavailable') {
         return { ...base, status: 'failed', streams: [], errorCode: result.errorCode };
       }
@@ -481,7 +502,37 @@ export async function resolveAddonDownloads(client: SupabaseClient<Database>, re
         return { ...base, status: 'empty', streams: [], ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
       }
       return { ...base, status: 'loaded', streams: result.streams, ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
-    }));
+    };
+
+    // Phase 1 (audit STM-01): BOUNDED concurrency pool instead of an
+    // unbounded Promise.all. Ordering is preserved by writing results into
+    // their original index; per-addon failure isolation is preserved by
+    // resolveAddonOnce (it never throws for addon-level problems). When
+    // the aggregate budget expires, addons not yet started are terminated
+    // immediately (failed/TIMEOUT) instead of opening new fetches.
+    const groups: AddonDownloadGroup[] = new Array(considered.length);
+    let nextIndex = 0;
+    const concurrency = Math.max(1, Math.min(deps.addonConcurrency ?? ADDON_CONCURRENCY, considered.length || 1));
+    const worker = async (): Promise<void> => {
+      while (true) {
+        if (controller.signal.aborted) {
+          // Aggregate budget expired: terminate every remaining addon.
+          const index = nextIndex;
+          if (index >= considered.length) return;
+          nextIndex += 1;
+          groups[index] = { ...addonBase(considered[index]), status: 'failed', streams: [], errorCode: 'TIMEOUT' };
+          continue;
+        }
+        const index = nextIndex;
+        if (index >= considered.length) return;
+        nextIndex += 1;
+        groups[index] = await resolveGroupFor(considered[index]);
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, () => worker()))
+      // The workers never reject (resolveGroupFor/resolveAddonOnce never
+      // throw for addon-level problems) — drained for belt and braces.
+      .catch(() => undefined);
 
     return {
       groups: groups.sort((a, b) => a.addonOrdering - b.addonOrdering || a.addonName.localeCompare(b.addonName)),

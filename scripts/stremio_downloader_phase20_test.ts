@@ -100,8 +100,8 @@ function section5(): void {
       { name: 'http', url: 'https://x.example/a.mkv' },
       { name: 'hls', url: 'https://x.example/master.m3u8' },
       { name: 'dash', url: 'https://x.example/manifest.mpd' },
-      { name: 'p2p', infoHash: 'deadbeef', sources: ['udp://tracker.example:1337'] },
-      { name: 'magnet', url: 'magnet:?xt=urn:btih:feedface' },
+      { name: 'p2p', infoHash: 'deadbeef0123456789abcdef0123456789abcdef', sources: ['udp://tracker.example:1337'] },
+      { name: 'magnet', url: 'magnet:?xt=urn:btih:feedface0123456789abcdef0123456789abcdef' },
     ],
   });
   ok(result.entries.length === 5, `5: ALL 5 mixed streams preserved (got ${result.entries.length})`);
@@ -119,11 +119,11 @@ function section5(): void {
 
 function section6(): void {
   const result = normalizeStremioStreamResponseForDownloader({
-    streams: [{ name: 'torrent', infoHash: 'abc123def', sources: ['udp://tracker1.example:1337', 'https://tracker2.example/announce'] }],
+    streams: [{ name: 'torrent', infoHash: 'abc123def0123456789abcdef0123456789abcde', sources: ['udp://tracker1.example:1337', 'https://tracker2.example/announce'] }],
   });
   ok(result.entries.length === 1, '6: infoHash-only entry preserved');
   ok(result.entries[0]?.kind === 'p2p', '6: classified as p2p');
-  ok(result.entries[0]?.url.startsWith('magnet:?xt=urn:btih:abc123def'), '6: magnet URI has correct xt');
+  ok(result.entries[0]?.url.startsWith('magnet:?xt=urn:btih:abc123def0123456789abcdef0123456789abcde'), '6: magnet URI has correct xt (valid btih — Phase 1 SEC-011)');
   ok(result.entries[0]?.url.includes('tr=udp%3A%2F%2Ftracker1.example%3A1337'), '6: magnet URI includes tracker 1');
 }
 

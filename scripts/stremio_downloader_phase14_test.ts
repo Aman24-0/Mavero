@@ -115,7 +115,7 @@ function pipeHttpPayload() {
     streams: [
       { name: '1080p', title: 'Dhurandhar 1080p WEB-DL Dual Audio\nHindi + English\n4.40 GB\nPixelDrain', url: 'http://pixeldrain.example/api/file/ab12cd', behaviorHints: { videoSize: 4_724_904_960 } },
       { name: '720p', title: 'Dhurandhar 720p WEB-DL Dual Audio\nHindi + English\n1.90 GB\nPixelDrain', url: 'http://pixeldrain.example/api/file/cd34ef', behaviorHints: { videoSize: 2_040_109_056 } },
-      { name: 'Torrent', title: 'magnet edition', infoHash: 'deadbeef' },
+      { name: 'Torrent', title: 'magnet edition', infoHash: 'deadbeef0123456789abcdef0123456789abcdef' },
     ],
   };
 }
@@ -124,8 +124,8 @@ function pipeHttpPayload() {
 function aioTypedHttpPayload() {
   return {
     streams: [
-      { type: 'http', name: '1080p', title: 'AIO 1080p WEB-DL\nHindi English\n4.40 GB', url: 'https://aio-cdn.example/dl/one?h=abc', infoHash: 'cafebeef', behaviorHints: { videoSize: 4_724_904_960, filename: 'AIO.1080p.WEB-DL.H264.mkv' } },
-      { type: 'p2p', name: '2160p', title: 'AIO 2160p', url: 'https://aio-cdn.example/dl/two', infoHash: 'feedface' },
+      { type: 'http', name: '1080p', title: 'AIO 1080p WEB-DL\nHindi English\n4.40 GB', url: 'https://aio-cdn.example/dl/one?h=abc', infoHash: 'cafebeef0123456789abcdef0123456789abcdef', behaviorHints: { videoSize: 4_724_904_960, filename: 'AIO.1080p.WEB-DL.H264.mkv' } },
+      { type: 'p2p', name: '2160p', title: 'AIO 2160p', url: 'https://aio-cdn.example/dl/two', infoHash: 'feedface0123456789abcdef0123456789abcdef' },
     ],
   };
 }
@@ -228,9 +228,9 @@ function sectionDE(): void {
   // player path is unchanged). The DOWNLOADER normalizer preserves them.
   const p2p = normalizeStreams({ streams: [{ type: 'p2p', name: 'x', url: 'https://x.example/a.mkv' }] });
   ok(p2p.length === 0, 'E (player normalizer): an explicit type:"p2p" stream is excluded from the PLAYER path (unchanged)');
-  const untypedInfoHash = normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', infoHash: 'deadbeef' }] });
+  const untypedInfoHash = normalizeStreams({ streams: [{ name: 'x', url: 'https://x.example/a.mkv', infoHash: 'deadbeef0123456789abcdef0123456789abcdef' }] });
   ok(untypedInfoHash.length === 0, 'E (player normalizer): an UNTYPED torrent-shaped entry (infoHash) is excluded from the PLAYER path (unchanged)');
-  const magnet = normalizeStreams({ streams: [{ name: 'x', url: 'magnet:?xt=urn:btih:deadbeef' }] });
+  const magnet = normalizeStreams({ streams: [{ name: 'x', url: 'magnet:?xt=urn:btih:deadbeef0123456789abcdef0123456789abcdef' }] });
   ok(magnet.length === 0, 'E (player normalizer): magnet URLs are excluded from the PLAYER path (non-http scheme)');
   const torrentUrl = normalizeStreams({ streams: [{ type: 'http', name: 'x', url: 'https://tracker.example/file.torrent' }] });
   ok(torrentUrl.length === 0, 'E (player normalizer): a .torrent URL is excluded even when the addon claims type http (URL tokens always win)');

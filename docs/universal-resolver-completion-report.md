@@ -1,3 +1,11 @@
+> **REMOVED (Phase 1 production hardening — audit BL-4 / SEC-001 / API-24):**
+> The `/api/playback/discover` endpoint and the entire `src/lib/server/discovery/`
+> subsystem documented in this file were removed from the application surface.
+> They were an unauthenticated server-side fetch surface with no first-party
+> callers (a dormant SSRF risk). Server-side media discovery continues to be
+> served exclusively by the hardened Stremio SSRF pipeline
+> (`src/lib/server/streaming/stremio/ssrf.ts` + `connect-guard.ts`).
+
 # MAVERO Universal Discovery / Resolver Milestone Report
 
 ## Executive result

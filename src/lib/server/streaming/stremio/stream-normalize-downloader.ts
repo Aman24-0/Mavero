@@ -127,6 +127,41 @@ const TORRENT_STREAM_FIELDS: ReadonlySet<string> = new Set([
 
 const FIELD_TEXT_MAX_LENGTH = 300;
 
+/** Phase 1 (audit SEC-011 / STM-08): magnet URI bounds. */
+const MAGNET_URI_MAX_LENGTH = 2000;
+
+/**
+ * Phase 1 (audit SEC-011 / STM-08): strict BitTorrent magnet classification.
+ *
+ * The downloader normalization previously accepted ANY short string as a
+ * "magnet" (a length-capped `magnetUri` or a length-capped `infoHash`),
+ * so garbage like `"hello"` or `"abc"` was presented to users as a valid
+ * magnet link (Share/text field).
+ *
+ * A magnet is now classified as such ONLY when it has the legitimate
+ * BitTorrent form: `magnet:?...xt=urn:btih:<HASH>...` where HASH is a real
+ * BitTorrent info-hash — 40 hex characters (v1 SHA-1) or 32 base32
+ * characters (the compact v1 form). Valid Stremio magnet streams are
+ * preserved VERBATIM (the exact original URI is kept for sharing);
+ * malformed/garbage values are rejected (the entry falls through to the
+ * next candidate URI or is counted malformed) instead of being surfaced as
+ * magnets.
+ */
+export function isValidBtih(value: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(value) || /^[a-z2-7]{32}$/i.test(value);
+}
+
+export function isMagnetUri(value: string): boolean {
+  if (!value.startsWith('magnet:?')) return false;
+  if (value.length > MAGNET_URI_MAX_LENGTH) return false;
+  // The xt param decides magnet-ness; it need not be the FIRST param
+  // (dn= sometimes leads), but it MUST carry a valid btih hash.
+  const params = value.slice('magnet:?'.length).split('&');
+  const xt = params.find((param) => /^xt=urn:btih:/i.test(param));
+  if (!xt) return false;
+  return isValidBtih(xt.slice('xt=urn:btih:'.length));
+}
+
 function textField(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -152,7 +187,9 @@ function declaredStreamType(record: Record<string, unknown>): { declared: boolea
   return { declared: true, http: value.toLowerCase() === 'http', value };
 }
 
-/** Constructs a magnet URI from an infoHash + optional trackers + display name. */
+/** Constructs a magnet URI from an infoHash + optional trackers + display name.
+ *  Callers pass an ALREADY-VALIDATED btih (see isValidBtih) — the output is
+ *  always a legitimate magnet URI. */
 function buildMagnetUri(infoHash: string, sources: string[] | undefined, displayName: string | undefined): string {
   const xt = `urn:btih:${infoHash}`;
   const params: string[] = [`xt=${xt}`];
@@ -199,10 +236,15 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
   const headerNames = hints ? proxyHeaderNames(hints) : [];
 
   // Preserve the raw torrent fields for magnet construction + diagnostics.
+  // Phase 1 (audit SEC-011/STM-08): the infoHash is accepted ONLY in a
+  // legitimate BitTorrent form (40 hex / 32 base32) — arbitrary short
+  // strings no longer become "valid" magnets; the magnetUri is accepted
+  // ONLY with the real magnet:?xt=urn:btih:<btih> form (preserved VERBATIM
+  // for sharing).
   const infoHashRaw = record.infoHash ?? record.infohash ?? record.info_hash ?? record.btih;
-  const infoHash = typeof infoHashRaw === 'string' && infoHashRaw.length > 0 && infoHashRaw.length <= 200 ? infoHashRaw.toLowerCase() : undefined;
+  const infoHash = typeof infoHashRaw === 'string' && infoHashRaw.length > 0 && infoHashRaw.length <= 200 && isValidBtih(infoHashRaw.toLowerCase()) ? infoHashRaw.toLowerCase() : undefined;
   const magnetUriRaw = record.magnetUri ?? record.magnet;
-  const magnetUri = typeof magnetUriRaw === 'string' && magnetUriRaw.length > 0 && magnetUriRaw.length <= 2000 ? magnetUriRaw : undefined;
+  const magnetUri = typeof magnetUriRaw === 'string' && magnetUriRaw.length > 0 && magnetUriRaw.length <= MAGNET_URI_MAX_LENGTH && isMagnetUri(magnetUriRaw) ? magnetUriRaw : undefined;
   const sourcesRaw = record.sources;
   const sources = Array.isArray(sourcesRaw) ? sourcesRaw.filter((s): s is string => typeof s === 'string' && s.length > 0 && s.length <= 500).slice(0, 20) : undefined;
 
@@ -240,7 +282,10 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
     url = magnetUri;
     kind = 'magnet';
     transport = 'magnet';
-  } else if (rawUrl && rawUrl.toLowerCase().startsWith('magnet:')) {
+  } else if (rawUrl && rawUrl.toLowerCase().startsWith('magnet:') && isMagnetUri(rawUrl)) {
+    // A magnet URL counts ONLY in the legitimate btih form — a garbage
+    // magnet-looking URL falls through (unusable url → infoHash → external
+    // → malformed) instead of being presented as a magnet.
     url = rawUrl;
     kind = 'magnet';
     transport = 'magnet';

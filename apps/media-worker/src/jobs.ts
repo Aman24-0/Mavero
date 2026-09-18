@@ -74,8 +74,12 @@ export class JobRegistry {
   private readonly readyPollMs = 500;
   private sweepTimer: NodeJS.Timeout | null = null;
   private encoder: ((job: Job, outDir: string) => { promise: Promise<void>; kill: () => void }) | null = null;
+  /** Injectable DNS sweep (tests) — defaults to the real public-host check. */
+  private readonly dnsCheck: (url: URL) => Promise<{ ok: true; url: URL } | { ok: false; code: 'INVALID_URL' | 'BLOCKED_URL' }>;
 
-  constructor(private readonly config: WorkerConfig) {}
+  constructor(private readonly config: WorkerConfig, dnsCheck?: (url: URL) => Promise<{ ok: true; url: URL } | { ok: false; code: 'INVALID_URL' | 'BLOCKED_URL' }>) {
+    this.dnsCheck = dnsCheck ?? assertResolvablePublicHost;
+  }
 
   /** Wires the actual encoder (avoids a circular import in server.ts). */
   registerEncoder(encoder: (job: Job, outDir: string) => { promise: Promise<void>; kill: () => void }): void {
@@ -135,7 +139,7 @@ export class JobRegistry {
     // guarantees MAVERO minted it; the worker re-checks the boundary).
     const structural = validateJobUrl(payload.u);
     if (!structural.ok) return { outcome: 'rejected', code: structural.code };
-    const dns = await assertResolvablePublicHost(structural.url);
+    const dns = await this.dnsCheck(structural.url);
     if (!dns.ok) return { outcome: 'rejected', code: dns.code };
 
     const counts = this.counts();
@@ -308,17 +312,40 @@ export class JobRegistry {
    * appropriate state instead of losing the stream mid-watch.
    */
   private fail(job: Job, code: string, message?: string): void {
-    if (job.status === 'failed') return;
+    // Callers may hold a snapshot copy (snapshot()/all()/submit() return
+    // copies); the failure state MUST land on the LIVE registry job.
+    const live = this.jobs.get(job.id) ?? job;
+    if (live.status === 'failed') return;
     const error = message ? `${code}: ${message.slice(0, 200)}` : code;
-    if (job.status === 'ready') {
-      job.phase = 'ended';
-      job.error = error;
+    if (live.status === 'ready') {
+      live.phase = 'ended';
+      live.error = error;
       return;
     }
-    job.status = 'failed';
-    job.phase = 'failed';
-    job.error = error;
-    this.kill(job);
+    live.status = 'failed';
+    live.phase = 'failed';
+    live.error = error;
+    this.kill(live);
+    // Phase 1 (audit MW-3): PROMPT failed-job cleanup. Previously partial
+    // output stayed on disk until the 3h TTL — repeated large failures
+    // accumulated to the per-job budget and eventually tripped the
+    // free-disk gate, BUSY-ing new jobs for up to 3h. The cleanup is:
+    //   * scoped to THIS job's registered directory (internal UUID path —
+    //     no client-controlled path components, no traversal, and it can
+    //     never touch another job's files);
+    //   * never applied to ready/ended jobs (those keep serving until their
+    //     intended expiry);
+    //   * best-effort + race-safe: ffmpeg was SIGKILLed above, `force: true`
+    //     tolerates already-vanished files, and the periodic sweep remains
+    //     the backstop if the removal fails (logged WITHOUT secrets, tokens
+    //     or URLs — job id and failure code only).
+    const dir = this.dirs.get(live.id);
+    if (dir) {
+      this.dirs.delete(live.id);
+      void rm(dir, { recursive: true, force: true }).catch(() => {
+        console.warn(JSON.stringify({ level: 'warn', msg: 'failed-job output cleanup deferred to sweep', jobId: live.id, code }));
+      });
+    }
   }
 
   /**
@@ -371,6 +398,8 @@ export class JobRegistry {
       } else if (overBudget && job.status !== 'failed') {
         this.fail(job, 'OUTPUT_LIMIT');
         const dir = this.dirs.get(job.id);
+        // fail() already removed the registered directory; this is a
+        // harmless no-op retained for the (removed-mapping) case.
         if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       } else if (job.status === 'ready' || job.status === 'failed') {
         // Refresh the output size for the budget check.

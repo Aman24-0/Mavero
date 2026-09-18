@@ -122,8 +122,8 @@ function section2to9(): void {
       { name: 'dash', url: 'https://x.example/manifest.mpd' },
       { name: 'mp4', url: 'https://x.example/movie.mp4' },
       { name: 'mkv', url: 'https://x.example/movie.mkv' },
-      { name: 'p2p', infoHash: 'deadbeef', sources: ['udp://tracker.example:1337'] },
-      { name: 'magnet', url: 'magnet:?xt=urn:btih:feedface' },
+      { name: 'p2p', infoHash: 'deadbeef0123456789abcdef0123456789abcdef', sources: ['udp://tracker.example:1337'] },
+      { name: 'magnet', url: 'magnet:?xt=urn:btih:feedface0123456789abcdef0123456789abcdef' },
     ],
   });
   ok(result.entries.length === 8, `2-9: ALL 8 entries preserved (got ${result.entries.length})`);
@@ -143,11 +143,11 @@ function section2to9(): void {
 
 function section10(): void {
   const result = normalizeStremioStreamResponseForDownloader({
-    streams: [{ name: 'torrent', infoHash: 'abc123def', sources: ['udp://tracker1.example:1337', 'https://tracker2.example/announce'] }],
+    streams: [{ name: 'torrent', infoHash: 'abc123def0123456789abcdef0123456789abcde', sources: ['udp://tracker1.example:1337', 'https://tracker2.example/announce'] }],
   });
   ok(result.entries.length === 1, '10: 1 entry preserved');
   ok(result.entries[0]?.kind === 'p2p', '10: kind = p2p');
-  ok(result.entries[0]?.url.startsWith('magnet:?xt=urn:btih:abc123def'), '10: magnet URI has correct xt');
+  ok(result.entries[0]?.url.startsWith('magnet:?xt=urn:btih:abc123def0123456789abcdef0123456789abcde'), '10: magnet URI has correct xt (valid btih form — Phase 1 SEC-011)');
   ok(result.entries[0]?.url.includes('tr=udp%3A%2F%2Ftracker1.example%3A1337'), '10: magnet URI includes tracker 1');
   ok(result.entries[0]?.url.includes('tr=https%3A%2F%2Ftracker2.example%2Fannounce'), '10: magnet URI includes tracker 2');
 }
@@ -159,8 +159,8 @@ function section10(): void {
 function section11(): void {
   const result = normalizeStremioStreamResponseForDownloader({
     streams: [
-      { type: 'http', name: 'aio-http', url: 'https://aio.example/dl/one', infoHash: 'cafebeef' },
-      { type: 'p2p', name: 'aio-p2p', url: 'https://aio.example/dl/two', infoHash: 'feedface' },
+      { type: 'http', name: 'aio-http', url: 'https://aio.example/dl/one', infoHash: 'cafebeef0123456789abcdef0123456789abcdef' },
+      { type: 'p2p', name: 'aio-p2p', url: 'https://aio.example/dl/two', infoHash: 'feedface0123456789abcdef0123456789abcdef' },
     ],
   });
   ok(result.entries.length === 2, '11: both AIO entries preserved');
@@ -192,7 +192,7 @@ function section12(): void {
 async function section13(): Promise<void> {
   const peerflixStreams: Array<Record<string, unknown>> = [];
   for (let i = 0; i < 49; i += 1) {
-    peerflixStreams.push({ name: `p${i}`, infoHash: `hash${i}`, sources: ['udp://tracker.example:1337'] });
+    peerflixStreams.push({ name: `p${i}`, infoHash: `1234567890abcdef1234567890abcdef123456${i.toString(16).padStart(2, '0')}`, sources: ['udp://tracker.example:1337'] });
   }
   const result = await resolveSingleAddonDownload({} as never, movieRequest, PEERFLIX.id, {
     loadAddons: loadAddonsOf([PEERFLIX]),
@@ -221,7 +221,7 @@ async function section14(): Promise<void> {
         streams: [
           { name: '1080p', url: 'https://pipe.example/a.mkv' },
           { name: '720p', url: 'https://pipe.example/b.mkv' },
-          { name: 'torrent', infoHash: 'deadbeef', sources: ['udp://tracker.example:1337'] },
+          { name: 'torrent', infoHash: 'deadbeef0123456789abcdef0123456789abcdef', sources: ['udp://tracker.example:1337'] },
           { name: 'external', externalUrl: 'https://opens-elsewhere.example/page' },
         ],
       }),

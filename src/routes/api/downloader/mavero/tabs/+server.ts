@@ -3,7 +3,9 @@ import type { RequestHandler } from './$types';
 import { listAddonDownloadTargets } from '$lib/server/streaming/stremio/addon-download-service';
 import { StreamServiceError } from '$lib/server/streaming/stremio/stream-errors';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
+import { assertAdultDownloadAllowed } from '$lib/server/content/adult-guard';
 import type { ContentType } from '$lib/server/content/types';
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 
 /**
  * MAVERO Downloader — addon TAB list endpoint (Phase 15, task §1).
@@ -32,7 +34,7 @@ function validMediaType(value: string | null): value is ContentType {
   return value === 'movie' || value === 'series' || value === 'anime';
 }
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, request, locals, cookies }) => {
   const mediaType = url.searchParams.get('mediaType');
   const contentId = url.searchParams.get('contentId')?.trim() ?? '';
   const tmdbId = url.searchParams.get('tmdbId')?.trim() ?? '';
@@ -53,6 +55,18 @@ export const GET: RequestHandler = async ({ url }) => {
       { status: 400, headers: NO_STORE },
     );
   }
+
+
+  // Phase 1 (audit SEC-003/DL-5/STM-11): bounded per-identity rate limit —
+  // this endpoint drives real upstream work (30-40s addon budgets / 4K API).
+  const rateVerdict = checkRateLimit('downloaderTabs', clientIdentity(request.headers, locals.user?.id));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'cache-control': 'no-store', 'retry-after': String(rateVerdict.retryAfterSeconds) } });
+  }
+  // Phase 1 (audit BL-5/DL-1): Adult Mode enforced at the server boundary
+  // (non-disclosing 404; runs BEFORE resolution — never swallowed by the
+  // 503 catch below).
+  await assertAdultDownloadAllowed(locals.supabase, locals.user, cookies, mediaType, contentId);
 
   try {
     const result = await listAddonDownloadTargets(createSupabaseAdminClient(), {

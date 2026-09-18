@@ -7,6 +7,7 @@ import { createAddonSession } from '$lib/server/streaming/stremio/addon-session'
 import { createSessionId } from '$lib/server/streaming/stremio/session-tokens';
 import { stremioSessionSecret } from '$lib/server/streaming/stremio/session-env';
 import { asStreamServiceError } from '$lib/server/streaming/stremio/stream-errors';
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 
 /**
  * MAVERO Player — progressive resolution SESSION endpoint (Phase 10, GOAL 1).
@@ -41,6 +42,13 @@ export const POST: RequestHandler = async ({ request }) => {
   const playbackRequest = parseStremioPlaybackRequest(parsed.value);
   if (!playbackRequest.ok) {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'The MAVERO Player request is invalid.' } }, { status: 400, headers: NO_STORE });
+  }
+
+  // Phase 1 (audit SEC-003): bounded per-identity rate limit — session
+  // creation mints signed tokens and queries the addon registry.
+  const rateVerdict = checkRateLimit('stremioSession', clientIdentity(request.headers));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'cache-control': 'no-store', 'retry-after': String(rateVerdict.retryAfterSeconds) } });
   }
 
   const secret = stremioSessionSecret();

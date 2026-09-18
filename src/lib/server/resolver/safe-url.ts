@@ -1,5 +1,6 @@
 import { ResolverError } from './errors';
 import { hasLegitimateHlsSignal } from '$lib/shared/hls-detect';
+import { expandIpv6, isBlockedIpv4, isBlockedIpv6, normalizeGuardedHostname, parseIpv4Literal } from '$lib/server/streaming/stremio/ssrf';
 import type { Json } from '$lib/server/supabase/database.types';
 import type { PlaybackProtocol, ResolverResultType } from './types';
 
@@ -14,18 +15,44 @@ function parseUrl(raw: string): URL {
   }
 }
 
+/**
+ * Phase 1 (audit SEC-002 / MW-2): hardened private-host classification.
+ *
+ * The previous string-based regexes missed the numeric IPv4 forms
+ * (decimal `2130706433`, hex `0x7f000001`, abbreviated `127.1`),
+ * IPv4-mapped IPv6 (`::ffff:127.0.0.1`, hex tail `::ffff:7f00:1`), CGNAT
+ * `100.64/10` and NAT64 `64:ff9b::/96` — an alternate SSRF path beside the
+ * hardened Stremio guard.
+ *
+ * This classification now REUSES the repository's existing tested
+ * parsing/classification primitives (`ssrf.ts`: WHATWG-accurate
+ * `parseIpv4Literal`, `expandIpv6`, the blocked-range matrices) so the two
+ * security levels cannot drift. Behavior additions only — the previous
+ * https-only, credential-rejection and origin-allowlist checks are
+ * preserved unchanged, and legitimate DNS hostnames still pass through.
+ *
+ * NOTE (scope): the resolver itself performs NO server-side network fetches
+ * with these URLs — every URL validated here is either returned to the
+ * browser (embeds/direct playback, browser-mixed-content governed) or
+ * fetched by the media worker, which re-validates with its own canonical
+ * guard (see apps/media-worker/src/validate.ts). The preflight upgrade
+ * here closes the classification gap; server-side fetching in the Stremio
+ * pipeline keeps its connect-time DNS pinning (connect-guard.ts).
+ */
 function isPrivateHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '');
+  const host = normalizeGuardedHostname(hostname);
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  if (host === '::1' || host === '[::1]') return true;
-  if (/^127(?:\.[0-9]{1,3}){3}$/.test(host)) return true;
-  if (/^10(?:\.[0-9]{1,3}){3}$/.test(host)) return true;
-  if (/^192\.168(?:\.[0-9]{1,3}){2}$/.test(host)) return true;
-  const private172 = host.match(/^172\.(\d{1,3})(?:\.[0-9]{1,3}){2}$/);
-  if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return true;
-  if (/^169\.254(?:\.[0-9]{1,3}){2}$/.test(host)) return true;
-  if (/^0(?:\.[0-9]{1,3}){3}$/.test(host)) return true;
-  if (host.includes(':') && (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe8') || host.startsWith('fe9') || host.startsWith('fea') || host.startsWith('feb'))) return true;
+  if (host.includes(':')) {
+    // IPv6 literal (brackets already stripped by normalizeGuardedHostname).
+    // Ambiguous/unparseable shapes FAIL CLOSED.
+    const hextets = expandIpv6(host);
+    return hextets === null ? true : isBlockedIpv6(hextets);
+  }
+  // IPv4 literal in ANY WHATWG numeric form (dotted, 3/2/1-part, decimal,
+  // hex, octal) — validated through the same blocked-range matrix as the
+  // hardened guard. Non-numeric hosts are DNS names (checked above).
+  const ipv4 = parseIpv4Literal(host);
+  if (ipv4 !== null) return isBlockedIpv4(ipv4);
   return false;
 }
 
