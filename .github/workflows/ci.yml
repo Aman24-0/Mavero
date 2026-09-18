@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Enable corepack (packageManager pin: pnpm@10.30.3)
+      - name: "Enable corepack (packageManager pin: pnpm@10.30.3)"
         run: corepack enable
 
       - name: Verify pinned pnpm version
