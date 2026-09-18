@@ -70,17 +70,15 @@
   let watchedLabel = $derived(watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`);
   let favoriteCount = $derived(favoriteItems.length);
 
-  // ── Experience preferences (migrated from Settings) ─────────────
-  let settings = $state({ autoplay: true, autoResume: true, reducedMotion: false });
-
-  function persistSettings() {
-    localStorage.setItem('mavero.settings', JSON.stringify(settings));
-  }
-
-  function persistSettingsAndHaptic() {
-    persistSettings();
-    haptic('light');
-  }
+  // Phase 2-J (audit UIX-1): the previous "Playback & interface" settings
+  // section (autoplay / autoResume / reducedMotion) was DEAD — written to
+  // localStorage('mavero.settings') but never read by any runtime code
+  // (verified via repo-wide grep). The audit requires that dead controls
+  // either be wired into actual behavior or removed. Wiring them would
+  // require new player-shell behavior changes (out of Phase 2 scope); a
+  // fake setting is worse than no setting, so the entire section + the
+  // localStorage persistence helpers were removed. Adult Mode (the other
+  // toggle on this page) is server-authoritative and remains intact.
 
   // ── Adult Mode (migrated from Settings — server-authoritative) ──
   let adultAvailable = $state(false);
@@ -224,12 +222,9 @@
   }
 
   onMount(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('mavero.settings') ?? '{}') as Partial<typeof settings>;
-      settings = { ...settings, ...stored };
-    } catch {
-      // Keep the safe defaults if local storage is unavailable or malformed.
-    }
+    // Phase 2-J (audit UIX-1): the dead mavero.settings localStorage load
+    // was removed (autoplay / autoResume / reducedMotion toggles were
+    // never read by runtime code). Adult Mode loads via loadAdultMode below.
     void loadLocalState();
     void loadAdultMode();
   });
@@ -332,46 +327,13 @@
       </section>
     {/if}
 
-    <!-- EXPERIENCE — playback & interface -->
-    <section class="account-section" aria-labelledby="experience-title">
-      <div class="section-title-row">
-        <span class="section-icon" aria-hidden="true"><Sparkles size={14} /></span>
-        <h2 id="experience-title">Playback &amp; interface</h2>
-      </div>
-      <div class="toggle-list">
-        <label class="toggle-row">
-          <span class="toggle-copy">
-            <strong>Autoplay next episode</strong>
-            <small>Start the next episode automatically when available.</small>
-          </span>
-          <span class="toggle-switch">
-            <input type="checkbox" bind:checked={settings.autoplay} onchange={persistSettingsAndHaptic} />
-            <i aria-hidden="true"></i>
-          </span>
-        </label>
-        <label class="toggle-row">
-          <span class="toggle-copy">
-            <strong>Resume where you left off</strong>
-            <small>Use your saved progress when reopening a title.</small>
-          </span>
-          <span class="toggle-switch">
-            <input type="checkbox" bind:checked={settings.autoResume} onchange={persistSettingsAndHaptic} />
-            <i aria-hidden="true"></i>
-          </span>
-        </label>
-        <div class="group-label" role="presentation">Interface</div>
-        <label class="toggle-row">
-          <span class="toggle-copy">
-            <strong>Reduce motion</strong>
-            <small>Use calmer transitions throughout the app.</small>
-          </span>
-          <span class="toggle-switch">
-            <input type="checkbox" bind:checked={settings.reducedMotion} onchange={persistSettingsAndHaptic} />
-            <i aria-hidden="true"></i>
-          </span>
-        </label>
-      </div>
-    </section>
+    <!-- Phase 2-J (audit UIX-1): the previous "Playback & interface" section
+         (autoplay / autoResume / reducedMotion toggles) was removed — the
+         settings were persisted to localStorage('mavero.settings') but never
+         read by any runtime code (verified via repo-wide grep). Wiring them
+         would require new player-shell behavior changes (out of Phase 2
+         scope); a fake setting is worse than no setting. The Adult Mode
+         section below remains intact — it's server-authoritative. -->
 
     <!-- CONTENT — Adult Mode (server-authoritative; only when available) -->
     {#if adultAvailable}
@@ -734,13 +696,10 @@
   .toggle-copy { display: grid; gap: 3px; min-width: 0; }
   .toggle-copy strong { color: #f5f5f5; font-size: .8rem; font-weight: 700; }
   .toggle-copy small { color: #77777f; font-size: .7rem; line-height: 1.45; }
-  .group-label {
-    padding: 10px 0 2px;
-    color: #c7c7cc;
-    font-size: .56rem; font-weight: 700;
-    letter-spacing: .1em; text-transform: uppercase;
-  }
-  .group-label + .toggle-row { border-top: 0; padding-top: 4px; }
+  /* Phase 2-J: the .group-label rule was removed — the only consumer was
+     the dead "Playback & interface" section (the "Interface" sub-group
+     label inside it). When a future section needs a sub-group label, restore
+     this rule with its consumer. */
   .toggle-switch { position: relative; flex: 0 0 auto; }
   .toggle-switch input { position: absolute; opacity: 0; pointer-events: none; }
   .toggle-switch i {

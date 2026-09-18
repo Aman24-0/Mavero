@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, X, Download } from 'lucide-svelte';
+  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, X, Download, AlertCircle, LoaderCircle } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
   import type { ContentType } from '$data/content';
@@ -312,7 +312,20 @@
   // Download buttons in SeasonEpisodes are gated by the same
   // visibleDownloadProviders list (the parent passes it through via the
   // onDownload callback being defined).
+  //
+  // Phase 2-K (audit UIX-2): the previous implementation set
+  // `downloadProvidersFailed = true` on fetch failure but NEVER rendered
+  // it — the Download button stayed hidden with no retry surface. The
+  // user saw the button silently disappear. We now render an explicit
+  // "Download temporarily unavailable / Retry" affordance on failure
+  // (still only for movie-like items, where a top-level Download button
+  // would have appeared). Series episode download buttons are gated by
+  // visibleDownloadProviders.length > 0 — when the prefetch fails, the
+  // episode buttons are NOT rendered. The retry affordance lets the user
+  // re-attempt the prefetch; once it succeeds, the normal Download button
+  // replaces the retry affordance.
   $: showDownloadButton = isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0;
+  $: showDownloadFailure = isMovieLike && downloadProvidersFailed && !downloadProvidersLoading && !downloadProvidersLoaded;
 
   // TMDB id resolution. The DetailPage's `item.id` is the content id used
   // across the app — for TMDB-backed content this IS the TMDB id. For
@@ -344,12 +357,22 @@
     } catch (error) {
       console.error('[DetailPage] Failed to load downloader config', error);
       downloadProvidersFailed = true;
-      // Don't show a toast — the user hasn't opened the sheet yet, so a
-      // toast would be confusing. The sheet itself will show the empty
-      // state if the user clicks through.
+      // Phase 2-K (audit UIX-2): the failure is now surfaced via the
+      // showDownloadFailure derived state (an inline "Download temporarily
+      // unavailable / Retry" affordance in the actions row). No toast —
+      // the user hasn't opened the sheet yet, and the inline affordance
+      // is more discoverable than a transient toast.
     } finally {
       downloadProvidersLoading = false;
     }
+  }
+
+  // Phase 2-K: retry entry point — re-attempts the prefetch when the user
+  // clicks the inline Retry affordance. Resets the failed flag and re-runs
+  // loadDownloadProviders (which has its own loading/failure management).
+  function retryDownloadProviders() {
+    if (downloadProvidersLoading || downloadProvidersLoaded) return;
+    void loadDownloadProviders();
   }
 
   // Open the sheet for a MOVIE download. No season/episode — the sheet
@@ -479,6 +502,15 @@
           <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen}>
             <Download size={16} />
             <span>Download</span>
+          </button>
+        {:else if showDownloadFailure}
+          <!-- Phase 2-K (audit UIX-2): the prefetch failed — surface a clear
+               recoverable state instead of silently hiding the Download button.
+               No fake download action, no leaking server errors. Retry
+               re-attempts the prefetch (which has its own loading/failure state). -->
+          <button class="download-btn download-unavailable" type="button" onclick={retryDownloadProviders} disabled={downloadProvidersLoading} aria-label="Download temporarily unavailable — retry loading providers">
+            {#if downloadProvidersLoading}<LoaderCircle size={16} />{:else}<AlertCircle size={16} />{/if}
+            <span>{downloadProvidersLoading ? 'Retrying…' : 'Download unavailable · Retry'}</span>
           </button>
         {/if}
       </div>
@@ -691,6 +723,22 @@
   }
   .download-btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.3); }
   .download-btn:active { transform: scale(.98); }
+  /* Phase 2-K (audit UIX-2): the failure-affordance variant — same shape
+     as the normal Download button (no layout shift on the actions row) but
+     amber-toned to signal a temporary problem. The Retry label makes the
+     action unambiguous. */
+  .download-btn.download-unavailable {
+    color: #ffb020;
+    border-color: rgba(255,176,32,.4);
+    background: rgba(255,176,32,.06);
+  }
+  .download-btn.download-unavailable:hover:not(:disabled) {
+    background: rgba(255,176,32,.12);
+    border-color: rgba(255,176,32,.6);
+  }
+  .download-btn.download-unavailable:disabled { opacity: .6; cursor: progress; }
+  .download-btn.download-unavailable :global(svg) { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .secondary-actions {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
     width: 100%; max-width: 480px;

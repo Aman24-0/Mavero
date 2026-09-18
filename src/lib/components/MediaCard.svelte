@@ -241,6 +241,13 @@
   .mc-wrap:has(.mc-card-link:hover) .mc-poster, .mc-wrap:has(.mc-card-link:focus-visible) .mc-poster { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.4); }
   .mc-wrap:has(.mc-card-link:hover) .mc-play, .mc-wrap:has(.mc-card-link:focus-visible) .mc-play { opacity: 1; transform: scale(1.06); }
   .mc-play:hover { background: #fff; transform: scale(1.1); }
+  /* Phase 2-M (A11Y-1): reveal Play/Details controls on their OWN keyboard focus
+     too, not just when the parent card link is focused. Without this, Tab-ing
+     from the card link onto the Play link leaves Play invisible (opacity:0)
+     even though it's the active focus target — the focus ring is also
+     suppressed by opacity. */
+  .mc-play:focus-visible { opacity: 1; transform: scale(1.06); outline: 2px solid #f5f5f5; outline-offset: 2px; }
+  .mc-detail:focus-visible { opacity: 1; outline: 2px solid #f5f5f5; outline-offset: 2px; }
 
   .mc-progress { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; height: 3px; background: rgba(0,0,0,.3); }
   .mc-progress > span { display: block; height: 100%; background: #f5f5f5; }
