@@ -185,7 +185,11 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 {
   // Each DiscoverSection instance owns its own state — no shared global.
   assert.match(discoverSection, /let items = .state<MediaItem\[\]>\(\[\]\)/, 'items is local $state');
-  assert.match(discoverSection, /let page = .state\(1\)/, 'page is local $state');
+  // Phase 2-G: the page counter was renamed from `page` to `currentPage`
+  // to avoid the naming collision with `page` from `$app/state` (which
+  // the rail cache integration needs for per-user keys). The state is
+  // still locally owned by the section instance — the contract is the same.
+  assert.match(discoverSection, /let currentPage = .state\(1\)/, 'currentPage is local $state (Phase 2-G: renamed from page to avoid $app/state collision)');
   assert.match(discoverSection, /let language = .state/, 'language is local $state');
   assert.match(discoverSection, /let hasNextPage = .state\(false\)/, 'hasNextPage is local $state');
   // No shared external store.

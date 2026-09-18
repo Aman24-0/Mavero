@@ -103,7 +103,13 @@ function historyRequest(event: unknown): Request {
 
 const locals = (userId: string | null, errorResult: { message: string } | null = null, calls: UpsertCall[] = []) => ({
   supabase: createMockSupabase(errorResult, calls),
+  // Phase 2-A: the history endpoint now reads locals.user directly instead
+  // of calling safeGetSession. We still expose safeGetSession for any
+  // future consumer that needs it, but the test mock MUST also populate
+  // locals.user to match the production hook behavior.
   safeGetSession: async () => (userId ? { session: {}, user: { id: userId } } : { session: null, user: null }),
+  user: userId ? { id: userId } : null,
+  session: userId ? {} : null,
 });
 
 const jsonBody = async (response: Response) => (await response.json()) as Record<string, unknown>;

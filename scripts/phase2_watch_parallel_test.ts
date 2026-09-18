@@ -11,9 +11,11 @@ import path from 'node:path';
  * detail was a true dependency for the adult gate; the others could run
  * in parallel.
  *
- * Fix: Promise.all on the independent work. Detail is awaited first
- * (the adult gate depends on item.tags), then streamingConfig + season +
- * maveroPlayerAvailable are awaited together.
+ * Fix: Promise.all on the independent work. Detail + streamingConfig +
+ * maveroPlayerAvailable run in parallel. After detail resolves, the
+ * adult gate runs, then the season fetch (which is title-specific
+ * episode data — never started before the gate clears, so unauthorized
+ * adult requests don't trigger unnecessary episode fetches).
  *
  * This is a static contract test — it verifies:
  *   1. The load function kicks off multiple promises concurrently.
@@ -22,6 +24,10 @@ import path from 'node:path';
  *   4. Streaming config degrades to a safe empty default on failure.
  *   5. maveroPlayerAvailable degrades to false on failure.
  *   6. Episode fetch is still optional (failure is silently absorbed).
+ *   7. The season fetch starts AFTER the adult gate clears (security:
+ *      unauthorized requests never trigger episode metadata fetches).
+ *   8. The adult gate uses locals.user (Phase 2-A reuse).
+ *   9. No duplicate queries — the season fetch runs at most once.
  *
  * Runtime measurement (timing) is NOT covered here — the audit explicitly
  * says "Only claim [runtime improvement] if actually measured." This test
@@ -45,7 +51,7 @@ const watch = read('src/routes/watch/[type]/[id]/+page.server.ts');
 // 1. The load function uses Promise.all to parallelize.
 // ============================================================
 ok(/Promise\.all\(/.test(watch), '1a. watch load uses Promise.all');
-ok(/streamingConfigPromise/.test(watch) && /maveroPlayerAvailablePromise/.test(watch) && /speculativeSeasonPromise/.test(watch), '1b. independent promises are started concurrently before awaiting');
+ok(/streamingConfigPromise/.test(watch) && /maveroPlayerAvailablePromise/.test(watch) && /detailPromise/.test(watch), '1b. independent promises (detail, streamingConfig, maveroPlayerAvailable) are started concurrently before awaiting');
 
 // ============================================================
 // 2. Detail is awaited first — the adult gate depends on item.tags.
@@ -78,37 +84,35 @@ ok(/getSeriesSeason\(params\.id, seasonNumber\)/.test(watch), '6a. season fetch 
 ok(/\.catch\(\(\)\s*=>\s*null\)/.test(watch), '6b. season fetch failure returns null (silently absorbed)');
 
 // ============================================================
-// 7. Speculative season fetch — series-like-by-params kicks off the
-//    season fetch BEFORE detail resolves (no need to wait for item).
+// 7. SECURITY: the season fetch starts AFTER the adult gate clears.
+// The season fetch is TITLE-SPECIFIC episode data. Starting it before
+// the gate would trigger unnecessary episode fetches for unauthorized
+// adult requests. We verify the gate appears BEFORE the season promise.
 // ============================================================
-ok(/seriesLikeByParams\s*=\s*params\.type\s*===\s*'series'\s*\|\|\s*params\.type\s*===\s*'anime'/.test(watch), '7a. seriesLikeByParams derived from params.type (no item dependency)');
-ok(/speculativeSeasonPromise.*seriesLikeByParams/.test(watch), '7b. speculative season fetch is gated on seriesLikeByParams');
+const gateIdx = watch.indexOf("detailVerdict(item.tags) === 'adult'");
+const seasonIdx = watch.indexOf('getSeriesSeason(params.id, seasonNumber)');
+ok(gateIdx > -1, '7a. adult gate exists in source');
+ok(seasonIdx > -1, '7b. season fetch exists in source');
+ok(gateIdx < seasonIdx, '7c. adult gate appears BEFORE the season fetch (security: unauthorized requests never trigger episode metadata fetches)');
 
 // ============================================================
-// 8. The rare movie+anime-series case is handled — lateSeasonPromise.
+// 8. Episode fallback to item.seasonsData is preserved.
 // ============================================================
-ok(/lateSeasonPromise/.test(watch), '8a. lateSeasonPromise handles the rare movie+anime-series case');
-ok(/!seriesLikeByParams\s*&&\s*isSeriesLike/.test(watch), '8b. lateSeasonPromise is gated on (not series-by-params) AND (series-like by item)');
+ok(/item\.seasonsData\?\.flatMap\(/.test(watch), '8a. fallback episodes from item.seasonsData preserved');
+ok(/isSeriesLike\s*&&\s*seasonEpisodes\s*&&\s*seasonEpisodes\.length\s*>\s*0/.test(watch), '8b. season episodes used only when series-like AND non-empty');
 
 // ============================================================
-// 9. Episode fallback to item.seasonsData is preserved.
+// 9. The adult gate uses locals.user (Phase 2-A reuse, not safeGetSession).
 // ============================================================
-ok(/item\.seasonsData\?\.flatMap\(/.test(watch), '9a. fallback episodes from item.seasonsData preserved');
-ok(/isSeriesLike\s*&&\s*seasonEpisodes\s*&&\s*seasonEpisodes\.length\s*>\s*0/.test(watch), '9b. season episodes used only when series-like AND non-empty');
+ok(/const user = locals\.user/.test(watch), '9a. adult gate uses locals.user (Phase 2-A: hook-resolved, no second auth roundtrip)');
+ok(!/await\s+locals\.safeGetSession\(\)/.test(watch.replace(/\/\/[^\n]*/g, '')), '9b. no redundant safeGetSession call (Phase 2-A preserved)');
 
 // ============================================================
-// 10. The adult gate uses locals.user (Phase 2-A reuse, not safeGetSession).
-// ============================================================
-ok(/const user = locals\.user/.test(watch), '10a. adult gate uses locals.user (Phase 2-A: hook-resolved, no second auth roundtrip)');
-ok(!/await\s+locals\.safeGetSession\(\)/.test(watch.replace(/\/\/[^\n]*/g, '')), '10b. no redundant safeGetSession call (Phase 2-A preserved)');
-
-// ============================================================
-// 11. No duplicate queries — the season fetch runs at most once.
+// 10. No duplicate queries — the season fetch runs at most once.
 // ============================================================
 // Count occurrences of getSeriesSeason as a CALL (not import or comment).
-// Should be 2: speculative (line 110) + late (line 137). Both are
-// conditional, only one fires per request.
+// Should be 1: the single season promise started after the adult gate.
 const seasonCallMatches = watch.match(/getSeriesSeason\(params\.id, seasonNumber\)/g) || [];
-ok(seasonCallMatches.length === 2, `11a. getSeriesSeason call sites: ${seasonCallMatches.length} (expected 2 — speculative + late; only one fires per request)`);
+ok(seasonCallMatches.length === 1, `10a. getSeriesSeason call sites: ${seasonCallMatches.length} (expected 1 — single season promise after the adult gate clears)`);
 
 console.log(`phase2_watch_parallel_test: ${passed} checks passed (Phase 2-E watch page parallelization)`);

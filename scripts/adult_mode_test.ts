@@ -623,8 +623,12 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page
   assert.match(watchPageServer, /await canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'watch route evaluates authorization per request');
   assert.match(watchPageServer, /throw error\(404, 'Title not found'\)/, 'unauthorized adult watch requests get the non-disclosing 404');
   // Guard runs BEFORE episodes + streaming config are fetched.
+  // Phase 2-E: the watch page now uses `const episodes` (renamed from
+  // `let episodes` to match the const-initialized flow of the
+  // parallelized Promise.all). The guard still appears BEFORE the
+  // episodes declaration — security contract preserved.
   const watchGuardIdx = watchPageServer.indexOf("detailVerdict(item.tags) === 'adult'");
-  const watchEpisodesIdx = watchPageServer.indexOf('let episodes');
+  const watchEpisodesIdx = watchPageServer.indexOf('const episodes');
   assert.ok(watchGuardIdx > -1 && watchEpisodesIdx > watchGuardIdx, 'watch guard evaluates before episode/streaming data is fetched');
 
   // ---- Season endpoint guard ----

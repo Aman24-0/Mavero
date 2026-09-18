@@ -336,10 +336,16 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   assert.match(watch, /detailVerdict\(item\.tags\) === 'adult'/, 'watch route classifies the resolved title');
   assert.match(watch, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'watch route evaluates per-request authorization');
   assert.match(watch, /throw error\(404, 'Title not found'\)/, 'watch denial is a non-disclosing 404');
-  const classifyPos = watch.indexOf('item = await getDetail(params.type, params.id)');
+  // Phase 2-E: the streamingConfigPromise is started concurrently with
+  // detail (it's independent of item.tags), but the streamingConfig
+  // VALUE is only consumed AFTER the adult gate clears. The contract
+  // test verifies the guard runs before the value is consumed (not
+  // before the promise is started — that would defeat the parallelization).
+  const classifyPos = watch.indexOf('const detailPromise = getDetail(params.type, params.id)');
   const guardPos = watch.indexOf("detailVerdict(item.tags) === 'adult'");
-  const dataPos = watch.indexOf('let streamingConfig');
-  assert.ok(classifyPos !== -1 && guardPos > classifyPos && dataPos > guardPos, 'classification -> authorization -> data order');
+  // The streamingConfig value is destructured from Promise.all AFTER the guard.
+  const dataPos = watch.indexOf('const [streamingConfig, maveroPlayerAvailable, seasonEpisodes] = await Promise.all');
+  assert.ok(classifyPos !== -1 && guardPos > classifyPos && dataPos > guardPos, 'classification -> authorization -> data order (Phase 2-E: streamingConfig value consumed after the guard; the promise is started concurrently with detail because it is independent of item.tags)');
   assert.doesNotMatch(watch, /url\.searchParams\.get\('(adult|include_adult|bypass)'\)/, 'no client adult flag exists on the watch route');
 
   const season = src('../src/routes/api/content/series/[id]/season/[season]/+server.ts');

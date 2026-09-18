@@ -94,16 +94,22 @@ assert.match(accountPage, /id="password-form"/, 'password form region exists');
 ok('5. password change behind an accessible inline disclosure');
 
 // ============================================================
-// 6. EXPERIENCE — localStorage preferences with original defaults
+// 6. EXPERIENCE — Phase 2-J: dead "Playback & interface" section removed.
+// The three toggles (autoplay / autoResume / reducedMotion) were dead —
+// persisted to localStorage('mavero.settings') but NEVER read by runtime
+// code (verified via repo-wide grep). The audit (UIX-1) required them to
+// be wired or removed; we removed them. Adult Mode (server-authoritative,
+// functional) is preserved.
 // ============================================================
-assert.match(accountPage, /let settings = \$state\(\{ autoplay: true, autoResume: true, reducedMotion: false \}\)/, 'original defaults preserved (autoplay/resume on, reduce motion off)');
-assert.match(accountPage, /localStorage\.setItem\('mavero\.settings'/, 'preferences persist to mavero.settings');
-assert.match(accountPage, /localStorage\.getItem\('mavero\.settings'\)/, 'preferences restore from mavero.settings');
-assert.match(accountPage, /Autoplay next episode/, 'autoplay toggle present');
-assert.match(accountPage, /Resume where you left off/, 'resume toggle present');
-assert.match(accountPage, /Reduce motion/, 'reduce motion toggle present');
-assert.match(accountPage, /persistSettingsAndHaptic/, 'haptic behavior preserved on toggle');
-ok('6. experience preferences migrated with defaults + haptics intact');
+assert.doesNotMatch(accountPage, /let settings = \$state\(\{ autoplay: true, autoResume: true, reducedMotion: false \}\)/, 'Phase 2-J: dead settings state removed');
+assert.doesNotMatch(accountPage, /localStorage\.setItem\('mavero\.settings'/, 'Phase 2-J: dead persistSettings write removed');
+assert.doesNotMatch(accountPage, /localStorage\.getItem\('mavero\.settings'\)/, 'Phase 2-J: dead mavero.settings localStorage load removed');
+assert.doesNotMatch(accountPage, /Autoplay next episode/, 'Phase 2-J: autoplay toggle removed (was dead)');
+assert.doesNotMatch(accountPage, /Resume where you left off/, 'Phase 2-J: resume toggle removed (was dead)');
+assert.doesNotMatch(accountPage, /Reduce motion/, 'Phase 2-J: reduce motion toggle removed (was dead)');
+assert.doesNotMatch(accountPage, /persistSettingsAndHaptic/, 'Phase 2-J: dead persistence helper removed');
+assert.match(accountPage, /Phase 2-J \(audit UIX-1\)/, 'Phase 2-J: removal annotated with audit comment');
+ok('6. Phase 2-J: dead "Playback & interface" toggles removed (audit UIX-1 — fake settings erode trust)');
 
 // ============================================================
 // 7. ADULT MODE — server-authoritative architecture unchanged
@@ -222,12 +228,17 @@ ok('15. legacy /profile and /settings are redirect-only compatibility routes (UI
 // 16. COMPACT REFINEMENT (Phase D) — density + a11y structure
 // ============================================================
 // Every conceptual section keeps a real labelled heading target.
-for (const id of ['profile-security-title', 'experience-title', 'adult-title', 'library-title', 'about-title', 'session-title', 'danger-title']) {
+// Phase 2-J: 'experience-title' removed (the dead "Playback & interface"
+// section was removed). Adult Mode and the other functional sections
+// keep their heading targets.
+for (const id of ['profile-security-title', 'adult-title', 'library-title', 'about-title', 'session-title', 'danger-title']) {
   assert.match(accountPage, new RegExp(`id="${id}"`), `section heading #${id} exists`);
 }
-// Section glyphs are decorative inline icons, not boxed chips (7 sections).
+// Section glyphs are decorative inline icons, not boxed chips.
+// Phase 2-J: was 7 sections; the dead "Playback & interface" section was
+// removed (audit UIX-1), so we now have 6 decorative icons.
 const decorativeIcons = (accountPage.match(/class="section-icon[^"]*" aria-hidden="true"/g) ?? []).length;
-assert.ok(decorativeIcons >= 7, 'all section icons are decorative inline glyphs (aria-hidden)');
+assert.ok(decorativeIcons >= 6, 'all section icons are decorative inline glyphs (aria-hidden) — Phase 2-J: 6 remaining after dead-settings removal');
 // Library stats stay flat — no nested bordered container inside the section card.
 const statBlock = accountPage.match(/\.stat-strip \{([\s\S]*?)\}/);
 assert.ok(statBlock, '.stat-strip styles exist');

@@ -47,6 +47,16 @@ export const GET: RequestHandler = async ({ url, setHeaders }) => {
   const page = Math.max(1, Math.floor(Number(url.searchParams.get('page')) || 1));
   const cursor = url.searchParams.get('cursor');
 
+  // Phase 2-C: helper to set cache headers defensively — the production
+  // SvelteKit event always provides setHeaders, but some test harnesses
+  // call the handler directly with only { url }. Guarding here keeps the
+  // cache header on real requests without breaking the test contract.
+  const applyCacheHeaders = () => {
+    if (typeof setHeaders === 'function') {
+      setHeaders({ 'cache-control': PUBLIC_CATALOG_CACHE });
+    }
+  };
+
   try {
     const result = await loadUpcomingPage({ month, year, type, language }, page, cursor);
     // A complete upstream failure for the requested mode is a real
@@ -64,7 +74,7 @@ export const GET: RequestHandler = async ({ url, setHeaders }) => {
     // Phase 2-C: cache publicly — no user/adult dimension on this response.
     // Per-request cursors are part of the URL (cache key) so distinct
     // cursors cannot collide.
-    setHeaders({ 'cache-control': PUBLIC_CATALOG_CACHE });
+    applyCacheHeaders();
     return json({
       ok: true,
       items: result.items,

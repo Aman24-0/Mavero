@@ -26,19 +26,19 @@ import type { PageServerLoad } from './$types';
 //
 // Parallelized flow:
 //   - Kick off detail, streamingConfig, addonEligibility in parallel.
-//   - For series/anime params.type, ALSO kick off the season fetch
-//     in parallel (the common series-like case — no need to wait for
-//     item.isAnime / item.animeFormat).
 //   - Wait for detail first.
 //   - Apply the adult gate.
-//   - For the rare movie+anime-series case (params.type === 'movie' &&
-//     item.isAnime && animeFormat !== 'movie'), fetch the season after
-//     detail resolves (preserves the existing rare-path behavior).
+//   - AFTER the gate clears, kick off the season fetch (title-specific
+//     episode data — never speculatively before the gate, so unauthorized
+//     adult requests don't trigger unnecessary episode fetches).
 //   - Await the remaining promises.
 //
 // Behavior preserved:
 //   - Adult Mode gate is still server-authoritative, per-request,
 //     non-disclosing 404.
+//   - Adult gate runs BEFORE any title-specific episode data is fetched
+//     (preserves the Phase 6 security contract — unauthorized requests
+//     never trigger episode metadata fetches).
 //   - Streaming config degrades to a safe empty default on failure.
 //   - maveroPlayerAvailable degrades to false on failure.
 //   - Episode fetch is still optional — failure is silently absorbed
@@ -84,13 +84,14 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   // client cannot distinguish "adult and forbidden" from "does not exist".
 
   const seasonNumber = Number(url.searchParams.get('season') || '') || 1;
-  // Speculatively fetch the season when params.type is series/anime —
-  // these are series-like REGARDLESS of item, so we know upfront we'll
-  // need the season. The rare movie+anime-series case waits for detail.
-  const seriesLikeByParams = params.type === 'series' || params.type === 'anime';
+  // SECURITY: the season fetch is TITLE-SPECIFIC episode data. We start it
+  // AFTER the adult gate (below) — never speculatively before — so
+  // unauthorized adult requests don't trigger unnecessary episode fetches.
+  // The streaming config + addon eligibility are NOT title-specific, so
+  // they CAN run in parallel with detail (no adult-gate dependency).
 
-  // Kick off ALL independent work in parallel. Detail must resolve first
-  // (the adult gate depends on item.tags), but the other three are
+  // Kick off the INDEPENDENT work in parallel. Detail must resolve first
+  // (the adult gate depends on item.tags), but the other two are
   // fully independent and can run concurrently with detail.
   const detailPromise = getDetail(params.type, params.id).catch(() => {
     // Fail-closed: an unresolvable title (including a failed classification
@@ -101,16 +102,6 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
     .catch(() => EMPTY_STREAMING_CONFIG);
   const maveroPlayerAvailablePromise = hasStreamEligibleAddons(createSupabaseAdminClient())
     .catch(() => false);
-  // Season fetch — optional, failure is silently absorbed (the player
-  // falls back to item.seasonsData episodes). Speculative only when
-  // series-like-by-params (the common case). The result is normalized to
-  // `Episode[] | null` so the union type doesn't widen (the fixture path
-  // returns a narrower episode shape than TMDB).
-  const speculativeSeasonPromise: Promise<Episode[] | null> = seriesLikeByParams
-    ? getSeriesSeason(params.id, seasonNumber)
-        .then((season): Episode[] => (season.episodes as Episode[]) ?? [])
-        .catch(() => null)
-    : Promise.resolve(null);
 
   // Await detail first — the adult gate depends on item.tags.
   const item = await detailPromise;
@@ -125,32 +116,34 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
     }
   }
 
-  // For the rare movie+anime-series case (params.type === 'movie' &&
-  // item.isAnime && animeFormat !== 'movie'), we still need to fetch the
-  // season now that we know it's needed.
+  // After the adult gate cleared, fetch the season if the title is series-like.
+  // For series/anime params.type, we know this upfront; for the rare
+  // movie+anime-series case (item.isAnime && animeFormat !== 'movie'), we
+  // only know after detail resolves.
   const isSeriesLike = params.type === 'series'
     || (item.isAnime === true && item.animeFormat !== 'movie')
     || params.type === 'anime';
-  // If we didn't speculatively fetch the season but now need it, kick
-  // it off here (rare path — preserves the existing behavior).
-  const lateSeasonPromise: Promise<Episode[] | null> | null = (!seriesLikeByParams && isSeriesLike)
+  // Season fetch — optional, failure is silently absorbed (the player
+  // falls back to item.seasonsData episodes). Result normalized to
+  // `Episode[] | null` so the union type doesn't widen (the fixture path
+  // returns a narrower episode shape than TMDB).
+  const seasonPromise: Promise<Episode[] | null> = isSeriesLike
     ? getSeriesSeason(params.id, seasonNumber)
         .then((season): Episode[] => (season.episodes as Episode[]) ?? [])
         .catch(() => null)
-    : null;
+    : Promise.resolve(null);
 
   try {
-    // Await all independent work in parallel. These ran concurrently with
-    // detail + the adult gate; we now collect their results.
-    const [streamingConfig, maveroPlayerAvailable, speculativeSeason, lateSeason] = await Promise.all([
+    // Await all independent work in parallel. The streaming config + addon
+    // eligibility ran concurrently with detail + the adult gate; the season
+    // fetch started after the gate cleared. We collect all results here.
+    const [streamingConfig, maveroPlayerAvailable, seasonEpisodes] = await Promise.all([
       streamingConfigPromise,
       maveroPlayerAvailablePromise,
-      speculativeSeasonPromise,
-      lateSeasonPromise ?? Promise.resolve(null)
+      seasonPromise
     ]);
 
     const fallbackEpisodes = item.seasonsData?.flatMap((season) => season.episodes ?? []) ?? [];
-    const seasonEpisodes = lateSeason ?? speculativeSeason;
     const episodes = (isSeriesLike && seasonEpisodes && seasonEpisodes.length > 0)
       ? seasonEpisodes
       : fallbackEpisodes;
