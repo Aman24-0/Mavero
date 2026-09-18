@@ -43,7 +43,7 @@ The implemented product currently provides:
 | Catalog sources | TMDB and AniList integrations in the server content adapters |
 | Motion | GSAP where used by the existing web experience |
 | Package manager | pnpm 10.30.3, as declared by `package.json` |
-| Runtime prerequisite | Node.js 20 or newer, as declared by `package.json` |
+| Runtime prerequisite | Node.js 22 or newer, as declared by `package.json` (matches Netlify `NODE_VERSION=22`, CI `node-version: 22`, and media-worker `engines.node >=22.19`) |
 
 The exact dependency and script contract is defined in `package.json`; this README intentionally does not list libraries that are not declared there.[6]
 
@@ -69,7 +69,7 @@ The repository uses SvelteKit route conventions and the aliases declared in `sve
 
 ### Prerequisites
 
-Install **Node.js 20 or newer** and **pnpm 10.30.3**. These versions are declared by the repository and lockfile contract.[6]
+Install **Node.js 22 or newer** and **pnpm 10.30.3**. These versions are declared by the repository and lockfile contract (Netlify `NODE_VERSION=22`, CI `node-version: 22`, media-worker `engines.node >=22.19`, root `engines.node >=22.0.0`).[6]
 
 ### Install dependencies
 

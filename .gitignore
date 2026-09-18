@@ -9,3 +9,7 @@ build/
 .vite/
 .netlify/
 coverage/
+# Phase 2-N: the project is pnpm-based (pnpm-lock.yaml is the active lockfile).
+# package-lock.json (npm-format) is stale and not maintained — keep it out of
+# the repo so it can't drift from pnpm-lock.yaml.
+package-lock.json
