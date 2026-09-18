@@ -47,6 +47,12 @@ const ENV_FREE_EXACT_PATHS: readonly string[] = [
   // The sitemap endpoint renders from static catalog data only — its
   // handler never reads `locals` (verified: src/routes/sitemap.xml/+server.ts).
   '/sitemap.xml',
+  // Phase 3-C (audit OBS-3): the health endpoint MUST be reachable
+  // even when Supabase env is missing — that's the whole point of a
+  // liveness probe. The handler never reads `locals.supabase` for the
+  // liveness path (deep=1 probes Supabase directly via fetch, not via
+  // the hook-resolved client).
+  '/api/health',
 ];
 
 /**
