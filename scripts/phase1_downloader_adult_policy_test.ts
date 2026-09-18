@@ -186,7 +186,9 @@ ok(true, '11. endpoints pass verified identity + guest cookies; 4K uses the cano
 
 for (const [label, source] of [['movie page', moviePage], ['tv page', tvPage]] as const) {
   assert.match(source, /await assertAdultDownloadAllowed\(/, `${label} must call the adult guard server-side`);
-  assert.match(source, /locals\.safeGetSession\(\)/, `${label} resolves the verified session server-side`);
+  // Phase 2-A: identity now comes from the hook-resolved locals.user
+  // (no second auth roundtrip). The guard contract is unchanged.
+  assert.match(source, /locals\.user/, `${label} reads hook-resolved locals.user`);
 }
 ok(true, '12. standalone downloader pages enforce the guard in +page.server.ts (deep links covered)');
 

@@ -10,7 +10,8 @@ const deletionInFlight = new Set<string>();
 type DeleteRequest = { confirmation?: unknown };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   if (!user) return json({ ok: false, message: 'Authentication required.' }, { status: 401 });
   if (deletionInFlight.has(user.id)) return json({ ok: false, message: 'Account deletion is already in progress.' }, { status: 409 });
 

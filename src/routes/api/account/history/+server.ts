@@ -6,7 +6,8 @@ import { historyFromRow, historyToRow, isCloudHistoryEvent, type CloudHistoryEve
 type HistoryRequest = { event?: unknown };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   if (!user) return json({ message: 'Authentication required.' }, { status: 401 });
 
   const body = await readJsonBody<HistoryRequest>(request);
@@ -21,7 +22,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 };
 
 export const GET: RequestHandler = async ({ locals, url }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   if (!user) return json({ message: 'Authentication required.' }, { status: 401 });
 
   const requestedLimit = Number(url.searchParams.get('limit') ?? 50);

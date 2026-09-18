@@ -19,7 +19,8 @@ export const load: PageServerLoad = async ({ params, locals, cookies }) => {
   const validEpisodeContext = (value: number): boolean => Number.isSafeInteger(value) && value >= 1 && value <= 10000;
   if (!validEpisodeContext(season) || !validEpisodeContext(episode)) throw error(404, 'Content not found');
 
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   await assertAdultDownloadAllowed(locals.supabase, user, cookies, 'series', `series-${tmdbId}`);
 
   // No server data needed — the panel fetches /api/downloader/mavero itself

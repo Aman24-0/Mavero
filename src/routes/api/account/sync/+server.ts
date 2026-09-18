@@ -22,8 +22,8 @@ function parseRecords<T>(value: unknown, label: string, validator: (candidate: u
 }
 
 async function currentUser(locals: App.Locals) {
-  const { user } = await locals.safeGetSession();
-  return user;
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  return locals.user;
 }
 
 export const GET: RequestHandler = async ({ locals }) => {

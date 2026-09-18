@@ -26,7 +26,8 @@ import type { RequestHandler } from './$types';
 // it returns an empty list (non-disclosing).
 
 export const GET: RequestHandler = async ({ locals, cookies }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
   if (!canAccess) {
     return json({ ok: true, providers: [] });

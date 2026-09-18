@@ -21,7 +21,8 @@ import type { RequestHandler } from './$types';
 // What it does NOT do:
 //   - touch `watch_history` (history is a separate audit log),
 //   - accept a `user_id` from the client (server resolves it via
-//     `locals.safeGetSession()` and the RPC reads `auth.uid()`).
+//     `locals.user` from the Phase 2-A hook resolution; the RPC reads
+//     `auth.uid()`).
 
 const MAX_ITEMS = 200;
 const MAX_BODY_BYTES = 256 * 1024;
@@ -33,7 +34,8 @@ function isValidType(value: string | null | undefined): value is LocalContentTyp
 }
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   if (!user) return json({ message: 'Authentication required.' }, { status: 401 });
 
   const body = await readJsonBody<{ items?: BatchItem[] }>(request, MAX_BODY_BYTES);

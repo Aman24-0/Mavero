@@ -15,13 +15,15 @@ import type { RequestHandler } from './$types';
 // for the user type, the preference is forced to false.
 
 export const GET: RequestHandler = async ({ locals, cookies }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   const settings = await getPublicAdultModeSettings(locals.supabase, user, cookies);
   return json({ ok: true, ...settings });
 };
 
 export const PUT: RequestHandler = async ({ request, locals, cookies }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   // Phase 1 (audit SEC-010): the shared bounded JSON-body parser (256 KiB
   // cap) — this unauthenticated route previously parsed the raw body with
   // with no size limit, inconsistent with the rest of the application.

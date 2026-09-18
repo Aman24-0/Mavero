@@ -15,7 +15,8 @@ export const load: PageServerLoad = async ({ params, locals, cookies }) => {
 
     // Phase 10: SSR adult content guard.
     if (detail.tags?.includes('Adult')) {
-      const { user } = await locals.safeGetSession();
+      // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+      const user = locals.user;
       const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
       if (!canAccess) {
         throw error(404, 'Series not found');

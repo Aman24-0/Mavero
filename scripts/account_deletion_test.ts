@@ -82,7 +82,11 @@ const endpoint = await readFile(new URL('../src/routes/api/account/delete/+serve
 // legacy /profile and /settings pages are redirect-only compatibility routes.
 const account = await readFile(new URL('../src/routes/account/+page.svelte', import.meta.url), 'utf8');
 const dialog = await readFile(new URL('../src/lib/components/ConfirmDialog.svelte', import.meta.url), 'utf8');
-assert.match(endpoint, /safeGetSession/);
+// Phase 2-A: identity comes from the hook-resolved locals.user (no second
+// auth roundtrip). The endpoint still requires an authenticated user and
+// still uses the user.id from the verified session — the contract is the
+// same, only the redundant network roundtrip was removed.
+assert.match(endpoint, /locals\.user/);
 assert.match(endpoint, /confirmation !== 'DELETE'/);
 assert.match(endpoint, /deletionInFlight/);
 assert.doesNotMatch(endpoint, /user_id\s*:/);

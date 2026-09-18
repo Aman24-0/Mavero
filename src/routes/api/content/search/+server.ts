@@ -29,9 +29,13 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
     return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'retry-after': String(rateVerdict.retryAfterSeconds) } });
   }
 
-  // Phase 9: Evaluate adult access server-side. The browser can NEVER
-  // bypass this — there is no ?adult=true query parameter.
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A (audit PERF-001): the server hook already resolved auth and
+  // stored the result on `locals.user`. Reading it directly avoids a second
+  // Supabase Auth network roundtrip (getSession + getUser) on every search.
+  // Safe because: identity is the only input needed here — `canAccessAdultContent`
+  // re-evaluates the per-request policy from the verified user + cookie, and
+  // never trusts a client-supplied flag.
+  const user = locals.user;
   const canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
 
   try {

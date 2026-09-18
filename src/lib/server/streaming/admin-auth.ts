@@ -3,7 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 
 export async function requireAdmin(locals: App.Locals, options: { redirectTo?: string } = {}) {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   if (!user) throw redirect(303, `/auth/sign-in?next=${encodeURIComponent(options.redirectTo ?? '/admin')}`);
 
   const { data: profile, error: profileError } = await locals.supabase

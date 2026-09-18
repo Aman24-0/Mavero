@@ -276,8 +276,9 @@ async function resetLocal() {
 // ============================================================================
 {
   const source = await readFile(new URL('../src/routes/api/account/favorites/batch-delete/+server.ts', import.meta.url), 'utf8');
+  // Phase 2-A: identity comes from the hook-resolved locals.user.
   // Authentication gate at the very top.
-  assert.match(source, /safeGetSession\(\)/, 'must resolve the session before any work');
+  assert.match(source, /locals\.user/, 'must read the hook-resolved locals.user before any work');
   assert.match(source, /status: 401/, 'must return 401 when unauthenticated');
   // Per-item validation: invalid contentType rejected, contentId required + bounded.
   assert.match(source, /movie.*series.*anime/, 'must validate contentType against movie|series|anime');

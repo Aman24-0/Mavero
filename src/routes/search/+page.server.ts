@@ -32,7 +32,9 @@ export const load: PageServerLoad = async ({ url, locals, cookies }) => {
     // decision down, so authorized users see consistent results on both
     // paths. Classification + filtering still happen server-side in the
     // content layer; the client is never trusted.
-    const { user } = await locals.safeGetSession();
+    //
+    // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+    const user = locals.user;
     const canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
     const result = await search(query, type, 1, {}, canAccessAdult);
     return {

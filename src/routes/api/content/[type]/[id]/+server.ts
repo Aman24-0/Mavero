@@ -22,7 +22,8 @@ export const GET: RequestHandler = async ({ params, locals, cookies }) => {
     // centralized adult policy. The browser can NEVER bypass this — there
     // is no client-side flag that grants access.
     if (detailVerdict(result.tags) === 'adult') {
-      const { user } = await locals.safeGetSession();
+      // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+      const user = locals.user;
       const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
       if (!canAccess) {
         // Non-disclosing: return NOT_FOUND rather than 403 so the caller

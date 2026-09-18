@@ -26,8 +26,9 @@ export type AccountActionResult = { section: Section; success: true; message: st
 export type AccountActionFailure = ActionFailure<{ section: Section; message: string }>;
 
 async function requireUser(locals: App.Locals) {
-  const { user } = await locals.safeGetSession();
-  return user;
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  // The server hook already verified the user via Supabase Auth.
+  return locals.user;
 }
 
 export async function saveProfile({ request, locals }: { request: Request; locals: App.Locals }): Promise<AccountActionResult | AccountActionFailure> {

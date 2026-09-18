@@ -15,7 +15,8 @@ export const load: PageServerLoad = async ({ params, locals, cookies }) => {
   const tmdbId = params.tmdbId ?? '';
   if (!/^\d{1,12}$/.test(tmdbId)) throw error(404, 'Content not found');
 
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   await assertAdultDownloadAllowed(locals.supabase, user, cookies, 'movie', `movie-${tmdbId}`);
 
   // No server data needed — the panel fetches /api/downloader/mavero itself

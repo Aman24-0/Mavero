@@ -45,7 +45,9 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
 
   let canAccessAdult = false;
   if (sectionParam === 'adult-shows') {
-    const { user } = await locals.safeGetSession();
+    // Phase 2-A: read the hook-resolved locals.user instead of re-calling
+    // safeGetSession (which would do a second getSession+getUser roundtrip).
+    const user = locals.user;
     canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
     if (!canAccessAdult) {
       return json({ ok: true, items: [], page, hasNextPage: false, section: sectionParam, language: languageParam, provider: safeProvider ?? null });

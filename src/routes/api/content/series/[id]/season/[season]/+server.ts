@@ -36,7 +36,8 @@ export const GET: RequestHandler = async ({ params, locals, cookies }) => {
       const parentType = params.id.startsWith('anime-') ? 'anime' : 'series';
       const parent = await getDetail(parentType, params.id);
       if (detailVerdict(parent.tags) === 'adult') {
-        const { user } = await locals.safeGetSession();
+        // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+        const user = locals.user;
         const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
         if (!canAccess) {
           // Non-disclosing: identical to a season whose series does not

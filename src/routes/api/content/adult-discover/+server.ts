@@ -46,7 +46,8 @@ import type { RequestHandler } from './$types';
 // Adult network IDs.
 export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   // ---- 1. Per-request server-side authorization (the only gate in). ----
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
   if (!canAccess) {
     // ---- 2. Non-disclosing 404 — indistinguishable from a missing route.

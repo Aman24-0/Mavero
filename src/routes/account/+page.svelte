@@ -16,13 +16,15 @@
   let { data, form }: { data: PageData; form?: { section?: string; success?: boolean; message?: string } } = $props();
 
   // ── Identity (migrated from Profile) ────────────────────────────
-  const displayName = $derived(typeof data.user?.user_metadata?.display_name === 'string' && data.user.user_metadata.display_name.trim() ? data.user.user_metadata.display_name : '');
+  // Phase 2-B: the layout payload is now a projection — no full Supabase
+  // User object is serialized to the client. We read the projected
+  // `displayName` / `email` fields directly.
+  const displayName = $derived(data.user?.displayName ?? '');
   const userEmail = $derived(data.user?.email ?? '');
-  let isAuthenticated = $derived(Boolean(data.user));
+  let isAuthenticated = $derived(data.isAuthenticated);
 
   function accountName() {
-    const metadata = data.user?.user_metadata;
-    return typeof metadata?.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name : data.user?.email?.split('@')[0] ?? 'Guest';
+    return data.user?.displayName ?? (data.user?.email ? data.user.email.split('@')[0] : 'Guest');
   }
 
   function initials() {

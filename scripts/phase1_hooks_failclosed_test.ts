@@ -118,10 +118,19 @@ ok(!/fake|empty.*supabase client/i.test(hooks.replace(/\/\/.*$/gm, '')), '2d. no
 // The reliability contract comment stays consistent with actual behavior.
 ok(/DEFAULT-DENY \(Phase 1, audit BL-2\)/.test(hooks) && /locals\.safeGetSession.*unassigned|fall through to `resolve\(event\)`/.test(hooks), '2e. Reliability contract documentation matches the default-deny behavior');
 
-// The layout still calls safeGetSession — under default-deny it can no
-// longer observe unassigned locals on the degraded path (the 503 short-
-// circuits before resolve(event)).
+// Phase 2-A: the root layout reads `locals.user` directly instead of
+// re-calling safeGetSession (which would do a second getSession+getUser
+// roundtrip on every page load). The hook is still the authoritative
+// resolver; the layout's safety contract (no crash on the degraded path
+// because the 503 short-circuits before resolve(event)) is preserved.
+//
+// The regex strips `// …` line comments so documentation references to
+// safeGetSession don't false-positive — only an actual CALL expression
+// (i.e. one outside a comment) counts as a regression.
 const layout = read('src/routes/+layout.server.ts');
-ok(/locals\.safeGetSession\(\)/.test(layout), '2f. root server layout unchanged (safeGetSession consumer protected by the hook)');
+const layoutCode = layout.replace(/\/\/[^\n]*/g, '');
+ok(!/locals\.safeGetSession\(\)/.test(layoutCode), '2f. root server layout no longer re-calls safeGetSession (Phase 2-A: hook is the authoritative resolver)');
+ok(/locals\.user/.test(layoutCode), '2g. root server layout reads hook-resolved locals.user directly');
+ok(/isAuthenticated/.test(layoutCode), '2h. root server layout projects the auth payload (Phase 2-B: no tokens, no full session)');
 
 console.log(`phase1_hooks_failclosed_test: ${passed} checks passed (default-deny fail-closed contract)`);

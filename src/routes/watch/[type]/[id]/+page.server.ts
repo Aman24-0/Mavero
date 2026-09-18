@@ -39,7 +39,8 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
     throw error(404, 'Title not found');
   }
   if (detailVerdict(item.tags) === 'adult') {
-    const { user } = await locals.safeGetSession();
+    // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+    const user = locals.user;
     const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
     if (!canAccess) {
       throw error(404, 'Title not found');

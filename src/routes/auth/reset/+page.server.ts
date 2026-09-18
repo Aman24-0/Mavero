@@ -6,11 +6,19 @@ import type { Actions, PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ url, locals }) => {
   const code = url.searchParams.get('code');
   if (code) {
+    // exchangeCodeForSession can CHANGE the session state mid-request
+    // (it exchanges a one-time recovery code for a fresh access/refresh
+    // token pair and writes the cookies). The hook resolved auth BEFORE
+    // this exchange, so locals.session/locals.user are now stale — we
+    // MUST re-resolve here. This is the ONLY legitimate second resolution
+    // in the codebase; everywhere else reads locals.user directly.
     const { error } = await locals.supabase.auth.exchangeCodeForSession(code);
     if (error) throw redirect(303, '/auth/sign-in?error=confirmation');
+    const { session } = await locals.safeGetSession();
+    return { ready: Boolean(session) };
   }
-  const { session } = await locals.safeGetSession();
-  return { ready: Boolean(session) };
+  // No code-exchange branch: locals.session is already authoritative.
+  return { ready: Boolean(locals.session) };
 };
 
 export const actions: Actions = {
@@ -20,7 +28,10 @@ export const actions: Actions = {
     const confirmation = String(formData.get('confirmation') ?? '');
     if (password.length < MIN_PASSWORD_LENGTH) return fail(400, { message: `Choose a password with at least ${MIN_PASSWORD_LENGTH} characters.` });
     if (password !== confirmation) return fail(400, { message: 'Passwords do not match.' });
-    const { session } = await locals.safeGetSession();
+    // The form action runs in a SEPARATE request from the load above, so
+    // the hook has already resolved auth for THIS request. locals.session
+    // is authoritative — no second resolution needed.
+    const session = locals.session;
     if (!session) return fail(401, { message: 'This reset link is no longer active. Request a new one.' });
     const { error } = await locals.supabase.auth.updateUser({ password });
     if (error) return fail(400, { message: friendlyAuthMessage(error.message, 'sign-up') });

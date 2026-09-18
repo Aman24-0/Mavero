@@ -9,7 +9,8 @@ import type { RequestHandler } from './$types';
  * must also disappear from Continue Watching.
  */
 export const DELETE: RequestHandler = async ({ locals, url }) => {
-  const { user } = await locals.safeGetSession();
+  // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+  const user = locals.user;
   if (!user) return json({ message: 'Authentication required.' }, { status: 401 });
 
   const contentType = url.searchParams.get('contentType');
