@@ -418,10 +418,22 @@
     // Immersive redesign: responsive viewport detection for source sheet placement.
     // compact (portrait) → bottom sheet; wide (landscape/desktop/TV) → right drawer.
     // Based on actual viewport width, NOT on landscapeMode toggle.
+    //
+    // Phase 2-I (PLR-02): the previous implementation registered a
+    // `change` listener on viewportMediaQuery but NEVER removed it in the
+    // onMount cleanup. Over a long-lived session with many PlayerShell
+    // mount/unmount cycles (e.g. navigating between watch pages), this
+    // leaked listeners on the MediaQueryList — each new mount added a new
+    // listener, none were removed, and the old listeners kept firing
+    // handleViewportChange on viewport changes, calling setState on a
+    // destroyed component. Now we hoist the handler into the onMount
+    // scope so the cleanup can remove it, matching the existing pattern
+    // used for handleFullscreen / handleKeydown / showControls.
+    let handleViewportChange: ((e: MediaQueryListEvent) => void) | undefined;
     if (typeof window !== 'undefined' && window.matchMedia) {
       viewportMediaQuery = window.matchMedia('(min-width: 769px)');
       isWideViewport = viewportMediaQuery.matches;
-      const handleViewportChange = (e: MediaQueryListEvent) => { isWideViewport = e.matches; };
+      handleViewportChange = (e: MediaQueryListEvent) => { isWideViewport = e.matches; };
       viewportMediaQuery.addEventListener('change', handleViewportChange);
     }
     // Phase 6: detect Wake Lock + Media Session support at mount, matching the
@@ -483,6 +495,12 @@
       if (hideTimer) clearTimeout(hideTimer);
       // Phase 8: clear embed load timeout on destroy.
       clearEmbedLoadTimeout();
+      // Phase 2-I (PLR-02): remove the viewport MediaQueryList listener —
+      // matches the addEventListener call above. Without this, each
+      // mount cycle leaked a listener on the MediaQueryList.
+      if (viewportMediaQuery && handleViewportChange) {
+        try { viewportMediaQuery.removeEventListener('change', handleViewportChange); } catch { /* already removed */ }
+      }
       document.removeEventListener('fullscreenchange', handleFullscreen);
       detachPictureInPictureListeners();
       window.removeEventListener('keydown', handleKeydown);
@@ -704,6 +722,16 @@
     state = 'embed-loading';
     errorMessage = '';
     revealControls();
+    // Phase 2-I (PLR-05): toggling the sandbox policy REMOUNTS the iframe
+    // (the sandbox attribute change forces a fresh load — the browser
+    // re-fetches the provider URL). The previous embed load timeout was
+    // cleared by the source-switch path, but a NEW one was never armed
+    // for the remounted iframe. If the remounted iframe failed to fire
+    // `on:load` (e.g. the provider was slow), the player stayed in
+    // `embed-loading` indefinitely. We now arm a fresh timeout here,
+    // preserving the existing stale-source protection (the timeout captures
+    // sourceId at start time and no-ops if the user switches away).
+    if (source?.sourceId) startEmbedLoadTimeout(source.sourceId);
   }
 
   function seek(time: number) {
@@ -947,7 +975,15 @@
     if (hideTimer) clearTimeout(hideTimer);
     // Immersive redesign: 10s auto-hide, applies in all modes (portrait + landscape).
     // Menu/source sheet open prevents auto-hide (checked in the timer callback).
-    if (playing && !menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
+    //
+    // Phase 2-I (PLR-04): embed playback must ALSO participate in auto-hide.
+    // The previous condition checked only `playing` (set for direct sources),
+    // so an embed source that was actively playing never auto-hid the
+    // controls. We now OR with `embedPlaying` so the same 10s countdown
+    // applies to embed playback too. The provider iframe content itself is
+    // NOT hidden — only the Mavero control overlay (which is irrelevant
+    // while the embed is playing).
+    if ((playing || embedPlaying) && !menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
       hideTimer = setTimeout(() => {
         if (!menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
           controlsVisible = false;
@@ -1334,6 +1370,18 @@
     } catch {
       // MediaMetadata constructor may be unavailable on older Safari.
       mediaSessionActive = false;
+    }
+    // Phase 2-I (PLR-03): the source-switch path calls clearMediaSession()
+    // (line 345 / 366) which clears BOTH metadata AND action handlers.
+    // The previous setupMediaSession restored metadata but NOT the action
+    // handlers — so after the first source switch, play/pause/seek media
+    // keys stopped working. We now re-register action handlers here for
+    // DIRECT sources (embed sources cannot be commanded reliably — see the
+    // existing comment in registerMediaSessionHandlers). For embed sources
+    // we intentionally do NOT register handlers (preserves the existing
+    // "no Media Session controls for unsupported embed playback" rule).
+    if (source?.type === 'direct') {
+      registerMediaSessionHandlers();
     }
   }
 
