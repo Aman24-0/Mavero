@@ -26,7 +26,14 @@ declare global {
       // whose session genuinely changes mid-request (e.g. /auth/reset after
       // exchangeCodeForSession) re-call safeGetSession deliberately.
       session: Session | null;
-      user: User | null
+      user: User | null;
+      // Phase 3-A: server hook resolves a request/correlation ID ONCE per
+      // request and stores it here. The structured logger (http/log.ts)
+      // reads it from locals so every log line for a single request shares
+      // the same ID — operators can grep Netlify logs by requestId to see
+      // the full request trace. NEVER used as an auth/authorization
+      // boundary — only as a diagnostic correlation label.
+      requestId: string;
     }
 
     interface PageData {

@@ -3,6 +3,7 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { error, type Handle } from '@sveltejs/kit';
 import type { Database } from '$lib/server/supabase/database.types';
 import { isEnvironmentFreePath } from '$lib/server/route-policy';
+import { resolveRequestIdFromHeaders, PUBLIC_REQUEST_ID_HEADER } from '$lib/server/http/request-id';
 
 // Server hook.
 //
@@ -47,12 +48,22 @@ export const handle: Handle = async ({ event, resolve }) => {
   const supabaseUrl = publicEnv.PUBLIC_SUPABASE_URL;
   const publishableKey = publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
+  // Phase 3-A: resolve a request/correlation ID ONCE per request. The
+  // ID is stored on locals.requestId (so server routes/loaders and the
+  // structured logger can read it) AND returned in the X-Request-ID
+  // response header (so the client can surface it in bug reports and
+  // operators can grep Netlify logs by requestId). A trusted incoming
+  // X-Request-ID is REUSED only if it matches the narrow accepted shape
+  // (see request-id.ts) — otherwise a fresh cryptographically-strong ID
+  // is generated. NEVER used as an auth boundary.
+  event.locals.requestId = resolveRequestIdFromHeaders(event.request.headers);
+
   // Missing public Supabase configuration is a deployment/environment
   // problem, not a programmer error. Returning a controlled SvelteKit
   // error keeps the function alive and lets the user retry once the
   // operator fixes the env. We only log a safe, static message.
   if (!supabaseUrl || !publishableKey) {
-    console.error('[Auth] Supabase public configuration is missing.');
+    console.error('[Auth] Supabase public configuration is missing.', { requestId: event.locals.requestId });
     // DEFAULT-DENY: fail closed with the intentional 503 for every
     // environment-dependent route (pages resolve through the root server
     // layout; API endpoints read `locals`). Only paths that genuinely
@@ -60,7 +71,9 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (!isEnvironmentFreePath(event.url.pathname)) {
       throw error(503, 'MAVERO is temporarily unavailable. Please try again in a moment.');
     }
-    return resolve(event);
+    return resolve(event, {
+      transformPageChunk: ({ html }) => appendRequestIdHeader(html, event.locals.requestId),
+    });
   }
 
   event.locals.supabase = createServerClient<Database>(supabaseUrl, publishableKey, {
@@ -86,7 +99,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       // A Supabase auth initialization failure (network, cookie parse,
       // token refresh race) must not crash the request. Treat the user
       // as a guest and continue. Safe diagnostic only — no tokens.
-      console.error('[Auth] safeGetSession exception', { name: (err as Error)?.name ?? 'unknown' });
+      console.error('[Auth] safeGetSession exception', { name: (err as Error)?.name ?? 'unknown', requestId: event.locals.requestId });
       return { session: null, user: null };
     }
   };
@@ -95,5 +108,32 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.session = auth.session;
   event.locals.user = auth.user;
 
-  return resolve(event);
+  // Phase 3-A: return the request ID in the response header so the
+  // client and operator can correlate. SvelteKit's resolve() options
+  // include `transformPageChunk` for HTML responses; for non-HTML
+  // (API JSON) responses, SvelteKit's setHeaders (used by individual
+  // +server.ts handlers) is the standard path. We use a lightweight
+  // resolve option that adds the header to ALL responses — this is
+  // the most robust approach and doesn't require every API handler to
+  // remember to set it.
+  const response = await resolve(event);
+  response.headers.set(PUBLIC_REQUEST_ID_HEADER, event.locals.requestId);
+  return response;
 };
+
+/**
+ * Adds the request ID as an HTTP meta tag inside the HTML <head>.
+ * This is the ONLY way to surface the request ID in a server-rendered
+ * HTML response without a separate response-header read (the response
+ * header is set on the Response object above; this is a complementary
+ * surface for client-side code that reads from the DOM).
+ *
+ * For non-HTML responses the header on the Response object is the
+ * canonical surface; this transform is a no-op.
+ */
+function appendRequestIdHeader(html: string, requestId: string): string {
+  // Only inject into HTML responses (the transformPageChunk input is
+  // the full HTML document for SSR routes). For non-HTML it's a no-op.
+  if (!html || !html.includes('<head>')) return html;
+  return html.replace('<head>', `<head><meta name="x-request-id" content="${requestId}">`);
+}
