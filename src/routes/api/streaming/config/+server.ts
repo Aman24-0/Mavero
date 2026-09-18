@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { getPublicStreamingConfig } from '$lib/server/streaming/public-config';
 import { PRIVATE_SHORT_CACHE } from '$lib/server/http/cache-headers';
+import { errorResponse } from '$lib/server/http/error-response';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, setHeaders }) => {
@@ -12,6 +13,8 @@ export const GET: RequestHandler = async ({ locals, setHeaders }) => {
     return json({ ok: true, config });
   } catch (error) {
     console.error('[Streaming] Public configuration failed', error);
-    return json({ ok: false, error: { message: 'Streaming configuration is temporarily unavailable.' } }, { status: 503 });
+    // Phase 3-J: consistent error envelope (was { ok: false, error: { message } }
+    // — now { ok: false, error: { code, message } }, backwards-compatible).
+    return errorResponse('STREAMING_CONFIG_UNAVAILABLE', 'Streaming configuration is temporarily unavailable.', { status: 503 });
   }
 };

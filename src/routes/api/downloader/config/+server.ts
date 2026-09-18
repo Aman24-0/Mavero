@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { getPublicDownloadConfig, rewriteMaveroOrigins } from '$lib/server/downloader/public-config';
 import { PUBLIC_SHORT_CACHE } from '$lib/server/http/cache-headers';
+import { errorResponse } from '$lib/server/http/error-response';
 import type { RequestHandler } from './$types';
 
 // Public downloader configuration endpoint.
@@ -27,6 +28,8 @@ export const GET: RequestHandler = async ({ locals, url, setHeaders }) => {
     return json({ ok: true, config: rewriteMaveroOrigins(config, url.origin) });
   } catch (error) {
     console.error('[Downloader] Public configuration failed', error);
-    return json({ ok: false, error: { message: 'Downloader configuration is temporarily unavailable.' } }, { status: 503 });
+    // Phase 3-J: consistent error envelope (was { ok: false, error: { message } }
+    // — now { ok: false, error: { code, message } }, backwards-compatible).
+    return errorResponse('DOWNLOADER_CONFIG_UNAVAILABLE', 'Downloader configuration is temporarily unavailable.', { status: 503 });
   }
 };

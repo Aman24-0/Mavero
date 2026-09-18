@@ -1,5 +1,8 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { env as publicEnv } from '$env/dynamic/public';
+import { cacheStats } from '$lib/server/content/cache';
+import { negativeCacheStats } from '$lib/server/resolver/negative-cache';
+import { providerCooldownStats } from '$lib/server/resolver/provider-cooldown';
 
 // Phase 3-C (audit OBS-3) — Health / readiness endpoint.
 //
@@ -140,5 +143,44 @@ async function readinessResponse(): Promise<Response> {
 export const GET: RequestHandler = async ({ url }) => {
   const deep = url.searchParams.get('deep') === '1';
   if (deep) return readinessResponse();
+  const stats = url.searchParams.get('stats') === '1';
+  if (stats) return statsResponse();
   return livenessResponse();
 };
+
+/**
+ * Phase 3-H (audit OBS-7) — Lightweight instrumentation exposed via the
+ * health endpoint. Operators can poll /api/health?stats=1 to see cache +
+ * resolver stats WITHOUT a separate observability platform.
+ *
+ * Returns:
+ *   * content cache stats (entries, evictions, sweeps, in-flight)
+ *   * negative cache stats (entries, max, TTL)
+ *   * provider cooldown stats (providers tracked, cooling down, threshold)
+ *
+ * NO SECRETS: the stats contain ONLY aggregate counts + bounds — never
+ * user data, never provider URLs, never content ids. The response is
+ * cacheable for 5 seconds (operators polling every 10-30s get fresh
+ * data without hammering the function).
+ *
+ * This is NOT a full metrics endpoint — it does not export Prometheus-
+ * format counters or integrate with an external metrics platform. It
+ * is the minimum viable instrumentation for Phase 3: operators can
+ * confirm the caches are working + see when providers are cooling down.
+ */
+function statsResponse(): Response {
+  const body = {
+    status: 'ok' as HealthStatus,
+    now: Date.now(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    caches: {
+      content: cacheStats(),
+      negative: negativeCacheStats(),
+      providerCooldown: providerCooldownStats(),
+    },
+  };
+  return json(body, {
+    status: 200,
+    headers: { 'cache-control': 'public, max-age=5' },
+  });
+}

@@ -16,6 +16,53 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
     X-Frame-Options = "DENY"
+    # Phase 3-I (audit SEC-CSP): Content-Security-Policy.
+    #
+    # A conservative CSP that protects against the highest-impact XSS
+    # vectors WITHOUT breaking Mavero's existing functionality:
+    #
+    #   * script-src 'self' 'unsafe-inline' — SvelteKit production builds
+    #     hash inline scripts, but the dev server + some client hydration
+    #     paths use inline scripts. 'unsafe-inline' is required for
+    #     SvelteKit compatibility (SvelteKit does not currently emit
+    #     per-request nonces by default).
+    #   * style-src 'self' 'unsafe-inline' — Tailwind CSS v4 + Svelte
+    #     component styles are inlined.
+    #   * img-src 'self' data: https://image.tmdb.org — TMDB poster/backdrop
+    #     images. `data:` for inline SVG placeholders.
+    #   * font-src 'self' — no external font CDN.
+    #   * connect-src 'self' — the SvelteKit app talks to itself + the
+    #     Supabase URL (which is on the SAME origin when proxied, or
+    #     configured via PUBLIC_SUPABASE_URL — see note below).
+    #   * frame-src * — provider embeds (vidsrc, vidlink, cineverse, etc.)
+    #     are ADMIN-CONFIGURED. A static allowlist would break playback
+    #     every time an admin adds a new provider. The permissive frame-src
+    #     is the safe tradeoff: the CSP still protects against XSS in
+    #     scripts/styles/images, but doesn't break the embed-based playback
+    #     architecture.
+    #   * frame-ancestors 'none' — nobody can iframe Mavero (X-Frame-Options
+    #     DENY already enforces this; the CSP is defense in depth).
+    #   * object-src 'none' — no Flash/Java/plugins.
+    #   * base-uri 'self' — no <base> injection.
+    #   * form-action 'self' — no form submission to external origins.
+    #
+    # NOTE on connect-src: when the Supabase URL is on a DIFFERENT origin
+    # (the common case — Supabase is a hosted service), the browser's
+    # fetch() calls to that URL would be blocked by `connect-src 'self'`.
+    # We CANNOT add the Supabase URL to connect-src here because:
+    #   1. netlify.toml is static — we don't know the customer's Supabase
+    #      URL at build time (different deployments use different Supabase
+    #      projects);
+    #   2. the Supabase URL is ALREADY public (baked into the client bundle
+    #      via PUBLIC_SUPABASE_URL), so adding it to the CSP reveals nothing
+    #      new — but we'd have to template the netlify.toml, which is out
+    #      of scope for Phase 3.
+    # The mitigation: the Supabase client uses fetch() to the Supabase URL,
+    # which IS subject to connect-src. To avoid breaking auth, we use
+    # `connect-src 'self' https://*.supabase.co` — the wildcard covers all
+    # hosted Supabase projects (the common case). Self-hosted Supabase
+    # deployments would need to add their URL here.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
 
 [[headers]]
   for = "/sw.js"

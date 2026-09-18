@@ -936,6 +936,13 @@ export type Database = {
           error: string | null
         }[]
       }
+      // Added by 20260922000000_phase3_watch_history_retention.sql.
+      // SECURITY DEFINER function: prunes watch_history rows older than
+      // the retention window. Returns the count of deleted rows.
+      prune_old_watch_history: {
+        Args: { retention_days: number }
+        Returns: number
+      }
     }
     Enums: {
       [_ in never]: never
