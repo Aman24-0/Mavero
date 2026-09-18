@@ -45,6 +45,9 @@ jobs:
       - name: Type and Svelte validation (pnpm check)
         run: corepack pnpm check
 
+      - name: Install ffmpeg (real binary required by stremio_player_phase11_test — gate policy forbids skipping suites)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Test suites (pnpm test)
         run: corepack pnpm test
 
