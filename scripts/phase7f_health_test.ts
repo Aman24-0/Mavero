@@ -5,6 +5,16 @@ import { resolveWithBoundedFallback } from '../src/lib/server/resolver/fallback'
 import { deriveRuntimeHealthState, isRuntimeHealthEligible, nextHealthAfterFailure, nextHealthAfterSuccess, type RuntimeHealthRow } from '../src/lib/server/streaming/health';
 import type { NormalizedMediaItem } from '../src/lib/server/content/types';
 import type { ResolverDependencies, ResolverRequest, TrustedResolutionConfig } from '../src/lib/server/resolver/types';
+// Phase 3-D: the negative cache + provider cooldown are module-level state.
+// Tests that exercise the fallback loop must clear them between scenarios
+// so a cached negative from one scenario doesn't skip the candidate in
+// the next scenario.
+import { clearNegativeCache } from '../src/lib/server/resolver/negative-cache';
+import { clearProviderCooldowns } from '../src/lib/server/resolver/provider-cooldown';
+
+// Phase 3-D: clear module-level resolver state before each scenario.
+clearNegativeCache();
+clearProviderCooldowns();
 
 const content: NormalizedMediaItem = {
   id: 'afterlight', title: 'Afterlight', year: 2024, type: 'movie', runtime: '2h 08m', rating: 8.4, genres: ['Drama'], description: 'Fixture', poster: 'https://images.example.test/poster.jpg', backdrop: 'https://images.example.test/backdrop.jpg', accent: '#9b87f5', source: { provider: 'tmdb', externalId: '778899', fetchedAt: new Date().toISOString() }, externalIds: { tmdb: '778899', imdb: 'tt1234567' },
@@ -56,6 +66,10 @@ assert.deepEqual(attempted, ['source-a']);
 assert.deepEqual(fallback.attempts.map((attempt) => attempt.result), ['failure', 'success']);
 
 let successfulFallbackSource = '';
+// Phase 3-D: clear before this scenario (failA is in the candidate list
+// and would be skipped by the negative cache from the previous scenario).
+clearNegativeCache();
+clearProviderCooldowns();
 const fallbackResult = await resolveWithBoundedFallback(request, content, [{ config: failA }, { config: successB }], dependencies, { maxAttempts: 2, onSuccess: (candidate) => { successfulFallbackSource = candidate.config.source.id; } });
 assert.equal(fallbackResult.result.url, 'https://media.example.test/source-b.m3u8');
 assert.equal(successfulFallbackSource, 'source-b');
@@ -63,24 +77,43 @@ assert.equal(successfulFallbackSource, 'source-b');
 const alwaysFail = config('provider-c', 'source-c', 'fail-c');
 const exhaustionDependencies: ResolverDependencies = { adaptersById: { 'fail-c': createMockAdapter('direct', null) } };
 let exhaustedAttempts = 0;
+// Phase 3-D: clear the negative cache before this scenario so the
+// failA candidate from the previous scenario doesn't get skipped.
+clearNegativeCache();
+clearProviderCooldowns();
 await assert.rejects(() => resolveWithBoundedFallback(request, content, [{ config: failA }, { config: alwaysFail }], { adaptersById: { ...dependencies.adaptersById, ...exhaustionDependencies.adaptersById } }, { maxAttempts: 2, onFailure: () => { exhaustedAttempts += 1; } }), (error: unknown) => error instanceof ResolverError && error.code === 'RESOLUTION_UNAVAILABLE');
 assert.equal(exhaustedAttempts, 2);
 
 let boundedAttempts = 0;
+// Phase 3-D: clear before this scenario (uses 20 distinct sources, but
+// the content id is the same — the negative cache from the previous
+// scenario would skip failA if it were in the candidate list).
+clearNegativeCache();
+clearProviderCooldowns();
 await assert.rejects(() => resolveWithBoundedFallback(request, content, Array.from({ length: 20 }, (_, index) => ({ config: config(`provider-${index}`, `source-${index}`, 'fail-c') })), exhaustionDependencies, { maxAttempts: 3, onFailure: () => { boundedAttempts += 1; } }));
 assert.equal(boundedAttempts, 3);
 
 const duplicateProviderSecondSource = config('provider-a', 'source-a2', 'success-a2');
 let duplicateSuccessSource = '';
+// Phase 3-D: clear before this scenario (failA is in the candidate list
+// and would be skipped if its negative from the previous scenario persisted).
+clearNegativeCache();
+clearProviderCooldowns();
 const duplicateResolution = await resolveWithBoundedFallback(request, content, [{ config: failA }, { config: duplicateProviderSecondSource }, { config: successB }], { adaptersById: { ...dependencies.adaptersById, 'success-a2': createMockAdapter('direct', directResult('source-a2')) } }, { maxAttempts: 3, onSuccess: (candidate) => { duplicateSuccessSource = candidate.config.source.id; } });
 assert.equal(duplicateSuccessSource, 'source-b');
 assert.equal(duplicateResolution.attempts.some((attempt) => attempt.sourceId === 'source-a2' && attempt.result === 'skipped'), true);
 
 let manualAttempts = 0;
+// Phase 3-D: clear before this scenario (failA is in the candidate list).
+clearNegativeCache();
+clearProviderCooldowns();
 await assert.rejects(() => resolveWithBoundedFallback(request, content, [{ config: failA }, { config: successB }], dependencies, { allowFallback: false, maxAttempts: 2, onFailure: () => { manualAttempts += 1; } }));
 assert.equal(manualAttempts, 1);
 
 let disabledAttempts = 0;
+// Phase 3-D: clear before this scenario.
+clearNegativeCache();
+clearProviderCooldowns();
 const disabled = config('provider-disabled', 'source-disabled', 'disabled', { enabled: false });
 const enabledAfterDisabled = config('provider-enabled', 'source-enabled', 'success-enabled');
 const disabledFallback = await resolveWithBoundedFallback(request, content, [{ config: disabled }, { config: enabledAfterDisabled }], { adaptersById: { disabled: createMockAdapter('direct', directResult('source-disabled')), 'success-enabled': createMockAdapter('direct', directResult('source-enabled')) } }, { maxAttempts: 2, onFailure: () => { disabledAttempts += 1; } });
