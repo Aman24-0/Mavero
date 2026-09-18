@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { getPublicDownloadConfig, rewriteMaveroOrigins } from '$lib/server/downloader/public-config';
+import { PUBLIC_SHORT_CACHE } from '$lib/server/http/cache-headers';
 import type { RequestHandler } from './$types';
 
 // Public downloader configuration endpoint.
@@ -22,7 +23,7 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ locals, url, setHeaders }) => {
   try {
     const config = await getPublicDownloadConfig(locals.supabase);
-    setHeaders({ 'cache-control': 'public, max-age=15, stale-while-revalidate=30' });
+    setHeaders({ 'cache-control': PUBLIC_SHORT_CACHE });
     return json({ ok: true, config: rewriteMaveroOrigins(config, url.origin) });
   } catch (error) {
     console.error('[Downloader] Public configuration failed', error);

@@ -2,10 +2,17 @@ import { json } from '@sveltejs/kit';
 import { loadUpcomingPage, parseUpcomingMonth, parseUpcomingType, parseUpcomingYear, serializeCursor } from '$lib/server/content/upcoming';
 import { UpcomingCursorError } from '$lib/server/content/upcoming-cursor';
 import { parseUpcomingLanguage } from '$lib/shared/upcoming-policy';
+import { PUBLIC_CATALOG_CACHE } from '$lib/server/http/cache-headers';
 import type { RequestHandler } from './$types';
 
 // Upcoming pagination API endpoint (v2 — compact cursor + server-side
 // snapshot continuation).
+//
+// Phase 2-C (audit PERF-003): the response is identical for every user —
+// no auth dimension, no Adult Mode dimension. Safe to cache publicly at
+// the CDN. Per-request cursors are part of the URL (cache key), so
+// distinct cursors get distinct cache entries — the cache cannot serve
+// the wrong page to a different cursor.
 //
 // The cursor is a COMPACT transport token (see
 // $lib/server/content/upcoming-cursor.ts): it never carries
@@ -29,7 +36,7 @@ import type { RequestHandler } from './$types';
 // failure never permanently marks the source exhausted. Internal stack
 // traces are never exposed.
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, setHeaders }) => {
   const month = parseUpcomingMonth(url.searchParams.get('month'));
   const year = parseUpcomingYear(url.searchParams.get('year'));
   const type = parseUpcomingType(url.searchParams.get('type'));
@@ -54,6 +61,10 @@ export const GET: RequestHandler = async ({ url }) => {
         errors: result.errors
       }, { status: 503 });
     }
+    // Phase 2-C: cache publicly — no user/adult dimension on this response.
+    // Per-request cursors are part of the URL (cache key) so distinct
+    // cursors cannot collide.
+    setHeaders({ 'cache-control': PUBLIC_CATALOG_CACHE });
     return json({
       ok: true,
       items: result.items,
