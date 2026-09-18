@@ -36,10 +36,11 @@
   type AdultDiscoverType = 'movie' | 'series';
 
   import { onMount } from 'svelte';
-  import { LoaderCircle, Plus } from 'lucide-svelte';
+  import { LoaderCircle, Plus, RotateCw } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
   import DiscoverDropdown from '$components/DiscoverDropdown.svelte';
+  import SkeletonCard from '$components/SkeletonCard.svelte';
 
   let { title = 'Indian Adult Shows' }: { title?: string } = $props();
 
@@ -61,7 +62,12 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let errorMessage = $state('');
-  let page = $state(1);
+  // Phase 2-L: separate error state for Show-more failures. The first-load
+  // error replaces the empty state with an error message; the Show-more
+  // error preserves the existing items and surfaces a retry action BELOW
+  // them (never replaces the rail).
+  let showMoreError = $state('');
+  let currentPage = $state(1);
   let hasNextPage = $state(false);
   let type = $state<AdultDiscoverType>('series');
   let provider = $state<string>('all');
@@ -112,6 +118,7 @@
     loading = true;
     loadingMore = false;
     errorMessage = '';
+    showMoreError = '';
     try {
       const response = await fetch(discoverUrl(1), { signal: controller.signal });
       if (requestId !== requestSequence || controller.signal.aborted) return;
@@ -128,7 +135,7 @@
       if (!response.ok || !payload.ok) throw new Error(payload?.error?.message || 'Section is temporarily unavailable.');
       if (requestId !== requestSequence) return;
       items = payload.items as MediaItem[];
-      page = 1;
+      currentPage = 1;
       hasNextPage = Boolean(payload.hasNextPage);
     } catch (error) {
       if (controller.signal.aborted || requestId !== requestSequence) return;
@@ -148,8 +155,9 @@
     requestSequence += 1;
     const requestId = requestSequence;
     loadingMore = true;
+    showMoreError = ''; // Phase 2-L: clear any previous Show-more error.
     try {
-      const nextPage = page + 1;
+      const nextPage = currentPage + 1;
       const response = await fetch(discoverUrl(nextPage));
       if (requestId !== requestSequence) return;
       if (response.status === 404) {
@@ -172,11 +180,14 @@
           seen.add(key);
         }
       }
-      page = nextPage;
+      currentPage = nextPage;
       hasNextPage = Boolean(payload.hasNextPage);
     } catch (error) {
       if (requestId !== requestSequence) return;
-      errorMessage = error instanceof Error ? error.message : 'Could not load more titles.';
+      // Phase 2-L: keep existing items visible AND surface a transient
+      // error WITH a retry action. The rail is NOT replaced with an
+      // error page — only the Show-more button reflects the failure.
+      showMoreError = error instanceof Error ? error.message : 'Could not load more titles.';
     } finally {
       if (requestId === requestSequence) loadingMore = false;
     }
@@ -250,13 +261,21 @@
 
     <div class="section-body">
       {#if loading}
-        <div class="section-loading" aria-live="polite">
-          <LoaderCircle size={20} />
-          <span>Loading…</span>
+        <!-- Phase 2-H: skeleton rail (stable layout) instead of an empty spinner.
+             The skeleton uses the SAME grid as the populated rail so the
+             section height is stable from first paint — no jump from
+             empty -> spinner -> rail. -->
+        <div class="rail skeleton-rail" aria-busy="true" aria-live="polite">
+          {#each Array(6) as _, i (i)}<SkeletonCard />{/each}
         </div>
       {:else if errorMessage && items.length === 0}
         <div class="section-error" role="alert">
           <span>{errorMessage}</span>
+          <!-- Phase 2-L: retry button for first-load failure. -->
+          <button class="retry-btn" type="button" onclick={() => loadFirst()} aria-label={`Retry loading ${title}`}>
+            <RotateCw size={14} />
+            <span>Retry</span>
+          </button>
         </div>
       {:else if items.length === 0}
         <div class="section-empty" aria-live="polite">
@@ -279,6 +298,17 @@
             {#if loadingMore}<LoaderCircle size={14} />{:else}<Plus size={14} />{/if}
             <span>{loadingMore ? 'Loading…' : 'Show more'}</span>
           </button>
+          <!-- Phase 2-L: Show-more failure preserves the existing rail AND
+               surfaces the error with a retry. The rail is NOT replaced. -->
+          {#if showMoreError}
+            <div class="show-more-error" role="alert">
+              <span>{showMoreError}</span>
+              <button class="retry-btn" type="button" onclick={loadMore} disabled={loadingMore} aria-label={`Retry loading more ${title}`}>
+                <RotateCw size={14} />
+                <span>Retry</span>
+              </button>
+            </div>
+          {/if}
         {/if}
       {/if}
     </div>
@@ -343,14 +373,45 @@
   }
   .rail::-webkit-scrollbar { display: none; }
 
-  .section-loading, .section-error, .section-empty {
+  .section-error, .section-empty {
     display: grid; place-items: center; gap: 8px;
     min-height: 120px;
     color: var(--muted, #777);
     font-size: .74rem;
   }
-  .section-loading :global(svg) { color: #b7b7bd; animation: spin 1s linear infinite; }
-  .section-error { color: #ffb020; }
+  .section-error { color: #ffb020; flex-direction: column; gap: 12px; }
+  /* Phase 2-L: retry button — same visual language as Show-more. */
+  .retry-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 34px;
+    padding: 0 16px;
+    border: 1px solid rgba(255,176,32,.4);
+    border-radius: 999px;
+    color: #ffb020;
+    background: rgba(255,176,32,.08);
+    font: inherit;
+    font-size: .7rem; font-weight: 700;
+    cursor: pointer;
+    transition: background 180ms ease, border-color 180ms ease;
+  }
+  .retry-btn:hover:not(:disabled) { background: rgba(255,176,32,.16); border-color: rgba(255,176,32,.6); }
+  .retry-btn:focus-visible { outline: 2px solid #ffb020; outline-offset: 1px; }
+  .retry-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .retry-btn :global(svg) { animation: spin 1s linear infinite; }
+  /* Phase 2-L: Show-more error — preserved rail + inline retry below. */
+  .show-more-error {
+    display: inline-flex; align-items: center; gap: 10px;
+    margin-top: 8px;
+    padding: 8px 14px;
+    border: 1px solid rgba(255,176,32,.3);
+    border-radius: 12px;
+    color: #ffb020;
+    background: rgba(255,176,32,.06);
+    font-size: .72rem;
+  }
+  /* Phase 2-H: skeleton rail uses the same grid as the populated rail so
+     the section height is stable from first paint. */
+  .skeleton-rail { min-height: 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .show-more {
@@ -390,6 +451,6 @@
     .rail { grid-auto-columns: 210px; gap: 18px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .section-loading :global(svg), .show-more :global(svg) { animation: none; }
+    .show-more :global(svg) { animation: none; }
   }
 </style>
