@@ -1,0 +1,51 @@
+-- Phase 4 REGRESSION-1: lock down prune_old_watch_history permissions.
+--
+-- The original migration (20260922000000_phase3_watch_history_retention.sql)
+-- created the SECURITY DEFINER function `prune_old_watch_history(retention_days)`
+-- and granted execute to `authenticated`. This was TOO BROAD: any ordinary
+-- authenticated user could call the function via PostgREST and trigger a
+-- global deletion of watch_history rows (every user's history, not just
+-- their own).
+--
+-- The function is SECURITY DEFINER, which means it runs as the function
+-- owner (postgres) and BYPASSES RLS. An ordinary authenticated user
+-- calling it would delete OTHER users' history — a privilege escalation.
+--
+-- Corrective action: revoke execute from `authenticated` (and `anon`,
+-- which was already revoked). The function remains callable ONLY by:
+--   * the `postgres` superuser (via pg_cron / Supabase scheduled reminders);
+--   * the service-role key (which bypasses RLS — used by the admin
+--     trigger in src/lib/server/account/history-retention.ts).
+--
+-- The `authenticated` and `anon` roles CANNOT call the function via
+-- PostgREST after this migration — an ordinary user attempting
+-- `POST /rest/v1/rpc/prune_old_watch_history` with their session token
+-- receives 403 (permission denied).
+--
+-- The function's SECURITY DEFINER + search_path = public + retention clamp
+-- [1, 3650] + only-deletes-old-rows semantics are all PRESERVED. Only
+-- the EXECUTE privilege changes.
+--
+-- This migration is ADDITIVE (per repository convention): it does not
+-- alter the original migration, only corrects the permission grant.
+-- Idempotent: revoke is safe to run multiple times.
+
+-- Revoke execute from authenticated (the regression: ordinary users
+-- must NOT be able to trigger a global prune).
+revoke execute on function public.prune_old_watch_history(int) from authenticated;
+
+-- Revoke execute from anon (defense in depth — was already revoked in
+-- the original migration, but re-revoking here is idempotent + makes
+-- the intent explicit in this corrective migration).
+revoke execute on function public.prune_old_watch_history(int) from anon;
+
+-- NOTE: we do NOT grant execute to any role. The function is now callable
+-- ONLY by the `postgres` superuser (via pg_cron / Supabase scheduled
+-- reminders) and by the service-role key (which bypasses RLS). Ordinary
+-- authenticated users and anon users receive 403 if they attempt to
+-- call it via PostgREST.
+--
+-- The service-role key is the SAME key used by the admin trigger in
+-- src/lib/server/account/history-retention.ts (pruneWatchHistory). It
+-- bypasses RLS entirely, so it does NOT need an explicit grant — it
+-- runs as the postgres role.

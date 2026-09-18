@@ -84,10 +84,30 @@ ok(!/delete from public\.favorites/.test(migration), '5d. function does NOT dele
 ok(!/delete from public\.favorite_deletions/.test(migration), '5e. function does NOT delete from favorite_deletions (tombstones preserved)');
 
 // ============================================================
-// 6. The function is granted to authenticated, revoked from anon.
+// 6. Permission model — REGRESSION-1 (Phase 4) lockdown.
+//
+// The original migration granted execute to `authenticated` — TOO BROAD.
+// Phase 4 REGRESSION-1 corrected this: a corrective migration revokes
+// execute from BOTH `authenticated` and `anon`. The function is now
+// callable ONLY by the postgres superuser (pg_cron / scheduled reminders)
+// and the service-role key (which bypasses RLS — used by the admin
+// trigger). Ordinary authenticated users receive 403 if they attempt
+// to call it via PostgREST.
 // ============================================================
-ok(/grant execute on function public\.prune_old_watch_history\(int\) to authenticated/.test(migration), '6a. function granted to authenticated (service-role client can call)');
-ok(/revoke execute on function public\.prune_old_watch_history\(int\) from anon/.test(migration), '6b. function revoked from anon (unauthenticated cannot prune)');
+// The original migration STILL grants to authenticated (we don't edit
+// existing migrations — we add corrective ones). The test verifies the
+// ORIGINAL grant exists AND that the CORRECTIVE migration revokes it.
+ok(/grant execute on function public\.prune_old_watch_history\(int\) to authenticated/.test(migration), '6a. original migration granted to authenticated (historical — corrected by Phase 4 regression-1)');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from anon/.test(migration), '6b. original migration revoked from anon');
+
+// The corrective migration locks down the permission model.
+const correctiveMigration = read('supabase/migrations/20260923000000_phase4_regression1_history_retention_permissions.sql');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from authenticated/.test(correctiveMigration), '6c. corrective migration revokes execute from authenticated (REGRESSION-1 fix: ordinary users cannot trigger a global prune)');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from anon/.test(correctiveMigration), '6d. corrective migration revokes execute from anon (defense in depth)');
+// The corrective migration must NOT grant execute to any role — the
+// function is callable ONLY by the postgres superuser + service-role key.
+ok(!/grant execute on function public\.prune_old_watch_history/.test(correctiveMigration), '6e. corrective migration does NOT grant execute to any role (only postgres superuser + service-role key can call)');
+ok(/Phase 4 REGRESSION-1/i.test(correctiveMigration), '6f. corrective migration annotated with Phase 4 REGRESSION-1');
 
 // ============================================================
 // 7. The application-level helper clamps retention_days.
