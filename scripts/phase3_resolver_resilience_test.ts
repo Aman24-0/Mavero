@@ -52,28 +52,42 @@ function ok(condition: unknown, label: string) {
 
 // ============================================================
 // 1. Negative cache — isCacheableNegative classification.
+// Phase 4 REGRESSION-2: RESOLUTION_UNAVAILABLE is NO LONGER cacheable
+// (it maps to HTTP 503 — transient by spec; generated in multiple
+// transient contexts). Only UNSUPPORTED_MEDIA_TYPE and MISSING_IDENTIFIER
+// are genuinely deterministic.
 // ============================================================
-ok(isCacheableNegative('RESOLUTION_UNAVAILABLE') === true, '1a. RESOLUTION_UNAVAILABLE is cacheable (deterministic)');
-ok(isCacheableNegative('UNSUPPORTED_MEDIA_TYPE') === true, '1b. UNSUPPORTED_MEDIA_TYPE is cacheable (deterministic)');
-ok(isCacheableNegative('MISSING_IDENTIFIER') === true, '1c. MISSING_IDENTIFIER is cacheable (deterministic)');
+ok(isCacheableNegative('UNSUPPORTED_MEDIA_TYPE') === true, '1a. UNSUPPORTED_MEDIA_TYPE is cacheable (deterministic — source capabilities)');
+ok(isCacheableNegative('MISSING_IDENTIFIER') === true, '1b. MISSING_IDENTIFIER is cacheable (deterministic — content identifiers)');
+// Phase 4 REGRESSION-2: RESOLUTION_UNAVAILABLE must NOT be cached.
+ok(isCacheableNegative('RESOLUTION_UNAVAILABLE') === false, '1c. RESOLUTION_UNAVAILABLE NOT cacheable (Phase 4 REGRESSION-2: HTTP 503 = transient)');
 // Transient failures are NEVER cached.
 ok(isCacheableNegative('RESOLUTION_TIMEOUT') === false, '1d. RESOLUTION_TIMEOUT NOT cacheable (transient)');
 ok(isCacheableNegative('INTERNAL_RESOLUTION_ERROR') === false, '1e. INTERNAL_RESOLUTION_ERROR NOT cacheable (transient)');
 ok(isCacheableNegative('PROVIDER_RESPONSE_INVALID') === false, '1f. PROVIDER_RESPONSE_INVALID NOT cacheable (transient)');
 ok(isCacheableNegative('INVALID_SOURCE_URL') === false, '1g. INVALID_SOURCE_URL NOT cacheable (transient)');
+ok(isCacheableNegative('INVALID_PROVIDER_ENDPOINT') === false, '1h. INVALID_PROVIDER_ENDPOINT NOT cacheable (transient)');
+ok(isCacheableNegative('SOURCE_EXPIRED') === false, '1i. SOURCE_EXPIRED NOT cacheable (time-dependent — URL refreshed on retry)');
+ok(isCacheableNegative('PROVIDER_DISABLED') === false, '1j. PROVIDER_DISABLED NOT cacheable (admin-state-dependent)');
+ok(isCacheableNegative('SOURCE_DISABLED') === false, '1k. SOURCE_DISABLED NOT cacheable (admin-state-dependent)');
+ok(isCacheableNegative('SOURCE_MAINTENANCE') === false, '1l. SOURCE_MAINTENANCE NOT cacheable (admin-state-dependent, 503)');
+ok(isCacheableNegative('SOURCE_NOT_FOUND') === false, '1m. SOURCE_NOT_FOUND NOT cacheable (admin-state-dependent)');
+ok(isCacheableNegative('PROVIDER_NOT_FOUND') === false, '1n. PROVIDER_NOT_FOUND NOT cacheable (admin-state-dependent)');
 
 // ============================================================
-// 2. Negative cache — store + read.
+// 2. Negative cache — store + read (deterministic codes only).
 // ============================================================
 clearNegativeCache();
 const key = negativeCacheKey({ sourceId: 'src-1', contentId: 'movie-123', mediaType: 'movie' });
 ok(typeof key === 'string' && key.startsWith('neg:src-1:movie-123:movie:0:0'), `2a. cache key shape (got ${key})`);
 
-setCachedNegative(key, 'RESOLUTION_UNAVAILABLE', 503);
+// Phase 4 REGRESSION-2: use UNSUPPORTED_MEDIA_TYPE (deterministic) for
+// the store+read test — RESOLUTION_UNAVAILABLE is no longer cacheable.
+setCachedNegative(key, 'UNSUPPORTED_MEDIA_TYPE', 422);
 const cached = getCachedNegative(key);
 ok(cached !== undefined, '2b. cached entry is readable');
-ok(cached!.code === 'RESOLUTION_UNAVAILABLE', '2c. cached code preserved');
-ok(cached!.status === 503, '2d. cached status preserved');
+ok(cached!.code === 'UNSUPPORTED_MEDIA_TYPE', '2c. cached code preserved');
+ok(cached!.status === 422, '2d. cached status preserved');
 ok(cached!.expiresAt > Date.now(), '2e. cached entry not yet expired');
 
 // ============================================================
@@ -90,14 +104,21 @@ negTest.resetDefaults();
 
 // ============================================================
 // 4. Negative cache — transient failures are NEVER stored.
+// Phase 4 REGRESSION-2: RESOLUTION_UNAVAILABLE is now in this group.
 // ============================================================
 clearNegativeCache();
-setCachedNegative(key, 'RESOLUTION_TIMEOUT', 504); // transient — should be a no-op
-ok(getCachedNegative(key) === undefined, '4a. transient failure (TIMEOUT) NOT stored as a negative');
+setCachedNegative(key, 'RESOLUTION_UNAVAILABLE', 503); // Phase 4 REGRESSION-2: transient — should be a no-op
+ok(getCachedNegative(key) === undefined, '4a. RESOLUTION_UNAVAILABLE NOT stored as a negative (Phase 4 REGRESSION-2: HTTP 503 = transient)');
+setCachedNegative(key, 'RESOLUTION_TIMEOUT', 504); // transient
+ok(getCachedNegative(key) === undefined, '4b. RESOLUTION_TIMEOUT NOT stored as a negative (transient)');
 setCachedNegative(key, 'INTERNAL_RESOLUTION_ERROR', 500); // transient
-ok(getCachedNegative(key) === undefined, '4b. transient failure (INTERNAL) NOT stored as a negative');
-setCachedNegative(key, 'RESOLUTION_UNAVAILABLE', 503); // deterministic — should store
-ok(getCachedNegative(key) !== undefined, '4c. deterministic failure (UNAVAILABLE) IS stored');
+ok(getCachedNegative(key) === undefined, '4c. INTERNAL_RESOLUTION_ERROR NOT stored as a negative (transient)');
+setCachedNegative(key, 'SOURCE_EXPIRED', 410); // time-dependent
+ok(getCachedNegative(key) === undefined, '4d. SOURCE_EXPIRED NOT stored as a negative (time-dependent)');
+setCachedNegative(key, 'PROVIDER_DISABLED', 409); // admin-state-dependent
+ok(getCachedNegative(key) === undefined, '4e. PROVIDER_DISABLED NOT stored as a negative (admin-state-dependent)');
+setCachedNegative(key, 'UNSUPPORTED_MEDIA_TYPE', 422); // deterministic — should store
+ok(getCachedNegative(key) !== undefined, '4f. UNSUPPORTED_MEDIA_TYPE IS stored (deterministic)');
 
 // ============================================================
 // 5. Negative cache — LRU bound.
@@ -105,10 +126,10 @@ ok(getCachedNegative(key) !== undefined, '4c. deterministic failure (UNAVAILABLE
 clearNegativeCache();
 configureNegativeCache({ maxEntries: 4 });
 for (let i = 0; i < 4; i++) {
-  setCachedNegative(`neg:src-${i}:c:movie:0:0`, 'RESOLUTION_UNAVAILABLE', 503);
+  setCachedNegative(`neg:src-${i}:c:movie:0:0`, 'UNSUPPORTED_MEDIA_TYPE', 422);
 }
 ok(negativeCacheStats().entries === 4, `5a. cache holds 4 entries at capacity (got ${negativeCacheStats().entries})`);
-setCachedNegative('neg:src-overflow:c:movie:0:0', 'RESOLUTION_UNAVAILABLE', 503);
+setCachedNegative('neg:src-overflow:c:movie:0:0', 'UNSUPPORTED_MEDIA_TYPE', 422);
 ok(negativeCacheStats().entries === 4, `5b. cache still holds 4 entries after overflow (LRU evicted oldest)`);
 ok(getCachedNegative('neg:src-0:c:movie:0:0') === undefined, '5c. LRU evicted the oldest entry (src-0)');
 configureNegativeCache({ maxEntries: 256 }); // reset
@@ -118,9 +139,9 @@ negTest.resetDefaults();
 // 6. Negative cache — invalidate by sourceId.
 // ============================================================
 clearNegativeCache();
-setCachedNegative('neg:src-A:content-1:movie:0:0', 'RESOLUTION_UNAVAILABLE', 503);
-setCachedNegative('neg:src-A:content-2:movie:0:0', 'RESOLUTION_UNAVAILABLE', 503);
-setCachedNegative('neg:src-B:content-1:movie:0:0', 'RESOLUTION_UNAVAILABLE', 503);
+setCachedNegative('neg:src-A:content-1:movie:0:0', 'UNSUPPORTED_MEDIA_TYPE', 422);
+setCachedNegative('neg:src-A:content-2:movie:0:0', 'UNSUPPORTED_MEDIA_TYPE', 422);
+setCachedNegative('neg:src-B:content-1:movie:0:0', 'UNSUPPORTED_MEDIA_TYPE', 422);
 invalidateNeg('src-A');
 ok(getCachedNegative('neg:src-A:content-1:movie:0:0') === undefined, '6a. invalidate(src-A) removed src-A entries (content-1)');
 ok(getCachedNegative('neg:src-A:content-2:movie:0:0') === undefined, '6b. invalidate(src-A) removed src-A entries (content-2)');

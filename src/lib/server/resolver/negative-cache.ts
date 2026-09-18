@@ -80,16 +80,40 @@ let defaultMaxEntries = DEFAULT_MAX_ENTRIES;
  * handles via `invalidate(sourceId)`).
  *
  * TRANSIENT failures are NEVER cached: they might succeed on retry.
+ *
+ * Phase 4 REGRESSION-2: RESOLUTION_UNAVAILABLE was previously in this
+ * set, but it maps to HTTP 503 ("Service Unavailable" — transient by
+ * HTTP spec) and is generated in MULTIPLE transient contexts:
+ *   * missing adapter (configuration issue — fixable by admin);
+ *   * missing env (environment issue — fixable by ops);
+ *   * content load failure (TMDB transient);
+ *   * adapter returned null (ambiguous — could be transient);
+ *   * all-candidates-exhausted (wraps the last error, which is usually
+ *     transient).
+ * Caching it as a deterministic negative would make the system
+ * permanently unable to recover until the TTL expired — a transient
+ * failure would become a 60-second permanent negative. This is wrong.
+ *
+ * The ONLY genuinely deterministic codes (content/source identity —
+ * doesn't change per-request, doesn't depend on transient state) are:
+ *   * UNSUPPORTED_MEDIA_TYPE (422) — the source's capabilities JSON
+ *     says "no" for this media type. Changes only when admin
+ *     reconfigures the source (admin invalidation clears the cache).
+ *   * MISSING_IDENTIFIER (422) — the content is missing an identifier
+ *     the source requires. The content's identifiers come from TMDB
+ *     and don't change (the same content always has the same IDs).
+ *
+ * Every other code is either transient (503/504/500/502/410) or
+ * admin-state-dependent (409/404) — NONE are cacheable as negatives.
  */
 const CACHEABLE_NEGATIVE_CODES = new Set<string>([
-  // The provider returned no stream for this content — deterministic
-  // (the provider's catalog doesn't have this title at this episode).
-  'RESOLUTION_UNAVAILABLE',
   // The source doesn't support this media type — deterministic (the
-  // source's capabilities JSON hasn't changed).
+  // source's capabilities JSON hasn't changed). Admin invalidation
+  // clears the cache when the source is reconfigured.
   'UNSUPPORTED_MEDIA_TYPE',
   // The content is missing an identifier the source requires —
-  // deterministic (the content's identifiers haven't changed).
+  // deterministic (the content's identifiers haven't changed — they
+  // come from TMDB).
   'MISSING_IDENTIFIER',
 ]);
 
