@@ -1,13 +1,65 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   type SelectionOption = { key: string; label: string; icon?: string; image?: string; description?: string };
-  export let open = false;
-  export let title = 'Choose an option';
-  export let eyebrow = 'MAVERO / Filter';
-  export let options: SelectionOption[] = [];
-  export let selected = '';
-  export let onClose: () => void = () => {};
-  export let onSelect: (key: string) => void = () => {};
-  function handleKeydown(event: KeyboardEvent) { if (open && event.key === 'Escape') onClose(); }
+  let {
+    open = false,
+    title = 'Choose an option',
+    eyebrow = 'MAVERO / Filter',
+    options = [],
+    selected = '',
+    onClose = () => {},
+    onSelect = () => {}
+  }: {
+    open?: boolean;
+    title?: string;
+    eyebrow?: string;
+    options?: SelectionOption[];
+    selected?: string;
+    onClose?: () => void;
+    onSelect?: (key: string) => void;
+  } = $props();
+
+  // Phase 4-E (audit A11Y-2): focus management for the SelectionSheet.
+  // Stores the previously-focused element on open and restores it on
+  // close. Auto-focuses the close button on open (the first interactive
+  // element). Implements a Tab trap so focus stays inside the dialog
+  // while it's open (matching the ConfirmDialog pattern).
+  let sheet = $state<HTMLDivElement>();
+  let lastOpen = false;
+  let previouslyFocused: HTMLElement | null = null;
+
+  $effect(() => {
+    if (open && !lastOpen) {
+      previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      void tick().then(() => sheet?.querySelector<HTMLElement>('.sheet-close')?.focus());
+    } else if (!open && lastOpen) {
+      previouslyFocused?.focus();
+      previouslyFocused = null;
+    }
+    lastOpen = open;
+  });
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (!open) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    // Phase 4-E: Tab trap — focus stays inside the sheet while it's open.
+    if (event.key !== 'Tab' || !sheet) return;
+    const focusable = [...sheet.querySelectorAll<HTMLElement>('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')];
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
   function choose(key: string) { onSelect(key); }
 </script>
 
@@ -16,7 +68,7 @@
 {#if open}
   <div class="sheet-layer" role="presentation">
     <button class="sheet-backdrop" aria-label="Close {title}" onclick={onClose}></button>
-    <div class="selection-sheet" role="dialog" aria-modal="true" aria-labelledby="selection-sheet-title">
+    <div class="selection-sheet" bind:this={sheet} role="dialog" aria-modal="true" aria-labelledby="selection-sheet-title" tabindex="-1">
       <div class="sheet-handle" aria-hidden="true"></div>
       <header class="sheet-header">
         <div><div class="eyebrow">{eyebrow}</div><h2 id="selection-sheet-title">{title}</h2></div>

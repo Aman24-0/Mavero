@@ -67,7 +67,7 @@ const detail = read('src/lib/components/DetailPage.svelte');
 // The downloadProvidersFailed flag is now rendered (not just set silently).
 ok(/downloadProvidersFailed/.test(detail), '2K-1a. downloadProvidersFailed state still tracked');
 ok(/showDownloadFailure/.test(detail), '2K-1b. showDownloadFailure derived state added (renders the failure)');
-ok(/showDownloadFailure = isMovieLike && downloadProvidersFailed && !downloadProvidersLoading && !downloadProvidersLoaded/.test(detail), '2K-1c. showDownloadFailure condition: failed + not loading + not loaded');
+ok(/showDownloadFailure = \$derived\(isMovieLike && downloadProvidersFailed && !downloadProvidersLoading && !downloadProvidersLoaded\)/.test(detail), '2K-1c. showDownloadFailure condition: failed + not loading + not loaded (Phase 4-E: $derived)');
 
 // The failure affordance is rendered in the actions row.
 ok(/download-unavailable/.test(detail), '2K-2a. download-unavailable CSS class added (failure affordance)');
@@ -84,7 +84,7 @@ ok(/downloadProvidersLoading \? 'Retrying…' : 'Download unavailable · Retry'/
 ok(/disabled={downloadProvidersLoading}/.test(detail), '2K-4b. retry button disabled while loading (prevents double-fire)');
 
 // The normal Download button is still shown on success (no regression).
-ok(/showDownloadButton = isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0/.test(detail), '2K-5a. showDownloadButton preserved (success path intact)');
+ok(/showDownloadButton = \$derived\(isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0\)/.test(detail), '2K-5a. showDownloadButton preserved (success path intact) — Phase 4-E: $derived');
 ok(/onclick={openDownloadSheet}/.test(detail), '2K-5b. normal Download button still opens the sheet on success');
 
 // The audit fix is annotated.

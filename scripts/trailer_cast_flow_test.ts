@@ -48,8 +48,9 @@ assert.match(contentSrc, /cast\?:\s*CastMember\[\];/, 'MediaItem type (client) d
 assert.match(contentSrc, /export type CastMember/, 'content.ts exports CastMember type');
 
 // --- 6. DetailPage uses real trailerKey and only shows Trailer button when present ---
-assert.match(detailSrc, /\$:\s*trailerKey\s*=\s*item\.trailerKey\s*\?\?\s*'';/, 'DetailPage reads trailerKey from item (no hardcoded values)');
-assert.match(detailSrc, /\$:\s*hasTrailer\s*=\s*Boolean\(trailerKey\);/, 'DetailPage gates Trailer on hasTrailer');
+// Phase 4-E: DetailPage was migrated from $: to $derived (Svelte 5 runes).
+assert.match(detailSrc, /const\s+trailerKey\s*=\s*\$derived\(item\.trailerKey\s*\?\?\s*''\);/, 'DetailPage reads trailerKey from item via $derived (Phase 4-E: runes mode)');
+assert.match(detailSrc, /const\s+hasTrailer\s*=\s*\$derived\(Boolean\(trailerKey\)\);/, 'DetailPage gates Trailer on hasTrailer via $derived');
 assert.match(detailSrc, /\{\#if hasTrailer\}/, 'DetailPage only renders Trailer button when hasTrailer is true');
 assert.match(detailSrc, /youtube\.com\/embed\/\$\{trailerKey\}/, 'DetailPage passes real trailerKey to YouTube embed URL');
 assert.doesNotMatch(detailSrc, /trailerKey\s*=\s*['"][a-zA-Z0-9_-]{5,}['"]/, 'DetailPage does NOT hardcode any trailer ID');

@@ -894,14 +894,14 @@ ok('anime series episode download uses the same path (no separate implementation
 // === Test case 6: movie still uses movie URL ===
 // downloadMediaType = 'movie' for movies → the sheet uses movieUrlTemplate.
 // Verify the mediaType mapping is unchanged.
-assert.match(detailPageSrc, /\$: downloadMediaType = \(type === 'movie' \|\| \(item\.isAnime && item\.animeFormat === 'movie'\)\) \? 'movie' : 'tv'/, 'downloadMediaType mapping unchanged (movie → movie, series → tv, anime movie → movie, anime series → tv)');
+assert.match(detailPageSrc, /const downloadMediaType = \$derived\(\(type === 'movie' \|\| \(item\.isAnime && item\.animeFormat === 'movie'\)\) \? 'movie' : 'tv'/, 'downloadMediaType mapping unchanged (movie → movie, series → tv, anime movie → movie, anime series → tv) — Phase 4-E: $derived');
 ok('movie still uses movie URL (mediaType mapping unchanged)');
 
 // === Test case 7: top-level TV Download button is no longer rendered ===
 // showDownloadButton must be gated by isMovieLike so TV/anime series
 // don't get a top-level Download button.
-assert.match(detailPageSrc, /\$: isMovieLike = downloadMediaType === 'movie';/, 'isMovieLike derived (movies only)');
-assert.match(detailPageSrc, /\$: showDownloadButton = isMovieLike && downloadProvidersLoaded && visibleDownloadProviders\.length > 0;/, 'showDownloadButton gated by isMovieLike (movies only)');
+assert.match(detailPageSrc, /const isMovieLike = \$derived\(downloadMediaType === 'movie'\);/, 'isMovieLike derived (movies only) — Phase 4-E: $derived');
+assert.match(detailPageSrc, /const showDownloadButton = \$derived\(isMovieLike && downloadProvidersLoaded && visibleDownloadProviders\.length > 0\);/, 'showDownloadButton gated by isMovieLike (movies only) — Phase 4-E: $derived');
 ok('top-level TV/anime-series Download button is no longer rendered');
 
 // === Test case 8: episode Download callback receives selectedSeason + episode.number ===

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, X, Download, AlertCircle, LoaderCircle } from 'lucide-svelte';
@@ -19,16 +19,26 @@
   import type { PublicDownloadProvider, DownloadMediaType } from '$lib/shared/downloader';
   import { filterProvidersByMediaType } from '$lib/shared/downloader';
 
-  export let id = 'afterlight';
-  export let type: ContentType = 'movie';
-  export let dataItem: MediaItem | undefined = undefined;
-  export let recommendationItems: MediaItem[] = [];
-  let watchlistStatus: WatchlistStatus | null = null;
-  let statusSheetOpen = false;
-  let saveError = '';
-  let resumeEpisode: { season: number; episode: number } | undefined;
-  let overviewExpanded = false;
-  let trailerOpen = false;
+  let {
+    id = 'afterlight',
+    type = 'movie' as ContentType,
+    dataItem = undefined,
+    recommendationItems = []
+  }: {
+    id?: string;
+    type?: ContentType;
+    dataItem?: MediaItem;
+    recommendationItems?: MediaItem[];
+  } = $props();
+  let watchlistStatus = $state<WatchlistStatus | null>(null);
+  let statusSheetOpen = $state(false);
+  let saveError = $state('');
+  let resumeEpisode = $state<{ season: number; episode: number } | undefined>(undefined);
+  let overviewExpanded = $state(false);
+  let trailerOpen = $state(false);
+  // Phase 4-E: trailer modal focus management.
+  let trailerModal = $state<HTMLDivElement>();
+  let trailerTrigger: HTMLElement | null = null;
 
   // ----- Download sheet state -----
   // The downloader registry is loaded lazily from the public
@@ -36,11 +46,11 @@
   // Download sheet. We keep the resolved providers in component state so
   // subsequent opens are instant (and benefit from the HTTP cache-control
   // header).
-  let downloadSheetOpen = false;
-  let downloadProviders: PublicDownloadProvider[] = [];
-  let downloadProvidersLoaded = false;
-  let downloadProvidersLoading = false;
-  let downloadProvidersFailed = false;
+  let downloadSheetOpen = $state(false);
+  let downloadProviders = $state<PublicDownloadProvider[]>([]);
+  let downloadProvidersLoaded = $state(false);
+  let downloadProvidersLoading = $state(false);
+  let downloadProvidersFailed = $state(false);
   // Phase 2 downloader refinement: the episode-card download target.
   // When the user clicks an episode's Download button, SeasonEpisodes
   // fires onDownload(season, episode) which sets these two values + opens
@@ -49,29 +59,29 @@
   // download URL always targets the EXACT episode the user clicked —
   // never a resume fallback or S1E1 default.
   // For movies, these stay undefined (the sheet uses the movie URL).
-  let downloadTargetSeason: number | undefined = undefined;
-  let downloadTargetEpisode: number | undefined = undefined;
+  let downloadTargetSeason = $state<number | undefined>(undefined);
+  let downloadTargetEpisode = $state<number | undefined>(undefined);
   const statusOptions = [
     { key: 'watching', label: 'Watching', icon: '▶', description: 'Keep this in your current rotation.' },
     { key: 'planned', label: 'Planned', icon: '＋', description: 'Save it for a future night.' },
     { key: 'completed', label: 'Completed', icon: '✓', description: 'Mark this story as finished.' },
     { key: 'remove', label: 'Remove from My List', icon: '×', description: 'Take it out of your saved library.' },
   ];
-  $: item = dataItem ?? getMedia(id);
+  const item = $derived(dataItem ?? getMedia(id));
   // Phase 7F+ (anime routing): dual-badge layout for anime-flagged
   // titles. Anime movie → "Anime · Movie", anime series → "Anime · Series".
   // Plain movie/series keep their single label (legacy).
-  $: detailBadges = formatBadges(item);
-  $: recommendations = recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6);
-  $: statusSheetOptions = watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove');
-  $: canonicalUrl = `${page.url.origin}/${type}/${item.id}`;
-  $: watchPath = type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`;
-  $: watchHref = appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`);
-  $: structuredData = JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } });
-  $: trailerKey = item.trailerKey ?? '';
-  $: hasTrailer = Boolean(trailerKey);
-  $: castMembers = item.cast ?? [];
-  $: hasLongOverview = item.description.length > 240;
+  const detailBadges = $derived(formatBadges(item));
+  const recommendations = $derived(recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6));
+  const statusSheetOptions = $derived(watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove'));
+  const canonicalUrl = $derived(`${page.url.origin}/${type}/${item.id}`);
+  const watchPath = $derived(type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`);
+  const watchHref = $derived(appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`));
+  const structuredData = $derived(JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } }));
+  const trailerKey = $derived(item.trailerKey ?? '');
+  const hasTrailer = $derived(Boolean(trailerKey));
+  const castMembers = $derived(item.cast ?? []);
+  const hasLongOverview = $derived(item.description.length > 240);
 
   onMount(() => {
     let active = true;
@@ -260,12 +270,39 @@
 
   function openTrailer() {
     if (!hasTrailer) return;
+    // Phase 4-E: store the trigger element so we can restore focus on close.
+    trailerTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     trailerOpen = true;
     haptic('light');
+    // Auto-focus the close button after the modal renders.
+    void tick().then(() => trailerModal?.querySelector<HTMLElement>('.trailer-close')?.focus());
   }
-  function closeTrailer() { trailerOpen = false; }
+  function closeTrailer() {
+    trailerOpen = false;
+    // Phase 4-E: restore focus to the triggering element.
+    trailerTrigger?.focus();
+    trailerTrigger = null;
+  }
   function handleTrailerKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && trailerOpen) closeTrailer();
+    if (!trailerOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeTrailer();
+      return;
+    }
+    // Phase 4-E: Tab trap — focus stays inside the trailer modal.
+    if (event.key !== 'Tab' || !trailerModal) return;
+    const focusable = [...trailerModal.querySelectorAll<HTMLElement>('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')];
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   // ----- Download integration -----
@@ -294,18 +331,18 @@
   //   - anime series           -> 'tv'
   // The mapping is computed from the existing `item.isAnime` + `item.animeFormat`
   // fields preserved by the existing anime routing.
-  $: downloadMediaType = (type === 'movie' || (item.isAnime && item.animeFormat === 'movie')) ? 'movie' : 'tv' as DownloadMediaType;
+  const downloadMediaType = $derived((type === 'movie' || (item.isAnime && item.animeFormat === 'movie')) ? 'movie' : 'tv' as DownloadMediaType);
 
   // The top-level Download button beside Play is now MOVIES-ONLY.
   // TV/anime series get a Download button on each episode card instead.
   // This avoids the previous bug where the top-level TV Download button
   // could only resolve one episode (the resume/S1E1 fallback).
-  $: isMovieLike = downloadMediaType === 'movie';
+  const isMovieLike = $derived(downloadMediaType === 'movie');
 
   // Filtered providers for the current media type. We hide the Download
   // button entirely if no enabled provider supports the current type (so
   // the user is never offered an empty sheet).
-  $: visibleDownloadProviders = filterProvidersByMediaType(downloadProviders, downloadMediaType);
+  const visibleDownloadProviders = $derived(filterProvidersByMediaType(downloadProviders, downloadMediaType));
   // The top-level Download button is shown ONLY for movies, ONLY after
   // the prefetch has completed, and ONLY when at least one provider
   // supports the movie type. For TV/anime series, the per-episode
@@ -324,8 +361,8 @@
   // episode buttons are NOT rendered. The retry affordance lets the user
   // re-attempt the prefetch; once it succeeds, the normal Download button
   // replaces the retry affordance.
-  $: showDownloadButton = isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0;
-  $: showDownloadFailure = isMovieLike && downloadProvidersFailed && !downloadProvidersLoading && !downloadProvidersLoaded;
+  const showDownloadButton = $derived(isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0);
+  const showDownloadFailure = $derived(isMovieLike && downloadProvidersFailed && !downloadProvidersLoading && !downloadProvidersLoaded);
 
   // TMDB id resolution. The DetailPage's `item.id` is the content id used
   // across the app — for TMDB-backed content this IS the TMDB id. For
@@ -335,13 +372,13 @@
   // dataItem from a real TMDB detail (so item.externalIds?.tmdb is set).
   // We prefer the explicit externalIds.tmdb, fall back to item.id, and
   // finally to '' (the sheet will show its "can't open this title" state).
-  $: downloadTmdbId = item.externalIds?.tmdb || item.id || '';
+  const downloadTmdbId = $derived(item.externalIds?.tmdb || item.id || '');
 
   // Release year for the Cineverse alternate-URL candidate. item.year is
   // already resolved by the existing content presenter (TMDB release_year
   // for movies, first-air-year for series). Passed through to the sheet
   // — other providers ignore it.
-  $: downloadReleaseYear = item.year || undefined;
+  const downloadReleaseYear = $derived(item.year || undefined);
 
   async function loadDownloadProviders() {
     if (downloadProvidersLoaded || downloadProvidersLoading) return;
@@ -576,7 +613,7 @@
 {#if trailerOpen && hasTrailer}
   <div class="trailer-layer" role="presentation">
     <button class="trailer-backdrop" aria-label="Close trailer" onclick={closeTrailer}></button>
-    <div class="trailer-modal" role="dialog" aria-modal="true" aria-label={`${item.title} trailer`}>
+    <div class="trailer-modal" bind:this={trailerModal} role="dialog" aria-modal="true" aria-label={`${item.title} trailer`} tabindex="-1">
       <div class="trailer-bar">
         <div class="trailer-title"><Film size={14} /> {item.title} — Trailer</div>
         <button class="trailer-close" type="button" aria-label="Close trailer" onclick={closeTrailer}><X size={16} /></button>
