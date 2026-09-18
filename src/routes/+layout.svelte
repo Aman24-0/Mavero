@@ -9,14 +9,41 @@
   import type { Snippet } from 'svelte';
   import type { LayoutData } from './$types';
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
+  import { isLibraryAwareRoute } from '$lib/shared/route-policy';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
   const title = 'Mavero — Movies, series & anime';
 
+  // Phase 2-F (audit PERF-006) — Account sync gating.
+  //
+  // `syncAuthenticatedState()` makes 2 cloud HTTP roundtrips (read + write)
+  // plus several IndexedDB reads + writes. The previous implementation
+  // fired it on EVERY root layout mount for EVERY authenticated user,
+  // even on routes where no library state is shown (e.g. /auth/sign-in,
+  // /search, /upcoming, /admin/*).
+  //
+  // We now gate the initial sync to library-aware routes (see
+  // src/lib/shared/route-policy.ts for the full list). The online-retry
+  // handler also checks the CURRENT route before firing — so a user who
+  // comes back online while on /search doesn't pay the sync cost.
+  //
+  // Routes that still need sync (my-list, discover, watch, account,
+  // movie/series/anime detail) still fire it. Library-aware sub-pages
+  // (e.g. /my-list, /discover, /watch/[id]) also call syncAuthenticatedState()
+  // from their OWN onMount, which is idempotent (de-duplicated by
+  // `syncInFlight`) — so this layout-level gate doesn't break them.
+  //
+  // Guests remain local-only — the `data.user` guard below already
+  // short-circuits for unauthenticated users.
   onMount(() => {
     if (!data.user) return;
+    if (!isLibraryAwareRoute(page.url.pathname)) return;
     void syncAuthenticatedState();
-    const retry = () => { if (navigator.onLine) void syncAuthenticatedState(); };
+    const retry = () => {
+      if (!navigator.onLine) return;
+      if (!isLibraryAwareRoute(page.url.pathname)) return;
+      void syncAuthenticatedState();
+    };
     window.addEventListener('online', retry);
     return () => window.removeEventListener('online', retry);
   });
