@@ -85,4 +85,115 @@ player within the ScraperViewport.
 
 ---
 
+## Phase 2: Backend Extraction Engine & Frontend SSE Integration
+
+**Date**: 2026-09-19
+**Branch**: main
+**Starting HEAD**: `e85f97719090e2cd7f03d4afb9af4b1710deb63a`
+
+### Objective
+
+Build the extraction engine in the Node.js media-worker using Server-Sent
+Events (SSE) to push extracted stream links to the Svelte frontend in
+real-time, and update the scanning UI dynamically.
+
+### Changes Made
+
+#### 1. Backend: Scraper Structure (`apps/media-worker/src/scrapers/`)
+
+New directory with 6 files:
+
+- **`types.ts`** — Shared types (`ExtractResult`, `ExtractError`,
+  `ExtractParams`) + `dummyExtract()` helper that simulates a randomized
+  2–8 second network delay and resolves with a mock HLS stream URL
+  (`https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`). 80% success
+  rate to exercise both card states.
+- **`vidsrc.ts`** — VidSrc dummy scraper.
+- **`vidlink.ts`** — VidLink dummy scraper.
+- **`cineverse.ts`** — Cineverse dummy scraper.
+- **`slast.ts`** — SLast dummy scraper.
+- **`index.ts`** — Scraper registry collecting all 4 scrapers into a
+  `ScraperEntry[]` array with display names matching the frontend cards.
+
+#### 2. Backend: SSE Endpoint (`apps/media-worker/src/server.ts`)
+
+New route `GET /api/extract/stream`:
+
+- **Query parameters**: `tmdbId`, `mediaType` (movie/series), `season`,
+  `episode`.
+- **SSE headers**: `Content-Type: text/event-stream`,
+  `Cache-Control: no-cache`, `Connection: keep-alive`.
+- **CORS**: `Access-Control-Allow-Origin: *` (the SvelteKit frontend
+  connects cross-origin to the media-worker).
+- **Concurrent execution**: All 4 scrapers execute concurrently. Each
+  scraper's `.then()` fires the moment it resolves — the result is
+  immediately written to the response stream as `data: <json>\n\n`.
+- **Completion**: `Promise.allSettled()` detects when all scrapers have
+  finished, then writes `data: {"status":"done"}\n\n` and closes the
+  connection (`res.end()`).
+- **CORS preflight**: `OPTIONS /api/extract/stream` returns 204 with
+  the CORS headers.
+- **Client disconnect**: `request.on('close')` handler is a no-op in
+  Phase 2 (scrapers are fire-and-forget; future phases may add
+  AbortController cancellation).
+
+#### 3. Frontend: SSE Connection (`src/lib/components/player/ScraperViewport.svelte`)
+
+Major rewrite of the Phase 1 component:
+
+- **Props**: Now accepts `contentId`, `contentType`, `season`,
+  `episode`, and `mediaWorkerUrl` in addition to `title` and `subtitle`.
+  Migrated from `export let` to Svelte 5 `$props()` (matches PlayerShell
+  runes mode).
+- **Provider state**: Changed from static `const providers` to reactive
+  `$state<ProviderCard[]>`. The 4 providers (VidSrc, VidLink, Cineverse,
+  SLast) start in `scanning` state.
+- **SSE connection**: In `onMount`, creates an `EventSource` connection
+  to `${mediaWorkerUrl}/api/extract/stream?tmdbId=...&mediaType=...`.
+- **Event handling**: `eventSource.onmessage` parses incoming JSON.
+  When a provider result arrives (`{provider, status, stream}` or
+  `{provider, status, error}`), the matching card's state is updated
+  from `scanning` to `success` (green check) or `failed` (red X).
+  Stream URLs are collected into `extractedStreams` for the future
+  player.
+- **Done event**: When `{"status":"done"}` arrives, the progress bar
+  stops animating, the subtitle changes to "Scan complete", and the
+  EventSource is closed.
+- **Error handling**: `eventSource.onerror` marks remaining scanning
+  providers as failed and closes the connection.
+- **Cleanup**: `onDestroy` and the exit button handler both call
+  `cleanupEventSource()` to prevent memory leaks and zombie connections.
+- **Stream selection**: Successful provider cards are clickable buttons
+  that dispatch a `streamselected` event with the stream URL (for the
+  future native player in Phase 3).
+- **PlayerShell integration**: Updated to pass `contentId`,
+  `contentType`, `season`, `episode` props from `content.id`,
+  `content.type`, `currentEpisode?.season`, `currentEpisode?.episode`.
+
+### Validation
+
+- `pnpm check`: 0 errors, 0 warnings
+- `pnpm test`: 131 suites passed, exit 0
+- `pnpm build`: success
+- media-worker `npx tsc --noEmit`: exit 0
+- `git diff --check`: clean
+
+### Constraints Preserved
+
+- ✅ PlaybackManager NOT modified
+- ✅ `+page.svelte` NOT modified
+- ✅ Existing iframe embed logic NOT modified
+- ✅ Progress tracking NOT modified
+- ✅ No actual video player implemented (Phase 3)
+- ✅ EventSource closed on destroy and on exit (no leaks)
+
+### What's Next (Phase 3+)
+
+Phase 3 will introduce the native video player within ScraperViewport
+to play the extracted stream URLs (HLS via hls.js). The player will
+replace the scanning grid when a stream is selected, with its own
+play/pause/seek controls.
+
+---
+
 *This worklog is updated as each phase of the Scraper Mode feature is completed.*

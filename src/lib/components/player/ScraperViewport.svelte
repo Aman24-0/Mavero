@@ -1,51 +1,151 @@
 <script lang="ts">
-  // Phase 1 — Direct Play / Scraper Mode: Scanning Viewport.
+  // Phase 2 — Direct Play / Scraper Mode: SSE-connected scanning viewport.
   //
-  // This component is the container for the scraping process and will
-  // eventually host the native video player. In Phase 1, it shows:
-  //   * A title (passed via prop, falls back to a generic label)
-  //   * A subtitle "Scanning high-speed servers..."
-  //   * A CSS-animated horizontal progress bar
-  //   * A responsive grid of provider cards (mocked)
-  //   * An "Exit Direct Mode" button that dispatches `exit`
+  // This component connects to the media-worker's SSE endpoint
+  // (GET /api/extract/stream) to receive real-time scraper results.
+  // Each scraper result updates the provider card from 'scanning' to
+  // 'success' or 'failed'. The extracted stream URLs are collected for
+  // use by the future native video player (Phase 3).
   //
   // DESIGN CONTRACTS:
   //   * Uses Mavero's existing CSS variables (no hardcoded colors).
   //   * Card states: 'scanning' (spinner), 'success' (green check),
-  //     'failed' (red cross). All start as 'scanning' in Phase 1.
+  //     'failed' (red cross).
   //   * The exit button dispatches a Svelte event so PlayerShell can
   //     set isScraperMode = false and remount the iframe.
+  //   * EventSource is closed on destroy and on exit to prevent leaks.
   //   * Does NOT import or depend on PlaybackManager, PlayerViewport,
-  //     or any resolver logic. Purely a presentational component.
+  //     or any resolver logic.
 
+  import { onMount, onDestroy } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
   import { ArrowLeft, Check, X, LoaderCircle } from 'lucide-svelte';
 
-  // Props
-  export let title = 'Direct Play';
-  export let subtitle = 'Scanning high-speed servers…';
+  // Props (Svelte 5 runes mode — matches PlayerShell)
+  let {
+    title = 'Direct Play',
+    subtitle = 'Scanning high-speed servers…',
+    contentId = '',
+    contentType = 'movie' as 'movie' | 'series' | 'anime',
+    season = undefined as number | undefined,
+    episode = undefined as number | undefined,
+    mediaWorkerUrl = 'http://127.0.0.1:8787',
+  }: {
+    title?: string;
+    subtitle?: string;
+    contentId?: string;
+    contentType?: 'movie' | 'series' | 'anime';
+    season?: number | undefined;
+    episode?: number | undefined;
+    mediaWorkerUrl?: string;
+  } = $props();
 
-  // Mock provider list for Phase 1. These names match the existing
-  // resolver adapters in the codebase (VidSrc, VidY, Cineverse, SLast,
-  // FilmU, CinemaOS) so the UI is representative of real scanning.
+  const dispatch = createEventDispatcher<{ exit: void; streamselected: { url: string; provider: string } }>();
+
+  // Provider state — now driven by SSE events instead of static mocks.
   type ProviderStatus = 'scanning' | 'success' | 'failed';
-  type MockProvider = { name: string; status: ProviderStatus };
+  type ProviderCard = { name: string; status: ProviderStatus; streamUrl?: string; error?: string };
 
-  const providers: MockProvider[] = [
+  // The 4 providers that the backend scrapers will scan. These match
+  // the scrapers registered in apps/media-worker/src/scrapers/index.ts.
+  let providers = $state<ProviderCard[]>([
     { name: 'VidSrc', status: 'scanning' },
-    { name: 'VidY', status: 'scanning' },
+    { name: 'VidLink', status: 'scanning' },
     { name: 'Cineverse', status: 'scanning' },
     { name: 'SLast', status: 'scanning' },
-    { name: 'FilmU', status: 'scanning' },
-    { name: 'CinemaOS', status: 'scanning' },
-  ];
+  ]);
 
-  // Dispatch exit event — PlayerShell listens and sets isScraperMode = false.
+  // Extracted streams collected from SSE — for use by the future player.
+  let extractedStreams: { provider: string; url: string; type: string }[] = [];
+
+  // Scan completion state
+  let scanComplete = $state(false);
+
+  let eventSource: EventSource | null = null;
+
   function handleExit() {
+    cleanupEventSource();
     dispatch('exit');
   }
 
-  import { createEventDispatcher } from 'svelte';
-  const dispatch = createEventDispatcher<{ exit: void }>();
+  function cleanupEventSource() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  }
+
+  function selectStream(stream: { provider: string; url: string }) {
+    dispatch('streamselected', stream);
+  }
+
+  onMount(() => {
+    // Build the SSE endpoint URL with query params.
+    const params = new URLSearchParams({
+      tmdbId: contentId,
+      mediaType: contentType === 'anime' ? 'series' : contentType,
+    });
+    if (season !== undefined) params.set('season', String(season));
+    if (episode !== undefined) params.set('episode', String(episode));
+
+    const sseUrl = `${mediaWorkerUrl}/api/extract/stream?${params.toString()}`;
+
+    try {
+      eventSource = new EventSource(sseUrl);
+    } catch {
+      // EventSource not available (SSR or unsupported browser) —
+      // mark all providers as failed.
+      providers = providers.map((p) => ({ ...p, status: 'failed' as const, error: 'Connection unavailable' }));
+      scanComplete = true;
+      return;
+    }
+
+    eventSource.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Done event — all scrapers have settled.
+        if (data.status === 'done') {
+          scanComplete = true;
+          cleanupEventSource();
+          return;
+        }
+
+        // Provider result event — update the matching card.
+        if (data.provider && data.status) {
+          providers = providers.map((p) => {
+            if (p.name !== data.provider) return p;
+            if (data.status === 'success' && data.stream) {
+              extractedStreams.push({ provider: data.provider, url: data.stream.url, type: data.stream.type });
+              return { ...p, status: 'success' as const, streamUrl: data.stream.url };
+            } else if (data.status === 'failed') {
+              return { ...p, status: 'failed' as const, error: data.error ?? 'Failed' };
+            }
+            return p;
+          });
+        }
+      } catch {
+        // Malformed SSE event — ignore (the connection stays open).
+      }
+    };
+
+    eventSource.onerror = () => {
+      // EventSource fires 'error' on connection failure AND on normal
+      // close (when the server sends done + end). If we haven't received
+      // 'done' yet, mark remaining scanning providers as failed.
+      if (!scanComplete) {
+        providers = providers.map((p) =>
+          p.status === 'scanning' ? { ...p, status: 'failed' as const, error: 'Connection lost' } : p
+        );
+        scanComplete = true;
+      }
+      cleanupEventSource();
+    };
+  });
+
+  onDestroy(() => {
+    cleanupEventSource();
+  });
 </script>
 
 <div class="scraper-viewport" role="region" aria-label="Direct play scanning">
@@ -58,17 +158,23 @@
   <!-- Centered scanning content -->
   <div class="scraper-center">
     <h1 class="scraper-title">{title}</h1>
-    <p class="scraper-subtitle">{subtitle}</p>
+    <p class="scraper-subtitle">{scanComplete ? 'Scan complete' : subtitle}</p>
 
-    <!-- CSS-animated progress bar -->
-    <div class="scraper-progress" role="progressbar" aria-label="Scanning progress" aria-valuenow={0} aria-valuemin={0} aria-valuemax={100}>
-      <div class="scraper-progress-bar"></div>
+    <!-- CSS-animated progress bar (stops animating when scan is done) -->
+    <div class="scraper-progress" role="progressbar" aria-label="Scanning progress" aria-valuenow={scanComplete ? 100 : 0} aria-valuemin={0} aria-valuemax={100}>
+      <div class="scraper-progress-bar" class:done={scanComplete}></div>
     </div>
 
     <!-- Provider grid -->
     <div class="provider-grid">
       {#each providers as provider (provider.name)}
-        <div class="provider-card" data-status={provider.status} role="status" aria-label={`${provider.name} ${provider.status}`}>
+        <button
+          class="provider-card"
+          data-status={provider.status}
+          aria-label={`${provider.name} ${provider.status}`}
+          disabled={provider.status !== 'success'}
+          onclick={() => provider.status === 'success' && provider.streamUrl ? selectStream({ provider: provider.name, url: provider.streamUrl }) : undefined}
+        >
           <div class="provider-icon">
             {#if provider.status === 'success'}
               <Check size={18} />
@@ -82,7 +188,7 @@
           <span class="provider-status-label">
             {provider.status === 'success' ? 'Ready' : provider.status === 'failed' ? 'Failed' : 'Scanning…'}
           </span>
-        </div>
+        </button>
       {/each}
     </div>
   </div>
@@ -180,6 +286,11 @@
     background-size: 200% 100%;
     animation: scraper-scan 1.6s linear infinite;
   }
+  .scraper-progress-bar.done {
+    animation: none;
+    background: var(--success);
+    opacity: .5;
+  }
   @keyframes scraper-scan {
     0% { background-position: -100% 0; }
     100% { background-position: 100% 0; }
@@ -205,6 +316,14 @@
     border-radius: var(--radius-md);
     background: var(--surface);
     transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
+    cursor: default;
+    font: inherit;
+  }
+  .provider-card:not(:disabled) {
+    cursor: pointer;
+  }
+  .provider-card:not(:disabled):hover {
+    background: rgba(53, 214, 143, .08);
   }
 
   /* Card status states */

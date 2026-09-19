@@ -39,6 +39,8 @@ import { verifyCompatToken } from './tokens.js';
 import { JobRegistry, type Job } from './jobs.js';
 import { runFfmpeg } from './ffmpeg.js';
 import { logger } from './logger.js';
+import { scrapers } from './scrapers/index.js';
+import type { ExtractParams } from './scrapers/types.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const JOB_TIMEOUT_MS = 4 * 3600 * 1000; // hard wall-clock cap per ffmpeg run
@@ -248,6 +250,86 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     }
   }
 
+  /**
+   * Phase 2 — SSE extraction stream endpoint.
+   *
+   * GET /api/extract/stream?tmdbId=123&mediaType=movie&season=1&episode=1
+   *
+   * Executes all scrapers concurrently. Each scraper result is pushed to
+   * the client the moment it resolves (not after all are done). When all
+   * scrapers have settled, a final {"status":"done"} event is sent and
+   * the connection is closed.
+   *
+   * The SSE protocol uses `Content-Type: text/event-stream` with each
+   * event formatted as `data: <json>\n\n`. The frontend uses
+   * EventSource to consume these events.
+   */
+  function handleExtractStream(request: IncomingMessage, response: ServerResponse, url: URL): void {
+    const tmdbId = url.searchParams.get('tmdbId') ?? '';
+    const mediaType = url.searchParams.get('mediaType') ?? 'movie';
+    const seasonParam = url.searchParams.get('season');
+    const episodeParam = url.searchParams.get('episode');
+
+    if (!tmdbId) {
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'tmdbId is required' } }));
+      return;
+    }
+
+    const params: ExtractParams = {
+      tmdbId,
+      mediaType: mediaType === 'series' ? 'series' : 'movie',
+      season: seasonParam ? Number(seasonParam) : undefined,
+      episode: episodeParam ? Number(episodeParam) : undefined,
+    };
+
+    // SSE headers + CORS (the SvelteKit frontend connects cross-origin).
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      'connection': 'keep-alive',
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'cache-control',
+      'access-control-allow-methods': 'GET',
+    });
+
+    // Helper to write an SSE event.
+    const writeEvent = (data: unknown): void => {
+      response.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // Execute all scrapers concurrently. Each .then() fires the moment
+    // that scraper resolves — the result is immediately written to the
+    // response stream.
+    const promises = scrapers.map((scraper) => {
+      return scraper.extract(params)
+        .then((result) => {
+          writeEvent({ provider: scraper.name, status: 'success', stream: result });
+        })
+        .catch((error: unknown) => {
+          const errorMsg = error instanceof Error ? error.message : (error && typeof error === 'object' && 'error' in error) ? String((error as { error: unknown }).error) : 'Unknown error';
+          writeEvent({ provider: scraper.name, status: 'failed', error: errorMsg });
+        });
+    });
+
+    // When all scrapers have settled, send the done event and close.
+    Promise.allSettled(promises).then(() => {
+      writeEvent({ status: 'done' });
+      response.end();
+    }).catch(() => {
+      // Should never happen (allSettled never rejects), but guard anyway.
+      writeEvent({ status: 'done' });
+      response.end();
+    });
+
+    // Handle client disconnect (EventSource close).
+    request.on('close', () => {
+      // The response is already finished or will be — nothing to clean up
+      // since the scrapers are fire-and-forget promises (no cancellation
+      // in Phase 2; future phases may add AbortController).
+    });
+  }
+
   const server = createServer((request, response) => {
     const started = Date.now();
     const url = new URL(request.url ?? '/', 'http://internal');
@@ -258,6 +340,19 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return sendJson(response, 200, { ok: true, jobs: registry.counts(), uptimeSeconds: Math.floor(process.uptime()) });
+    }
+    // Phase 2: SSE extraction stream endpoint.
+    if (request.method === 'GET' && url.pathname === '/api/extract/stream') {
+      return handleExtractStream(request, response, url);
+    }
+    // CORS preflight for the SSE endpoint.
+    if (request.method === 'OPTIONS' && url.pathname === '/api/extract/stream') {
+      response.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': 'cache-control',
+        'access-control-allow-methods': 'GET',
+      });
+      return response.end();
     }
     if (request.method === 'POST' && url.pathname === '/api/v1/compat/manifest') {
       void handleManifest(request, response).catch(() => sendJson(response, 500, { ok: false, error: { code: 'INTERNAL', message: 'Unexpected worker error.' } }));

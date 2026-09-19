@@ -1507,12 +1507,14 @@
       <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching source…' : effectiveState === 'embed-loading' ? 'Starting your stream…' : 'Loading player…'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
     {/if}
     {:else}
-    <!-- Phase 1: Direct Play / Scraper Mode — replaces the iframe viewport.
+    <!-- Phase 1/2: Direct Play / Scraper Mode — replaces the iframe viewport.
          When isScraperMode is true, the PlayerViewport is completely
          unmounted (halting any background playback from the embed)
          and the ScraperViewport is shown instead. The exit event
-         sets isScraperMode = false, which remounts the iframe. -->
-    <ScraperViewport title={content.title} subtitle="Scanning high-speed servers…" on:exit={() => isScraperMode = false} />
+         sets isScraperMode = false, which remounts the iframe.
+         Phase 2: passes content identity (id, type, season, episode)
+         so the ScraperViewport can connect to the SSE endpoint. -->
+    <ScraperViewport title={content.title} subtitle="Scanning high-speed servers…" contentId={content.id} contentType={content.type} season={currentEpisode?.season} episode={currentEpisode?.episode} on:exit={() => isScraperMode = false} />
     {/if}
   </section>
 
