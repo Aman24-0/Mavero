@@ -399,4 +399,271 @@ watch_history system, and custom error/retry states.
 
 ---
 
+## Phase 5: Real Scrapers, FFmpeg Download Pipeline & Frontend Download UI
+
+**Date**: 2026-09-19
+**Branch**: main
+**Starting HEAD**: `d706d5406a8e62b66e6a85c9c1ac5a4a5e4f49e6`
+
+### Objective
+
+Promote the Phase 2 dummy scrapers to real HTTP extraction, ship an
+FFmpeg direct-download streaming proxy on the media-worker, and add a
+quality-specific Download button to the OTT control bar.
+
+### Changes Made
+
+#### 1. Backend — Real Extraction Logic (`apps/media-worker/src/scrapers/`)
+
+**`types.ts`** — kept the Phase 2 types (`ExtractResult`, `ExtractError`,
+`ExtractParams`, `dummyExtract`) intact so the SSE handler in
+`server.ts` did not need changes, and added three new shared helpers
+that real scrapers use:
+
+- `fetchEmbedPage({ url, referer? })` — bounded `fetch` against a
+  provider's embed URL with spoofed browser headers:
+  * `User-Agent` — standard Chrome 124 string
+  * `Accept-Language: en-US,en;q=0.9`
+  * `Referer` — defaults to the embed URL's origin
+  * `Sec-Fetch-*` headers — looks like a real navigation
+  * Bounded to `MAX_EMBED_BYTES` (1 MiB) and a 15-second wall-clock
+    timeout so a slow / malicious provider cannot stall the SSE stream.
+- `findM3u8Url(body, origin)` — three-stage regex matcher for the
+  master playlist URL:
+  1. Absolute `https://...m3u8[?query]`
+  2. Protocol-relative `//host/path/.m3u8`
+  3. Origin-relative `/path/.m3u8`
+  Returns `null` if no m3u8 URL is present (caller then rejects with
+  an `ExtractError`, which the SSE handler turns into a
+  `{"status":"failed"}` event — never crashes the stream).
+- `buildEmbedUrl(template, params)` — `$id`, `$season`, `$episode`
+  placeholder substitution; for series, swaps the `/movie/` segment
+  to `/tv/` automatically.
+
+**`vidsrc.ts`** — real extractor that fetches
+`https://vidsrc.sh/embed/movie/$id` (or
+`https://vidsrc.sh/embed/tv/$id/$season/$episode` for series) with the
+spoofed headers, then parses the response for the m3u8 master URL.
+
+**`vidlink.ts`** — real extractor that fetches
+`https://vidlink.to/embed/movie/$id` (or the `/tv/` variant for
+series) using the same headers + parser.
+
+Both scrapers preserve the Phase 2 contract: they NEVER throw
+synchronously — every failure path returns a `Promise.reject({ provider,
+error })` so the SSE handler's existing `.catch()` block in `server.ts`
+emits a `{"status":"failed"}` event without altering the SSE stream.
+
+The `cineverse.ts` and `slast.ts` scrapers still use `dummyExtract()`
+(scheduled for a future phase — out of scope here).
+
+#### 2. Backend — FFmpeg Download Proxy Endpoint
+
+**`apps/media-worker/src/ffmpeg.ts`** — added a new
+`streamHlsToPipe(options)` function that spawns FFmpeg with the spec
+contract:
+
+```
+ffmpeg -nostdin -hide_banner -loglevel warning \
+       -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
+       -i "${streamUrl}" -c copy -bsf:a aac_adtstoasc \
+       -movflags frag_keyframe+empty_moov -f mp4 pipe:1
+```
+
+Highlights:
+
+- **No disk I/O** — pipes ffmpeg stdout directly into the HTTP response
+  (fragmented MP4 with `empty_moov` so no seek-back to write the moov
+  atom at the end).
+- **Back-pressure** — pauses ffmpeg stdout when the response stream
+  reports `write() === false`, resumes on `'drain'`. Prevents memory
+  blowup when the client is on a slow connection.
+- **Bounded stderr** — keeps only the last 4 KiB of stderr for
+  diagnostic logging (no unbounded buffer growth).
+- **Hard 4-hour wall-clock cap** — kills the child if the download
+  exceeds 4 hours (matches `JOB_TIMEOUT_MS`).
+- **Returns a `kill()` handle** so the HTTP layer can terminate ffmpeg
+  when the client closes the connection.
+
+**`apps/media-worker/src/server.ts`** — added a new
+`GET /api/download?streamUrl=<url>&quality=<label>` route:
+
+- **Validates** the `streamUrl` parameter (must be a valid `http(s)`
+  URL — defense in depth; the frontend only ever hands us extracted
+  https m3u8 URLs).
+- **Sanitizes** the `quality` label (alphanumeric + `_`/`-` only,
+  truncated to 16 chars) so it is safe to embed in the
+  `Content-Disposition` filename.
+- **Sets response headers**:
+  * `Content-Type: video/mp4`
+  * `Content-Disposition: attachment; filename="mavero-download-${quality}.mp4"`
+  * `Cache-Control: no-store`
+  * `Access-Control-Allow-Origin: *` (cross-origin download —
+    the SvelteKit app and the media-worker are separate origins)
+- **Pipes** `ffmpeg.stdout` into the response via
+  `streamHlsToPipe({ out: response, ... })`.
+- **Cancel path** — `request.on('close')` calls `handle.kill()` so
+  cancelling the download (closing the tab / clicking "Cancel" in the
+  browser) terminates ffmpeg immediately (no orphan processes, no
+  memory leak).
+- **CORS preflight** — `OPTIONS /api/download` returns 204 with the
+  CORS headers.
+
+#### 3. Frontend — Download UI Integration (`ScraperControls.svelte`)
+
+- **New props**: `mediaWorkerUrl` (string) and `activeStreamUrl` (string).
+  Both flow down from `ScraperViewport` so the controls know where to
+  point the download request.
+- **New local state**: `let showDownloadModal = $state(false);`.
+- **New button** — a `Download` icon (from `lucide-svelte`) added to
+  the control bar, immediately after the "Sources" button.
+  Disabled when `!activeStreamUrl || !mediaWorkerUrl` (e.g., before a
+  stream is loaded).
+- **New sheet** — when the Download button is clicked, a modal/sheet
+  (similar to the source switcher) opens with:
+  * "Auto (best available)" — always present, uses the master playlist
+    as-is (FFmpeg picks the highest-bandwidth variant).
+  * One entry per quality in the `qualities` array ("1080p", "720p",
+    "Auto" / "Level N").
+- **Click handler** — for each entry, constructs the URL:
+  ```
+  ${mediaWorkerUrl}/api/download?streamUrl=${encodeURIComponent(activeStreamUrl)}&quality=${qualityToken}
+  ```
+  and triggers the download with `window.open(downloadUrl, '_blank')`.
+  The browser receives `Content-Disposition: attachment` and starts a
+  real file download (not inline playback).
+- **Styling** — the sheet mirrors the source-switcher panel from
+  `ScraperViewport.svelte` (dark surface, blur backdrop, same radius
+  and spacing). Uses Mavero's CSS variables throughout.
+
+**`ScraperViewport.svelte`** — wires the two new props through:
+
+```svelte
+<ScraperControls
+  ...
+  mediaWorkerUrl={mediaWorkerUrl}
+  activeStreamUrl={activeStream?.url ?? ''}
+  ...
+/>
+```
+
+No other ScraperViewport logic changed — the player lifecycle,
+source switcher, and HLS API integration are untouched.
+
+### Validation
+
+- `pnpm check`: 0 errors, 0 warnings
+- media-worker `npx tsc --noEmit`: exit 0
+- `pnpm test`: 131 suites passed, exit 0
+- `pnpm build`: success
+- `git diff --check`: clean
+
+### Constraints Preserved
+
+- ✅ PlaybackManager NOT modified
+- ✅ `+page.svelte` NOT modified
+- ✅ PlayerShell / PlayerViewport / PlayerControls NOT modified
+- ✅ Existing SSE / scanning logic in `server.ts` and
+  `ScraperViewport.svelte` NOT modified (only new code added)
+- ✅ The FFmpeg pipeline cleanly pipes stdout → response with
+  back-pressure and a kill handler on `request.on('close')` — no
+  memory leaks when downloads are cancelled or slow.
+- ✅ Real scrapers NEVER throw synchronously — every failure rejects
+  with an `ExtractError` that the existing SSE `.catch()` handler
+  converts into a `{"status":"failed"}` event without crashing the
+  stream.
+- ✅ `cineverse.ts` and `slast.ts` still use `dummyExtract()` —
+  their promotion to real extractors is out of scope for Phase 5
+  and will not regress the existing scan UI.
+
+### What's Next (Phase 6+)
+
+- Promote `cineverse.ts` and `slast.ts` to real extraction.
+- Wire up download progress tracking (e.g., service-worker-based
+  byte counter on the browser side) since the streaming response
+  does not advertise a `Content-Length`.
+
+---
+
+## Phase 5.1: Hidden Anchor Download Trigger
+
+**Date**: 2026-09-19
+**Branch**: main
+**Starting HEAD**: post-Phase-5 (uncommitted changes superseded by this commit)
+
+### Objective
+
+Replace the `window.open(downloadUrl, '_blank')` call in
+`ScraperControls.svelte`'s download handler with a hidden-anchor
+(`<a download>`) trigger. This fixes two UX regressions introduced by
+`window.open`:
+
+1. **Aggressive popup blockers** — some browsers (and extensions like
+   uBlock Origin's pop-up blocker) intercept `window.open` when the
+   destination is cross-origin (the SvelteKit app is on a different
+   origin than the media-worker). The download then silently fails
+   with no user feedback.
+2. **Blank-tab flicker** — even when the popup is allowed, the browser
+   briefly opens a new tab while `Content-Disposition: attachment`
+   negotiates the download. For short streams (a few seconds), the
+   user sees a tab appear and immediately close, which feels broken.
+
+### Changes Made
+
+#### `src/lib/components/player/ScraperControls.svelte`
+
+Replaced `triggerDownload()`'s `window.open` call with the standard
+hidden-anchor pattern:
+
+```js
+const a = document.createElement('a');
+a.href = downloadUrl;
+a.setAttribute('download', ''); // backend's Content-Disposition names the file
+a.style.display = 'none';
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+```
+
+Why this is correct:
+
+- **User-gesture preservation** — the anchor is created, appended,
+  clicked, and removed synchronously inside the click handler, so the
+  browser treats it as the direct result of the user's click. This
+  preserves the user-activation chain that `Content-Disposition`
+  downloads require (no popup-blocker prompt).
+- **No new tab** — the anchor's `download=""` attribute tells the
+  browser to fetch the URL as a download rather than navigate to it.
+  Combined with the backend's `Content-Disposition: attachment;
+  filename="..."` header, the browser opens its native "Save File"
+  dialog without ever rendering the URL.
+- **Filename** — the `download=""` attribute is intentionally empty
+  because the actual filename is decided by the backend's
+  `Content-Disposition` header (e.g. `mavero-download-1080p.mp4`).
+  Setting a value here would override the backend's choice, which is
+  undesirable for cross-origin requests (the browser ignores the
+  attribute on cross-origin downloads anyway).
+- **Cleanup** — the anchor is removed from the DOM immediately after
+  the click, so there is no dangling element.
+
+The `closeDownloadModal()` call is preserved at the end of the handler
+so the sheet closes after the download is dispatched (same UX as
+before).
+
+### Validation
+
+- `pnpm check`: 0 errors, 0 warnings
+- No backend changes — the `/api/download` endpoint and FFmpeg pipeline
+  are untouched.
+
+### Constraints Preserved
+
+- ✅ PlaybackManager NOT modified
+- ✅ `+page.svelte` NOT modified
+- ✅ `ScraperViewport.svelte` NOT modified (props flow unchanged)
+- ✅ Backend `/api/download` route + FFmpeg pipeline NOT modified
+- ✅ Modal close behavior preserved (`showDownloadModal = false`)
+
+---
+
 *This worklog is updated as each phase of the Scraper Mode feature is completed.*

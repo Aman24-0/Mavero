@@ -37,7 +37,7 @@ import { basename, join, resolve, sep } from 'node:path';
 import { assertConfigUsable, loadConfig, type WorkerConfig } from './config.js';
 import { verifyCompatToken } from './tokens.js';
 import { JobRegistry, type Job } from './jobs.js';
-import { runFfmpeg } from './ffmpeg.js';
+import { runFfmpeg, streamHlsToPipe } from './ffmpeg.js';
 import { logger } from './logger.js';
 import { scrapers } from './scrapers/index.js';
 import type { ExtractParams } from './scrapers/types.js';
@@ -330,6 +330,90 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     });
   }
 
+  /**
+   * Phase 5 — FFmpeg direct-download streaming proxy endpoint.
+   *
+   * GET /api/download?streamUrl=<hls-master>&quality=<label>
+   *
+   * Spawns FFmpeg to remux the HLS stream into a fragmented MP4 piped
+   * directly into the HTTP response (no disk I/O). The `quality`
+   * parameter is forwarded into the filename only — FFmpeg copies
+   * whatever the master playlist yields (`-c copy`). The browser
+   * receives a `Content-Disposition: attachment` so it triggers a
+   * download rather than inline playback.
+   *
+   * Lifecycle:
+   *   * If the client closes the connection (download cancelled), the
+   *     `request.on('close')` handler kills the FFmpeg child to avoid
+   *     orphan processes;
+   *   * stdout/stderr are bounded (stderr keeps only the last 4 KiB);
+   *   * a hard 4-hour wall-clock cap on each run.
+   */
+  function handleDownload(request: IncomingMessage, response: ServerResponse, url: URL): void {
+    const streamUrl = url.searchParams.get('streamUrl') ?? '';
+    const quality = url.searchParams.get('quality') ?? 'default';
+
+    if (!streamUrl) {
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'streamUrl is required' } }));
+      return;
+    }
+
+    // Reject anything that is not http(s) — defense in depth. The
+    // frontend only ever hands us https m3u8 URLs from the extractor.
+    let parsed: URL;
+    try {
+      parsed = new URL(streamUrl);
+    } catch {
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'streamUrl must be a valid URL' } }));
+      return;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'streamUrl must be http or https' } }));
+      return;
+    }
+
+    // Headers FIRST — the browser must commit to the download before
+    // ffmpeg starts producing bytes (otherwise a slow ffmpeg start would
+    // cause the client to time out). The fragmented MP4 moov atom is
+    // written up front (empty_moov), so the file is playable while
+    // still streaming.
+    const safeQuality = String(quality).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16) || 'default';
+    const filename = `mavero-download-${safeQuality}.mp4`;
+    response.writeHead(200, {
+      'content-type': 'video/mp4',
+      'content-disposition': `attachment; filename="${filename}"`,
+      'cache-control': 'no-store',
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'range',
+      'access-control-allow-methods': 'GET',
+      // No content-length: fragmented MP4 is produced incrementally,
+      // we genuinely do not know the total size up front.
+    });
+
+    const handle = streamHlsToPipe({
+      ffmpegPath: config.ffmpegPath,
+      streamUrl: parsed.toString(),
+      out: response,
+      onExit: (info) => {
+        if (info.code !== 0 && !info.killed) {
+          logger.warn('download ffmpeg exit', { code: info.code, stderr: info.stderrTail.slice(-200) });
+        }
+        // End the response — fragmented MP4 streams cleanly even mid-flight
+        // because empty_moov means there is no trailing atom to write.
+        try { response.end(); } catch { /* already ended */ }
+      },
+    });
+
+    // Cancel path: client closed the connection (download cancelled).
+    // Kill FFmpeg so we don't keep producing bytes into a dead socket.
+    request.on('close', () => {
+      handle.kill();
+    });
+  }
+
   const server = createServer((request, response) => {
     const started = Date.now();
     const url = new URL(request.url ?? '/', 'http://internal');
@@ -340,6 +424,19 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return sendJson(response, 200, { ok: true, jobs: registry.counts(), uptimeSeconds: Math.floor(process.uptime()) });
+    }
+    // Phase 5: FFmpeg direct-download proxy endpoint.
+    if (request.method === 'GET' && url.pathname === '/api/download') {
+      return handleDownload(request, response, url);
+    }
+    // CORS preflight for the download endpoint.
+    if (request.method === 'OPTIONS' && url.pathname === '/api/download') {
+      response.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': 'range',
+        'access-control-allow-methods': 'GET',
+      });
+      return response.end();
     }
     // Phase 2: SSE extraction stream endpoint.
     if (request.method === 'GET' && url.pathname === '/api/extract/stream') {

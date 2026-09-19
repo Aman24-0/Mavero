@@ -283,3 +283,111 @@ export function runFfmpeg(options: FfmpegRunOptions): FfmpegRun {
 export function fileUrlFor(path: string): URL {
   return pathToFileURL(path);
 }
+
+// ============================================================
+// Phase 5 — Direct-download streaming proxy (FFmpeg → stdout pipe)
+// ============================================================
+
+/**
+ * Phase 5 — Streams an HLS source through FFmpeg and pipes the resulting
+ * fragmented MP4 bytes directly into a writable stream (the HTTP
+ * response object), WITHOUT touching disk.
+ *
+ * The FFmpeg command is the spec contract:
+ *
+ *   ffmpeg -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
+ *          -i "<streamUrl>" -c copy -bsf:a aac_adtstoasc \
+ *          -movflags frag_keyframe+empty_moov -f mp4 pipe:1
+ *
+ *   * `-reconnect*`           — auto-resume on transient HLS drops
+ *   * `-c copy`               — no re-encode (CPU-cheap, instant start)
+ *   * `-bsf:a aac_adtstoasc`  — strips ADTS framing on AAC so the bitstream
+ *                               is mp4-compatible (the standard fixup for
+ *                               HLS-extracted audio)
+ *   * `-movflags frag_keyframe+empty_moov` — fragmented MP4 that can be
+ *                               streamed incrementally (no moov atom at
+ *                               the end → no need to seek back to header)
+ *   * `-f mp4 pipe:1`         — container + output to stdout
+ *
+ * The returned `kill()` lets the HTTP layer terminate the child process
+ * when the client closes the connection (download cancelled). stderr is
+ * parsed for the first error line so the caller can log a useful
+ * diagnostic without buffering megabytes.
+ */
+export type StreamHlsToPipeOptions = {
+  ffmpegPath: string;
+  streamUrl: string;
+  /** Writable stream that receives the MP4 bytes (typically `res`). */
+  out: NodeJS.WritableStream;
+  /** Hard wall-clock cap (ms). Defaults to 4 hours (matches JOB_TIMEOUT_MS). */
+  timeoutMs?: number;
+  /** Optional stderr-summary callback for logging. */
+  onExit?: (info: { code: number | null; killed: boolean; stderrTail: string }) => void;
+};
+
+export type StreamHlsToPipeHandle = {
+  /** Resolves when ffmpeg exits (any outcome). */
+  promise: Promise<void>;
+  /** Kills the child (call when the HTTP request closes). */
+  kill: () => void;
+};
+
+export function streamHlsToPipe(options: StreamHlsToPipeOptions): StreamHlsToPipeHandle {
+  const argv = [
+    '-nostdin',
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-i', options.streamUrl,
+    '-c', 'copy',
+    '-bsf:a', 'aac_adtstoasc',
+    '-movflags', 'frag_keyframe+empty_moov',
+    '-f', 'mp4',
+    'pipe:1',
+  ];
+
+  const child = spawn(options.ffmpegPath, argv, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stderrTail = '';
+  let killed = false;
+
+  const kill = () => {
+    killed = true;
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+  };
+
+  const timer = setTimeout(() => {
+    killed = true;
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+  }, options.timeoutMs ?? 4 * 3600 * 1000);
+
+  child.stdout?.on('data', (chunk: Buffer) => {
+    // Back-pressure: if the client is slow, pause the child so ffmpeg
+    // doesn't fill memory faster than we can drain. Resume on drain.
+    const ok = options.out.write(chunk);
+    if (!ok) {
+      child.stdout?.pause();
+      options.out.once('drain', () => child.stdout?.resume());
+    }
+  });
+
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString('utf8')).slice(-4000);
+  });
+
+  const promise = new Promise<void>((resolve) => {
+    const finalize = (code: number | null) => {
+      clearTimeout(timer);
+      options.onExit?.({ code, killed, stderrTail: stderrTail.slice(-500) });
+      resolve();
+    };
+    child.on('error', () => finalize(-1));
+    child.on('close', (code) => finalize(code));
+  });
+
+  return { promise, kill };
+}

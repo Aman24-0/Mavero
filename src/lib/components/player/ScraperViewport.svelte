@@ -498,6 +498,8 @@
         subtitleTracks={subtitleTracksList as { id: number; name?: string; lang?: string }[]}
         {currentSubtitleTrack}
         activeProvider={activeStream?.provider ?? ''}
+        mediaWorkerUrl={mediaWorkerUrl}
+        activeStreamUrl={activeStream?.url ?? ''}
         ontoggleplay={togglePlay}
         onseek={seekTo}
         ontogglemute={toggleMute}
