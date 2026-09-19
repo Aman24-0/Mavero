@@ -196,4 +196,98 @@ play/pause/seek controls.
 
 ---
 
+## Phase 3: Native Player Integration (hls.js) inside ScraperViewport
+
+**Date**: 2026-09-19
+**Branch**: main
+**Starting HEAD**: `19e1978b82a5d120525906fa534cc802f06553b4`
+
+### Objective
+
+Implement a native HTML5 video player using hls.js to play the extracted
+stream URLs. The UI transitions from the scanning grid to the video player
+when a user selects a successful stream.
+
+### Changes Made
+
+#### 1. Dependency
+
+hls.js (1.7.2) was already in the project dependencies (added in a
+previous phase). No new dependency was needed. The library ships its own
+TypeScript definitions — no `@types/hls.js` required.
+
+#### 2. ScraperViewport Component Update (`src/lib/components/player/ScraperViewport.svelte`)
+
+Major update — the component now has two views:
+
+**A. Scanning view** (existing, wrapped in `{#if !activeStream}`)
+- Unchanged from Phase 2: SSE connection, provider grid, progress bar.
+- Provider cards are clickable when their status is `success`.
+
+**B. Native player view** (`{:else}` block — new in Phase 3)
+- Renders a native `<video>` element with `controls`, `playsinline`,
+  `autoplay` attributes.
+- Full-viewport black background, `object-fit: contain`.
+- "Sources" button (top-right) lets the user go back to the scanning
+  grid to pick a different stream (`backToScan()`).
+- Error state: if HLS playback fails fatally, an error message with
+  "Choose another source" button is shown.
+
+**C. HLS player lifecycle**
+
+- `import Hls from 'hls.js'` + `import type { ErrorData } from 'hls.js'`.
+- `let activeStream = $state<ActiveStream>(null)` — holds the selected
+  stream URL + provider.
+- `let videoElement = $state<HTMLVideoElement | null>(null)` — bound to
+  the `<video>` element.
+- `let hlsInstance: Hls | null = null` — holds the HLS.js instance.
+- `initPlayer(streamUrl)` — checks `Hls.isSupported()`, creates a new
+  `Hls()` instance, loads the source, attaches media, and listens for
+  `MANIFEST_PARSED` (triggers `videoElement.play()`) and `ERROR` events
+  (recovers network/media errors, destroys on fatal unrecoverable errors).
+- Safari fallback: if `canPlayType('application/vnd.apple.mpegurl')`,
+  sets `videoElement.src` directly (native HLS).
+- `$effect` — initializes the player when both `activeStream` and
+  `videoElement` become truthy (after the `<video>` element renders).
+- `destroyPlayer()` — calls `hlsInstance.destroy()`, removes the `src`,
+  and resets state. Called on stream switch, exit, and `onDestroy`.
+- `backToScan()` — destroys the player and sets `activeStream = null`,
+  returning to the scanning grid.
+- `handleExit()` — now calls `destroyPlayer()` before `cleanupEventSource()`
+  and `dispatch('exit')`.
+
+**D. Error recovery**
+
+- Network errors: `hlsInstance.startLoad()` (retry).
+- Media errors: `hlsInstance.recoverMediaError()`.
+- Fatal unrecoverable: `playerError` state shows error message + retry
+  button.
+
+### Validation
+
+- `pnpm check`: 0 errors, 0 warnings
+- `pnpm test`: 131 suites passed, exit 0
+- `pnpm build`: success
+- media-worker `npx tsc --noEmit`: exit 0
+- `git diff --check`: clean
+
+### Constraints Preserved
+
+- ✅ PlaybackManager NOT modified
+- ✅ `+page.svelte` NOT modified
+- ✅ PlayerShell's iframe logic NOT modified
+- ✅ Existing scanning SSE logic NOT modified
+- ✅ Uses native `controls` attribute (custom controls in Phase 4)
+- ✅ HLS instance destroyed on exit, stream switch, and unmount (no leaks)
+- ✅ EventSource still closed on destroy and exit (no leaks)
+
+### What's Next (Phase 4+)
+
+Phase 4 will build custom Mavero-styled player controls (Quality selector,
+Audio track switcher, Source switcher) to replace the native `controls`
+attribute. The custom controls will match the existing PlayerShell design
+language while remaining within the ScraperViewport component.
+
+---
+
 *This worklog is updated as each phase of the Scraper Mode feature is completed.*

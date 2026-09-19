@@ -1,11 +1,11 @@
 <script lang="ts">
-  // Phase 2 — Direct Play / Scraper Mode: SSE-connected scanning viewport.
+  // Phase 3 — Direct Play / Scraper Mode: Native HLS player integration.
   //
   // This component connects to the media-worker's SSE endpoint
   // (GET /api/extract/stream) to receive real-time scraper results.
-  // Each scraper result updates the provider card from 'scanning' to
-  // 'success' or 'failed'. The extracted stream URLs are collected for
-  // use by the future native video player (Phase 3).
+  // When a user selects a successful stream, the scanning grid
+  // transitions to a native HTML5 <video> element using hls.js for
+  // HLS playback.
   //
   // DESIGN CONTRACTS:
   //   * Uses Mavero's existing CSS variables (no hardcoded colors).
@@ -14,12 +14,15 @@
   //   * The exit button dispatches a Svelte event so PlayerShell can
   //     set isScraperMode = false and remount the iframe.
   //   * EventSource is closed on destroy and on exit to prevent leaks.
+  //   * HLS instance is destroyed on stream switch, exit, and unmount.
   //   * Does NOT import or depend on PlaybackManager, PlayerViewport,
   //     or any resolver logic.
 
   import { onMount, onDestroy } from 'svelte';
   import { createEventDispatcher } from 'svelte';
   import { ArrowLeft, Check, X, LoaderCircle } from 'lucide-svelte';
+  import Hls from 'hls.js';
+  import type { ErrorData } from 'hls.js';
 
   // Props (Svelte 5 runes mode — matches PlayerShell)
   let {
@@ -42,12 +45,10 @@
 
   const dispatch = createEventDispatcher<{ exit: void; streamselected: { url: string; provider: string } }>();
 
-  // Provider state — now driven by SSE events instead of static mocks.
+  // Provider state — driven by SSE events.
   type ProviderStatus = 'scanning' | 'success' | 'failed';
   type ProviderCard = { name: string; status: ProviderStatus; streamUrl?: string; error?: string };
 
-  // The 4 providers that the backend scrapers will scan. These match
-  // the scrapers registered in apps/media-worker/src/scrapers/index.ts.
   let providers = $state<ProviderCard[]>([
     { name: 'VidSrc', status: 'scanning' },
     { name: 'VidLink', status: 'scanning' },
@@ -55,15 +56,112 @@
     { name: 'SLast', status: 'scanning' },
   ]);
 
-  // Extracted streams collected from SSE — for use by the future player.
+  // Extracted streams collected from SSE.
   let extractedStreams: { provider: string; url: string; type: string }[] = [];
 
   // Scan completion state
   let scanComplete = $state(false);
 
+  // Phase 3: Native player state
+  type ActiveStream = { provider: string; url: string; type: string } | null;
+  let activeStream = $state<ActiveStream>(null);
+  let videoElement = $state<HTMLVideoElement | null>(null);
+  let hlsInstance: Hls | null = null;
+  let playerError = $state<string>('');
+
   let eventSource: EventSource | null = null;
 
+  // ============================================================
+  // Phase 3: HLS player lifecycle
+  // ============================================================
+
+  /**
+   * Initializes the HLS player for the given stream URL.
+   * Uses hls.js for browsers that don't support native HLS (Chrome, Firefox).
+   * Falls back to native HLS for Safari.
+   */
+  function initPlayer(streamUrl: string): void {
+    // Destroy any existing instance first (stream switch).
+    destroyPlayer();
+
+    if (!videoElement) return;
+
+    playerError = '';
+
+    // Check if hls.js is supported (Chrome, Firefox, Edge).
+    if (Hls.isSupported()) {
+      hlsInstance = new Hls();
+      hlsInstance.loadSource(streamUrl);
+      hlsInstance.attachMedia(videoElement);
+
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        void videoElement?.play().catch(() => {
+          // Autoplay was blocked — the user needs to interact.
+          // The native controls are visible, so they can press play.
+        });
+      });
+
+      hlsInstance.on(Hls.Events.ERROR, (_event: unknown, data: ErrorData) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              // Try to recover network errors.
+              hlsInstance?.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              // Try to recover media errors.
+              hlsInstance?.recoverMediaError();
+              break;
+            default:
+              // Unrecoverable error — destroy and show error.
+              playerError = 'Stream playback failed. Try another source.';
+              destroyPlayer();
+              break;
+          }
+        }
+      });
+    } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari native HLS support.
+      videoElement.src = streamUrl;
+      void videoElement.play().catch(() => {
+        // Autoplay blocked — user can press play via native controls.
+      });
+    } else {
+      playerError = 'HLS playback is not supported in this browser.';
+    }
+  }
+
+  /**
+   * Destroys the HLS instance and cleans up the video element.
+   * Called on stream switch, exit, and component unmount.
+   */
+  function destroyPlayer(): void {
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+    if (videoElement) {
+      videoElement.removeAttribute('src');
+      videoElement.load();
+    }
+    playerError = '';
+  }
+
+  // Phase 3: $effect — initialize the player when both activeStream
+  // and videoElement become truthy (i.e., when the user selects a
+  // stream and the <video> element has been rendered).
+  $effect(() => {
+    if (activeStream && videoElement) {
+      initPlayer(activeStream.url);
+    }
+  });
+
+  // ============================================================
+  // Event handlers
+  // ============================================================
+
   function handleExit() {
+    destroyPlayer();
     cleanupEventSource();
     dispatch('exit');
   }
@@ -77,10 +175,16 @@
 
   function selectStream(stream: { provider: string; url: string }) {
     dispatch('streamselected', stream);
+    // Phase 3: transition to the native player.
+    activeStream = { provider: stream.provider, url: stream.url, type: 'hls' };
+  }
+
+  function backToScan() {
+    destroyPlayer();
+    activeStream = null;
   }
 
   onMount(() => {
-    // Build the SSE endpoint URL with query params.
     const params = new URLSearchParams({
       tmdbId: contentId,
       mediaType: contentType === 'anime' ? 'series' : contentType,
@@ -93,8 +197,6 @@
     try {
       eventSource = new EventSource(sseUrl);
     } catch {
-      // EventSource not available (SSR or unsupported browser) —
-      // mark all providers as failed.
       providers = providers.map((p) => ({ ...p, status: 'failed' as const, error: 'Connection unavailable' }));
       scanComplete = true;
       return;
@@ -104,14 +206,12 @@
       try {
         const data = JSON.parse(event.data);
 
-        // Done event — all scrapers have settled.
         if (data.status === 'done') {
           scanComplete = true;
           cleanupEventSource();
           return;
         }
 
-        // Provider result event — update the matching card.
         if (data.provider && data.status) {
           providers = providers.map((p) => {
             if (p.name !== data.provider) return p;
@@ -125,14 +225,11 @@
           });
         }
       } catch {
-        // Malformed SSE event — ignore (the connection stays open).
+        // Malformed SSE event — ignore.
       }
     };
 
     eventSource.onerror = () => {
-      // EventSource fires 'error' on connection failure AND on normal
-      // close (when the server sends done + end). If we haven't received
-      // 'done' yet, mark remaining scanning providers as failed.
       if (!scanComplete) {
         providers = providers.map((p) =>
           p.status === 'scanning' ? { ...p, status: 'failed' as const, error: 'Connection lost' } : p
@@ -144,54 +241,84 @@
   });
 
   onDestroy(() => {
+    destroyPlayer();
     cleanupEventSource();
   });
 </script>
 
-<div class="scraper-viewport" role="region" aria-label="Direct play scanning">
-  <!-- Exit button — top-left, always visible -->
+<div class="scraper-viewport" role="region" aria-label="Direct play">
+  <!-- Exit button — top-left, always visible (overlaid on both scanning and player views) -->
   <button class="exit-btn" type="button" aria-label="Exit direct mode" onclick={handleExit}>
     <ArrowLeft size={18} />
     <span>Exit Direct Mode</span>
   </button>
 
-  <!-- Centered scanning content -->
-  <div class="scraper-center">
-    <h1 class="scraper-title">{title}</h1>
-    <p class="scraper-subtitle">{scanComplete ? 'Scan complete' : subtitle}</p>
+  {#if !activeStream}
+    <!-- ==================================================== -->
+    <!-- Scanning / Provider Grid view                         -->
+    <!-- ==================================================== -->
+    <div class="scraper-center">
+      <h1 class="scraper-title">{title}</h1>
+      <p class="scraper-subtitle">{scanComplete ? 'Scan complete' : subtitle}</p>
 
-    <!-- CSS-animated progress bar (stops animating when scan is done) -->
-    <div class="scraper-progress" role="progressbar" aria-label="Scanning progress" aria-valuenow={scanComplete ? 100 : 0} aria-valuemin={0} aria-valuemax={100}>
-      <div class="scraper-progress-bar" class:done={scanComplete}></div>
-    </div>
+      <div class="scraper-progress" role="progressbar" aria-label="Scanning progress" aria-valuenow={scanComplete ? 100 : 0} aria-valuemin={0} aria-valuemax={100}>
+        <div class="scraper-progress-bar" class:done={scanComplete}></div>
+      </div>
 
-    <!-- Provider grid -->
-    <div class="provider-grid">
-      {#each providers as provider (provider.name)}
-        <button
-          class="provider-card"
-          data-status={provider.status}
-          aria-label={`${provider.name} ${provider.status}`}
-          disabled={provider.status !== 'success'}
-          onclick={() => provider.status === 'success' && provider.streamUrl ? selectStream({ provider: provider.name, url: provider.streamUrl }) : undefined}
-        >
-          <div class="provider-icon">
-            {#if provider.status === 'success'}
-              <Check size={18} />
-            {:else if provider.status === 'failed'}
-              <X size={18} />
-            {:else}
-              <LoaderCircle size={18} />
-            {/if}
-          </div>
-          <span class="provider-name">{provider.name}</span>
-          <span class="provider-status-label">
-            {provider.status === 'success' ? 'Ready' : provider.status === 'failed' ? 'Failed' : 'Scanning…'}
-          </span>
-        </button>
-      {/each}
+      <div class="provider-grid">
+        {#each providers as provider (provider.name)}
+          <button
+            class="provider-card"
+            data-status={provider.status}
+            aria-label={`${provider.name} ${provider.status}`}
+            disabled={provider.status !== 'success'}
+            onclick={() => provider.status === 'success' && provider.streamUrl ? selectStream({ provider: provider.name, url: provider.streamUrl }) : undefined}
+          >
+            <div class="provider-icon">
+              {#if provider.status === 'success'}
+                <Check size={18} />
+              {:else if provider.status === 'failed'}
+                <X size={18} />
+              {:else}
+                <LoaderCircle size={18} />
+              {/if}
+            </div>
+            <span class="provider-name">{provider.name}</span>
+            <span class="provider-status-label">
+              {provider.status === 'success' ? 'Ready' : provider.status === 'failed' ? 'Failed' : 'Scanning…'}
+            </span>
+          </button>
+        {/each}
+      </div>
     </div>
-  </div>
+  {:else}
+    <!-- ==================================================== -->
+    <!-- Native HLS player view                               -->
+    <!-- ==================================================== -->
+    <div class="player-container">
+      <!-- Back-to-scan button — lets the user pick another source -->
+      <button class="back-to-scan-btn" type="button" aria-label="Back to source list" onclick={backToScan}>
+        <ArrowLeft size={16} />
+        <span>Sources</span>
+      </button>
+
+      {#if playerError}
+        <div class="player-error" role="alert">
+          <p>{playerError}</p>
+          <button class="retry-btn" type="button" onclick={backToScan}>Choose another source</button>
+        </div>
+      {/if}
+
+      <video
+        bind:this={videoElement}
+        controls
+        playsinline
+        autoplay
+        class="native-video"
+        aria-label={`${activeStream.provider} stream playback`}
+      ></video>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -226,7 +353,7 @@
     cursor: pointer;
     transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
     backdrop-filter: blur(8px);
-    z-index: 5;
+    z-index: 20;
   }
   .exit-btn:hover {
     background: rgba(255, 255, 255, .08);
@@ -237,11 +364,9 @@
     outline: 2px solid var(--ink);
     outline-offset: 2px;
   }
-  .exit-btn :global(svg) {
-    flex-shrink: 0;
-  }
+  .exit-btn :global(svg) { flex-shrink: 0; }
 
-  /* Center content */
+  /* Center content (scanning view) */
   .scraper-center {
     display: flex;
     flex-direction: column;
@@ -319,69 +444,106 @@
     cursor: default;
     font: inherit;
   }
-  .provider-card:not(:disabled) {
-    cursor: pointer;
-  }
-  .provider-card:not(:disabled):hover {
-    background: rgba(53, 214, 143, .08);
-  }
+  .provider-card:not(:disabled) { cursor: pointer; }
+  .provider-card:not(:disabled):hover { background: rgba(53, 214, 143, .08); }
 
-  /* Card status states */
-  .provider-card[data-status='scanning'] {
-    border-color: rgba(255, 255, 255, .12);
-  }
-  .provider-card[data-status='success'] {
-    border-color: rgba(53, 214, 143, .35);
-    background: rgba(53, 214, 143, .04);
-  }
-  .provider-card[data-status='failed'] {
-    border-color: rgba(255, 176, 32, .35);
-    background: rgba(255, 176, 32, .04);
-  }
+  .provider-card[data-status='scanning'] { border-color: rgba(255, 255, 255, .12); }
+  .provider-card[data-status='success'] { border-color: rgba(53, 214, 143, .35); background: rgba(53, 214, 143, .04); }
+  .provider-card[data-status='failed'] { border-color: rgba(255, 176, 32, .35); background: rgba(255, 176, 32, .04); }
 
   .provider-icon {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
+    display: grid; place-items: center;
+    width: 36px; height: 36px;
     border-radius: 50%;
     border: 1px solid var(--line);
     background: var(--surface-2);
   }
-  .provider-card[data-status='scanning'] .provider-icon {
-    color: var(--ink-soft);
-  }
-  .provider-card[data-status='scanning'] .provider-icon :global(svg) {
-    animation: scraper-spin 1s linear infinite;
-  }
-  .provider-card[data-status='success'] .provider-icon {
-    color: var(--success);
-    border-color: rgba(53, 214, 143, .3);
-  }
-  .provider-card[data-status='failed'] .provider-icon {
-    color: var(--warning);
-    border-color: rgba(255, 176, 32, .3);
-  }
+  .provider-card[data-status='scanning'] .provider-icon { color: var(--ink-soft); }
+  .provider-card[data-status='scanning'] .provider-icon :global(svg) { animation: scraper-spin 1s linear infinite; }
+  .provider-card[data-status='success'] .provider-icon { color: var(--success); border-color: rgba(53, 214, 143, .3); }
+  .provider-card[data-status='failed'] .provider-icon { color: var(--warning); border-color: rgba(255, 176, 32, .3); }
   @keyframes scraper-spin { to { transform: rotate(360deg); } }
 
-  .provider-name {
+  .provider-name { font-size: .72rem; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
+  .provider-status-label { font-size: .58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .provider-card[data-status='success'] .provider-status-label { color: var(--success); }
+  .provider-card[data-status='failed'] .provider-status-label { color: var(--warning); }
+
+  /* ============================================================ */
+  /* Phase 3: Native player view                                  */
+  /* ============================================================ */
+
+  .player-container {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+  }
+
+  .native-video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+
+  .back-to-scan-btn {
+    position: absolute;
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    background: rgba(0, 0, 0, .6);
+    color: var(--ink-soft);
+    font-size: .7rem;
+    font-weight: 700;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    z-index: 20;
+    transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .back-to-scan-btn:hover {
+    background: rgba(0, 0, 0, .8);
+    color: var(--ink);
+  }
+  .back-to-scan-btn:focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+
+  .player-error {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    z-index: 25;
+    color: var(--ink-soft);
+    text-align: center;
+  }
+  .player-error p { margin: 0; font-size: .88rem; }
+
+  .retry-btn {
+    padding: 10px 18px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, .06);
+    color: var(--ink);
     font-size: .72rem;
     font-weight: 700;
-    color: var(--ink);
-    letter-spacing: -.01em;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out);
   }
-  .provider-status-label {
-    font-size: .58rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: .04em;
-  }
-  .provider-card[data-status='success'] .provider-status-label {
-    color: var(--success);
-  }
-  .provider-card[data-status='failed'] .provider-status-label {
-    color: var(--warning);
-  }
+  .retry-btn:hover { background: rgba(255, 255, 255, .1); }
 
   /* Responsive */
   @media (max-width: 480px) {
@@ -389,12 +551,8 @@
       grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
       gap: 8px;
     }
-    .provider-card {
-      padding: 12px 6px;
-    }
-    .scraper-title {
-      font-size: 1.3rem;
-    }
+    .provider-card { padding: 12px 6px; }
+    .scraper-title { font-size: 1.3rem; }
   }
 
   @media (prefers-reduced-motion: reduce) {
