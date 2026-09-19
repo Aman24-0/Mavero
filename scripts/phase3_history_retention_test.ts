@@ -84,35 +84,53 @@ ok(!/delete from public\.favorites/.test(migration), '5d. function does NOT dele
 ok(!/delete from public\.favorite_deletions/.test(migration), '5e. function does NOT delete from favorite_deletions (tombstones preserved)');
 
 // ============================================================
-// 6. Permission model — REGRESSION-1 (Phase 4) lockdown.
+// 6. Permission model — REGRESSION-1 full closure (Phase 5).
 //
 // The original migration granted execute to `authenticated` — TOO BROAD.
-// Phase 4 REGRESSION-1 corrected this: a corrective migration revokes
-// execute from BOTH `authenticated` and `anon`. The function is now
-// callable ONLY by the postgres superuser (pg_cron / scheduled reminders)
-// and the service-role key (which bypasses RLS — used by the admin
-// trigger). Ordinary authenticated users receive 403 if they attempt
-// to call it via PostgREST.
+// Phase 4 corrective migration revoked from `authenticated` and `anon`.
+// Phase 5 corrective migration ALSO revokes from `PUBLIC` — this is the
+// critical fix: in PostgreSQL, `PUBLIC` is a pseudo-role that ALL roles
+// inherit from. Without revoking from `PUBLIC`, the previous revocations
+// from `authenticated` and `anon` were ineffective because both roles
+// inherit the `PUBLIC` execute privilege.
+//
+// After the Phase 5 closure, the function is callable ONLY by:
+//   * the `postgres` superuser (Supabase service-role key authenticates
+//     as `postgres` — bypasses ALL privilege checks, needs no grant);
+//   * pg_cron / Supabase scheduled reminders (runs as `postgres`).
+// Ordinary `authenticated` and `anon` users receive 403 via PostgREST.
 // ============================================================
 // The original migration STILL grants to authenticated (we don't edit
 // existing migrations — we add corrective ones). The test verifies the
-// ORIGINAL grant exists AND that the CORRECTIVE migration revokes it.
-ok(/grant execute on function public\.prune_old_watch_history\(int\) to authenticated/.test(migration), '6a. original migration granted to authenticated (historical — corrected by Phase 4 regression-1)');
+// ORIGINAL grant exists AND that the CORRECTIVE migrations revoke it.
+ok(/grant execute on function public\.prune_old_watch_history\(int\) to authenticated/.test(migration), '6a. original migration granted to authenticated (historical — corrected by Phase 4 + Phase 5 regressions)');
 ok(/revoke execute on function public\.prune_old_watch_history\(int\) from anon/.test(migration), '6b. original migration revoked from anon');
 
-// The corrective migration locks down the permission model.
+// Phase 4 corrective migration: revoked from authenticated + anon.
 const correctiveMigration = read('supabase/migrations/20260923000000_phase4_regression1_history_retention_permissions.sql');
-ok(/revoke execute on function public\.prune_old_watch_history\(int\) from authenticated/.test(correctiveMigration), '6c. corrective migration revokes execute from authenticated (REGRESSION-1 fix: ordinary users cannot trigger a global prune)');
-ok(/revoke execute on function public\.prune_old_watch_history\(int\) from anon/.test(correctiveMigration), '6d. corrective migration revokes execute from anon (defense in depth)');
-// The corrective migration must NOT grant execute to any role — the
-// function is callable ONLY by the postgres superuser + service-role key.
-ok(!/grant execute on function public\.prune_old_watch_history/.test(correctiveMigration), '6e. corrective migration does NOT grant execute to any role (only postgres superuser + service-role key can call)');
-ok(/Phase 4 REGRESSION-1/i.test(correctiveMigration), '6f. corrective migration annotated with Phase 4 REGRESSION-1');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from authenticated/.test(correctiveMigration), '6c. Phase 4 corrective migration revokes execute from authenticated');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from anon/.test(correctiveMigration), '6d. Phase 4 corrective migration revokes execute from anon');
+ok(!/grant execute on function public\.prune_old_watch_history/.test(correctiveMigration), '6e. Phase 4 corrective migration does NOT grant execute to any role');
+ok(/Phase 4 REGRESSION-1/i.test(correctiveMigration), '6f. Phase 4 corrective migration annotated with Phase 4 REGRESSION-1');
+
+// Phase 5 corrective migration: ALSO revokes from PUBLIC — the critical fix.
+const phase5Migration = read('supabase/migrations/20260924000000_phase5_regression1_prune_public_revoke.sql');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from PUBLIC/.test(phase5Migration), '6g. Phase 5 corrective migration revokes execute from PUBLIC (CRITICAL: closes the default PostgreSQL grant that ALL roles inherit)');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from authenticated/.test(phase5Migration), '6h. Phase 5 corrective migration re-revokes from authenticated (defense in depth)');
+ok(/revoke execute on function public\.prune_old_watch_history\(int\) from anon/.test(phase5Migration), '6i. Phase 5 corrective migration re-revokes from anon (defense in depth)');
+ok(!/grant execute on function public\.prune_old_watch_history/.test(phase5Migration), '6j. Phase 5 corrective migration does NOT grant execute to any role (postgres superuser needs no grant)');
+ok(/Phase 5 REGRESSION-1/i.test(phase5Migration), '6k. Phase 5 corrective migration annotated with Phase 5 REGRESSION-1');
+
+// Verify the helper comment accurately describes the privilege model.
+const helper = read('src/lib/server/account/history-retention.ts');
+ok(/EXECUTE privilege is revoked from PUBLIC/.test(helper) && /authenticated/.test(helper) && /and anon/.test(helper), '6l. helper comment accurately describes the privilege model (PUBLIC + authenticated + anon revoked)');
+ok(/bypasses\s+ALL privilege checks/.test(helper.replace(/\n\s*\*\s*/g, ' ')), '6m. helper comment accurately describes that postgres superuser bypasses privilege checks');
+ok(/NOT called from any production request path/.test(helper), '6n. helper comment accurately documents that it is NOT called from any production request path');
 
 // ============================================================
 // 7. The application-level helper clamps retention_days.
+// (helper was read in section 6 above — no need to re-read.)
 // ============================================================
-const helper = read('src/lib/server/account/history-retention.ts');
 ok(/export const DEFAULT_WATCH_HISTORY_RETENTION_DAYS = 180;/.test(helper), '7a. default retention is 180 days');
 ok(/export const MIN_WATCH_HISTORY_RETENTION_DAYS = 1;/.test(helper), '7b. min retention is 1 day');
 ok(/export const MAX_WATCH_HISTORY_RETENTION_DAYS = 3650;/.test(helper), '7c. max retention is 3650 days (10 years)');

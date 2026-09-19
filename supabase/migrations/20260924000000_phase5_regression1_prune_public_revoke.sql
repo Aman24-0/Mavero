@@ -1,0 +1,70 @@
+-- Phase 5 REGRESSION-1 closure: fully lock down prune_old_watch_history.
+--
+-- The previous corrective migration (20260923000000_phase4_regression1_history_retention_permissions.sql)
+-- revoked EXECUTE from `authenticated` and `anon`, but did NOT revoke from
+-- `PUBLIC`. In PostgreSQL, `PUBLIC` is a pseudo-role that ALL roles inherit
+-- from. When a function is created with CREATE FUNCTION, PostgreSQL grants
+-- EXECUTE to `PUBLIC` by default. The previous corrective migration left
+-- this default grant in place — so the function was STILL callable by any
+-- role that could connect to the database, including ordinary `authenticated`
+-- users via PostgREST.
+--
+-- This migration closes the gap by explicitly revoking EXECUTE from `PUBLIC`.
+-- After this migration, the function is callable ONLY by:
+--   * the `postgres` superuser (the Supabase service-role key authenticates
+--     as `postgres` — it bypasses ALL privilege checks, so it needs NO
+--     explicit grant);
+--   * pg_cron / Supabase scheduled reminders (which also run as `postgres`).
+--
+-- Ordinary `authenticated` and `anon` users CANNOT call the function via
+-- PostgREST — they receive 403 (permission denied).
+--
+-- This follows the existing repository convention for SECURITY DEFINER
+-- function lockdown (see 20260915000000_download_providers.sql line 215:
+--   `revoke all on function public.bump_download_providers_config_version()
+--    from public, anon, authenticated;`
+-- and 20260821010000_phase7a_migration_repair.sql line 19:
+--   `revoke all on function public.is_admin() from public, anon;`).
+--
+-- PRESERVED:
+--   * SECURITY DEFINER (function runs as owner = postgres)
+--   * search_path = public (safe against search_path injection)
+--   * retention_days clamp [1, 3650] (defense in depth)
+--   * only-deletes-old-rows semantics (preserves recent history)
+--   * watch_progress / favorites / favorite_deletions untouched
+--   * RLS policies on watch_history unchanged
+--   * No user-facing prune endpoint created
+--
+-- Idempotent: revoke is safe to run multiple times.
+
+-- CRITICAL: revoke EXECUTE from PUBLIC — this closes the default PostgreSQL
+-- grant that ALL roles inherit from. Without this line, the previous
+-- revocations from `authenticated` and `anon` were ineffective because
+-- both roles inherit the `PUBLIC` execute privilege.
+revoke execute on function public.prune_old_watch_history(int) from PUBLIC;
+
+-- Defense in depth: re-revoke from authenticated and anon (idempotent —
+-- already revoked in 20260923000000_phase4_regression1, but explicit here
+-- makes the intent clear in this migration too).
+revoke execute on function public.prune_old_watch_history(int) from authenticated;
+revoke execute on function public.prune_old_watch_history(int) from anon;
+
+-- NO grant to any role. The `postgres` superuser (Supabase service-role
+-- key + pg_cron) bypasses ALL privilege checks — it needs NO explicit
+-- grant to execute any function. Ordinary roles (authenticated, anon)
+-- now CANNOT execute the function because:
+--   1. PUBLIC execute is revoked (no inherited privilege);
+--   2. authenticated execute is revoked (no direct privilege);
+--   3. anon execute is revoked (no direct privilege).
+--
+-- The application helper `pruneWatchHistory()` in
+-- src/lib/server/account/history-retention.ts uses the service-role
+-- client (createSupabaseAdminClient), which authenticates as `postgres`
+-- via the PRIVATE_SUPABASE_SERVICE_ROLE_KEY. It can still call the
+-- function because the `postgres` superuser bypasses privilege checks.
+--
+-- Production cleanup should run via Supabase scheduled reminders / pg_cron
+-- (which runs as `postgres`). The application helper is for manual admin
+-- triggers and tests only — it is NOT called from any production request
+-- path (verified: grep finds zero imports of pruneWatchHistory outside the
+-- definition file and database.types.ts).

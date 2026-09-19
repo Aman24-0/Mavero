@@ -44,13 +44,24 @@ export const MAX_WATCH_HISTORY_RETENTION_DAYS = 3650;
  * function. The function is SECURITY DEFINER so it bypasses RLS — but
  * it only DELETES old rows (no cross-user data leak, no schema change).
  *
- * Requirements:
- *   * The caller MUST use the service-role client (the function is
- *     granted to `authenticated`, but RLS would prevent a user from
- *     deleting other users' rows — the service-role client bypasses
- *     RLS, which is what we want for a global prune).
- *   * `retentionDays` is clamped to [1, 3650] by the SQL function
- *     (defense in depth — the application clamp here matches).
+ * PRIVILEGE MODEL (Phase 5 Regression-1 closure):
+ *   The function's EXECUTE privilege is revoked from PUBLIC, authenticated,
+ *   and anon. Ordinary users CANNOT call it via PostgREST — they receive
+ *   403. The function is callable ONLY by the `postgres` superuser (the
+ *   Supabase service-role key authenticates as `postgres`, which bypasses
+ *   ALL privilege checks — no explicit grant needed).
+ *
+ *   This helper uses the service-role client (createSupabaseAdminClient),
+ *   which authenticates as `postgres` via PRIVATE_SUPABASE_SERVICE_ROLE_KEY.
+ *   It can still call the function.
+ *
+ *   This helper is NOT called from any production request path (verified:
+ *   zero imports outside this file). It exists for manual admin triggers
+ *   and tests. Production cleanup should run via Supabase scheduled
+ *   reminders / pg_cron (which runs as `postgres`).
+ *
+ *   `retentionDays` is clamped to [1, 3650] by the SQL function
+ *   (defense in depth — the application clamp here matches).
  *
  * Returns the count of deleted rows (for ops dashboards).
  */
