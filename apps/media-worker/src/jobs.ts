@@ -63,6 +63,18 @@ export type SubmitOutcome =
   | { outcome: 'busy'; code: 'BUSY' }
   | { outcome: 'rejected'; code: 'INVALID_URL' | 'BLOCKED_URL' | 'PROBE_FAILED' | 'TOO_LONG' };
 
+/**
+ * Phase 6.2: Maximum concurrent+queued jobs per session. Prevents a single
+ * user/session from exhausting the entire worker's capacity. The signed
+ * token payload's `s` (sessionId) field is used as the identity key —
+ * it is cryptographically tied to the MAVERO app's session, so it cannot
+ * be spoofed by the client.
+ *
+ * Default: 2 — enough for a retry after a failure, but not enough to
+ * monopolize the worker (default maxConcurrentJobs=2, maxQueueDepth=4).
+ */
+const MAX_JOBS_PER_SESSION = 2;
+
 export class JobRegistry {
   private readonly jobs = new Map<string, Job>();
   private readonly byTokenHash = new Map<string, string>();
@@ -105,6 +117,21 @@ export class JobRegistry {
     return { active: this.running.size, queued: this.waiting.length };
   }
 
+  /**
+   * Phase 6.2: counts active+queued jobs for a specific session. Used by
+   * the per-session admission control to prevent a single user from
+   * exhausting the worker's capacity.
+   */
+  private sessionJobCount(sessionId: string): number {
+    let count = 0;
+    for (const job of this.jobs.values()) {
+      if (job.sessionId === sessionId && job.status !== 'failed' && job.status !== 'ready') {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   private hashToken(token: string): string {
     // The token itself is never stored — only its SHA-256 identity.
     return createHash('sha256').update(token, 'utf8').digest('hex');
@@ -142,11 +169,6 @@ export class JobRegistry {
     const dns = await this.dnsCheck(structural.url);
     if (!dns.ok) return { outcome: 'rejected', code: dns.code };
 
-    const counts = this.counts();
-    if (counts.active >= this.config.maxConcurrentJobs && counts.queued >= this.config.maxQueueDepth) {
-      return { outcome: 'busy', code: 'BUSY' };
-    }
-
     // Free-disk gate (GOAL B5): a worker whose disk is below the configured
     // floor refuses NEW jobs (typed BUSY — the app surfaces "conversion
     // unavailable right now") instead of writing into a full volume.
@@ -155,6 +177,26 @@ export class JobRegistry {
       if (free !== null && free < this.config.minFreeDiskBytes) {
         return { outcome: 'busy', code: 'BUSY' };
       }
+    }
+
+    // Phase 6.2 Gap C fix: the counts check was previously done BEFORE the
+    // async validations (DNS, disk). By the time the start/queue decision
+    // was made, the counts snapshot was stale — concurrent submits could
+    // all see active < max and all call start(), exceeding the concurrency
+    // cap. Now the counts check is done AFTER the async validations, right
+    // before the synchronous start/queue decision — no await between the
+    // check and the mutation, so it's atomic in the Node.js event loop.
+    const counts = this.counts();
+    if (counts.active >= this.config.maxConcurrentJobs && counts.queued >= this.config.maxQueueDepth) {
+      return { outcome: 'busy', code: 'BUSY' };
+    }
+
+    // Phase 6.2 Gap B fix: per-session admission control. A single session
+    // can create at most MAX_JOBS_PER_SESSION concurrent+queued jobs.
+    // This prevents one user from exhausting the entire worker's capacity.
+    const sessionJobCount = this.sessionJobCount(payload.s);
+    if (sessionJobCount >= MAX_JOBS_PER_SESSION) {
+      return { outcome: 'busy', code: 'BUSY' };
     }
 
     const id = randomUUID();
@@ -183,7 +225,11 @@ export class JobRegistry {
     this.byTokenHash.set(tokenHash, id);
     this.dirs.set(id, outDir);
 
-    if (counts.active < this.config.maxConcurrentJobs) {
+    // Phase 6.2 Gap C fix: re-check counts right before the synchronous
+    // start/queue decision. Since this is the last operation before the
+    // synchronous start()/push(), the counts are accurate.
+    const finalCounts = this.counts();
+    if (finalCounts.active < this.config.maxConcurrentJobs) {
       this.start(job);
     } else {
       job.phase = 'queued';
