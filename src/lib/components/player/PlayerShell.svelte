@@ -3,6 +3,7 @@
   import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Clapperboard, Info, ListVideo, Maximize2, Menu, RotateCcw, Settings2, ShieldCheck, ShieldOff, Smartphone, X } from 'lucide-svelte';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
+  import ScraperViewport from './ScraperViewport.svelte';
   import MaveroStreamCard from './MaveroStreamCard.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerInternalQualityOption, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
@@ -78,6 +79,10 @@
   let fullscreen = false;
   let landscapeMode = false;
   let landscapeToggleInFlight = false;
+  // Phase 1: Direct Play / Scraper Mode — opt-in UI toggle. When true,
+  // the iframe PlayerViewport is unmounted and the ScraperViewport is
+  // shown instead. All legacy controls are hidden.
+  let isScraperMode = false;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
   let state: PlayerPlaybackState = source ? 'preparing' : 'source-unavailable';
@@ -1487,6 +1492,7 @@
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
+    {#if !isScraperMode}
     <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} {statusNote} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
@@ -1500,6 +1506,14 @@
     {:else if effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading'}
       <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching source…' : effectiveState === 'embed-loading' ? 'Starting your stream…' : 'Loading player…'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
     {/if}
+    {:else}
+    <!-- Phase 1: Direct Play / Scraper Mode — replaces the iframe viewport.
+         When isScraperMode is true, the PlayerViewport is completely
+         unmounted (halting any background playback from the embed)
+         and the ScraperViewport is shown instead. The exit event
+         sets isScraperMode = false, which remounts the iframe. -->
+    <ScraperViewport title={content.title} subtitle="Scanning high-speed servers…" on:exit={() => isScraperMode = false} />
+    {/if}
   </section>
 
   <!-- Immersive redesign: Back FAB — top-left overlay, translucent, safe-area aware. -->
@@ -1507,15 +1521,18 @@
     <ArrowLeft size={20} />
   </button>
 
-  <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding). -->
-  {#if source?.type === 'direct'}
+  <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding).
+       Phase 1: hidden when isScraperMode is active (the scraper viewport has its own exit control). -->
+  {#if source?.type === 'direct' && !isScraperMode}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
       <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} streamCount={maveroStreams.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={openSourceFromMenu} onStreams={() => { if (streamsSheetOpen) closeStreamsSheet(); else openStreamsSheet(playerRoot ?? document.activeElement as HTMLElement); }} />
     </div>
   {/if}
 
   <!-- Immersive redesign: Control Menu FAB — bottom-right overlay.
-       When clicked, unfolds Orientation / Source / Episodes / Sandbox vertically. -->
+       When clicked, unfolds Orientation / Source / Episodes / Sandbox vertically.
+       Phase 1: hidden when isScraperMode is active (the scraper viewport has its own exit control). -->
+  {#if !isScraperMode}
   <div class="control-fab-group" class:visible={controlsVisible}>
     {#if menuOpen}
       <!-- Menu items unfold vertically above the FAB with staggered animation. -->
@@ -1547,12 +1564,18 @@
           <span class="fab-item-label">Sandbox {effectiveSandboxEnabled ? 'ON' : 'OFF'}</span>
         </button>
       {/if}
+      <!-- Phase 1: Direct Play / Scraper Mode toggle -->
+      <button class="fab-item" style="--fab-delay: 250ms" type="button" aria-label="Switch to Direct Play mode" aria-pressed={isScraperMode} onclick={() => { isScraperMode = true; closeMenu(); }}>
+        <Smartphone size={18} />
+        <span class="fab-item-label">Direct Play</span>
+      </button>
     {/if}
     <!-- The main FAB button: Menu icon when closed, X when open. -->
     <button class="control-fab" type="button" aria-label={menuOpen ? 'Close menu' : 'Open player menu'} aria-expanded={menuOpen} onclick={toggleMenu}>
       {#if menuOpen}<X size={22} />{:else}<Menu size={22} />{/if}
     </button>
   </div>
+  {/if}
 
   {#if sourceMenuOpen}
     <!-- Source sheet — responsive: bottom sheet on compact, right drawer on wide. -->
