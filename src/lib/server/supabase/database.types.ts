@@ -943,6 +943,22 @@ export type Database = {
         Args: { retention_days: number }
         Returns: number
       }
+      // Added by 20260925000000_phase6_provider_health_atomicity.sql.
+      // SECURITY DEFINER function: atomically records a successful resolution
+      // for a (provider_id, source_id) pair. Eliminates the READ-MODIFY-WRITE
+      // race condition in the previous loadRow+upsertRow pattern.
+      record_provider_health_success: {
+        Args: { p_provider_id: string; p_source_id: string; p_checked_at?: string }
+        Returns: undefined
+      }
+      // Added by 20260925000000_phase6_provider_health_atomicity.sql.
+      // SECURITY DEFINER function: atomically records a transient failure
+      // for a (provider_id, source_id) pair. Increments counters and sets
+      // cooldown state in a single atomic UPDATE.
+      record_provider_health_failure: {
+        Args: { p_provider_id: string; p_source_id: string; p_failure_type: string; p_checked_at?: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

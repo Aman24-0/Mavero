@@ -66,12 +66,31 @@ async function upsertRow(client: HealthClient, row: RuntimeHealthRow): Promise<v
   if (error) throw error;
 }
 
+// Phase 6.1: the previous implementation used an unsafe READ-MODIFY-WRITE
+// pattern (loadRow → nextHealthAfterSuccess → upsertRow). Under concurrent
+// requests, two calls could both read the same row, both increment in JS
+// memory, and both write the same value — losing one increment.
+//
+// The fix replaces the loadRow+upsertRow calls with atomic PostgreSQL
+// RPCs (record_provider_health_success / record_provider_health_failure)
+// that perform an INSERT ... ON CONFLICT DO UPDATE in a single statement.
+// PostgreSQL's row-level locking during UPDATE guarantees that concurrent
+// calls to the same (provider_id, source_id) row are serialized — no
+// increments are lost.
+//
+// The application-side nextHealthAfterSuccess / nextHealthAfterFailure
+// functions in health.ts are PRESERVED — they are still used for
+// pure/in-memory health derivation (ranking tests, admin summaries,
+// deriveRuntimeHealthState). Only the DB-mutation path changes here.
+
 export async function recordRuntimeSuccess(client: HealthClient, providerId: string, sourceId: string, checkedAt = nowIso()): Promise<void> {
   try {
-    const next = nextHealthAfterSuccess(await loadRow(client, providerId, sourceId), checkedAt);
-    next.provider_id = providerId;
-    next.source_id = sourceId;
-    await upsertRow(client, next);
+    const { error } = await client.rpc('record_provider_health_success', {
+      p_provider_id: providerId,
+      p_source_id: sourceId,
+      p_checked_at: checkedAt,
+    });
+    if (error) throw error;
   } catch (error) {
     console.warn('[ProviderHealth] success update unavailable', error);
   }
@@ -81,10 +100,13 @@ export async function recordRuntimeFailure(client: HealthClient, providerId: str
   const failureType = runtimeFailureType(error);
   if (!failureType) return;
   try {
-    const next = nextHealthAfterFailure(await loadRow(client, providerId, sourceId), failureType, checkedAt);
-    next.provider_id = providerId;
-    next.source_id = sourceId;
-    await upsertRow(client, next);
+    const { error: rpcError } = await client.rpc('record_provider_health_failure', {
+      p_provider_id: providerId,
+      p_source_id: sourceId,
+      p_failure_type: failureType,
+      p_checked_at: checkedAt,
+    });
+    if (rpcError) throw rpcError;
   } catch (healthError) {
     console.warn('[ProviderHealth] failure update unavailable', healthError);
   }

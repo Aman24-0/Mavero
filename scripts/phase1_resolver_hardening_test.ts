@@ -146,8 +146,14 @@ function directResult(sourceId: string) {
   // scheduler issues them without blocking, so a capped 3-attempt
   // resolution with per-attempt work of ~1ms completes far below the
   // awaited-DB cost.
+  // Phase 6.1: the health service now uses atomic RPCs instead of
+  // loadRow+upsertRow. The mock client needs to intercept rpc() calls.
   const dbCalls: string[] = [];
   const slowClient = {
+    rpc(fn: string) {
+      dbCalls.push(fn);
+      return new Promise<{ error: null }>((resolve) => setTimeout(() => resolve({ error: null }), 400));
+    },
     from(table: string) {
       assert.equal(table, 'streaming_provider_health');
       return {
@@ -169,7 +175,8 @@ function directResult(sourceId: string) {
           };
         },
         upsert() {
-          dbCalls.push('upsert');
+          // Phase 6.1: upsert is no longer called by the record* functions
+          // (they use rpc() now). Keep the mock for any other caller.
           return new Promise<{ error: null }>((resolve) => setTimeout(() => resolve({ error: null }), 400));
         },
       };
@@ -185,9 +192,13 @@ function directResult(sourceId: string) {
 
   // Writes were ISSUED (durable, not fire-and-forget)...
   await scheduler.flush();
-  assert.equal(dbCalls.length, 2, 'both health writes were issued through the real record* functions');
+  assert.equal(dbCalls.length, 2, 'both health writes were issued through the atomic RPC functions (Phase 6.1)');
+  // Phase 6.1: verify the correct RPCs were called.
+  assert.ok(dbCalls.includes('record_provider_health_success'), 'success RPC was called');
+  assert.ok(dbCalls.includes('record_provider_health_failure'), 'failure RPC was called');
   // ...and the flush budget is bounded.
   const hungClient = {
+    rpc: () => new Promise<never>(() => {}),
     from: () => ({
       select: () => ({ eq: () => ({ eq: () => ({ limit: () => ({ maybeSingle: () => new Promise<never>(() => {}) }) }) }) }),
       upsert: () => new Promise<never>(() => {}),
