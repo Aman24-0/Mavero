@@ -114,7 +114,11 @@ The `watch_history` table grows with each distinct title a user watches. A SECUR
 select prune_old_watch_history(180);
 ```
 
+**Scheduler status**: The current Supabase Free plan does NOT expose pg_cron or Supabase scheduled reminders. Retention scheduling is an **external operational dependency** — it must be configured manually when the project upgrades to a plan that supports scheduled functions, or run manually by an operator via the Supabase SQL editor. The function is safe to call repeatedly (idempotent — each call prunes only rows older than the cutoff).
+
 The application helper (`pruneWatchHistory()` in `src/lib/server/account/history-retention.ts`) is for manual admin triggers and tests only — it is NOT called from any production request path.
+
+**Accepted platform limitation**: Leaked Password Protection is unavailable on the current Supabase Free plan. The Supabase Security Advisor warning `auth_leaked_password_protection` is accepted as a platform limitation — it cannot be resolved without upgrading the Supabase plan. No application-code workaround is implemented.
 
 ## Health endpoint (Phase 3)
 
