@@ -4,6 +4,7 @@ import { error, type Handle } from '@sveltejs/kit';
 import type { Database } from '$lib/server/supabase/database.types';
 import { isEnvironmentFreePath } from '$lib/server/route-policy';
 import { resolveRequestIdFromHeaders, PUBLIC_REQUEST_ID_HEADER } from '$lib/server/http/request-id';
+import { captureException } from '$lib/server/observability/error-tracking';
 
 // Server hook.
 //
@@ -116,9 +117,22 @@ export const handle: Handle = async ({ event, resolve }) => {
   // resolve option that adds the header to ALL responses — this is
   // the most robust approach and doesn't require every API handler to
   // remember to set it.
-  const response = await resolve(event);
-  response.headers.set(PUBLIC_REQUEST_ID_HEADER, event.locals.requestId);
-  return response;
+  try {
+    const response = await resolve(event);
+    response.headers.set(PUBLIC_REQUEST_ID_HEADER, event.locals.requestId);
+    return response;
+  } catch (err) {
+    // Phase 6.3: capture unexpected server-side errors for production
+    // error tracking. When MAVERO_SENTRY_DSN is set, the error is sent
+    // to the Sentry-compatible endpoint with the request ID for
+    // correlation. When disabled, this is a no-op — the error propagates
+    // normally (SvelteKit's error handler takes over).
+    captureException(err, {
+      requestId: event.locals.requestId,
+      route: event.url.pathname,
+    });
+    throw err;
+  }
 };
 
 /**
