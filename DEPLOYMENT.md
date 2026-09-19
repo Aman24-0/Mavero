@@ -99,6 +99,47 @@ After Netlify provides the production URL, set the Supabase project Site URL to 
 
 Verify sign-in, sign-up confirmation, callback exchange, password reset, sign-out, invalid redirect handling, guest discovery, and authenticated synchronization after the production URL is known.
 
+## Watch history scheduled cleanup (Phase 3)
+
+The `watch_history` table grows with each distinct title a user watches. A SECURITY DEFINER function `prune_old_watch_history(retention_days)` deletes rows older than the retention window (default 180 days, clamped to [1, 3650]). The function:
+
+- Preserves recent history (within the retention window).
+- Does NOT touch `watch_progress` (the Continue Watching source).
+- Does NOT touch `favorites` or `favorite_deletions`.
+- Is callable ONLY by the `postgres` superuser (EXECUTE revoked from PUBLIC + authenticated + anon). The Supabase service-role key authenticates as `postgres` and bypasses privilege checks. Ordinary users receive 403 via PostgREST.
+
+**Production cleanup should run via Supabase scheduled reminders / pg_cron** (which runs as `postgres`). Configure a daily scheduled reminder calling:
+
+```sql
+select prune_old_watch_history(180);
+```
+
+The application helper (`pruneWatchHistory()` in `src/lib/server/account/history-retention.ts`) is for manual admin triggers and tests only — it is NOT called from any production request path.
+
+## Health endpoint (Phase 3)
+
+The application exposes a health endpoint at `/api/health`:
+
+- `GET /api/health` — liveness (always 200, no external calls). Reachable even when Supabase env is missing.
+- `GET /api/health?deep=1` — readiness (bounded 2s Supabase HEAD probe, 503 when unreachable).
+- `GET /api/health?stats=1` — cache + resolver stats (content cache, negative cache, provider cooldown).
+
+The media worker has its own `/health` endpoint — operators should probe it directly (the app does NOT proxy to it).
+
+## Content-Security-Policy (Phase 3)
+
+`netlify.toml` includes a conservative Content-Security-Policy:
+
+- `script-src 'self' 'unsafe-inline'` — SvelteKit compatibility (SvelteKit does not currently emit per-request nonces by default).
+- `style-src 'self' 'unsafe-inline'` — Tailwind CSS v4 + Svelte component styles.
+- `img-src 'self' data: https://image.tmdb.org` — TMDB poster/backdrop images.
+- `connect-src 'self' https://*.supabase.co https://image.tmdb.org` — Supabase auth + API + TMDB images. Self-hosted Supabase deployments need to add their URL here.
+- `frame-src *` — admin-configured provider embeds (restricting would break playback every time an admin adds a new provider).
+- `frame-ancestors 'none'` — nobody can iframe Mavero.
+- `object-src 'none'` — no plugins.
+- `base-uri 'self'` — no base injection.
+- `form-action 'self'` — no external form submission.
+
 ## Phase boundaries
 
 Phase 7B adds only the provider-agnostic Source Resolver and safe playback-resolution endpoint. It does not integrate real third-party streaming providers, call provider APIs, scrape providers, bypass DRM or access controls, activate embeds, forward provider secrets, or implement the Mavero Player. A later approved provider phase must be reviewed separately for security, legal scope, credentials, redirect policy, and runtime behavior.

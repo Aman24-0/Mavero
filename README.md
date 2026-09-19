@@ -158,6 +158,8 @@ The player is a reusable client component reached by the watch route. It support
 Important documentation already in the repository includes:
 
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — Netlify setup, environment variables, Supabase Auth production preparation, and resolver phase boundaries.
+- [`docs/architecture.md`](docs/architecture.md) — canonical architecture document: request flow, major modules, authentication, Adult Mode boundary, resolver, cache, health, deployment, security boundaries.
+- [`docs/phase-history.md`](docs/phase-history.md) — concise phase history (Phase 1–5): objectives, major work, architectural decisions, regressions/fixes, status.
 - [`docs/phase7g-completion-report.md`](docs/phase7g-completion-report.md) — provider/source ranking and optimization completion report.
 - [`docs/landscape-player-completion-report.md`](docs/landscape-player-completion-report.md) — landscape player implementation record.
 - [`docs/universal-resolver-completion-report.md`](docs/universal-resolver-completion-report.md) — resolver architecture and verification record.
