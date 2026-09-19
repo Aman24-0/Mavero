@@ -290,4 +290,113 @@ language while remaining within the ScraperViewport component.
 
 ---
 
+## Phase 4: Custom Quality, Audio & Source Controls (OTT UI)
+
+**Date**: 2026-09-19
+**Branch**: main
+**Starting HEAD**: `265958a09aae16ed34b8bb328bd375aebd6613cc`
+
+### Objective
+
+Replace the native HTML5 `<video controls>` in ScraperViewport with a
+custom, premium OTT-style control overlay. Integrate hls.js APIs for
+Quality, Audio, and Subtitle selection. Implement seamless source
+switching without losing seek position.
+
+### Changes Made
+
+#### 1. New Component: `ScraperControls.svelte`
+
+Extracted the custom control bar into a sibling component (~435 lines):
+
+- **Play/Pause toggle** — bound to `videoElement.play()` / `.pause()`
+  via `ontoggleplay` callback prop.
+- **Timeline scrubber** — range input overlay with buffered + progress
+  fill, time labels (current / duration), pointer-event scrubbing.
+- **Quality dropdown** — maps `hlsInstance.levels` to quality labels
+  ("1080p", "720p", "Auto"). Clicking sets `hlsInstance.currentLevel`.
+- **Audio dropdown** — maps `hlsInstance.audioTracks` to language/name
+  labels. Clicking sets `hlsInstance.audioTrack`.
+- **Subtitle dropdown** — maps `hlsInstance.subtitleTracks` + "Off"
+  option (-1). Clicking sets `hlsInstance.subtitleTrack`.
+- **Sources button** — triggers the source switcher in the parent.
+- **Auto-hide** — the control bar shows/hides via the `showControls`
+  prop (4s inactivity timer in the parent).
+- **Click-to-toggle** — clicking the center area toggles play/pause.
+- **Design system** — uses Mavero's CSS variables throughout.
+
+Uses Svelte 5 `$props()` with callback props (not `createEventDispatcher`)
+for all event communication with the parent.
+
+#### 2. ScraperViewport Update
+
+**A. State management & HLS API wrapping**
+- Removed `controls` attribute from `<video>`.
+- Added `$state` variables: `isPlaying`, `currentTime`, `duration`,
+  `buffered`, `muted`, `showControls` (with 4s inactivity timeout).
+- Added `$state` variables: `qualities` (Level[]), `audioTracksList`
+  (MediaPlaylist[]), `subtitleTracksList` (MediaPlaylist[]),
+  `currentLevel`, `currentAudioTrack`, `currentSubtitleTrack`.
+- `MANIFEST_PARSED` listener now populates these arrays from
+  `hlsInstance.levels`, `.audioTracks`, `.subtitleTracks`.
+- Added `AUDIO_TRACKS_UPDATED` and `SUBTITLE_TRACKS_UPDATED` listeners
+  for live track changes.
+
+**B. Video event listeners**
+- `onplay` → `isPlaying = true` + reveal controls.
+- `onpause` → `isPlaying = false` + show controls.
+- `ontimeupdate` → updates `currentTime` + `buffered`.
+- `ondurationchange` / `onloadedmetadata` → updates `duration`.
+- `onvolumechange` → updates `muted`.
+- `onended` → `isPlaying = false`.
+
+**C. Control handlers**
+- `togglePlay()` — plays/pauses `videoElement`.
+- `seekTo(time)` — sets `videoElement.currentTime`.
+- `toggleMute()` — toggles `videoElement.muted`.
+- `setQuality(level)` — sets `hlsInstance.currentLevel`.
+- `setAudioTrack(id)` — sets `hlsInstance.audioTrack`.
+- `setSubtitleTrack(id)` — sets `hlsInstance.subtitleTrack`.
+
+**D. Seamless source switching**
+- "Sources" button opens a modal showing `extractedStreams`.
+- When a new stream is selected:
+  1. Captures `videoElement.currentTime` (savedTime).
+  2. Sets `activeStream` to the new stream.
+  3. The `$effect` calls `initPlayer(newUrl, savedTime)`.
+  4. In `MANIFEST_PARSED`, waits for `loadeddata` event, then seeks
+     to `savedTime` and plays.
+- This preserves the watch position across source switches.
+
+**E. Controls visibility (inactivity timer)**
+- `revealControls()` — shows controls + starts 4s timeout.
+- `hideControlsNow()` — hides if playing.
+- `onpointermove` on the player container reveals controls.
+- `onpointerleave` hides controls if playing.
+
+### Validation
+
+- `pnpm check`: 0 errors, 0 warnings
+- `pnpm test`: 131 suites passed, exit 0
+- `pnpm build`: success
+- media-worker `npx tsc --noEmit`: exit 0
+- `git diff --check`: clean
+
+### Constraints Preserved
+
+- ✅ PlaybackManager NOT modified
+- ✅ `+page.svelte` NOT modified
+- ✅ PlayerShell's iframe logic NOT modified
+- ✅ Existing PlayerControls.svelte NOT modified (new ScraperControls)
+- ✅ HLS instance destroyed on exit, stream switch, unmount (no leaks)
+- ✅ EventSource still closed on destroy and exit (no leaks)
+
+### What's Next (Phase 5+)
+
+Phase 5+ could add: real scraper implementations (replacing the dummy
+extract functions), progress tracking integration with the existing
+watch_history system, and custom error/retry states.
+
+---
+
 *This worklog is updated as each phase of the Scraper Mode feature is completed.*
