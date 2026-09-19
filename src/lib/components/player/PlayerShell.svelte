@@ -64,6 +64,14 @@
   export let resolutionError = '';
   export let resolutionMessage = '';
   export let resolutionKind: 'provider-error' | 'unsupported' | 'unavailable' = 'provider-error';
+  /**
+   * Phase 7 — production media-worker URL (no implicit localhost fallback).
+   * Passed through from `+page.server.ts` via page data. When `null`
+   * (production without MAVERO_MEDIA_WORKER_URL configured), the
+   * ScraperViewport renders a typed "Extractor unavailable" state
+   * instead of silently dialing 127.0.0.1.
+   */
+  export let mediaWorkerUrl: string | null = null;
 
   let viewport: PlayerViewport;
   let videoElement: HTMLVideoElement | undefined;
@@ -1514,7 +1522,7 @@
          sets isScraperMode = false, which remounts the iframe.
          Phase 2: passes content identity (id, type, season, episode)
          so the ScraperViewport can connect to the SSE endpoint. -->
-    <ScraperViewport title={content.title} subtitle="Scanning high-speed servers…" contentId={content.id} contentType={content.type} season={currentEpisode?.season} episode={currentEpisode?.episode} on:exit={() => isScraperMode = false} />
+    <ScraperViewport title={content.title} subtitle="Scanning high-speed servers…" contentId={content.id} contentType={content.type} season={currentEpisode?.season} episode={currentEpisode?.episode} mediaWorkerUrl={mediaWorkerUrl} on:exit={() => isScraperMode = false} />
     {/if}
   </section>
 

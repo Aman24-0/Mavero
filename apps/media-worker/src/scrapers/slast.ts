@@ -1,10 +1,24 @@
-import { dummyExtract, type ExtractParams, type ExtractResult } from './types.js';
+import type { ExtractError, ExtractParams, ExtractResult } from './types.js';
 
 /**
- * Phase 2 — SLast dummy scraper.
- * Simulates a network delay and resolves with a mock HLS stream URL.
+ * SLast extractor — NOT IMPLEMENTED.
+ *
+ * This provider does not have a real extraction adapter yet. Rather
+ * than fake a successful extraction with a Mux test stream (which
+ * would lie to the UI), this adapter ALWAYS rejects with a typed
+ * `UNSUPPORTED` error. The frontend renders the provider card as
+ * "Unavailable" rather than "Ready".
+ *
+ * When a real SLast extraction flow is added, replace this body
+ * with the real fetch + parse pipeline (mirror `vidsrc.ts`).
  */
-export function extract(params: ExtractParams): Promise<ExtractResult> {
-  void params;
-  return dummyExtract('SLast');
+
+const PROVIDER = 'SLast';
+
+export function extract(_params: ExtractParams): Promise<ExtractResult> {
+  return Promise.reject({
+    provider: PROVIDER,
+    category: 'UNSUPPORTED',
+    error: 'SLast extraction is not implemented',
+  } satisfies ExtractError);
 }

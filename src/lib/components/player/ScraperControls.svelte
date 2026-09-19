@@ -26,11 +26,11 @@
     buffered = 0,
     muted = false,
     showControls = true,
-    qualities = [] as { height: number; bitrate: number; name?: string }[],
+    qualities = [] as { height: number; bitrate: number; name?: string; index?: number }[],
     currentLevel = -1,
-    audioTracks = [] as { id: number; name?: string; lang?: string }[],
+    audioTracks = [] as { id: number; name?: string; lang?: string; enabled?: boolean }[],
     currentAudioTrack = -1,
-    subtitleTracks = [] as { id: number; name?: string; lang?: string }[],
+    subtitleTracks = [] as { id: number; name?: string; lang?: string; mode?: string }[],
     currentSubtitleTrack = -1,
     activeProvider = '',
     mediaWorkerUrl = '',
@@ -49,11 +49,11 @@
     buffered?: number;
     muted?: boolean;
     showControls?: boolean;
-    qualities?: { height: number; bitrate: number; name?: string }[];
+    qualities?: { height: number; bitrate: number; name?: string; index?: number }[];
     currentLevel?: number;
-    audioTracks?: { id: number; name?: string; lang?: string }[];
+    audioTracks?: { id: number; name?: string; lang?: string; enabled?: boolean }[];
     currentAudioTrack?: number;
-    subtitleTracks?: { id: number; name?: string; lang?: string }[];
+    subtitleTracks?: { id: number; name?: string; lang?: string; mode?: string }[];
     currentSubtitleTrack?: number;
     activeProvider?: string;
     /**

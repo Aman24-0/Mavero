@@ -24,16 +24,19 @@ RUN npm install --no-audit --no-fund \
   && npm prune --omit=dev
 
 ENV NODE_ENV=production \
-    PORT=8787
+    PORT=3000
 
 # Required: MAVERO_COMPAT_SESSION_SECRET (the SAME secret the app signs
 # compat references with). Recommended: PUBLIC_BASE_URL (https!).
-EXPOSE 8787
+# Phase 7: PORT default aligned with config.ts (3000). Render injects
+# PORT dynamically into every Docker web service, so this default only
+# fires for non-Docker local runs (the dev path).
+EXPOSE 3000
 
 # Unprivileged runtime user.
 USER node
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/server.js"]

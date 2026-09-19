@@ -120,11 +120,18 @@ export function assertConfigUsable(config: WorkerConfig): void {
   if (config.publicBaseUrl.startsWith('http://') && !/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(config.publicBaseUrl)) {
     console.warn(JSON.stringify({ level: 'warn', msg: 'PUBLIC_BASE_URL is not https — browsers on https pages cannot play mixed-content output', publicBaseUrl: config.publicBaseUrl }));
   }
-  // Phase 6 — when ALLOWED_ORIGIN is unset we fall back to `*`, but in
-  // production that defeats the strict-CORS policy. Warn loudly so an
-  // operator shipping to Render without setting ALLOWED_ORIGIN notices
-  // in the logs (the worker still boots — the wildcard is valid).
-  if (config.allowedOrigin === '*') {
-    console.warn(JSON.stringify({ level: 'warn', msg: 'ALLOWED_ORIGIN is not set — falling back to permissive wildcard CORS. Set ALLOWED_ORIGIN to the production app origin (e.g. https://mavero1.netlify.app) before shipping.' }));
+  // Phase 7 — fail-closed CORS in production. A wildcard `*` is
+  // acceptable ONLY when the worker is explicitly in development mode
+  // (NODE_ENV !== 'production'). In production, an unset or wildcard
+  // ALLOWED_ORIGIN is a security regression: any web origin could
+  // drive extraction jobs and download proxies from this worker.
+  const isProduction = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+  if (isProduction && config.allowedOrigin === '*') {
+    throw new Error(
+      'media-worker: ALLOWED_ORIGIN must be set to the production app origin (e.g. https://mavero1.netlify.app) when NODE_ENV=production — refusing to start with permissive wildcard CORS.',
+    );
+  }
+  if (!isProduction && config.allowedOrigin === '*') {
+    console.warn(JSON.stringify({ level: 'warn', msg: 'ALLOWED_ORIGIN is not set — falling back to permissive wildcard CORS (development only). Set ALLOWED_ORIGIN to the production app origin before shipping.' }));
   }
 }

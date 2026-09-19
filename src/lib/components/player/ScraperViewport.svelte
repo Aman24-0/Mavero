@@ -1,32 +1,55 @@
 <script lang="ts">
-  // Phase 4 — Direct Play / Scraper Mode: Custom OTT controls + HLS API.
+  // Phase 7 — Direct Play / Scraper Mode: Video.js player + hardened SSE.
   //
   // This component connects to the media-worker's SSE endpoint
   // (GET /api/extract/stream) to receive real-time scraper results.
   // When a user selects a successful stream, the scanning grid
-  // transitions to a native HTML5 <video> element using hls.js for
-  // HLS playback. The native controls attribute has been removed and
-  // replaced with a custom ScraperControls overlay.
+  // transitions to a Video.js player using the VHS HLS pipeline.
   //
-  // DESIGN CONTRACTS:
-  //   * Uses Mavero's existing CSS variables (no hardcoded colors).
-  //   * Card states: 'scanning' (spinner), 'success' (green check),
-  //     'failed' (red cross).
-  //   * The exit button dispatches a Svelte event so PlayerShell can
-  //     set isScraperMode = false and remount the iframe.
-  //   * EventSource is closed on destroy and on exit to prevent leaks.
-  //   * HLS instance is destroyed on stream switch, exit, and unmount.
-  //   * Does NOT import or depend on PlaybackManager, PlayerViewport,
-  //     or any resolver logic.
+  // DESIGN CONTRACTS (Phase 7):
+  //   * SINGLE authoritative player lifecycle — exactly ONE `$effect`
+  //     reacts to `activeStream + videoElement` and initializes the
+  //     Video.js player. There are NO duplicate effects.
+  //   * SINGLE playback owner — Video.js (with VHS) is the only HLS
+  //     engine; no parallel hls.js instance is ever created on the
+  //     same media element.
+  //   * `mediaWorkerUrl` is `string | null` — when `null` (production
+  //     without MAVERO_MEDIA_WORKER_URL configured), the component
+  //     renders a typed "Extractor unavailable" state instead of
+  //     silently dialing 127.0.0.1.
+  //   * Provider cards only become `success` when the scraper returns
+  //     a valid URL + supported media type. A `UNSUPPORTED` typed
+  //     error renders the card as `unavailable`, NOT as `success`.
+  //   * Source switching captures currentTime, disposes the old
+  //     Video.js player, creates a new one, and restores seek position.
+  //   * Video.js is disposed on exit, source switch, and unmount.
+  //   * EventSource is closed on destroy, on exit, and on scan
+  //     completion — no zombie connections.
 
   import { onMount, onDestroy } from 'svelte';
   import { createEventDispatcher } from 'svelte';
   import { ArrowLeft, Check, X, LoaderCircle } from 'lucide-svelte';
-  import Hls from 'hls.js';
-  import type { ErrorData, Level, MediaPlaylist } from 'hls.js';
+  import videojs from 'video.js';
+  import type Player from 'video.js/dist/types/player';
+  import qualityLevelsPlugin from 'videojs-contrib-quality-levels';
   import ScraperControls from './ScraperControls.svelte';
 
-  // Props (Svelte 5 runes mode — matches PlayerShell)
+  // Phase 7 — minimal structural types for Video.js track lists.
+  // Video.js's own typings don't expose indexed access (`list[i]`);
+  // we cast through these inline shapes to access `.label`, `.language`,
+  // `.enabled`, `.mode`, and `.kind` without losing type safety on
+  // the values we actually read.
+  type VjsAudioTrack = { label?: string; language?: string; enabled: boolean };
+  type VjsTextTrack = { label?: string; language?: string; mode: string; kind: string };
+  type VjsAudioTrackList = { length: number; [i: number]: VjsAudioTrack | undefined } &
+    { addEventListener: (evt: string, fn: () => void) => void };
+  type VjsTextTrackList = { length: number; [i: number]: VjsTextTrack | undefined } &
+    { addEventListener: (evt: string, fn: () => void) => void };
+
+  // ============================================================
+  // Props
+  // ============================================================
+
   let {
     title = 'Direct Play',
     subtitle = 'Scanning high-speed servers…',
@@ -34,7 +57,13 @@
     contentType = 'movie' as 'movie' | 'series' | 'anime',
     season = undefined as number | undefined,
     episode = undefined as number | undefined,
-    mediaWorkerUrl = 'http://127.0.0.1:8787',
+    /**
+     * Phase 7 — production media-worker URL. `null` in production
+     * without MAVERO_MEDIA_WORKER_URL configured (no implicit
+     * localhost fallback). The dev path falls back to
+     * `http://127.0.0.1:3000` via +page.server.ts.
+     */
+    mediaWorkerUrl = null as string | null,
   }: {
     title?: string;
     subtitle?: string;
@@ -42,14 +71,26 @@
     contentType?: 'movie' | 'series' | 'anime';
     season?: number | undefined;
     episode?: number | undefined;
-    mediaWorkerUrl?: string;
+    mediaWorkerUrl?: string | null;
   } = $props();
 
   const dispatch = createEventDispatcher<{ exit: void; streamselected: { url: string; provider: string } }>();
 
-  // Provider state — driven by SSE events.
-  type ProviderStatus = 'scanning' | 'success' | 'failed';
-  type ProviderCard = { name: string; status: ProviderStatus; streamUrl?: string; error?: string };
+  // ============================================================
+  // Provider state (driven by SSE events)
+  // ============================================================
+
+  // Phase 7 — honest provider states. `unavailable` is a typed state
+  // distinct from `failed`: it means "the provider adapter itself is
+  // not implemented" (UNSUPPORTED), not "extraction failed at runtime".
+  type ProviderStatus = 'scanning' | 'success' | 'failed' | 'unavailable';
+  type ProviderCard = {
+    name: string;
+    status: ProviderStatus;
+    streamUrl?: string;
+    streamType?: 'hls' | 'mp4';
+    error?: string;
+  };
 
   let providers = $state<ProviderCard[]>([
     { name: 'VidSrc', status: 'scanning' },
@@ -58,20 +99,33 @@
     { name: 'SLast', status: 'scanning' },
   ]);
 
-  // Extracted streams collected from SSE.
-  let extractedStreams: { provider: string; url: string; type: string }[] = [];
+  // Extracted streams collected from SSE (only successes with valid URLs).
+  let extractedStreams: { provider: string; url: string; type: 'hls' | 'mp4' }[] = [];
 
-  // Scan completion state
+  // Scan completion state.
   let scanComplete = $state(false);
 
-  // Phase 3/4: Native player state
-  type ActiveStream = { provider: string; url: string; type: string } | null;
+  // ============================================================
+  // Player state
+  // ============================================================
+
+  type ActiveStream = { provider: string; url: string; type: 'hls' | 'mp4' } | null;
   let activeStream = $state<ActiveStream>(null);
+
+  // The DOM <video> element — bound via `bind:this`. Video.js wraps it.
   let videoElement = $state<HTMLVideoElement | null>(null);
-  let hlsInstance: Hls | null = null;
+
+  // The Video.js player instance — the SINGLE playback owner.
+  let playerInstance: Player | null = null;
+
+  // Generation token — bumped on every source switch so a slow
+  // initialization for source A is invalidated when the source
+  // switches to B (race-condition guard, spec §17).
+  let playerGeneration = 0;
+
   let playerError = $state<string>('');
 
-  // Phase 4: Playback tracking state
+  // Playback tracking state — driven by Video.js events.
   let isPlaying = $state(false);
   let currentTime = $state(0);
   let duration = $state(0);
@@ -80,21 +134,27 @@
   let showControls = $state(true);
   let controlsTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // Phase 4: HLS feature state
-  let qualities = $state<Level[]>([]);
-  let currentLevel = $state(-1);
-  let audioTracksList = $state<MediaPlaylist[]>([]);
+  // Phase 7 — Video.js quality / audio / subtitle state. Replaces the
+  // old hls.js-specific `Level[]` / `MediaPlaylist[]` arrays.
+  let qualities = $state<{ height: number; bitrate: number; name?: string; index: number }[]>([]);
+  let currentLevel = $state(-1); // -1 = Auto
+  let audioTracks = $state<{ id: number; name?: string; lang?: string; enabled: boolean }[]>([]);
   let currentAudioTrack = $state(-1);
-  let subtitleTracksList = $state<MediaPlaylist[]>([]);
-  let currentSubtitleTrack = $state(-1);
+  let subtitleTracks = $state<{ id: number; name?: string; lang?: string; mode: string }[]>([]);
+  let currentSubtitleTrack = $state(-1); // -1 = Off
 
-  // Phase 4: Source switcher modal
+  // Phase 7 — Source switcher modal + pending seek for seamless restore.
   let showSourceSwitcher = $state(false);
+  let pendingSeekPosition: number | undefined = undefined;
 
   let eventSource: EventSource | null = null;
 
+  // Track whether Video.js has been registered with the quality-levels
+  // plugin (register once per page load).
+  let qualityLevelsRegistered = false;
+
   // ============================================================
-  // Phase 4: Controls visibility (inactivity timer)
+  // Controls visibility (inactivity timer)
   // ============================================================
 
   function revealControls() {
@@ -113,101 +173,248 @@
   }
 
   // ============================================================
-  // Phase 3/4: HLS player lifecycle
+  // Video.js player lifecycle — SINGLE authoritative effect
   // ============================================================
 
   /**
-   * Initializes the HLS player for the given stream URL.
-   * Uses hls.js for browsers that don't support native HLS (Chrome, Firefox).
-   * Falls back to native HLS for Safari.
-   * Phase 4: Populates quality/audio/subtitle track arrays from hls.js APIs.
-   * Phase 4: Supports seekPosition param for seamless source switching.
+   * Maps an ExtractResult type to the Video.js source type.
+   *   * hls → 'application/vnd.apple.mpegurl' (VHS handles it)
+   *   * mp4 → 'video/mp4'
    */
-  function initPlayer(streamUrl: string, seekPosition?: number): void {
+  function videojsSourceType(streamType: 'hls' | 'mp4'): string {
+    return streamType === 'hls' ? 'application/vnd.apple.mpegurl' : 'video/mp4';
+  }
+
+  /**
+   * Initializes the Video.js player for the given stream URL.
+   *
+   * This is the SINGLE player-init path. Called by the $effect below
+   * when BOTH `activeStream` and `videoElement` are truthy.
+   *
+   * Race protection: bumps `playerGeneration` and captures the local
+   * generation. Any async continuation (loadstart, loadedmetadata) is
+   * discarded if the generation has advanced by the time it fires
+   * (source switched in the meantime).
+   */
+  function initPlayer(streamUrl: string, streamType: 'hls' | 'mp4', seekPosition?: number): void {
     destroyPlayer();
-
     if (!videoElement) return;
-
     playerError = '';
 
-    if (Hls.isSupported()) {
-      hlsInstance = new Hls();
-      hlsInstance.loadSource(streamUrl);
-      hlsInstance.attachMedia(videoElement);
-
-      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-        // Phase 4: Populate HLS feature arrays.
-        qualities = hlsInstance?.levels ?? [];
-        audioTracksList = hlsInstance?.audioTracks ?? [];
-        subtitleTracksList = hlsInstance?.subtitleTracks ?? [];
-        currentLevel = -1; // Auto
-        currentAudioTrack = hlsInstance?.audioTrack ?? -1;
-        currentSubtitleTrack = hlsInstance?.subtitleTrack ?? -1;
-
-        // Phase 4: Seamless source switching — restore seek position.
-        if (seekPosition !== undefined && seekPosition > 0 && videoElement) {
-          // Wait for the video to be ready before seeking.
-          const onLoadedData = () => {
-            if (videoElement) {
-              videoElement.currentTime = Math.min(seekPosition, (videoElement.duration || seekPosition) - 2);
-            }
-            void videoElement?.play().catch(() => {});
-            videoElement?.removeEventListener('loadeddata', onLoadedData);
-          };
-          videoElement.addEventListener('loadeddata', onLoadedData);
-        } else {
-          void videoElement?.play().catch(() => {});
-        }
-      });
-
-      hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
-        audioTracksList = hlsInstance?.audioTracks ?? [];
-        currentAudioTrack = hlsInstance?.audioTrack ?? -1;
-      });
-
-      hlsInstance.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
-        subtitleTracksList = hlsInstance?.subtitleTracks ?? [];
-        currentSubtitleTrack = hlsInstance?.subtitleTrack ?? -1;
-      });
-
-      hlsInstance.on(Hls.Events.ERROR, (_event: unknown, data: ErrorData) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              hlsInstance?.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hlsInstance?.recoverMediaError();
-              break;
-            default:
-              playerError = 'Stream playback failed. Try another source.';
-              destroyPlayer();
-              break;
-          }
-        }
-      });
-    } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
-      videoElement.src = streamUrl;
-      void videoElement.play().catch(() => {});
-    } else {
-      playerError = 'HLS playback is not supported in this browser.';
+    // Register the quality-levels plugin once per page (idempotent).
+    if (!qualityLevelsRegistered) {
+      try {
+        videojs.registerPlugin('qualityLevels', qualityLevelsPlugin);
+      } catch {
+        // Already registered — safe to ignore.
+      }
+      qualityLevelsRegistered = true;
     }
+
+    const generation = ++playerGeneration;
+
+    const player = videojs(videoElement, {
+      controls: false, // custom OTT overlay
+      autoplay: false, // we call play() manually after metadata
+      preload: 'auto',
+      fluid: true,
+      html5: {
+        vhs: {
+          // VHS (Video.js HTTP Streaming) — the built-in HLS engine.
+          overrideNative: true,
+          enableLowInitialPlaylist: true,
+        },
+      },
+    }) as Player;
+
+    playerInstance = player;
+
+    // Load the source — Video.js / VHS handles HLS, native handles MP4.
+    player.src({ src: streamUrl, type: videojsSourceType(streamType) });
+
+    // ============================================================
+    // Player event listeners — drive the playback-tracking state
+    // ============================================================
+
+    player.on('play', () => {
+      if (generation !== playerGeneration) return;
+      isPlaying = true;
+      revealControls();
+    });
+    player.on('pause', () => {
+      if (generation !== playerGeneration) return;
+      isPlaying = false;
+      showControls = true;
+      if (controlsTimer) clearTimeout(controlsTimer);
+    });
+    player.on('timeupdate', () => {
+      if (generation !== playerGeneration) return;
+      currentTime = player.currentTime() ?? 0;
+      const bufferedEnd = player.bufferedEnd();
+      buffered = Number.isFinite(bufferedEnd) ? bufferedEnd : 0;
+    });
+    player.on('durationchange', () => {
+      if (generation !== playerGeneration) return;
+      const d = player.duration() ?? 0;
+      duration = Number.isFinite(d) ? d : 0;
+    });
+    player.on('loadedmetadata', () => {
+      if (generation !== playerGeneration) return;
+      const d = player.duration() ?? 0;
+      duration = Number.isFinite(d) ? d : 0;
+    });
+    player.on('volumechange', () => {
+      if (generation !== playerGeneration) return;
+      muted = player.muted() ?? false;
+    });
+    player.on('ended', () => {
+      if (generation !== playerGeneration) return;
+      isPlaying = false;
+      showControls = true;
+    });
+
+    // ============================================================
+    // Quality levels (HLS via VHS) — videojs-contrib-quality-levels
+    // ============================================================
+
+    const setupQualityLevels = () => {
+      if (generation !== playerGeneration) return;
+      try {
+        const qlPlugin = (player as unknown as { qualityLevels?: () => { length: number; getLevel: (i: number) => { height?: number; bitrate?: number } | null } | undefined }).qualityLevels?.();
+        if (!qlPlugin) return;
+        qualities = [];
+        for (let i = 0; i < qlPlugin.length; i++) {
+          const level = qlPlugin.getLevel(i);
+          if (!level) continue;
+          qualities.push({
+            height: level.height || 0,
+            bitrate: level.bitrate || 0,
+            index: i,
+            name: level.height ? `${level.height}p` : `Level ${i + 1}`,
+          });
+        }
+      } catch {
+        qualities = [];
+      }
+    };
+    player.on('loadedmetadata', setupQualityLevels);
+
+    // ============================================================
+    // Audio tracks (HLS via VHS) — Video.js audioTrack API
+    // ============================================================
+
+    const setupAudioTracks = () => {
+      if (generation !== playerGeneration) return;
+      try {
+        const tracks = player.audioTracks?.() as unknown as VjsAudioTrackList | undefined;
+        if (!tracks) return;
+        audioTracks = [];
+        for (let i = 0; i < tracks.length; i++) {
+          const t = tracks[i];
+          if (!t) continue;
+          audioTracks.push({
+            id: i,
+            name: t.label || t.language || `Track ${i + 1}`,
+            lang: t.language,
+            enabled: t.enabled,
+          });
+        }
+        const enabled = audioTracks.find((t) => t.enabled);
+        currentAudioTrack = enabled ? enabled.id : -1;
+      } catch {
+        audioTracks = [];
+      }
+    };
+    player.on('loadedmetadata', setupAudioTracks);
+    player.audioTracks?.()?.addEventListener('change', setupAudioTracks);
+
+    // ============================================================
+    // Text tracks (subtitles) — Video.js textTrack API
+    // ============================================================
+
+    const setupTextTracks = () => {
+      if (generation !== playerGeneration) return;
+      try {
+        const tracks = player.textTracks?.() as unknown as VjsTextTrackList | undefined;
+        if (!tracks) return;
+        subtitleTracks = [];
+        // Skip the VHS-generated metadata track (if any).
+        for (let i = 0; i < tracks.length; i++) {
+          const t = tracks[i];
+          if (!t) continue;
+          if (t.kind === 'metadata') continue;
+          subtitleTracks.push({
+            id: i,
+            name: t.label || t.language || `Subtitle ${i + 1}`,
+            lang: t.language,
+            mode: t.mode,
+          });
+        }
+        const showing = subtitleTracks.find((t) => t.mode === 'showing');
+        currentSubtitleTrack = showing ? showing.id : -1;
+      } catch {
+        subtitleTracks = [];
+      }
+    };
+    player.on('loadedmetadata', setupTextTracks);
+    player.textTracks?.()?.addEventListener('change', setupTextTracks);
+
+    // ============================================================
+    // Fatal error handling — show recovery UI, do NOT auto-retry
+    // (spec §16: "Do not immediately convert every failure into an
+    // FFmpeg job").
+    // ============================================================
+    player.on('error', () => {
+      if (generation !== playerGeneration) return;
+      const err = player.error();
+      if (!err) return;
+      // Phase 7 — honest fatal-error state. The user chooses another
+      // source; no silent retry, no FFmpeg fallback.
+      playerError = 'This source could not be played directly. Try another source.';
+    });
+
+    // ============================================================
+    // Restore seek position + start playback (autoplay-safe)
+    // ============================================================
+    player.one('loadedmetadata', () => {
+      if (generation !== playerGeneration) return;
+      if (seekPosition !== undefined && seekPosition > 0) {
+        const safeSeek = Math.min(seekPosition, (player.duration() || seekPosition) - 2);
+        if (safeSeek > 0) {
+          try { player.currentTime(safeSeek); } catch { /* not ready yet */ }
+        }
+      }
+      // Autoplay — handle browser autoplay restrictions gracefully.
+      // Autoplay failure is NOT a source failure (spec §26).
+      const p = player.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          // Autoplay succeeded — playback state will be set by 'play' event.
+        }).catch(() => {
+          // Autoplay blocked (browser policy) — show controls so the
+          // user can press play. This is NOT a player error.
+          showControls = true;
+          isPlaying = false;
+        });
+      }
+    });
   }
 
   function destroyPlayer(): void {
-    if (hlsInstance) {
-      hlsInstance.destroy();
-      hlsInstance = null;
+    if (playerInstance) {
+      try {
+        playerInstance.dispose();
+      } catch {
+        // Already disposed — no-op.
+      }
+      playerInstance = null;
     }
-    if (videoElement) {
-      videoElement.removeAttribute('src');
-      videoElement.load();
-    }
-    playerError = '';
-    // Phase 4: Reset HLS feature state.
+    // Bump generation so any in-flight async continuation is invalidated.
+    playerGeneration++;
+    // Reset all playback state.
     qualities = [];
-    audioTracksList = [];
-    subtitleTracksList = [];
+    audioTracks = [];
+    subtitleTracks = [];
     currentLevel = -1;
     currentAudioTrack = -1;
     currentSubtitleTrack = -1;
@@ -217,66 +424,104 @@
     buffered = 0;
   }
 
-  // $effect — initialize the player when both activeStream and videoElement become truthy.
+  /**
+   * SINGLE authoritative player-initialization effect.
+   *
+   * Replaces the Phase 4 code which had TWO competing `$effect()`
+   * blocks both reacting to `activeStream + videoElement`. The new
+   * effect is the only place a Video.js player is constructed.
+   *
+   * The `pendingSeekPosition` module-level variable is read + cleared
+   * synchronously inside the effect so a source switch can request a
+   * seek restore without triggering a second effect.
+   */
   $effect(() => {
     if (activeStream && videoElement) {
-      initPlayer(activeStream.url);
+      const seek = pendingSeekPosition;
+      pendingSeekPosition = undefined;
+      initPlayer(activeStream.url, activeStream.type, seek);
     }
   });
 
   // ============================================================
-  // Phase 4: Video event listeners
-  // ============================================================
-
-  function handlePlay() { isPlaying = true; revealControls(); }
-  function handlePause() { isPlaying = false; showControls = true; if (controlsTimer) clearTimeout(controlsTimer); }
-  function handleTimeUpdate() { if (videoElement) { currentTime = videoElement.currentTime; buffered = videoElement.buffered.length > 0 ? videoElement.buffered.end(videoElement.buffered.length - 1) : 0; } }
-  function handleDurationChange() { if (videoElement) duration = videoElement.duration; }
-  function handleVolumeChange() { if (videoElement) muted = videoElement.muted; }
-  function handleLoadedMetadata() { if (videoElement) duration = videoElement.duration; }
-  function handleEnded() { isPlaying = false; showControls = true; }
-
-  // ============================================================
-  // Phase 4: Control handlers (from ScraperControls)
+  // Control handlers (called by ScraperControls)
   // ============================================================
 
   function togglePlay() {
-    if (!videoElement) return;
-    if (videoElement.paused) void videoElement.play();
-    else videoElement.pause();
+    if (!playerInstance) return;
+    if (playerInstance.paused()) {
+      const p = playerInstance.play();
+      if (p && typeof p.then === 'function') {
+        p.catch(() => { /* autoplay blocked — not a fatal error */ });
+      }
+    } else {
+      playerInstance.pause();
+    }
   }
 
   function seekTo(time: number) {
-    if (videoElement) videoElement.currentTime = time;
+    if (playerInstance) {
+      try { playerInstance.currentTime(time); } catch { /* not ready */ }
+    }
   }
 
   function toggleMute() {
-    if (videoElement) videoElement.muted = !videoElement.muted;
+    if (playerInstance) {
+      const muted = !playerInstance.muted();
+      playerInstance.muted(muted);
+    }
   }
 
   function setQuality(level: number) {
-    if (hlsInstance) {
-      hlsInstance.currentLevel = level;
+    // Phase 7 — Video.js / VHS quality selection via
+    // videojs-contrib-quality-levels. -1 = Auto.
+    try {
+      const ql = (playerInstance as unknown as { qualityLevels?: () => { length: number; getLevel: (i: number) => { height?: number; bitrate?: number; enabled?: boolean } | null } | undefined })?.qualityLevels?.();
+      if (!ql) return;
+      for (let i = 0; i < ql.length; i++) {
+        const l = ql.getLevel(i);
+        if (!l) continue;
+        l.enabled = level === -1 || i === level;
+      }
       currentLevel = level;
+    } catch {
+      /* quality API not available for this source */
     }
   }
 
   function setAudioTrack(trackId: number) {
-    if (hlsInstance) {
-      hlsInstance.audioTrack = trackId;
+    try {
+      const tracks = playerInstance?.audioTracks?.() as unknown as VjsAudioTrackList | undefined;
+      if (!tracks) return;
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i];
+        if (!t) continue;
+        t.enabled = i === trackId;
+      }
       currentAudioTrack = trackId;
+    } catch {
+      /* audio track API not available */
     }
   }
 
   function setSubtitleTrack(trackId: number) {
-    if (hlsInstance) {
-      hlsInstance.subtitleTrack = trackId;
+    try {
+      const tracks = playerInstance?.textTracks?.() as unknown as VjsTextTrackList | undefined;
+      if (!tracks) return;
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i];
+        if (!t) continue;
+        if (t.kind === 'metadata') continue;
+        t.mode = i === trackId ? 'showing' : 'disabled';
+      }
       currentSubtitleTrack = trackId;
+    } catch {
+      /* text track API not available */
     }
   }
 
   // ============================================================
-  // Phase 4: Seamless source switching
+  // Source switching (seamless — preserves seek position)
   // ============================================================
 
   function openSourceSwitcher() {
@@ -287,33 +532,18 @@
     showSourceSwitcher = false;
   }
 
-  function switchToStream(stream: { provider: string; url: string; type: string }) {
-    // Capture current playback position.
-    const savedTime = videoElement?.currentTime ?? 0;
+  function switchToStream(stream: { provider: string; url: string; type: 'hls' | 'mp4' }) {
+    // Capture current playback position BEFORE destroying the player.
+    const savedTime = playerInstance?.currentTime() ?? 0;
 
-    // Close the switcher.
     showSourceSwitcher = false;
 
-    // Update the active stream (triggers the $effect to re-init the player).
-    // Pass the saved time for seamless seek restoration.
-    activeStream = { provider: stream.provider, url: stream.url, type: stream.type };
-
-    // The $effect will call initPlayer(activeStream.url) — but we need
-    // to pass the seekPosition. We use a module-level variable for that.
+    // Setting `activeStream` triggers the SINGLE $effect, which calls
+    // `initPlayer` with the seek position. The pending position is
+    // stashed in a module-level variable so the effect picks it up.
     pendingSeekPosition = savedTime > 5 ? savedTime : 0;
+    activeStream = { provider: stream.provider, url: stream.url, type: stream.type };
   }
-
-  // Module-level variable to pass seek position into the $effect.
-  let pendingSeekPosition: number | undefined = undefined;
-
-  // Override the $effect to include seek position.
-  $effect(() => {
-    if (activeStream && videoElement) {
-      const seek = pendingSeekPosition;
-      pendingSeekPosition = undefined;
-      initPlayer(activeStream.url, seek);
-    }
-  });
 
   // ============================================================
   // Event handlers
@@ -333,9 +563,86 @@
     }
   }
 
+  /**
+   * Phase 7 — Honest provider-card status. A card only becomes
+   * `success` when the SSE event carried BOTH a valid URL AND a
+   * supported media type ('hls' or 'mp4'). An `UNSUPPORTED` typed
+   * error renders the card as `unavailable`.
+   */
+  function applySseResult(data: {
+    provider?: string;
+    status?: string;
+    stream?: { url?: string; type?: string };
+    error?: string;
+    category?: string;
+  }): void {
+    if (!data.provider || !data.status) return;
+    const providerName = data.provider;
+
+    if (data.status === 'success' && data.stream?.url) {
+      // Validate the URL is well-formed and the type is playable.
+      const streamUrl = data.stream.url;
+      try {
+        const u = new URL(streamUrl);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          throw new Error('non-http(s) URL');
+        }
+      } catch {
+        providers = providers.map((p) =>
+          p.name === providerName
+            ? { ...p, status: 'failed', error: 'No playable stream' }
+            : p
+        );
+        return;
+      }
+      const streamType = data.stream.type === 'mp4' ? 'mp4' : 'hls';
+      extractedStreams.push({ provider: providerName, url: streamUrl, type: streamType });
+      providers = providers.map((p) =>
+        p.name === providerName
+          ? { ...p, status: 'success', streamUrl, streamType }
+          : p
+      );
+    } else if (data.status === 'failed') {
+      // Phase 7 — map UNSUPPORTED to the `unavailable` card state.
+      const isUnsupported = data.category === 'UNSUPPORTED';
+      const safeMessage = safeUserMessage(data.category, data.error);
+      providers = providers.map((p) =>
+        p.name === providerName
+          ? { ...p, status: isUnsupported ? 'unavailable' : 'failed', error: safeMessage }
+          : p
+      );
+    }
+  }
+
+  /**
+   * Maps a typed error category to a safe user-facing message.
+   * NEVER exposes provider internals / stack traces / signed URLs.
+   */
+  function safeUserMessage(category: string | undefined, fallback: string | undefined): string {
+    switch (category) {
+      case 'UNSUPPORTED':
+        return 'Extractor unavailable';
+      case 'NETWORK_ERROR':
+        return 'Connection failed';
+      case 'HTTP_ERROR':
+        return 'Provider unavailable';
+      case 'NO_STREAM':
+        return 'No playable stream';
+      case 'PARSER_ERROR':
+        return 'No playable stream';
+      case 'PLAYBACK_UNAVAILABLE':
+        return 'No playable stream';
+      default:
+        return fallback ?? 'Failed';
+    }
+  }
+
   function selectStream(stream: { provider: string; url: string }) {
+    // Find the stream type from the extractedStreams array.
+    const extracted = extractedStreams.find((s) => s.url === stream.url);
+    const type: 'hls' | 'mp4' = extracted?.type ?? 'hls';
     dispatch('streamselected', stream);
-    activeStream = { provider: stream.provider, url: stream.url, type: 'hls' };
+    activeStream = { provider: stream.provider, url: stream.url, type };
   }
 
   function backToScan() {
@@ -344,6 +651,18 @@
   }
 
   onMount(() => {
+    // Phase 7 — typed "Extractor unavailable" state when no worker URL
+    // is configured. NO implicit localhost fallback in production.
+    if (!mediaWorkerUrl) {
+      providers = providers.map((p) => ({
+        ...p,
+        status: 'unavailable' as const,
+        error: 'Extractor unavailable',
+      }));
+      scanComplete = true;
+      return;
+    }
+
     const params = new URLSearchParams({
       tmdbId: contentId,
       mediaType: contentType === 'anime' ? 'series' : contentType,
@@ -364,25 +683,12 @@
     eventSource.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
-
         if (data.status === 'done') {
           scanComplete = true;
           cleanupEventSource();
           return;
         }
-
-        if (data.provider && data.status) {
-          providers = providers.map((p) => {
-            if (p.name !== data.provider) return p;
-            if (data.status === 'success' && data.stream) {
-              extractedStreams.push({ provider: data.provider, url: data.stream.url, type: data.stream.type });
-              return { ...p, status: 'success' as const, streamUrl: data.stream.url };
-            } else if (data.status === 'failed') {
-              return { ...p, status: 'failed' as const, error: data.error ?? 'Failed' };
-            }
-            return p;
-          });
-        }
+        applySseResult(data);
       } catch {
         // Malformed SSE event — ignore.
       }
@@ -391,7 +697,7 @@
     eventSource.onerror = () => {
       if (!scanComplete) {
         providers = providers.map((p) =>
-          p.status === 'scanning' ? { ...p, status: 'failed' as const, error: 'Connection lost' } : p
+          p.status === 'scanning' ? { ...p, status: 'failed' as const, error: 'Connection failed' } : p
         );
         scanComplete = true;
       }
@@ -437,7 +743,7 @@
             <div class="provider-icon">
               {#if provider.status === 'success'}
                 <Check size={18} />
-              {:else if provider.status === 'failed'}
+              {:else if provider.status === 'failed' || provider.status === 'unavailable'}
                 <X size={18} />
               {:else}
                 <LoaderCircle size={18} />
@@ -445,7 +751,13 @@
             </div>
             <span class="provider-name">{provider.name}</span>
             <span class="provider-status-label">
-              {provider.status === 'success' ? 'Ready' : provider.status === 'failed' ? 'Failed' : 'Scanning…'}
+              {provider.status === 'success'
+                ? 'Ready'
+                : provider.status === 'failed'
+                  ? 'Failed'
+                  : provider.status === 'unavailable'
+                    ? 'Unavailable'
+                    : 'Scanning…'}
             </span>
           </button>
         {/each}
@@ -453,7 +765,7 @@
     </div>
   {:else}
     <!-- ==================================================== -->
-    <!-- Native HLS player view (custom controls — no native controls) -->
+    <!-- Video.js player view (custom OTT controls)             -->
     <!-- ==================================================== -->
     <div class="player-container" role="region" aria-label="Video player" onpointermove={revealControls} onpointerleave={hideControlsNow}>
       <button class="back-to-scan-btn" type="button" aria-label="Back to source list" onclick={backToScan}>
@@ -468,22 +780,20 @@
         </div>
       {/if}
 
-      <video
-        bind:this={videoElement}
-        playsinline
-        autoplay
-        class="native-video"
-        aria-label={`${activeStream?.provider ?? ''} stream playback`}
-        onplay={handlePlay}
-        onpause={handlePause}
-        ontimeupdate={handleTimeUpdate}
-        ondurationchange={handleDurationChange}
-        onvolumechange={handleVolumeChange}
-        onloadedmetadata={handleLoadedMetadata}
-        onended={handleEnded}
-      ></video>
+      <!-- Phase 7: Video.js wraps this <video> element. The data-setup
+           is intentionally minimal — Video.js is constructed
+           imperatively in initPlayer() so the effect can pass
+           generation-aware options. -->
+      <div data-vjs-player class="video-js-host">
+        <video
+          bind:this={videoElement}
+          playsinline
+          class="video-js vjs-default-skin vjs-big-play-centered"
+          aria-label={`${activeStream?.provider ?? ''} stream playback`}
+        ></video>
+      </div>
 
-      <!-- Phase 4: Custom OTT control overlay -->
+      <!-- Custom OTT control overlay (preserved from Phase 4) -->
       <ScraperControls
         {isPlaying}
         {currentTime}
@@ -491,14 +801,14 @@
         {buffered}
         {muted}
         {showControls}
-        qualities={qualities as { height: number; bitrate: number; name?: string }[]}
+        qualities={qualities}
         {currentLevel}
-        audioTracks={audioTracksList as { id: number; name?: string; lang?: string }[]}
+        {audioTracks}
         {currentAudioTrack}
-        subtitleTracks={subtitleTracksList as { id: number; name?: string; lang?: string }[]}
+        {subtitleTracks}
         {currentSubtitleTrack}
         activeProvider={activeStream?.provider ?? ''}
-        mediaWorkerUrl={mediaWorkerUrl}
+        mediaWorkerUrl={mediaWorkerUrl ?? ''}
         activeStreamUrl={activeStream?.url ?? ''}
         ontoggleplay={togglePlay}
         onseek={seekTo}
@@ -510,7 +820,7 @@
       />
     </div>
 
-    <!-- Phase 4: Source switcher modal -->
+    <!-- Phase 7: Source switcher modal -->
     {#if showSourceSwitcher}
       <div class="source-switcher-overlay" role="presentation" onclick={closeSourceSwitcher} onkeydown={(e) => { if (e.key === 'Escape') closeSourceSwitcher(); }}>
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -598,20 +908,26 @@
   .provider-card[data-status='scanning'] { border-color: rgba(255, 255, 255, .12); }
   .provider-card[data-status='success'] { border-color: rgba(53, 214, 143, .35); background: rgba(53, 214, 143, .04); }
   .provider-card[data-status='failed'] { border-color: rgba(255, 176, 32, .35); background: rgba(255, 176, 32, .04); }
+  .provider-card[data-status='unavailable'] { border-color: rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .02); opacity: .7; }
   .provider-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); }
   .provider-card[data-status='scanning'] .provider-icon { color: var(--ink-soft); }
   .provider-card[data-status='scanning'] .provider-icon :global(svg) { animation: scraper-spin 1s linear infinite; }
   .provider-card[data-status='success'] .provider-icon { color: var(--success); border-color: rgba(53, 214, 143, .3); }
   .provider-card[data-status='failed'] .provider-icon { color: var(--warning); border-color: rgba(255, 176, 32, .3); }
+  .provider-card[data-status='unavailable'] .provider-icon { color: var(--muted); border-color: var(--line); }
   @keyframes scraper-spin { to { transform: rotate(360deg); } }
   .provider-name { font-size: .72rem; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
   .provider-status-label { font-size: .58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .provider-card[data-status='success'] .provider-status-label { color: var(--success); }
   .provider-card[data-status='failed'] .provider-status-label { color: var(--warning); }
+  .provider-card[data-status='unavailable'] .provider-status-label { color: var(--muted); }
 
-  /* Phase 4: Native player view */
+  /* Phase 7: Video.js player view */
   .player-container { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #000; }
-  .native-video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .video-js-host { width: 100%; height: 100%; }
+  /* Video.js takes over the <video> — the vjs classes style it. */
+  :global(.video-js) { width: 100%; height: 100%; }
+  :global(.vjs-tech) { object-fit: contain; }
 
   .back-to-scan-btn { position: absolute; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: rgba(0, 0, 0, .6); color: var(--ink-soft); font-size: .7rem; font-weight: 700; cursor: pointer; backdrop-filter: blur(8px); z-index: 20; transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .back-to-scan-btn:hover { background: rgba(0, 0, 0, .8); color: var(--ink); }
@@ -622,7 +938,7 @@
   .retry-btn { padding: 10px 18px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: rgba(255, 255, 255, .06); color: var(--ink); font-size: .72rem; font-weight: 700; cursor: pointer; transition: background var(--motion-fast) var(--ease-out); }
   .retry-btn:hover { background: rgba(255, 255, 255, .1); }
 
-  /* Phase 4: Source switcher modal */
+  /* Phase 7: Source switcher modal */
   .source-switcher-overlay { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .7); backdrop-filter: blur(8px); }
   .source-switcher-panel { width: min(100%, 380px); max-height: 70vh; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); padding: 16px; }
   .switcher-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }

@@ -762,4 +762,166 @@ changed (the field is not asserted in any existing test).
 
 ---
 
+## Phase 7: Scraper + Direct Player Complete Repair
+
+**Date**: 2026-09-19
+**Branch**: main
+**Starting HEAD**: `40fcf81` (Phase 6)
+
+### Objective
+
+Repair the production Scraper Mode / Direct Player implementation.
+Fix every root cause discovered in audit:
+1. Production media-worker URL not wired into ScraperViewport (silent localhost fallback).
+2. Player was `<video>` + hls.js, not Video.js.
+3. Duplicate `$effect()` player initialization (race condition).
+4. Extractor too simplistic (single regex match).
+5. Fake provider success (Cineverse/SLast returned Mux test streams).
+6. SSE lifecycle had a no-op disconnect handler (no AbortController).
+7. Dockerfile port (8787) inconsistent with config default (3000).
+8. CORS wildcard accepted silently in production.
+
+### Changes Made
+
+#### Backend — Typed extractor contract (`apps/media-worker/src/scrapers/types.ts`)
+
+- New typed failure categories: `NETWORK_ERROR`, `HTTP_ERROR`,
+  `PARSER_ERROR`, `NO_STREAM`, `UNSUPPORTED`, `PLAYBACK_UNAVAILABLE`.
+  Drives distinct, honest user-facing UX states.
+- `ExtractResult` now requires `type: 'hls' | 'mp4'` (no `'embed'`).
+- New `fetchEmbedPage()` with AbortSignal support, spoofed Chrome
+  headers, 1 MiB body cap, 15s timeout.
+- New multi-stage `findMediaUrl()` parser (replaces the old
+  `findM3u8Url` regex matcher):
+  - Stage A: absolute https/http URLs ending in `.m3u8`.
+  - Stage B: absolute https/http URLs ending in `.mp4`.
+  - Stage C: escaped JavaScript strings (`\/\/` → `/`).
+  - Stage D: JSON-embedded URLs via script-block walking.
+  - Stage E: protocol-relative URLs (`//host/path`).
+  - Stage F: origin-relative URLs (`/path`).
+  - Each candidate validated via `new URL()` — signed query params preserved.
+- New `validateSseRequest()` — validates tmdbId (1–64 chars),
+  mediaType (movie|series), season/episode (positive integers)
+  BEFORE launching scrapers.
+- `dummyExtract()` kept for test fixtures only — NOT registered in
+  production `scrapers` array.
+
+#### Backend — Provider honesty (`cineverse.ts` + `slast.ts`)
+
+- Both now return typed `UNSUPPORTED` errors — they NEVER return fake
+  Mux test streams. The UI renders them as "Unavailable" rather than
+  "Ready".
+
+#### Backend — SSE hardening (`apps/media-worker/src/server.ts`)
+
+- `handleExtractStream` rewritten with:
+  - Request validation via `validateSseRequest()`.
+  - AbortController shared by all scraper fetches — aborted on
+    client disconnect (no zombie fetches).
+  - `doneSent` guard ensures `done` event emitted exactly once.
+  - Safe-write guard prevents uncaught EPIPE on late results after
+    client disconnect (no zombie writes).
+  - Bounded diagnostic logging (provider, stage, duration, type,
+    category) — NEVER logs signed URLs or secrets.
+  - `x-accel-buffering: no` header to prevent proxy buffering.
+
+#### Backend — Production fail-closed CORS (`apps/media-worker/src/config.ts`)
+
+- `assertConfigUsable()` now throws if `NODE_ENV=production` AND
+  `ALLOWED_ORIGIN` is unset or `*`. The worker refuses to boot with
+  permissive wildcard CORS in production.
+- Dev mode (NODE_ENV !== 'production') still allows `*` with a warning.
+
+#### Backend — Dockerfile port alignment (`apps/media-worker/Dockerfile`)
+
+- `ENV PORT=3000` (was `8787`).
+- `EXPOSE 3000` (was `8787`).
+- `HEALTHCHECK` fallback uses `3000` (was `8787`).
+- All four touch-points (config.ts, Dockerfile, README, DEPLOYMENT.md)
+  now describe the same port behavior.
+
+#### Frontend — Production worker URL wiring (`+page.server.ts` + `PlayerShell.svelte`)
+
+- `+page.server.ts` returns `mediaWorkerUrl: string | null` in page data:
+  - `MAVERO_MEDIA_WORKER_URL` env var (https only) when configured.
+  - Dev-only fallback to `http://127.0.0.1:3000` when `dev` is true.
+  - Production returns `null` when unset — NO implicit localhost fallback.
+- `PlayerShell.svelte` accepts `mediaWorkerUrl` prop and passes it down.
+- `ScraperViewport.svelte` accepts `mediaWorkerUrl: string | null`
+  (was `string` with `127.0.0.1:8787` default). When `null`, the
+  component renders all provider cards as `unavailable` with the
+  typed message "Extractor unavailable".
+
+#### Frontend — Video.js player (`ScraperViewport.svelte`)
+
+- Replaced `<video>` + hls.js with **Video.js v8.24.1** — the single
+  playback owner. VHS (Video.js HTTP Streaming) handles HLS natively;
+  no parallel hls.js instance is ever created on the same media element.
+- Added `videojs-contrib-quality-levels` for HLS quality selection
+  (replaces hls.js `currentLevel` API).
+- Audio tracks via Video.js `audioTracks()` API.
+- Subtitles via Video.js `textTracks()` API (skips VHS metadata tracks).
+- Source type handling: `application/vnd.apple.mpegurl` for HLS,
+  `video/mp4` for MP4 — accurate, no `type='hls'` for everything.
+
+#### Frontend — Single authoritative player lifecycle
+
+- ONE `$effect` initializes the player (was two competing effects).
+- Generation token (`playerGeneration`) invalidates stale async
+  continuations from a previous source — race-condition guard.
+- `destroyPlayer()` disposes the Video.js player + bumps the generation.
+- `switchToStream()` captures `currentTime` BEFORE destroying, passes
+  it through `pendingSeekPosition` to the effect.
+- Autoplay handled with `play().catch()` — autoplay failure is NOT a
+  source failure (shows controls so user can press play).
+- Fatal playback error shows recovery UI: "This source could not be
+  played directly. Try another source." — no silent retry, no FFmpeg
+  fallback.
+
+#### Frontend — Honest provider cards (`ScraperViewport.svelte`)
+
+- New `unavailable` card state (distinct from `failed`).
+- `applySseResult()` validates the URL via `new URL()` and only marks
+  the card `success` when the URL is valid AND the type is supported.
+- UNSUPPORTED typed errors render the card as `unavailable`.
+- `safeUserMessage()` maps typed categories to user-facing messages
+  (no provider internals / stack traces / signed URLs).
+
+#### Tests — Phase 7 regression suite (`scripts/phase7_scraper_repair_test.ts`)
+
+- 83 checks across 7 categories: Configuration (9), SSE validation (7),
+  Extraction (9), Provider honesty (11), Player (16), Controls (9),
+  Security (15), SSE lifecycle live (5).
+- Covers all 47 spec §31 acceptance checks + variants.
+- Live SSE test spawns the real worker on a random port, exercises
+  the endpoint, and verifies done-once + disconnect-cleanup.
+
+### Validation
+
+- `pnpm check`: 0 errors, 0 warnings
+- media-worker `npx tsc --noEmit`: exit 0
+- `pnpm build`: success
+- `git diff --check`: clean
+- New regression suite: 83/83 checks pass
+- Existing media-worker hardening tests: 9 + 28 + 37 checks pass (no regressions)
+
+### Constraints Preserved
+
+- ✅ PlaybackManager NOT modified
+- ✅ `+page.svelte` only minimally touched (one new prop)
+- ✅ PlayerShell iframe logic NOT modified
+- ✅ Existing PlayerControls.svelte NOT modified
+- ✅ Existing compat token / FFmpeg compatibility path NOT modified
+- ✅ SSRF protections (`validate.ts`, `ip-guard.ts`) NOT modified
+- ✅ Signed compat token validation NOT modified
+- ✅ Media Worker job limits / output limits NOT modified
+- ✅ Provider health atomic RPCs NOT modified
+- ✅ No arbitrary proxy introduced (worker only fetches hardcoded
+  provider embed URLs)
+- ✅ No secret exposed to client (only `mediaWorkerUrl` URL string)
+- ✅ Direct-first playback (no auto-routing through FFmpeg)
+- ✅ Existing FFmpeg download proxy (`/api/download`) preserved
+
+---
+
 *This worklog is updated as each phase of the Scraper Mode feature is completed.*

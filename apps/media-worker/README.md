@@ -34,7 +34,7 @@ native player (Video.js HlsJsVideo). No iframe, no external player, no proxy.
 |---|---|---|
 | `MAVERO_COMPAT_SESSION_SECRET` | yes | HMAC secret shared with the app (same value as the app's `MAVERO_COMPAT_SESSION_SECRET`) |
 | `PUBLIC_BASE_URL` | prod | https base URL browsers use for HLS output (e.g. `https://media.example.com`) |
-| `ALLOWED_ORIGIN` | prod | Strict CORS origin — set to the app's exact HTTPS origin (e.g. `https://mavero1.netlify.app`). Falls back to `*` (permissive) when unset, with a boot warning. |
+| `ALLOWED_ORIGIN` | prod | Strict CORS origin — set to the app's exact HTTPS origin (e.g. `https://mavero1.netlify.app`). In production (`NODE_ENV=production`), an unset or wildcard `*` value causes the worker to REFUSE TO BOOT (fail-closed). In development, falls back to `*` with a warning. |
 | `PORT` | no | default `3000` (Render injects this dynamically) |
 | `MEDIA_WORKER_MAX_CONCURRENT_JOBS` | no | default `2` |
 | `MEDIA_WORKER_MAX_QUEUE_DEPTH` | no | default `4` |

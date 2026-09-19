@@ -40,7 +40,7 @@ import { JobRegistry, type Job } from './jobs.js';
 import { runFfmpeg, streamHlsToPipe } from './ffmpeg.js';
 import { logger } from './logger.js';
 import { scrapers } from './scrapers/index.js';
-import type { ExtractParams } from './scrapers/types.js';
+import { validateSseRequest, type ExtractError, type ExtractParams } from './scrapers/types.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const JOB_TIMEOUT_MS = 4 * 3600 * 1000; // hard wall-clock cap per ffmpeg run
@@ -251,7 +251,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
   }
 
   /**
-   * Phase 2 — SSE extraction stream endpoint.
+   * Phase 7 — SSE extraction stream endpoint (hardened).
    *
    * GET /api/extract/stream?tmdbId=123&mediaType=movie&season=1&episode=1
    *
@@ -260,28 +260,40 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
    * scrapers have settled, a final {"status":"done"} event is sent and
    * the connection is closed.
    *
-   * The SSE protocol uses `Content-Type: text/event-stream` with each
-   * event formatted as `data: <json>\n\n`. The frontend uses
-   * EventSource to consume these events.
+   * HARDENING (Phase 7):
+   *   * Request validation (spec §19) — rejects malformed `tmdbId` /
+   *     `mediaType` / `season` / `episode` BEFORE launching scrapers.
+   *   * AbortController (spec §18) — a client disconnect aborts every
+   *     in-flight scraper fetch via the shared signal.
+   *   * No duplicate `done` — the `doneSent` guard ensures the final
+   *     event is emitted exactly once.
+   *   * No zombie writes — every `writeEvent` checks `response.writableEnded`
+   *     and `aborted` so a late scraper result after the client closed
+   *     the connection is silently dropped (no uncaught EPIPE).
+   *   * Bounded diagnostic logging (spec §24) — safe fields only
+   *     (provider, category, duration, stage), NEVER signed URLs or
+   *     secrets or provider HTML.
    */
   function handleExtractStream(request: IncomingMessage, response: ServerResponse, url: URL): void {
-    const tmdbId = url.searchParams.get('tmdbId') ?? '';
-    const mediaType = url.searchParams.get('mediaType') ?? 'movie';
-    const seasonParam = url.searchParams.get('season');
-    const episodeParam = url.searchParams.get('episode');
-
-    if (!tmdbId) {
+    const validation = validateSseRequest({
+      tmdbId: url.searchParams.get('tmdbId') ?? '',
+      mediaType: url.searchParams.get('mediaType') ?? 'movie',
+      season: url.searchParams.get('season'),
+      episode: url.searchParams.get('episode'),
+    });
+    if (!validation.ok) {
       response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': config.allowedOrigin });
-      response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'tmdbId is required' } }));
+      response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: validation.message } }));
       return;
     }
+    const params: ExtractParams = validation.params;
 
-    const params: ExtractParams = {
-      tmdbId,
-      mediaType: mediaType === 'series' ? 'series' : 'movie',
-      season: seasonParam ? Number(seasonParam) : undefined,
-      episode: episodeParam ? Number(episodeParam) : undefined,
-    };
+    // AbortController shared by every scraper fetch — aborted when the
+    // client closes the EventSource so in-flight fetches stop promptly.
+    const abortController = new AbortController();
+    let aborted = false;
+    let doneSent = false;
+    let responseClosed = false;
 
     // SSE headers + CORS (the SvelteKit frontend connects cross-origin).
     response.writeHead(200, {
@@ -291,42 +303,100 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
       'access-control-allow-origin': config.allowedOrigin,
       'access-control-allow-headers': 'cache-control',
       'access-control-allow-methods': 'GET',
+      // Disable proxy buffering (Render's nginx, Cloudflare, etc.) so
+      // each SSE event flushes immediately — without this, small events
+      // coalesce and the client sees jitter.
+      'x-accel-buffering': 'no',
     });
 
-    // Helper to write an SSE event.
+    // Safe write — drops the event silently if the response is already
+    // ended (client closed the connection). This is the "no zombie
+    // writes" guarantee: a late scraper result after `request.on('close')`
+    // fires cannot trigger an uncaught EPIPE.
     const writeEvent = (data: unknown): void => {
-      response.write(`data: ${JSON.stringify(data)}\n\n`);
+      if (responseClosed || response.writableEnded || aborted) return;
+      try {
+        response.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        // Socket already torn down — mark closed so subsequent writes no-op.
+        responseClosed = true;
+      }
     };
 
-    // Execute all scrapers concurrently. Each .then() fires the moment
-    // that scraper resolves — the result is immediately written to the
-    // response stream.
+    // Execute all scrapers concurrently with the shared abort signal.
+    const startedAt = Date.now();
     const promises = scrapers.map((scraper) => {
-      return scraper.extract(params)
+      const scraperStart = Date.now();
+      return scraper
+        .extract(params, { signal: abortController.signal })
         .then((result) => {
+          const durationMs = Date.now() - scraperStart;
+          // Bounded diagnostic — provider name, stage, duration, type only.
+          // NEVER log the extracted URL (it may be signed / sensitive).
+          logger.info('scraper.result', {
+            provider: scraper.name,
+            stage: 'completed',
+            durationMs,
+            type: result.type,
+          });
           writeEvent({ provider: scraper.name, status: 'success', stream: result });
         })
         .catch((error: unknown) => {
-          const errorMsg = error instanceof Error ? error.message : (error && typeof error === 'object' && 'error' in error) ? String((error as { error: unknown }).error) : 'Unknown error';
-          writeEvent({ provider: scraper.name, status: 'failed', error: errorMsg });
+          const durationMs = Date.now() - scraperStart;
+          const err = error as Partial<ExtractError>;
+          const category = (err && typeof err === 'object' && 'category' in err)
+            ? String(err.category)
+            : 'PARSER_ERROR';
+          const safeMessage = (err && typeof err === 'object' && 'error' in err)
+            ? String(err.error)
+            : 'extraction failed';
+          // Bounded diagnostic — category + safe message only.
+          logger.info('scraper.result', {
+            provider: scraper.name,
+            stage: 'failed',
+            durationMs,
+            category,
+          });
+          writeEvent({
+            provider: scraper.name,
+            status: 'failed',
+            error: safeMessage,
+            category,
+          });
         });
     });
 
-    // When all scrapers have settled, send the done event and close.
-    Promise.allSettled(promises).then(() => {
+    // Final `done` event — guarded so it can only be emitted ONCE.
+    const sendDone = (): void => {
+      if (doneSent || aborted) return;
+      doneSent = true;
       writeEvent({ status: 'done' });
-      response.end();
-    }).catch(() => {
-      // Should never happen (allSettled never rejects), but guard anyway.
-      writeEvent({ status: 'done' });
-      response.end();
-    });
+      try {
+        if (!response.writableEnded) response.end();
+      } catch {
+        // Already torn down — no-op.
+      }
+    };
 
-    // Handle client disconnect (EventSource close).
+    Promise.allSettled(promises)
+      .then(() => {
+        logger.info('scraper.batch', { stage: 'done', durationMs: Date.now() - startedAt });
+        sendDone();
+      })
+      .catch(() => sendDone());
+
+    // Client disconnect — abort every scraper fetch and mark the
+    // response closed so no further writes are attempted. This is
+    // the "no zombie connections" guarantee.
     request.on('close', () => {
-      // The response is already finished or will be — nothing to clean up
-      // since the scrapers are fire-and-forget promises (no cancellation
-      // in Phase 2; future phases may add AbortController).
+      aborted = true;
+      abortController.abort();
+      responseClosed = true;
+      try {
+        if (!response.writableEnded) response.end();
+      } catch {
+        // Already closed — no-op.
+      }
     });
   }
 

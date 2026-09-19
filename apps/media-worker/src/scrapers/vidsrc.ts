@@ -1,31 +1,34 @@
 import {
   buildEmbedUrl,
   fetchEmbedPage,
-  findM3u8Url,
+  findMediaUrl,
+  type ExtractError,
   type ExtractParams,
   type ExtractResult,
 } from './types.js';
 
 /**
- * Phase 5 — VidSrc real scraper.
+ * VidSrc real extractor — fetches the embed page with spoofed
+ * browser headers, parses the response for an m3u8 / mp4 URL using
+ * the multi-stage `findMediaUrl` parser, and returns a typed
+ * `ExtractResult`.
  *
- * Fetches the VidSrc embed page (https://vidsrc.sh/embed/movie/$id or
- * https://vidsrc.sh/embed/tv/$id/$season/$episode), spoofs a Chrome
- * User-Agent + Referer + Accept-Language to bypass basic blocks, and
- * parses the returned HTML / packed JavaScript for the raw .m3u8
- * master playlist URL.
+ * NEVER throws synchronously — every failure path rejects with a
+ * typed `ExtractError` so the SSE handler's `.catch()` can convert
+ * it into a `{"status":"failed"}` event without crashing the stream.
  *
- * The function NEVER throws synchronously — every failure path
- * REJECTS with an `ExtractError` so the SSE handler in `server.ts`
- * can convert the rejection into a `{"status":"failed"}` event
- * without crashing the stream (Phase 2 contract preserved).
+ * Honors the caller's `AbortSignal` so a client disconnect cancels
+ * the in-flight fetch.
  */
 
 const PROVIDER = 'VidSrc';
 const EMBED_BASE = 'https://vidsrc.sh/embed/movie/$id';
 const EMBED_BASE_TV = 'https://vidsrc.sh/embed/tv/$id/$season/$episode';
 
-export async function extract(params: ExtractParams): Promise<ExtractResult> {
+export async function extract(
+  params: ExtractParams,
+  options: { signal?: AbortSignal } = {},
+): Promise<ExtractResult> {
   const embedUrl =
     params.mediaType === 'series'
       ? buildEmbedUrl(EMBED_BASE_TV, params)
@@ -33,22 +36,21 @@ export async function extract(params: ExtractParams): Promise<ExtractResult> {
 
   let body: string;
   try {
-    body = await fetchEmbedPage({ url: embedUrl });
+    body = await fetchEmbedPage({ url: embedUrl, signal: options.signal });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'network error';
-    return Promise.reject({ provider: PROVIDER, error: `fetch failed: ${message}` });
+    // fetchEmbedPage rejects with an ExtractError-shaped object.
+    const err = error as ExtractError;
+    throw { provider: PROVIDER, category: err.category ?? 'NETWORK_ERROR', error: err.error ?? 'fetch failed' } satisfies ExtractError;
   }
 
-  // VidSrc packs the playlist URL inside JavaScript blobs — look for any
-  // .m3u8 occurrence and normalize to an absolute https URL.
-  const streamUrl = findM3u8Url(body, new URL(embedUrl).origin);
-  if (!streamUrl) {
-    return Promise.reject({ provider: PROVIDER, error: 'no m3u8 found in embed page' });
+  const parsed = findMediaUrl(body, new URL(embedUrl).origin);
+  if (!parsed) {
+    throw { provider: PROVIDER, category: 'NO_STREAM', error: 'no playable stream found in embed page' } satisfies ExtractError;
   }
 
   return {
     provider: PROVIDER,
-    url: streamUrl,
-    type: 'hls',
+    url: parsed.url,
+    type: parsed.type,
   };
 }

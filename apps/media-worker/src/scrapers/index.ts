@@ -1,9 +1,16 @@
 /**
- * Phase 2 — Scraper registry.
+ * Scraper registry — collects all production-ready scrapers so the
+ * SSE endpoint can execute them concurrently.
  *
- * Collects all scraper modules so the SSE endpoint can execute them
- * concurrently. Each entry has a display name (matching the frontend
- * provider card names) and an extract function.
+ * DESIGN CONTRACTS (Phase 7):
+ *   * Every entry's `extract()` MUST accept `(params, options)` where
+ *     `options.signal` is the SSE handler's `AbortSignal` so a client
+ *     disconnect cancels in-flight fetches.
+ *   * NO production entry calls `dummyExtract()` — that function is
+ *     TEST-FIXTURE-ONLY and lives in `types.ts` for isolation.
+ *   * Providers that do not have a real extractor return a typed
+ *     `UNSUPPORTED` error — they are still registered so the UI can
+ *     render them as "Unavailable" rather than silently omitting them.
  */
 
 import * as vidsrc from './vidsrc.js';
@@ -14,7 +21,7 @@ import type { ExtractParams, ExtractResult } from './types.js';
 
 export type ScraperEntry = {
   name: string;
-  extract: (params: ExtractParams) => Promise<ExtractResult>;
+  extract: (params: ExtractParams, options?: { signal?: AbortSignal }) => Promise<ExtractResult>;
 };
 
 export const scrapers: ScraperEntry[] = [

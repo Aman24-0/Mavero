@@ -7,6 +7,8 @@ import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { detailVerdict } from '$lib/server/content/search-classify';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { hasStreamEligibleAddons } from '$lib/server/streaming/stremio/mavero-player-source';
+import { mediaWorkerBaseUrl } from '$lib/server/streaming/stremio/session-env';
+import { dev } from '$app/environment';
 import type { PageServerLoad } from './$types';
 
 // Phase 2-E (audit PERF-005) — Watch page server load parallelization.
@@ -148,7 +150,23 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
       ? seasonEpisodes
       : fallbackEpisodes;
 
-    return { item: toMediaItem(item), streamingConfig, episodes, maveroPlayerAvailable };
+    // Phase 7 — wire the production media-worker URL into the page data
+    // so ScraperViewport can connect to the real worker instead of
+    // falling back to localhost. Resolution rules:
+    //   1. `MAVERO_MEDIA_WORKER_URL` env var (https only — the
+    //      `mediaWorkerBaseUrl()` helper rejects http and non-URL values).
+    //   2. In dev only, fall back to `http://127.0.0.1:3000` so a
+    //      developer can run the worker locally without configuration.
+    //   3. In production, NO implicit fallback — `mediaWorkerUrl` is
+    //      `null` and the ScraperViewport renders a typed
+    //      "Extractor unavailable" state instead of silently dialing
+    //      localhost. This is the "no silent production localhost"
+    //      guarantee.
+    const configuredWorkerUrl = mediaWorkerBaseUrl();
+    const mediaWorkerUrl: string | null = configuredWorkerUrl
+      ?? (dev ? 'http://127.0.0.1:3000' : null);
+
+    return { item: toMediaItem(item), streamingConfig, episodes, maveroPlayerAvailable, mediaWorkerUrl };
   } catch {
     throw error(404, 'Title not found');
   }

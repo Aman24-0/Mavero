@@ -1,33 +1,56 @@
 /**
- * Phase 2 / Phase 5 — Scraper extraction engine: shared types & helpers.
+ * Phase 7 — Scraper extraction engine: shared types & helpers.
  *
- * Phase 2 shipped a `dummyExtract()` helper that simulated a 2–8 second
- * network delay and resolved with a mock HLS URL. Phase 5 keeps the SAME
- * public types so the SSE endpoint in `server.ts` is untouched, but the
- * dummy helper is now used only by the `cineverse.ts` and `slast.ts`
- * scrapers — `vidsrc.ts` and `vidlink.ts` perform REAL HTTP extraction.
- *
- * DESIGN CONTRACTS (Phase 5):
+ * DESIGN CONTRACTS:
  *   * A scraper NEVER throws synchronously — it ALWAYS returns a Promise
  *     that RESOLVES with an `ExtractResult` on success or REJECTS with an
  *     `ExtractError` on failure. The SSE handler's `.catch()` turns a
  *     rejection into a `{"status":"failed"}` event without crashing the
- *     stream (Phase 2 contract preserved).
- *   * All network I/O is bounded (timeout + max-response-size) to keep
- *     a single slow provider from stalling the SSE stream.
- *   * Spoofed headers (UA / Referer / Accept-Language) live in the
- *     shared `fetchEmbedPage` helper so every provider sends the same
- *     shape — providers only add their own `Referer` if needed.
+ *     stream.
+ *   * All network I/O is bounded (timeout + max-response-size) and
+ *     cancellable via `AbortSignal` so a client disconnect stops work.
+ *   * Spoofed headers (UA / Referer / Accept-Language) live in the shared
+ *     `fetchEmbedPage` helper so every provider sends the same shape.
+ *   * Failure categories are typed (NETWORK_ERROR, HTTP_ERROR,
+ *     PARSER_ERROR, NO_STREAM, UNSUPPORTED, PLAYBACK_UNAVAILABLE) so the
+ *     frontend can render honest, distinct UX states.
+ *   * `dummyExtract()` is TEST-FIXTURE-ONLY — it is NOT registered in
+ *     the production scraper registry (`index.ts`).
  */
+
+// ============================================================
+// Result + error model
+// ============================================================
+
+export type ExtractMediaType = 'hls' | 'mp4';
 
 export type ExtractResult = {
   provider: string;
   url: string;
-  type: 'hls' | 'mp4' | 'embed';
+  /** Accurate media type — drives the Video.js source type. */
+  type: ExtractMediaType;
+  /** Optional descriptive title (display only). */
+  title?: string;
 };
+
+/**
+ * Typed failure categories. The frontend maps these to distinct,
+ * honest user-facing states ("Extractor unavailable", "Connection
+ * failed", "No playable stream", etc.) — never a raw stack trace.
+ */
+export type ExtractErrorCategory =
+  | 'NETWORK_ERROR' // fetch rejected (DNS, timeout, TCP reset, abort)
+  | 'HTTP_ERROR' // server replied non-2xx
+  | 'PARSER_ERROR' // body fetched but no media URL could be extracted
+  | 'NO_STREAM' // parser ran, no candidate found
+  | 'UNSUPPORTED' // provider adapter not implemented for this path
+  | 'PLAYBACK_UNAVAILABLE'; // URL extracted but type is not directly playable
 
 export type ExtractError = {
   provider: string;
+  /** Typed category — drives the frontend's failure UX. */
+  category: ExtractErrorCategory;
+  /** Safe, generic, user-facing message (no provider internals). */
   error: string;
 };
 
@@ -39,7 +62,7 @@ export type ExtractParams = {
 };
 
 // ============================================================
-// Phase 5 — Real extraction helpers (shared HTTP + regex utils)
+// Bounded HTTP fetch helper
 // ============================================================
 
 const DEFAULT_USER_AGENT =
@@ -59,31 +82,36 @@ export type FetchEmbedOptions = {
   url: string;
   /** Optional Referer to spoof (defaults to the embed URL's origin). */
   referer?: string;
+  /** Optional abort signal — cancels the in-flight fetch. */
+  signal?: AbortSignal;
 };
 
 /**
- * Phase 5 — Shared HTTP fetch helper used by every real scraper.
+ * Bounded `fetch` against a provider's embed URL using spoofed browser
+ * headers so basic User-Agent / Referer / language checks pass.
  *
- * Performs a bounded `fetch` against a provider's embed URL using
- * spoofed browser headers so basic User-Agent / Referer / language
- * checks pass. Resolves with the decoded UTF-8 response body, or
- * rejects with a descriptive error string.
- *
- * The body is hard-capped at `MAX_EMBED_BYTES` to prevent a malicious
- * or buggy provider from streaming gigabytes into the worker.
+ * Resolves with the decoded UTF-8 response body, or rejects with an
+ * `ExtractError`-shaped object (category + safe message) — never a
+ * raw `Error`. The body is hard-capped at `MAX_EMBED_BYTES` to prevent
+ * a malicious or buggy provider from streaming gigabytes into the
+ * worker.
  */
 export async function fetchEmbedPage(options: FetchEmbedOptions): Promise<string> {
   const url = options.url;
   const referer = options.referer ?? new URL(url).origin + '/';
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EMBED_FETCH_TIMEOUT_MS);
+  // Compose the abort signal: caller-supplied + a wall-clock timeout.
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), EMBED_FETCH_TIMEOUT_MS);
+  const composedSignal = options.signal
+    ? composeAbortSignals(options.signal, timeoutController.signal)
+    : timeoutController.signal;
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: 'GET',
-      signal: controller.signal,
+      signal: composedSignal,
       redirect: 'follow',
       headers: {
         'user-agent': DEFAULT_USER_AGENT,
@@ -97,22 +125,30 @@ export async function fetchEmbedPage(options: FetchEmbedOptions): Promise<string
     });
   } catch (error) {
     clearTimeout(timer);
+    const aborted = (error instanceof Error && error.name === 'AbortError') || composedSignal.aborted;
     const reason = error instanceof Error ? error.message : 'network error';
-    throw new Error(`fetch failed: ${reason}`);
+    throw {
+      provider: '',
+      category: aborted ? 'NETWORK_ERROR' : 'NETWORK_ERROR',
+      error: aborted ? 'request cancelled' : `network: ${reason}`,
+    } satisfies ExtractError;
   }
   clearTimeout(timer);
 
   if (!response.ok) {
-    throw new Error(`http ${response.status}`);
+    throw {
+      provider: '',
+      category: 'HTTP_ERROR',
+      error: `http ${response.status}`,
+    } satisfies ExtractError;
   }
 
   // Bounded read — accumulate up to MAX_EMBED_BYTES then abort.
   const reader = response.body?.getReader();
   if (!reader) {
-    // Fall back to .text() — still bounded by the server's response size.
     const text = await response.text();
     if (text.length > MAX_EMBED_BYTES) {
-      throw new Error('response too large');
+      throw { provider: '', category: 'PARSER_ERROR', error: 'response too large' } satisfies ExtractError;
     }
     return text;
   }
@@ -127,7 +163,7 @@ export async function fetchEmbedPage(options: FetchEmbedOptions): Promise<string
       total += value.byteLength;
       if (total > MAX_EMBED_BYTES) {
         try { await reader.cancel(); } catch { /* ignore */ }
-        throw new Error('response too large');
+        throw { provider: '', category: 'PARSER_ERROR', error: 'response too large' } satisfies ExtractError;
       }
       body += decoder.decode(value, { stream: true });
     }
@@ -137,58 +173,196 @@ export async function fetchEmbedPage(options: FetchEmbedOptions): Promise<string
 }
 
 /**
- * Phase 5 — Extracts the first .m3u8 playlist URL from a blob of HTML
- * or packed JavaScript using a permissive regex. The matcher accepts:
- *
- *   * `https://host/path/playlist.m3u8` (absolute)
- *   * `//host/path/playlist.m3u8`     (protocol-relative)
- *   * `/path/playlist.m3u8`           (origin-relative — needs `origin`)
- *
- * Returns the FIRST match (providers normally only ship one master
- * playlist; if there are several, the first is the master). Returns
- * `null` when no m3u8 URL is present — the caller rejects with an
- * `ExtractError` in that case.
+ * Composes multiple AbortSignals into one — aborts when ANY input
+ * signal aborts. Uses the native `AbortSignal.any()` when available
+ * (Node 20+), falls back to manual propagation otherwise.
  */
-export function findM3u8Url(body: string, origin: string): string | null {
-  // Match any of: https://..., //host/path, or /path ending in .m3u8
-  // (optionally followed by a query string).
-  const pattern = /(?:https?:)?(?:\\?\/\\?\/)?[\w.-]+(?:\.[\w.-]+)+(?:\/[^\s"'`<>\\]*)?\.m3u8[^\s"'`<>\\]*/g;
-  // The pattern above may be too greedy in some JS-packed bodies. Try
-  // the most-specific absolute-URL pattern first.
-  const absolute = /https?:\/\/[^\s"'`<>\\)]+\.m3u8(?:\?[^\s"'`<>\\)]*)?/i.exec(body);
-  if (absolute && absolute[0]) {
-    return normalizeM3u8Url(absolute[0], origin);
+function composeAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  // Modern Node 20+ has AbortSignal.any().
+  const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === 'function') return anyFn(signals);
+  // Fallback — compose manually.
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  return controller.signal;
+}
+
+// ============================================================
+// Multi-stage media-URL parser (replaces the old findM3u8Url)
+// ============================================================
+
+export type ParsedMediaUrl = {
+  url: string;
+  type: ExtractMediaType;
+};
+
+/**
+ * Multi-stage parser that locates the BEST candidate media URL in a
+ * blob of provider HTML / packed JavaScript / JSON config.
+ *
+ * Stage order (most-specific → most-permissive):
+ *   A. Absolute https/http URLs ending in `.m3u8` (preserves ?query).
+ *   B. Absolute https/http URLs ending in `.mp4` (preserves ?query).
+ *   C. Escaped JavaScript strings — `https:\/\/host\/path\/master.m3u8?...`
+ *      (unescapes `\/` to `/` before validating).
+ *   D. JSON-embedded values — extract string values from `<script>`
+ *      blocks containing JSON, then look for URL-shaped values.
+ *   E. Protocol-relative URLs — `//host/path/.m3u8` → `https://...`.
+ *   F. Origin-relative URLs — `/path/.m3u8` → `${origin}/path/.m3u8`.
+ *
+ * Each candidate is validated via `new URL()` and must have http(s)
+ * protocol + a non-empty path. Signed query parameters are PRESERVED.
+ *
+ * Returns `null` when no candidate is found (caller then rejects with
+ * a typed `NO_STREAM` error). Does NOT select arbitrary `.m3u8` strings
+ * from unrelated analytics/config data when stronger media evidence is
+ * available (absolute URL match wins over escaped/JSON match).
+ */
+export function findMediaUrl(body: string, origin: string): ParsedMediaUrl | null {
+  // Stage A: absolute https/http m3u8 (highest confidence — direct URL).
+  const absoluteM3u8 = matchAbsoluteUrl(body, '.m3u8');
+  if (absoluteM3u8) return { url: absoluteM3u8, type: 'hls' };
+
+  // Stage B: absolute https/http mp4.
+  const absoluteMp4 = matchAbsoluteUrl(body, '.mp4');
+  if (absoluteMp4) return { url: absoluteMp4, type: 'mp4' };
+
+  // Stage C: escaped JavaScript strings — unescape `\/` to `/` then
+  // re-run the absolute-URL matcher on the unescaped body.
+  const unescaped = body.replace(/\\\//g, '/');
+  if (unescaped !== body) {
+    const escapedM3u8 = matchAbsoluteUrl(unescaped, '.m3u8');
+    if (escapedM3u8) return { url: escapedM3u8, type: 'hls' };
+    const escapedMp4 = matchAbsoluteUrl(unescaped, '.mp4');
+    if (escapedMp4) return { url: escapedMp4, type: 'mp4' };
   }
 
-  // Fall back to protocol-relative / origin-relative detection.
-  const rel = /(?:["'(=]|^)(\/\/[^\s"'`<>\\)]+\.m3u8(?:\?[^\s"'`<>\\)]*)?)/.exec(body);
-  if (rel && rel[1]) {
-    return normalizeM3u8Url(rel[1], origin);
+  // Stage D: JSON-embedded values — extract string values from
+  // <script> JSON blocks and look for URL-shaped values.
+  const jsonUrls = extractJsonStringUrls(body);
+  for (const candidate of jsonUrls) {
+    if (candidate.endsWith('.m3u8') || candidate.includes('.m3u8?')) {
+      const validated = validateAbsolute(candidate);
+      if (validated) return { url: validated, type: 'hls' };
+    }
+    if (candidate.endsWith('.mp4') || candidate.includes('.mp4?')) {
+      const validated = validateAbsolute(candidate);
+      if (validated) return { url: validated, type: 'mp4' };
+    }
   }
 
-  const path = /(?:["'(=]|^)(\/[^\s"'`<>\\)]+\.m3u8(?:\?[^\s"'`<>\\)]*)?)/.exec(body);
-  if (path && path[1]) {
-    return normalizeM3u8Url(path[1], origin);
-  }
+  // Stage E: protocol-relative URLs — `//host/path/.m3u8`.
+  const protoRel = matchProtocolRelative(body, '.m3u8');
+  if (protoRel) return { url: protoRel, type: 'hls' };
+  const protoRelMp4 = matchProtocolRelative(body, '.mp4');
+  if (protoRelMp4) return { url: protoRelMp4, type: 'mp4' };
 
-  void pattern; // (kept for documentation; not relied on by default path)
+  // Stage F: origin-relative URLs — `/path/.m3u8` → `${origin}/path/.m3u8`.
+  const originRel = matchOriginRelative(body, origin, '.m3u8');
+  if (originRel) return { url: originRel, type: 'hls' };
+  const originRelMp4 = matchOriginRelative(body, origin, '.mp4');
+  if (originRelMp4) return { url: originRelMp4, type: 'mp4' };
+
   return null;
 }
 
-/** Normalizes a matched URL to an absolute https URL. */
-function normalizeM3u8Url(raw: string, origin: string): string {
-  const cleaned = raw.replace(/\\(?!\/)/g, '').replace(/^["'(]+|["')]+$/g, '');
-  if (/^https?:\/\//i.test(cleaned)) return cleaned;
-  if (cleaned.startsWith('//')) return `https:${cleaned}`;
-  // Origin-relative.
-  const base = origin.replace(/\/+$/, '');
-  return `${base}${cleaned.startsWith('/') ? cleaned : `/${cleaned}`}`;
+/** Matches absolute https/http URLs ending in the given extension (with optional ?query). */
+function matchAbsoluteUrl(body: string, ext: string): string | null {
+  const pattern = new RegExp(`https?:\\/\\/[^\\s"'\\\`<>)]+\\${ext}(?:\\?[^\\s"'\\\`<>)]*)?`, 'i');
+  const match = pattern.exec(body);
+  if (!match || !match[0]) return null;
+  return validateAbsolute(match[0]);
 }
 
+/** Matches protocol-relative URLs (`//host/path/.ext`). */
+function matchProtocolRelative(body: string, ext: string): string | null {
+  // Look for `//host/path/.ext` preceded by a non-URL boundary (quote, =, (, space).
+  const pattern = new RegExp(`(?:["'(=\\s]|^)(\\/\\/[\\w.-]+(?:\\.[\\w.-]+)+(?:\\/[^\\s"'\\\`<>)]*)?\\${ext}(?:\\?[^\\s"'\\\`<>)]*)?)`, 'i');
+  const match = pattern.exec(body);
+  if (!match || !match[1]) return null;
+  const url = `https:${match[1]}`;
+  return validateAbsolute(url);
+}
+
+/** Matches origin-relative URLs (`/path/.ext`) and resolves against `origin`. */
+function matchOriginRelative(body: string, origin: string, ext: string): string | null {
+  const pattern = new RegExp(`(?:["'(=\\s]|^)(\\/(?:[^\\s"'\\\`<>)]*\\${ext})(?:\\?[^\\s"'\\\`<>)]*)?)`, 'i');
+  const match = pattern.exec(body);
+  if (!match || !match[1]) return null;
+  const base = origin.replace(/\/+$/, '');
+  const url = `${base}${match[1].startsWith('/') ? match[1] : `/${match[1]}`}`;
+  return validateAbsolute(url);
+}
+
+/** Extracts string-valued URLs from `<script>` JSON blocks. */
+function extractJsonStringUrls(body: string): string[] {
+  const urls: string[] = [];
+  // Find all <script>...</script> blocks.
+  const scriptPattern = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let scriptMatch: RegExpExecArray | null;
+  while ((scriptMatch = scriptPattern.exec(body)) !== null) {
+    const scriptContent = scriptMatch[1] ?? '';
+    if (!scriptContent) continue;
+    // Extract quoted string values that look like URLs.
+    const stringPattern = /["'`]([^"'`\s<>]+https?:\/\/[^"'`\s<>]+)["'`]/g;
+    let stringMatch: RegExpExecArray | null;
+    while ((stringMatch = stringPattern.exec(scriptContent)) !== null) {
+      if (stringMatch[1]) urls.push(stringMatch[1]);
+    }
+    // Also try parsing the script content as JSON and walk for URL values.
+    try {
+      const parsed = JSON.parse(scriptContent.trim());
+      walkJsonForUrls(parsed, urls);
+    } catch {
+      // Not JSON — the regex pass above already covered it.
+    }
+  }
+  return urls;
+}
+
+/** Walks a parsed JSON tree collecting URL-shaped string values. */
+function walkJsonForUrls(node: unknown, out: string[]): void {
+  if (typeof node === 'string' && /https?:\/\//.test(node) && node.length < 2048) {
+    out.push(node);
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) walkJsonForUrls(item, out);
+    return;
+  }
+  if (node && typeof node === 'object') {
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      walkJsonForUrls(value, out);
+    }
+  }
+}
+
+/** Validates an absolute URL — must be http(s) with a non-empty path. */
+function validateAbsolute(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!parsed.pathname || parsed.pathname === '/') return null;
+    // Preserve the full href (including signed ?query params).
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// Embed URL builder
+// ============================================================
+
 /**
- * Phase 5 — Builds a provider embed URL from a path template and params.
- * Replaces the placeholders `$id`, `$season`, `$episode` in the template
- * (mirrors the spec example: `https://vidsrc.sh/embed/movie/$id`).
+ * Builds a provider embed URL from a path template and params.
+ * Replaces the placeholders `$id`, `$season`, `$episode` in the template.
  */
 export function buildEmbedUrl(baseUrl: string, params: ExtractParams): string {
   let out = baseUrl;
@@ -207,29 +381,74 @@ export function buildEmbedUrl(baseUrl: string, params: ExtractParams): string {
 }
 
 // ============================================================
-// Phase 2 — dummyExtract (kept for cineverse.ts + slast.ts)
+// SSE request validation (spec §19)
+// ============================================================
+
+export type SseRequestValidation =
+  | { ok: true; params: ExtractParams }
+  | { ok: false; code: 'INVALID_TMDB' | 'INVALID_TYPE' | 'INVALID_SEASON' | 'INVALID_EPISODE'; message: string };
+
+/**
+ * Validates the SSE extraction request query parameters BEFORE any
+ * scraper work is launched. Rejects obviously malformed requests so
+ * the worker doesn't waste concurrency on garbage input.
+ */
+export function validateSseRequest(input: {
+  tmdbId: string;
+  mediaType: string;
+  season?: string | null;
+  episode?: string | null;
+}): SseRequestValidation {
+  const tmdbId = input.tmdbId.trim();
+  if (!tmdbId || tmdbId.length > 64) {
+    return { ok: false, code: 'INVALID_TMDB', message: 'tmdbId must be 1–64 chars' };
+  }
+  if (input.mediaType !== 'movie' && input.mediaType !== 'series') {
+    return { ok: false, code: 'INVALID_TYPE', message: 'mediaType must be movie or series' };
+  }
+  let season: number | undefined;
+  if (input.season !== undefined && input.season !== null && input.season !== '') {
+    const n = Number(input.season);
+    if (!Number.isSafeInteger(n) || n < 1) {
+      return { ok: false, code: 'INVALID_SEASON', message: 'season must be a positive integer' };
+    }
+    season = n;
+  }
+  let episode: number | undefined;
+  if (input.episode !== undefined && input.episode !== null && input.episode !== '') {
+    const n = Number(input.episode);
+    if (!Number.isSafeInteger(n) || n < 1) {
+      return { ok: false, code: 'INVALID_EPISODE', message: 'episode must be a positive integer' };
+    }
+    episode = n;
+  }
+  return { ok: true, params: { tmdbId, mediaType: input.mediaType, season, episode } };
+}
+
+// ============================================================
+// TEST-FIXTURE-ONLY dummy extractor
 // ============================================================
 
 /**
- * Dummy extract helper — still used by the Phase 2 scrapers that have
- * not been promoted to real extraction in Phase 5. Returns a promise
- * that resolves after a randomized 2–8 second delay with a mock
- * ExtractResult, or rejects with an ExtractError (20% failure rate to
- * exercise both card states in the frontend).
+ * TEST FIXTURE ONLY — NOT registered in the production scraper
+ * registry. Used by isolated extraction tests to exercise the SSE
+ * pipeline shape without hitting real providers.
+ *
+ * In production, providers that do not have a real extractor return
+ * a typed `UNSUPPORTED` error — they NEVER call this function.
  */
 export function dummyExtract(
   providerName: string,
   mockUrl: string = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
 ): Promise<ExtractResult> {
-  const delay = 2000 + Math.random() * 6000; // 2–8 seconds
-  const shouldSucceed = Math.random() > 0.2; // 80% success rate
-
+  const delay = 2000 + Math.random() * 6000;
+  const shouldSucceed = Math.random() > 0.2;
   return new Promise((resolve, reject) => {
     setTimeout(() => {
       if (shouldSucceed) {
         resolve({ provider: providerName, url: mockUrl, type: 'hls' });
       } else {
-        reject({ provider: providerName, error: 'No stream found' });
+        reject({ provider: providerName, category: 'NO_STREAM', error: 'no stream found' } satisfies ExtractError);
       }
     }, delay);
   });
