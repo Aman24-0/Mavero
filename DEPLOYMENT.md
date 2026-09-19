@@ -148,6 +148,41 @@ The media worker has its own `/health` endpoint — operators should probe it di
 
 Phase 7B adds only the provider-agnostic Source Resolver and safe playback-resolution endpoint. It does not integrate real third-party streaming providers, call provider APIs, scrape providers, bypass DRM or access controls, activate embeds, forward provider secrets, or implement the Mavero Player. A later approved provider phase must be reviewed separately for security, legal scope, credentials, redirect policy, and runtime behavior.
 
+## Render deployment — media-worker (Phase 6)
+
+The dedicated FFmpeg media-worker (`apps/media-worker/`) is shipped as a
+**Docker web service on Render**. Netlify Functions cannot run it —
+FFmpeg conversions are long-running (minutes), which is incompatible
+with serverless function timeouts.
+
+### Worker-side env vars (Render dashboard)
+
+| Variable | Value |
+|---|---|
+| `MAVERO_COMPAT_SESSION_SECRET` | The SAME secret the Netlify app signs compatibility references with. Mismatched pairs mean every job the app signs is rejected by the worker. |
+| `PUBLIC_BASE_URL` | The worker's own HTTPS URL Render assigns (e.g. `https://mavero-media-worker.onrender.com`). Used to build the HLS playback URL the app's player fetches. |
+| `ALLOWED_ORIGIN` | `https://mavero1.netlify.app` — strict CORS binding. Sent on every `Access-Control-Allow-Origin` header so the worker only accepts browser requests from the real app origin. Falls back to `*` with a boot warning when unset (local development only). |
+| `PORT` | Render injects this dynamically — leave it unset. The worker already honors `process.env.PORT` (default `3000`). |
+
+### App-side env var (Netlify dashboard)
+
+| Variable | Value |
+|---|---|
+| `MAVERO_MEDIA_WORKER_URL` | The Render-assigned HTTPS URL of the media-worker (e.g. `https://mavero-media-worker.onrender.com`). When unset, conversion-required streams degrade to a typed `COMPAT_UNAVAILABLE` state — never faked. |
+
+### CORS contract
+
+The worker's strict CORS binding means:
+- The Netlify app origin (`https://mavero1.netlify.app`) is the ONLY
+  origin allowed to call `/api/extract/stream`, `/api/download`, and
+  the `/hls/*` playback endpoints cross-origin.
+- Browser dev tools on a different origin will see the worker's
+  response headers carry `Access-Control-Allow-Origin: https://mavero1.netlify.app`
+  (NOT `*`).
+- A misconfigured or missing `ALLOWED_ORIGIN` falls back to `*` and
+  prints a boot warning — useful for local development, never
+  acceptable in production.
+
 ## References
 
 [1]: https://docs.netlify.com/build/frameworks/framework-setup-guides/sveltekit/ "Netlify SvelteKit framework setup"

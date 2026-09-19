@@ -158,6 +158,7 @@ function workerConfig(overrides: Partial<WorkerConfig> = {}): WorkerConfig {
     port: 0,
     secret: 'test-secret',
     publicBaseUrl: 'http://127.0.0.1:8787',
+    allowedOrigin: '*',
     maxConcurrentJobs: 0,
     maxQueueDepth: 4,
     maxJobOutputBytes: 1024 * 1024,

@@ -666,4 +666,100 @@ before).
 
 ---
 
+## Phase 6: Deployment Prep & Strict CORS Binding
+
+**Date**: 2026-09-19
+**Branch**: main
+**Starting HEAD**: post-Phase-5.1
+
+### Objective
+
+Prepare the media-worker for production deployment on Render by
+securing the CORS policy (replace the permissive `*` with an
+environment-bound origin) and ensuring port bindings are dynamic
+so Render's injected `PORT` env var is honored.
+
+### Changes Made
+
+#### 1. Backend — strict CORS origin (`apps/media-worker/src/config.ts`)
+
+- Added `allowedOrigin: string` to the `WorkerConfig` type.
+- `loadConfig()` reads `process.env.ALLOWED_ORIGIN` (trimmed). When
+  absent or empty, falls back to `*` (permissive — local dev only).
+- `assertConfigUsable()` prints a loud structured warning when
+  `allowedOrigin === '*'` so an operator shipping to Render without
+  setting `ALLOWED_ORIGIN` notices in the logs.
+
+#### 2. Backend — port default changed to `3000`
+
+- `intEnv('PORT', 3000, 1, 65535)` — was `8787`. Render injects
+  `PORT` dynamically into every Docker web service; the new default
+  matches the conventional container port so the worker binds
+  correctly even when `PORT` is unset (e.g., local Docker runs).
+- The dev server still honors `PORT` if explicitly set.
+
+#### 3. Backend — every CORS header now reads `config.allowedOrigin`
+
+In `apps/media-worker/src/server.ts`, **11** hardcoded
+`'access-control-allow-origin': '*'` occurrences were replaced with
+`'access-control-allow-origin': config.allowedOrigin`:
+
+| Location | Endpoint |
+|---|---|
+| `handleHls` 200 response | HLS playlist / segment serving |
+| `handleHls` 404 fallback | segment-not-yet-written retries |
+| `handleExtractStream` 400 (no tmdbId) | SSE extractor validation |
+| `handleExtractStream` 200 (SSE headers) | SSE extractor stream |
+| `handleDownload` 400 × 3 | download endpoint validation |
+| `handleDownload` 200 (download headers) | FFmpeg download proxy |
+| `OPTIONS /api/download` preflight | CORS preflight |
+| `OPTIONS /api/extract/stream` preflight | CORS preflight |
+| `OPTIONS /hls/*` preflight | CORS preflight |
+
+No new endpoints; no endpoint behavior changed beyond the origin
+header. The boot log now also prints `allowedOrigin` alongside the
+port and `publicBaseUrl` for debugging Render deployments.
+
+#### 4. Test fixture updated
+
+`scripts/phase1_media_worker_hardening_test.ts` constructs a literal
+`WorkerConfig` for the failure-path tests — added `allowedOrigin: '*'`
+to the fixture so the new required field compiles. No test logic
+changed (the field is not asserted in any existing test).
+
+#### 5. Documentation
+
+- **`apps/media-worker/.env.example`** — added `ALLOWED_ORIGIN=` with
+  a usage note, updated `PORT` default comment from `8787` to `3000`.
+- **`apps/media-worker/README.md`** — added `ALLOWED_ORIGIN` to the
+  config table, refreshed the Docker run example to use port 3000
+  and pass `ALLOWED_ORIGIN`, and added a new **"Render deployment
+  (Phase 6)"** section with step-by-step instructions (create
+  service, instance tier, port binding, env vars, health check,
+  app pairing).
+- **`DEPLOYMENT.md`** — added a new top-level **"Render deployment —
+  media-worker (Phase 6)"** section documenting the worker-side
+  env vars (`MAVERO_COMPAT_SESSION_SECRET`, `PUBLIC_BASE_URL`,
+  `ALLOWED_ORIGIN`, `PORT`) and the app-side env var
+  (`MAVERO_MEDIA_WORKER_URL`) on Netlify, plus the CORS contract
+  (only `https://mavero1.netlify.app` is allowed to call the
+  worker cross-origin in production).
+
+### Validation
+
+- `pnpm check`: 0 errors, 0 warnings
+- media-worker `npx tsc --noEmit`: exit 0
+- `git diff --check`: clean
+
+### Constraints Preserved
+
+- ✅ PlaybackManager NOT modified
+- ✅ `+page.svelte` NOT modified
+- ✅ PlayerShell / PlayerViewport / PlayerControls NOT modified
+- ✅ FFmpeg pipeline + scraper extraction logic NOT modified
+- ✅ Existing test suite NOT modified (only the fixture's literal
+  config gained the new required field)
+
+---
+
 *This worklog is updated as each phase of the Scraper Mode feature is completed.*

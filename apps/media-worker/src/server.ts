@@ -240,12 +240,12 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
         // Playlists must not be cached while the encode is in progress;
         // segments are immutable but the URLs expire anyway.
         'cache-control': cleanFile.endsWith('.m3u8') ? 'no-store' : 'private, max-age=3600',
-        'access-control-allow-origin': '*',
+        'access-control-allow-origin': config.allowedOrigin,
       });
       createReadStream(filePath).pipe(response);
     } catch {
       // A segment ffmpeg has not written yet — tell hls.js to retry.
-      response.writeHead(404, { 'access-control-allow-origin': '*' });
+      response.writeHead(404, { 'access-control-allow-origin': config.allowedOrigin });
       response.end();
     }
   }
@@ -271,7 +271,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     const episodeParam = url.searchParams.get('episode');
 
     if (!tmdbId) {
-      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': config.allowedOrigin });
       response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'tmdbId is required' } }));
       return;
     }
@@ -288,7 +288,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       'connection': 'keep-alive',
-      'access-control-allow-origin': '*',
+      'access-control-allow-origin': config.allowedOrigin,
       'access-control-allow-headers': 'cache-control',
       'access-control-allow-methods': 'GET',
     });
@@ -354,7 +354,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     const quality = url.searchParams.get('quality') ?? 'default';
 
     if (!streamUrl) {
-      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': config.allowedOrigin });
       response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'streamUrl is required' } }));
       return;
     }
@@ -365,12 +365,12 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     try {
       parsed = new URL(streamUrl);
     } catch {
-      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': config.allowedOrigin });
       response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'streamUrl must be a valid URL' } }));
       return;
     }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.writeHead(400, { 'content-type': 'application/json', 'access-control-allow-origin': config.allowedOrigin });
       response.end(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'streamUrl must be http or https' } }));
       return;
     }
@@ -386,7 +386,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
       'content-type': 'video/mp4',
       'content-disposition': `attachment; filename="${filename}"`,
       'cache-control': 'no-store',
-      'access-control-allow-origin': '*',
+      'access-control-allow-origin': config.allowedOrigin,
       'access-control-allow-headers': 'range',
       'access-control-allow-methods': 'GET',
       // No content-length: fragmented MP4 is produced incrementally,
@@ -432,7 +432,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     // CORS preflight for the download endpoint.
     if (request.method === 'OPTIONS' && url.pathname === '/api/download') {
       response.writeHead(204, {
-        'access-control-allow-origin': '*',
+        'access-control-allow-origin': config.allowedOrigin,
         'access-control-allow-headers': 'range',
         'access-control-allow-methods': 'GET',
       });
@@ -445,7 +445,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     // CORS preflight for the SSE endpoint.
     if (request.method === 'OPTIONS' && url.pathname === '/api/extract/stream') {
       response.writeHead(204, {
-        'access-control-allow-origin': '*',
+        'access-control-allow-origin': config.allowedOrigin,
         'access-control-allow-headers': 'cache-control',
         'access-control-allow-methods': 'GET',
       });
@@ -466,7 +466,7 @@ export function createWorkerServer(config: WorkerConfig, registry: JobRegistry) 
     }
     if (request.method === 'OPTIONS' && url.pathname.startsWith('/hls/')) {
       response.writeHead(204, {
-        'access-control-allow-origin': '*',
+        'access-control-allow-origin': config.allowedOrigin,
         'access-control-allow-headers': 'range,origin',
         'access-control-allow-methods': 'GET',
       });
@@ -484,7 +484,7 @@ export function main(): void {
   const server = createWorkerServer(config, registry);
   registry.startSweeper();
   server.listen(config.port, () => {
-    logger.info('media-worker listening', { port: config.port, publicBaseUrl: config.publicBaseUrl });
+    logger.info('media-worker listening', { port: config.port, publicBaseUrl: config.publicBaseUrl, allowedOrigin: config.allowedOrigin });
   });
   const shutdown = () => {
     logger.info('media-worker shutting down');

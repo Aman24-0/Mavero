@@ -52,6 +52,15 @@ export type WorkerConfig = {
    * Defaults to `http://127.0.0.1:${port}` for local development.
    */
   publicBaseUrl: string;
+  /**
+   * Phase 6 — value of the `Access-Control-Allow-Origin` header sent on
+   * every CORS-capable endpoint (SSE extractor, FFmpeg download proxy,
+   * HLS playlist/segments). Set to the app's exact HTTPS origin in
+   * production (e.g. `https://mavero1.netlify.app`). Defaults to `*`
+   * only when `ALLOWED_ORIGIN` is absent (local development — every
+   * cross-origin request is accepted).
+   */
+  allowedOrigin: string;
   /** Maximum number of FFmpeg processes running at once. */
   maxConcurrentJobs: number;
   /** Maximum jobs waiting to start (BUSY beyond this). */
@@ -74,12 +83,22 @@ export type WorkerConfig = {
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
-  const port = intEnv('PORT', 8787, 1, 65535);
+  // Phase 6 — default port changed to 3000 so Render's dynamic PORT env
+  // var (which it injects into every Docker web service) is honored even
+  // when an operator forgets to set PORT explicitly. The fallback only
+  // fires when PORT is unset OR out of the [1, 65535] range.
+  const port = intEnv('PORT', 3000, 1, 65535);
   const publicBaseUrl = (env.PUBLIC_BASE_URL ?? env.MAVERO_MEDIA_WORKER_PUBLIC_URL ?? '').trim().replace(/\/+$/, '') || `http://127.0.0.1:${port}`;
+  // Phase 6 — strict CORS binding. ALLOWED_ORIGIN must be the app's exact
+  // HTTPS origin in production (e.g. https://mavero1.netlify.app). When
+  // unset (local dev), fall back to `*` so cross-origin SSE / download
+  // requests from the dev server still work without configuration.
+  const allowedOrigin = (env.ALLOWED_ORIGIN ?? '').trim() || '*';
   return {
     port,
     secret: requiredSecret(),
     publicBaseUrl,
+    allowedOrigin,
     maxConcurrentJobs: intEnv('MEDIA_WORKER_MAX_CONCURRENT_JOBS', 2, 1, 16),
     maxQueueDepth: intEnv('MEDIA_WORKER_MAX_QUEUE_DEPTH', 4, 0, 32),
     maxJobOutputBytes: intEnv('MEDIA_WORKER_MAX_OUTPUT_MB', 4096, 64, 1024 * 1024) * 1024 * 1024,
@@ -100,5 +119,12 @@ export function assertConfigUsable(config: WorkerConfig): void {
   }
   if (config.publicBaseUrl.startsWith('http://') && !/^http:\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(config.publicBaseUrl)) {
     console.warn(JSON.stringify({ level: 'warn', msg: 'PUBLIC_BASE_URL is not https — browsers on https pages cannot play mixed-content output', publicBaseUrl: config.publicBaseUrl }));
+  }
+  // Phase 6 — when ALLOWED_ORIGIN is unset we fall back to `*`, but in
+  // production that defeats the strict-CORS policy. Warn loudly so an
+  // operator shipping to Render without setting ALLOWED_ORIGIN notices
+  // in the logs (the worker still boots — the wildcard is valid).
+  if (config.allowedOrigin === '*') {
+    console.warn(JSON.stringify({ level: 'warn', msg: 'ALLOWED_ORIGIN is not set — falling back to permissive wildcard CORS. Set ALLOWED_ORIGIN to the production app origin (e.g. https://mavero1.netlify.app) before shipping.' }));
   }
 }
