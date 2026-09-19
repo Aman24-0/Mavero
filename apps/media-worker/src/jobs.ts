@@ -114,13 +114,40 @@ export class JobRegistry {
   }
 
   counts(): { active: number; queued: number } {
-    return { active: this.running.size, queued: this.waiting.length };
+    // Phase 6b: include reserved jobs in the counts so concurrent
+    // submissions see them during the capacity check. A reserved job
+    // occupies a capacity slot even before mkdir completes.
+    //
+    // Reserved jobs are counted toward the TOTAL capacity (active + queued).
+    // We count them as active up to maxConcurrentJobs, and the remainder
+    // as queued. This ensures the AND condition (active >= max && queued >= max)
+    // correctly fires when the total exceeds the combined capacity.
+    const totalReserved = this.countReserved();
+    const activeSlots = Math.min(totalReserved, this.config.maxConcurrentJobs);
+    const queuedSlots = Math.max(0, totalReserved - this.config.maxConcurrentJobs);
+    return {
+      active: this.running.size + activeSlots,
+      queued: this.waiting.length + queuedSlots,
+    };
+  }
+
+  private countReserved(): number {
+    let count = 0;
+    for (const job of this.jobs.values()) {
+      if (job.phase === 'reserved' && !this.running.has(job.id)) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   /**
-   * Phase 6.2: counts active+queued jobs for a specific session. Used by
-   * the per-session admission control to prevent a single user from
-   * exhausting the worker's capacity.
+   * Phase 6.2: counts active+queued+reserved jobs for a specific session.
+   * Used by the per-session admission control to prevent a single user from
+   * exhausting the worker's capacity. Includes reserved jobs (Phase 6b:
+   * the synchronous reservation creates a job entry before mkdir, so it
+   * must be counted to prevent concurrent submissions for the same session
+   * from racing past the limit).
    */
   private sessionJobCount(sessionId: string): number {
     let count = 0;
@@ -179,26 +206,39 @@ export class JobRegistry {
       }
     }
 
-    // Phase 6.2 Gap C fix: the counts check was previously done BEFORE the
-    // async validations (DNS, disk). By the time the start/queue decision
-    // was made, the counts snapshot was stale — concurrent submits could
-    // all see active < max and all call start(), exceeding the concurrency
-    // cap. Now the counts check is done AFTER the async validations, right
-    // before the synchronous start/queue decision — no await between the
-    // check and the mutation, so it's atomic in the Node.js event loop.
+    // Phase 6b: SYNCHRONOUS RESERVATION (race-safe admission).
+    //
+    // The previous implementation checked capacity AFTER the async validations
+    // (DNS, disk) but BEFORE the async mkdir(). Two concurrent submissions
+    // could both pass the capacity check, both await mkdir(), and both insert
+    // their jobs — exceeding the concurrency/session caps.
+    //
+    // Fix: perform the capacity check AND the slot reservation synchronously
+    // (no await between check and mutation). The reservation is a temporary
+    // job entry in the `jobs` Map with status='reserved'. If the subsequent
+    // mkdir fails, the reservation is released. If mkdir succeeds, the job
+    // transitions to 'queued' and is started/pushed.
+    //
+    // This is race-safe because Node.js is single-threaded: between the
+    // capacity check and the Map.set, no other code can run (no await).
+    // Concurrent submissions that arrive during the mkdir await will see
+    // the reserved job in the Map (via sessionJobCount + counts) and be
+    // correctly rejected if the capacity is exceeded.
+
+    // 1. Check global capacity (active + queued + reserved).
     const counts = this.counts();
     if (counts.active >= this.config.maxConcurrentJobs && counts.queued >= this.config.maxQueueDepth) {
       return { outcome: 'busy', code: 'BUSY' };
     }
 
-    // Phase 6.2 Gap B fix: per-session admission control. A single session
-    // can create at most MAX_JOBS_PER_SESSION concurrent+queued jobs.
-    // This prevents one user from exhausting the entire worker's capacity.
-    const sessionJobCount = this.sessionJobCount(payload.s);
-    if (sessionJobCount >= MAX_JOBS_PER_SESSION) {
+    // 2. Check per-session capacity.
+    const sessionCount = this.sessionJobCount(payload.s);
+    if (sessionCount >= MAX_JOBS_PER_SESSION) {
       return { outcome: 'busy', code: 'BUSY' };
     }
 
+    // 3. Reserve the slot SYNCHRONOUSLY — create the job entry BEFORE any
+    //    await, so concurrent submissions see it in the Map.
     const id = randomUUID();
     const now = Date.now();
     const job: Job = {
@@ -211,7 +251,7 @@ export class JobRegistry {
       contentId: payload.c,
       mediaType: payload.m,
       status: 'queued',
-      phase: 'queued',
+      phase: 'reserved',
       progressSeconds: 0,
       inputDurationSeconds: null,
       createdAt: now,
@@ -219,15 +259,31 @@ export class JobRegistry {
       error: null,
       outputBytes: 0,
     };
-    const outDir = join(tmpdir(), 'mavero-media-worker', id);
-    await mkdir(outDir, { recursive: true });
+
+    // Synchronous insertion — the job is now visible to sessionJobCount()
+    // and counts(). No await between the check and this mutation.
     this.jobs.set(id, job);
     this.byTokenHash.set(tokenHash, id);
-    this.dirs.set(id, outDir);
 
-    // Phase 6.2 Gap C fix: re-check counts right before the synchronous
-    // start/queue decision. Since this is the last operation before the
-    // synchronous start()/push(), the counts are accurate.
+    // 4. Perform async filesystem preparation. If it fails, release the
+    //    reservation (remove the job from the Map) and return an error.
+    const outDir = join(tmpdir(), 'mavero-media-worker', id);
+    try {
+      await mkdir(outDir, { recursive: true });
+    } catch {
+      // Release the reservation — the job was never started.
+      this.jobs.delete(id);
+      this.byTokenHash.delete(tokenHash);
+      return { outcome: 'rejected', code: 'PROBE_FAILED' };
+    }
+
+    // 5. Filesystem preparation succeeded — transition the job from
+    //    'reserved' to 'queued' and start/push it. The job is already
+    //    in the Map (counted by counts + sessionJobCount), so the
+    //    start/queue decision is based on accurate counts.
+    this.dirs.set(id, outDir);
+    job.phase = 'queued';
+
     const finalCounts = this.counts();
     if (finalCounts.active < this.config.maxConcurrentJobs) {
       this.start(job);
