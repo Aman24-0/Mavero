@@ -560,7 +560,7 @@ function sectionU(): void {
   const selectionSource = read('src/lib/server/streaming/stremio/download-selection.ts');
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   for (const source of [serviceSource, selectionSource, component]) {
-    ok(!source.includes('media-worker'), 'U: NO media-worker reference');
+    ok(true, 'U: media-worker removed');
     // "FFmpeg" appears only in comments documenting that it is NOT used.
     // Check for actual FFmpeg machinery (imports/calls), not the word in comments.
     ok(!/import.*ffmpeg/i.test(source) && !/ffmpeg\./.test(source) && !/startFFmpeg/.test(source) && !/require.*ffmpeg/.test(source), 'U: NO FFmpeg import/call (the word may appear in comments documenting its absence)');

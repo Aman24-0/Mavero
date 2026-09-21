@@ -63,8 +63,6 @@ export type MaveroAddonStatus = {
 export type MaveroResolvedStream = {
   source: PlayerSource;
   quality: PlayerQualityOption;
-  compatToken?: string;
-  compatKind?: 'remux' | 'transcode';
 };
 
 /** One merged addon outcome delivered to the watch route. */
@@ -177,13 +175,7 @@ export function startMaveroProgressiveResolution(
           const source = entry.source as PlayerSource | undefined;
           const quality = entry.quality as PlayerQualityOption | undefined;
           if (!source || typeof source.url !== 'string' || !quality) continue;
-          const compat = isRecord(entry.compat) ? entry.compat : null;
-          streams.push({
-            source,
-            quality,
-            ...(compat && typeof compat.token === 'string' ? { compatToken: compat.token } : {}),
-            ...(compat && (compat.kind === 'remux' || compat.kind === 'transcode') ? { compatKind: compat.kind } : {}),
-          });
+          streams.push({ source, quality });
         }
         run.status = { ...run.status, status: 'ok', streamCount: streams.length, errorCode: undefined };
         callbacks.onResult({ key: run.key, addonName: run.status.addonName, ordering: run.status.ordering, status: 'ok', streams });
@@ -293,19 +285,13 @@ export function mergeMaveroResults(
   if (!okResults.length) return null;
 
   // Phase 10: compat references ride the URL → token map so the merged
-  // quality options carry the signed references (the shell's compat path
-  // needs them at selection time).
   // Phase 13: the SERVER-computed usability verdict rides the same way —
   // the client orders/presents with the server's ranking, never a second
   // ranking implementation.
-  const compatByUrl = new Map<string, { token: string; kind: 'remux' | 'transcode' }>();
   const usabilityByUrl = new Map<string, StreamUsability>();
   for (const result of okResults) {
     for (const entry of result.streams) {
       if (typeof entry.source.url !== 'string') continue;
-      if (entry.compatToken && !compatByUrl.has(entry.source.url)) {
-        compatByUrl.set(entry.source.url, { token: entry.compatToken, kind: entry.compatKind ?? 'transcode' });
-      }
       if (entry.quality.usability && !usabilityByUrl.has(entry.source.url)) {
         usabilityByUrl.set(entry.source.url, entry.quality.usability);
       }
@@ -340,11 +326,6 @@ export function mergeMaveroResults(
   const orderedPicked = [primary, ...rest.map((entry) => entry.source)];
   const qualities = orderedPicked.map((source) => {
     const option = qualityOptionOfSource(source);
-    const compat = typeof source.url === 'string' ? compatByUrl.get(source.url) : undefined;
-    if (compat) {
-      option.compatToken = compat.token;
-      option.compatKind = compat.kind;
-    }
     const usability = typeof source.url === 'string' ? usabilityByUrl.get(source.url) : undefined;
     if (usability) option.usability = usability;
     return option;

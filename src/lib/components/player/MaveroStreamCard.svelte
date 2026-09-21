@@ -2,7 +2,7 @@
   import { Check, Copy, Download } from 'lucide-svelte';
   import type { PlayerQualityOption } from '$lib/shared/player';
   import { formatMaveroStreamSize, maveroStreamDetailLabel, maveroStreamFormatLabel, maveroStreamHeadline, maveroStreamQualityLabel, maveroStreamSubtitleLabel } from '$lib/client/player/mavero-streams';
-  import { compatBadgeForStream } from '$lib/client/player/mavero-compat';
+  // Phase 10 GOAL 11: compatibility hint badge removed — no media worker.
   import { copyStreamUrl, downloadAttributesFor } from '$lib/client/player/stream-actions';
 
   /**
@@ -38,10 +38,6 @@
     formatMaveroStreamSize(stream.videoSize),
   ].filter((badge): badge is string => Boolean(badge));
   $: detail = maveroStreamDetailLabel(stream);
-  // Phase 10 GOAL 11: compatibility hint badge — derived ONLY from the
-  // addon-supplied metadata (shared classifier). `null` renders nothing;
-  // Phase 13 copy: conversion is phrased as the fallback it is.
-  $: compatBadge = compatBadgeForStream(stream);
   // Phase 13 (quality-first UX): the headline reads "1080p • Dual Audio •
   // HLS" from the server's usability verdict; the legacy quality label is
   // the fallback for streams without a verdict.
@@ -105,10 +101,7 @@
           {#each badges as badge (badge)}
             <span class="card-badge">{badge}</span>
           {/each}
-          {#if compatBadge}<span class="card-badge card-compat">{compatBadge}</span>{/if}
         </span>
-      {:else if compatBadge}
-        <span class="card-badges"><span class="card-badge card-compat">{compatBadge}</span></span>
       {/if}
     </span>
   </button>

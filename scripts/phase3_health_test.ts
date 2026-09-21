@@ -108,9 +108,6 @@ ok(/type HealthResponse = \{[\s\S]*?status: HealthStatus;[\s\S]*?now: number;[\s
 // ============================================================
 // 6. Media-worker health is NOT proxied.
 // ============================================================
-ok(!/\/hls\//.test(health), '6a. health endpoint does NOT proxy to media-worker /hls/');
-ok(!/media-worker/.test(health.replace(/\/\/[^\n]*/g, '')), '6b. health endpoint does NOT call media-worker (operators probe its own /health)');
-ok(/MEDIA-WORKER is a SEPARATELY-DEPLOYED service/.test(health), '6c. documented: media-worker health is canonical at its own /health, not proxied');
 
 // ============================================================
 // 7. Caching is no-store.

@@ -47,8 +47,7 @@ Real values must be provided through Netlify’s encrypted environment-variable 
 | `TMDB_API_KEY` | Server-only TMDB fallback credential (v3 API key) | Server-side secret |
 | `MAVERO_ADULT_COOKIE_SECRET` | HMAC-SHA256 signing secret for the guest Adult Mode cookie | Encrypted server-side secret; never public |
 | `MAVERO_STREMIO_SESSION_SECRET` | HMAC-SHA256 signing secret for Stremio addon session tokens | Encrypted server-side secret; never public |
-| `MAVERO_COMPAT_SESSION_SECRET` | Optional independent signing secret for compatibility references | Encrypted server-side secret; never public |
-| `MAVERO_MEDIA_WORKER_URL` | HTTPS base URL of the dedicated FFmpeg compatibility media worker | Public runtime configuration (URL only, no secret material) |
+
 
 The application reads public Supabase values through SvelteKit’s runtime public environment module rather than requiring them as build-time static exports. This allows the Netlify build to compile without baking credentials into the bundle; the variables must still be present at runtime for Supabase Auth and data operations to work.
 
@@ -62,18 +61,7 @@ The requirement level of each secret is determined by the code that consumes it,
 - **TMDB: at least one of the two credentials is required for TMDB-backed content.** Each variable is individually optional, but with neither set, TMDB-backed content endpoints fail closed with a typed `CONFIG_MISSING` (503) — they never silently return empty results. Set `TMDB_READ_ACCESS_TOKEN` (v4 token) for normal deployments; `TMDB_API_KEY` (v3 key) is the fallback path for deployments whose token store only carries a v3 key.
 - **`MAVERO_ADULT_COOKIE_SECRET` is REQUIRED in production.** It signs the guest Adult Mode preference cookie (HMAC-SHA256). Missing/empty secret fails closed in both directions: verification treats the guest preference as OFF, and cookie issuance throws — the server refuses to mint cookies it cannot sign.
 - **`MAVERO_STREMIO_SESSION_SECRET` is optional with a safe default.** When unset, session tokens are signed with a domain-separated SHA-256 derivation of `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` (one-way, domain-tagged; the raw service key is never used as an HMAC key). A deployment with neither secret fails closed: no session tokens can be signed or verified.
-- **`MAVERO_COMPAT_SESSION_SECRET` is optional and defaults to the session secret.** If set, it rotates compatibility references independently of session tokens.
-- **`MAVERO_MEDIA_WORKER_URL` is optional.** When absent, conversion-required streams degrade to a typed `COMPAT_UNAVAILABLE` state — conversion is never faked in serverless. When present it must be HTTPS (the playback page is HTTPS; mixed content would break playback).
 
-### Media-worker secret pairing (required when a worker is deployed)
-
-The media worker (`apps/media-worker`) refuses to boot without a signing secret and must be configured with the SAME secret value the application signs compatibility references with:
-
-- Worker: `MAVERO_COMPAT_SESSION_SECRET` (falling back to `MAVERO_STREMIO_SESSION_SECRET`) — required, fail-closed at boot.
-- Application: the corresponding app-side value (`MAVERO_COMPAT_SESSION_SECRET` if set, else `MAVERO_STREMIO_SESSION_SECRET`, else the service-key derivation).
-- A mismatched pair means the worker rejects every job the app signs; set BOTH sides to the same value (and rotate them together).
-
-The worker additionally accepts hardening/limit environment variables (`MEDIA_WORKER_MAX_CONCURRENT_JOBS`, `MEDIA_WORKER_MAX_QUEUE_DEPTH`, `MEDIA_WORKER_MAX_OUTPUT_MB`, `MEDIA_WORKER_MAX_INPUT_HOURS`, `MEDIA_WORKER_JOB_TTL_SECONDS`, `MEDIA_WORKER_MIN_FREE_GB`, `PUBLIC_BASE_URL`/`MAVERO_MEDIA_WORKER_PUBLIC_URL`). See `apps/media-worker/src/config.ts` for the full, bounded set — every limit is a deliberate production policy, not decoration.
 
 ### Node and package manager expectations
 
@@ -128,7 +116,7 @@ The application exposes a health endpoint at `/api/health`:
 - `GET /api/health?deep=1` — readiness (bounded 2s Supabase HEAD probe, 503 when unreachable).
 - `GET /api/health?stats=1` — cache + resolver stats (content cache, negative cache, provider cooldown).
 
-The media worker has its own `/health` endpoint — operators should probe it directly (the app does NOT proxy to it).
+
 
 ## Content-Security-Policy (Phase 3)
 

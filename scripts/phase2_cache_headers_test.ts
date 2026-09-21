@@ -113,11 +113,7 @@ ok(/no-store/.test(playbackStremio), '5b. /api/playback/stremio keeps no-store (
 const playbackStremioSession = read('src/routes/api/playback/stremio/session/+server.ts');
 ok(/no-store/.test(playbackStremioSession), '5c. /api/playback/stremio/session keeps no-store (per-request tokens)');
 
-const compatManifest = read('src/routes/api/playback/compat/manifest/+server.ts');
-ok(/no-store/.test(compatManifest), '5d. /api/playback/compat/manifest keeps no-store');
-
-const compatStatus = read('src/routes/api/playback/compat/status/+server.ts');
-ok(/no-store/.test(compatStatus), '5e. /api/playback/compat/status keeps no-store');
+// 5d/5e: compat routes removed — no longer tested.
 
 // ============================================================
 // 6. Downloader endpoints stay no-store (Adult Mode protected).

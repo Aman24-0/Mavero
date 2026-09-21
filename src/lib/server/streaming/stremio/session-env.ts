@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import { env as privateEnv } from '$env/dynamic/private';
 
 /**
- * MAVERO Player — session signing secret wiring (Phase 10).
+ * MAVERO Player — session signing secret wiring.
  *
- * Endpoint-layer env resolution for the Stremio addon session tokens and
- * compatibility references (the crypto modules themselves never touch
- * `$env` — repo convention, see adult-cookie.ts).
+ * Endpoint-layer env resolution for the Stremio addon session tokens
+ * (the crypto modules themselves never touch `$env` — repo convention,
+ * see adult-cookie.ts).
  *
  * Resolution order:
  *   1. `MAVERO_STREMIO_SESSION_SECRET` — a dedicated deployment secret
@@ -30,28 +30,4 @@ export function stremioSessionSecret(): string {
     return createHash('sha256').update(`mavero:stremio-session:v1:${serviceKey}`, 'utf8').digest('hex');
   }
   return '';
-}
-
-/**
- * The compatibility references share the session secret by default; a
- * deployment MAY rotate them independently via
- * `MAVERO_COMPAT_SESSION_SECRET` (documented in docs/compat-worker.md).
- */
-export function compatSessionSecret(): string {
-  const dedicated = privateEnv.MAVERO_COMPAT_SESSION_SECRET;
-  if (typeof dedicated === 'string' && dedicated.length > 0) return dedicated;
-  return stremioSessionSecret();
-}
-
-/** Configured media worker base URL (GOAL 16) — absent until the operator provisions one. */
-export function mediaWorkerBaseUrl(): string | null {
-  const raw = privateEnv.MAVERO_MEDIA_WORKER_URL;
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  try {
-    const parsed = new URL(raw.trim());
-    if (parsed.protocol !== 'https:') return null;
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return null;
-  }
 }

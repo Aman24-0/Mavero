@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { validateAddonStreamPlaybackUrl } from '$lib/server/resolver/safe-url';
 import type { PlayerQualityOption, PlayerSource } from '$lib/shared/player';
-import { classifyStreamCompatibility, needsCompatibilityPath, type StreamCompatibilityInput } from '$lib/shared/media-compat';
+import { classifyStreamCompatibility, type StreamCompatibilityInput } from '$lib/shared/media-compat';
 import { selectAddonStreams, releaseClassFor, type StreamSelectionInput, type StreamUsability, type PlayClass } from '$lib/shared/stream-selection';
 import type { StreamingAddon } from '$lib/shared/streaming-addons';
 import type { ContentType } from '$lib/server/content/types';
@@ -14,7 +14,7 @@ import { planAddonStreamRequest, stremioStreamTypeFor, type StremioAddonStreamPl
 import { stremioStreamToPlayerSource } from './stream-player-source';
 import { loadEnabledAddons } from './stream-resolver';
 import { mapAddonRow } from '$lib/server/streaming/addons';
-import { signAddonToken, verifyAddonToken, tokenMatchesRequest, signCompatToken, ADDON_TOKEN_TTL_SECONDS, type AddonTokenPayload } from './session-tokens';
+import { signAddonToken, verifyAddonToken, tokenMatchesRequest, ADDON_TOKEN_TTL_SECONDS, type AddonTokenPayload } from './session-tokens';
 
 /**
  * MAVERO Player — progressive Stremio addon resolution service (Phase 10,
@@ -198,18 +198,10 @@ export async function createAddonSession(client: SupabaseClient<Database>, reque
 // Per-addon resolution
 // ---------------------------------------------------------------------------
 
-/** Safe per-addon compatibility reference (signed) — GOAL 12. */
-export type AddonStreamCompatReference = {
-  /** Opaque signed token for /api/playback/compat/manifest (URL embedded). */
-  token: string;
-  kind: 'remux' | 'transcode';
-};
-
 /** One resolved stream entry as the per-addon endpoint returns it. */
 export type AddonResolvedStream = {
   source: PlayerSource;
   quality: PlayerQualityOption;
-  compat?: AddonStreamCompatReference;
 };
 
 export type AddonResolutionResult =
@@ -227,7 +219,7 @@ export type ResolveAddonTokenDeps = {
   loadAddonById?: (client: SupabaseClient<Database>, id: string) => Promise<StreamingAddon | null>;
   /** Injectable content lookup (tests); defaults to the content pipeline. */
   loadContent?: (mediaType: ContentType, contentId: string) => Promise<ContentLookup>;
-  compatSecret?: string;
+  compatSecret?: string; // DEPRECATED — kept for type compatibility, no longer used
   now?: Date;
 };
 
@@ -377,10 +369,8 @@ export async function resolveAddonToken(client: SupabaseClient<Database>, input:
       const candidate = candidates[entry.index];
       const usability: StreamUsability = entry.usability;
       const quality: PlayerQualityOption = { ...candidate.quality, usability };
-      // Compat reference: ONLY selected conversion candidates (the user can
-      // explicitly choose the fallback; discovery stays job-free).
-      const compat = usability.play === 'remux' || usability.play === 'transcode' ? compatReferenceOf(quality, context, payload, deps) : undefined;
-      streams.push({ source: candidate.source, quality, ...(compat ? { compat } : {}) });
+      // Compat reference generation removed — no media worker to convert streams.
+      streams.push({ source: candidate.source, quality });
     }
     // Diagnostics: WHY a boundary-valid candidate did not reach the user.
     for (let index = 0; index < candidates.length; index++) {
@@ -484,11 +474,6 @@ function qualityOptionOf(source: PlayerSource, addonName: string): PlayerQuality
   };
 }
 
-function compatSecretOf(deps: ResolveAddonTokenDeps): string | null {
-  const secret = deps.compatSecret ?? deps.secret;
-  return typeof secret === 'string' && secret.length > 0 ? secret : null;
-}
-
 /** Builds the compatibility-classifier input from a quality option (Phase 12 rule: ALL addon text). */
 function streamCompatibilityInputOf(quality: PlayerQualityOption): StreamCompatibilityInput {
   return {
@@ -530,47 +515,4 @@ function playClassOfVerdict(verdict: ReturnType<typeof classifyStreamCompatibili
 /** The release class of an already-built selection input (diagnostics only). */
 function releaseClassOfSelectionInput(input: StreamSelectionInput): string {
   return releaseClassFor(input);
-}
-
-/**
- * Issues a signed compatibility reference for streams the classifier routes
- * to remux/transcode (GOAL 11→12). Only for non-HLS candidates that already
- * passed the playback boundary. The EXACT validated URL is carried INSIDE
- * the signed token — the compatibility endpoint accepts nothing but this
- * reference, so it can never act as an arbitrary URL proxy (GOAL 12/24).
- */
-function compatReferenceOf(quality: PlayerQualityOption, context: { contentId: string; mediaType: string; season?: number; episode?: number }, payload: AddonTokenPayload, deps: ResolveAddonTokenDeps): AddonStreamCompatReference | null {
-  const secret = compatSecretOf(deps);
-  if (!secret) return null;
-  const url = quality.url;
-  if (typeof url !== 'string' || !url.startsWith('https://') || url.length > 2048) return null;
-  // Phase 12 (GOAL B): the classifier receives EVERY addon-supplied text the
-  // quality option carries — not just the filename. An extensionless URL
-  // whose stream title says "Dhurandhar The Revenge (2026).mkv" must classify
-  // as MKV (remux) exactly like a .mkv filename would; a title mentioning
-  // HEVC/10-bit must reach the transcode path.
-  const verdict = classifyStreamCompatibility(streamCompatibilityInputOf(quality));
-  if (!needsCompatibilityPath(verdict)) return null;
-  const exp = Math.floor((deps.now ?? new Date()).getTime() / 1000) + ADDON_TOKEN_TTL_SECONDS;
-  try {
-    const token = signCompatToken(
-      {
-        s: payload.s,
-        a: payload.a,
-        c: context.contentId,
-        m: context.mediaType,
-        ...(context.season !== undefined ? { se: context.season } : {}),
-        ...(context.episode !== undefined ? { ep: context.episode } : {}),
-        u: url,
-        k: verdict.action === 'remux' ? 'remux' : 'transcode',
-        exp,
-      },
-      secret,
-    );
-    return { token, kind: verdict.action === 'remux' ? 'remux' : 'transcode' };
-  } catch {
-    // Reference issuance must never fail the stream — direct playback
-    // remains available regardless.
-    return null;
-  }
 }

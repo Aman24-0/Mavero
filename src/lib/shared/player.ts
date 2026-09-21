@@ -48,14 +48,6 @@ export type PlayerQualityOption = {
   /** Addon-provided subtitle tracks (URLs already https-validated server-side). */
   subtitles?: PlayerSubtitleTrack[];
   /**
-   * Phase 10 (GOAL 12): the SIGNED compatibility reference issued with this
-   * stream when the classifier routes it to remux/transcode. Opaque to the
-   * client — it authorizes exactly ONE worker-backed conversion of exactly
-   * THIS stream. Streams without a reference never touch the compat path.
-   */
-  compatToken?: string;
-  compatKind?: 'remux' | 'transcode';
-  /**
    * Phase 13: the usability verdict the SERVER's selection engine computed
    * for this stream (quality bucket, audio class, release weight, playback
    * path, composite rank). It travels with the stream so the client orders

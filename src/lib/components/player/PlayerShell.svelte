@@ -22,10 +22,7 @@
   // Phase 10 (GOAL 18): audio-track display — a LOCAL structural type so the
   // shell stays engine-library-name-free (same pattern as WakeLockSentinelHandle).
   type AudioTrackHandle = { id: number; lang?: string; name?: string; default?: boolean };
-  // Phase 10 (GOALS 12–15): controlled compatibility path — signed worker
-  // sessions for streams the browser cannot decode, honest badges for
-  // uncertain formats.
-  import { COMPAT_PREPARING_MESSAGE, requestMaveroCompatStream } from '$lib/client/player/mavero-compat';
+  // Phase 10 (GOALS 12–15): honest badges for uncertain formats.
   import { checkMediaCompatibility, type MediaCompatibilityDecision } from '$lib/client/player/media-capabilities';
   import type { SandboxPolicy } from '$lib/shared/sandbox-policy';
 
@@ -211,17 +208,15 @@
   // Phase 10: compat override — when a compatibility session succeeds, the
   // player plays the WORKER-PROVIDED streaming url instead of the addon’s direct URL
   // (which the browser cannot decode). Cleared on any source/stream switch.
-  let compatOverrideUrl: string | null = null;
-  let compatPreparing = false;
-  $: mediaUrl = compatOverrideUrl ?? selectedQualityOption?.url ?? source?.url ?? null;
-  $: statusNote = compatPreparing ? COMPAT_PREPARING_MESSAGE : '';
+  $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
+  $: statusNote = '';
   // Phase 10 stale guard: a source object that no longer contains the
   // selected stream (episode switch → fresh aggregate) invalidates any
   // pending compatibility session. Live merges KEEP the playing stream
   // (mergeMaveroResults pins it), so they never trigger this reset.
   $: if (source && source.sourceId === sourceIdentity && selectedQuality && !source.qualities?.some((quality) => quality.url === selectedQuality)) {
-    compatOverrideUrl = null;
-    compatPreparing = false;
+    
+    
     selectedQuality = '';
   }
   // Phase 6: MAVERO Player addon-stream presentation — derived ONLY when the
@@ -313,11 +308,11 @@
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
     // Phase 10: any pending compatibility override belongs to the previous
     // source session — the new session starts direct.
-    compatOverrideUrl = null;
-    compatPreparing = false;
+    
+    
     // Phase 11 (GOAL B7): a pending compat POLL from the old session is
     // invalidated too — its result can never touch the new session.
-    compatSelectionSeq += 1;
+    
     // Phase 9: failure markers are per-source-session — a stream that failed
     // for a previous source/aggregate must not mark the new one.
     failedStreamUrls = [];
@@ -822,57 +817,22 @@
   // preparation). A monotonic selection sequence invalidates superseded
   // selections — the newest stream choice always wins, a slow prepare for an
   // older stream can never hijack the newer one.
-  let compatSelectionSeq = 0;
+  
 
   function selectMaveroStream(stream: PlayerQualityOption) {
     closeStreamsSheet();
-    if (!stream.url || (stream.url === mediaUrl && !compatOverrideUrl)) return;
-    const compatToken = typeof stream.compatToken === 'string' ? stream.compatToken : null;
-    const compatKind = stream.compatKind === 'remux' || stream.compatKind === 'transcode' ? stream.compatKind : null;
+    if (!stream.url || stream.url === mediaUrl) return;
     const sourceAtSelection = source;
-    const selectionSeq = ++compatSelectionSeq;
     void (async () => {
       // Runtime capability refinement (never filename-only guessing).
-      // Phase 12 (GOAL B): ALL addon-supplied text feeds the decision —
-      // an extensionless URL whose title says ".mkv"/"HEVC"/"10-bit" must
-      // route exactly like the filename-equivalent.
       let decision: MediaCompatibilityDecision;
       try {
         decision = await checkMediaCompatibility({ protocol: stream.protocol, container: stream.container, codec: stream.codec, filename: stream.filename, title: stream.title, description: stream.description });
       } catch {
         decision = { supported: true, needsRemux: false, needsTranscode: false, reason: 'probe-unavailable', tier: 'DIRECT_UNCERTAIN' };
       }
-      const needsCompat = !decision.supported && (decision.needsRemux || decision.needsTranscode) && Boolean(compatToken);
-      if (needsCompat && compatToken) {
-        const kind: 'remux' | 'transcode' = compatKind ?? 'transcode';
-        compatPreparing = true;
-        state = 'preparing';
-        errorMessage = '';
-        playing = false;
-        capturePendingSeek(pendingSeekState, currentTime, Date.now());
-        const result = await requestMaveroCompatStream(compatToken, kind);
-        compatPreparing = false;
-        // Stale guards: a source/episode switch OR a newer stream selection
-        // since selection started invalidates the outcome.
-        if (source !== sourceAtSelection || selectionSeq !== compatSelectionSeq) return;
-        if (result.ok) {
-          // Play the signed worker session — identity stays the stream's url
-          // so the sheet's selected-state and progress keys are unchanged.
-          compatOverrideUrl = result.workerUrl;
-          selectedQuality = stream.url;
-          state = 'preparing';
-          return;
-        }
-        // Graceful degradation (GOAL 8): this stream errors, others remain.
-        compatOverrideUrl = null;
-        failedStreamUrls = failedStreamUrls.includes(stream.url) ? failedStreamUrls : [...failedStreamUrls, stream.url];
-        errorMessage = result.message;
-        state = 'error';
-        revealControls();
-        return;
-      }
-      // Direct playback (supported, uncertain, or no reference available).
-      compatOverrideUrl = null;
+      // Direct playback only — no media worker/compat conversion path.
+      
       setQuality(stream.url);
     })();
   }

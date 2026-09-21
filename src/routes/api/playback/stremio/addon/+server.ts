@@ -4,7 +4,7 @@ import { readJsonBody } from '$lib/server/http/body';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { parseStremioPlaybackRequest } from '$lib/server/streaming/stremio/mavero-player-source';
 import { resolveAddonToken } from '$lib/server/streaming/stremio/addon-session';
-import { compatSessionSecret, stremioSessionSecret } from '$lib/server/streaming/stremio/session-env';
+import { stremioSessionSecret } from '$lib/server/streaming/stremio/session-env';
 import { asStreamServiceError } from '$lib/server/streaming/stremio/stream-errors';
 
 /**
@@ -59,7 +59,7 @@ export const POST: RequestHandler = async ({ request }) => {
       createSupabaseAdminClient(),
       parsed.value,
       { mediaType, contentId, ...(season !== undefined ? { season } : {}), ...(episode !== undefined ? { episode } : {}) },
-      { secret, compatSecret: compatSessionSecret() },
+      { secret },
     );
     return json({ ok: true, result }, { headers: NO_STORE });
   } catch (error) {
