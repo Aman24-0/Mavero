@@ -61,7 +61,10 @@
 
 <section class="ep-section" aria-labelledby="ep-heading">
   <div class="ep-head">
-    <div><div class="ep-eyebrow">MAVERO / Series guide</div><h2 class="ep-title" id="ep-heading">Episodes</h2></div>
+    <div>
+      <div class="ep-eyebrow">MAVERO / Series guide</div>
+      <h2 class="ep-title" id="ep-heading">Episodes</h2>
+    </div>
     {#if seasonCount > 1}
       <div class="season-tabs" role="group" aria-label="Select season">
         {#each Array(Math.max(seasonCount, 1)) as _, index}
@@ -79,12 +82,18 @@
     <div class="ep-list">
       {#each season.episodes as episode}
         <article class="ep-row">
-          <div class="ep-num">{String(episode.number).padStart(2, '0')}</div>
-          {#if episode.still}
-            <img src={episode.still} alt={`${episode.title} still`} loading="lazy" width="320" height="180" />
-          {:else}
-            <div class="ep-still" aria-hidden="true"></div>
-          {/if}
+          <!-- Thumbnail is the primary visual anchor on every
+               breakpoint. The episode number overlays the top-left
+               corner of the still so the row stays compact without a
+               dedicated number column. -->
+          <div class="ep-thumb-wrap">
+            {#if episode.still}
+              <img src={episode.still} alt={`${episode.title} still`} loading="lazy" width="320" height="180" />
+            {:else}
+              <div class="ep-still" aria-hidden="true"></div>
+            {/if}
+            <span class="ep-num" aria-hidden="true">{String(episode.number).padStart(2, '0')}</span>
+          </div>
           <div class="ep-copy">
             <h3>{episode.title}</h3>
             <div class="ep-meta">{episode.runtime ?? 'Episode'}{#if episode.airDate}<span>·</span>{episode.airDate}{/if}</div>
@@ -115,63 +124,238 @@
 </section>
 
 <style>
-  .ep-section { margin-top: 36px; }
-  .ep-head { display: flex; align-items: end; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,.06); }
-  .ep-eyebrow { color: #77777f; font-size: .58rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-  .ep-title { color: #f5f5f5; font-size: 1.1rem; font-weight: 700; letter-spacing: -.02em; margin: 2px 0 0; }
-
-  .season-tabs { display: flex; gap: 4px; max-width: 58%; overflow-x: auto; padding: 4px; border: 1px solid rgba(255,255,255,.06); border-radius: 6px; background: rgba(255,255,255,.02); scrollbar-width: none; }
-  .season-tabs::-webkit-scrollbar { display: none; }
-  .season-tabs button { flex: 0 0 auto; border: 0; border-radius: 4px; padding: 6px 10px; color: #77777f; background: transparent; font: inherit; font-size: .58rem; font-weight: 700; cursor: pointer; transition: all 200ms cubic-bezier(.22,1,.36,1); }
-  .season-tabs button.active { color: #000; background: #f5f5f5; }
-  .season-tabs button:hover:not(.active) { color: #f5f5f5; background: rgba(255,255,255,.06); }
-
-  .ep-loading, .ep-error, .ep-empty { display: flex; align-items: center; gap: 9px; padding: 20px 0; border-bottom: 1px solid rgba(255,255,255,.06); color: #77777f; font-size: .76rem; }
-  .ep-error { color: #ffb020; }
-  .retry-btn { margin-left: auto; border: 0; background: none; cursor: pointer; color: #f5f5f5; font-size: .72rem; font-weight: 600; }
-
-  .ep-list { padding-top: 6px; }
-  .ep-row {
-    display: grid; grid-template-columns: 30px 140px minmax(0, 1fr) auto; align-items: center; gap: 14px;
-    padding: 12px 8px; border-bottom: 1px solid rgba(255,255,255,.04); border-radius: 8px;
-    transition: background 200ms cubic-bezier(.22,1,.36,1);
+  .ep-section { margin-top: clamp(28px, 4vw, 40px); }
+  .ep-head {
+    display: flex; align-items: end; justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--color-border);
   }
-  .ep-row:hover { background: rgba(255,255,255,.03); }
-  .ep-num { color: #555; font-size: .6rem; font-weight: 700; }
-  .ep-row img, .ep-still { width: 140px; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid rgba(255,255,255,.04); border-radius: 6px; background: #111; }
-  .ep-copy h3 { margin: 0 0 4px; color: #f5f5f5; font-size: .78rem; font-weight: 600; }
-  .ep-meta { display: flex; gap: 6px; color: #555; font-size: .56rem; }
-  .ep-copy p { max-width: 580px; margin: 6px 0 0; overflow: hidden; color: #77777f; font-size: .68rem; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+  .ep-eyebrow {
+    display: inline-flex; align-items: center; gap: 7px;
+    color: var(--color-primary);
+    font-size: .58rem; font-weight: 800;
+    letter-spacing: .12em; text-transform: uppercase;
+    text-shadow: 0 0 10px rgba(0, 255, 156, .3);
+  }
+  .ep-title {
+    color: var(--color-text);
+    font-size: clamp(1.1rem, 1.6vw, 1.3rem);
+    font-weight: 800; letter-spacing: -.02em;
+    margin: 4px 0 0;
+  }
+
+  .season-tabs {
+    display: flex; gap: 4px;
+    max-width: 58%; overflow-x: auto;
+    padding: 4px;
+    border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm);
+    background: rgba(0, 255, 156, .03);
+    scrollbar-width: none;
+  }
+  .season-tabs::-webkit-scrollbar { display: none; }
+  .season-tabs button {
+    flex: 0 0 auto;
+    border: 0; border-radius: 4px;
+    padding: 6px 12px;
+    color: var(--color-text-muted);
+    background: transparent;
+    font: inherit; font-size: .6rem; font-weight: 700;
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
+  }
+  .season-tabs button.active {
+    color: #050708; background: var(--color-primary);
+    box-shadow: var(--glow-primary);
+  }
+  .season-tabs button:hover:not(.active) {
+    color: var(--color-text); background: rgba(0, 255, 156, .08);
+  }
+  .season-tabs button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+  .ep-loading, .ep-error, .ep-empty {
+    display: flex; align-items: center; gap: 9px;
+    padding: 22px 0;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    font-size: .76rem;
+  }
+  .ep-error { color: var(--color-warning); }
+  .retry-btn {
+    margin-left: auto;
+    border: 1px solid var(--color-border-strong); border-radius: 999px;
+    padding: 4px 10px;
+    background: transparent;
+    cursor: pointer;
+    color: var(--color-text);
+    font-size: .68rem; font-weight: 700;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+  }
+  .retry-btn:hover { background: var(--color-primary-soft); border-color: var(--color-primary-border); }
+  .retry-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+  .ep-list { padding-top: 8px; }
+  /* Desktop episode row: a single horizontal composition with thumbnail,
+     copy, and actions aligned to the row center. The row is wider on
+     large viewports but bounded so very wide screens don't stretch
+     the description line indefinitely. */
+  .ep-row {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr) auto;
+    align-items: center; gap: 20px;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    transition: background var(--motion-fast) var(--ease-out);
+  }
+  .ep-row:hover { background: rgba(0, 255, 156, .03); }
+  .ep-row:focus-within {
+    background: rgba(0, 255, 156, .04);
+    /* TV / keyboard focus: lift the row slightly with a cyber-green
+       left rail so the focused episode is unambiguous. */
+    box-shadow: inset 2px 0 0 var(--color-primary);
+  }
+
+  /* Thumbnail wrapper — preserves aspect-ratio so images never cause
+     layout shift, and the episode number overlays its top-left corner. */
+  .ep-thumb-wrap {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--color-surface-elevated);
+  }
+  .ep-thumb-wrap img, .ep-still {
+    width: 100%; height: 100%; object-fit: cover;
+    transition: transform 320ms var(--ease-out);
+  }
+  .ep-row:hover .ep-thumb-wrap img { transform: scale(1.04); }
+  .ep-still {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(0,255,156,.05), transparent 55%),
+      var(--color-surface-elevated);
+  }
+  .ep-num {
+    position: absolute; top: 6px; left: 6px;
+    padding: 2px 7px; border-radius: 4px;
+    color: rgba(242,255,248,.88);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: .58rem; font-weight: 700;
+    letter-spacing: .04em;
+    background: rgba(5,7,8,.7); backdrop-filter: blur(6px);
+    border: 1px solid var(--color-border-strong);
+  }
+
+  .ep-copy { min-width: 0; }
+  .ep-copy h3 {
+    margin: 0 0 4px;
+    color: var(--color-text);
+    font-size: .82rem; font-weight: 700;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ep-meta {
+    display: flex; gap: 6px;
+    color: var(--color-text-deep);
+    font-size: .6rem; font-weight: 600;
+  }
+  .ep-copy p {
+    /* Description stays visible at every breakpoint but clamps to a
+       bounded number of lines on small viewports so the row stays
+       compact. */
+    max-width: 580px;
+    margin: 6px 0 0;
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-size: .72rem; line-height: 1.55;
+    display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; line-clamp: 2;
+  }
   /* Episode action cluster: Play + Download sit side-by-side so the
-     layout doesn't grow taller. Both buttons share the same circular
-     shape + 30px footprint; Download is visually secondary (outline
-     style, smaller icon) so Play remains the primary CTA. */
+     layout doesn't grow taller. Both share the same circular shape +
+     30px footprint (base mobile size); Download is visually
+     secondary (outline style, smaller icon) so Play remains the
+     primary CTA. Larger viewports scale both up via media queries. */
   .ep-actions { display: inline-flex; align-items: center; gap: 8px; }
   .ep-play {
-    display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
-    color: #000; background: rgba(255,255,255,.9); box-shadow: 0 2px 8px rgba(0,0,0,.3);
-    text-decoration: none; transition: transform 200ms cubic-bezier(.22,1,.36,1), background 200ms ease;
+    display: grid; place-items: center;
+    width: 30px; height: 30px; border-radius: 50%;
+    color: #050708; background: var(--color-primary);
+    box-shadow: 0 4px 14px rgba(0,0,0,.4), var(--glow-primary);
+    text-decoration: none;
+    transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
-  .ep-play:hover { background: #fff; transform: scale(1.08); }
+  .ep-play:hover { filter: brightness(1.08); transform: scale(1.08); }
+  .ep-play:active { transform: scale(.94); }
+  .ep-play:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
   .ep-download {
-    display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
-    border: 1px solid rgba(255,255,255,.18); color: #f5f5f5; background: rgba(255,255,255,.04);
-    cursor: pointer; transition: transform 200ms cubic-bezier(.22,1,.36,1), background 200ms ease, border-color 200ms ease;
+    display: grid; place-items: center;
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid var(--color-border-strong);
+    color: var(--color-text);
+    background: rgba(255,255,255,.03);
+    cursor: pointer;
+    transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .ep-download:hover { transform: scale(1.08); background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.3); }
-  .ep-download:active { transform: scale(.96); }
-  .ep-download:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
+  .ep-download:hover {
+    transform: scale(1.08);
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary-border);
+  }
+  .ep-download:active { transform: scale(.94); }
+  .ep-download:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
+  /* ---- TABLET ---- */
+  @media (min-width: 641px) and (max-width: 1024px) {
+    .ep-row { grid-template-columns: 180px minmax(0, 1fr) auto; gap: 16px; padding: 12px 8px; }
+    .ep-copy p { -webkit-line-clamp: 2; line-clamp: 2; }
+  }
+
+  /* ---- DESKTOP / TV ---- */
+  @media (min-width: 1025px) {
+    .ep-row { grid-template-columns: 260px minmax(0, 1fr) auto; gap: 24px; padding: 16px 14px; }
+    .ep-copy h3 { font-size: .9rem; }
+    .ep-copy p { font-size: .76rem; -webkit-line-clamp: 2; line-clamp: 2; max-width: 720px; }
+    .ep-play, .ep-download { width: 40px; height: 40px; }
+  }
+  @media (min-width: 1900px) {
+    .ep-row { grid-template-columns: 320px minmax(0, 1fr) auto; gap: 32px; }
+    .ep-copy h3 { font-size: .96rem; }
+    .ep-copy p { font-size: .8rem; max-width: 820px; -webkit-line-clamp: 3; line-clamp: 3; }
+  }
+
+  /* ---- MOBILE ----
+     Compact card layout: thumbnail with play overlay, title beneath,
+     description collapses to 1 line so multiple episodes fit on the
+     screen. The play affordance becomes a small overlay on the
+     thumbnail so the row stays single-tap-target-friendly. */
   @media (max-width: 640px) {
     .ep-head { flex-direction: column; align-items: start; gap: 12px; }
     .season-tabs { max-width: 100%; width: 100%; }
-    .ep-row { grid-template-columns: 22px 84px minmax(0, 1fr) auto; gap: 10px; padding-inline: 0; }
-    .ep-row img, .ep-still { width: 84px; }
-    .ep-copy p { display: none; }
-    .ep-play, .ep-download { width: 26px; height: 26px; }
+    .ep-list { padding-top: 4px; }
+    .ep-row {
+      grid-template-columns: 96px minmax(0, 1fr) auto;
+      gap: 12px; padding-inline: 4px; padding-block: 10px;
+    }
+    .ep-thumb-wrap { border-radius: 8px; }
+    .ep-num { top: 4px; left: 4px; font-size: .52rem; padding: 1px 5px; }
+    .ep-copy h3 { font-size: .76rem; }
+    .ep-meta { font-size: .56rem; }
+    .ep-copy p { font-size: .68rem; -webkit-line-clamp: 1; line-clamp: 1; }
+    .ep-play, .ep-download { width: 32px; height: 32px; }
     .ep-actions { gap: 6px; }
   }
+
+  /* ---- LANDSCAPE MOBILE (short viewport) ----
+     The episode row stays compact so multiple episodes remain
+     visible without scrolling. */
+  @media (max-width: 1024px) and (orientation: landscape) and (max-height: 480px) {
+    .ep-row { grid-template-columns: 120px minmax(0, 1fr) auto; gap: 12px; padding-block: 8px; }
+    .ep-copy p { -webkit-line-clamp: 1; line-clamp: 1; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .ep-row, .ep-play, .ep-download, .season-tabs button { transition: none; }
+    .ep-row, .ep-play, .ep-download, .season-tabs button, .ep-thumb-wrap img { transition: none; }
+    .ep-row:hover .ep-thumb-wrap img { transform: none; }
   }
 </style>

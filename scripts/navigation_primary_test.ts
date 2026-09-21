@@ -128,8 +128,8 @@ ok('7. mobile pill: 5 columns, labels nowrap, glass + haptics + pill shape intac
 // ============================================================
 assert.match(appShell, /aria-label="Primary navigation"/, 'desktop rail landmark preserved');
 assert.match(appShell, /class="brand-lockup"/, 'brand lockup preserved');
-assert.match(appShell, /class="rail-nav"/, 'rail nav container preserved');
-assert.match(appShell, /class="rail-caption"/, 'rail caption preserved');
+assert.match(appShell, /class="sidebar-nav"/, 'sidebar nav container preserved (Phase B rename: rail-nav → sidebar-nav)');
+assert.match(appShell, /class="sidebar-caption"/, 'sidebar caption preserved (Phase B rename: rail-caption → sidebar-caption)');
 ok('8. desktop rail keeps brand/spacing/active language with the five destinations');
 
 // ============================================================

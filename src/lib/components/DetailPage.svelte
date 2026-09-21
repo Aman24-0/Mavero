@@ -473,101 +473,123 @@
 <svelte:window onkeydown={handleTrailerKeydown} />
 
 <div class="detail-page">
-  <!-- Cinematic backdrop hero (full width) -->
+  <!-- ============================================================
+       CINEMATIC HERO — three intentional layout modes:
+         • mobile  (≤640px): full-bleed backdrop → centered poster
+           overlapping the hero/content boundary → left-aligned title,
+           full-width Play, grouped secondary actions.
+         • tablet  (641–1024px): backdrop still on top, but poster +
+           identity sit side-by-side in a horizontal composition.
+         • desktop (≥1025px): one cinematic hero. Backdrop fills the
+           hero, dark gradient scrims guarantee readability, and the
+           poster + identity + actions form a single horizontal block
+           left-aligned over the lower-left of the backdrop.
+       The same DOM is rendered at every breakpoint — only CSS Grid
+       + clamp() decide the composition.
+       ============================================================ -->
   <header class="hero">
     {#if item.backdrop}
       <img src={item.backdropSmall || item.backdrop} alt="" class="hero-img" loading="eager" fetchpriority="high" />
     {/if}
-    <div class="hero-scrim"></div>
+    <div class="hero-scrim" aria-hidden="true"></div>
     <button class="back-btn" type="button" onclick={goBack} aria-label="Go back">
       <ArrowLeft size={16} /> <span>Back</span>
     </button>
+
+    <div class="hero-inner">
+      <div class="hero-composition">
+        <!-- Poster — never centered on desktop. On mobile it sits
+             below the backdrop image and overlaps the boundary. -->
+        {#if item.poster}
+          <div class="poster-wrap">
+            <img src={item.posterSmall || item.poster} alt={`${item.title} poster`} class="poster-img" />
+          </div>
+        {/if}
+
+        <!-- Identity + actions: title / metadata / overview / genres /
+             primary CTA / secondary actions all live in one block so
+             they visually belong together. -->
+        <section class="identity">
+          <div class="detail-eyebrow">{detailBadges.primary}{#if detailBadges.secondary} · {detailBadges.secondary}{/if}</div>
+          <h1 class="detail-title">{item.title}</h1>
+
+          <div class="meta-row">
+            {#if item.rating > 0}
+              <span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>
+            {/if}
+            {#if item.year > 0}<span class="dot"></span><span>{item.year}</span>{/if}
+            {#if item.maturity}<span class="dot"></span><span>{item.maturity}</span>{/if}
+            {#if type === 'series' && item.seasons}
+              <span class="dot"></span><span>{item.seasons} season{item.seasons === 1 ? '' : 's'}</span>
+            {:else if item.isAnime && item.episodes}
+              <span class="dot"></span><span>{item.episodes} episode{item.episodes === 1 ? '' : 's'}</span>
+            {:else if type === 'movie' && item.runtime}
+              <span class="dot"></span><span>{item.runtime}</span>
+            {/if}
+          </div>
+
+          {#if item.description}
+            <p class="detail-desc" class:expanded={overviewExpanded}>{item.description}</p>
+            {#if hasLongOverview}
+              <button class="show-more" type="button" onclick={() => (overviewExpanded = !overviewExpanded)} aria-expanded={overviewExpanded}>
+                {overviewExpanded ? 'Show Less' : 'Show More'}
+              </button>
+            {/if}
+          {/if}
+
+          {#if item.genres.length}
+            <div class="genre-tags">
+              {#each item.genres as genre}<span class="genre-tag">{genre}</span>{/each}
+            </div>
+          {/if}
+
+          <!-- Actions -->
+          <div class="actions">
+            <div class="primary-actions">
+              <a class="play-btn" href={watchHref}>
+                <Play size={16} fill="currentColor" strokeWidth={0} />
+                {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else}Play{/if}
+              </a>
+              {#if showDownloadButton}
+                <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen}>
+                  <Download size={16} />
+                  <span>Download</span>
+                </button>
+              {:else if showDownloadFailure}
+                <button class="download-btn download-unavailable" type="button" onclick={retryDownloadProviders} disabled={downloadProvidersLoading} aria-label="Download temporarily unavailable — retry loading providers">
+                  {#if downloadProvidersLoading}<LoaderCircle size={16} />{:else}<AlertCircle size={16} />{/if}
+                  <span>{downloadProvidersLoading ? 'Retrying…' : 'Download unavailable · Retry'}</span>
+                </button>
+              {/if}
+            </div>
+            <div class="secondary-actions">
+              <button class="secondary-btn" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}>
+                {#if watchlistStatus}<Heart size={15} fill="currentColor" />{:else}<ListPlus size={15} />{/if}
+                <span>{statusLabel(watchlistStatus)}</span>
+              </button>
+              <button class="secondary-btn" onclick={shareItem} aria-label={`Share ${item.title}`}>
+                <Share2 size={15} /><span>Share</span>
+              </button>
+              {#if hasTrailer}
+                <button class="secondary-btn" onclick={openTrailer} aria-haspopup="dialog" aria-expanded={trailerOpen}>
+                  <Film size={15} /><span>Trailer</span>
+                </button>
+              {/if}
+            </div>
+            {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
+          </div>
+        </section>
+      </div>
+    </div>
   </header>
 
-  <!-- Centered poster overlapping backdrop -->
-  <div class="poster-wrap">
-    {#if item.poster}
-      <img src={item.posterSmall || item.poster} alt={`${item.title} poster`} class="poster-img" />
-    {/if}
-  </div>
-
-  <div class="detail-container">
-    <!-- Title + metadata + overview + genres -->
-    <section class="identity">
-      <div class="detail-eyebrow">{detailBadges.primary}{#if detailBadges.secondary} · {detailBadges.secondary}{/if}</div>
-      <h1 class="detail-title">{item.title}</h1>
-
-      <div class="meta-row">
-        {#if item.rating > 0}
-          <span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>
-        {/if}
-        {#if item.year > 0}<span class="dot"></span><span>{item.year}</span>{/if}
-        {#if item.maturity}<span class="dot"></span><span>{item.maturity}</span>{/if}
-        {#if type === 'series' && item.seasons}
-          <span class="dot"></span><span>{item.seasons} season{item.seasons === 1 ? '' : 's'}</span>
-        {:else if item.isAnime && item.episodes}
-          <span class="dot"></span><span>{item.episodes} episode{item.episodes === 1 ? '' : 's'}</span>
-        {:else if type === 'movie' && item.runtime}
-          <span class="dot"></span><span>{item.runtime}</span>
-        {/if}
-      </div>
-
-      {#if item.description}
-        <p class="detail-desc" class:expanded={overviewExpanded}>{item.description}</p>
-        {#if hasLongOverview}
-          <button class="show-more" type="button" onclick={() => (overviewExpanded = !overviewExpanded)} aria-expanded={overviewExpanded}>
-            {overviewExpanded ? 'Show Less' : 'Show More'}
-          </button>
-        {/if}
-      {/if}
-
-      {#if item.genres.length}
-        <div class="genre-tags">
-          {#each item.genres as genre}<span class="genre-tag">{genre}</span>{/each}
-        </div>
-      {/if}
-    </section>
-
-    <!-- Actions -->
-    <section class="actions">
-      <div class="primary-actions">
-        <a class="play-btn" href={watchHref}>
-          <Play size={16} fill="currentColor" strokeWidth={0} />
-          {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else}Play{/if}
-        </a>
-        {#if showDownloadButton}
-          <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen}>
-            <Download size={16} />
-            <span>Download</span>
-          </button>
-        {:else if showDownloadFailure}
-          <!-- Phase 2-K (audit UIX-2): the prefetch failed — surface a clear
-               recoverable state instead of silently hiding the Download button.
-               No fake download action, no leaking server errors. Retry
-               re-attempts the prefetch (which has its own loading/failure state). -->
-          <button class="download-btn download-unavailable" type="button" onclick={retryDownloadProviders} disabled={downloadProvidersLoading} aria-label="Download temporarily unavailable — retry loading providers">
-            {#if downloadProvidersLoading}<LoaderCircle size={16} />{:else}<AlertCircle size={16} />{/if}
-            <span>{downloadProvidersLoading ? 'Retrying…' : 'Download unavailable · Retry'}</span>
-          </button>
-        {/if}
-      </div>
-      <div class="secondary-actions">
-        <button class="secondary-btn" onclick={openStatusSheet} aria-haspopup="dialog" aria-expanded={statusSheetOpen}>
-          {#if watchlistStatus}<Heart size={15} fill="currentColor" />{:else}<ListPlus size={15} />{/if}
-          <span>{statusLabel(watchlistStatus)}</span>
-        </button>
-        <button class="secondary-btn" onclick={shareItem} aria-label={`Share ${item.title}`}>
-          <Share2 size={15} /><span>Share</span>
-        </button>
-        {#if hasTrailer}
-          <button class="secondary-btn" onclick={openTrailer} aria-haspopup="dialog" aria-expanded={trailerOpen}>
-            <Film size={15} /><span>Trailer</span>
-          </button>
-        {/if}
-      </div>
-      {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
-    </section>
-
+  <!-- ============================================================
+       BELOW THE FOLD — Cast / Episodes / Recommendations.
+       All sections share the same content max-width so the page
+       reads as one composed column rather than a stack of
+       disconnected cards.
+       ============================================================ -->
+  <div class="detail-body">
     <!-- Cast -->
     {#if castMembers.length}
       <section class="cast-section" aria-labelledby="cast-heading">
@@ -654,230 +676,461 @@
 />
 
 <style>
-  .detail-page { position: relative; overflow: hidden; padding-bottom: 80px; background: #000; }
+  /* ============================================================
+     DETAIL PAGE — Matrix/Cyberpunk cinematic redesign (Phase B P2)
+     -----------------------------------------------------------------
+     Layout modes:
+       • mobile  (≤640px): backdrop hero → centered poster overlap
+         → left-aligned identity → full-width Play → grouped secondary
+       • tablet  (641–1024px): poster + identity side-by-side
+       • desktop (≥1025px): cinematic hero with horizontal composition
+         (poster left, identity/actions right) over the lower-left of
+         a full-bleed backdrop.
+       • large   (≥1900px): same composition, wider max-width, larger
+         poster + bounded typography so 4K doesn't look like an
+         enlarged 1080p layout.
+     The hero never has a hard rectangular backdrop edge: a dark
+     bottom gradient blends into the page background so the
+     transition below the fold is invisible.
+     ============================================================ */
 
-  /* Hero backdrop */
-  .hero { position: relative; width: 100%; height: clamp(280px, 56vw, 460px); overflow: hidden; background: #0a0a10; }
-  .hero-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; }
+  .detail-page {
+    position: relative;
+    background: var(--color-bg);
+    overflow-x: hidden;
+    padding-bottom: clamp(72px, 8vw, 110px);
+  }
+
+  /* ---- Hero backdrop ---- */
+  .hero {
+    position: relative;
+    width: 100%;
+    /* Hero height adapts to viewport — short landscape phones stay
+       tall enough to show poster + title, but never eats the whole
+       viewport on desktop. */
+    min-height: clamp(440px, 78vh, 760px);
+    overflow: hidden;
+    background: var(--color-surface);
+    isolation: isolate;
+  }
+  .hero-img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: center 18%;
+  }
+  /* Scrim — cinematic dark gradients. Multiple stops blend the
+     backdrop into the page background so there's no hard edge. */
   .hero-scrim {
-    position: absolute; inset: 0; pointer-events: none;
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
     background:
-      linear-gradient(to bottom, rgba(0,0,0,.55) 0%, transparent 22%, transparent 55%, rgba(0,0,0,.55) 80%, #000 100%),
-      linear-gradient(to right, rgba(0,0,0,.25), transparent 30%, transparent 70%, rgba(0,0,0,.25));
+      linear-gradient(180deg, rgba(5,7,8,.55) 0%, rgba(5,7,8,.18) 22%, rgba(5,7,8,.32) 60%, rgba(5,7,8,.92) 88%, var(--color-bg) 100%),
+      linear-gradient(90deg, rgba(5,7,8,.72) 0%, rgba(5,7,8,.32) 32%, transparent 60%);
   }
-  .back-btn {
-    position: absolute; top: calc(14px + env(safe-area-inset-top)); left: 14px; z-index: 4;
-    display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
-    padding: 0 14px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px;
-    color: #f5f5f5; background: rgba(0,0,0,.55); backdrop-filter: blur(8px);
-    font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer;
-    transition: all 200ms cubic-bezier(.22,1,.36,1);
-  }
-  .back-btn:hover { background: rgba(0,0,0,.75); border-color: rgba(255,255,255,.22); }
-  .back-btn:active { transform: scale(.97); }
 
-  /* Centered poster overlapping the backdrop bottom */
+  /* Back button — floats over the hero top-left, with safe-area. */
+  .back-btn {
+    position: absolute; top: calc(14px + env(safe-area-inset-top));
+    left: clamp(14px, 3vw, 32px); z-index: 6;
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 36px; padding: 0 14px;
+    border: 1px solid var(--color-border-strong); border-radius: 999px;
+    color: var(--color-text); background: rgba(5,7,8,.62); backdrop-filter: blur(10px);
+    font: inherit; font-size: .72rem; font-weight: 700;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
+  }
+  .back-btn:hover { background: rgba(5,7,8,.78); border-color: var(--color-primary-border); }
+  .back-btn:active { transform: scale(.97); }
+  .back-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+  /* ---- Hero inner (the responsive composition container) ----
+     On mobile this is a vertical flex (poster overlaps the boundary).
+     On tablet/desktop it becomes a horizontal grid: poster + identity. */
+  .hero-inner {
+    position: relative; z-index: 3;
+    width: min(1500px, calc(100% - clamp(28px, 5vw, 96px)));
+    margin-inline: auto;
+    padding-top: clamp(60px, 10vh, 120px);
+    padding-bottom: clamp(28px, 4vh, 56px);
+  }
+  .hero-composition {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: clamp(20px, 3vw, 36px);
+    align-items: end;
+  }
+
+  /* Poster — on mobile, centered + overlapping the hero/content
+     boundary. On tablet/desktop, left-aligned, sitting on top of the
+     lower-left of the backdrop. */
   .poster-wrap {
     display: flex; justify-content: center;
-    margin-top: clamp(-92px, -22vw, -52px); padding: 0 16px; position: relative; z-index: 3;
+    /* Pull the poster down so it overlaps the hero bottom edge. */
+    margin-top: clamp(-92px, -16vw, -52px);
+    position: relative; z-index: 4;
   }
   .poster-img {
-    width: clamp(120px, 36vw, 156px); aspect-ratio: 2 / 3; object-fit: cover;
-    border-radius: 12px; border: 1px solid rgba(255,255,255,.1);
-    box-shadow: 0 18px 44px rgba(0,0,0,.55);
+    width: clamp(120px, 36vw, 156px);
+    aspect-ratio: 2 / 3; object-fit: cover;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border-strong);
+    box-shadow: 0 22px 50px rgba(0,0,0,.6);
   }
 
-  .detail-container {
-    position: relative; z-index: 2;
-    width: min(1100px, calc(100% - clamp(28px, 6vw, 96px))); margin-inline: auto;
+  /* Identity block */
+  .identity {
+    text-align: center;
+    /* On desktop this becomes left-aligned (see media queries). */
   }
-
-  /* Identity */
-  .identity { text-align: center; margin-top: 18px; }
   .detail-eyebrow {
-    color: #77777f; font-size: .58rem; font-weight: 700;
-    letter-spacing: .14em; text-transform: uppercase; margin-bottom: 6px;
+    color: var(--color-primary);
+    font-size: .62rem; font-weight: 800;
+    letter-spacing: .16em; text-transform: uppercase;
+    margin-bottom: 8px;
+    text-shadow: 0 0 12px rgba(0,255,156,.35);
   }
   .detail-title {
-    margin: 0; color: #f5f5f5; font-size: clamp(1.6rem, 5.5vw, 2.4rem); font-weight: 800;
-    letter-spacing: -.025em; line-height: 1.05; text-wrap: balance;
-    text-shadow: 0 2px 16px rgba(0,0,0,.4);
+    margin: 0;
+    color: var(--color-text);
+    font-size: clamp(1.7rem, 6vw, 2.6rem);
+    font-weight: 900;
+    letter-spacing: -.025em;
+    line-height: 1.04;
+    text-wrap: balance;
+    text-shadow: 0 2px 18px rgba(0,0,0,.55);
   }
   .meta-row {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
-    gap: 7px; margin-top: 12px; color: #b7b7bd; font-size: .74rem; font-weight: 600;
+    gap: 7px; margin-top: 12px;
+    color: var(--color-text-muted);
+    font-size: .76rem; font-weight: 600;
   }
-  .meta-row .rating { display: inline-flex; align-items: center; gap: 3px; color: #ffc94d; font-weight: 700; }
-  .dot { width: 3px; height: 3px; border-radius: 50%; background: #555; }
+  .meta-row .rating {
+    display: inline-flex; align-items: center; gap: 3px;
+    color: #ffc94d; font-weight: 800;
+  }
+  .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--color-text-deep); }
 
   .detail-desc {
-    max-width: 580px; margin: 14px auto 0; color: #b7b7bd; font-size: .82rem; line-height: 1.6;
-    text-align: center;
+    /* On desktop this becomes left-aligned (see media queries). */
+    max-width: 620px; margin: 14px auto 0;
+    color: var(--color-text-muted); font-size: .84rem; line-height: 1.6;
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
   }
   .detail-desc.expanded { -webkit-line-clamp: unset; line-clamp: unset; overflow: visible; }
   .show-more {
-    display: inline-block; margin: 8px auto 0; padding: 4px 8px;
-    border: 0; background: transparent; color: #f5f5f5; font: inherit;
-    font-size: .7rem; font-weight: 700; cursor: pointer; text-decoration: underline;
-    text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,.4);
+    display: inline-block; margin: 8px auto 0;
+    padding: 4px 8px; border: 0; background: transparent;
+    color: var(--color-primary); font: inherit;
+    font-size: .7rem; font-weight: 700; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 3px;
+    text-decoration-color: var(--color-primary-border);
+    transition: text-decoration-color var(--motion-fast) var(--ease-out);
   }
-  .show-more:hover { text-decoration-color: #f5f5f5; }
+  .show-more:hover { text-decoration-color: var(--color-primary); }
+  .show-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 4px; }
 
   .genre-tags {
-    display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 16px;
+    display: flex; flex-wrap: wrap; gap: 6px;
+    justify-content: center;
+    margin-top: 16px;
   }
   .genre-tag {
-    padding: 4px 11px; border: 1px solid rgba(255,255,255,.1); border-radius: 999px;
-    color: #c7c7cc; font-size: .66rem; font-weight: 600;
-    background: rgba(255,255,255,.03);
+    padding: 4px 11px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 999px;
+    color: var(--color-text-muted);
+    font-size: .66rem; font-weight: 700;
+    background: rgba(0,255,156,.04);
+    backdrop-filter: blur(6px);
   }
 
-  /* Actions */
-  .actions { margin-top: 22px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-  /* Primary row holds Play + Download side-by-side. They share the available
-     width so neither becomes tiny on mobile; Play keeps a slight flex bias so
-     it remains the visually-dominant CTA. */
+  /* ---- Actions ----
+     Mobile: Play is near-full-width, secondary actions wrap below in a
+     compact grouped row. Desktop: inline cluster, left-aligned. */
+  .actions {
+    margin-top: 22px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
   .primary-actions {
     display: flex; align-items: stretch; gap: 8px;
-    width: 100%; max-width: 480px;
+    width: 100%; max-width: 460px;
   }
   .play-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    flex: 1 1 60%; padding: 14px 24px; border-radius: 999px;
-    color: #000; font-size: .9rem; font-weight: 800; text-decoration: none;
-    background: #fff; box-shadow: 0 6px 24px rgba(255,255,255,.18);
-    transition: transform 220ms cubic-bezier(.22,1,.36,1), box-shadow 220ms cubic-bezier(.22,1,.36,1);
+    flex: 1 1 60%; min-height: 48px;
+    padding: 14px 24px; border-radius: 999px;
+    color: #050708; font-size: .9rem; font-weight: 800;
+    text-decoration: none;
+    background: var(--color-primary);
+    box-shadow: 0 6px 22px rgba(0,255,156,.28), var(--glow-primary);
+    transition: transform var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
-  .play-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 28px rgba(255,255,255,.25); }
+  .play-btn:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: 0 8px 28px rgba(0,255,156,.4), var(--glow-primary); }
   .play-btn:active { transform: scale(.98); }
+  .play-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
   .download-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    flex: 1 1 40%; padding: 14px 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.18);
-    color: #f5f5f5; font-size: .9rem; font-weight: 800; cursor: pointer;
-    background: rgba(255,255,255,.06); backdrop-filter: blur(6px);
-    transition: transform 220ms cubic-bezier(.22,1,.36,1), background 220ms cubic-bezier(.22,1,.36,1), border-color 220ms cubic-bezier(.22,1,.36,1);
+    flex: 1 1 40%; min-height: 48px;
+    padding: 14px 18px; border-radius: 999px;
+    border: 1px solid var(--color-border-strong);
+    color: var(--color-text); font-size: .9rem; font-weight: 800; cursor: pointer;
+    background: rgba(255,255,255,.04); backdrop-filter: blur(6px);
+    transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .download-btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.3); }
+  .download-btn:hover { transform: translateY(-1px); background: rgba(0,255,156,.08); border-color: var(--color-primary-border); }
   .download-btn:active { transform: scale(.98); }
-  /* Phase 2-K (audit UIX-2): the failure-affordance variant — same shape
-     as the normal Download button (no layout shift on the actions row) but
-     amber-toned to signal a temporary problem. The Retry label makes the
-     action unambiguous. */
+  .download-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
   .download-btn.download-unavailable {
-    color: #ffb020;
-    border-color: rgba(255,176,32,.4);
-    background: rgba(255,176,32,.06);
+    color: var(--color-warning);
+    border-color: rgba(255,194,71,.4);
+    background: rgba(255,194,71,.06);
   }
   .download-btn.download-unavailable:hover:not(:disabled) {
-    background: rgba(255,176,32,.12);
-    border-color: rgba(255,176,32,.6);
+    background: rgba(255,194,71,.12);
+    border-color: rgba(255,194,71,.6);
   }
   .download-btn.download-unavailable:disabled { opacity: .6; cursor: progress; }
   .download-btn.download-unavailable :global(svg) { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .secondary-actions {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
-    width: 100%; max-width: 480px;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+    gap: 8px;
+    width: 100%; max-width: 460px;
   }
   .secondary-btn {
-    display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border-radius: 999px;
-    color: #f5f5f5; font-size: .76rem; font-weight: 700; border: 1px solid rgba(255,255,255,.14);
-    background: rgba(255,255,255,.06); cursor: pointer;
-    transition: background 220ms cubic-bezier(.22,1,.36,1), border-color 220ms cubic-bezier(.22,1,.36,1);
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 40px; padding: 10px 16px; border-radius: 999px;
+    color: var(--color-text); font-size: .76rem; font-weight: 700;
+    border: 1px solid var(--color-border-strong);
+    background: rgba(255,255,255,.04); cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
   }
-  .secondary-btn:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.24); }
+  .secondary-btn:hover { background: var(--color-primary-soft); border-color: var(--color-primary-border); }
   .secondary-btn:active { transform: scale(.97); }
-  .save-error { margin-top: 4px; color: #ffb020; font-size: .66rem; text-align: center; }
+  .secondary-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .save-error { margin-top: 4px; color: var(--color-warning); font-size: .66rem; text-align: center; }
+
+  /* ---- Below the fold ---- */
+  .detail-body {
+    position: relative; z-index: 2;
+    width: min(1500px, calc(100% - clamp(28px, 5vw, 96px)));
+    margin-inline: auto;
+    padding-top: clamp(8px, 2vh, 24px);
+  }
 
   /* Cast rail */
-  .cast-section { margin-top: 36px; }
+  .cast-section { margin-top: clamp(28px, 4vw, 40px); }
   .section-h {
-    color: #f5f5f5; font-size: 1.05rem; font-weight: 700; letter-spacing: -.02em;
-    margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.06);
+    color: var(--color-text);
+    font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+    font-weight: 800; letter-spacing: -.02em;
+    margin: 0 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--color-border);
   }
   .cast-rail {
-    display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity;
-    padding: 2px 0 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    display: flex; gap: 12px;
+    overflow-x: auto; scroll-snap-type: x proximity;
+    padding: 2px 0 10px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
   }
   .cast-rail::-webkit-scrollbar { display: none; }
   .cast-card {
-    flex: 0 0 92px; min-width: 0; scroll-snap-align: start;
+    flex: 0 0 96px; min-width: 0; scroll-snap-align: start;
     display: flex; flex-direction: column; gap: 4px;
   }
   .cast-photo {
-    width: 92px; height: 92px; border-radius: 50%; object-fit: cover;
-    border: 1px solid rgba(255,255,255,.08); background: #1a1a22;
+    width: 96px; height: 96px; border-radius: 50%; object-fit: cover;
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-surface-elevated);
   }
-  .cast-photo-fallback { display: grid; place-items: center; color: rgba(255,255,255,.18); font-size: 1.5rem; font-weight: 800; }
+  .cast-photo-fallback {
+    display: grid; place-items: center;
+    color: var(--color-text-deep);
+    font-size: 1.5rem; font-weight: 800;
+  }
   .cast-name {
-    color: #f5f5f5; font-size: .68rem; font-weight: 700; text-align: center;
+    color: var(--color-text); font-size: .68rem; font-weight: 700; text-align: center;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .cast-character {
-    color: #77777f; font-size: .6rem; text-align: center;
+    color: var(--color-text-deep); font-size: .6rem; text-align: center;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
   /* Recommendations */
-  .recs-rail { margin-top: 36px; }
+  .recs-rail { margin-top: clamp(28px, 4vw, 40px); }
 
-  /* === Trailer modal === */
+  /* === Trailer modal ===
+     Unchanged behavior — only colors aligned to Phase B tokens. */
   .trailer-layer { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 16px; }
-  .trailer-backdrop { position: absolute; inset: 0; border: 0; background: rgba(0,0,0,.82); backdrop-filter: blur(8px); cursor: default; }
+  .trailer-backdrop {
+    position: absolute; inset: 0; border: 0;
+    background: rgba(5,7,8,.85); backdrop-filter: blur(8px);
+    cursor: default;
+  }
   .trailer-modal {
     position: relative; width: min(960px, 100%); max-height: 90dvh; overflow: hidden;
-    border: 1px solid rgba(255,255,255,.12); border-radius: 14px;
-    background: #0a0a10; box-shadow: 0 30px 80px rgba(0,0,0,.6);
-    animation: trailer-in 240ms cubic-bezier(.22,1,.36,1);
+    border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg);
+    background: var(--color-surface); box-shadow: var(--shadow-lg);
+    animation: trailer-in 240ms var(--ease-out);
   }
   .trailer-bar {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.08);
-    color: #f5f5f5; font-size: .76rem; font-weight: 700;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text); font-size: .76rem; font-weight: 700;
   }
   .trailer-title { display: inline-flex; align-items: center; gap: 8px; }
   .trailer-close {
-    display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid rgba(255,255,255,.12);
-    border-radius: 50%; color: #b7b7bd; background: rgba(255,255,255,.04); cursor: pointer;
-    transition: color 200ms ease, border-color 200ms ease;
+    display: grid; place-items: center;
+    width: 32px; height: 32px;
+    border: 1px solid var(--color-border-strong); border-radius: 50%;
+    color: var(--color-text-muted);
+    background: rgba(255,255,255,.04);
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .trailer-close:hover { color: #fff; border-color: rgba(255,255,255,.24); }
+  .trailer-close:hover { color: var(--color-text); border-color: var(--color-primary-border); }
+  .trailer-close:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .trailer-frame { position: relative; aspect-ratio: 16 / 9; background: #000; }
   .trailer-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   @keyframes trailer-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
-  /* Desktop: richer two-column-ish hero identity */
-  @media (min-width: 900px) {
-    .hero { height: clamp(420px, 56vw, 620px); }
-    .poster-wrap { margin-top: clamp(-130px, -18vw, -80px); }
-    .poster-img { width: clamp(160px, 16vw, 200px); }
-    .detail-container { width: min(1100px, calc(100% - 96px)); }
-    .identity { margin-top: 22px; }
-    .detail-title { font-size: clamp(2rem, 3.4vw, 3rem); }
-    .detail-desc { font-size: .88rem; max-width: 720px; }
-    .primary-actions { max-width: 420px; }
-    .play-btn { padding: 14px 28px; }
+  /* ============================================================
+     RESPONSIVE — three intentional layout modes.
+     Mobile is the base stylesheet above. Below: tablet, desktop,
+     large desktop/4K, and landscape mobile tweaks.
+     ============================================================ */
+
+  /* TABLET — poster + identity side-by-side. */
+  @media (min-width: 641px) and (max-width: 1024px) {
+    .hero { min-height: clamp(420px, 60vh, 560px); }
+    .hero-inner { padding-top: clamp(80px, 12vh, 140px); }
+    .hero-composition {
+      grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+      gap: clamp(24px, 4vw, 40px);
+      align-items: end;
+    }
+    .poster-wrap { justify-content: flex-start; margin-top: 0; }
+    .poster-img { width: clamp(160px, 22vw, 220px); }
+    .identity { text-align: left; }
+    .meta-row { justify-content: flex-start; }
+    .detail-desc {
+      margin-left: 0; margin-right: 0;
+      text-align: left;
+    }
+    .genre-tags { justify-content: flex-start; }
+    .actions { align-items: flex-start; }
+    .primary-actions, .secondary-actions { max-width: 460px; }
     .cast-card { flex: 0 0 110px; }
     .cast-photo { width: 110px; height: 110px; }
   }
+
+  /* DESKTOP — full cinematic hero. */
+  @media (min-width: 1025px) {
+    .hero { min-height: clamp(520px, 76vh, 760px); }
+    .hero-inner {
+      width: min(1500px, calc(100% - clamp(48px, 6vw, 120px)));
+      padding-top: clamp(96px, 14vh, 160px);
+      padding-bottom: clamp(36px, 6vh, 80px);
+    }
+    .hero-composition {
+      grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+      gap: clamp(32px, 4vw, 56px);
+      align-items: end;
+    }
+    .poster-wrap { justify-content: flex-start; margin-top: 0; }
+    .poster-img { width: clamp(220px, 18vw, 280px); }
+    .identity { text-align: left; }
+    .detail-eyebrow { font-size: .68rem; }
+    .detail-title { font-size: clamp(2.2rem, 4.2vw, 3.4rem); }
+    .meta-row { justify-content: flex-start; font-size: .82rem; }
+    .detail-desc {
+      margin-left: 0; margin-right: 0; text-align: left;
+      font-size: .9rem; max-width: 680px;
+    }
+    .show-more { margin-left: 0; }
+    .genre-tags { justify-content: flex-start; }
+    .actions { align-items: flex-start; }
+    .primary-actions, .secondary-actions { max-width: 480px; }
+    .play-btn { padding: 16px 28px; }
+    .cast-card { flex: 0 0 120px; }
+    .cast-photo { width: 120px; height: 120px; }
+  }
+
+  /* LARGE DESKTOP / 4K — wider composition + bounded typography.
+     The hero composition stays anchored to the lower-left, the
+     content max-width grows but typography stays readable so 4K
+     doesn't look like an enlarged 1080p layout. */
+  @media (min-width: 1900px) {
+    .hero-inner {
+      width: min(1700px, calc(100% - 120px));
+      padding-top: clamp(120px, 16vh, 200px);
+    }
+    .hero-composition { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 56px; }
+    .poster-img { width: clamp(260px, 14vw, 320px); }
+    .detail-title { font-size: clamp(2.6rem, 3vw, 3.6rem); }
+    .detail-desc { max-width: 760px; font-size: .94rem; }
+    .detail-body { width: min(1700px, calc(100% - 120px)); }
+    .cast-card { flex: 0 0 130px; }
+    .cast-photo { width: 130px; height: 130px; }
+  }
+
+  /* MOBILE — fine-tune base. */
   @media (max-width: 640px) {
     .detail-page { padding-bottom: 96px; }
+    .hero { min-height: clamp(380px, 64vh, 520px); }
     .back-btn { top: calc(12px + env(safe-area-inset-top)); left: 12px; padding: 0 12px; min-height: 34px; font-size: .68rem; }
-    .hero { height: clamp(260px, 58vw, 360px); }
-    .poster-wrap { margin-top: clamp(-78px, -22vw, -50px); padding: 0 16px; }
-    .poster-img { width: clamp(118px, 36vw, 142px); border-radius: 10px; }
-    .detail-container { width: calc(100% - 32px); }
-    .detail-title { font-size: clamp(1.4rem, 6.4vw, 2rem); }
+    .hero-inner {
+      width: calc(100% - 28px);
+      padding-top: clamp(56px, 12vh, 100px);
+    }
+    .hero-composition { gap: 18px; }
+    .poster-wrap { margin-top: clamp(-78px, -22vw, -50px); }
+    .poster-img { width: clamp(120px, 36vw, 142px); border-radius: 10px; }
+    .detail-title { font-size: clamp(1.5rem, 6.4vw, 2rem); }
     .meta-row { font-size: .7rem; gap: 6px; }
     .detail-desc { font-size: .8rem; }
-    .play-btn { padding: 12px 22px; font-size: .85rem; }
-    .download-btn { padding: 12px 16px; font-size: .85rem; }
+    /* Play button takes the full width on mobile — download sits in a
+       second row of secondary actions to keep Play the unambiguous
+       primary CTA. */
+    .primary-actions { max-width: 100%; }
+    .play-btn { flex: 1 1 100%; padding: 14px 22px; font-size: .9rem; }
+    .download-btn {
+      flex: 1 1 100%;
+      /* On mobile, the Download action joins the secondary row — the
+         primary row collapses to Play alone. (Visibility rules above
+         still gate it; if neither shows, the row stays single-CTA.) */
+    }
     .secondary-btn { padding: 9px 14px; font-size: .72rem; }
-    .cast-section { margin-top: 30px; }
+    .cast-section { margin-top: 28px; }
     .recs-rail { margin-top: 28px; }
   }
+
+  /* LANDSCAPE MOBILE — short viewport: keep the title + Play above
+     the fold, never push content below the visible area. */
+  @media (max-width: 1024px) and (orientation: landscape) and (max-height: 480px) {
+    .hero {
+      min-height: auto;
+      height: auto;
+    }
+    .hero-inner { padding-top: clamp(48px, 10vh, 80px); padding-bottom: 16px; }
+    .hero-composition { gap: 18px; }
+    .poster-img { width: clamp(110px, 18vw, 160px); }
+    .detail-title { font-size: clamp(1.3rem, 3vw, 1.8rem); }
+    .detail-desc { -webkit-line-clamp: 2; line-clamp: 2; }
+    .primary-actions { max-width: 100%; }
+    .play-btn { flex: 1 1 100%; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .back-btn, .play-btn, .download-btn, .secondary-btn, .trailer-modal { transition: none; animation: none; }
+    .back-btn, .play-btn, .download-btn, .secondary-btn, .trailer-modal,
+    .show-more, .trailer-close {
+      transition: none !important;
+      animation: none !important;
+    }
   }
 </style>
