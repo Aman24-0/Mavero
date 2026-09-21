@@ -109,26 +109,26 @@
     z-index: 45;
     display: grid; place-items: center;
     width: 44px; height: 44px;
-    border: 1px solid rgba(255, 255, 255, .12);
+    border: 1px solid var(--color-primary-border);
     border-radius: 50%;
-    background: rgba(10, 10, 10, .82);
+    background: rgba(8, 11, 13, .82);
     backdrop-filter: blur(12px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
-    color: #f5f5f5;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .5), var(--glow-primary);
+    color: var(--color-text);
     cursor: pointer;
     padding: 0;
-    transition: transform 200ms cubic-bezier(.22, 1, .36, 1),
-                opacity 200ms cubic-bezier(.22, 1, .36, 1),
-                border-color 200ms cubic-bezier(.22, 1, .36, 1);
-    animation: fab-in 220ms cubic-bezier(.22, 1, .36, 1);
+    transition: transform var(--motion-fast) var(--ease-out),
+                opacity var(--motion-fast) var(--ease-out),
+                border-color var(--motion-fast) var(--ease-out);
+    animation: fab-in 220ms var(--ease-out);
   }
   .scroll-to-top:hover {
     transform: translateY(-2px);
-    border-color: rgba(255, 255, 255, .28);
+    border-color: var(--color-primary);
   }
   .scroll-to-top:active { transform: scale(.94); }
   .scroll-to-top:focus-visible {
-    outline: 2px solid #f5f5f5;
+    outline: 2px solid var(--color-focus);
     outline-offset: 3px;
   }
 
@@ -139,12 +139,12 @@
   }
   .ring-track {
     fill: none;
-    stroke: rgba(255, 255, 255, .1);
+    stroke: rgba(242, 255, 248, .1);
     stroke-width: 2;
   }
   .ring-progress {
     fill: none;
-    stroke: #f5f5f5;
+    stroke: var(--color-primary);
     stroke-width: 2;
     stroke-linecap: round;
     transition: stroke-dashoffset 120ms linear;
@@ -153,7 +153,7 @@
   .fab-arrow {
     position: relative;
     display: grid; place-items: center;
-    color: #f5f5f5;
+    color: var(--color-primary);
   }
 
   /* Desktop: lift the FAB a bit higher since there's no floating bottom nav. */

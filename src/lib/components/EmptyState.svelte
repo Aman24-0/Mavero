@@ -28,22 +28,23 @@
   .empty-state {
     display: grid; place-items: center;
     min-height: 260px; margin-top: 26px; padding: 36px 20px;
-    border: 1px solid var(--line); border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, .015);
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    background: rgba(0,255,156,.012);
     text-align: center;
   }
   .empty-orbit {
     display: grid; place-items: center;
     width: 58px; height: 58px; margin-bottom: 15px;
-    border: 1px solid rgba(255, 255, 255, .12); border-radius: 50%;
-    box-shadow: 0 0 0 9px rgba(255, 255, 255, .025);
+    border: 1px solid var(--color-primary-border); border-radius: 50%;
+    box-shadow: 0 0 0 9px rgba(0,255,156,.025);
   }
   .empty-mark {
     display: grid; place-items: center;
     width: 42px; height: 42px;
-    border: 1px solid var(--line-strong); border-radius: 50%;
-    color: var(--ink-soft); background: rgba(0, 0, 0, .6);
+    border: 1px solid var(--color-primary-border); border-radius: 50%;
+    color: var(--color-primary); background: var(--color-primary-soft);
+    box-shadow: var(--glow-primary);
   }
-  .empty-state h2 { margin: 8px 0 7px; color: var(--ink); font-size: 1.4rem; font-weight: 800; letter-spacing: -.02em; }
-  .empty-state p { max-width: 360px; margin: 0 0 20px; color: var(--muted); font-size: .82rem; line-height: 1.6; }
+  .empty-state h2 { margin: 8px 0 7px; color: var(--color-text); font-size: 1.4rem; font-weight: 800; letter-spacing: -.02em; }
+  .empty-state p { max-width: 360px; margin: 0 0 20px; color: var(--color-text-muted); font-size: .82rem; line-height: 1.6; }
 </style>
