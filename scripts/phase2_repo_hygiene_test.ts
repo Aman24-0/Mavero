@@ -49,8 +49,7 @@ ok(/NODE_VERSION\s*=\s*"22"/.test(netlify), '2a. netlify.toml pins NODE_VERSION=
 const ci = read('.github/workflows/ci.yml');
 ok(/node-version:\s*22/.test(ci), '2b. CI workflow uses node-version: 22');
 
-const mediaWorkerPkg = JSON.parse(read('apps/media-worker/package.json'));
-ok(mediaWorkerPkg.engines && mediaWorkerPkg.engines.node.startsWith('>=22.'), `2c. media-worker engines.node is >=22.x (got ${mediaWorkerPkg.engines.node})`);
+// 2c. media-worker removed — no package.json to check.
 
 // ============================================================
 // 3. README.md consistent with the actual supported floor.

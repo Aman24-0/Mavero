@@ -1,9 +1,6 @@
 name: CI
 
-# Phase 1 closure (audit BL-7): blocking quality gates for every change to
-# main. A red gate blocks the merge/push — no continue-on-error, no `|| true`,
-# no suppressed failures. The pnpm version is the repository's packageManager
-# pin in package.json (pnpm@10.30.3), enforced — not assumed.
+# CI quality gates for every change to main.
 
 on:
   push:
@@ -45,7 +42,7 @@ jobs:
       - name: Type and Svelte validation (pnpm check)
         run: corepack pnpm check
 
-      - name: Install ffmpeg (real binary required by stremio_player_phase11_test — gate policy forbids skipping suites)
+      - name: Install ffmpeg (real binary required by some test suites)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Test suites (pnpm test)
@@ -53,23 +50,3 @@ jobs:
 
       - name: Production build (pnpm build)
         run: corepack pnpm build
-
-  media-worker:
-    name: Media worker typecheck (Node 22)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install media-worker dependencies (frozen lockfile)
-        working-directory: apps/media-worker
-        run: npm ci
-
-      - name: TypeScript typecheck (no emit)
-        working-directory: apps/media-worker
-        run: npx tsc -p tsconfig.json --noEmit
