@@ -148,7 +148,10 @@
   .card-detail { display: -webkit-box; overflow: hidden; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 0.55rem; line-height: 1.45; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
   .card-badges { display: flex; flex-wrap: wrap; gap: 4px; }
   .card-badge { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; color: var(--ink-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 0.53rem; text-overflow: ellipsis; white-space: nowrap; }
-  .card-compat { border-color: rgba(255, 176, 32, 0.45); color: #ffb020; }
+  /* Phase A (commit 71fd41e): the .card-compat variant was removed along with
+     the compatibility-worker badge — direct playback only, no compat-tier
+     badge is ever rendered. The base .card-badge rule above is the only
+     badge style still in use. */
   /* Phase 12 (GOAL H): compact icon actions, 38px touch targets. */
   .card-actions { display: flex; flex: 0 0 auto; flex-direction: column; gap: 2px; padding: 0 6px 0 2px; }
   .card-action { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255,255,255,.03); cursor: pointer; text-decoration: none; }

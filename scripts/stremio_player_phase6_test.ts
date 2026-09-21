@@ -408,9 +408,13 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   ok(aggregate?.url === aggregate?.qualities?.[0]?.url, 'I: the initial current stream IS qualities[0] (mediaUrl falls back to source.url)');
   ok(cardSource.includes('aria-selected={selected}') && shellTemplate.includes('selected={stream.url === mediaUrl}'), 'I: current-stream identity is the stable stream URL compared against the live mediaUrl');
   const body = shellSource.slice(shellSource.indexOf('function selectMaveroStream'));
-  // Phase 10: a compat override keeps mediaUrl on the worker session, so the
-  // no-op guard allows re-selection while an override is active.
-  ok(/if \(!stream\.url \|\| \(stream\.url === mediaUrl && !compatOverrideUrl\)\) return;/.test(body), 'I: selecting the CURRENT stream is a no-op (no pointless reload; Phase 10: re-selection allowed while a compat session is live)');
+  // Phase A (commit 71fd41e): the compatibility-worker override path
+  // (compatOverrideUrl) was removed entirely. Direct playback only — no
+  // FFmpeg conversion, no worker session. The no-op guard now uses a
+  // plain equality check against the live mediaUrl with no compat
+  // escape hatch.
+  ok(/if \(!stream\.url \|\| stream\.url === mediaUrl\) return;/.test(body), 'I: selecting the CURRENT stream is a no-op (direct-playback equality check; compat override removed)');
+  ok(!/compatOverrideUrl/.test(body), 'I: no compatOverrideUrl reference remains in selectMaveroStream (Phase A compat-worker decommissioned)');
 }
 
 // ===========================================================================

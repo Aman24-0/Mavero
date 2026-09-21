@@ -388,9 +388,13 @@ function streamFixture(overrides: Record<string, unknown> = {}): Record<string, 
   // (`{tab.streamCount}`) — each addon still shows ITS OWN real count.
   ok(shellTemplate.includes('{tab.streamCount}'), '17: each addon TAB shows ITS OWN real stream count');
   ok(shellTemplate.includes('selected={stream.url === mediaUrl}'), '17: the current stream is identified by the stable mediaUrl identity');
-  // Phase 10: re-selection is allowed while a compat session is live (the
-  // worker url owns mediaUrl) — direct re-selection stays a no-op.
-  ok(/if \(!stream\.url \|\| \(stream\.url === mediaUrl && !compatOverrideUrl\)\) return;/.test(shellSource), '17: re-selecting the current stream is a no-op (stale selection cannot overwrite the live stream; Phase 10 compat-aware)');
+  // Phase A (commit 71fd41e): the compatibility-worker override path
+  // (compatOverrideUrl) was removed entirely. Direct playback only — no
+  // FFmpeg conversion, no worker session. The no-op guard is now a plain
+  // equality check against the live mediaUrl with no compat escape
+  // hatch, so stale direct re-selection stays a no-op.
+  ok(/if \(!stream\.url \|\| stream\.url === mediaUrl\) return;/.test(shellSource), '17: re-selecting the current stream is a no-op (direct-playback equality check; compat override removed)');
+  ok(!/compatOverrideUrl/.test(shellSource), '17: no compatOverrideUrl reference remains in PlayerShell (Phase A compat-worker decommissioned)');
   ok(shellSource.includes('failedStreamUrls') && shellTemplate.includes('failed={failedStreamUrls.includes(stream.url)}'), '18: failed streams are marked per-session in the sheet');
   ok(cardSource.includes('class:failed') && cardSource.includes('Failed — try another or retry'), '18: a failed stream keeps its card with a visible marker');
   ok(shellTemplate.includes('onselect={selectMaveroStream}'), '18: cards route selection through the single selectMaveroStream path');
