@@ -1,9 +1,12 @@
 <script lang="ts">
   import { ArrowUpRight, Database, Download, Layers3, Puzzle, ShieldCheck, SlidersHorizontal, Wifi } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
+  import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+  import AdminMetricCard from '$lib/components/admin/AdminMetricCard.svelte';
+  import AdminSection from '$lib/components/admin/AdminSection.svelte';
   import type { PageData } from './$types';
 
-  export let data: PageData;
+  let { data }: { data: PageData } = $props();
 </script>
 
 <svelte:head>
@@ -12,72 +15,264 @@
 </svelte:head>
 
 <AdminShell active="overview">
-  <div class="eyebrow">MAVERO / Admin registry</div>
-  <h1>Control the<br /><em>configuration.</em></h1>
-  <p class="admin-intro">Provider, source, and category configuration is stored in Supabase and versioned independently of the public application.</p>
+  <AdminPageHeader
+    eyebrow="MAVERO / Control room"
+    title="System"
+    accent="status."
+    description="Provider, source, downloader, default, category, and Stremio addon configuration stored in Supabase — versioned independently of the public application. Live operational view; mutations propagate to the public config after invalidation."
+  />
 
-  <section class="admin-grid" aria-label="MAVERO streaming registry summary">
-    <div class="admin-stat"><div class="eyebrow">Providers</div><strong>{data.overview.providerCount}</strong><span class="stat-foot"><ShieldCheck size={13} /> {data.overview.activeProviderCount} enabled</span></div>
-    <div class="admin-stat"><div class="eyebrow">Sources</div><strong>{data.overview.sourceCount}</strong><span class="stat-foot"><Wifi size={13} /> {data.overview.activeSourceCount} enabled</span></div>
-    <div class="admin-stat"><div class="eyebrow">Categories</div><strong>{data.overview.categoryCount}</strong><span class="stat-foot"><Layers3 size={13} /> custom ordering</span></div>
-    <div class="admin-stat"><div class="eyebrow">Config version</div><strong>v{data.overview.configVersion}</strong><span class="stat-foot"><Database size={13} /> invalidates on mutation</span></div>
-  </section>
-
-  <div class="admin-section-head"><div><div class="eyebrow">Registry foundation</div><h2>Manage the streaming catalog</h2></div><span class="version">Updated {new Date(data.overview.configUpdatedAt).toLocaleString()}</span></div>
-  <div class="admin-cards">
-    <a class="admin-card" href="/admin/providers"><span class="card-icon"><ShieldCheck size={18} /></span><div><h3>Providers</h3><p>Define integrations, states, capabilities, and safe display metadata.</p></div><ArrowUpRight size={16} /></a>
-    <a class="admin-card" href="/admin/sources"><span class="card-icon"><SlidersHorizontal size={18} /></span><div><h3>Sources</h3><p>Configure selectable source metadata and inert media templates.</p></div><ArrowUpRight size={16} /></a>
-    <a class="admin-card" href="/admin/categories"><span class="card-icon"><Layers3 size={18} /></span><div><h3>Categories</h3><p>Organize public sources with category-specific ordering.</p></div><ArrowUpRight size={16} /></a>
+  <!-- ============================================================
+       TOP METRIC TILES — primary registry counts + live state.
+       Renders only what the backend actually provides; no invented metrics.
+       ============================================================ -->
+  <div class="metric-grid">
+    <AdminMetricCard
+      label="Providers"
+      value={data.overview.providerCount}
+      status={`${data.overview.activeProviderCount} enabled`}
+      statusTone={data.overview.activeProviderCount > 0 ? 'good' : 'neutral'}
+      icon={ShieldCheck}
+      href="/admin/providers"
+    />
+    <AdminMetricCard
+      label="Sources"
+      value={data.overview.sourceCount}
+      status={`${data.overview.activeSourceCount} enabled`}
+      statusTone={data.overview.activeSourceCount > 0 ? 'good' : 'neutral'}
+      icon={Wifi}
+      href="/admin/sources"
+    />
+    <AdminMetricCard
+      label="Categories"
+      value={data.overview.categoryCount}
+      status="custom ordering"
+      statusTone="info"
+      icon={Layers3}
+      href="/admin/categories"
+    />
+    <AdminMetricCard
+      label="Config version"
+      value={`v${data.overview.configVersion}`}
+      status="invalidates on mutation"
+      statusTone="neutral"
+      icon={Database}
+    />
   </div>
 
-  <!-- Optional Downloaders card. Renders only when the downloaders overview
-       loaded successfully (the load catches errors and returns null for
-       pre-migration environments). Kept intentionally small — this is not a
-       redesign of the overview, just a pointer to the new section. -->
   {#if data.downloadersOverview}
-    <div class="admin-section-head"><div><div class="eyebrow">Separate registry</div><h2>Download providers</h2></div><span class="version">v{data.downloadersOverview.configVersion}</span></div>
-    <div class="admin-cards">
-      <a class="admin-card" href="/admin/downloaders"><span class="card-icon"><Download size={18} /></span><div><h3>Downloaders</h3><p>{data.downloadersOverview.providerCount} providers · {data.downloadersOverview.enabledCount} enabled · {data.downloadersOverview.defaultCount} default</p></div><ArrowUpRight size={16} /></a>
+    <div class="metric-grid secondary">
+      <AdminMetricCard
+        label="Downloaders"
+        value={data.downloadersOverview.providerCount}
+        status={`${data.downloadersOverview.enabledCount} enabled · ${data.downloadersOverview.defaultCount} default`}
+        statusTone={data.downloadersOverview.enabledCount > 0 ? 'good' : 'neutral'}
+        icon={Download}
+        href="/admin/downloaders"
+      />
+      {#if data.addonsOverview}
+        <AdminMetricCard
+          label="Stremio Addons"
+          value={data.addonsOverview.addonCount}
+          status={`${data.addonsOverview.enabledCount} enabled`}
+          statusTone={data.addonsOverview.enabledCount > 0 ? 'good' : 'neutral'}
+          icon={Puzzle}
+          href="/admin/addons"
+        />
+      {/if}
+    </div>
+  {:else if data.addonsOverview}
+    <div class="metric-grid secondary">
+      <AdminMetricCard
+        label="Stremio Addons"
+        value={data.addonsOverview.addonCount}
+        status={`${data.addonsOverview.enabledCount} enabled`}
+        statusTone={data.addonsOverview.enabledCount > 0 ? 'good' : 'neutral'}
+        icon={Puzzle}
+        href="/admin/addons"
+      />
     </div>
   {/if}
 
-  <!-- Optional Stremio addons card (Phase 7). Same graceful-degradation
-       pattern as the downloaders card — renders only when the registry
-       overview loads (pre-migration environments return null). -->
-  {#if data.addonsOverview}
-    <div class="admin-section-head"><div><div class="eyebrow">MAVERO Player registry</div><h2>Stremio addons</h2></div><span class="version">Admin-managed</span></div>
-    <div class="admin-cards">
-      <a class="admin-card" href="/admin/addons"><span class="card-icon"><Puzzle size={18} /></span><div><h3>Stremio Addons</h3><p>{data.addonsOverview.addonCount} addons · {data.addonsOverview.enabledCount} enabled</p></div><ArrowUpRight size={16} /></a>
+  <!-- ============================================================
+       REGISTRY NAVIGATION CARDS — primary links into each sub-page.
+       ============================================================ -->
+  <AdminSection eyebrow="Registry foundation" title="Manage the streaming" accent="catalog.">
+    <div class="registry-cards">
+      <a class="registry-card" href="/admin/providers">
+        <span class="card-icon"><ShieldCheck size={18} /></span>
+        <div class="card-body">
+          <h3>Providers</h3>
+          <p>Define integrations, states, capabilities, and safe display metadata.</p>
+        </div>
+        <ArrowUpRight size={16} />
+      </a>
+      <a class="registry-card" href="/admin/sources">
+        <span class="card-icon"><SlidersHorizontal size={18} /></span>
+        <div class="card-body">
+          <h3>Sources</h3>
+          <p>Configure selectable source metadata and inert media templates.</p>
+        </div>
+        <ArrowUpRight size={16} />
+      </a>
+      <a class="registry-card" href="/admin/categories">
+        <span class="card-icon"><Layers3 size={18} /></span>
+        <div class="card-body">
+          <h3>Categories</h3>
+          <p>Organize public sources with category-specific ordering.</p>
+        </div>
+        <ArrowUpRight size={16} />
+      </a>
+      {#if data.downloadersOverview}
+        <a class="registry-card" href="/admin/downloaders">
+          <span class="card-icon"><Download size={18} /></span>
+          <div class="card-body">
+            <h3>Downloaders</h3>
+            <p>{data.downloadersOverview.providerCount} providers · {data.downloadersOverview.enabledCount} enabled · {data.downloadersOverview.defaultCount} default</p>
+          </div>
+          <ArrowUpRight size={16} />
+        </a>
+      {/if}
+      {#if data.addonsOverview}
+        <a class="registry-card" href="/admin/addons">
+          <span class="card-icon"><Puzzle size={18} /></span>
+          <div class="card-body">
+            <h3>Stremio Addons</h3>
+            <p>{data.addonsOverview.addonCount} addons · {data.addonsOverview.enabledCount} enabled</p>
+          </div>
+          <ArrowUpRight size={16} />
+        </a>
+      {/if}
     </div>
-  {/if}
+  </AdminSection>
 
-  <div class="admin-lower-grid">
-    <section class="admin-panel"><div class="eyebrow">Configuration status</div><h3>Sanitized public contract</h3><p>The public service exposes only enabled, visible records and safe capabilities. Credentials, templates, internal notes, and admin-only metadata remain server-side.</p><span class="security-line"><ShieldCheck size={15} /> RLS and server authorization active</span></section>
-    <section class="admin-panel"><div class="eyebrow">Deferred by design</div><h3>No playback activation</h3><p>Phase 7A stores configuration only. It does not resolve URLs, call providers, activate embeds, or implement the MAVERO Player.</p><span class="security-line"><Database size={15} /> Phase 7A boundary intact</span></section>
+  <!-- ============================================================
+       SECURITY / BOUNDARY — non-negotiable contracts surfaced so the
+       admin always remembers what the panel DOES NOT do.
+       ============================================================ -->
+  <div class="boundary-grid">
+    <AdminSection eyebrow="Configuration status" title="Sanitized public contract">
+      <p class="boundary-text">The public service exposes only enabled, visible records and safe capabilities. Credentials, templates, internal notes, and admin-only metadata remain server-side.</p>
+      <span class="security-line"><ShieldCheck size={15} /> RLS and server authorization active</span>
+    </AdminSection>
+    <AdminSection eyebrow="Deferred by design" title="No playback activation">
+      <p class="boundary-text">Phase 7A stores configuration only. It does not resolve URLs, call providers, activate embeds, or implement the MAVERO Player.</p>
+      <span class="security-line"><Database size={15} /> Phase 7A boundary intact</span>
+    </AdminSection>
   </div>
 </AdminShell>
 
 <style>
-  em { color: var(--accent); font-style: normal; }
-  .admin-intro { max-width: 600px; margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.7; }
-  .admin-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 30px; }
-  .admin-stat { min-height: 125px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
-  .admin-stat strong { display: block; margin-top: 10px; color: var(--ink); font-size: 2rem; letter-spacing: -.08em; }
-  .stat-foot { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  .admin-section-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-top: 58px; }
-  .admin-section-head h2 { margin: 7px 0 0; font-size: 1.25rem; letter-spacing: -.05em; }
-  .version { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .56rem; }
-  .admin-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
-  .admin-card { display: flex; align-items: center; gap: 12px; min-height: 130px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); background: var(--surface); text-decoration: none; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
-  .admin-card:hover { transform: translateY(-2px); border-color: rgba(155,135,245,.45); background: var(--surface-raised); }
-  .admin-card > div { flex: 1; }
-  .card-icon { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
-  .admin-card h3, .admin-panel h3 { margin: 0 0 7px; font-size: .92rem; letter-spacing: -.035em; }
-  .admin-card p, .admin-panel p { margin: 0; color: var(--muted); font-size: .7rem; line-height: 1.55; }
-  .admin-lower-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
-  .admin-panel { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
-  .admin-panel h3 { margin-top: 9px; }
-  .security-line { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; color: var(--success); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .57rem; }
-  @media (max-width: 850px) { .admin-grid { grid-template-columns: repeat(2, 1fr); } .admin-cards { grid-template-columns: 1fr; } }
-  @media (max-width: 640px) { .admin-section-head { align-items: start; flex-direction: column; gap: 10px; } .admin-lower-grid { grid-template-columns: 1fr; } }
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .metric-grid.secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; }
+
+  .registry-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .registry-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 110px;
+    padding: 16px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    text-decoration: none;
+    transition: border-color var(--motion-fast) var(--ease-out),
+                background var(--motion-fast) var(--ease-out),
+                transform var(--motion-fast) var(--ease-out);
+  }
+  .registry-card:hover {
+    border-color: var(--color-primary-border);
+    background: rgba(0, 255, 156, .03);
+    transform: translateY(-2px);
+  }
+  .registry-card:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 3px;
+  }
+  .registry-card > .card-body { flex: 1; min-width: 0; }
+  .card-icon {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    color: var(--color-primary);
+    background: var(--color-primary-soft);
+    border: 1px solid var(--color-primary-border);
+    flex: 0 0 auto;
+  }
+  .registry-card h3 {
+    margin: 0 0 6px;
+    font-size: .92rem;
+    font-weight: 700;
+    letter-spacing: -.01em;
+  }
+  .registry-card p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: .7rem;
+    line-height: 1.55;
+  }
+  .registry-card > :global(svg) {
+    color: var(--color-text-deep);
+    flex: 0 0 auto;
+    transition: transform var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .registry-card:hover > :global(svg) {
+    color: var(--color-primary);
+    transform: translate(2px, -2px);
+  }
+
+  .boundary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .boundary-text {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: .76rem;
+    line-height: 1.6;
+  }
+  .security-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 14px;
+    color: var(--color-primary);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: .56rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+
+  /* Responsive — tablet drops to 2-column metric grid; mobile to 1-column. */
+  @media (max-width: 1024px) {
+    .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px) {
+    .metric-grid,
+    .metric-grid.secondary,
+    .boundary-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Large desktop / TV — wider metric grid; secondary grid goes 4-wide so
+     every tile stays readable without becoming oversized. */
+  @media (min-width: 1920px) {
+    .metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+    .metric-grid.secondary { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+    .registry-cards { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  }
 </style>

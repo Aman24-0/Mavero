@@ -1,19 +1,30 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp, Check, ChevronDown, Puzzle, RefreshCw, Trash2, X } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
+  import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+  import AdminSection from '$lib/components/admin/AdminSection.svelte';
+  import AdminEmptyState from '$lib/components/admin/AdminEmptyState.svelte';
+  import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import type { ActionData, PageData } from './$types';
 
-  export let data: PageData;
-  export let form: ActionData;
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
   type Addon = PageData['addons'][number];
   type Preview = Extract<NonNullable<ActionData>, { preview: unknown }>['preview'];
 
   // Add-workflow state: the add panel and the confirmed preview. A NEW
   // preview response (fresh object identity) replaces any dismissed one.
-  let addOpen = data.addons.length === 0;
-  let shownPreview: Preview | null = null;
-  $: if (form?.preview && form.preview !== shownPreview) shownPreview = form.preview;
+  // Initial value captures data.addons.length at first mount — the panel
+  // opens only when the registry starts empty. Subsequent data updates
+  // (e.g. after a navigation back to the page) re-mount the component, so
+  // this captures the correct initial state each time.
+  // svelte-ignore state_referenced_locally
+  let addOpen = $state(data.addons.length === 0);
+  let shownPreview = $state<Preview | null>(null);
+  $effect(() => {
+    if (form?.preview) shownPreview = form.preview;
+  });
+
   function cancelPreview() {
     shownPreview = null;
     addOpen = false;
@@ -23,8 +34,8 @@
   // flight every submit button is disabled and further submits are ignored.
   // The guard clears when the action responds (form set) or the redirect
   // navigation completes.
-  let pending = '';
-  $: if (form) pending = '';
+  let pending = $state('');
+  $effect(() => { if (form) pending = ''; });
   function guard(action: string, confirmMessage?: string) {
     return (event: SubmitEvent) => {
       if (pending) {
@@ -50,6 +61,13 @@
     unavailable: 'Unavailable',
   };
 
+  function statusToneFor(status: string): 'good' | 'warn' | 'bad' | 'neutral' {
+    if (status === 'active' || status === 'experimental') return 'good';
+    if (status === 'maintenance') return 'warn';
+    if (status === 'unavailable') return 'bad';
+    return 'neutral';
+  }
+
   function formatDate(value: string | undefined): string {
     if (!value) return 'Never';
     return new Date(value).toLocaleString();
@@ -59,66 +77,70 @@
 <svelte:head><title>Stremio Addons — Mavero</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <AdminShell active="addons">
-  <div class="eyebrow">MAVERO / Stremio addon registry</div>
-  <div class="heading-row">
-    <div>
-      <h1>Stremio <em>addons.</em></h1>
-      <p class="intro">HTTP stream addons for MAVERO Player. Manifests are validated server-side by the secure manifest service — the browser never fetches addon URLs. New addons stay disabled until you enable them.</p>
-    </div>
-    <span class="count">{data.addons.length} addons · {data.addons.filter((addon) => addon.enabled).length} enabled</span>
-  </div>
+  <AdminPageHeader
+    eyebrow="MAVERO / Stremio addon registry"
+    title="Stremio"
+    accent="addons."
+    description="HTTP stream addons for MAVERO Player. Manifests are validated server-side by the secure manifest service — the browser never fetches addon URLs. New addons stay disabled until you enable them."
+    count={`${data.addons.length} addons · ${data.addons.filter((addon) => addon.enabled).length} enabled`}
+  />
 
   {#if data.notice}<div class="notice" role="status"><Check size={15} /> {data.notice}</div>{/if}
   {#if form?.message}<div class="error" role="alert">{form.message}</div>{/if}
 
-  <details class="form-panel" bind:open={addOpen}>
-    <summary><span><Puzzle size={15} /> Add Stremio Addon</span><ChevronDown size={16} /></summary>
-    <form method="POST" action="?/previewAddon" class="registry-form" onsubmit={guard('previewAddon')}>
-      <label for="addon-manifest-url">Manifest URL</label>
-      <input
-        id="addon-manifest-url"
-        name="manifestUrl"
-        type="url"
-        required
-        maxlength="2048"
-        placeholder="https://example.com/manifest.json"
-        aria-describedby="addon-manifest-hint"
-      />
-      <small class="hint" id="addon-manifest-hint">HTTP or HTTPS Stremio manifest. The URL is validated and fetched by the server (SSRF-checked); only HTTP stream addons are accepted.</small>
-      <div class="form-actions">
-        <button class="btn btn-primary" type="submit" disabled={pending !== ''} aria-busy={pending === 'previewAddon'}>{pending === 'previewAddon' ? 'Validating addon…' : 'Validate addon'}</button>
-        <span class="hint">Fetching manifest… then a preview appears before anything is saved.</span>
-      </div>
-    </form>
+  <AdminSection variant="info">
+    <details class="form-panel" bind:open={addOpen}>
+      <summary><span class="summary-label"><Puzzle size={15} /> Add Stremio Addon</span><ChevronDown size={16} /></summary>
+      <form method="POST" action="?/previewAddon" class="registry-form" onsubmit={guard('previewAddon')}>
+        <label for="addon-manifest-url">Manifest URL</label>
+        <input
+          id="addon-manifest-url"
+          name="manifestUrl"
+          type="url"
+          required
+          maxlength="2048"
+          placeholder="https://example.com/manifest.json"
+          aria-describedby="addon-manifest-hint"
+        />
+        <small class="hint" id="addon-manifest-hint">HTTP or HTTPS Stremio manifest. The URL is validated and fetched by the server (SSRF-checked); only HTTP stream addons are accepted.</small>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit" disabled={pending !== ''} aria-busy={pending === 'previewAddon'}>{pending === 'previewAddon' ? 'Validating addon…' : 'Validate addon'}</button>
+          <span class="hint">Fetching manifest… then a preview appears before anything is saved.</span>
+        </div>
+      </form>
 
-    {#if shownPreview}
-      <div class="preview" aria-live="polite">
-        <div class="eyebrow">Addon detected</div>
-        <h3>{shownPreview.name}</h3>
-        <dl class="preview-grid">
-          <div><dt>Version</dt><dd>{shownPreview.version}</dd></div>
-          <div><dt>Stream support</dt><dd class:good={shownPreview.supportsStream}>{shownPreview.supportsStream ? 'HTTP streams' : 'None'}</dd></div>
-          <div><dt>Supported types</dt><dd>{shownPreview.supportedTypes.length ? shownPreview.supportedTypes.join(', ') : '—'}</dd></div>
-          <div><dt>ID prefixes</dt><dd>{shownPreview.idPrefixes.length ? shownPreview.idPrefixes.join(', ') : '—'}</dd></div>
-        </dl>
-        {#if shownPreview.description}<p class="preview-desc">{shownPreview.description}</p>{/if}
-        <form method="POST" action="?/confirmAddon" class="form-actions" onsubmit={guard('confirmAddon')}>
-          <input type="hidden" name="manifestUrl" value={shownPreview.manifestUrl} />
-          <button class="btn btn-primary" type="submit" disabled={pending !== ''} aria-busy={pending === 'confirmAddon'}>{pending === 'confirmAddon' ? 'Adding…' : 'Add addon'}</button>
-          <button class="btn btn-secondary" type="button" onclick={cancelPreview}><X size={13} /> Cancel</button>
-          <span class="hint">The manifest is re-validated server-side before saving.</span>
-        </form>
-      </div>
-    {/if}
-  </details>
+      {#if shownPreview}
+        <div class="preview" aria-live="polite">
+          <div class="eyebrow">Addon detected</div>
+          <h3>{shownPreview.name}</h3>
+          <dl class="preview-grid">
+            <div><dt>Version</dt><dd>{shownPreview.version}</dd></div>
+            <div><dt>Stream support</dt><dd class:good={shownPreview.supportsStream}>{shownPreview.supportsStream ? 'HTTP streams' : 'None'}</dd></div>
+            <div><dt>Supported types</dt><dd>{shownPreview.supportedTypes.length ? shownPreview.supportedTypes.join(', ') : '—'}</dd></div>
+            <div><dt>ID prefixes</dt><dd>{shownPreview.idPrefixes.length ? shownPreview.idPrefixes.join(', ') : '—'}</dd></div>
+          </dl>
+          {#if shownPreview.description}<p class="preview-desc">{shownPreview.description}</p>{/if}
+          <form method="POST" action="?/confirmAddon" class="form-actions" onsubmit={guard('confirmAddon')}>
+            <input type="hidden" name="manifestUrl" value={shownPreview.manifestUrl} />
+            <button class="btn btn-primary" type="submit" disabled={pending !== ''} aria-busy={pending === 'confirmAddon'}>{pending === 'confirmAddon' ? 'Adding…' : 'Add addon'}</button>
+            <button class="btn btn-secondary" type="button" onclick={cancelPreview}><X size={13} /> Cancel</button>
+            <span class="hint">The manifest is re-validated server-side before saving.</span>
+          </form>
+        </div>
+      {/if}
+    </details>
+  </AdminSection>
 
   {#if data.addons.length === 0}
-    <div class="empty">
-      <Puzzle size={22} />
-      <h2>No Stremio addons configured</h2>
-      <p>Add a supported Stremio HTTP addon to make additional streams available through MAVERO Player.</p>
-      <button class="btn btn-primary" type="button" onclick={() => (addOpen = true)}>Add Stremio Addon</button>
-    </div>
+    <AdminEmptyState
+      icon={Puzzle}
+      title="No Stremio addons configured"
+      message="Add a supported Stremio HTTP addon to make additional streams available through MAVERO Player."
+    >
+      {#snippet actions()}
+        <button class="btn btn-primary" type="button" onclick={() => (addOpen = true)}>Add Stremio Addon</button>
+      {/snippet}
+    </AdminEmptyState>
   {:else}
     <div class="registry-list">
       {#each data.addons as addon (addon.id)}
@@ -126,14 +148,20 @@
           <summary>
             <div class="record-main">
               <span class="provider-icon" aria-hidden="true"><Puzzle size={14} /></span>
-              <div>
+              <div class="record-copy">
                 <strong>{addon.name}</strong>
-                <span>{addon.version ? `v${addon.version} · ` : ''}order {addon.ordering} · {addon.supportedTypes.length ? addon.supportedTypes.join(', ') : 'no types'}</span>
+                <span class="record-sub">{addon.version ? `v${addon.version} · ` : ''}order {addon.ordering} · {addon.supportedTypes.length ? addon.supportedTypes.join(', ') : 'no types'}</span>
               </div>
             </div>
             <div class="record-meta">
-              <span class:good={addon.enabled} class:warning={!addon.enabled}>{addon.enabled ? 'Enabled' : 'Disabled'}</span>
-              <span class={addon.status === 'active' ? 'good' : addon.status === 'unavailable' ? 'bad' : 'muted'}>{statusLabels[addon.status] ?? addon.status}</span>
+              <AdminStatusBadge
+                label={addon.enabled ? 'Enabled' : 'Disabled'}
+                tone={addon.enabled ? 'good' : 'neutral'}
+              />
+              <AdminStatusBadge
+                label={statusLabels[addon.status] ?? addon.status}
+                tone={statusToneFor(addon.status)}
+              />
               <ChevronDown size={15} />
             </div>
           </summary>
@@ -180,62 +208,73 @@
 </AdminShell>
 
 <style>
-  em { color: var(--accent); font-style: normal; }
-  .heading-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
-  h1 { margin: 8px 0 9px; color: var(--ink); font-size: clamp(1.7rem, 3.2vw, 2.4rem); font-weight: 900; letter-spacing: -.02em; line-height: 1.1; }
-  .intro { max-width: 640px; margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.65; }
-  .count, .hint { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; }
-  .hint { display: block; margin-top: 4px; line-height: 1.5; }
-  .notice, .error { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding: 11px 13px; border-radius: 9px; font-size: .72rem; }
-  .notice { color: var(--success); border: 1px solid rgba(126,220,180,.2); background: rgba(126,220,180,.06); }
-  .error { color: #ff8a8a; border: 1px solid rgba(228,133,105,.25); background: rgba(228,133,105,.07); }
-  .form-panel, .record { margin-top: 19px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
-  summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 17px 19px; cursor: pointer; list-style: none; color: var(--ink); font-size: .8rem; }
+  .notice, .error { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding: 11px 13px; border-radius: var(--radius-sm); font-size: .72rem; }
+  .notice { color: var(--color-primary); border: 1px solid var(--color-primary-border); background: rgba(0, 255, 156, .06); }
+  .error { color: var(--color-danger); border: 1px solid rgba(255, 77, 109, .25); background: rgba(255, 77, 109, .07); }
+
+  .hint { display: block; color: var(--color-text-deep); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .56rem; line-height: 1.5; letter-spacing: .04em; margin-top: 4px; }
+
+  .form-panel { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: rgba(0, 255, 156, .015); overflow: hidden; }
+  summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; cursor: pointer; list-style: none; color: var(--color-text); font-size: .8rem; }
   summary::-webkit-details-marker { display: none; }
-  summary > span, .record-main, .record-meta { display: flex; align-items: center; gap: 9px; }
-  summary > span { color: var(--accent); }
-  .registry-form { display: grid; gap: 13px; padding: 0 19px 19px; }
-  label { display: grid; gap: 6px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .57rem; }
-  .registry-form label { display: grid; }
-  input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; color: var(--ink); background: rgba(255,255,255,.035); font: inherit; font-family: inherit; font-size: .68rem; outline: none; }
-  input:focus { border-color: rgba(155,135,245,.7); box-shadow: 0 0 0 3px rgba(155,135,245,.1); }
+  .summary-label { display: inline-flex; align-items: center; gap: 8px; color: var(--color-primary); font-weight: 700; }
+  .registry-form { display: grid; gap: 13px; padding: 0 18px 18px; }
+  label { display: grid; gap: 6px; color: var(--color-text-muted); font-size: .58rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  input {
+    width: 100%; box-sizing: border-box;
+    min-height: 44px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    color: var(--color-text);
+    background: var(--color-surface-elevated);
+    font: inherit;
+    font-family: inherit;
+    font-size: .78rem;
+    outline: none;
+    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  }
+  input:focus { border-color: var(--color-primary); background: var(--color-surface-raised); box-shadow: var(--glow-primary); }
+
   .form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-  .secondary-actions { padding: 0 19px 16px; }
-  .btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; cursor: pointer; color: var(--ink); background: transparent; font: inherit; font-size: .66rem; }
+  .secondary-actions { padding: 0 18px 16px; }
+  .btn { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); padding: 0 14px; cursor: pointer; color: var(--color-text); background: var(--color-primary-soft); font: inherit; font-size: .74rem; font-weight: 700; transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
   .btn:disabled { opacity: .55; cursor: default; }
-  .btn-primary { border-color: transparent; color: #12121a; background: var(--ink); }
-  .btn-secondary:hover { border-color: rgba(155,135,245,.45); background: var(--accent-soft); }
-  .btn-danger { color: #ff8a8a; }
-  .btn-danger:hover { border-color: rgba(228,133,105,.35); background: rgba(228,133,105,.08); }
-  .icon-btn { padding: 9px 10px; }
+  .btn:active:not(:disabled) { transform: scale(.98); }
+  .btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .btn-primary { border-color: transparent; color: #050708; background: var(--color-primary); box-shadow: 0 4px 18px rgba(0, 255, 156, .22), var(--glow-primary); }
+  .btn-secondary:hover:not(:disabled) { border-color: var(--color-primary-border); background: var(--color-primary-soft); box-shadow: var(--glow-primary); }
+  .btn-danger { color: var(--color-danger); }
+  .btn-danger:hover:not(:disabled) { border-color: rgba(255, 77, 109, .45); background: rgba(255, 77, 109, .08); }
+  .icon-btn { padding: 0 10px; min-height: 36px; }
   .inline-form { display: inline-flex; padding: 0; }
-  .preview { margin: 0 19px 19px; padding: 15px; border: 1px solid rgba(155,135,245,.3); border-radius: 10px; background: rgba(155,135,245,.05); }
-  .preview h3 { margin: 6px 0 12px; color: var(--ink); font-size: .92rem; letter-spacing: -.035em; }
+
+  .preview { margin: 0 18px 18px; padding: 16px; border: 1px solid var(--color-primary-border); border-radius: var(--radius-sm); background: rgba(0, 255, 156, .04); }
+  .preview h3 { margin: 6px 0 12px; color: var(--color-text); font-size: .95rem; letter-spacing: -.01em; }
   .preview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
-  .preview-grid dt, .meta-grid dt { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; text-transform: uppercase; letter-spacing: .06em; }
-  .preview-grid dd, .meta-grid dd { margin: 4px 0 0; color: var(--ink); font-size: .68rem; line-height: 1.5; overflow-wrap: anywhere; }
-  .preview-desc { margin: 12px 0 0; color: var(--muted); font-size: .68rem; line-height: 1.55; }
+  .preview-grid dt, .meta-grid dt { color: var(--color-text-deep); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .54rem; text-transform: uppercase; letter-spacing: .06em; }
+  .preview-grid dd, .meta-grid dd { margin: 4px 0 0; color: var(--color-text); font-size: .72rem; line-height: 1.5; overflow-wrap: anywhere; }
+  .preview-grid dd.good, .meta-grid dd.good { color: var(--color-primary); }
+  .meta-grid dd.bad { color: var(--color-danger); }
+  .preview-desc { margin: 12px 0 0; color: var(--color-text-muted); font-size: .72rem; line-height: 1.55; }
   .preview .form-actions { margin-top: 14px; }
-  .registry-list { display: grid; gap: 10px; margin-top: 15px; }
+
+  .registry-list { display: grid; gap: 12px; margin-top: 16px; }
+  .record { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow: hidden; transition: border-color var(--motion-fast) var(--ease-out); }
+  .record[open] { border-color: var(--color-primary-border); box-shadow: var(--glow-primary); }
   .record summary { padding: 14px 16px; }
-  .record-body { border-top: 1px solid var(--line); }
-  .provider-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--accent); background: var(--accent-soft); }
-  .record-main strong { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-size: .78rem; }
-  .record-main span:not(.provider-icon) { display: block; margin-top: 3px; color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; }
-  .record-meta { color: var(--muted-deep); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
-  .record-meta .good, dd.good { color: var(--success); }
-  .record-meta .warning { color: #ffb020; }
-  .record-meta .muted { color: var(--muted-deep); }
-  .record-meta .bad, dd.bad { color: #ff8a8a; }
-  .meta-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 15px 19px 4px; }
-  .url { font-family: 'JetBrains Mono', monospace; font-size: .6rem; color: var(--muted); }
-  .empty { margin-top: 15px; padding: 45px 20px; text-align: center; border: 1px dashed var(--line); border-radius: 14px; }
-  .empty h2 { margin: 10px 0 5px; font-size: 1rem; }
-  .empty p { margin: 0 0 14px; color: var(--muted); font-size: .72rem; }
-  .empty .btn { margin: 0 auto; }
+  .record-body { border-top: 1px solid var(--color-border); }
+  .provider-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--color-primary); background: var(--color-primary-soft); border: 1px solid var(--color-primary-border); flex: 0 0 auto; }
+  .record-main { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
+  .record-copy { min-width: 0; }
+  .record-copy strong { display: block; color: var(--color-text); font-size: .82rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .record-sub { display: block; margin-top: 3px; color: var(--color-text-deep); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .56rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .record-meta { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .meta-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 16px 18px 6px; }
+  .url { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .6rem; color: var(--color-text-muted); word-break: break-all; }
+
   @media (max-width: 700px) {
-    .heading-row { align-items: start; flex-direction: column; }
     .preview-grid, .meta-grid { grid-template-columns: 1fr; }
-    .record-meta { flex-wrap: wrap; justify-content: flex-end; }
+    .record-meta { gap: 4px; }
   }
 </style>

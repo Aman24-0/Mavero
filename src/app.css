@@ -80,12 +80,19 @@
   --motion-normal: 240ms;
   --motion-slow: 460ms;
 
-  /* ---- sidebar ---- */
+  /* ---- sidebar (public) ---- */
   --sidebar-expanded: 240px;
   --sidebar-collapsed: 72px;
   --sidebar-current: var(--sidebar-expanded);
 
-  /* ---- mobile topbar ---- */
+  /* ---- admin sidebar (Phase G — independent from public sidebar) ---- */
+  --admin-sidebar-expanded: 244px;
+  --admin-sidebar-collapsed: 72px;
+  --admin-sidebar-current: var(--admin-sidebar-expanded);
+  --admin-topbar-h: 56px;
+  --admin-topbar-h-safe: calc(var(--admin-topbar-h) + env(safe-area-inset-top, 0px));
+
+  /* ---- mobile topbar (public) ---- */
   --topbar-h: 56px;
   --topbar-h-safe: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
   --shell-content-top: 0px;
