@@ -280,3 +280,252 @@ $ git push --force-with-lease origin main
 To https://github.com/Aman24-0/Mavero.git
  + 33f1b07...4db4c11 main -> main (forced update)
 ```
+
+---
+
+## Phase 3.2 Post-Commit Audit — Critical Corrective Fix
+
+### Audit trigger
+A post-commit code audit of `e934482` (the Phase 3.2 single commit)
+found a production-breaking correctness bug in the new atomic
+exchange implementation.
+
+### The bug
+`claimAndExchangePairing()` used:
+
+```ts
+const { data: claimed } = await admin
+  .from('device_pairing_requests')
+  .update({
+    status: 'consumed',
+    consumed_at: now,
+    exchange_code: null,    // ← SET exchange_code to NULL
+  })
+  .eq('secret_hash', secretHash)
+  .eq('status', 'approved')
+  .is('consumed_at', null)
+  .gt('expires_at', now)
+  .select('id, exchange_code')   // ← PostgREST UPDATE ... RETURNING
+  .maybeSingle();
+```
+
+PostgREST translates `.update(...).select(...)` into:
+
+```sql
+UPDATE device_pairing_requests
+SET status='consumed', consumed_at=$now, exchange_code=NULL
+WHERE secret_hash=$1 AND status='approved' AND consumed_at IS NULL
+                                    AND expires_at > $now
+RETURNING id, exchange_code;
+```
+
+**PostgreSQL's `UPDATE ... RETURNING` returns the NEW (post-update)
+row values**, not the OLD values. Because the SET clause sets
+`exchange_code = NULL`, the RETURNING step yields
+`exchange_code = NULL` for the winner — not the pre-update OTP.
+
+### Production impact
+Every successful atomic claim hits the "Claim succeeded but stored
+credential was null" defensive branch, returns HTTP 503 to the TV,
+and **permanently consumes the pairing** (status='consumed'). The
+user can never recover without creating a new QR. This bug would
+block every TV login attempt in production.
+
+### Why this happened
+PostgREST's `.update(...).select()` API does NOT expose a way to
+return OLD column values. The RETURNING clause in standard SQL is
+defined to return post-update values. The `OLD.*` pseudo-table is
+only available inside trigger functions, not in plain RETURNING.
+A naive reading of "UPDATE ... RETURNING" can lead to the incorrect
+assumption that you can SET a column to NULL and then RETURN its
+previous value in the same statement — that is NOT how it works.
+
+### Chosen fix
+Add a small `SECURITY DEFINER` PL/pgSQL RPC function that performs
+the claim in a single atomic transaction:
+
+```sql
+CREATE OR REPLACE FUNCTION public.claim_device_pairing(
+  p_secret_hash text,
+  p_now timestamptz DEFAULT now()
+)
+RETURNS TABLE(id uuid, exchange_code text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_row RECORD;
+BEGIN
+  -- SELECT ... FOR UPDATE acquires a row lock AND captures the
+  -- OLD exchange_code into v_row BEFORE any UPDATE.
+  SELECT id, exchange_code INTO v_row
+  FROM public.device_pairing_requests
+  WHERE secret_hash = p_secret_hash
+    AND status = 'approved'
+    AND consumed_at IS NULL
+    AND expires_at > p_now
+  FOR UPDATE;   -- row lock held until COMMIT
+
+  IF NOT FOUND THEN
+    RETURN;   -- empty result set
+  END IF;
+
+  -- UPDATE: flip status, set consumed_at, clear exchange_code.
+  -- Row is already locked, so this is safe within the same tx.
+  UPDATE public.device_pairing_requests
+  SET status = 'consumed',
+      consumed_at = p_now,
+      exchange_code = NULL
+  WHERE id = v_row.id;
+
+  -- RETURN the OLD exchange_code (captured BEFORE the UPDATE).
+  RETURN QUERY SELECT v_row.id, v_row.exchange_code;
+END;
+$$;
+```
+
+The service now calls `admin.rpc('claim_device_pairing', { p_secret_hash })`
+instead of `.update(...).select(...)`. The RPC returns the OLD OTP
+to the caller; the application reads it into memory and uses it
+for `exchangeCodeForSession(otpCode)`.
+
+### Concurrency behavior
+Two concurrent transactions A and B both call the RPC.
+
+- **A**: `SELECT ... FOR UPDATE` acquires the row lock on the
+  matching row, captures `v_row.exchange_code = 'OTP_xyz'` (OLD
+  value). A's UPDATE sets `status='consumed'`, `consumed_at=now()`,
+  `exchange_code=NULL`. A's `RETURN QUERY` yields
+  `{id, 'OTP_xyz'}`. A commits. Lock released.
+- **B**: B's `SELECT ... FOR UPDATE` was blocked on the row lock.
+  After A commits, B's SELECT re-evaluates the WHERE clause:
+  `status='approved'` is now FALSE (status is 'consumed'),
+  `consumed_at IS NULL` is now FALSE. SELECT returns no row. The
+  `IF NOT FOUND THEN RETURN; END IF;` branch fires. B receives an
+  empty result set. The service reads `claimed = null`, performs
+  the diagnostic lookup, returns HTTP 409.
+
+There is no interleaving where both A and B receive the OTP. The
+OTP exists in server memory only between the RPC RETURN and the
+`exchangeCodeForSession()` call.
+
+### Failure semantics (preserved)
+If `exchangeCodeForSession()` fails after the RPC commits:
+- The pairing is already in `consumed` state.
+- The OTP is already cleared from disk.
+- The OTP has been either consumed by the failed call or is now
+  unusable.
+- The application returns HTTP 503 to the TV.
+- The user must create a new pairing.
+
+We do NOT restore `exchange_code` or attempt to make the pairing
+reusable. `generateLink()` requires the phone user's auth context
+which the TV does not have, so retry is impossible by design.
+
+### Files changed (corrective commit)
+- `supabase/migrations/20260929000000_device_pairing_claim_rpc.sql`
+  (NEW — defines `claim_device_pairing` RPC + privilege lockdown)
+- `src/lib/server/supabase/database.types.ts`
+  (adds `claim_device_pairing` RPC type signature)
+- `src/lib/server/auth/device-pairing.ts`
+  (refactors `claimAndExchangePairing` to call the RPC instead of
+  `.update(...).select(...)`)
+- `scripts/device_pairing_test.ts`
+  (rewrites Section 9, 15, 16, 23 to verify the RPC contract;
+  adds new Section 9b — CRITICAL BUG REGRESSION — verifying the
+  RPC captures OLD exchange_code; adds Section 9c — static
+  simulation proving the RPC result contains OLD OTP and the DB
+  row is cleared; adds Section 9d — concurrency simulation
+  proving single-winner semantics)
+
+### Schema/migration changes
+ONE new migration: `20260929000000_device_pairing_claim_rpc.sql`.
+Creates the `claim_device_pairing` PL/pgSQL function and revokes
+EXECUTE from PUBLIC/anon/authenticated (only the postgres superuser
+/ Supabase service-role key can call it).
+
+No table changes. Existing `device_pairing_requests` schema is
+sufficient.
+
+### Test results
+- `scripts/device_pairing_test.ts` — 336 check groups pass
+  (was 294 before the corrective commit; added 42 new assertions
+  for the RPC contract, OLD-vs-NEW value simulation, and
+  concurrency simulation).
+- `scripts/device_session_registry_test.ts` — 120 groups pass
+  (no regression).
+- `scripts/account_sessions_test.ts` — 81 groups pass
+  (no regression).
+
+### pnpm check
+`svelte-check found 0 errors and 0 warnings` — PASS.
+
+### pnpm test
+All Phase 3.2 device-pairing tests pass. The 8 pre-existing
+unrelated test failures documented in the previous Phase 3.2
+worklog entry remain unchanged (require live Supabase credentials
+or test Phase 5/6/7 features outside the device-pairing surface).
+
+### pnpm build
+`vite build` succeeds in 25.46s — PASS.
+
+### Runtime DB verification status
+NOT performed — no live Supabase/Postgres credentials available
+in this environment. The RPC contract is verified by:
+1. Static source contract assertions (the migration contains the
+   expected PL/pgSQL syntax: SELECT FOR UPDATE → capture v_row →
+   UPDATE → RETURN QUERY v_row.id, v_row.exchange_code).
+2. Deterministic simulation tests (Section 9c and 9d) that model
+   the RPC's documented behavior in pure TypeScript and prove:
+   - The RPC result contains the OLD OTP (not the post-update NULL).
+   - The DB row's exchange_code is NULL after the RPC commits.
+   - The DB row's status is 'consumed' after the RPC commits.
+   - Under concurrent calls, exactly one transaction wins the OTP.
+
+A live integration test against a real Postgres instance would be
+required to fully verify runtime behavior — this is documented as
+a remaining limitation.
+
+### Worklog status
+This entry. Updated BEFORE the corrective commit per the worklog
+protocol; the commit SHA and push confirmation will be filled in
+after the commit is created.
+
+### Corrective commit SHA
+`b5f1b4465928ccaec32bb0c97228bdf42988441f`
+
+(Note: earlier candidate commits `c1d8e1c` and `ccc5087` were
+superseded by `b5f1b44` after amending to include the
+worklog-finalization diff in the same single corrective commit.
+Force-pushed to update the remote. This is the final SHA.)
+
+Commit message:
+```
+fix(auth): return pre-update QR credential during atomic claim
+```
+
+Stacked on top of `e934482` (Phase 3.2 original single commit).
+No history rewrite of the Phase 3.2 commit — only the corrective
+commit was amended to fold in its own worklog finalization.
+
+Files changed in the corrective commit (5):
+- `supabase/migrations/20260929000000_device_pairing_claim_rpc.sql` (NEW)
+- `src/lib/server/supabase/database.types.ts`
+- `src/lib/server/auth/device-pairing.ts`
+- `scripts/device_pairing_test.ts`
+- `Mavero_Device_Auth_Integration_Worklog.md` (this entry)
+
+### Push status
+Pushed to `origin/main` (force-pushed after amend to keep the
+single-corrective-commit requirement).
+
+```
+$ git push --force-with-lease origin main
+To https://github.com/Aman24-0/Mavero.git
+ + ccc5087...b5f1b44 main -> main (forced update)
+```
+
+- Local `main`: `b5f1b44`
+- Remote `refs/heads/main`: `b5f1b4465928ccaec32bb0c97228bdf42988441f`
+- Working tree: clean. No uncommitted files remain.

@@ -359,30 +359,38 @@ export type ExchangeOutcome =
  *
  * This is the SINGLE operation that:
  *   1. Validates the pairing secret.
- *   2. Atomically claims the approved pairing request (single-winner
- *      UPDATE…RETURNING — Postgres row-level lock serializes
- *      concurrent attempts on the same row).
+ *   2. Atomically claims the approved pairing request via a
+ *      server-side PL/pgSQL RPC (`claim_device_pairing`). The RPC
+ *      uses SELECT ... FOR UPDATE to capture the OLD exchange_code
+ *      BEFORE the UPDATE, then UPDATEs the row to 'consumed' and
+ *      clears exchange_code in the SAME transaction. The OLD OTP
+ *      is returned to the caller.
+ *
+ *      IMPORTANT: a PostgREST `.update({...exchange_code: null})
+ *      .select('exchange_code')` would NOT work here — UPDATE ...
+ *      RETURNING returns NEW row values, so the cleared column
+ *      would yield NULL for the winner. The RPC captures the
+ *      PRE-update value inside the same atomic transaction.
  *   3. Only the request that successfully claims it receives the
- *      exchange_code in RETURNING. The code lives in server memory
+ *      exchange_code from the RPC. The code lives in server memory
  *      only for the duration of step 4.
  *   4. Calls `exchangeCodeForSession(code)` on the TV's OWN Supabase
  *      SSR client — the resulting session is established through
  *      cookies on the TV's response (NOT a copy of the phone's
  *      session, NOT a JSON token).
- *   5. Marks the pairing as `consumed` and clears `exchange_code`
- *      in the SAME atomic UPDATE as the claim — so no second
- *      request can ever read the code.
+ *   5. The pairing is already in 'consumed' state from step 2 —
+ *      no further state mutation is needed.
  *
  * Concurrency analysis:
- *   Two concurrent requests with the same secret_hash both target
- *   the same row. Postgres acquires a row-level lock on the first
- *   UPDATE; the second UPDATE blocks until the first commits, then
- *   re-evaluates the WHERE clause. Because the first UPDATE set
- *   `status='consumed'` and `consumed_at = now()`, the second
- *   UPDATE's `WHERE status='approved' AND consumed_at IS NULL` no
- *   longer matches — RETURNING yields zero rows. The second request
- *   therefore cannot obtain the exchange_code and fails safely with
- *   HTTP 409.
+ *   Two concurrent requests with the same secret_hash both call
+ *   the RPC. Inside the RPC, the first transaction's SELECT ...
+ *   FOR UPDATE acquires a row-level lock; the second transaction
+ *   blocks on the same lock. After the first commits (status is
+ *   now 'consumed', consumed_at is set, exchange_code is NULL),
+ *   the second transaction's SELECT re-evaluates the WHERE
+ *   clause — status='approved' is now FALSE — so SELECT returns
+ *   no row, the RPC returns an empty result set, and the caller
+ *   falls through to the diagnostic branch (HTTP 409).
  *
  * Failure semantics:
  *   If `exchangeCodeForSession()` fails (network, Supabase error,
@@ -397,7 +405,7 @@ export type ExchangeOutcome =
  *   - The exchange_code is NEVER returned to the client.
  *   - The exchange_code is NEVER logged.
  *   - The exchange_code exists in server memory only between the
- *     RETURNING step and the exchangeCodeForSession() call.
+ *     RPC RETURN step and the exchangeCodeForSession() call.
  *   - The raw pairing secret is NEVER logged.
  */
 export async function claimAndExchangePairing(
@@ -408,35 +416,44 @@ export async function claimAndExchangePairing(
   // Step 1: hash the secret for lookup.
   const secretHash = hashSecret(secret);
 
-  // Step 2: atomic claim. Only one concurrent request can win this
-  // UPDATE; all others get an empty RETURNING result.
+  // Step 2: atomic claim via server-side RPC.
   //
-  // The .eq('status', 'approved') clause prevents claiming a
-  // pending/cancelled/expired/consumed request. The
-  // .eq('consumed_at', null) clause is belt-and-suspenders —
-  // 'approved' status already implies consumed_at IS NULL (consumed
-  // state always sets consumed_at in the same statement), but the
-  // extra guard defends against any future bug that might leave
-  // consumed_at NULL on a consumed row.
-  const now = new Date().toISOString();
-  const { data: claimed, error: claimError } = await admin
-    .from('device_pairing_requests')
-    .update({
-      status: 'consumed',
-      consumed_at: now,
-      exchange_code: null, // clear in the SAME statement as the claim
-    })
-    .eq('secret_hash', secretHash)
-    .eq('status', 'approved')
-    .is('consumed_at', null)
-    .gt('expires_at', now)
-    .select('id, exchange_code')
-    .maybeSingle();
+  // The RPC (public.claim_device_pairing) performs:
+  //   BEGIN
+  //     SELECT id, exchange_code INTO v_row
+  //     FROM device_pairing_requests
+  //     WHERE secret_hash = $1 AND status = 'approved'
+  //       AND consumed_at IS NULL AND expires_at > now()
+  //     FOR UPDATE;   -- row lock held until COMMIT
+  //
+  //     IF NOT FOUND THEN RETURN; END IF;
+  //
+  //     UPDATE device_pairing_requests
+  //     SET status='consumed', consumed_at=now(), exchange_code=NULL
+  //     WHERE id = v_row.id;
+  //
+  //     RETURN NEXT v_row.id, v_row.exchange_code;  -- OLD value
+  //   COMMIT
+  //
+  // This is the ONLY safe way to obtain the PRE-update OTP:
+  // PostgREST's .update(...).select(...) returns NEW values, which
+  // would be NULL after the explicit `exchange_code: null` SET.
+  //
+  // The RPC returns at most one row. An empty result means the
+  // request was not eligible (not found / not approved / already
+  // consumed / cancelled / expired).
+  const { data: claimedRows, error: claimError } = await admin.rpc(
+    'claim_device_pairing',
+    { p_secret_hash: secretHash }
+  );
 
   if (claimError) {
-    console.error('[Pairing] Claim error', { name: claimError.name, code: claimError.code });
+    console.error('[Pairing] Claim RPC error', { name: claimError.name, code: claimError.code });
     return { ok: false, status: 503, message: 'Unable to establish a session.' };
   }
+
+  // RPC returns an array (per the typed signature).
+  const claimed = Array.isArray(claimedRows) && claimedRows.length > 0 ? claimedRows[0] : null;
 
   if (!claimed) {
     // Either: not found, not approved, already consumed, cancelled,
@@ -465,15 +482,17 @@ export async function claimAndExchangePairing(
     return { ok: false, status: 400, message: `This request is ${current.status}.` };
   }
 
-  // Step 3: we have the exchange_code in memory ONLY. It has been
-  // cleared from the DB in the same atomic UPDATE.
+  // Step 3: we have the OLD exchange_code in memory ONLY. It has
+  // been cleared from the DB by the RPC's UPDATE in the same
+  // transaction.
   const otpCode = claimed.exchange_code;
   if (!otpCode) {
-    // Defensive: the row was in 'approved' state but exchange_code
-    // was NULL. This shouldn't happen if approve works correctly,
-    // but we treat it as a terminal failure — the pairing is now
-    // consumed and the user must re-pair.
-    console.error('[Pairing] Claim succeeded but stored credential was null', {
+    // Defensive: the RPC found an approved+unconsumed row but its
+    // exchange_code was NULL. This shouldn't happen if approve
+    // works correctly, but we treat it as a terminal failure — the
+    // pairing is now consumed (the RPC's UPDATE has committed) and
+    // the user must re-pair.
+    console.error('[Pairing] Claim RPC returned null credential', {
       requestId: claimed.id,
     });
     return { ok: false, status: 503, message: 'Unable to establish a session.' };
@@ -495,7 +514,7 @@ export async function claimAndExchangePairing(
   }
 
   // Step 5: success. The pairing is already in 'consumed' state from
-  // step 2. No further state mutation needed.
+  // the RPC's UPDATE. No further state mutation needed.
   return { ok: true };
 }
 

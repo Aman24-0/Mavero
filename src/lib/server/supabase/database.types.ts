@@ -1070,6 +1070,35 @@ export type Database = {
         Args: { p_provider_id: string; p_source_id: string; p_failure_type: string; p_checked_at?: string }
         Returns: undefined
       }
+      // Added by 20260929000000_device_pairing_claim_rpc.sql.
+      // SECURITY DEFINER function: atomically claims an approved pairing
+      // request and returns the OLD (pre-update) exchange_code.
+      //
+      // Why this exists: PostgREST's UPDATE ... RETURNING returns the
+      // NEW row values, so a single .update({exchange_code: null})
+      // .select('exchange_code') always yields NULL — the previous
+      // Phase 3.2 implementation was broken. This RPC captures the
+      // OLD exchange_code via SELECT ... FOR UPDATE inside the same
+      // transaction that flips status to 'consumed' and clears
+      // exchange_code.
+      //
+      // Concurrency: SELECT ... FOR UPDATE serializes concurrent
+      // callers on the same row; only the first transaction finds
+      // the row matching (status='approved' AND consumed_at IS NULL),
+      // captures the OTP, updates, and returns it. Subsequent
+      // transactions find no row (status is now 'consumed') and the
+      // function returns an empty result set.
+      //
+      // Returns: at most one row { id, exchange_code }.
+      //   - Winner: id = pairing row id, exchange_code = OLD OTP.
+      //   - Loser / not-eligible: empty result set.
+      claim_device_pairing: {
+        Args: { p_secret_hash: string; p_now?: string }
+        Returns: {
+          id: string | null
+          exchange_code: string | null
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

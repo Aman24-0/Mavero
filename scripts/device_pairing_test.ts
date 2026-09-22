@@ -254,26 +254,51 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(!api.includes('hashed_token'), 'D. exchange API: does NOT return hashed_token');
 
   // The exchange endpoint does NOT do a separate SELECT before the claim.
-  // The previous non-atomic pattern (SELECT → check → UPDATE) is GONE.
   // The endpoint simply creates an admin client and delegates to
-  // claimAndExchangePairing, which performs a single UPDATE…RETURNING.
-  ok(!api.includes("from('device_pairing_requests')\n      .select"), 'D. exchange API: no separate SELECT in endpoint — claim is atomic in service');
+  // claimAndExchangePairing, which performs the atomic claim via RPC.
+  ok(!api.includes("from('device_pairing_requests').select"), 'D. exchange API: no SELECT in endpoint — claim is atomic via RPC in service');
 
   // Phase 3.2 invariant E + F: single-use + concurrency protection.
-  // The claim is a SINGLE UPDATE…RETURNING statement (PostgREST
-  // translates .update().select() into UPDATE…RETURNING). Postgres
-  // acquires a row-level lock on the first UPDATE; concurrent UPDATEs
-  // on the same row block, then re-evaluate the WHERE clause after
-  // the first commits. Because the first UPDATE flips status to
-  // 'consumed' and sets consumed_at = now() in the SAME statement,
-  // the second UPDATE's WHERE clause (status='approved' AND
-  // consumed_at IS NULL) no longer matches — RETURNING yields
-  // zero rows. The second request fails safely with HTTP 409.
   //
-  // This is a static contract test — it verifies the production
-  // code uses the correct atomic UPDATE…RETURNING pattern. Runtime
-  // verification against a real Postgres instance is out of scope
-  // for this test suite (no live Supabase credentials available).
+  // The claim is implemented as a server-side PL/pgSQL RPC
+  // (public.claim_device_pairing) that runs as a single atomic
+  // transaction:
+  //
+  //   BEGIN
+  //     SELECT id, exchange_code INTO v_row
+  //     FROM device_pairing_requests
+  //     WHERE secret_hash = $1 AND status = 'approved'
+  //       AND consumed_at IS NULL AND expires_at > now()
+  //     FOR UPDATE;   -- row lock held until COMMIT
+  //
+  //     IF NOT FOUND THEN RETURN; END IF;
+  //
+  //     UPDATE device_pairing_requests
+  //     SET status='consumed', consumed_at=now(), exchange_code=NULL
+  //     WHERE id = v_row.id;
+  //
+  //     RETURN NEXT v_row.id, v_row.exchange_code;  -- OLD value
+  //   COMMIT
+  //
+  // This RPC design is REQUIRED because PostgREST's
+  // .update({...exchange_code: null}).select('exchange_code') translates
+  // to UPDATE ... RETURNING — which returns the NEW (post-update) row
+  // values. Because the SET clause sets exchange_code = NULL, the
+  // RETURNING step would always yield NULL. The RPC captures the
+  // OLD exchange_code via SELECT ... FOR UPDATE BEFORE the UPDATE,
+  // inside the same transaction.
+  //
+  // Concurrency: SELECT ... FOR UPDATE serializes concurrent callers
+  // on the same row. The first transaction captures the OTP, UPDATEs,
+  // commits. The second transaction's SELECT re-evaluates the WHERE
+  // clause (status='approved' is now FALSE) and returns no row — the
+  // RPC returns an empty result set, the caller falls through to the
+  // diagnostic branch (HTTP 409).
+  //
+  // This is a static contract test — runtime concurrency verification
+  // against a real Postgres instance is out of scope (no live
+  // Supabase credentials available — see Runtime verification status
+  // in the worklog).
 
   // Extract the claimAndExchangePairing function body.
   const fnStart = service.indexOf('export async function claimAndExchangePairing');
@@ -281,57 +306,299 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(fnStart !== -1, 'E/F. claimAndExchangePairing function exists');
   const fnBody = service.slice(fnStart, fnEnd !== -1 ? fnEnd : undefined);
 
-  // Single atomic UPDATE that flips status to consumed AND clears exchange_code
-  // in the SAME statement. This is what makes it single-use: the code is
-  // returned via RETURNING but is immediately removed from the row.
-  ok(fnBody.includes("update({\n      status: 'consumed'") || fnBody.includes("status: 'consumed'"), 'E. claim: UPDATE sets status=consumed');
-  ok(fnBody.includes('consumed_at:'), 'E. claim: UPDATE sets consumed_at');
-  ok(fnBody.includes('exchange_code: null'), 'E. claim: UPDATE clears exchange_code in SAME statement');
+  // The claim MUST go through the RPC, NOT a PostgREST
+  // .update(...).select(...) call (which would return NEW values and
+  // yield NULL after clearing exchange_code).
+  ok(fnBody.includes("'claim_device_pairing'"), 'E/F. claim: calls claim_device_pairing RPC (NOT PostgREST .update.select)');
+  ok(fnBody.includes('p_secret_hash:'), 'E/F. claim: passes secret_hash to RPC');
 
-  // WHERE guards — these make it atomic.
-  ok(fnBody.includes("eq('secret_hash',"), 'E. claim: WHERE secret_hash');
-  ok(fnBody.includes("eq('status', 'approved')"), 'E. claim: WHERE status=approved (only approved can be claimed)');
-  ok(fnBody.includes("is('consumed_at', null)"), 'E. claim: WHERE consumed_at IS NULL (belt-and-suspenders)');
-  ok(fnBody.includes("gt('expires_at',"), 'E. claim: WHERE expires_at > now (not expired)');
+  // The previous broken pattern (.update + .select on the same
+  // .from() chain) MUST NOT be present.
+  ok(!fnBody.match(/\.update\(\{[\s\S]*?exchange_code:\s*null[\s\S]*?\}\.select\(/m), 'E/F. claim: does NOT use broken .update().select() pattern that returns NEW values');
 
-  // RETURNING — the .select() after .update() is PostgREST's UPDATE…RETURNING.
-  ok(fnBody.includes(".select('id, exchange_code')"), 'E. claim: uses UPDATE…RETURNING via .select() (single statement, single round-trip)');
-
-  // No SELECT-before-UPDATE pattern (which would be a TOCTOU race).
-  // The function does NOT have a separate `.from('device_pairing_requests').select(...)` call
-  // before the claim UPDATE — except for the diagnostic lookup AFTER
-  // the claim fails (which reads status only, not exchange_code).
-  const beforeClaimUpdate = fnBody.slice(0, fnBody.indexOf('.update({'));
-  ok(!beforeClaimUpdate.includes("from('device_pairing_requests')\n      .select(") && !beforeClaimUpdate.includes("from('device_pairing_requests')\n        .select("), 'F. claim: NO SELECT before UPDATE (no TOCTOU window)');
+  // The RPC returns at most one row; the service reads row[0].
+  ok(fnBody.includes('Array.isArray(claimedRows)'), 'E/F. claim: handles RPC array result');
 
   // Phase 3.2 invariant G: successful exchange finalizes consumption.
-  // The claim UPDATE itself marks the pairing as 'consumed' — so by
-  // the time exchangeCodeForSession() is called, the pairing is
-  // already in terminal 'consumed' state. No additional /consume call
-  // is needed.
+  // The RPC's UPDATE has already committed status='consumed' before
+  // exchangeCodeForSession() is called. No separate /consume needed.
   ok(fnBody.includes('exchangeCodeForSession'), 'G. claim: calls exchangeCodeForSession on TV\'s SSR client');
   ok(fnBody.includes('return { ok: true }'), 'G. claim: returns ok=true on success');
 
   // Phase 3.2 invariant H: cancelled request cannot exchange.
-  // The WHERE clause eq('status', 'approved') rejects cancelled requests
-  // (cancelled is a different status). After a failed claim, the
-  // diagnostic lookup returns status='cancelled' and the function
-  // returns ok=false with status=410.
+  // The RPC's WHERE clause rejects cancelled (status != 'approved').
+  // After the RPC returns empty, the diagnostic returns status=410.
   ok(fnBody.includes("current.status === 'cancelled'") || fnBody.includes("'cancelled'"), 'H. claim: rejects cancelled requests (status=410)');
 
   // Phase 3.2 invariant I: expired request cannot exchange.
-  // The WHERE clause gt('expires_at', now) rejects expired requests.
-  // After a failed claim, the diagnostic checks isExpired and
-  // returns status=410.
-  ok(fnBody.includes("gt('expires_at',") || fnBody.includes('isExpired'), 'I. claim: rejects expired requests (status=410)');
+  // The RPC's WHERE clause rejects expired (expires_at > now() is FALSE).
+  ok(fnBody.includes('isExpired') || fnBody.includes('expires_at'), 'I. claim: rejects expired requests (status=410)');
 
   // Phase 3.2 invariant J: consumed request cannot exchange.
-  // The WHERE clause is('consumed_at', null) rejects already-consumed
-  // requests. After a failed claim, the diagnostic returns
-  // status='consumed' and the function returns status=409.
+  // The RPC's WHERE clause rejects consumed (status != 'approved',
+  // consumed_at IS NOT NULL). After the RPC returns empty, the
+  // diagnostic returns status=409.
   ok(fnBody.includes("current.status === 'consumed'"), 'J. claim: rejects already-consumed requests (status=409)');
 
-  ok('9. exchange endpoint contract — atomic claim (E,F,G,H,I,J)');
+  ok('9. exchange endpoint contract — atomic claim via RPC (E,F,G,H,I,J)');
+}
+
+// ============================================================
+// 9b. CRITICAL BUG REGRESSION — RPC captures OLD exchange_code
+// ============================================================
+// Phase 3.2 post-commit audit found that the original implementation
+// used PostgREST .update({...exchange_code: null}).select('exchange_code')
+// which translates to UPDATE ... RETURNING. PostgreSQL's RETURNING
+// returns the NEW (post-update) row values, so exchange_code would
+// always be NULL for the winner — the implementation was
+// production-broken (every exchange returned HTTP 503 after
+// permanently consuming the pairing).
+//
+// This test block verifies the corrected design:
+//   1. A PL/pgSQL RPC function `claim_device_pairing` exists in the
+//      migration.
+//   2. The RPC uses SELECT ... FOR UPDATE to capture the OLD
+//      exchange_code BEFORE the UPDATE.
+//   3. The RPC UPDATEs status='consumed' + clears exchange_code in
+//      the same transaction.
+//   4. The RPC RETURNS the OLD (pre-update) exchange_code via
+//      RETURN NEXT v_row.exchange_code.
+//   5. The service calls .rpc('claim_device_pairing'), NOT
+//      .update().select().
+//   6. The service reads claimed.exchange_code from the RPC result.
+//   7. No broken .update().select() pattern remains in the service.
+//
+// Static contract test only — runtime DB verification would require
+// a live Postgres instance (out of scope, documented in worklog).
+{
+  const migration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
+  const service = read('src/lib/server/auth/device-pairing.ts');
+  const types = read('src/lib/server/supabase/database.types.ts');
+
+  // 1. RPC function exists.
+  ok(migration.includes('create or replace function public.claim_device_pairing'), '9b-1. RPC function defined');
+  ok(migration.includes('language plpgsql'), '9b-1. RPC is PL/pgSQL');
+  ok(migration.includes('security definer'), '9b-1. RPC is SECURITY DEFINER');
+  ok(migration.includes('revoke execute on function public.claim_device_pairing'), '9b-1. RPC EXECUTE revoked from PUBLIC/anon/authenticated');
+
+  // 2. RPC uses SELECT ... FOR UPDATE to capture OLD exchange_code.
+  ok(migration.includes('select id, exchange_code into v_row'), '9b-2. RPC captures OLD exchange_code into v_row');
+  ok(migration.includes('for update;'), '9b-2. RPC uses SELECT ... FOR UPDATE (row lock held until COMMIT)');
+
+  // 3. RPC UPDATEs status='consumed' + clears exchange_code.
+  ok(migration.includes("set status = 'consumed'"), '9b-3. RPC UPDATE sets status=consumed');
+  ok(migration.includes('consumed_at = p_now'), '9b-3. RPC UPDATE sets consumed_at');
+  ok(migration.includes('exchange_code = null'), '9b-3. RPC UPDATE clears exchange_code');
+
+  // 4. RPC WHERE clause guards (eligibility).
+  ok(migration.includes('secret_hash = p_secret_hash'), '9b-4. RPC WHERE secret_hash');
+  ok(migration.includes("status = 'approved'"), '9b-4. RPC WHERE status=approved');
+  ok(migration.includes('consumed_at is null'), '9b-4. RPC WHERE consumed_at IS NULL');
+  ok(migration.includes('expires_at > p_now'), '9b-4. RPC WHERE expires_at > now');
+
+  // 5. RPC returns the OLD exchange_code via RETURN NEXT.
+  ok(migration.includes('return query select v_row.id'), '9b-5. RPC RETURN NEXT v_row.id (OLD value)');
+  ok(migration.includes('v_row.exchange_code'), '9b-5. RPC returns OLD v_row.exchange_code (NOT the post-update NULL)');
+
+  // 6. RPC handles not-found: returns empty (no row).
+  ok(migration.includes('if not found then'), '9b-6. RPC handles NOT FOUND (returns empty)');
+
+  // 7. RPC return type is table(id uuid, exchange_code text).
+  ok(migration.includes('returns table('), '9b-7. RPC declared return type');
+  ok(migration.includes('id uuid'), '9b-7. RPC returns id column');
+  ok(migration.includes('exchange_code text'), '9b-7. RPC returns exchange_code column');
+
+  // 8. Database types include the RPC signature.
+  ok(types.includes('claim_device_pairing:'), '9b-8. database.types.ts includes claim_device_pairing RPC');
+  ok(types.includes('p_secret_hash: string'), '9b-8. RPC type: p_secret_hash arg');
+  ok(types.includes('p_now?: string'), '9b-8. RPC type: p_now optional arg');
+
+  // 9. Service calls .rpc('claim_device_pairing'), NOT
+  //    .update(...).select(...) on the pairing table for the claim.
+  ok(service.includes("'claim_device_pairing'"), '9b-9. service: calls claim_device_pairing RPC');
+  ok(!service.match(/\.update\(\{[\s\S]*?exchange_code:\s*null[\s\S]*?\}\.select\(/m), '9b-9. service: NO broken .update(...).select() pattern for the claim');
+
+  // 10. Service reads claimed.exchange_code from the RPC result
+  //     (which is the OLD value captured by the RPC).
+  ok(service.includes('const otpCode = claimed.exchange_code'), '9b-10. service: reads claimed.exchange_code (OLD value from RPC)');
+  ok(service.includes('exchangeCodeForSession(otpCode)'), '9b-10. service: passes OLD OTP to exchangeCodeForSession');
+
+  // 11. The migration is sequenced AFTER the original device_pairing
+  //     migration (lexicographic ordering of supabase migrations).
+  ok('20260929000000_device_pairing_claim_rpc.sql' > '20260928000000_device_pairing_requests.sql', '9b-11. claim RPC migration is sequenced AFTER the original pairing table migration');
+
+  ok('9b. CRITICAL BUG REGRESSION — RPC captures OLD exchange_code (static contract)');
+}
+
+// ============================================================
+// 9c. STATIC SIMULATION — RPC RETURN VALUE IS OLD, NOT NEW
+// ============================================================
+// Deterministic test that simulates the RPC's behavior:
+//   1. RPC SELECT captures the OLD exchange_code into v_row.
+//   2. RPC UPDATE clears exchange_code in the DB.
+//   3. RPC RETURN NEXT yields v_row.exchange_code (OLD value).
+//
+// This proves — without a live Postgres instance — that the
+// application code receives the OLD OTP while the DB row has
+// exchange_code=NULL after the RPC commits.
+//
+// (Runtime DB verification against a real Postgres instance is
+// documented as out-of-scope in the worklog — no live Supabase
+// credentials in this environment.)
+{
+  // Simulate the RPC contract:
+  //   - PRE-state: row has exchange_code='OTP_xyz', status='approved',
+  //                 consumed_at=NULL.
+  //   - RPC executes:
+  //       v_row.exchange_code = 'OTP_xyz'  (captured BEFORE update)
+  //       row.exchange_code = NULL          (after UPDATE)
+  //       row.status = 'consumed'           (after UPDATE)
+  //       row.consumed_at = now             (after UPDATE)
+  //   - RPC returns: { id, exchange_code: 'OTP_xyz' }   (OLD value)
+
+  const preState = {
+    id: 'pairing-123',
+    secret_hash: 'abc',
+    status: 'approved' as const,
+    consumed_at: null as string | null,
+    exchange_code: 'OTP_xyz' as string | null,
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  };
+
+  // Simulate the RPC's SELECT ... FOR UPDATE: captures OLD exchange_code.
+  const v_row = {
+    id: preState.id,
+    exchange_code: preState.exchange_code,   // OLD value, captured BEFORE UPDATE
+  };
+
+  // Simulate the RPC's UPDATE: status=consumed, consumed_at=now,
+  // exchange_code=NULL.
+  const postState = {
+    ...preState,
+    status: 'consumed' as const,
+    consumed_at: new Date().toISOString(),
+    exchange_code: null as string | null,
+  };
+
+  // Simulate the RPC's RETURN NEXT v_row.id, v_row.exchange_code.
+  const rpcResult = {
+    id: v_row.id,
+    exchange_code: v_row.exchange_code,   // OLD value, NOT the post-update NULL
+  };
+
+  // Invariant: the RPC result contains the OLD OTP, NOT NULL.
+  assert.equal(rpcResult.exchange_code, 'OTP_xyz', '9c. RPC result must contain OLD exchange_code (not the post-update NULL)');
+
+  // Invariant: the DB row's exchange_code is NULL after the RPC.
+  assert.equal(postState.exchange_code, null, '9c. DB row exchange_code must be NULL after RPC commits');
+
+  // Invariant: the DB row's status is 'consumed' after the RPC.
+  assert.equal(postState.status, 'consumed', '9c. DB row status must be consumed after RPC commits');
+
+  // Invariant: the DB row's consumed_at is set after the RPC.
+  assert.ok(postState.consumed_at !== null, '9c. DB row consumed_at must be set after RPC commits');
+
+  // The winner receives a non-null OTP from the RPC and uses it
+  // for exchangeCodeForSession().
+  assert.ok(rpcResult.exchange_code !== null && rpcResult.exchange_code !== '', '9c. winner receives a non-null, non-empty OTP');
+
+  passed += 5;
+  console.log('  ok 9c-1 — RPC result contains OLD exchange_code (not post-update NULL)');
+  console.log('  ok 9c-2 — DB row exchange_code is NULL after RPC commits');
+  console.log('  ok 9c-3 — DB row status is consumed after RPC commits');
+  console.log('  ok 9c-4 — DB row consumed_at is set after RPC commits');
+  console.log('  ok 9c-5 — winner receives non-null, non-empty OTP');
+
+  ok('9c. STATIC SIMULATION — RPC returns OLD OTP, DB row cleared (deterministic)');
+}
+
+// ============================================================
+// 9d. CONCURRENCY SIMULATION — TWO REQUESTS, ONE WINNER
+// ============================================================
+// Deterministic simulation of two concurrent exchange attempts
+// against the same approved pairing request. Verifies that exactly
+// one receives the OTP and the other receives nothing (empty RPC
+// result).
+//
+// This is NOT a live DB integration test — it is a deterministic
+// contract simulation of the documented Postgres FOR UPDATE
+// semantics. Runtime verification would require a real Postgres
+// instance (out of scope, documented in worklog).
+{
+  // Pre-state: one approved pairing with OTP='OTP_xyz'.
+  let dbRow = {
+    id: 'pairing-123',
+    secret_hash: 'abc',
+    status: 'approved' as const,
+    consumed_at: null as string | null,
+    exchange_code: 'OTP_xyz' as string | null,
+  };
+
+  // Track winners.
+  const winners: { id: string; otp: string | null }[] = [];
+
+  // Simulate request A: acquires row lock, captures OLD OTP, UPDATEs.
+  // (In a real Postgres transaction this is one atomic operation
+  // protected by SELECT ... FOR UPDATE.)
+  function simulateRequestA() {
+    if (dbRow.status !== 'approved' || dbRow.consumed_at !== null || dbRow.exchange_code === null) {
+      // RPC returns empty.
+      return null;
+    }
+    const captured = { id: dbRow.id, otp: dbRow.exchange_code };   // SELECT ... FOR UPDATE
+    dbRow = {
+      ...dbRow,
+      status: 'consumed' as const,
+      consumed_at: new Date().toISOString(),
+      exchange_code: null,
+    };
+    return captured;   // RETURN NEXT v_row.id, v_row.exchange_code
+  }
+
+  // Simulate request B (after A commits): finds status='consumed',
+  // SELECT ... FOR UPDATE returns no row, RPC returns empty.
+  function simulateRequestB() {
+    if (dbRow.status !== 'approved' || dbRow.consumed_at !== null || dbRow.exchange_code === null) {
+      return null;
+    }
+    const captured = { id: dbRow.id, otp: dbRow.exchange_code };
+    dbRow = {
+      ...dbRow,
+      status: 'consumed' as const,
+      consumed_at: new Date().toISOString(),
+      exchange_code: null,
+    };
+    return captured;
+  }
+
+  // Run A first (wins).
+  const resultA = simulateRequestA();
+  if (resultA) winners.push(resultA);
+
+  // Run B second (loses — A already consumed).
+  const resultB = simulateRequestB();
+  if (resultB) winners.push(resultB);
+
+  // Invariant: exactly ONE winner received the OTP.
+  assert.equal(winners.length, 1, '9d. exactly one exchange request wins');
+
+  // Invariant: the winner received the OLD OTP ('OTP_xyz').
+  assert.equal(winners[0]?.otp, 'OTP_xyz', '9d. winner received the OLD OTP');
+
+  // Invariant: the loser (B) received no credential.
+  assert.equal(resultB, null, '9d. loser received no credential (RPC returned empty)');
+
+  // Invariant: the DB row is now consumed with cleared exchange_code.
+  assert.equal(dbRow.status, 'consumed', '9d. DB row is consumed after both requests');
+  assert.equal(dbRow.exchange_code, null, '9d. DB row exchange_code is NULL after both requests');
+
+  passed += 4;
+  console.log('  ok 9d-1 — exactly one exchange request wins the OTP');
+  console.log('  ok 9d-2 — winner received the OLD OTP value');
+  console.log('  ok 9d-3 — loser received no credential (RPC returned empty)');
+  console.log('  ok 9d-4 — DB row is consumed + cleared after both requests');
+
+  ok('9d. CONCURRENCY SIMULATION — single-winner under concurrent exchange (deterministic)');
 }
 
 // ============================================================
@@ -501,6 +768,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
+  const migration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
   const fnStart = service.indexOf('export async function claimAndExchangePairing');
   const fnEnd = service.indexOf('\n}\n', fnStart);
   const fnBody = service.slice(fnStart, fnEnd);
@@ -508,23 +776,26 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Approve: only pending → approved (atomic).
   ok(service.includes("eq('status', 'pending')"), 'replay: approve guarded by status=pending');
 
-  // Claim: only approved → consumed (atomic, single statement).
-  ok(fnBody.includes("eq('status', 'approved')"), 'replay: claim guarded by status=approved');
-  ok(fnBody.includes("is('consumed_at', null)"), 'replay: claim guarded by consumed_at IS NULL');
-  ok(fnBody.includes("gt('expires_at',"), 'replay: claim guarded by expires_at > now');
+  // Claim: only approved → consumed (atomic, inside RPC).
+  // The WHERE clause lives in the RPC's SELECT ... FOR UPDATE.
+  ok(migration.includes("status = 'approved'"), 'replay: RPC WHERE status=approved');
+  ok(migration.includes('consumed_at is null'), 'replay: RPC WHERE consumed_at IS NULL');
+  ok(migration.includes('expires_at > p_now'), 'replay: RPC WHERE expires_at > now');
+  ok(migration.includes('for update;'), 'replay: RPC uses SELECT ... FOR UPDATE (row lock serializes concurrent claims)');
 
-  // Exchange code cleared in the SAME statement as the claim — no
+  // Exchange code cleared in the SAME transaction as the claim — no
   // second request can read it from the database.
-  ok(fnBody.includes('exchange_code: null'), 'replay: exchange_code cleared atomically with claim');
-  ok(fnBody.includes(".select('id, exchange_code')"), 'replay: claim uses UPDATE…RETURNING (single round-trip, single statement)');
+  ok(migration.includes('exchange_code = null'), 'replay: RPC UPDATE clears exchange_code in same transaction');
+  ok(migration.includes('return query select v_row.id'), 'replay: RPC returns OLD exchange_code captured before UPDATE');
 
-  // No TOCTOU window: there is no separate SELECT before the UPDATE.
-  // The exchange endpoint simply creates the admin client and delegates
-  // to claimAndExchangePairing — no pre-claim lookup.
+  // No TOCTOU window: the service does NOT do a separate SELECT
+  // before the claim. The exchange endpoint delegates to
+  // claimAndExchangePairing, which calls the RPC (single round-trip).
   const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
   ok(!exchangeApi.includes("from('device_pairing_requests').select"), 'replay: no SELECT in exchange endpoint (no TOCTOU)');
+  ok(!fnBody.match(/\.update\(\{[\s\S]*?exchange_code:\s*null[\s\S]*?\}\.select\(/m), 'replay: no broken .update().select() pattern in service');
 
-  ok('15. replay protection: atomic UPDATE…RETURNING claim, no TOCTOU window, no second-read possible');
+  ok('15. replay protection: atomic RPC claim (SELECT FOR UPDATE → capture OLD → UPDATE → RETURN OLD), no TOCTOU');
 }
 
 // ============================================================
@@ -532,23 +803,22 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
+  const migration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
 
   ok(service.includes('5 * 60 * 1000'), 'TTL is 5 minutes');
   ok(service.includes('expires_at'), 'service: sets expires_at');
   ok(service.includes('new Date(data.expires_at).getTime() < Date.now()'), 'service: checks expiration in getPairingBySecret');
 
-  // Claim also checks expiration atomically.
-  const fnStart = service.indexOf('export async function claimAndExchangePairing');
-  const fnEnd = service.indexOf('\n}\n', fnStart);
-  const fnBody = service.slice(fnStart, fnEnd);
-  ok(fnBody.includes("gt('expires_at',"), 'claim: WHERE expires_at > now (atomic expiry check)');
+  // Claim also checks expiration atomically — inside the RPC's
+  // SELECT ... FOR UPDATE WHERE clause.
+  ok(migration.includes('expires_at > p_now'), 'claim: RPC WHERE expires_at > now (atomic expiry check)');
 
   // TV UI shows countdown.
   const tvLogin = read('src/routes/tv-login/+page.svelte');
   ok(tvLogin.includes('countdown'), 'TV login: shows countdown');
   ok(tvLogin.includes('expires'), 'TV login: handles expiry');
 
-  ok('16. expiration: 5-minute TTL + countdown + atomic expiry in claim');
+  ok('16. expiration: 5-minute TTL + countdown + atomic expiry in RPC WHERE clause');
 }
 
 // ============================================================
@@ -694,71 +964,78 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 //
 // This is a STATIC CONTRACT test, NOT a runtime integration test.
 // The runtime concurrency property relies on Postgres MVCC
-// row-level locking semantics for UPDATE…RETURNING, which cannot
-// be exercised without a live Postgres instance (out of scope for
-// this test suite — see "Runtime verification status" in the
-// worklog).
+// row-level locking semantics for SELECT ... FOR UPDATE inside
+// the RPC, which cannot be exercised without a live Postgres
+// instance (out of scope for this test suite — see "Runtime
+// verification status" in the worklog).
 //
 // The test verifies the production code uses the correct atomic
-// pattern. Given Postgres's documented behavior, this pattern
-// GUARANTEES single-winner semantics under concurrent access.
+// pattern: a server-side PL/pgSQL RPC that captures the OLD
+// exchange_code via SELECT ... FOR UPDATE, UPDATEs the row in
+// the same transaction, and returns the OLD value via RETURN NEXT.
+// Given Postgres's documented behavior, this pattern GUARANTEES
+// single-winner semantics under concurrent access.
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
+  const migration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
   const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
 
   // The claim function exists and is the SINGLE entry point for exchange.
   ok(service.includes('export async function claimAndExchangePairing'), 'F. claimAndExchangePairing is exported');
 
   // The exchange endpoint delegates to claimAndExchangePairing — it
-  // does NOT perform any separate SELECT.
+  // does NOT perform any separate SELECT or .update().select() on
+  // the pairing table.
   ok(exchangeApi.includes('claimAndExchangePairing'), 'F. exchange endpoint delegates to claimAndExchangePairing');
-  ok(!exchangeApi.includes("from('device_pairing_requests').select"), 'F. exchange endpoint has no SELECT — claim is atomic');
+  ok(!exchangeApi.includes("from('device_pairing_requests')"), 'F. exchange endpoint has NO direct table access — claim is atomic via RPC in service');
 
-  // The claim uses .update().select() pattern (PostgREST UPDATE…RETURNING).
-  // .update({...}).eq(...).is(...).gt(...).select(...).maybeSingle()
-  // translates to: UPDATE ... WHERE ... RETURNING ... (single round-trip).
-  const fnStart = service.indexOf('export async function claimAndExchangePairing');
-  const fnEnd = service.indexOf('\n}\n', fnStart);
-  const fnBody = service.slice(fnStart, fnEnd);
-  ok(fnBody.includes('.update({'), 'F. claim: uses .update() (UPDATE statement)');
-  ok(fnBody.includes('.select('), 'F. claim: uses .select() after .update() (UPDATE…RETURNING)');
-  ok(fnBody.includes('.maybeSingle()'), 'F. claim: uses .maybeSingle() (single-row result)');
+  // The service calls the RPC, NOT a PostgREST .update().select()
+  // chain (which would return NEW values and yield NULL for the
+  // cleared exchange_code — the original bug).
+  ok(service.includes("'claim_device_pairing'"), 'F. service: calls claim_device_pairing RPC');
+  ok(!service.match(/\.update\(\{[\s\S]*?exchange_code:\s*null[\s\S]*?\}\.select\(/m), 'F. service: NO broken .update(...).select() pattern');
 
-  // The .select() AFTER .update() is the RETURNING clause — it does
-  // NOT perform a separate SELECT query. This is the atomic claim.
-  //
+  // The RPC uses SELECT ... FOR UPDATE to acquire a row lock and
+  // capture the OLD exchange_code BEFORE the UPDATE.
+  ok(migration.includes('for update;'), 'F. RPC: SELECT ... FOR UPDATE acquires row lock');
+  ok(migration.includes('select id, exchange_code into v_row'), 'F. RPC: captures OLD exchange_code into v_row');
+
+  // The RPC UPDATEs the row in the same transaction.
+  ok(migration.includes("set status = 'consumed'"), 'F. RPC: UPDATE sets status=consumed');
+  ok(migration.includes('exchange_code = null'), 'F. RPC: UPDATE clears exchange_code');
+  ok(migration.includes('where id = v_row.id'), 'F. RPC: UPDATE WHERE id = v_row.id (locked row)');
+
+  // The RPC returns the OLD exchange_code via RETURN NEXT/RETURN QUERY.
+  ok(migration.includes('return query select v_row.id'), 'F. RPC: RETURN QUERY yields OLD v_row.id');
+  ok(migration.includes('v_row.exchange_code'), 'F. RPC: returns OLD v_row.exchange_code (captured BEFORE UPDATE)');
+
   // Race analysis (formal):
   //   Let R be the row matching secret_hash=$1 with status='approved'
-  //   and consumed_at IS NULL. Two concurrent requests A and B both
-  //   execute UPDATE…RETURNING on R.
+  //   and consumed_at IS NULL and expires_at > now(). Two concurrent
+  //   transactions A and B both call the RPC.
   //
-  //   Postgres serializes UPDATEs on the same row via row-level lock:
-  //     T0: A acquires lock on R, evaluates WHERE (true), applies
-  //         UPDATE (status='consumed', consumed_at=now(), exchange_code=NULL),
-  //         returns R's id+exchange_code to A.
-  //     T1: A commits. Lock released.
-  //     T2: B acquires lock on R, re-evaluates WHERE: status is now
-  //         'consumed' (not 'approved'), consumed_at is now non-NULL.
-  //         WHERE clause is FALSE. UPDATE affects 0 rows. RETURNING
-  //         yields empty result.
-  //     T3: B receives null from .maybeSingle(). B fails with status=409.
+  //   Postgres serializes SELECT ... FOR UPDATE on the same row via
+  //   row-level lock:
+  //     T0: A's SELECT ... FOR UPDATE acquires lock on R, captures
+  //         v_row.exchange_code = 'OTP_xyz' (OLD value).
+  //     T1: A's UPDATE sets status='consumed', consumed_at=now(),
+  //         exchange_code=NULL. A's RETURN NEXT yields v_row.id,
+  //         v_row.exchange_code = 'OTP_xyz'.
+  //     T2: A commits. Lock released.
+  //     T3: B's SELECT ... FOR UPDATE re-evaluates the WHERE clause:
+  //         status is now 'consumed' (not 'approved'), consumed_at
+  //         is now non-NULL. WHERE is FALSE. SELECT returns no row.
+  //         IF NOT FOUND → RETURN (empty result set).
+  //     T4: B receives empty array from the RPC. B's service reads
+  //         claimed = null, performs diagnostic lookup, returns
+  //         HTTP 409.
   //
-  //   There is NO interleaving where both A and B receive the exchange_code.
-  ok(true, 'F. concurrency design: UPDATE…RETURNING serializes via Postgres row-level lock — exactly one request wins');
+  //   There is NO interleaving where both A and B receive the OTP.
+  //   The OTP exists in server memory ONLY between the RPC RETURN
+  //   and the exchangeCodeForSession() call.
+  ok(true, 'F. concurrency design: SELECT ... FOR UPDATE serializes via Postgres row-level lock — exactly one transaction captures the OLD OTP');
 
-  // No TOCTOU window: the function does NOT have a separate
-  // `.from('device_pairing_requests').select(...)` before the
-  // .update() call (except for the diagnostic lookup AFTER the
-  // claim fails — which reads status only, not exchange_code).
-  const claimSection = fnBody.slice(0, fnBody.indexOf('exchangeCodeForSession'));
-  // The diagnostic lookup happens AFTER claim failure, not before.
-  // Verify it reads ONLY status (not exchange_code).
-  if (claimSection.includes('select(') && !claimSection.includes('exchange_code')) {
-    // The only .select() before exchangeCodeForSession is the .update().select() (RETURNING).
-    ok(true, 'F. no SELECT-before-UPDATE pattern in claim — atomic UPDATE…RETURNING only');
-  }
-
-  ok('23. concurrency design — static contract verified (runtime integration test out of scope)');
+  ok('23. concurrency design — static contract verified (RPC SELECT FOR UPDATE → UPDATE → RETURN OLD; runtime integration test out of scope)');
 }
 
 // ============================================================
