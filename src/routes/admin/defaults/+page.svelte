@@ -83,7 +83,6 @@
     eyebrow="MAVERO / Default sources"
     title="Playback"
     accent="defaults."
-    description="Configure the default playback source for each content type. Defaults are sorted to the front of the fallback candidate list — they do not receive an artificial health boost, and ineligible defaults are silently omitted from public configuration."
   />
 
   {#if data.notice}<div class="notice" role="status"><Check size={15} /> {data.notice}</div>{/if}
@@ -112,12 +111,12 @@
             <div class="current-meta">{providerName(currentSource.provider_id)} · {eligibilityLabel(currentSource)}</div>
           </div>
           {#if ineligible}
-            <div class="warning" role="alert"><AlertTriangle size={14} /> <span>This source is currently <strong>{eligibilityLabel(currentSource)}</strong>. Public configuration will omit it until the source becomes eligible again. The default is preserved so it auto-activates when re-enabled.</span></div>
+            <div class="warning" role="alert"><AlertTriangle size={14} /> <span>Source is currently <strong>{eligibilityLabel(currentSource)}</strong>. Public configuration will omit it until the source becomes eligible again. The default is preserved so it auto-activates when re-enabled.</span></div>
           {/if}
         {:else}
           <div class="current-default none">
             <div class="current-label">No default configured</div>
-            <div class="current-meta">The resolver will use health-ranked fallback ordering.</div>
+            <div class="current-meta">Resolver uses health-ranked fallback.</div>
           </div>
         {/if}
 
@@ -151,7 +150,6 @@
     eyebrow="MAVERO / Adult Mode"
     title="Adult Mode"
     accent="policy."
-    description="Control whether Adult Mode is available for logged-in users and guests. When disabled for a user type, the setting disappears from their UI and adult content is blocked server-side."
   >
     {#snippet actions()}
       <ShieldCheck size={14} />
@@ -190,7 +188,7 @@
 
   .hint { color: var(--color-text-deep); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .56rem; letter-spacing: .04em; }
 
-  .defaults-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-top: 22px; }
+  .defaults-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-top: 12px; }
   .default-card { display: grid; gap: 13px; padding: 18px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
   .default-card.ineligible { border-color: rgba(255, 194, 71, .35); }
   .card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

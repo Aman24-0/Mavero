@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { page } from '$app/state';
   import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download, Puzzle, PanelLeftClose, PanelLeft, Menu, X } from 'lucide-svelte';
   import type { Snippet } from 'svelte';
@@ -61,6 +61,12 @@
     } catch { /* SSR / no access */ }
   });
 
+  // Defensive: never leave the body scroll-locked if this shell unmounts
+  // while the drawer is open (e.g. navigating away from /admin entirely).
+  onDestroy(() => {
+    unlockBodyScroll();
+  });
+
   function toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
     try { localStorage.setItem(STORAGE_KEY, String(sidebarCollapsed)); } catch { /* no access */ }
@@ -80,10 +86,28 @@
   // Mobile drawer — open/close with Escape + backdrop + focus management.
   // Closes on navigation so the overlay never lingers invisibly after the
   // user has moved to another admin route.
+  //
+  // Body scroll lock: while the drawer is open the underlying page must NOT
+  // scroll. We toggle a `data-admin-drawer-open` attribute on <html> which
+  // pairs with the CSS rule `html[data-admin-drawer-open] body { overflow: hidden; }`
+  // so the underlying admin page is fixed in place while the user interacts
+  // with the drawer.
   // ============================================================
+  function lockBodyScroll() {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-admin-drawer-open', '');
+    }
+  }
+  function unlockBodyScroll() {
+    if (typeof document !== 'undefined') {
+      document.documentElement.removeAttribute('data-admin-drawer-open');
+    }
+  }
+
   function openDrawer(event: Event) {
     drawerTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     drawerOpen = true;
+    lockBodyScroll();
     void tick().then(() => {
       // Focus the close button first so screen readers announce the drawer.
       drawerEl?.querySelector<HTMLElement>('.admin-drawer-close')?.focus();
@@ -92,6 +116,7 @@
 
   function closeDrawer() {
     drawerOpen = false;
+    unlockBodyScroll();
     // Restore focus to the trigger so keyboard users don't lose their place.
     drawerTrigger?.focus();
     drawerTrigger = null;
@@ -119,12 +144,34 @@
     }
   }
 
-  // Close drawer on route change (so navigation away from the current page
-  // never leaves the overlay lingering invisibly).
+  // ============================================================
+  // Close drawer on route change ONLY — never when the user opens it.
+  //
+  // ROOT CAUSE of the original "hamburger does not open" bug:
+  //   The previous $effect read BOTH `page.url.pathname` AND `drawerOpen`
+  //   (the `if (drawerOpen)` check). Svelte 5 re-runs the effect whenever
+  //   ANY tracked dependency changes. So when the user tapped the
+  //   hamburger → drawerOpen flipped true → the effect re-ran → it saw
+  //   drawerOpen === true → it immediately set drawerOpen = false again,
+  //   closing the drawer the same frame it opened.
+  //
+  // FIX: track the PREVIOUS pathname in a closure variable. The effect
+  // closes the drawer ONLY when the pathname actually changes (i.e. when
+  // the user has navigated to a different admin route). Opening the
+  // drawer no longer re-triggers the close path.
+  // ============================================================
+  let lastPathname = typeof location !== 'undefined' ? location.pathname : '';
   $effect(() => {
-    // Read page.url.pathname so the effect re-runs on navigation.
-    const _path = page.url.pathname;
-    if (drawerOpen) drawerOpen = false;
+    const current = page.url.pathname;
+    if (current !== lastPathname) {
+      lastPathname = current;
+      if (drawerOpen) {
+        drawerOpen = false;
+        unlockBodyScroll();
+        // Focus handled by closeDrawer(); on route change we just hide.
+        drawerTrigger = null;
+      }
+    }
   });
 </script>
 
@@ -494,6 +541,17 @@
     margin-inline: auto;
     padding-top: clamp(24px, 4vw, 48px);
     padding-bottom: clamp(48px, 6vw, 96px);
+  }
+  /* Mobile (<1024px) — tighten the top + bottom padding so the first card
+     appears without scrolling. The topbar already offsets the page via
+     .admin-main { padding-top: var(--admin-topbar-h-safe) }, so the content
+     itself only needs a small breathing gap below the topbar. */
+  @media (max-width: 1023px) {
+    .admin-content {
+      width: min(100% - 28px, 1400px);
+      padding-top: 14px;
+      padding-bottom: 80px;
+    }
   }
   /* Headings rendered inside admin-content share one typography baseline. */
   .admin-content :global(h1) {
