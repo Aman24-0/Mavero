@@ -49,6 +49,16 @@
   // resolution path, but it is not surfaced as a separate "MAVERO Player"
   // entry in the embed/source selector. The underlying HLS implementation
   // and the addon resolution pipeline are untouched.
+  // Build a lookup map of source_id → category name from the public streaming
+  // config's sourceCategories mapping. Sources without a category assignment
+  // get categoryName = undefined and appear under "Other" in the selector.
+  $: sourceCategoryMap = new Map<string, string>(
+    (data.streamingConfig.sourceCategories ?? []).map((mapping) => {
+      const category = data.streamingConfig.categories?.find((c) => c.id === mapping.category_id);
+      return [mapping.source_id, category?.name ?? 'Other'];
+    })
+  );
+
   $: sourceOptions = [
     ...data.streamingConfig.sources.map((source) => {
       const provider = data.streamingConfig.providers.find((provider) => provider.id === source.provider_id);
@@ -62,7 +72,8 @@
         // default → system default). `resolveSandboxRuntime` exposes the
         // configured-vs-effective provenance in one place; the option and
         // the resolved source always agree.
-        sandboxPolicy: resolveSandboxRuntime(provider?.capabilities, source.capabilities).effectiveSandboxPolicy
+        sandboxPolicy: resolveSandboxRuntime(provider?.capabilities, source.capabilities).effectiveSandboxPolicy,
+        categoryName: sourceCategoryMap.get(source.id),
       };
       return option;
     }),

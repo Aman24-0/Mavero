@@ -325,7 +325,6 @@
 <style>
   .admin-shell {
     display: block;
-    min-height: 100dvh;
     background: var(--color-bg);
     overflow-x: hidden;
   }
@@ -532,7 +531,7 @@
      ============================================================ */
   .admin-main {
     margin-left: var(--admin-sidebar-current);
-    height: 100dvh;
+    min-height: 100dvh;
     overflow-y: auto;
     overflow-x: hidden;
     transition: margin-left var(--motion-normal) var(--ease-out);
@@ -590,6 +589,7 @@
     .admin-sidebar { display: none; }
     .admin-main {
       margin-left: 0;
+      min-height: auto;
       height: auto;
       overflow-y: visible;
       padding-top: var(--admin-topbar-h-safe);

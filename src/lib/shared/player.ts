@@ -148,6 +148,13 @@ export type PlayerSourceOption = {
   integrationType?: string;
   sandboxPolicy?: SandboxPolicy;
   /**
+   * Optional category name for grouping in the source selector.
+   * Populated from the public streaming config's category assignments.
+   * Sources without a category get categoryName = undefined and appear
+   * under the "Other" / uncategorized group at the end of the list.
+   */
+  categoryName?: string;
+  /**
    * Phase 7F (MegaPlay): optional playback variants exposed by a single
    * source. When present, the source selector renders inline variant
    * toggle buttons (e.g. SUB | DUB) inside this source option — both

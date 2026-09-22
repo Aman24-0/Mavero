@@ -1084,17 +1084,30 @@
     .detail-page { padding-bottom: 96px; }
     .hero { min-height: clamp(380px, 64vh, 520px); }
     .back-btn { top: calc(12px + env(safe-area-inset-top)); left: 12px; padding: 0 12px; min-height: 34px; font-size: .68rem; }
-    /* Mobile backdrop fix: the backdrop image should NOT dominate from the
-       very top of the hero. Instead, position it so the visually interesting
-       part appears starting around 40% down the hero — the top 40% is a
-       dark gradient that blends into the backdrop. This restores the
-       cinematic hierarchy where the back button + poster overlap + title
-       remain readable over a controlled dark region, and the backdrop
-       establishes below them. */
-    .hero-img { object-position: center 55%; }
+    /* Mobile backdrop fix: the backdrop image should NOT be visible from
+       the top. The top ~40% of the hero must be solid dark (the page
+       background color), so the back button + poster + title + metadata
+       remain over a controlled dark region. The backdrop progressively
+       reveals starting around 40% down and becomes fully visible in the
+       lower 50% of the hero, creating the cinematic hierarchy where:
+         TOP → dark background → poster + title + text
+         MIDDLE → gradual backdrop reveal
+         BOTTOM → backdrop visible + Play/actions + blend to page
+
+       Implementation: override the hero-scrim with an opaque gradient that
+       uses var(--color-bg) (solid, not semi-transparent) for the top 38%,
+       then transitions to transparent at 52% so the backdrop image shows
+       through in the lower region. The hero-img stays at inset:0 but is
+       visually hidden by the opaque scrim in the top region. */
     .hero-scrim {
       background:
-        linear-gradient(180deg, var(--color-bg) 0%, var(--color-bg) 28%, rgba(5,7,8,.7) 48%, rgba(5,7,8,.4) 72%, var(--color-bg) 100%);
+        linear-gradient(180deg,
+          var(--color-bg) 0%,
+          var(--color-bg) 38%,
+          rgba(5,7,8,.85) 46%,
+          rgba(5,7,8,.4) 60%,
+          rgba(5,7,8,.55) 80%,
+          var(--color-bg) 100%);
     }
     .hero-inner {
       width: calc(100% - 28px);
@@ -1106,16 +1119,10 @@
     .detail-title { font-size: clamp(1.5rem, 6.4vw, 2rem); }
     .meta-row { font-size: .7rem; gap: 6px; }
     .detail-desc { font-size: .8rem; }
-    /* Play button takes the full width on mobile — download sits in a
-       second row of secondary actions to keep Play the unambiguous
-       primary CTA. */
     .primary-actions { max-width: 100%; }
     .play-btn { flex: 1 1 100%; padding: 14px 22px; font-size: .9rem; }
     .download-btn {
       flex: 1 1 100%;
-      /* On mobile, the Download action joins the secondary row — the
-         primary row collapses to Play alone. (Visibility rules above
-         still gate it; if neither shows, the row stays single-CTA.) */
     }
     .secondary-btn { padding: 9px 14px; font-size: .72rem; }
     .cast-section { margin-top: 28px; }

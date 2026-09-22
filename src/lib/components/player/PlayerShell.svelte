@@ -262,6 +262,30 @@
   // Phase 9: the MAVERO Player source option (provider selection) — the
   // source sheet shows ONE "X Streams →" entry point for it.
   $: maveroSourceOption = sourceOptions.find((option) => option.id === MAVERO_PLAYER_SOURCE_ID);
+  // Category grouping: sources that have a categoryName are grouped under
+  // a category header in the source selector. Sources without a category
+  // appear under "Other" at the bottom. The order follows the source list
+  // order (which is already ordered by the admin's `ordering` field).
+  $: groupedSourceOptions = (() => {
+    const groups: { name: string; options: typeof sourceOptions }[] = [];
+    const seen = new Set<string>();
+    for (const option of sourceOptions) {
+      const name = option.categoryName ?? 'Other';
+      if (!seen.has(name)) {
+        seen.add(name);
+        groups.push({ name, options: [] });
+      }
+      const group = groups.find((g) => g.name === name);
+      if (group) group.options.push(option);
+    }
+    // Move "Other" to the end if it exists and isn't already last.
+    const otherIdx = groups.findIndex((g) => g.name === 'Other');
+    if (otherIdx !== -1 && otherIdx !== groups.length - 1) {
+      const [other] = groups.splice(otherIdx, 1);
+      groups.push(other);
+    }
+    return groups;
+  })();
   // Phase 9: per-stream subtitle tracks — the SELECTED stream's addon-
   // provided tracks win, the aggregate source's tracks are the fallback.
   $: effectiveSubtitles = selectedQualityOption?.subtitles?.length ? selectedQualityOption.subtitles : source?.subtitles ?? [];
@@ -1520,9 +1544,9 @@
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each sourceOptions as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}{#if option.id === MAVERO_PLAYER_SOURCE_ID && maveroStreams.length}
+      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}{#if option.id === MAVERO_PLAYER_SOURCE_ID && maveroStreams.length}
           <button class="streams-entry-button" type="button" aria-label={`Open the ${maveroStreams.length} MAVERO Player streams`} onclick={(e) => { e.stopPropagation(); openStreamsSheet(e.currentTarget as HTMLElement, true); }}><Clapperboard size={14} aria-hidden="true" /><strong>{maveroStreams.length} Stream{maveroStreams.length === 1 ? '' : 's'}</strong><ArrowRight size={14} aria-hidden="true" /></button>
-        {/if}</div>{/each}
+        {/if}</div>{/each}{/each}
       </div>
     </div>
   {/if}
@@ -1688,6 +1712,8 @@
   .sheet-head .eyebrow { color: var(--muted); }
   .close-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted); background: rgba(255,255,255,.04); cursor: pointer; }
   .sheet-list { display: grid; gap: 4px; padding: 0 12px 14px; }
+  .sheet-group-label { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 10px 0 4px; border-top: 1px solid var(--line); margin-top: 6px; }
+  .sheet-group-label:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
   .sheet-option { display: flex; align-items: center; gap: 11px; min-height: 52px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 12px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }
   .sheet-option:hover, .sheet-option:focus-visible, .sheet-option.active { border-color: var(--line-strong); background: var(--accent-soft); }
   .sheet-option strong, .sheet-option small { display: block; }

@@ -251,8 +251,13 @@ function makeAggregate(overrides: Partial<PlayerSource> = {}): PlayerSource {
   // DEDICATED sheet with ONE "X Streams →" entry point in the source sheet.
   const option = maveroPlayerSourceOption();
   ok(option.id === MAVERO_PLAYER_SOURCE_ID && option.name === MAVERO_PLAYER_SOURCE_NAME, 'A: the virtual source option is unchanged (one logical source)');
-  const optionLoopCount = shellTemplate.split('{#each sourceOptions as option}').length - 1;
-  ok(optionLoopCount === 1, 'A: the sheet renders exactly ONE source-options loop (no second source list)');
+  // Category grouping: the source sheet now iterates over grouped options
+  // ({#each groupedSourceOptions as group} → {#each group.options as option})
+  // instead of a flat {#each sourceOptions as option}. The contract still
+  // verifies that there is exactly ONE source-options loop — it's now
+  // nested inside the group loop. The inner loop count is 1.
+  const innerLoopCount = shellTemplate.split('{#each group.options as option}').length - 1;
+  ok(innerLoopCount === 1, 'A: the sheet renders exactly ONE source-options loop (grouped by category, no second source list)');
   ok(!shellTemplate.includes('mavero-section'), 'A: Phase 9 — the source sheet no longer embeds the raw stream list (provider selection only)');
   ok(shellTemplate.includes('streams-entry-button') && shellTemplate.includes('openStreamsSheet'), 'A: the source sheet carries ONE "X Streams →" entry point that opens the dedicated streams sheet');
   ok(shellTemplate.includes('mavero-streams-sheet') && shellTemplate.includes('aria-label="MAVERO Player streams"'), 'A: the dedicated MAVERO streams sheet exists as its own dialog');
@@ -1025,7 +1030,7 @@ function engineLevelsSnapshotForMp4(): boolean {
   // landscape overlay are gone).
   ok(shellTemplate.split('aria-label="Switch source"').length === 3, 'AR: exactly the current two source entry points remain (message card action + FAB menu item)');
   ok(controlsSource.split('Choose source, ${sourceCount} available').length === 2, 'AR: the playback controls keep their single source button');
-  ok(shellTemplate.split('{#each sourceOptions as option}').length === 2, 'AR: still exactly one source-options list (streams never become source options)');
+  ok(shellTemplate.split('{#each group.options as option}').length === 2, 'AR: still exactly one source-options list (streams never become source options)');
 }
 
 // ===========================================================================
