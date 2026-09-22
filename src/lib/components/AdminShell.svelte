@@ -721,11 +721,26 @@
     to { transform: translateX(0); }
   }
 
-  /* Large desktop / TV — wider content max-width so 4K doesn't waste
-     space, but typography stays bounded so it doesn't look stretched. */
+  /* Large desktop / TV — progressive content max-width strategy.
+     At 1920px: 1700px content (measured: 115px free space — appropriate).
+     At 2560px: 1700px still works (measured: 616px free — acceptable, ~12% per side).
+     At 3840px: 1700px is too narrow (measured: 1896px free — 53% empty per side).
+     Fix: at 2560px+ allow up to 2100px; at 3840px+ allow up to 2400px.
+     This keeps content bounded so text lines don't become excessively
+     wide, while preventing the 4K "narrow column in a sea of space" look. */
   @media (min-width: 1920px) {
     .admin-content {
       width: min(1700px, calc(100% - clamp(60px, 6vw, 120px)));
+    }
+  }
+  @media (min-width: 2560px) {
+    .admin-content {
+      width: min(2100px, calc(100% - clamp(80px, 5vw, 160px)));
+    }
+  }
+  @media (min-width: 3840px) {
+    .admin-content {
+      width: min(2400px, calc(100% - clamp(100px, 4vw, 200px)));
     }
   }
 
