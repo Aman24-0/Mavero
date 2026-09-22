@@ -1,5 +1,9 @@
 import { json, redirect } from '@sveltejs/kit';
+import { env as publicEnv } from '$env/dynamic/public';
+import { env as privateEnv } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
+import { extractSessionId } from '$lib/server/auth/jwt-session-id';
+import { revokeSession } from '$lib/server/auth/device-sessions';
 
 // Sign-out endpoint.
 //
@@ -41,6 +45,28 @@ function safeLog(message: string, detail: { name?: string; code?: string | numbe
 }
 
 export const POST: RequestHandler = async ({ locals }) => {
+  // Phase 1 Device Auth: mark the current device session as revoked
+  // BEFORE calling signOut (which invalidates the access token).
+  // This is non-blocking — if revocation fails, sign-out still proceeds.
+  if (locals.session?.access_token && locals.user?.id) {
+    try {
+      const supabaseSessionId = extractSessionId(locals.session.access_token);
+      if (supabaseSessionId) {
+        const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
+        const adminKey = privateEnv.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
+        if (adminUrl && adminKey) {
+          const { createClient } = await import('@supabase/supabase-js');
+          const admin = createClient(adminUrl, adminKey, {
+            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+          });
+          await revokeSession(admin, locals.user.id, supabaseSessionId);
+        }
+      }
+    } catch {
+      // Non-critical — sign-out proceeds even if revocation fails.
+    }
+  }
+
   let signOutError: { code?: string } | null = null;
 
   try {

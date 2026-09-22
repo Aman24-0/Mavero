@@ -1,10 +1,14 @@
 import { createServerClient, type SetAllCookies } from '@supabase/ssr';
 import { env as publicEnv } from '$env/dynamic/public';
+import { env as privateEnv } from '$env/dynamic/private';
 import { error, type Handle } from '@sveltejs/kit';
 import type { Database } from '$lib/server/supabase/database.types';
 import { isEnvironmentFreePath } from '$lib/server/route-policy';
 import { resolveRequestIdFromHeaders, PUBLIC_REQUEST_ID_HEADER } from '$lib/server/http/request-id';
 import { captureException } from '$lib/server/observability/error-tracking';
+import { extractSessionId } from '$lib/server/auth/jwt-session-id';
+import { parseDeviceMetadata, getOrCreateDeviceId } from '$lib/server/auth/device-metadata';
+import { registerCurrentSession } from '$lib/server/auth/device-sessions';
 
 // Server hook.
 //
@@ -108,6 +112,58 @@ export const handle: Handle = async ({ event, resolve }) => {
   const auth = await event.locals.safeGetSession();
   event.locals.session = auth.session;
   event.locals.user = auth.user;
+
+  // Phase 1 Device Auth: register the current device session in the
+  // registry. This is NON-BLOCKING — if the admin client is missing
+  // or the registry write fails, authentication continues normally.
+  // The registry is supporting infrastructure, not a security gate.
+  if (auth.session && auth.user) {
+    try {
+      const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
+      const adminKey = privateEnv.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
+      if (adminUrl && adminKey) {
+        const supabaseSessionId = extractSessionId(auth.session.access_token);
+        if (supabaseSessionId) {
+          // Device ID: read from cookie, create if missing.
+          const DEVICE_ID_COOKIE = 'mavero:device-id';
+          let deviceId = event.cookies.get(DEVICE_ID_COOKIE) ?? '';
+          if (!deviceId || deviceId.length < 8) {
+            deviceId = getOrCreateDeviceId(null);
+            event.cookies.set(DEVICE_ID_COOKIE, deviceId, {
+              path: '/',
+              httpOnly: true,
+              sameSite: 'lax',
+              maxAge: 60 * 60 * 24 * 365, // 1 year
+              secure: event.url.protocol === 'https:',
+            });
+          }
+          const metadata = parseDeviceMetadata(event.request.headers.get('user-agent'));
+          // Use the admin client inline — don't import createSupabaseAdminClient
+          // (which throws if env is missing). We already verified env above.
+          const { createClient } = await import('@supabase/supabase-js');
+          const admin = createClient<Database>(adminUrl, adminKey, {
+            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+            global: { fetch: event.fetch },
+          });
+          // Fire-and-forget — registration failure must not block auth.
+          void registerCurrentSession(admin, {
+            userId: auth.user.id,
+            supabaseSessionId,
+            deviceId,
+            metadata,
+          }).catch((err) => {
+            console.error('[DeviceSessions] Registration failed (non-blocking)', {
+              name: (err as Error)?.name ?? 'unknown',
+              requestId: event.locals.requestId,
+            });
+          });
+        }
+      }
+    } catch {
+      // Any unexpected error in device session registration is
+      // non-critical. Authentication continues normally.
+    }
+  }
 
   // Phase 3-A: return the request ID in the response header so the
   // client and operator can correlate. SvelteKit's resolve() options

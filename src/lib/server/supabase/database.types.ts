@@ -14,6 +14,63 @@ export type Database = {
   }
   public: {
     Tables: {
+      device_sessions: {
+        Row: {
+          id: string
+          user_id: string
+          supabase_session_id: string
+          device_id: string
+          device_type: string
+          device_name: string
+          browser: string | null
+          os: string | null
+          platform: string | null
+          ip_hash: string | null
+          created_at: string
+          last_seen_at: string
+          revoked_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          supabase_session_id: string
+          device_id?: string
+          device_type?: string
+          device_name?: string
+          browser?: string | null
+          os?: string | null
+          platform?: string | null
+          ip_hash?: string | null
+          created_at?: string
+          last_seen_at?: string
+          revoked_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          supabase_session_id?: string
+          device_id?: string
+          device_type?: string
+          device_name?: string
+          browser?: string | null
+          os?: string | null
+          platform?: string | null
+          ip_hash?: string | null
+          created_at?: string
+          last_seen_at?: string
+          revoked_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'device_sessions_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'users'
+            referencedSchema: 'auth'
+            referencedColumns: ['id']
+          }
+        ]
+      }
       app_settings: {
         Row: {
           id: number
