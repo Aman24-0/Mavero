@@ -52,8 +52,8 @@
 <style>
   .metric-card {
     display: block;
-    min-height: 118px;
-    padding: 16px;
+    min-height: 100px;
+    padding: 14px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-surface);

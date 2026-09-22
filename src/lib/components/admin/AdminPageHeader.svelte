@@ -38,16 +38,16 @@
 <style>
   .admin-header {
     display: flex;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: clamp(16px, 3vw, 32px);
+    gap: 12px;
     flex-wrap: wrap;
   }
-  .admin-header-copy { min-width: 0; flex: 1 1 380px; }
+  .admin-header-copy { min-width: 0; flex: 1 1 240px; }
   .admin-title {
-    margin: 8px 0 0;
+    margin: 6px 0 0;
     color: var(--color-text);
-    font-size: clamp(1.7rem, 3.2vw, 2.4rem);
+    font-size: clamp(1.5rem, 4vw, 2.2rem);
     font-weight: 900;
     letter-spacing: -.02em;
     line-height: 1.08;
@@ -55,21 +55,22 @@
   .admin-title em { color: var(--color-primary); font-style: normal; }
   .admin-intro {
     max-width: 640px;
-    margin: 10px 0 0;
+    margin: 8px 0 0;
     color: var(--color-text-muted);
-    font-size: .82rem;
-    line-height: 1.65;
+    font-size: .78rem;
+    line-height: 1.55;
   }
   .admin-header-aside {
     display: inline-flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    flex-shrink: 0;
   }
   .admin-count {
     color: var(--color-text-muted);
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: .58rem;
+    font-size: .56rem;
     letter-spacing: .04em;
     text-transform: uppercase;
     padding: 4px 9px;
@@ -77,7 +78,9 @@
     border-radius: 999px;
     background: rgba(0, 255, 156, .03);
   }
+  /* Mobile — stack header vertically so Add button is directly below heading. */
   @media (max-width: 640px) {
-    .admin-header { align-items: flex-start; flex-direction: column; gap: 12px; }
+    .admin-header { flex-direction: column; align-items: stretch; gap: 8px; }
+    .admin-header-aside { justify-content: flex-start; }
   }
 </style>

@@ -1084,6 +1084,18 @@
     .detail-page { padding-bottom: 96px; }
     .hero { min-height: clamp(380px, 64vh, 520px); }
     .back-btn { top: calc(12px + env(safe-area-inset-top)); left: 12px; padding: 0 12px; min-height: 34px; font-size: .68rem; }
+    /* Mobile backdrop fix: the backdrop image should NOT dominate from the
+       very top of the hero. Instead, position it so the visually interesting
+       part appears starting around 40% down the hero — the top 40% is a
+       dark gradient that blends into the backdrop. This restores the
+       cinematic hierarchy where the back button + poster overlap + title
+       remain readable over a controlled dark region, and the backdrop
+       establishes below them. */
+    .hero-img { object-position: center 55%; }
+    .hero-scrim {
+      background:
+        linear-gradient(180deg, var(--color-bg) 0%, var(--color-bg) 28%, rgba(5,7,8,.7) 48%, rgba(5,7,8,.4) 72%, var(--color-bg) 100%);
+    }
     .hero-inner {
       width: calc(100% - 28px);
       padding-top: clamp(56px, 12vh, 100px);

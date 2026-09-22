@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { page } from '$app/state';
-  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download, Puzzle, PanelLeftClose, PanelLeft, Menu, X } from 'lucide-svelte';
+  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download, Puzzle, PanelLeftClose, PanelLeft, Menu, X, ToggleRight } from 'lucide-svelte';
   import type { Snippet } from 'svelte';
 
   // ============================================================
@@ -28,10 +28,10 @@
   //   - `<a class="admin-back" href="/discover">` Back to app link.
   // ============================================================
   let {
-    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons',
+    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control',
     children
   }: {
-    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons';
+    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control';
     children: Snippet;
   } = $props();
 
@@ -42,6 +42,7 @@
     { id: 'downloaders', label: 'Downloaders', href: '/admin/downloaders', icon: Download },
     { id: 'defaults', label: 'Defaults', href: '/admin/defaults', icon: Star },
     { id: 'categories', label: 'Categories', href: '/admin/categories', icon: Layers3 },
+    { id: 'feature-control', label: 'Feature Control', href: '/admin/feature-control', icon: ToggleRight },
     { id: 'addons', label: 'Stremio Addons', href: '/admin/addons', icon: Puzzle },
   ] as const;
 
@@ -553,8 +554,12 @@
       padding-bottom: 80px;
     }
   }
-  /* Headings rendered inside admin-content share one typography baseline. */
-  .admin-content :global(h1) {
+  /* AdminPageHeader renders its own scoped h1 (class="admin-title"), so the
+     global h1 rule below is intentionally minimal — it only provides a
+     fallback for admin pages that render a bare <h1> without the header
+     component. The AdminPageHeader's scoped rules take precedence for
+     pages that use it. */
+  .admin-content :global(h1:not(.admin-title)) {
     margin: 10px 0 0;
     color: var(--color-text);
     font-size: clamp(1.7rem, 3.2vw, 2.4rem);
@@ -562,7 +567,7 @@
     letter-spacing: -.02em;
     line-height: 1.1;
   }
-  .admin-content :global(h1 em) { color: var(--color-primary); font-style: normal; }
+  .admin-content :global(h1:not(.admin-title) em) { color: var(--color-primary); font-style: normal; }
   .admin-content :global(h2) {
     margin: 0;
     color: var(--color-text);

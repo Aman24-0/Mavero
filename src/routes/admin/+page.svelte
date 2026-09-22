@@ -103,7 +103,7 @@
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 12px;
-    margin-top: 16px;
+    margin-top: 12px;
   }
   .metric-grid.secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; }
 
@@ -111,11 +111,15 @@
   @media (max-width: 1024px) {
     .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-  /* Mobile — 1-column metric grid; minimal top gap so tiles appear right
-     under the heading without huge blank space. */
+  /* Mobile — 2-column metric grid so stats are compact and scannable.
+     Cards use min-width to prevent overflow at 320px. */
   @media (max-width: 640px) {
     .metric-grid,
-    .metric-grid.secondary { grid-template-columns: 1fr; margin-top: 12px; }
+    .metric-grid.secondary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-top: 10px;
+      gap: 8px;
+    }
   }
 
   /* Large desktop / TV — wider metric grid; secondary grid goes 4-wide so

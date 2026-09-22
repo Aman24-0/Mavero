@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, isRedirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createCategory, deleteCategory, deleteSourceCategory, listAdminCategories, listAdminSources, listSourceCategories, updateCategory, upsertSourceCategory } from '$lib/server/streaming/admin-service';
@@ -21,7 +21,7 @@ export const actions: Actions = {
       const category = await createCategory(locals.supabase, parseCategoryForm(await request.formData()));
       throw redirect(303, `/admin/categories?notice=${encodeURIComponent(`Created ${category.name}.`)}`);
     } catch (error) {
-      if (error instanceof Response) throw error;
+      if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to create category.') });
     }
   },
@@ -33,7 +33,7 @@ export const actions: Actions = {
       await updateCategory(locals.supabase, id, parseCategoryForm(form));
       throw redirect(303, '/admin/categories?notice=Category%20updated.');
     } catch (error) {
-      if (error instanceof Response) throw error;
+      if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to update category.') });
     }
   },
@@ -45,7 +45,7 @@ export const actions: Actions = {
       await updateCategory(locals.supabase, id, { enabled: String(form.get('enabled')) === 'true' });
       throw redirect(303, '/admin/categories?notice=Category%20state%20updated.');
     } catch (error) {
-      if (error instanceof Response) throw error;
+      if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to update category state.') });
     }
   },
@@ -55,7 +55,7 @@ export const actions: Actions = {
       await deleteCategory(locals.supabase, parseId(await request.formData(), 'Category'));
       throw redirect(303, '/admin/categories?notice=Category%20deleted.');
     } catch (error) {
-      if (error instanceof Response) throw error;
+      if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to delete category.') });
     }
   },
@@ -65,7 +65,7 @@ export const actions: Actions = {
       await upsertSourceCategory(locals.supabase, parseSourceCategoryForm(await request.formData()));
       throw redirect(303, '/admin/categories?notice=Source%20assignment%20saved.');
     } catch (error) {
-      if (error instanceof Response) throw error;
+      if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to assign source.') });
     }
   },
@@ -82,7 +82,7 @@ export const actions: Actions = {
       await deleteSourceCategory(locals.supabase, sourceId, categoryId);
       throw redirect(303, '/admin/categories?notice=Source%20assignment%20removed.');
     } catch (error) {
-      if (error instanceof Response) throw error;
+      if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to remove source assignment.') });
     }
   },

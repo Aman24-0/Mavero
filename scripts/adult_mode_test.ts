@@ -25,7 +25,7 @@ const adultDiscoverEndpoint = await readFile(path.join(repoRoot, 'src/routes/api
 const migration = await readFile(path.join(repoRoot, 'supabase/migrations/20260913000000_adult_mode.sql'), 'utf8');
 const types = await readFile(path.join(repoRoot, 'src/lib/server/content/types.ts'), 'utf8');
 const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
-const adminDefaults = await readFile(path.join(repoRoot, 'src/routes/admin/defaults/+page.svelte'), 'utf8');
+const adminDefaults = await readFile(path.join(repoRoot, 'src/routes/admin/feature-control/+page.svelte'), 'utf8');
 // Since Phase C the canonical Adult Mode toggle surface is /account; the
 // legacy /settings page is a redirect-only compatibility route.
 const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page.svelte'), 'utf8');
@@ -300,7 +300,7 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page
 // ============================================================================
 {
   // No changes to player files.
-  const changedFiles = ['src/lib/server/content/adult-policy.ts', 'src/lib/server/content/adult-providers.ts', 'src/lib/server/content/adapters/tmdb.ts', 'src/lib/server/content/service.ts', 'src/lib/server/content/types.ts', 'src/routes/api/discover/rail/+server.ts', 'src/routes/api/settings/adult-mode/+server.ts', 'src/routes/api/discover/adult-providers/+server.ts', 'src/routes/api/admin/adult-mode/+server.ts', 'src/routes/api/content/search/+server.ts', 'src/lib/components/DiscoverPage.svelte', 'src/routes/admin/defaults/+page.svelte', 'src/routes/account/+page.svelte', 'src/lib/server/supabase/database.types.ts', 'supabase/migrations/20260913000000_adult_mode.sql'];
+  const changedFiles = ['src/lib/server/content/adult-policy.ts', 'src/lib/server/content/adult-providers.ts', 'src/lib/server/content/adapters/tmdb.ts', 'src/lib/server/content/service.ts', 'src/lib/server/content/types.ts', 'src/routes/api/discover/rail/+server.ts', 'src/routes/api/settings/adult-mode/+server.ts', 'src/routes/api/discover/adult-providers/+server.ts', 'src/routes/api/admin/adult-mode/+server.ts', 'src/routes/api/content/search/+server.ts', 'src/lib/components/DiscoverPage.svelte', 'src/routes/admin/feature-control/+page.svelte', 'src/routes/account/+page.svelte', 'src/lib/server/supabase/database.types.ts', 'supabase/migrations/20260913000000_adult_mode.sql'];
   // Verify the test does NOT import from player/resolver/watch.
   assert.doesNotMatch(adultPolicy, /from.*player/, 'adult policy does not import player');
   assert.doesNotMatch(adultPolicy, /from.*resolver/, 'adult policy does not import resolver');
@@ -334,6 +334,8 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page
 
 // ============================================================================
 // O. Admin UI — toggle controls present.
+// Moved from /admin/defaults to /admin/feature-control (single authoritative
+// UI for global feature switches). The test now reads from the new route.
 // ============================================================================
 {
   assert.match(adminDefaults, /loadAdultPolicy/, 'admin page loads adult policy');
