@@ -1125,8 +1125,17 @@
       flex: 1 1 100%;
     }
     .secondary-btn { padding: 9px 14px; font-size: .72rem; }
-    .cast-section { margin-top: 28px; }
-    .recs-rail { margin-top: 28px; }
+    /* Consolidate the gap between the last hero action row and the first
+       content section below (Cast / Episodes / Recommendations). The base
+       rules stack three independent spacings: hero-inner padding-bottom
+       (clamp(28px, 4vh, 56px)) + detail-body padding-top (clamp(8px, 2vh,
+       24px)) + cast-section margin-top (clamp(28px, 4vw, 40px)). On a tall
+       phone these can total 80-100px+ of dead space. The mobile override
+       below collapses them into a single compact 24px total gap. */
+    .hero-inner { padding-bottom: 8px; }
+    .detail-body { padding-top: 0; }
+    .cast-section { margin-top: 16px; }
+    .recs-rail { margin-top: 16px; }
   }
 
   /* LANDSCAPE MOBILE — short viewport: keep the title + Play above
