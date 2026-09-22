@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      device_pairing_requests: {
+        Row: {
+          id: string
+          secret_hash: string
+          short_code: string
+          status: string
+          requested_device_type: string
+          requested_device_name: string
+          requested_browser: string | null
+          requested_os: string | null
+          requested_platform: string | null
+          approved_by_user_id: string | null
+          approved_at: string | null
+          exchange_code: string | null
+          created_at: string
+          expires_at: string
+          consumed_at: string | null
+        }
+        Insert: {
+          id?: string
+          secret_hash: string
+          short_code: string
+          status?: string
+          requested_device_type?: string
+          requested_device_name?: string
+          requested_browser?: string | null
+          requested_os?: string | null
+          requested_platform?: string | null
+          approved_by_user_id?: string | null
+          approved_at?: string | null
+          exchange_code?: string | null
+          created_at?: string
+          expires_at: string
+          consumed_at?: string | null
+        }
+        Update: {
+          id?: string
+          secret_hash?: string
+          short_code?: string
+          status?: string
+          requested_device_type?: string
+          requested_device_name?: string
+          requested_browser?: string | null
+          requested_os?: string | null
+          requested_platform?: string | null
+          approved_by_user_id?: string | null
+          approved_at?: string | null
+          exchange_code?: string | null
+          created_at?: string
+          expires_at?: string
+          consumed_at?: string | null
+        }
+        Relationships: []
+      }
       device_sessions: {
         Row: {
           id: string
