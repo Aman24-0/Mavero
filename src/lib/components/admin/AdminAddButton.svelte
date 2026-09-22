@@ -1,9 +1,11 @@
 <script lang="ts">
   import { Plus } from 'lucide-svelte';
   // AdminAddButton — the prominent primary CTA at the top of every admin
-  // registry page. Clicking it opens the create modal/sheet. The button is
-  // intentionally simple (no props other than label + onclick) so it stays
-  // visually consistent across all registry pages.
+  // registry page. Clicking it opens the create modal/sheet.
+  //
+  // Desktop/tablet: full-width button with icon + text label.
+  // Mobile: icon-only square button — the text label is hidden via CSS
+  // but preserved in the DOM for accessibility (aria-label uses the label).
   let {
     label = 'Add',
     onclick
@@ -13,9 +15,9 @@
   } = $props();
 </script>
 
-<button class="admin-add-btn" type="button" onclick={onclick}>
+<button class="admin-add-btn" type="button" onclick={onclick} aria-label={label} title={label}>
   <Plus size={16} />
-  <span>{label}</span>
+  <span class="admin-add-label">{label}</span>
 </button>
 
 <style>
@@ -40,4 +42,19 @@
   .admin-add-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
   .admin-add-btn:active { transform: scale(.98); }
   .admin-add-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+  /* Mobile — icon-only square button. The label text is hidden but the
+     aria-label + title attributes preserve accessibility. */
+  @media (max-width: 640px) {
+    .admin-add-btn {
+      width: 40px;
+      height: 40px;
+      min-height: 40px;
+      padding: 0;
+      justify-content: center;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+    .admin-add-label { display: none; }
+  }
 </style>

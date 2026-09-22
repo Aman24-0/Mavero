@@ -1082,7 +1082,14 @@
   /* MOBILE — fine-tune base. */
   @media (max-width: 640px) {
     .detail-page { padding-bottom: 96px; }
-    .hero { min-height: clamp(380px, 64vh, 520px); }
+    /* Mobile hero: remove the viewport-relative min-height. The base rule
+       `min-height: clamp(440px, 78vh, 760px)` is overridden to `auto` so
+       the hero sizes to its content — poster + title + metadata +
+       description + actions. The previous min-height forced the hero to
+       be 520px+ tall even when the content was only ~400px, leaving
+       100-140px of dead space between the last action button and the
+       hero bottom edge (which is where the Cast section starts). */
+    .hero { min-height: auto; }
     .back-btn { top: calc(12px + env(safe-area-inset-top)); left: 12px; padding: 0 12px; min-height: 34px; font-size: .68rem; }
     /* Mobile backdrop fix: the backdrop image should NOT be visible from
        the top. The top ~40% of the hero must be solid dark (the page

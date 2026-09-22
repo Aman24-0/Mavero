@@ -78,18 +78,23 @@
     border-radius: 999px;
     background: rgba(0, 255, 156, .03);
   }
-  /* Mobile — stack header vertically so Add button is directly below heading.
-     CRITICAL: override .admin-header-copy's flex-basis. The desktop rule
-     `flex: 1 1 240px` uses 240px as a HORIZONTAL flex-basis (width in a
-     row layout). When the parent switches to flex-direction: column on
-     mobile, that 240px becomes a VERTICAL flex-basis — giving the copy
-     div a 240px tall basis even though its content is only ~60px tall.
-     This was the root cause of the massive vertical gap on every admin
-     page. The fix: set flex to `0 0 auto` on mobile so the copy sizes
-     naturally to its content height. */
+  /* Mobile — stack header vertically: title block, then a row with
+     count (left) + Add button (right). CRITICAL: override
+     .admin-header-copy's flex-basis. The desktop rule `flex: 1 1 240px`
+     uses 240px as a HORIZONTAL flex-basis (width in a row layout).
+     When the parent switches to flex-direction: column on mobile,
+     that 240px becomes a VERTICAL flex-basis — giving the copy div a
+     240px tall basis even though its content is only ~60px tall.
+     This was the root cause of the massive vertical gap on every
+     admin page. The fix: set flex to `0 0 auto` on mobile so the
+     copy sizes naturally to its content height.
+
+     The aside (count + Add button) is laid out as a horizontal row
+     with space-between so count stays left and the Add button goes
+     to the far right. */
   @media (max-width: 640px) {
     .admin-header { flex-direction: column; align-items: stretch; gap: 8px; }
     .admin-header-copy { flex: 0 0 auto; width: 100%; }
-    .admin-header-aside { justify-content: flex-start; }
+    .admin-header-aside { justify-content: space-between; width: 100%; }
   }
 </style>
