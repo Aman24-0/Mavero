@@ -133,14 +133,16 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(api.includes('GET'), 'status API: GET handler');
   ok(!api.includes('locals.user'), 'status API: does NOT require authentication');
   ok(api.includes('getPairingBySecret'), 'status API: uses service');
-  ok(api.includes('exchangeCode'), 'status API: returns exchangeCode when approved');
-  ok(api.includes('cache-control'), 'status API: cache-control header');
+  // The exchange code is NOT returned in the status response.
+  // (The string 'exchangeCode' may appear in comments — check it's not in JSON responses.)
+  ok(!api.match(/exchangeCode.*json/) && !api.match(/json.*exchangeCode/), 'status API: does NOT return exchangeCode in JSON response');
+  ok(api.includes('exchange_code is NOT returned'), 'status API: documents why exchange code is not returned');
 
   // No tokens in response beyond the one-time exchange code.
   ok(!api.includes('access_token'), 'status API: no access_token');
   ok(!api.includes('refresh_token'), 'status API: no refresh_token');
 
-  ok('5. pairing status API contract');
+  ok('5. pairing status API contract (exchange code NOT exposed)');
 }
 
 // ============================================================
@@ -209,7 +211,8 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(page.includes('/api/auth/device-pairing/create'), 'TV login: calls create API');
   ok(page.includes('/api/auth/device-pairing/status'), 'TV login: polls status API');
   ok(page.includes('exchangeSession'), 'TV login: has exchangeSession function');
-  ok(page.includes('/auth/callback'), 'TV login: uses auth callback for session exchange');
+  ok(page.includes('/api/auth/device-pairing/exchange'), 'TV login: calls dedicated exchange endpoint');
+  ok(!page.includes('/auth/callback'), 'TV login: does NOT use generic auth callback (dedicated exchange instead)');
   ok(page.includes('pairingState'), 'TV login: has pairing state');
   ok(page.includes('pending'), 'TV login: has pending state');
   ok(page.includes('approved'), 'TV login: has approved/exchanging state');
@@ -220,11 +223,21 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(page.includes('shortCode'), 'TV login: displays short code');
   ok(page.includes('Generate new code'), 'TV login: has retry button');
 
+  // Local QR generation — no external service.
+  ok(page.includes("import QRCode from 'qrcode'"), 'TV login: imports qrcode package locally');
+  ok(page.includes('QRCode.toDataURL'), 'TV login: uses local QRCode.toDataURL generation');
+  ok(!page.includes('api.qrserver.com'), 'TV login: does NOT use external api.qrserver.com');
+  ok(!page.includes('qrserver'), 'TV login: does NOT reference any external QR service');
+
+  // Exchange code NOT in client state.
+  ok(!page.match(/\bexchangeCode\b/) || page.includes('exchangeCodeForSession'), 'TV login: exchangeCode only appears in exchangeCodeForSession comment');
+  ok(!page.includes('exchange_code'), 'TV login: does NOT reference exchange_code in client');
+
   // No tokens in the UI.
   ok(!page.includes('access_token'), 'TV login: no access_token reference');
   ok(!page.includes('refresh_token'), 'TV login: no refresh_token reference');
 
-  ok('9. TV login UI contract');
+  ok('9. TV login UI contract (local QR, no exchange code exposure)');
 }
 
 // ============================================================
@@ -237,6 +250,8 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(page.includes('/api/auth/device-pairing/approve'), 'authorize: calls approve API');
   ok(page.includes('Approve'), 'authorize: has Approve button');
   ok(page.includes('Cancel'), 'authorize: has Cancel button');
+  ok(page.includes('/api/auth/device-pairing/cancel'), 'authorize: calls cancel API (not just navigates away)');
+  ok(page.includes('cancelling'), 'authorize: has cancelling state');
   ok(page.includes('deviceName'), 'authorize: displays device name');
   ok(page.includes('approved'), 'authorize: has approved state');
   ok(page.includes('expired'), 'authorize: has expired state');
@@ -246,8 +261,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // No tokens in the UI.
   ok(!page.includes('access_token'), 'authorize: no access_token reference');
   ok(!page.includes('refresh_token'), 'authorize: no refresh_token reference');
+  // No exchange code in client.
+  ok(!page.includes('exchangeCode'), 'authorize: no exchangeCode reference');
+  ok(!page.includes('exchange_code'), 'authorize: no exchange_code reference');
 
-  ok('10. phone authorize UI contract');
+  ok('10. phone authorize UI contract (actual cancellation, no exchange code)');
 }
 
 // ============================================================
@@ -283,22 +301,26 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const service = read('src/lib/server/auth/device-pairing.ts');
   const tvLogin = read('src/routes/tv-login/+page.svelte');
 
-  // TV establishes its OWN session via exchangeCodeForSession.
+  // TV establishes its OWN session via dedicated exchange endpoint.
   ok(service.includes('generateLink'), 'service: uses generateLink (not token copy)');
   ok(service.includes('hashed_token'), 'service: extracts OTP code (not access token)');
-  ok(tvLogin.includes('exchangeCodeForSession') || tvLogin.includes('/auth/callback'), 'TV: uses auth callback (exchangeCodeForSession) for session');
 
-  // The pairing status API returns exchangeCode, not tokens.
-  const statusApi = read('src/routes/api/auth/device-pairing/status/+server.ts');
-  ok(statusApi.includes('exchangeCode'), 'status API: returns exchangeCode (OTP, not token)');
-  ok(!statusApi.includes('access_token'), 'status API: no access_token');
-  ok(!statusApi.includes('refresh_token'), 'status API: no refresh_token');
+  // The exchange endpoint performs exchangeCodeForSession server-side.
+  const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
+  ok(exchangeApi.includes('exchangeCodeForSession'), 'exchange API: calls exchangeCodeForSession server-side');
+  ok(exchangeApi.includes('locals.supabase'), 'exchange API: uses the TV browser\'s own Supabase client');
+  ok(!exchangeApi.includes('access_token'), 'exchange API: no access_token in response');
+  ok(!exchangeApi.includes('refresh_token'), 'exchange API: no refresh_token in response');
 
-  // The exchange code is cleared after consumption (single-use).
+  // The exchange code is NEVER returned to the client.
+  ok(!exchangeApi.includes('exchange_code.*json'), 'exchange API: does NOT return exchange_code in JSON response');
+  ok(exchangeApi.includes('exchange code'), 'exchange API: documents that exchange code is not returned');
+
+  // The exchange code is cleared after consumption.
   ok(service.includes('exchange_code: null'), 'consume: clears exchange_code');
   ok(service.includes("eq('status', 'approved')"), 'consume: only approved requests can be consumed');
 
-  ok('12. security: session isolation (TV gets own session, no token copy)');
+  ok('12. security: session isolation (TV gets own session via server-side exchange, code never exposed)');
 }
 
 // ============================================================
@@ -372,6 +394,131 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(service.includes('device-metadata'), 'pairing service: imports from device-metadata module');
 
   ok('16. device metadata: reuses existing Phase 1 parser');
+}
+
+// ============================================================
+// 17. EXCHANGE ENDPOINT CONTRACT (Phase 3.1 hardening)
+// ============================================================
+{
+  const api = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
+
+  ok(api.includes('POST'), 'exchange API: POST handler');
+  ok(api.includes('exchangeCodeForSession'), 'exchange API: calls exchangeCodeForSession server-side');
+  ok(api.includes('locals.supabase'), 'exchange API: uses the TV browser\'s own Supabase client');
+  ok(api.includes('cache-control'), 'exchange API: cache-control header');
+
+  // Validates pairing state before exchange.
+  ok(api.includes("status !== 'approved'"), 'exchange API: rejects non-approved status');
+  ok(api.includes('expires_at'), 'exchange API: checks expiration');
+  ok(api.includes('consumed_at'), 'exchange API: checks if already consumed');
+  ok(api.includes('exchange_code'), 'exchange API: reads exchange_code from database');
+
+  // Exchange code NOT returned to client.
+  ok(!api.match(/json.*exchange_code/i), 'exchange API: does NOT return exchange_code in JSON');
+  ok(api.includes('NEVER returned'), 'exchange API: documents exchange code is not returned');
+
+  // No tokens in response.
+  ok(!api.includes('access_token'), 'exchange API: no access_token');
+  ok(!api.includes('refresh_token'), 'exchange API: no refresh_token');
+
+  // No logging of exchange code.
+  ok(!api.match(/console\.\w+.*exchange_code/i), 'exchange API: does NOT log exchange_code');
+  ok(!api.match(/console\.\w+.*hashed_token/i), 'exchange API: does NOT log hashed_token');
+
+  ok('17. exchange endpoint contract (server-side exchange, code never exposed)');
+}
+
+// ============================================================
+// 18. CANCELLATION ENDPOINT CONTRACT (Phase 3.1 hardening)
+// ============================================================
+{
+  const api = read('src/routes/api/auth/device-pairing/cancel/+server.ts');
+
+  ok(api.includes('POST'), 'cancel API: POST handler');
+  ok(api.includes('cancelPairingRequest'), 'cancel API: uses cancelPairingRequest service');
+  ok(api.includes('cache-control'), 'cancel API: cache-control header');
+
+  // Validates pairing secret.
+  ok(api.includes('secret'), 'cancel API: requires pairing secret');
+
+  ok('18. cancellation endpoint contract');
+}
+
+// ============================================================
+// 19. NO EXTERNAL QR SERVICE (Phase 3.1 hardening)
+// ============================================================
+{
+  // Search ALL Phase 3 source files for external QR references.
+  const tvLogin = read('src/routes/tv-login/+page.svelte');
+  const createApi = read('src/routes/api/auth/device-pairing/create/+server.ts');
+  const service = read('src/lib/server/auth/device-pairing.ts');
+
+  ok(!tvLogin.includes('api.qrserver.com'), 'TV login: no api.qrserver.com reference');
+  ok(!tvLogin.includes('qrserver'), 'TV login: no qrserver reference anywhere');
+  ok(!createApi.includes('qrserver'), 'create API: no qrserver reference');
+  ok(!service.includes('qrserver'), 'service: no qrserver reference');
+
+  // Local QR generation is used.
+  ok(tvLogin.includes("import QRCode from 'qrcode'"), 'TV login: imports qrcode package');
+  ok(tvLogin.includes('QRCode.toDataURL'), 'TV login: uses QRCode.toDataURL for local generation');
+
+  ok('19. no external QR service — local generation only');
+}
+
+// ============================================================
+// 20. NO EXCHANGE CODE LEAKAGE (Phase 3.1 hardening)
+// ============================================================
+{
+  const tvLogin = read('src/routes/tv-login/+page.svelte');
+  const authorize = read('src/routes/authorize/+page.svelte');
+  const statusApi = read('src/routes/api/auth/device-pairing/status/+server.ts');
+  const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
+  const service = read('src/lib/server/auth/device-pairing.ts');
+
+  // TV login does NOT reference exchangeCode or exchange_code.
+  ok(!tvLogin.match(/\bexchangeCode\b/) || tvLogin.includes('exchangeCodeForSession'), 'TV login: exchangeCode only in exchangeCodeForSession comment');
+  ok(!tvLogin.includes('exchange_code'), 'TV login: no exchange_code reference');
+
+  // Authorize page does NOT reference exchangeCode.
+  ok(!authorize.includes('exchangeCode'), 'authorize: no exchangeCode reference');
+  ok(!authorize.includes('exchange_code'), 'authorize: no exchange_code reference');
+
+  // Status API does NOT return exchangeCode.
+  ok(!statusApi.match(/\bexchangeCode\b/) || statusApi.includes('exchangeCodeForSession'), 'status API: exchangeCode only in exchangeCodeForSession comment');
+
+  // Exchange API does NOT return exchange_code.
+  ok(!exchangeApi.match(/json.*exchange_code/i), 'exchange API: does NOT return exchange_code in JSON response');
+
+  // No logging of exchange_code or hashed_token.
+  ok(!service.match(/console\.\w+.*exchange_code/i), 'service: does NOT log exchange_code');
+  ok(!service.match(/console\.\w+.*hashed_token/i), 'service: does NOT log hashed_token');
+  ok(!exchangeApi.match(/console\.\w+.*exchange_code/i), 'exchange API: does NOT log exchange_code');
+  ok(!exchangeApi.match(/console\.\w+.*hashed_token/i), 'exchange API: does NOT log hashed_token');
+
+  ok('20. no exchange code leakage in client state, API responses, or logs');
+}
+
+// ============================================================
+// 21. NO PAIRING SECRET LOGGING (Phase 3.1 hardening)
+// ============================================================
+{
+  const service = read('src/lib/server/auth/device-pairing.ts');
+  const createApi = read('src/routes/api/auth/device-pairing/create/+server.ts');
+  const statusApi = read('src/routes/api/auth/device-pairing/status/+server.ts');
+  const approveApi = read('src/routes/api/auth/device-pairing/approve/+server.ts');
+  const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
+  const cancelApi = read('src/routes/api/auth/device-pairing/cancel/+server.ts');
+
+  // No console.log/error that includes the raw secret.
+  const allFiles = [service, createApi, statusApi, approveApi, exchangeApi, cancelApi];
+  for (const file of allFiles) {
+    ok(!file.match(/console\.\w+.*\bsecret\b/i), 'no file logs the raw pairing secret');
+  }
+
+  // No file logs the full URL containing the secret.
+  ok(!service.match(/console\.\w+.*url/i), 'service: does NOT log URLs containing secrets');
+
+  ok('21. no pairing secret in logs');
 }
 
 console.log(`\nPhase 3 QR TV device authorization tests passed (${passed} check groups).`);

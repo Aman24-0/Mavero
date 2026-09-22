@@ -280,7 +280,7 @@ export async function approvePairingRequest(
     // The hashed_token is what exchangeCodeForSession expects.
     const exchangeCode = linkData.properties?.hashed_token;
     if (!exchangeCode) {
-      console.error('[Pairing] No hashed_token in generateLink response');
+      console.error('[Pairing] No exchange code in generateLink response');
       return { success: false, error: 'Unable to authorize this device right now.' };
     }
 

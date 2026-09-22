@@ -45,6 +45,13 @@ export const GET: RequestHandler = async ({ url }) => {
   return json({
     ok: true,
     status: request.status,
-    exchangeCode: request.exchangeCode,
+    // The exchange_code is NOT returned to the client. The TV calls
+    // the dedicated /api/auth/device-pairing/exchange endpoint which
+    // performs the exchange server-side using the stored OTP code.
+    // This prevents the exchange credential from appearing in:
+    //   - JSON responses
+    //   - client-side state
+    //   - browser history
+    //   - network logs
   }, { headers: { 'cache-control': 'no-store' } });
 };

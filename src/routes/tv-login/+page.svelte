@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/state';
-  import { ArrowRight, LoaderCircle, RefreshCw, ScanLine, Tv, AlertCircle, CheckCircle2 } from 'lucide-svelte';
+  import { LoaderCircle, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
   import { haptic } from '$lib/client/haptics';
+  import QRCode from 'qrcode';
 
   type PairingState = 'idle' | 'loading' | 'pending' | 'approved' | 'exchanging' | 'success' | 'expired' | 'error';
 
@@ -12,6 +12,7 @@
   let pairingSecret = $state('');
   let shortCode = $state('');
   let qrUrl = $state('');
+  let qrDataUrl = $state('');
   let expiresAt = $state('');
   let countdown = $state(0);
   let errorMessage = $state('');
@@ -30,6 +31,7 @@
   async function createPairing() {
     pairingState = 'loading';
     errorMessage = '';
+    qrDataUrl = '';
     if (pollTimer) clearInterval(pollTimer);
     if (countdownTimer) clearInterval(countdownTimer);
 
@@ -49,6 +51,21 @@
       shortCode = payload.pairing.shortCode;
       qrUrl = payload.pairing.qrUrl;
       expiresAt = payload.pairing.expiresAt;
+
+      // Generate QR code locally — NEVER send the pairing URL to an
+      // external service. The QR encodes only the pairing URL
+      // (/authorize?s=<secret>), which the TV already possesses.
+      try {
+        qrDataUrl = await QRCode.toDataURL(qrUrl, {
+          width: 240,
+          margin: 1,
+          color: { dark: '#050708', light: '#f2fff8' },
+        });
+      } catch {
+        // If local QR generation fails, show the short code fallback.
+        qrDataUrl = '';
+      }
+
       pairingState = 'pending';
       startCountdown();
       startPolling();
@@ -92,11 +109,11 @@
           return;
         }
 
-        if (payload.status === 'approved' && payload.exchangeCode) {
+        if (payload.status === 'approved') {
           pairingState = 'exchanging';
           if (pollTimer) clearInterval(pollTimer);
           if (countdownTimer) clearInterval(countdownTimer);
-          await exchangeSession(payload.exchangeCode);
+          await exchangeSession();
         } else if (payload.status === 'cancelled') {
           pairingState = 'error';
           errorMessage = 'The authorization was cancelled.';
@@ -119,15 +136,21 @@
     }, 3000); // Poll every 3 seconds
   }
 
-  async function exchangeSession(exchangeCode: string) {
+  async function exchangeSession() {
     try {
-      // Use the Supabase client to exchange the code for a session.
-      // This establishes the TV's OWN independent session.
-      const res = await fetch('/auth/callback?' + new URLSearchParams({ code: exchangeCode, next: '/discover' }), {
+      // Call the dedicated device-pairing exchange endpoint.
+      // This endpoint validates the pairing secret server-side and
+      // performs exchangeCodeForSession using the stored OTP code.
+      // The exchange code NEVER reaches the client — the server
+      // reads it from the database and exchanges it internally.
+      const res = await fetch('/api/auth/device-pairing/exchange', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ secret: pairingSecret }),
         redirect: 'manual',
       });
-      // The callback redirects — follow it.
-      if (res.type === 'opaqueredirect' || res.status === 303 || res.status === 302) {
+
+      if (res.ok) {
         // Consume the pairing (clear the code, mark as consumed).
         void fetch('/api/auth/device-pairing/consume', {
           method: 'POST',
@@ -138,8 +161,8 @@
         // Navigate to discover after a brief delay.
         setTimeout(() => { void goto('/discover'); }, 1500);
       } else {
-        // Try direct navigation.
-        void goto('/discover');
+        pairingState = 'error';
+        errorMessage = 'Unable to establish a session. Please try again.';
       }
     } catch {
       pairingState = 'error';
@@ -174,9 +197,14 @@
     {:else if pairingState === 'pending'}
       <div class="tv-qr-area">
         <div class="tv-qr-frame">
-          <!-- QR code rendered as an SVG — generated client-side from qrUrl -->
+          <!-- QR code generated locally via the qrcode package — the
+               pairing URL is NEVER sent to an external service. -->
           <div class="tv-qr-placeholder">
-            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(qrUrl)}`} alt="QR code for Mavero sign-in" width="240" height="240" loading="eager" />
+            {#if qrDataUrl}
+              <img src={qrDataUrl} alt="QR code for Mavero sign-in" width="240" height="240" loading="eager" />
+            {:else}
+              <div class="tv-qr-fallback">QR unavailable</div>
+            {/if}
           </div>
         </div>
         <div class="tv-qr-info">

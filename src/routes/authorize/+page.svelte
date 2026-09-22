@@ -76,8 +76,21 @@
     }
   }
 
-  function cancel() {
+  let cancelling = $state(false);
+
+  async function cancel() {
+    if (cancelling) return;
+    cancelling = true;
     haptic('light');
+    try {
+      await fetch('/api/auth/device-pairing/cancel', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ secret: pairingSecret }),
+      });
+    } catch {
+      // Non-critical — navigate away regardless.
+    }
     void goto('/discover');
   }
 
@@ -144,7 +157,7 @@
           <div class="authorize-platform">Platform: {platform}</div>
         {/if}
         <div class="authorize-actions">
-          <button class="authorize-cancel-btn" type="button" onclick={cancel}>Cancel</button>
+          <button class="authorize-cancel-btn" type="button" onclick={cancel} disabled={cancelling || approving}>Cancel</button>
           <button class="authorize-approve-btn" type="button" onclick={approve} disabled={approving}>
             {#if approving}<LoaderCircle size={16} class="spin" /> Approving…{:else}<ShieldCheck size={16} /> Approve{/if}
           </button>
