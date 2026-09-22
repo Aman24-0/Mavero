@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Check, Cloud, Info, LockKeyhole, LogIn, LogOut, Mail, ShieldCheck, Sparkles, Trash2, UserRound } from 'lucide-svelte';
+  import { Check, Cloud, Info, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
@@ -12,6 +12,7 @@
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
   import { haptic } from '$lib/client/haptics';
+  import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
 
   let { data, form }: { data: PageData; form?: { section?: string; success?: boolean; message?: string } } = $props();
 
@@ -130,6 +131,100 @@
   let signoutBusy = $state(false);
   let signoutError = $state('');
 
+  // ── Device sessions (Phase 2) ──────────────────────────────────
+  type SessionInfo = {
+    id: string;
+    deviceType: string;
+    deviceName: string;
+    browser: string | null;
+    os: string | null;
+    platform: string | null;
+    createdAt: string;
+    lastSeenAt: string;
+    isCurrent: boolean;
+  };
+  let sessions = $state<SessionInfo[]>([]);
+  let sessionsLoading = $state(false);
+  let sessionsError = $state('');
+  let revokeTarget = $state<SessionInfo | null>(null);
+  let revokeBusy = $state(false);
+
+  function relativeTime(iso: string): string {
+    const now = Date.now();
+    const then = new Date(iso).getTime();
+    const diff = now - then;
+    if (diff < 60_000) return 'Active now';
+    if (diff < 3600_000) return `${Math.floor(diff / 60_000)} minute${Math.floor(diff / 60_000) === 1 ? '' : 's'} ago`;
+    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} hour${Math.floor(diff / 3600_000) === 1 ? '' : 's'} ago`;
+    if (diff < 172800_000) return 'Yesterday';
+    return new Date(iso).toLocaleDateString();
+  }
+
+  function deviceIcon(type: string) {
+    if (type === 'mobile') return Smartphone;
+    if (type === 'tablet') return Smartphone;
+    if (type === 'tv') return Tv;
+    if (type === 'desktop') return Monitor;
+    return Laptop;
+  }
+
+  async function loadSessions() {
+    if (!data.isAuthenticated) return;
+    sessionsLoading = true;
+    sessionsError = '';
+    try {
+      const res = await fetch('/api/account/sessions', { headers: { accept: 'application/json' } });
+      const payload = await res.json();
+      if (!res.ok || !payload.ok) {
+        sessionsError = payload.message ?? 'Unable to load sessions.';
+        sessions = [];
+      } else {
+        sessions = payload.sessions ?? [];
+      }
+    } catch {
+      sessionsError = 'Unable to load sessions. Please try again.';
+      sessions = [];
+    } finally {
+      sessionsLoading = false;
+    }
+  }
+
+  function openRevoke(session: SessionInfo) {
+    if (session.isCurrent) return;
+    revokeTarget = session;
+    haptic('light');
+  }
+
+  function closeRevoke() {
+    revokeTarget = null;
+  }
+
+  async function confirmRevoke() {
+    if (!revokeTarget || revokeBusy) return;
+    revokeBusy = true;
+    try {
+      const res = await fetch('/api/account/sessions/revoke', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: revokeTarget.id }),
+      });
+      const payload = await res.json();
+      if (!res.ok || !payload.ok) {
+        showErrorToast(payload.message ?? 'Unable to revoke the session.');
+      } else {
+        showSuccessToast('Session revoked.');
+        // Remove the revoked session from the local list immediately.
+        sessions = sessions.filter((s) => s.id !== revokeTarget!.id);
+        haptic('success');
+      }
+    } catch {
+      showErrorToast('Unable to revoke the session. Please try again.');
+    } finally {
+      revokeBusy = false;
+      revokeTarget = null;
+    }
+  }
+
   function openSignout() {
     signoutError = '';
     signoutOpen = true;
@@ -226,6 +321,7 @@
     // was removed (autoplay / autoResume / reducedMotion toggles were
     // never read by runtime code). Adult Mode loads via loadAdultMode below.
     void loadLocalState();
+    void loadSessions();
     void loadAdultMode();
   });
 </script>
@@ -409,6 +505,57 @@
     </section>
 
     {#if data.user}
+      <!-- ACCOUNT — device sessions (Phase 2) -->
+      <section class="account-section" aria-labelledby="sessions-title">
+        <div class="section-title-row">
+          <span class="section-icon" aria-hidden="true"><Monitor size={14} /></span>
+          <h2 id="sessions-title">Devices &amp; Sessions</h2>
+        </div>
+
+        {#if sessionsLoading}
+          <div class="sessions-loading" role="status" aria-live="polite">
+            <LoaderCircle size={16} class="spin" /> Loading sessions…
+          </div>
+        {:else if sessionsError}
+          <div class="sessions-error" role="alert">
+            {sessionsError}
+            <button class="retry-btn" type="button" onclick={loadSessions}>Retry</button>
+          </div>
+        {:else if sessions.length === 0}
+          <div class="sessions-empty">
+            No active sessions found.
+          </div>
+        {:else}
+          <div class="session-list">
+            {#each sessions as session (session.id)}
+              {@const Icon = deviceIcon(session.deviceType)}
+              <div class="session-card" class:current={session.isCurrent}>
+                <div class="session-card-head">
+                  <span class="session-icon" aria-hidden="true"><Icon size={16} /></span>
+                  <div class="session-card-copy">
+                    <strong class="session-card-name">{session.deviceName}</strong>
+                    <span class="session-card-meta">
+                      {[session.browser, session.os].filter(Boolean).join(' · ') || 'Unknown browser'}
+                    </span>
+                  </div>
+                  {#if session.isCurrent}
+                    <span class="current-badge">This device</span>
+                  {/if}
+                </div>
+                <div class="session-card-foot">
+                  <span class="session-time">{relativeTime(session.lastSeenAt)}</span>
+                  {#if !session.isCurrent}
+                    <button class="revoke-btn" type="button" onclick={() => openRevoke(session)} disabled={revokeBusy}>
+                      Revoke
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
       <!-- ACCOUNT — session -->
       <section class="account-section session-section" aria-labelledby="session-title">
         <div class="section-title-row">
@@ -444,6 +591,8 @@
 <ConfirmDialog open={signoutOpen} eyebrow="MAVERO / Sign out" title="Sign out?" description="Are you sure you want to sign out of Mavero?" primaryLabel={signoutBusy ? 'Signing out…' : 'Sign out'} primaryDisabled={signoutBusy} cancelDisabled={signoutBusy} onCancel={closeSignout} onPrimary={confirmSignout}>
   {#if signoutError}<p class="dialog-error" role="alert">{signoutError}</p>{/if}
 </ConfirmDialog>
+
+<ConfirmDialog open={revokeTarget !== null} eyebrow="MAVERO / Sessions" title="Revoke this session?" description={revokeTarget ? `${revokeTarget.deviceName} will no longer have access to your account.` : ''} primaryLabel={revokeBusy ? 'Revoking…' : 'Revoke'} primaryDisabled={revokeBusy} cancelDisabled={revokeBusy} tone="danger" onCancel={closeRevoke} onPrimary={confirmRevoke} />
 
 <ConfirmDialog open={deleteStep === 'initial'} eyebrow="MAVERO / Danger zone" title="Delete your account?" description="This will permanently delete your Mavero account and associated personal data. This action cannot be undone." primaryLabel="Continue" tone="danger" onCancel={closeDelete} onPrimary={continueDelete} />
 <ConfirmDialog open={deleteStep === 'final'} eyebrow="MAVERO / Final confirmation" title="Confirm account deletion" description="To permanently delete your account, type DELETE below. This final action cannot be undone." primaryLabel={deleteBusy ? 'Deleting…' : 'Delete account'} primaryDisabled={deleteBusy || deleteConfirmation !== 'DELETE'} cancelDisabled={deleteBusy} tone="danger" onCancel={closeDelete} onPrimary={deleteAccount}>
@@ -912,4 +1061,54 @@
   @media (prefers-reduced-motion: reduce) {
     .sign-in-cta, .secondary-cta, .toggle-switch i, .toggle-switch i::after, .signout-btn, .delete-account-btn, .cinelog-cta, .identity-meta > span.syncing { transition: none; animation: none; }
   }
+
+  /* ── Device sessions (Phase 2) ── */
+  .sessions-loading { display: flex; align-items: center; gap: 8px; padding: 16px 0; color: var(--color-text-muted); font-size: .76rem; }
+  .sessions-loading :global(svg.spin) { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .sessions-error { display: flex; align-items: center; gap: 10px; padding: 12px 0; color: var(--color-warning); font-size: .74rem; }
+  .retry-btn { border: 1px solid var(--color-border-strong); border-radius: 999px; padding: 4px 12px; background: var(--color-primary-soft); color: var(--color-text); font: inherit; font-size: .68rem; font-weight: 700; cursor: pointer; }
+  .retry-btn:hover { border-color: var(--color-primary-border); box-shadow: var(--glow-primary); }
+  .retry-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .sessions-empty { padding: 16px 0; color: var(--color-text-deep); font-size: .74rem; }
+
+  .session-list { display: grid; gap: 8px; margin-top: 8px; }
+  .session-card {
+    display: grid; gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-elevated);
+    transition: border-color var(--motion-fast) var(--ease-out);
+  }
+  .session-card.current { border-color: var(--color-primary-border); box-shadow: var(--glow-primary); }
+  .session-card-head {
+    display: flex; align-items: center; gap: 10px; min-width: 0;
+  }
+  .session-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: var(--color-primary); background: var(--color-primary-soft); border: 1px solid var(--color-primary-border); flex: 0 0 auto; }
+  .session-card-copy { min-width: 0; flex: 1; }
+  .session-card-name { display: block; color: var(--color-text); font-size: .78rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-card-meta { display: block; margin-top: 2px; color: var(--color-text-deep); font-size: .62rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .current-badge {
+    display: inline-flex; align-items: center;
+    padding: 3px 9px; border-radius: 999px;
+    color: #050708; background: var(--color-primary);
+    font-size: .5rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+    flex: 0 0 auto;
+  }
+  .session-card-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .session-time { color: var(--color-text-deep); font-size: .58rem; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .revoke-btn {
+    display: inline-flex; align-items: center;
+    min-height: 32px; padding: 0 12px;
+    border: 1px solid rgba(255, 77, 109, .3); border-radius: 999px;
+    color: var(--color-danger); background: transparent;
+    font: inherit; font-size: .64rem; font-weight: 700; cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+  }
+  .revoke-btn:hover:not(:disabled) { background: rgba(255, 77, 109, .08); border-color: rgba(255, 77, 109, .5); }
+  .revoke-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .revoke-btn:disabled { opacity: .5; cursor: not-allowed; }
 </style>
