@@ -139,10 +139,13 @@
   async function exchangeSession() {
     try {
       // Call the dedicated device-pairing exchange endpoint.
-      // This endpoint validates the pairing secret server-side and
-      // performs exchangeCodeForSession using the stored OTP code.
+      // This endpoint atomically claims the approved pairing request
+      // (single-winner UPDATE…RETURNING) and performs
+      // exchangeCodeForSession on the TV's own Supabase SSR client.
       // The exchange code NEVER reaches the client — the server
-      // reads it from the database and exchanges it internally.
+      // reads it from the database in the same atomic UPDATE that
+      // marks the pairing as consumed, and clears it in the same
+      // statement. No separate /consume call is needed.
       const res = await fetch('/api/auth/device-pairing/exchange', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -151,12 +154,9 @@
       });
 
       if (res.ok) {
-        // Consume the pairing (clear the code, mark as consumed).
-        void fetch('/api/auth/device-pairing/consume', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ secret: pairingSecret }),
-        });
+        // Exchange endpoint has finalized server-side: pairing is
+        // marked consumed, the OTP code is cleared, TV session
+        // cookies are set. No client-side consume call required.
         pairingState = 'success';
         // Navigate to discover after a brief delay.
         setTimeout(() => { void goto('/discover'); }, 1500);

@@ -1,9 +1,9 @@
-import { json, redirect } from '@sveltejs/kit';
+import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { env as publicEnv } from '$env/dynamic/public';
 import { env as privateEnv } from '$env/dynamic/private';
-import { createHash } from 'node:crypto';
 import { readJsonBody } from '$lib/server/http/body';
+import { claimAndExchangePairing } from '$lib/server/auth/device-pairing';
 import type { Database } from '$lib/server/supabase/database.types';
 
 const MAX_BODY_BYTES = 4 * 1024;
@@ -15,22 +15,48 @@ type ExchangeRequest = {
 /**
  * POST /api/auth/device-pairing/exchange
  *
- * Performs the server-side session exchange for the TV. This endpoint:
+ * Performs the server-side atomic claim + session exchange for the TV.
+ *
+ * This endpoint is the SINGLE owner of the exchange credential. It:
  *   1. Validates the pairing secret.
- *   2. Checks that the pairing is in 'approved' status.
- *   3. Reads the stored OTP code (hashed_token from generateLink).
+ *   2. Atomically claims the approved pairing request via a single
+ *      UPDATE…RETURNING (Postgres row-level lock serializes
+ *      concurrent attempts). The exchange_code is cleared from the
+ *      DB in the SAME statement — it exists in server memory only
+ *      for the duration of step 4.
+ *   3. Only the request that successfully claims it receives the
+ *      exchange_code in RETURNING.
  *   4. Calls locals.supabase.auth.exchangeCodeForSession(code) —
- *      this establishes the TV's OWN independent Supabase session.
- *   5. The exchange code is NEVER returned to the client.
+ *      this establishes the TV's OWN independent Supabase session
+ *      via the SSR cookie mechanism (NOT a copy of the phone's
+ *      session, NOT a JSON token, NOT client-side localStorage).
+ *   5. The pairing is already in 'consumed' state from step 2 —
+ *      no further state mutation is needed.
  *
- * This endpoint uses the request's Supabase client (from the server hook)
- * to perform the exchange — the resulting session is set via cookies by
- * the Supabase SSR client, exactly like the existing /auth/callback flow.
+ * Concurrency safety:
+ *   Two concurrent requests with the same secret both target the
+ *   same row. Postgres acquires a row lock on the first UPDATE;
+ *   the second UPDATE blocks, then re-evaluates the WHERE clause
+ *   after the first commits. Because the first UPDATE set
+ *   status='consumed' and consumed_at = now(), the second UPDATE's
+ *   WHERE status='approved' no longer matches — RETURNING yields
+ *   zero rows. The second request fails safely with HTTP 409
+ *   (already consumed). No exchange_code is ever exposed to either
+ *   client.
  *
- * No authentication required — the pairing secret is the authorization.
- * This is called by the TV AFTER detecting 'approved' status via polling.
+ * No authentication required — the pairing secret is the
+ * authorization. This is called by the TV AFTER detecting 'approved'
+ * status via polling.
+ *
+ * SECURITY:
+ *   - The exchange_code is NEVER returned to the client.
+ *   - The exchange_code is NEVER logged.
+ *   - The raw pairing secret is NEVER logged.
+ *   - No auth tokens, OTP codes, or session material are ever
+ *     logged or returned in the JSON body.
+ *   - cache-control: no-store on every response.
  */
-export const POST: RequestHandler = async ({ request, locals, url }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
   const body = await readJsonBody<ExchangeRequest>(request, MAX_BODY_BYTES);
   if (!body.ok) return json({ ok: false, message: body.message }, { status: body.status, headers: { 'cache-control': 'no-store' } });
 
@@ -50,50 +76,16 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 
-  // Look up the pairing request by secret_hash.
-  const secretHash = createHash('sha256').update(secret).digest('hex');
-  const { data: pairing, error: lookupError } = await admin
-    .from('device_pairing_requests')
-    .select('id, status, expires_at, exchange_code, consumed_at')
-    .eq('secret_hash', secretHash)
-    .maybeSingle();
+  // The TV's own Supabase SSR client — exchangeCodeForSession()
+  // on this client sets cookies on the response, establishing the
+  // TV's independent session through the standard SSR flow.
+  const tvSupabase = locals.supabase;
 
-  if (lookupError || !pairing) {
-    return json({ ok: false, message: 'Pairing request not found.' }, { status: 404, headers: { 'cache-control': 'no-store' } });
+  const outcome = await claimAndExchangePairing(admin, tvSupabase, secret);
+
+  if (!outcome.ok) {
+    return json({ ok: false, message: outcome.message }, { status: outcome.status, headers: { 'cache-control': 'no-store' } });
   }
 
-  // Check status — only approved requests can be exchanged.
-  if (pairing.status !== 'approved') {
-    return json({ ok: false, message: `This request is ${pairing.status}.` }, { status: 400, headers: { 'cache-control': 'no-store' } });
-  }
-
-  // Check expiration.
-  if (new Date(pairing.expires_at).getTime() < Date.now()) {
-    await admin.from('device_pairing_requests').update({ status: 'expired' }).eq('id', pairing.id).eq('status', 'approved');
-    return json({ ok: false, message: 'This request has expired.' }, { status: 410, headers: { 'cache-control': 'no-store' } });
-  }
-
-  // Check if already consumed.
-  if (pairing.consumed_at) {
-    return json({ ok: false, message: 'This request has already been consumed.' }, { status: 409, headers: { 'cache-control': 'no-store' } });
-  }
-
-  // Check if exchange_code exists.
-  if (!pairing.exchange_code) {
-    return json({ ok: false, message: 'Exchange code unavailable.' }, { status: 400, headers: { 'cache-control': 'no-store' } });
-  }
-
-  // Perform the exchange using the TV's own Supabase SSR client.
-  // This sets cookies on the response — establishing the TV's session.
-  const { error: exchangeError } = await locals.supabase.auth.exchangeCodeForSession(pairing.exchange_code);
-
-  if (exchangeError) {
-    // Log only safe fields — NEVER log the exchange code.
-    console.error('[Pairing] Exchange failed', { name: exchangeError.name, code: exchangeError.code });
-    return json({ ok: false, message: 'Unable to establish a session.' }, { status: 503, headers: { 'cache-control': 'no-store' } });
-  }
-
-  // Success — the TV now has its own independent session.
-  // The consume endpoint will be called separately to clear the code.
   return json({ ok: true, message: 'Session established.' }, { headers: { 'cache-control': 'no-store' } });
 };

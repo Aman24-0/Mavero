@@ -11,13 +11,21 @@ import type { Database } from '$lib/server/supabase/database.types';
  * Returns the current status of a pairing request.
  * The TV polls this endpoint to detect when the phone has approved.
  *
- * When status is 'approved', the response includes the exchange_code
- * which the TV uses to establish its own Supabase session via
- * exchangeCodeForSession(code).
+ * Response shape (Phase 3.2):
+ *   { ok: true, status: "pending" | "approved" | "consumed" | "expired" | "cancelled" }
+ *
+ * The dedicated /api/auth/device-pairing/exchange endpoint owns the
+ * exchange credential — the status path must NEVER load or expose
+ * the OTP code, any auth token, or any session material.
  *
  * No authentication required — the pairing secret itself is the
  * authorization. The secret is high-entropy (32 bytes random) and
  * short-lived (5 minutes).
+ *
+ * SECURITY:
+ *   - cache-control: no-store on every response.
+ *   - The status service selects ONLY `status` and `expires_at`
+ *     from the database — never the exchange credential.
  */
 export const GET: RequestHandler = async ({ url }) => {
   const secret = url.searchParams.get('secret');
@@ -45,13 +53,5 @@ export const GET: RequestHandler = async ({ url }) => {
   return json({
     ok: true,
     status: request.status,
-    // The exchange_code is NOT returned to the client. The TV calls
-    // the dedicated /api/auth/device-pairing/exchange endpoint which
-    // performs the exchange server-side using the stored OTP code.
-    // This prevents the exchange credential from appearing in:
-    //   - JSON responses
-    //   - client-side state
-    //   - browser history
-    //   - network logs
   }, { headers: { 'cache-control': 'no-store' } });
 };
