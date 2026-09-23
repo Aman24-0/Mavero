@@ -4,6 +4,7 @@ import { env as privateEnv } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
 import { extractSessionId } from '$lib/server/auth/jwt-session-id';
 import { revokeSession } from '$lib/server/auth/device-sessions';
+import { invalidateRevocationCache } from '$lib/server/auth/session-revocation-cache';
 
 // Sign-out endpoint.
 //
@@ -60,6 +61,10 @@ export const POST: RequestHandler = async ({ locals }) => {
             auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
           });
           await revokeSession(admin, locals.user.id, supabaseSessionId);
+          // Invalidate the per-instance revocation cache for the
+          // current session so the next request from this browser
+          // (if any cookie lingers) is re-queried and rejected.
+          invalidateRevocationCache(supabaseSessionId);
         }
       }
     } catch {

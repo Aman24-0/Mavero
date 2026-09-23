@@ -697,3 +697,232 @@ To https://github.com/Aman24-0/Mavero.git
 - Working tree: clean. No uncommitted files remain.
 - Exactly ONE logical commit added after `98d12c8`.
 - Run `git log -1 origin/main` to see the final SHA.
+
+---
+
+## Phase 3 — Individual revoke enforcement + Sign out All devices
+
+### Starting commit
+`8f9787861de110e5394e099c8af3d8e3051add1a`
+
+### Audit finding (carried from prior audit)
+- `device_sessions.revoked_at` is written by `revokeSession()` and
+  `revokeAllOtherSessions()` but was NEVER enforced at the Mavero
+  auth boundary. A revoked session's Supabase JWT remained valid
+  for up to 1 hour after revocation.
+- `revokeAllOtherSessions()` existed only as a backend helper — no
+  API endpoint, no UI button, no end-to-end flow.
+
+### Implemented
+
+#### A. Session revocation enforcement (hooks.server.ts)
+- New module `src/lib/server/auth/session-revocation-cache.ts`:
+  bounded in-memory cache (5000 entries max, 30-second TTL) keyed
+  by `supabase_session_id`. Cross-user contamination impossible.
+- New service function `lookupSessionRevocationState()` in
+  `device-sessions.ts`: queries `device_sessions.revoked_at` for
+  the incoming session. Fail-open on DB errors (Supabase JWT
+  remains authoritative).
+- hooks.server.ts now calls `isSessionRevoked()` after
+  `safeGetSession()` resolves a valid Supabase session. If revoked:
+  clears `locals.session` and `locals.user` to null, skips session
+  registration. Page requests render the guest layout; API requests
+  hit the existing `if (!locals.user)` 401 path.
+- Cache is invalidated by the revoke APIs (individual + Sign out
+  All + sign-out) so the next request from a revoked session is
+  re-queried and rejected.
+
+#### B. Sign out All Other Devices
+- New API endpoint `POST /api/account/sessions/revoke-all`:
+  - Auth required (locals.user).
+  - Current session_id derived server-side from JWT.
+  - Calls `revokeAllOtherSessions()` service.
+  - Returns `{ ok: true, revokedCount: N }`.
+  - Idempotent: 0 other sessions → success with count=0.
+  - Invalidates per-instance revocation cache for each revoked session.
+- Fixed `revokeAllOtherSessions()`:
+  - Was returning hardcoded `1`. Now returns `{ count, revokedSessionIds }`
+    via a SELECT before the UPDATE.
+  - The `.neq('supabase_session_id', currentSessionId)` filter
+    guarantees the current session is NEVER revoked.
+- Account UI:
+  - New "Sign out all devices" button (only shown when there are
+    other active sessions).
+  - ConfirmDialog: "Sign out all other devices?" with clear scope
+    explanation ("This device will remain signed in").
+  - States: idle / submitting / error.
+  - Prevents duplicate submissions while busy.
+  - Refreshes the session list from the server after success.
+
+#### C. Individual revoke — cache invalidation
+- The existing `/api/account/sessions/revoke` endpoint now also
+  calls `invalidateRevocationCache(targetRow.supabase_session_id)`
+  after a successful revoke, so the next request from the revoked
+  session is re-queried and rejected (rather than served from a
+  stale cache entry that says "not revoked").
+- Existing IDOR protection, current-session protection, and 404/409
+  handling are unchanged.
+
+#### D. Sign-out — cache invalidation
+- The existing `/auth/sign-out` endpoint now also calls
+  `invalidateRevocationCache(supabaseSessionId)` after revoking the
+  current session, so any lingering cookie cannot bypass the
+  revocation check via cache.
+
+### How revoked sessions are enforced
+1. Request arrives with a valid Supabase JWT.
+2. `safeGetSession()` resolves `locals.session` + `locals.user`.
+3. Hook extracts `supabase_session_id` from JWT (server-side).
+4. `isSessionRevoked(user.id, session_id, lookup)`:
+   - Checks 30s-TTL cache.
+   - On miss, calls `lookupSessionRevocationState()` which queries
+     `device_sessions.revoked_at`.
+   - Caches the result.
+5. If revoked: clears `locals.session = null` + `locals.user = null`.
+6. The rest of the request treats the user as a guest:
+   - Page requests render the guest layout (no authenticated UI).
+   - API requests hit the existing `if (!locals.user)` 401 path.
+7. Registration is skipped (a revoked session must NOT be
+   re-registered, which would resurrect it in the active list).
+
+### How Sign out All works
+1. Authenticated user clicks "Sign out all devices" → ConfirmDialog.
+2. `POST /api/account/sessions/revoke-all`.
+3. Endpoint derives `currentSessionId` from JWT (server-side).
+4. `revokeAllOtherSessions(admin, user.id, currentSessionId)`:
+   - SELECTs all other active sessions for the user.
+   - UPDATEs them all to `revoked_at = now()`.
+   - Returns the list of revoked session IDs.
+5. For each revoked session_id: `invalidateRevocationCache(sid)`.
+6. Response: `{ ok: true, revokedCount: N }`.
+7. UI refreshes the session list from the server.
+8. Each revoked session, on its next request, is rejected by the
+   hook's revocation check (cache miss → DB lookup → revoked=true
+   → locals cleared → 401 / guest layout).
+
+### Current session remains active
+- The `.neq('supabase_session_id', currentSessionId)` filter in
+  `revokeAllOtherSessions()` is the primary guarantee.
+- The hook's revocation check uses the same `currentSessionId`
+  derived from the JWT — the current session's row has
+  `revoked_at IS NULL`, so the check returns `revoked=false`.
+- The cache is keyed by `supabase_session_id`, so the current
+  session's cache entry is independent of any other session's.
+
+### Tests added/updated
+- NEW `scripts/phase3_session_revocation_test.ts` — 128 check groups:
+  - Section 1: hooks.server.ts revocation enforcement (static contract).
+  - Section 2: revocation cache module (bounded, TTL, session_id-keyed).
+  - Section 3: deterministic cache behavior (miss/hit/invalidate/TTL/
+    fail-open/cross-session isolation) — exercises the actual cache
+    module without a live DB.
+  - Section 4: revoke-all API contract (auth, server-derived identity,
+    service reuse, cache invalidation, safe response).
+  - Section 5: revoke-all current-session protection.
+  - Section 6: revoke-all idempotency (empty case).
+  - Section 7: Account UI Sign out all devices (button, confirmation,
+    states, refresh, no tokens).
+  - Section 8: individual revoke regression + cache invalidation.
+  - Section 9: service contract (revokeAllOtherSessions count,
+    lookupSessionRevocationState, fail-open).
+  - Section 10: security (no client-supplied identity).
+  - Section 11: sign-out cache invalidation regression.
+  - Section 12: existing auth behavior preserved.
+- UPDATED `scripts/device_session_registry_test.ts`: hooks integration
+  section now verifies the `!sessionRevoked` guard, the new imports,
+  and the locals-clearing behavior. 120 → 124 check groups.
+- UPDATED `scripts/stremio_player_phase8_test.ts`: test-chain assertion
+  updated to reflect the new ending (`phase3_session_revocation_test.ts`).
+- UPDATED `package.json`: test chain appends `phase3_session_revocation_test.ts`.
+
+### Validation results
+- `pnpm check` (svelte-kit sync + svelte-check) — 0 errors, 0 warnings.
+- `pnpm build` (vite build) — built successfully.
+- `pnpm test` — 137 of 145 test suites pass. 8 pre-existing failures
+  (`phase5_cloud_test`, `phase6_auth_test`, `phase6_rls_test`,
+  `phase7a_public_config_test`, `phase7a_security_test`,
+  `phase7a_validation_test`, `player_fab_autohide_test`,
+  `search_performance_test`) are unchanged from before this commit —
+  they require live Supabase credentials or test Phase 5/6/7 features
+  outside the device-pairing / session surface.
+- Phase 3 specific tests:
+  - `device_session_registry_test.ts` — 124 groups, pass.
+  - `account_sessions_test.ts` — 81 groups, pass.
+  - `device_pairing_test.ts` — 343 groups, pass.
+  - `phase3_session_revocation_test.ts` — 128 groups, pass.
+  - `signout_reliability_test.ts` — pass.
+  - `account_page_test.ts` — pass.
+  - `account_route_migration_test.ts` — pass.
+  - `account_deletion_test.ts` — pass.
+
+### Runtime verification status
+NOT performed — no live Supabase/Postgres credentials available.
+The enforcement logic is verified by:
+1. Static source-contract assertions (the hook calls `isSessionRevoked`,
+   clears locals, etc.).
+2. Deterministic unit test of the cache module's internal behavior
+   (miss/hit/invalidate/TTL/fail-open/cross-session isolation).
+3. Logic-reasoned enforcement flow (documented above).
+
+A live integration test against a real Supabase instance (verifying
+that a revoked session's next request actually returns 401 / guest
+layout) remains a documented limitation.
+
+### Limitations
+- Per-instance cache: on Netlify, other function instances may
+  serve stale-authenticated requests for up to 30 seconds after a
+  revocation, until their own cache expires. This is an acceptable
+  tradeoff vs. a DB query on every request.
+- No live integration test of the end-to-end revocation enforcement.
+- The 8 pre-existing unrelated test failures remain unchanged.
+
+### Files changed
+- `src/lib/server/auth/session-revocation-cache.ts` (NEW)
+- `src/lib/server/auth/device-sessions.ts` (revokeAllOtherSessions
+  return value + new lookupSessionRevocationState)
+- `src/hooks.server.ts` (revocation enforcement)
+- `src/routes/api/account/sessions/revoke-all/+server.ts` (NEW)
+- `src/routes/api/account/sessions/revoke/+server.ts` (cache invalidation)
+- `src/routes/auth/sign-out/+server.ts` (cache invalidation)
+- `src/routes/account/+page.svelte` (Sign out all devices button + dialog)
+- `scripts/phase3_session_revocation_test.ts` (NEW)
+- `scripts/device_session_registry_test.ts` (updated hooks assertions)
+- `scripts/stremio_player_phase8_test.ts` (updated test-chain assertion)
+- `package.json` (test chain appends phase3_session_revocation_test.ts)
+- `Mavero_Device_Auth_Integration_Worklog.md` (this entry)
+
+### Corrective commit SHA
+The Phase 3 commit is the HEAD of `origin/main` as of this push,
+with commit message:
+
+```
+feat(auth): enforce session revocation + Sign out all devices (Phase 3)
+```
+
+(`git log -1 origin/main` is the canonical source of truth for the
+exact SHA — it is intentionally not hardcoded in this worklog
+narrative to avoid a self-referential amend loop.)
+
+Stacked on top of `8f97878` (Phase 3.2 second corrective —
+service_role EXECUTE grant). No history rewrite of any prior commit.
+
+Files changed (12):
+- `src/lib/server/auth/session-revocation-cache.ts` (NEW)
+- `src/lib/server/auth/device-sessions.ts`
+- `src/hooks.server.ts`
+- `src/routes/api/account/sessions/revoke-all/+server.ts` (NEW)
+- `src/routes/api/account/sessions/revoke/+server.ts`
+- `src/routes/auth/sign-out/+server.ts`
+- `src/routes/account/+page.svelte`
+- `scripts/phase3_session_revocation_test.ts` (NEW)
+- `scripts/device_session_registry_test.ts`
+- `scripts/stremio_player_phase8_test.ts`
+- `package.json`
+- `Mavero_Device_Auth_Integration_Worklog.md` (this entry)
+
+### Push status
+Pushed to `origin/main`.
+
+- Working tree: clean. No uncommitted files remain.
+- Exactly ONE Phase 3 commit added after `8f97878`.
+- Run `git log -1 origin/main` to see the final SHA.

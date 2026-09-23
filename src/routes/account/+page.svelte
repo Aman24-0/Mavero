@@ -225,6 +225,50 @@
     }
   }
 
+  // ── Sign out all other devices (Phase 3) ──────────────────────
+  let signoutAllOpen = $state(false);
+  let signoutAllBusy = $state(false);
+  let signoutAllError = $state('');
+
+  function openSignoutAll() {
+    signoutAllError = '';
+    signoutAllOpen = true;
+    haptic('light');
+  }
+
+  function closeSignoutAll() {
+    if (!signoutAllBusy) signoutAllOpen = false;
+  }
+
+  async function confirmSignoutAll() {
+    if (signoutAllBusy) return;
+    signoutAllBusy = true;
+    signoutAllError = '';
+    try {
+      const res = await fetch('/api/account/sessions/revoke-all', {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+      });
+      const payload = await res.json();
+      if (!res.ok || !payload.ok) {
+        signoutAllError = payload.message ?? 'Unable to sign out other devices.';
+        signoutAllBusy = false;
+        return;
+      }
+      // Success — refresh the session list from the server so the
+      // current device remains visible (marked "This device") and
+      // all other devices are gone.
+      showSuccessToast(payload.message ?? 'Signed out of other devices.');
+      haptic('success');
+      signoutAllOpen = false;
+      await loadSessions();
+    } catch {
+      signoutAllError = 'Unable to sign out other devices. Please try again.';
+    } finally {
+      signoutAllBusy = false;
+    }
+  }
+
   function openSignout() {
     signoutError = '';
     signoutOpen = true;
@@ -554,6 +598,16 @@
             {/each}
           </div>
         {/if}
+
+        <!-- Phase 3 — Sign out all OTHER devices. -->
+        <!-- Only shown when there is at least one OTHER active session. -->
+        {#if !sessionsLoading && !sessionsError && sessions.filter((s) => !s.isCurrent).length > 0}
+          <div class="signout-all-row">
+            <button type="button" class="signout-all-btn" onclick={openSignoutAll} disabled={signoutAllBusy}>
+              <LogOut size={13} /> <span>Sign out all devices</span>
+            </button>
+          </div>
+        {/if}
       </section>
 
       <!-- ACCOUNT — session -->
@@ -593,6 +647,10 @@
 </ConfirmDialog>
 
 <ConfirmDialog open={revokeTarget !== null} eyebrow="MAVERO / Sessions" title="Revoke this session?" description={revokeTarget ? `${revokeTarget.deviceName} will no longer have access to your account.` : ''} primaryLabel={revokeBusy ? 'Revoking…' : 'Revoke'} primaryDisabled={revokeBusy} cancelDisabled={revokeBusy} tone="danger" onCancel={closeRevoke} onPrimary={confirmRevoke} />
+
+<ConfirmDialog open={signoutAllOpen} eyebrow="MAVERO / Sessions" title="Sign out all other devices?" description="This will sign you out from every other device currently using Mavero. This device will remain signed in." primaryLabel={signoutAllBusy ? 'Signing out…' : 'Sign out all'} primaryDisabled={signoutAllBusy} cancelDisabled={signoutAllBusy} tone="danger" onCancel={closeSignoutAll} onPrimary={confirmSignoutAll}>
+  {#if signoutAllError}<p class="dialog-error" role="alert">{signoutAllError}</p>{/if}
+</ConfirmDialog>
 
 <ConfirmDialog open={deleteStep === 'initial'} eyebrow="MAVERO / Danger zone" title="Delete your account?" description="This will permanently delete your Mavero account and associated personal data. This action cannot be undone." primaryLabel="Continue" tone="danger" onCancel={closeDelete} onPrimary={continueDelete} />
 <ConfirmDialog open={deleteStep === 'final'} eyebrow="MAVERO / Final confirmation" title="Confirm account deletion" description="To permanently delete your account, type DELETE below. This final action cannot be undone." primaryLabel={deleteBusy ? 'Deleting…' : 'Delete account'} primaryDisabled={deleteBusy || deleteConfirmation !== 'DELETE'} cancelDisabled={deleteBusy} tone="danger" onCancel={closeDelete} onPrimary={deleteAccount}>
@@ -1111,4 +1169,17 @@
   .revoke-btn:hover:not(:disabled) { background: rgba(255, 77, 109, .08); border-color: rgba(255, 77, 109, .5); }
   .revoke-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .revoke-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .signout-all-row { margin-top: 12px; display: flex; justify-content: flex-start; }
+  .signout-all-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    min-height: 36px; padding: 0 16px;
+    border: 1px solid var(--color-border-strong); border-radius: 999px;
+    color: var(--color-text); background: transparent;
+    font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+  }
+  .signout-all-btn:hover:not(:disabled) { background: var(--color-surface-elevated); border-color: var(--color-danger, #ff4d6d); color: var(--color-danger, #ff4d6d); }
+  .signout-all-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .signout-all-btn:disabled { opacity: .5; cursor: not-allowed; }
 </style>

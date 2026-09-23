@@ -4,6 +4,7 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { env as privateEnv } from '$env/dynamic/private';
 import { extractSessionId } from '$lib/server/auth/jwt-session-id';
 import { revokeSession } from '$lib/server/auth/device-sessions';
+import { invalidateRevocationCache } from '$lib/server/auth/session-revocation-cache';
 import { readJsonBody } from '$lib/server/http/body';
 import type { Database } from '$lib/server/supabase/database.types';
 
@@ -95,6 +96,11 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   if (!success) {
     return json({ ok: false, message: 'Unable to revoke the session right now. Please try again.' }, { status: 503, headers: { 'cache-control': 'no-store' } });
   }
+
+  // Invalidate the per-instance revocation cache for the revoked
+  // session so the next request from that session is re-queried
+  // (and rejected) rather than served from a stale cache entry.
+  invalidateRevocationCache(targetRow.supabase_session_id);
 
   return json({ ok: true, message: 'Session revoked.' }, { headers: { 'cache-control': 'no-store' } });
 };

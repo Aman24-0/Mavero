@@ -8,7 +8,8 @@ import { resolveRequestIdFromHeaders, PUBLIC_REQUEST_ID_HEADER } from '$lib/serv
 import { captureException } from '$lib/server/observability/error-tracking';
 import { extractSessionId } from '$lib/server/auth/jwt-session-id';
 import { parseDeviceMetadata, getOrCreateDeviceId } from '$lib/server/auth/device-metadata';
-import { registerCurrentSession } from '$lib/server/auth/device-sessions';
+import { registerCurrentSession, lookupSessionRevocationState } from '$lib/server/auth/device-sessions';
+import { isSessionRevoked } from '$lib/server/auth/session-revocation-cache';
 
 // Server hook.
 //
@@ -113,11 +114,73 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.session = auth.session;
   event.locals.user = auth.user;
 
+  // Phase 3 — application-level session revocation enforcement.
+  //
+  // The Supabase JWT remains valid until its own expiry (default 1 hour).
+  // Without this check, a session that was revoked via the Account UI
+  // (or via Sign out All) could continue to authenticate Mavero requests
+  // for up to 1 hour after revocation.
+  //
+  // We consult a short-TTL in-memory cache (keyed by supabase_session_id)
+  // so the common case does not hit the DB. On cache miss we query
+  // device_sessions.revoked_at. The cache is bounded and per-instance
+  // (see session-revocation-cache.ts for the full serverless honesty
+  // disclosure — staleness is bounded to 30 seconds).
+  //
+  // If the session is revoked:
+  //   - Clear locals.session and locals.user to null — the request is
+  //     treated as a guest. Page requests render the guest layout; API
+  //     requests hit the existing `if (!locals.user)` 401 path.
+  //   - Do NOT register the session — a revoked session must not be
+  //     resurrected in the registry.
+  //
+  // SECURITY:
+  //   - userId and supabaseSessionId are server-derived (from locals.user
+  //     and the JWT session_id claim). NEVER client-supplied.
+  //   - The check fails-open on DB errors (the Supabase JWT remains the
+  //     authoritative auth boundary; the registry is a supplementary
+  //     revocation layer).
+  let sessionRevoked = false;
+  if (auth.session?.access_token && auth.user) {
+    const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
+    const adminKey = privateEnv.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
+    if (adminUrl && adminKey) {
+      const supabaseSessionId = extractSessionId(auth.session.access_token);
+      if (supabaseSessionId) {
+        const { createClient } = await import('@supabase/supabase-js');
+        const admin = createClient<Database>(adminUrl, adminKey, {
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+          global: { fetch: event.fetch },
+        });
+        const { revoked } = await isSessionRevoked(
+          auth.user.id,
+          supabaseSessionId,
+          (uid, sid) => lookupSessionRevocationState(admin, uid, sid)
+        );
+        if (revoked) {
+          // Treat as guest: clear the auth context so the rest of the
+          // request — page layout, API routes — sees an unauthenticated
+          // request. Supabase's own session cookies remain (we do NOT
+          // call signOut here — that's a separate user-initiated flow;
+          // this is just an enforcement gate).
+          event.locals.session = null;
+          event.locals.user = null;
+          sessionRevoked = true;
+          // Do NOT fall through to registration. A revoked session must
+          // not be re-registered (that would resurrect it in the list).
+        }
+      }
+    }
+  }
+
   // Phase 1 Device Auth: register the current device session in the
   // registry. This is NON-BLOCKING — if the admin client is missing
   // or the registry write fails, authentication continues normally.
   // The registry is supporting infrastructure, not a security gate.
-  if (auth.session && auth.user) {
+  //
+  // Skip registration entirely when the session was just revoked
+  // above — a revoked session must not be re-registered.
+  if (!sessionRevoked && auth.session && auth.user) {
     try {
       const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
       const adminKey = privateEnv.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;

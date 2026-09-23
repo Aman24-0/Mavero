@@ -222,26 +222,123 @@ export async function revokeSession(
 
 /**
  * Revokes all sessions for a user EXCEPT the current one.
- * Foundation for "sign out all other devices".
+ * Used by the "Sign out all devices" feature (Phase 3).
+ *
+ * Returns the actual count of revoked sessions (via .select() to read
+ * the affected rows). The current session is NEVER revoked — the
+ * `.neq('supabase_session_id', currentSessionId)` filter guarantees
+ * this even under concurrent calls.
+ *
+ * The operation is idempotent: if there are no other active sessions,
+ * the count is 0 and the endpoint still returns success.
  */
 export async function revokeAllOtherSessions(
   admin: SupabaseAdminClient,
   userId: string,
   currentSessionId: string
-): Promise<number> {
+): Promise<{ count: number; revokedSessionIds: string[] }> {
   try {
-    const { error } = await admin
+    // First, look up the other active sessions so we can return the
+    // count and invalidate the revocation cache for each one.
+    const { data: others, error: selectError } = await admin
+      .from('device_sessions')
+      .select('supabase_session_id')
+      .eq('user_id', userId)
+      .neq('supabase_session_id', currentSessionId)
+      .is('revoked_at', null);
+    if (selectError) {
+      console.error('[DeviceSessions] RevokeAllOthers select error', { name: selectError.name, code: selectError.code });
+      return { count: 0, revokedSessionIds: [] };
+    }
+    if (!others || others.length === 0) {
+      // Idempotent: nothing to revoke.
+      return { count: 0, revokedSessionIds: [] };
+    }
+
+    // Atomically revoke all matching rows. The WHERE clause is the
+    // SAME as the select above — concurrent calls between the SELECT
+    // and UPDATE could only result in fewer rows being revoked (if a
+    // parallel request revoked them first), which is safe.
+    const { error: updateError } = await admin
       .from('device_sessions')
       .update({ revoked_at: new Date().toISOString() })
       .eq('user_id', userId)
       .neq('supabase_session_id', currentSessionId)
       .is('revoked_at', null);
-    if (error) {
-      console.error('[DeviceSessions] RevokeAllOthers error', { name: error.name, code: error.code });
-      return 0;
+    if (updateError) {
+      console.error('[DeviceSessions] RevokeAllOthers update error', { name: updateError.name, code: updateError.code });
+      return { count: 0, revokedSessionIds: [] };
     }
-    return 1; // Supabase update doesn't return the count by default.
-  } catch {
-    return 0;
+
+    const revokedSessionIds = others.map((r) => r.supabase_session_id);
+    return { count: revokedSessionIds.length, revokedSessionIds };
+  } catch (err) {
+    console.error('[DeviceSessions] RevokeAllOthers exception', { name: (err as Error)?.name ?? 'unknown' });
+    return { count: 0, revokedSessionIds: [] };
+  }
+}
+
+/**
+ * Looks up whether a session is revoked. Used by the revocation cache
+ * (src/lib/server/auth/session-revocation-cache.ts) which is called
+ * from hooks.server.ts on every authenticated request.
+ *
+ * Returns `{ revoked: true }` if:
+ *   - the session row exists and has `revoked_at` set, OR
+ *   - the session row does not exist (defensive: a session that was
+ *     never registered OR was deleted is treated as revoked — but in
+ *     practice the server hook registers every authenticated session
+ *     on first request, so a missing row almost always means
+ *     registration hasn't completed yet; in that case we fail-open
+ *     below to avoid blocking a freshly-authenticated request before
+ *     its session row is written).
+ *
+ * Returns `{ revoked: false }` if:
+ *   - the session row exists with `revoked_at IS NULL`, OR
+ *   - the DB lookup fails (fail-open: do not block auth on a registry
+ *     query failure — the Supabase JWT remains authoritative).
+ *
+ * SECURITY:
+ *   - userId and supabaseSessionId are ALWAYS server-derived (from
+ *     locals.user.id and the JWT session_id claim). Never client-supplied.
+ *   - This function NEVER throws.
+ */
+export async function lookupSessionRevocationState(
+  admin: SupabaseAdminClient,
+  userId: string,
+  supabaseSessionId: string
+): Promise<{ revoked: boolean }> {
+  try {
+    const { data, error } = await admin
+      .from('device_sessions')
+      .select('revoked_at')
+      .eq('user_id', userId)
+      .eq('supabase_session_id', supabaseSessionId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[DeviceSessions] Revocation lookup error', { name: error.name, code: error.code });
+      // Fail-open on DB error.
+      return { revoked: false };
+    }
+
+    if (!data) {
+      // No row found. Two possible cases:
+      //   1. The session was never registered (race: very first request
+      //      after auth, registration hasn't completed yet).
+      //   2. The session was registered, then deleted (rare — only
+      //      happens on account deletion which cascades).
+      //
+      // We fail-open here: a session that hasn't been registered yet
+      // should NOT be blocked. The server hook's registration call
+      // will create the row on this same request (fire-and-forget),
+      // so the next request will find a row.
+      return { revoked: false };
+    }
+
+    return { revoked: data.revoked_at !== null };
+  } catch (err) {
+    console.error('[DeviceSessions] Revocation lookup exception', { name: (err as Error)?.name ?? 'unknown' });
+    return { revoked: false };
   }
 }

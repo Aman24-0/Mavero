@@ -199,15 +199,23 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(hooks.includes('extractSessionId'), 'hooks.server.ts imports extractSessionId');
   ok(hooks.includes('parseDeviceMetadata'), 'hooks.server.ts imports parseDeviceMetadata');
   ok(hooks.includes('getOrCreateDeviceId'), 'hooks.server.ts imports getOrCreateDeviceId');
-  ok(hooks.includes('if (auth.session && auth.user)'), 'hooks only registers when authenticated');
+  // Phase 3: the registration guard now also checks !sessionRevoked so a
+  // revoked session is NOT re-registered (which would resurrect it in the list).
+  ok(hooks.includes('!sessionRevoked && auth.session && auth.user'), 'hooks only registers when authenticated AND not revoked');
   ok(hooks.includes('Non-blocking') || hooks.includes('non-blocking') || hooks.includes('NON-BLOCKING'), 'hooks documents non-blocking behavior');
   ok(hooks.includes('mavero:device-id'), 'hooks sets device-id cookie');
   ok(!hooks.includes('locals.session.access_token') || !hooks.match(/console\.\w+.*access_token/), 'hooks does NOT log access tokens');
 
   // Guest traffic must never trigger registration.
-  ok(hooks.includes('if (auth.session && auth.user)') && !hooks.includes('registerCurrentSession(.*null'), 'No registration call outside the auth guard');
+  ok(hooks.includes('!sessionRevoked && auth.session && auth.user') && !hooks.includes('registerCurrentSession(.*null'), 'No registration call outside the auth guard');
 
-  ok('6. hooks.server.ts integration (non-blocking, authenticated only, no token logging)');
+  // Phase 3: revocation enforcement is now present.
+  ok(hooks.includes('isSessionRevoked'), 'hooks: imports isSessionRevoked (Phase 3 enforcement)');
+  ok(hooks.includes('lookupSessionRevocationState'), 'hooks: imports lookupSessionRevocationState (Phase 3 enforcement)');
+  ok(hooks.includes('sessionRevoked = true'), 'hooks: sets sessionRevoked flag when revoked');
+  ok(hooks.includes('event.locals.session = null') && hooks.includes('event.locals.user = null'), 'hooks: clears locals on revoked session');
+
+  ok('6. hooks.server.ts integration (non-blocking, authenticated only, no token logging, Phase 3 revocation enforcement)');
 }
 
 // ============================================================
