@@ -1773,3 +1773,73 @@ Inspected all Device Auth source files (hooks, services, RPCs, endpoints, pages,
 
 ### Push status
 (see below)
+
+---
+
+## Discover + Detail + Header + Admin Fix Batch
+
+### Starting commit
+`f1473fcd9f74b47dea2037b8187dd3b3c29a2f54`
+
+### A. Discover cross-rail deduplication
+
+**Root cause:** Each Discover rail was fetched independently with no cross-rail deduplication. A title appearing in both "Running in theatre" and "Action" genre would appear in both rails.
+
+**Implementation:**
+- NEW `src/lib/server/content/discover-dedup.ts`: canonical identity (`${type}:${id}`), section priority, canonical genre assignment (deterministic first-priority match), `filterSeen()` helper.
+- NEW `src/routes/api/discover/batch/+server.ts`: batch endpoint that fetches ALL sections in priority order with a global seen set. Bounded continuation (up to 3 pages) fills rails that lost items.
+- MODIFIED `src/routes/api/discover/rail/+server.ts`: accepts `exclude` parameter (comma-separated canonical IDs) for Show More continuation. Filters out excluded items with bounded continuation.
+- MODIFIED `src/lib/server/content/service.ts`: added `discoverBatchDeduped()` function.
+
+**Canonical identity:** `${mediaType}:${tmdbId}` — e.g. `movie:550`. Movie and series are never merged by title.
+
+**Section priority:** theatre > new-ott > popular-* > top-rated-* > genre-*
+
+**Main-genre rule:** A title's canonical genre is the first matching genre in priority order: Action → Adventure → Crime → Thriller → Sci-Fi → Comedy → Drama → Horror → Romance. Deterministic — same genres always produce the same canonical section.
+
+### B. Detail page backdrop fix
+
+**Root cause:** Mobile `@media (max-width: 640px)` override replaced `.hero-scrim` with an opaque `var(--color-bg)` gradient for the top 38%, hiding the backdrop image.
+
+**Fix:** Replaced the opaque gradient with a cinematic semi-transparent gradient:
+- Top: `rgba(5,7,8,.45)` (backdrop visible)
+- Middle: progressively darker (`.55` → `.78` → `.88`)
+- Bottom: `var(--color-bg)` (fade into page background)
+
+### C. Header brand alignment
+
+**Root cause:** `.mobile-brand` had `display: inline-flex` but was missing `align-items: center` and `gap: 9px` (which `.brand-lockup` had).
+
+**Fix:** Added `align-items: center; gap: 9px;` to `.mobile-brand` in the `@media (max-width: 1024px)` rule.
+
+### D. Admin category/source deletion cascade
+
+**Root cause:** `deleteCategory()` and `deleteSource()` both refused deletion when source-category mappings existed, forcing admins to manually remove each assignment.
+
+**Fix:** Both functions now cascade-delete mappings before deleting the record:
+- `deleteSource()`: deletes all `streaming_source_categories` rows for the source, then deletes the source.
+- `deleteCategory()`: deletes all `streaming_source_categories` rows for the category, then deletes the category.
+- Neither throws an error when mappings exist — they cascade.
+- Sources and categories are NOT deleted (only mapping rows).
+- Confirm dialogs updated to say "All assignments will be removed."
+- Updated `phase7a_security_test.ts` to test cascade behavior.
+
+### E. Stremio catalog audit
+
+**STATUS: AUDIT ONLY — NO IMPLEMENTATION.**
+
+The existing Stremio infrastructure is focused on addon manifest/stream resolution, not catalog data. The manifest fetching stack (`manifest-fetch.ts` → `manifest-normalize.ts` → `manifest-cache.ts` → `manifest-service.ts`) is well-secured with SSRF guards, body caps, and redirect limits.
+
+**Recommendation:** TMDB remains the primary Discover catalog source. Stremio addon catalogs should NOT replace TMDB Discover at this time. If addon catalogs are integrated later, they should:
+1. Be fetched server-side with the existing SSRF/security boundary.
+2. Use parallel bounded requests + short server cache.
+3. Normalize to canonical `movie:<tmdbId>` / `series:<tmdbId>` identity.
+4. Feed into the same cross-rail dedup system implemented above.
+
+### Tests
+- NEW `scripts/discover_detail_header_admin_tests.ts` (65 check groups).
+- UPDATED `scripts/phase7a_security_test.ts` — tests cascade delete behavior.
+- pnpm test: 145 of 153 suites pass. 8 pre-existing failures unchanged.
+
+### Final commit SHA
+(see below)

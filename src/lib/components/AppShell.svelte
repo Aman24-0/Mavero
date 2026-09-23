@@ -198,7 +198,7 @@
       border-bottom: 1px solid var(--color-border);
       background: rgba(5, 7, 8, .88); backdrop-filter: blur(22px);
     }
-    .mobile-brand { display: inline-flex; }
+    .mobile-brand { display: inline-flex; align-items: center; gap: 9px; }
   }
 
   @media (max-width: 640px) {

@@ -158,7 +158,7 @@
                 <button class="mini-btn" type="submit">{source.enabled ? 'Disable' : 'Enable'}</button>
               </form>
               <button class="mini-btn" type="button" onclick={() => openTestPanel(source)}><FlaskConical size={13} /> Test</button>
-              <form method="POST" action="?/deleteSource" class="inline-form" onsubmit={() => confirm(`Delete ${source.name}? Assigned category records must be removed first.`)}>
+              <form method="POST" action="?/deleteSource" class="inline-form" onsubmit={() => confirm(`Delete ${source.name}? All category assignments will be removed.`)}>
                 <input type="hidden" name="id" value={source.id} />
                 <button class="mini-btn mini-btn-danger" type="submit" aria-label={`Delete ${source.name}`}><Trash2 size={13} /></button>
               </form>

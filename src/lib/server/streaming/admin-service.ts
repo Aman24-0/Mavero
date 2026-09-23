@@ -116,9 +116,14 @@ export async function updateSource(client: StreamingClient, id: string, input: S
 }
 
 export async function deleteSource(client: StreamingClient, id: string) {
-  const { count: mappingCount, error: mappingError } = await client.from('streaming_source_categories').select('source_id', { count: 'exact', head: true }).eq('source_id', id);
-  if (mappingError) throwRegistryError('Check source dependencies', mappingError);
-  if ((mappingCount ?? 0) > 0) throw new Error('This source belongs to one or more categories. Remove its category assignments before deleting it.');
+  // Phase 8: cascade-delete source-category mappings before deleting the source.
+  // Previously this function refused deletion when mappings existed, forcing
+  // the admin to manually remove each assignment. Now it cascades:
+  //   1. Delete all streaming_source_categories rows for this source.
+  //   2. Delete the source itself.
+  // Categories are NOT deleted — only the mapping rows.
+  const { error: mappingError } = await client.from('streaming_source_categories').delete().eq('source_id', id);
+  if (mappingError) throwRegistryError('Delete source category mappings', mappingError);
   const { error } = await client.from('streaming_sources').delete().eq('id', id);
   if (error) throwRegistryError('Delete source', error);
   invalidatePublicStreamingConfig();
@@ -139,9 +144,14 @@ export async function updateCategory(client: StreamingClient, id: string, input:
 }
 
 export async function deleteCategory(client: StreamingClient, id: string) {
-  const { count: mappingCount, error: mappingError } = await client.from('streaming_source_categories').select('category_id', { count: 'exact', head: true }).eq('category_id', id);
-  if (mappingError) throwRegistryError('Check category dependencies', mappingError);
-  if ((mappingCount ?? 0) > 0) throw new Error('This category has source assignments. Remove its sources before deleting the category.');
+  // Phase 8: cascade-delete source-category mappings before deleting the category.
+  // Previously this function refused deletion when mappings existed, forcing
+  // the admin to manually remove each source assignment. Now it cascades:
+  //   1. Delete all streaming_source_categories rows for this category.
+  //   2. Delete the category itself.
+  // Sources are NOT deleted — only the mapping rows.
+  const { error: mappingError } = await client.from('streaming_source_categories').delete().eq('category_id', id);
+  if (mappingError) throwRegistryError('Delete category source mappings', mappingError);
   const { error } = await client.from('streaming_categories').delete().eq('id', id);
   if (error) throwRegistryError('Delete category', error);
   invalidatePublicStreamingConfig();

@@ -1091,29 +1091,25 @@
        hero bottom edge (which is where the Cast section starts). */
     .hero { min-height: auto; }
     .back-btn { top: calc(12px + env(safe-area-inset-top)); left: 12px; padding: 0 12px; min-height: 34px; font-size: .68rem; }
-    /* Mobile backdrop fix: the backdrop image should NOT be visible from
-       the top. The top ~40% of the hero must be solid dark (the page
-       background color), so the back button + poster + title + metadata
-       remain over a controlled dark region. The backdrop progressively
-       reveals starting around 40% down and becomes fully visible in the
-       lower 50% of the hero, creating the cinematic hierarchy where:
-         TOP → dark background → poster + title + text
-         MIDDLE → gradual backdrop reveal
-         BOTTOM → backdrop visible + Play/actions + blend to page
-
-       Implementation: override the hero-scrim with an opaque gradient that
-       uses var(--color-bg) (solid, not semi-transparent) for the top 38%,
-       then transitions to transparent at 52% so the backdrop image shows
-       through in the lower region. The hero-img stays at inset:0 but is
-       visually hidden by the opaque scrim in the top region. */
+    /* Mobile backdrop fix: the backdrop image MUST be visible from the
+       actual top of the hero. The previous design used an opaque
+       var(--color-bg) gradient for the top 38%, hiding the backdrop.
+       The new design uses a cinematic gradient that keeps the backdrop
+       visible from the top while maintaining readable text:
+         TOP → light dark overlay (backdrop visible)
+         MIDDLE → darker overlay for poster/title/metadata
+         BOTTOM → strong fade into var(--color-bg)
+       The poster/content composition enters ~30-40% down from the top,
+       over the darker middle section. */
     .hero-scrim {
       background:
         linear-gradient(180deg,
-          var(--color-bg) 0%,
-          var(--color-bg) 38%,
-          rgba(5,7,8,.85) 46%,
-          rgba(5,7,8,.4) 60%,
-          rgba(5,7,8,.55) 80%,
+          rgba(5,7,8,.45) 0%,
+          rgba(5,7,8,.35) 15%,
+          rgba(5,7,8,.55) 30%,
+          rgba(5,7,8,.78) 45%,
+          rgba(5,7,8,.88) 60%,
+          rgba(5,7,8,.94) 80%,
           var(--color-bg) 100%);
     }
     .hero-inner {

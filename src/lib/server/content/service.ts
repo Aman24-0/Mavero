@@ -473,6 +473,65 @@ export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult 
 }
 
 /**
+ * Cross-rail deduplicated discover batch.
+ *
+ * Fetches ALL non-adult Discover sections in priority order, maintaining
+ * a global seen set so each title appears in ONE primary location only.
+ *
+ * For genre sections, a title is assigned to exactly ONE canonical genre
+ * (first matching genre in priority order) — it does NOT appear in
+ * every genre it belongs to.
+ *
+ * If a rail loses items to higher-priority rails, bounded continuation
+ * (up to 3 pages) is used to fill the rail to a minimum of 10 items
+ * when possible.
+ *
+ * Adult sections are NOT included in the batch — they remain independently
+ * fetched by the existing per-rail endpoint.
+ */
+export async function discoverBatchDeduped(
+  language: DiscoverLanguage,
+  provider?: string,
+  canAccessAdult = false
+): Promise<Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }>> {
+  const { SECTION_PRIORITY, filterSeen } = await import('./discover-dedup');
+  const seen = new Set<string>();
+  const results: Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }> = {};
+  const TARGET_ITEMS = 10;
+  const MAX_PAGES = 3;
+
+  for (const section of SECTION_PRIORITY) {
+    let railItems: NormalizedMediaItem[] = [];
+    let currentPage = 1;
+    let hasNext = false;
+
+    while (currentPage <= MAX_PAGES) {
+      const result = await discoverRail(
+        { section: section as DiscoverSectionKey, language, provider, page: currentPage },
+        canAccessAdult
+      );
+      const deduped = filterSeen(result.items, seen);
+      railItems.push(...deduped);
+
+      if (railItems.length >= TARGET_ITEMS || !result.hasNextPage) {
+        hasNext = result.hasNextPage;
+        break;
+      }
+      currentPage++;
+      hasNext = result.hasNextPage;
+    }
+
+    results[section] = {
+      items: railItems.slice(0, 20), // Cap at 20 per rail
+      page: 1,
+      hasNextPage: hasNext,
+    };
+  }
+
+  return results;
+}
+
+/**
  * Merged anime collection — used by the /discover/anime Explore page.
  *
  * Queries BOTH TMDB movie AND TMDB TV with `with_genres=16` +

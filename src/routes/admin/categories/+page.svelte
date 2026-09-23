@@ -94,7 +94,7 @@
                 <input type="hidden" name="enabled" value={category.enabled ? 'false' : 'true'} />
                 <button class="mini-btn" type="submit">{category.enabled ? 'Disable' : 'Enable'}</button>
               </form>
-              <form method="POST" action="?/deleteCategory" class="inline-form" onsubmit={() => confirm(`Delete ${category.name}? Assigned sources must be removed first.`)}>
+              <form method="POST" action="?/deleteCategory" class="inline-form" onsubmit={() => confirm(`Delete ${category.name}? All source assignments will be removed.`)}>
                 <input type="hidden" name="id" value={category.id} />
                 <button class="mini-btn mini-btn-danger" type="submit" aria-label={`Delete ${category.name}`}><Trash2 size={13} /></button>
               </form>

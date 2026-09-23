@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createClient } from '@supabase/supabase-js';
-import { deleteProvider, deleteSource, getAdminOverview, listAdminCategories, listAdminProviders, listAdminSources } from '../src/lib/server/streaming/admin-service.ts';
+import { deleteProvider, deleteSource, deleteCategory, listAdminCategories, listAdminProviders, listAdminSources } from '../src/lib/server/streaming/admin-service.ts';
 import type { Database } from '../src/lib/server/supabase/database.types.ts';
 
 const url = process.env.PUBLIC_SUPABASE_URL;
@@ -88,24 +88,21 @@ try {
   const normalProfile = await normal.from('profiles').select('id,role').eq('id', 'c6c5d5a1-0b2c-4a6a-8c1e-9f9c7a5e3b11').limit(1).single();
   assert.equal(normalProfile.data?.role, 'user', 'Normal User B role must remain user');
 
+  // Phase 8: deleteSource and deleteCategory now CASCADE-delete mappings
+  // instead of refusing. Provider deletion still guards on dependent sources.
   await assert.rejects(() => deleteProvider(admin, providerId), /dependent sources/);
-  await assert.rejects(() => deleteSource(admin, sourceId), /category assignments/);
-
-  const beforeOverview = await getAdminOverview(admin);
-  const sourceDeleteAfterMapping = await admin.from('streaming_source_categories').delete().eq('source_id', sourceId).eq('category_id', categoryId);
-  assert.equal(sourceDeleteAfterMapping.error, null);
-  const sourceDelete = await admin.from('streaming_sources').delete().eq('id', sourceId);
-  assert.equal(sourceDelete.error, null);
+  // deleteSource should now succeed (cascade-deletes mappings) instead of throwing.
+  await deleteSource(admin, sourceId);
   sourceId = '';
-  const categoryDelete = await admin.from('streaming_categories').delete().eq('id', categoryId);
-  assert.equal(categoryDelete.error, null);
+  // deleteCategory should now succeed (cascade-deletes mappings) instead of throwing.
+  await deleteCategory(admin, categoryId);
   categoryId = '';
   const providerDelete = await admin.from('streaming_providers').delete().eq('id', providerId);
   assert.equal(providerDelete.error, null);
   providerId = '';
   const afterMeta = await anonymous.from('streaming_config_meta').select('version').eq('id', 1).limit(1).maybeSingle();
   assert.equal(afterMeta.error, null);
-  assert.ok((afterMeta.data?.version ?? 0) > beforeOverview.configVersion, 'Admin mutations must bump configuration version');
+  assert.ok((afterMeta.data?.version ?? 0) > (beforeMeta.data?.version ?? 0), 'Admin mutations must bump configuration version');
   const adminProviders = await listAdminProviders(admin);
   const adminSources = await listAdminSources(admin);
   const adminCategories = await listAdminCategories(admin);

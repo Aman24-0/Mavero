@@ -4,7 +4,9 @@ import { isDiscoverLanguage, isDiscoverSectionKey } from '$lib/server/content/se
 import { toMediaItem } from '$lib/server/content/presenter';
 import { contentErrorResponse } from '$lib/server/content/response';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
+import { canonicalKey, filterSeen } from '$lib/server/content/discover-dedup';
 import type { RequestHandler } from './$types';
+import type { NormalizedMediaItem } from '$lib/server/content/types';
 
 // Discover V2 rail endpoint.
 //
@@ -22,18 +24,19 @@ import type { RequestHandler } from './$types';
 // unavailable" and hides the rail). This is consistent with the existing
 // API convention where unavailable sections return empty items.
 //
-// Cache: the underlying TMDB adapter caches each (section, language,
-// provider, page) tuple via getOrSet. Adult section cache keys include
-// the provider dimension so responses don't leak between providers.
-// Normal rail cache keys include the adult-exclusion dimension so
-// adult-excluded results don't leak into a context where adult content
-// is expected.
+// DEDUP SUPPORT: The `exclude` query parameter accepts a comma-separated
+// list of canonical IDs (e.g. "movie:550,series:1399") to filter out
+// from the response. This is used by Show More continuation to avoid
+// re-introducing items already displayed in higher-priority rails. The
+// server fetches up to 3 pages with bounded continuation when too many
+// items are filtered out.
 
 export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   const sectionParam = url.searchParams.get('section') ?? '';
   const languageParam = url.searchParams.get('language') ?? 'all';
   const provider = url.searchParams.get('provider') ?? undefined;
   const page = Math.max(1, Math.min(Number(url.searchParams.get('page') ?? 1) || 1, 20));
+  const excludeParam = url.searchParams.get('exclude') ?? '';
 
   if (!isDiscoverSectionKey(sectionParam)) {
     return json({ ok: false, error: { code: 'INVALID_SECTION', message: 'Unknown Discover section.' } }, { status: 400 });
@@ -43,10 +46,16 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   }
   const safeProvider = provider && provider.trim() && provider.length <= 80 ? provider.trim() : undefined;
 
+  // Parse the exclude list into a Set for O(1) lookup.
+  const excludeSet = new Set(
+    excludeParam.split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && s.length <= 100)
+      .slice(0, 500) // bounded — prevent abuse
+  );
+
   let canAccessAdult = false;
   if (sectionParam === 'adult-shows') {
-    // Phase 2-A: read the hook-resolved locals.user instead of re-calling
-    // safeGetSession (which would do a second getSession+getUser roundtrip).
     const user = locals.user;
     canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
     if (!canAccessAdult) {
@@ -55,17 +64,56 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   }
 
   try {
-    const result = await discoverRail({
-      section: sectionParam,
-      language: languageParam,
-      provider: safeProvider,
-      page
-    }, canAccessAdult);
+    // If no exclude list, use the simple path (backward-compatible).
+    if (excludeSet.size === 0) {
+      const result = await discoverRail({
+        section: sectionParam,
+        language: languageParam,
+        provider: safeProvider,
+        page
+      }, canAccessAdult);
+      return json({
+        ok: true,
+        items: result.items.map(toMediaItem),
+        page: result.page,
+        hasNextPage: result.hasNextPage,
+        section: sectionParam,
+        language: languageParam,
+        provider: safeProvider ?? null
+      });
+    }
+
+    // With exclude list: fetch with bounded continuation (up to 3 pages).
+    const TARGET_ITEMS = 10;
+    const MAX_PAGES = 3;
+    let collected: NormalizedMediaItem[] = [];
+    let currentPage = page;
+    let lastHasNext = false;
+
+    while (currentPage <= page + MAX_PAGES - 1) {
+      const result = await discoverRail({
+        section: sectionParam,
+        language: languageParam,
+        provider: safeProvider,
+        page: currentPage
+      }, canAccessAdult);
+
+      const filtered = filterSeen(result.items, excludeSet);
+      collected.push(...filtered);
+
+      if (collected.length >= TARGET_ITEMS || !result.hasNextPage) {
+        lastHasNext = result.hasNextPage;
+        break;
+      }
+      currentPage++;
+      lastHasNext = result.hasNextPage;
+    }
+
     return json({
       ok: true,
-      items: result.items.map(toMediaItem),
-      page: result.page,
-      hasNextPage: result.hasNextPage,
+      items: collected.slice(0, 20).map(toMediaItem),
+      page,
+      hasNextPage: lastHasNext,
       section: sectionParam,
       language: languageParam,
       provider: safeProvider ?? null
