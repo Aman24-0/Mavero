@@ -265,6 +265,31 @@
     };
   });
 
+  // Phase 8 fix: reactive $effect that re-calls loadFirst() when
+  // batchPending transitions from true → false. This is the critical
+  // missing piece — without this, DiscoverSection shows a skeleton
+  // forever after the batch resolves because loadFirst() was only
+  // called once (during onMount) and returned early due to batchPending.
+  //
+  // When batchPending becomes false:
+  //   - If batch succeeded: initialItems are now populated → loadFirst()
+  //     consumes them directly (no independent page-1 fetch).
+  //   - If batch failed: initialItems are empty → loadFirst() falls
+  //     through to the normal independent fetch path.
+  //
+  // The guard `!filterChanged` ensures we don't re-trigger after the
+  // user has changed language/provider (those paths already call
+  // loadFirst() directly).
+  // svelte-ignore state_referenced_locally -- intentional initial-value capture for transition detection
+  let lastBatchPending = batchPending;
+  $effect(() => {
+    const nowPending = batchPending;
+    if (lastBatchPending && !nowPending && !filterChanged && mounted) {
+      void loadFirst();
+    }
+    lastBatchPending = nowPending;
+  });
+
   // Build the dropdown options. For language-filterable sections we
   // render the language dropdown. For the OTT section we render the
   // provider dropdown (with logos). Both are mutually exclusive in

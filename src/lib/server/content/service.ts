@@ -494,7 +494,7 @@ export async function discoverBatchDeduped(
   provider?: string,
   canAccessAdult = false
 ): Promise<Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }>> {
-  const { SECTION_PRIORITY, filterSeen, shouldExcludeFromGenre, isGenreSection, canonicalKey } = await import('./discover-dedup');
+  const { SECTION_PRIORITY, shouldExcludeFromGenre, isGenreSection, canonicalKey } = await import('./discover-dedup');
   const seen = new Set<string>();
   const results: Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }> = {};
   const TARGET_ITEMS = 10;
@@ -504,23 +504,34 @@ export async function discoverBatchDeduped(
     let railItems: NormalizedMediaItem[] = [];
     let currentPage = 1;
     let hasNext = false;
+    const sectionIsGenre = isGenreSection(section);
 
     while (currentPage <= MAX_PAGES) {
       const result = await discoverRail(
         { section: section as DiscoverSectionKey, language, provider, page: currentPage },
         canAccessAdult
       );
-      // Filter out items already seen in higher-priority rails.
-      let deduped = filterSeen(result.items, seen);
 
-      // For genre sections, also filter out items whose canonical genre
-      // is a DIFFERENT genre — they should appear in their canonical
-      // genre rail, not in every genre they belong to.
-      if (isGenreSection(section)) {
-        deduped = deduped.filter(item => !shouldExcludeFromGenre(item, section));
+      // Phase 8 fix: the dedup algorithm must NOT use filterSeen() for
+      // genre sections because filterSeen() adds items to the seen set
+      // BEFORE genre eligibility is checked. An item that is rejected
+      // by canonical genre assignment must NOT occupy a slot in seen —
+      // it must remain available for its correct canonical genre rail.
+      //
+      // Correct algorithm per item:
+      //   A. canonical ID already in seen? → reject (already displayed)
+      //   B. section is genre + canonical genre ≠ this section? → reject
+      //      WITHOUT adding to seen (it belongs to a different genre rail)
+      //   C. otherwise → accept + add canonical ID to seen
+      for (const item of result.items) {
+        if (railItems.length >= 20) break; // cap per rail
+        const key = canonicalKey(item);
+        if (seen.has(key)) continue;      // A: already displayed
+        if (sectionIsGenre && shouldExcludeFromGenre(item, section)) continue; // B: wrong genre
+        // C: accept
+        seen.add(key);
+        railItems.push(item);
       }
-
-      railItems.push(...deduped);
 
       if (railItems.length >= TARGET_ITEMS || !result.hasNextPage) {
         hasNext = result.hasNextPage;
