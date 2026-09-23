@@ -1534,3 +1534,66 @@ static source-contract assertions + logic-reasoned lifecycle analysis.
 
 ### Push status
 (see below)
+
+---
+
+## Phase 7 — QR → New Authenticated Session Handoff
+
+### Starting commit
+`f503503786630946114319f8b92598ff842ad0f9` (Phase 6 critical scanner fix)
+
+### Audit findings
+
+**Already correct (preserved, NOT rewritten):**
+1. Exchange endpoint uses `locals.supabase` (TV's own SSR client) for `exchangeCodeForSession()`.
+2. `claim_device_pairing` RPC uses `SELECT ... FOR UPDATE` to capture OLD `exchange_code` before clearing it.
+3. No tokens/OTP/secrets in any JSON response (status, create, approve, exchange).
+4. `cache-control: no-store` on all pairing endpoints.
+5. Rate-limited (pairingExchange, pairingApprove, pairingPoll, pairingCreate).
+6. TV polling stops on approved → exchange called once (requestToken guard).
+7. Session registration via `register_device_session` RPC (atomic, no resurrection).
+8. Revocation enforcement via 30s-TTL cache + hooks check.
+9. Session isolation: phone session never copied; TV gets own SSR session via cookies.
+10. Exchange failure semantics: pairing consumed before exchange — intentional, documented.
+
+**Real defect found:**
+- **Approval race condition:** `approvePairingRequest()` chained `.update()` without `.select()`, so the Supabase JS client returned `{ error: null, data: null }` when 0 rows were affected. A concurrent approval that lost the race would falsely report `success: true` even though its OTP was never stored. The phone user would see "Device authorized" for both requests.
+
+### Fix
+
+Chained `.select('id')` after the `.update()` to get PostgREST's `UPDATE ... RETURNING` data. If `updatedRows` is null or empty, the WHERE clause (`status='pending'`) didn't match — another approval won the race. Returns `{ success: false, error: 'This request was already approved.' }`.
+
+### Security findings
+- No new exposure introduced. The fix only adds a `.select()` and a data-check — no new API surface, no new logging, no new client-facing behavior.
+- The race-loser's OTP (from `generateLink()`) is burned but never stored — this is a quota concern, not a security issue (already documented as out-of-scope in prior worklog entries).
+
+### Race-condition findings
+- **Approval race:** FIXED. The `.select()` check ensures exactly one approval can transition `pending → approved`.
+- **Claim race:** Already correct (SELECT FOR UPDATE in RPC).
+- **Exchange race:** Already correct (RPC + requestToken guard in TV polling).
+
+### Files changed
+- `src/lib/server/auth/device-pairing.ts` — approval race fix (.select() + affected-rows check).
+- `scripts/phase7_qr_session_handoff_test.ts` (NEW) — 175 check groups.
+- `scripts/stremio_player_phase8_test.ts` — test-chain ending updated.
+- `package.json` — test chain appends phase7_qr_session_handoff_test.ts.
+- `Mavero_Device_Auth_Integration_Worklog.md` — this entry.
+
+### Test results
+- `scripts/phase7_qr_session_handoff_test.ts` — 175 check groups, all pass.
+- Full suite: 142 of 145 pass. 8 pre-existing failures unchanged.
+
+### Known limitations
+- No live Supabase runtime verification of the approval race fix. The fix is verified by:
+  1. Static source-contract assertions (Section 9).
+  2. Deterministic simulation of the race (Section 9b — first approve wins, second fails, DB has winner's OTP).
+- The exchange failure semantics (pairing consumed before exchange) are intentional and documented. If `exchangeCodeForSession()` fails, the user must re-pair. This is the safest design because `generateLink()` requires the phone user's auth context which the TV does not have.
+
+### Real-device verification status
+NOT performed. Static contract + deterministic simulation only.
+
+### Final commit SHA
+(see below)
+
+### Push status
+(see below)

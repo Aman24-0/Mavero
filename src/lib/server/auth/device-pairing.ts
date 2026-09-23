@@ -296,7 +296,16 @@ export async function approvePairingRequest(
     // 5. Atomically update: pending → approved + store exchange_code.
     //    The .eq('status', 'pending') ensures only one approval can
     //    succeed (race condition protection).
-    const { error: updateError } = await admin
+    //
+    //    Phase 7 fix: chain .select() to get the RETURNING data. The
+    //    Supabase JS client returns { data: null, error: null } when
+    //    0 rows are affected (WHERE clause doesn't match). Without
+    //    checking the returned data, a concurrent approval that loses
+    //    the race would falsely report success. By chaining .select(),
+    //    we get the updated rows back (PostgREST's UPDATE ... RETURNING).
+    //    If data is null/empty, the UPDATE affected 0 rows — the race
+    //    was lost and we correctly return failure.
+    const { data: updatedRows, error: updateError } = await admin
       .from('device_pairing_requests')
       .update({
         status: 'approved',
@@ -305,11 +314,22 @@ export async function approvePairingRequest(
         exchange_code: otpCode,
       })
       .eq('id', pairing.id)
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .select('id');
 
     if (updateError) {
       // Could be a race condition — another approval already happened.
       return { success: false, error: 'This request may have already been processed.' };
+    }
+
+    // Phase 7: verify the UPDATE actually affected a row. If
+    // updatedRows is null or empty, the WHERE clause (status='pending')
+    // no longer matched — another concurrent approval won the race
+    // and transitioned the row to 'approved' before this UPDATE.
+    // Without this check, the losing request would falsely report
+    // success even though its OTP was never stored.
+    if (!updatedRows || updatedRows.length === 0) {
+      return { success: false, error: 'This request was already approved.' };
     }
 
     return { success: true, error: null };
