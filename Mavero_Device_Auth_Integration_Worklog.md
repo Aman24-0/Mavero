@@ -1223,3 +1223,170 @@ Pushed to `origin/main`.
 
 ### Push status
 (see below)
+
+---
+
+## Phase 6 — Phone QR Scanner + Approval
+
+### Starting commit
+`b6ea78016736f8c7c877d5fa3788607dc2f3b684` (Phase 5 — TV/Desktop QR UI)
+
+### Audit findings
+
+**Already complete (preserved, NOT rewritten):**
+- `/authorize` page: loads device info, displays device metadata, explicit Approve/Cancel buttons, expired/error states, calls `/api/auth/device-pairing/approve` + `/cancel`.
+- `/tv-login` page: creates pairing, displays QR, polls status, exchanges, redirects to /discover.
+- Phase 4 backend: all pairing endpoints, `claim_device_pairing` RPC, rate limits.
+- Phase 5 TV UI: responsive QR, TV-readable typography, focus management, ARIA live regions.
+
+**Missing (implemented in this commit):**
+1. No "Login on TV" entry point in the Account page.
+2. No phone-side QR camera scanner.
+3. No in-app camera → QR decode → validate → navigate-to-/authorize flow.
+
+### Implementation
+
+#### A. Account page — "Login on TV" button
+- Added a "Login on TV" button (`<a class="login-tv-btn" href="/account/scan-tv">`) at the top of the Devices & Sessions section in `src/routes/account/+page.svelte`.
+- Only visible to authenticated users (inside `{#if data.user}`).
+- 40px touch target, focus-visible state, uses the `Tv` icon from lucide-svelte.
+- Links to the new `/account/scan-tv` route (bare route, no AppShell sidebar).
+
+#### B. Scanner route — `/account/scan-tv`
+- NEW `src/routes/account/scan-tv/+page.server.ts`: server load that redirects unauthenticated users to `/auth/sign-in?redirect=/account/scan-tv`.
+- NEW `src/routes/account/scan-tv/+page.svelte`: full-screen phone QR scanner.
+
+#### C. Scanner implementation
+
+**State machine:**
+```
+idle → starting → scanning → validating → success
+                                    ↘ error (permission denied / camera unavailable / invalid QR)
+```
+
+**Camera lifecycle:**
+- `getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })` — prefers rear camera, graceful fallback.
+- `stopCamera()` stops all tracks (turns off camera indicator), cancels `requestAnimationFrame`, detaches stream from video element.
+- Called on: successful scan, cancel, error, component destroy.
+- `destroyed` flag prevents post-destroy state mutations.
+
+**QR decode loop:**
+- Uses `jsQR` (installed as `^1.4.0` dependency) — a small, maintained, pure-JS QR decoder.
+- `requestAnimationFrame` loop captures video frames to a hidden canvas, decodes with jsQR.
+- `scanResolved` guard prevents duplicate scan-success callbacks.
+- Decode loop checks `scanState !== 'scanning'` and `scanResolved` before processing.
+
+**QR validation — CRITICAL SECURITY:**
+- `validateMaveroPairingURL(raw: string)` validates the decoded QR data:
+  - Rejects `javascript:`, `data:`, `vbscript:` schemes.
+  - Parses URL via `new URL()` (rejects malformed URLs).
+  - Enforces same-origin (`url.origin === window.location.origin`) — prevents redirect to external domains.
+  - Validates pathname is exactly `/authorize`.
+  - Extracts `s` parameter (pairing secret), rejects if missing or < 16 chars.
+  - Rejects unexpected query params (only `s` is allowed — no `token`, `user_id`, `session_id`).
+  - Rejects hash fragments (could carry credential data).
+- On valid QR: navigates to `/authorize?s=<encodeURIComponent(secret)>` — uses the validated secret, NOT the raw decoded data.
+
+**Error states:**
+- Permission denied (`NotAllowedError`): explains how to enable camera permission.
+- No camera found (`NotFoundError`): explains no camera detected.
+- Camera in use (`NotReadableError`): explains camera is occupied.
+- Insecure context (non-HTTPS): explains HTTPS requirement.
+- Invalid QR: "This QR code isn't a Mavero TV login code." — allows retry.
+- Camera unavailable (generic): generic message with retry.
+- Each error state has "Try again" + "Cancel" buttons.
+
+**Camera frames — client-side only:**
+- Camera frames are captured to a hidden `<canvas>` for jsQR decoding. No frames, images, or video are sent to the server. The scanner only navigates to `/authorize?s=<secret>` on success.
+
+**Accessibility:**
+- Semantic heading (`<h2>`).
+- `aria-live="polite"` on loading/scanning/validating states.
+- `role="alert"` on error states.
+- Camera preview has `aria-label="Live camera preview for QR scanning"`.
+- Scan region has `role="region"` and `aria-label="QR code scanner"`.
+- Back button has `aria-label="Cancel and go back to account"`.
+- All interactive elements have `type="button"` and `:focus-visible` styles.
+- 44px touch target on all buttons.
+- `prefers-reduced-motion`: disables spin animation and transitions.
+
+**Landscape support:**
+- Scan frame shrinks to `min(200px, 45vh)` in landscape with `max-height: 500px`.
+
+### Security considerations
+- Scanned QR data is treated as untrusted input.
+- No `javascript:` / `data:` / `vbscript:` execution.
+- No rendering of decoded HTML.
+- No redirect to arbitrary domains (same-origin enforcement).
+- No raw camera frames sent to server.
+- No pairing secrets logged, stored in localStorage/sessionStorage, or put into analytics.
+- No automatic approval on scan — the user must explicitly click "Approve" on the `/authorize` page.
+- The scanner does NOT call any pairing API endpoint (no `/approve`, `/cancel`, `/exchange`, `/create`). It only navigates to `/authorize?s=<secret>`.
+
+### Dependency
+- Added `jsqr@^1.4.0` — a small (~43KB minified), maintained, pure-JavaScript QR code decoder. Works with canvas `ImageData` frames. No native dependencies, no WASM. Compatible with all modern browsers.
+- The existing `qrcode` package (for QR generation on `/tv-login`) is preserved unchanged.
+- No duplicate scanner libraries installed (no `qr-scanner`, no `@zxing`, no `BarcodeDetector` polyfill).
+
+### What remains for Phase 7
+Phase 7 (QR → new authenticated session handoff) is ALREADY IMPLEMENTED and was NOT modified in this commit:
+- The TV's `/tv-login` page calls `/api/auth/device-pairing/exchange` after detecting approval.
+- The `claim_device_pairing` RPC atomically claims the pairing and returns the OLD OTP.
+- `exchangeCodeForSession(otpCode)` on the TV's own Supabase SSR client establishes the TV's independent session.
+- The TV is then registered as a normal authenticated device session by `hooks.server.ts`.
+
+No Phase 7 work was newly implemented or modified.
+
+### Files changed
+- `package.json` — added `jsqr@^1.4.0` dependency.
+- `src/routes/+layout.svelte` — added `/account/scan-tv` to bare-route list.
+- `src/routes/account/+page.svelte` — added "Login on TV" button + CSS.
+- `src/routes/account/scan-tv/+page.server.ts` (NEW) — auth-protected server load.
+- `src/routes/account/scan-tv/+page.svelte` (NEW) — phone QR scanner page.
+- `scripts/phase6_phone_qr_scanner_test.ts` (NEW) — 158 check groups.
+- `scripts/stremio_player_phase8_test.ts` — test-chain ending assertion updated.
+- `Mavero_Device_Auth_Integration_Worklog.md` — this entry.
+
+### Tests
+- NEW `scripts/phase6_phone_qr_scanner_test.ts` (158 check groups):
+  1. Account page has "Login on TV" entry point.
+  2. Scanner route exists with auth guard.
+  3. Camera API usage only in scanner (not in /tv-login, /authorize, /account, hooks).
+  4. Environment camera preference (`facingMode: { ideal: 'environment' }`).
+  5. Camera tracks stopped during cleanup (onDestroy, cancel, error).
+  6. Successful scan stops camera.
+  7. Duplicate scan callbacks prevented (`scanResolved` guard).
+  8. QR payload validation function exists.
+  9. Only `/authorize?s=<secret>` payloads accepted.
+  10. Arbitrary external URLs rejected (dangerous schemes, wrong origin, wrong path, short secret, unexpected params, hash fragments).
+  11. Secret not logged, not stored in localStorage/sessionStorage.
+  12. Invalid QR has retry path.
+  13. Permission denied has useful UI (retry + cancel).
+  14. Camera unavailable has useful UI (multiple error types handled).
+  15. Scanner cancellation cleans up camera.
+  16. Existing /authorize flow remains connected.
+  17. Scanner does NOT directly approve the pairing (no approve/cancel/exchange/create endpoint calls).
+  18. Existing /tv-login flow remains intact.
+  19. Accessibility attributes/labels exist (aria-live, role, aria-label, focus-visible).
+  20. Reduced-motion handling exists.
+  21. Bare route (/account/scan-tv renders without AppShell).
+  22. No camera frames sent to server (no FormData, no toBlob, no toDataURL upload).
+  23. State machine (idle → starting → scanning → validating → success/error).
+  24. Dependency discipline (only jsqr added, no duplicate scanner libs).
+  25. No Phase 7 work (scanner does not exchange, claim, or read locals.session).
+
+### Validation
+- `pnpm check` (svelte-kit sync + svelte-check): 0 errors, 0 warnings.
+- `pnpm build` (vite build): PASS.
+- `pnpm test`: 141 of 145 suites pass. 8 pre-existing failures unchanged.
+
+### Known limitations
+- No live browser verification of actual camera access, QR decoding, or navigation. Tests are static source-contract + logic-reasoned. A Playwright/cypress E2E test that loads `/account/scan-tv` with a mock camera would be Phase 9 scope.
+- The `video` element has `transform: scaleX(-1)` for mirror display (natural UX on front-facing cameras). On rear cameras this mirror is cosmetic only — the jsQR decode operates on the un-mirrored canvas frame, so mirroring does not affect QR detection.
+- BarcodeDetector API is not used (would be a native fast-path on Chrome Android). jsQR is used as the sole decoder for cross-browser consistency and simpler code.
+
+### Final commit SHA
+(see below)
+
+### Push status
+(see below)

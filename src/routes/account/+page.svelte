@@ -556,6 +556,16 @@
           <h2 id="sessions-title">Devices &amp; Sessions</h2>
         </div>
 
+        <!-- Phase 6 — Login on TV. Opens the phone-side QR scanner so the
+             authenticated user can scan a TV's QR code and approve it.
+             Only shown for authenticated users (the whole section is inside
+             {#if data.user}). -->
+        <div class="login-tv-row">
+          <a class="login-tv-btn" href="/account/scan-tv">
+            <Tv size={13} /> <span>Login on TV</span>
+          </a>
+        </div>
+
         {#if sessionsLoading}
           <div class="sessions-loading" role="status" aria-live="polite">
             <LoaderCircle size={16} class="spin" /> Loading sessions…
@@ -1182,4 +1192,20 @@
   .signout-all-btn:hover:not(:disabled) { background: var(--color-surface-elevated); border-color: var(--color-danger, #ff4d6d); color: var(--color-danger, #ff4d6d); }
   .signout-all-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .signout-all-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Phase 6 — Login on TV button. */
+  .login-tv-row { margin-bottom: 12px; display: flex; justify-content: flex-start; }
+  .login-tv-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    min-height: 40px; padding: 0 18px;
+    border: 1px solid var(--color-primary-border); border-radius: 999px;
+    color: #050708; background: var(--color-primary);
+    font: inherit; font-size: .76rem; font-weight: 800;
+    text-decoration: none;
+    box-shadow: var(--glow-primary);
+    transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
+  }
+  .login-tv-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
+  .login-tv-btn:active { transform: scale(.98); }
+  .login-tv-btn:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
 </style>

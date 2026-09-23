@@ -189,8 +189,8 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('phase5_tv_login_ui_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 5 TV/Desktop QR UI suite (Phase 9–20 extension + Phase 1–5 Device Auth)',
+      testScript.trimEnd().endsWith('phase6_phone_qr_scanner_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 6 phone QR scanner suite (Phase 9–20 extension + Phase 1–6 Device Auth)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');

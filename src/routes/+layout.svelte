@@ -121,7 +121,7 @@
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || /^\/discover\/(movies|series|anime)\/?$/.test(page.url.pathname)}
+{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/account/scan-tv') || /^\/discover\/(movies|series|anime)\/?$/.test(page.url.pathname)}
   <!-- /admin/* renders bare too: AdminShell is a self-contained
        administrative layout with its OWN navigation. The consumer
        AppShell (side rail + mobile bottom nav) must not render there at
