@@ -113,6 +113,43 @@
   // which independently re-evaluates authorization on every request.
   let adultCanAccess = $state(false);
 
+  // Phase 8: cross-rail dedup state. The batch endpoint fetches all rails
+  // in priority order with a global seen set. The results are distributed
+  // to each DiscoverSection as initialItems, and the excludeIds (all
+  // canonical IDs from higher-priority rails) are passed for Show More.
+  let batchRails = $state<Record<string, { items: MediaItem[]; hasNextPage: boolean } | undefined>>({});
+  let batchLoaded = $state(false);
+
+  async function loadBatchRails() {
+    try {
+      const response = await fetch('/api/discover/batch?language=all');
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!payload.ok || !payload.rails) return;
+      batchRails = payload.rails;
+      batchLoaded = true;
+    } catch {
+      // Silent fail — sections will fetch independently.
+    }
+  }
+
+  // Compute the exclude IDs for each section based on the batch results.
+  // A section's excludeIds = all canonical IDs from ALL sections that
+  // appear BEFORE it in the priority order.
+  function excludeIdsFor(sectionKey: string): string[] {
+    const ids: string[] = [];
+    for (const section of SECTIONS) {
+      if (section.key === sectionKey) break;
+      const rail = batchRails[section.key];
+      if (rail) {
+        for (const item of rail.items) {
+          ids.push(`${item.type}:${item.id}`);
+        }
+      }
+    }
+    return ids;
+  }
+
   async function loadAdultModeSettings() {
     try {
       const response = await fetch('/api/settings/adult-mode');
@@ -378,6 +415,7 @@
     void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
     void loadOttProviders();
     void loadAdultModeSettings();
+    void loadBatchRails(); // Phase 8: server-authoritative cross-rail dedup
     queueGalleryRotation();
 
     return () => {
@@ -512,6 +550,8 @@
           providerFilter={sectionDef.providerFilter}
           providers={sectionDef.providerFilter ? ottProviders : []}
           viewAllHref={sectionDef.viewAllHref ?? ''}
+          initialItems={batchRails[sectionDef.key]?.items ?? []}
+          excludeIds={excludeIdsFor(sectionDef.key)}
         />
       {/each}
       <!-- Phase 8: Indian Adult Shows — the LAST content rail before the

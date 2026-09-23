@@ -151,12 +151,15 @@ export function isGenreSection(section: string): boolean {
  * This is used to prevent a title from appearing in every genre rail
  * it belongs to. A title is only shown in its canonical (first-priority)
  * genre rail, not in every genre it has.
+ *
+ * Uses the `tmdbGenreIds` field on NormalizedMediaItem (populated by
+ * mapTmdb from raw.genre_ids or raw.genres[].id).
  */
 export function shouldExcludeFromGenre(
-  item: NormalizedMediaItem & { genreIds?: number[] },
+  item: NormalizedMediaItem,
   targetGenreSection: string
 ): boolean {
-  const canonical = canonicalGenreSection(item.genreIds);
+  const canonical = canonicalGenreSection(item.tmdbGenreIds);
   if (canonical === null) return false; // No genre info — don't exclude
   return canonical !== targetGenreSection;
 }

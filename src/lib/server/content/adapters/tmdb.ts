@@ -221,7 +221,8 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     source: tmdbSource(String(raw.id)),
     externalIds,
     trailerKey: raw.videos?.results?.find((video) => video.site === 'YouTube' && video.type === 'Trailer')?.key,
-    cast: extractCast(raw)
+    cast: extractCast(raw),
+    tmdbGenreIds: genreIds.length > 0 ? genreIds : undefined
   };
 }
 

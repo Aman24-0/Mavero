@@ -104,6 +104,60 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok('F. batch discover endpoint exists');
 }
 
+// F2. DiscoverPage actually uses batch endpoint
+{
+  const discoverPage = read('src/lib/components/DiscoverPage.svelte');
+  ok(discoverPage.includes('loadBatchRails'), 'F2. DiscoverPage: has loadBatchRails function');
+  ok(discoverPage.includes('/api/discover/batch'), 'F2. DiscoverPage: calls /api/discover/batch');
+  ok(discoverPage.includes('batchRails'), 'F2. DiscoverPage: has batchRails state');
+  ok(discoverPage.includes('excludeIdsFor'), 'F2. DiscoverPage: has excludeIdsFor function');
+  ok(discoverPage.includes('initialItems'), 'F2. DiscoverPage: passes initialItems to DiscoverSection');
+  ok(discoverPage.includes('excludeIds'), 'F2. DiscoverPage: passes excludeIds to DiscoverSection');
+  ok('F2. DiscoverPage wired to batch dedup endpoint');
+}
+
+// F3. DiscoverSection accepts initialItems + excludeIds + sends exclude on Show More
+{
+  const section = read('src/lib/components/DiscoverSection.svelte');
+  ok(section.includes('initialItems'), 'F3. DiscoverSection: accepts initialItems prop');
+  ok(section.includes('excludeIds'), 'F3. DiscoverSection: accepts excludeIds prop');
+  ok(section.includes("params.set('exclude'"), 'F3. DiscoverSection: sends exclude parameter on rail URL');
+  ok(section.includes('usedInitialItems'), 'F3. DiscoverSection: tracks usedInitialItems flag');
+  ok(section.includes('usedInitialItems = false'), 'F3. DiscoverSection: resets flag on language/provider change');
+  ok('F3. DiscoverSection wired for dedup (initialItems + exclude on Show More)');
+}
+
+// G. tmdbGenreIds field exists on NormalizedMediaItem
+{
+  const types = read('src/lib/server/content/types.ts');
+  ok(types.includes('tmdbGenreIds'), 'G. NormalizedMediaItem: has tmdbGenreIds field');
+  ok(types.includes('tmdbGenreIds?: number[]'), 'G. NormalizedMediaItem: tmdbGenreIds is optional number[]');
+  ok('G. tmdbGenreIds field on NormalizedMediaItem');
+}
+
+// G2. mapTmdb populates tmdbGenreIds
+{
+  const tmdb = read('src/lib/server/content/adapters/tmdb.ts');
+  ok(tmdb.includes('tmdbGenreIds: genreIds.length > 0 ? genreIds : undefined'), 'G2. mapTmdb: populates tmdbGenreIds from genreIds');
+  ok('G2. mapTmdb populates tmdbGenreIds');
+}
+
+// G3. discover-dedup uses tmdbGenreIds (not genreIds)
+{
+  const dedup = read('src/lib/server/content/discover-dedup.ts');
+  ok(dedup.includes('item.tmdbGenreIds'), 'G3. dedup: uses item.tmdbGenreIds');
+  ok(!dedup.includes('item.genreIds'), 'G3. dedup: does NOT use item.genreIds');
+  ok('G3. discover-dedup uses tmdbGenreIds field');
+}
+
+// G4. discoverBatchDeduped applies canonical genre filtering
+{
+  const service = read('src/lib/server/content/service.ts');
+  ok(service.includes('shouldExcludeFromGenre'), 'G4. batch: applies shouldExcludeFromGenre');
+  ok(service.includes('isGenreSection'), 'G4. batch: checks isGenreSection');
+  ok('G4. discoverBatchDeduped applies canonical genre filtering');
+}
+
 // G. Rail endpoint supports exclude parameter
 {
   const railApi = read('src/routes/api/discover/rail/+server.ts');

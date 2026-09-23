@@ -98,6 +98,14 @@ export type NormalizedMediaItem = {
   networks?: Array<{ id: number; name: string }>;
   trailerKey?: string;
   cast?: CastMember[];
+  /**
+   * Raw TMDB genre IDs (e.g. [28, 35] for Action+Comedy).
+   * Populated from raw.genre_ids or raw.genres[].id in mapTmdb().
+   * Used by the Discover cross-rail dedup system to assign each title
+   * to exactly ONE canonical genre rail (first-priority match).
+   * Optional — some content sources may not provide genre IDs.
+   */
+  tmdbGenreIds?: number[];
 };
 
 export type ContentDetail = NormalizedMediaItem & {

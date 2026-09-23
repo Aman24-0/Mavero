@@ -40,6 +40,8 @@
     viewAllHref = '',
     initialLanguage = 'all' as DiscoverLanguage,
     initialProvider = '',
+    initialItems = [] as MediaItem[],
+    excludeIds = [] as string[],
   }: {
     section: DiscoverSectionKey;
     title: string;
@@ -49,6 +51,8 @@
     viewAllHref?: string;
     initialLanguage?: DiscoverLanguage;
     initialProvider?: string;
+    initialItems?: MediaItem[];
+    excludeIds?: string[];
   } = $props();
 
   const LANGUAGE_OPTIONS: LanguageOption[] = [
@@ -74,6 +78,11 @@
   let showMoreError = $state('');
   let currentPage = $state(1);
   let hasNextPage = $state(false);
+  // Phase 8: tracks whether initialItems from the batch dedup were used.
+  // When true, loadFirst() uses the provided initialItems instead of
+  // fetching independently. On language/provider change, the flag is
+  // cleared and a normal fetch is performed.
+  let usedInitialItems = $state(false);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; initialLanguage is a prop snapshot
   let language = $state<DiscoverLanguage>(initialLanguage);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; initialProvider is a prop snapshot
@@ -82,17 +91,34 @@
   let requestController: AbortController | undefined;
   let mounted = false;
 
-  function railUrl(targetPage: number) {
+  function railUrl(targetPage: number, includeExclude = false) {
     const params = new URLSearchParams({
       section,
       language,
       page: String(targetPage),
     });
     if (providerFilter && provider) params.set('provider', provider);
+    // Phase 8: send the exclude list for Show More so the server can
+    // filter out items already displayed in higher-priority rails.
+    if (includeExclude && excludeIds.length > 0) {
+      params.set('exclude', excludeIds.slice(0, 500).join(','));
+    }
     return `/api/discover/rail?${params.toString()}`;
   }
 
   async function loadFirst() {
+    // Phase 8: if initialItems were provided by the batch dedup, use them
+    // directly instead of fetching independently. This is the server-authoritative
+    // dedup path — the batch endpoint already applied the global seen set.
+    if (initialItems.length > 0 && !usedInitialItems) {
+      items = [...initialItems];
+      currentPage = 1;
+      hasNextPage = initialItems.length >= 10; // heuristic — batch provides up to 20
+      loading = false;
+      usedInitialItems = true;
+      return;
+    }
+
     // Reset and fetch page 1.
     requestSequence += 1;
     const requestId = requestSequence;
@@ -150,7 +176,12 @@
     showMoreError = ''; // Phase 2-L: clear any previous Show-more error.
     try {
       const nextPage = currentPage + 1;
-      const response = await fetch(railUrl(nextPage));
+      // Phase 8: pass includeExclude=true so the server filters out
+      // items already displayed in this rail AND in higher-priority rails.
+      // The excludeIds prop contains all canonical IDs from higher-priority
+      // rails + this rail's current items.
+      const allExclude = [...excludeIds, ...items.map(i => `${i.type}:${i.id}`)];
+      const response = await fetch(railUrl(nextPage, true));
       if (requestId !== requestSequence) return;
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload?.error?.message || 'Could not load more titles.');
@@ -158,7 +189,7 @@
       // Append to existing — do NOT replace.
       const incoming = payload.items as MediaItem[];
       // Dedupe by canonical type+id (defensive against upstream dupes).
-      const seen = new Set(items.map((i) => `${i.type}:${i.id}`));
+      const seen = new Set(allExclude);
       for (const item of incoming) {
         const key = `${item.type}:${item.id}`;
         if (!seen.has(key)) {
@@ -183,6 +214,9 @@
     const nextLang = next as DiscoverLanguage;
     if (nextLang === language) return;
     language = nextLang;
+    // Phase 8: clear the initial-items flag so a real fetch happens
+    // (the batch dedup only applies to the initial 'all' language load).
+    usedInitialItems = false;
     // Reset to page 1, replace results (do NOT append old-language items).
     void loadFirst();
   }
@@ -190,6 +224,8 @@
   function changeProvider(next: string) {
     if (next === provider) return;
     provider = next;
+    // Phase 8: clear the initial-items flag for the same reason.
+    usedInitialItems = false;
     void loadFirst();
   }
 

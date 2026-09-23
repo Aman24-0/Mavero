@@ -494,7 +494,7 @@ export async function discoverBatchDeduped(
   provider?: string,
   canAccessAdult = false
 ): Promise<Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }>> {
-  const { SECTION_PRIORITY, filterSeen } = await import('./discover-dedup');
+  const { SECTION_PRIORITY, filterSeen, shouldExcludeFromGenre, isGenreSection, canonicalKey } = await import('./discover-dedup');
   const seen = new Set<string>();
   const results: Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }> = {};
   const TARGET_ITEMS = 10;
@@ -510,7 +510,16 @@ export async function discoverBatchDeduped(
         { section: section as DiscoverSectionKey, language, provider, page: currentPage },
         canAccessAdult
       );
-      const deduped = filterSeen(result.items, seen);
+      // Filter out items already seen in higher-priority rails.
+      let deduped = filterSeen(result.items, seen);
+
+      // For genre sections, also filter out items whose canonical genre
+      // is a DIFFERENT genre — they should appear in their canonical
+      // genre rail, not in every genre they belong to.
+      if (isGenreSection(section)) {
+        deduped = deduped.filter(item => !shouldExcludeFromGenre(item, section));
+      }
+
       railItems.push(...deduped);
 
       if (railItems.length >= TARGET_ITEMS || !result.hasNextPage) {
