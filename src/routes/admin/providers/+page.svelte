@@ -8,6 +8,9 @@
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
   import { integrationTypes, providerStatuses } from '$lib/shared/streaming';
   import { sandboxPolicies, sandboxPolicyDescription, sandboxPolicyFromCapabilities } from '$lib/shared/sandbox-policy';
+  // Phase 8: sandbox is a simple ON/OFF toggle. ON = 'required', OFF = 'unrestricted'.
+  // The 4-option (required/optional/unrestricted/provider_default) UI is removed.
+  const providerSandboxOn = (provider: PageData['providers'][number]) => sandboxPolicyFromCapabilities(provider.capabilities) === 'required';
   import { CAPABILITY_FIELDS, CAPABILITY_LABELS, type ProviderPlaybackCapabilities } from '$lib/shared/player-capabilities';
   import type { ActionData, PageData } from './$types';
 
@@ -173,14 +176,25 @@
       <label>Adapter ID<input name="adapter_id" maxlength="80" placeholder="reserved-adapter-id" value={editingProvider?.adapter_id ?? ''} /></label>
     </div>
     <label>Description<textarea name="description" maxlength="500" rows="2" placeholder="Safe display description.">{editingProvider?.description ?? ''}</textarea></label>
-    <label>Sandbox policy (embed only)<select name="sandbox_policy">{#each sandboxPolicies as policy}<option value={policy} selected={editingProvider ? providerSandboxPolicy(editingProvider) === policy : policy === 'required'}>{sandboxPolicyLabels[policy]}</option>{/each}</select><small class="security-note">{sandboxPolicyDescription(editingProvider ? providerSandboxPolicy(editingProvider) : 'required')}</small></label>
-    {#if editingProvider && sourceOverridesFor(editingProvider.id).length}
-      <div class="sandbox-override-warning" role="alert">
-        <ShieldCheck size={14} />
-        <span>{sourceOverridesFor(editingProvider.id).length} source{sourceOverridesFor(editingProvider.id).length === 1 ? '' : 's'} of this provider carr{sourceOverridesFor(editingProvider.id).length === 1 ? 'ies' : 'y'} an explicit sandbox override ({sourceOverridesFor(editingProvider.id).map((override) => `${override.name}: ${override.policy}`).join(', ')}), which outranks the provider policy at runtime. Clear it on the source (choose "Provider default — inherit") if the provider choice should apply.</span>
-      </div>
+    <!-- Phase 8: simple sandbox ON/OFF toggle. ON = required (secure iframe sandbox).
+         OFF = unrestricted (no sandbox). The stored policy is 'required' or 'unrestricted'.
+         No source-level sandbox configuration exists anymore. -->
+    <label>Sandbox
+      <select name="sandbox_policy">
+        <option value="required" selected={editingProvider ? providerSandboxOn(editingProvider) : true}>ON — Secure iframe sandbox</option>
+        <option value="unrestricted" selected={editingProvider ? !providerSandboxOn(editingProvider) : false}>OFF — Sandbox disabled</option>
+      </select>
+      <small class="security-note">Controls the iframe sandbox for all sources of this provider.</small>
+    </label>
+    <!-- Phase 8: the raw Capabilities JSON textarea is removed for EDIT mode to
+         prevent data loss (the previous blank-textarea pattern silently overwrote
+         allowed_embed_origins, result_type, supports_* fields). For CREATE mode,
+         a minimal capabilities object is acceptable (the form default {"movies":true}).
+         The server-side parseProviderForm merges the sandbox_policy into the
+         capabilities JSON; existing capability keys are preserved server-side. -->
+    {#if !editingProvider}
+      <input type="hidden" name="capabilities" value='{{"movies":true}}' />
     {/if}
-    <label>Capabilities JSON<textarea name="capabilities" rows="3" placeholder="JSON object, e.g. movies=true">&#123;&quot;movies&quot;:true&#125;</textarea>{#if editingProvider}<small class="security-note">Current: {JSON.stringify(editingProvider.capabilities ?? {}, null, 2)}</small>{/if}</label>
     <label>Admin notes<textarea name="notes" maxlength="2000" rows="2" placeholder="Internal notes; never returned by public config.">{editingProvider?.notes ?? ''}</textarea></label>
     <div class="sheet-actions">
       <button class="btn btn-primary" type="submit">{editingProvider ? 'Save changes' : 'Create provider'}</button>
@@ -369,8 +383,7 @@
 
   .security-note { color: var(--color-warning); font-size: .56rem; line-height: 1.5; text-transform: none; letter-spacing: 0; font-weight: 500; }
 
-  .sandbox-override-warning { display: flex; align-items: flex-start; gap: 8px; margin: -6px 0 6px; border: 1px solid rgba(255, 194, 71, .45); border-radius: var(--radius-sm); padding: 10px 12px; color: var(--color-warning); font-size: .58rem; line-height: 1.5; background: rgba(255, 194, 71, .04); }
-  .sandbox-override-warning :global(svg) { flex: 0 0 auto; margin-top: 1px; }
+  /* Phase 8: sandbox-override-warning CSS removed (no source-level sandbox). */
 
   /* Phase 7: capability matrix panel (rendered inside the Edit modal). */
   .capability-panel { margin-top: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: rgba(0, 255, 156, .012); }

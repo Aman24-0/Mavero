@@ -1,5 +1,5 @@
 import { identifierModes, integrationTypes, providerStatuses, sourceVisibilities, type IdentifierMode, type IntegrationType, type JsonObject, type ProviderStatus, type SourceVisibility } from './types';
-import { sandboxPolicyChoices, withSourceSandboxChoice, withSandboxPolicy, sandboxPolicies, type SandboxPolicy, type SandboxPolicyChoice } from '$lib/shared/sandbox-policy';
+import { withSandboxPolicy, sandboxPolicies, type SandboxPolicy } from '$lib/shared/sandbox-policy';
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const adapterPattern = /^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
@@ -70,6 +70,21 @@ function template(value: FormDataEntryValue | null, label: string): string | nul
   return normalized;
 }
 
+/**
+ * Phase 8: strips any legacy `sandbox_policy` key from a source's
+ * capabilities JSON. Sandbox is now provider-level only — sources must
+ * NOT carry this key. All other capability fields (allowed_embed_origins,
+ * result_type, supports_*, movie/series/anime flags, etc.) are preserved.
+ */
+function stripSandboxPolicy(capabilities: JsonObject): JsonObject {
+  if ('sandbox_policy' in capabilities) {
+    const next = { ...capabilities };
+    delete next.sandbox_policy;
+    return next;
+  }
+  return capabilities;
+}
+
 export function normalizeSlug(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, '-');
 }
@@ -113,17 +128,11 @@ export function parseSourceForm(form: FormData) {
       const value = String(form.get('integration_type') ?? '').trim();
       return value ? enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType : null;
     })(),
-    // Phase 10 (GOAL 20): the source sandbox select carries the
-    // `provider_default` choice. That choice means INHERIT — the source
-    // capabilities JSON must NOT store a sandbox_policy at all (any legacy
-    // key is removed). Only the three concrete policies are stored
-    // explicitly. This fixes the Phase 7A bug where EVERY source write
-    // force-stamped `sandbox_policy` into the JSON (defaulting to
-    // `required`), silently overriding a provider's policy.
-    capabilities: withSourceSandboxChoice(
-      jsonObject(form.get('capabilities'), 'Capabilities'),
-      enumValue(form.get('sandbox_policy'), 'Sandbox policy', sandboxPolicyChoices, 'provider_default') as SandboxPolicyChoice,
-    ),
+    // Phase 8: sandbox is PROVIDER-LEVEL ONLY. Source forms no longer
+    // accept or store sandbox_policy. The capabilities JSON is parsed
+    // as-is (preserving allowed_embed_origins, result_type, supports_*
+    // fields, etc.) and any legacy sandbox_policy key is stripped.
+    capabilities: stripSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities')),
     movie_template: template(form.get('movie_template'), 'Movie template'),
     series_template: template(form.get('series_template'), 'Series template'),
     anime_template: template(form.get('anime_template'), 'Anime template'),

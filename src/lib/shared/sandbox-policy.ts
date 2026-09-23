@@ -1,19 +1,27 @@
-export const sandboxPolicies = ['required', 'optional', 'unrestricted'] as const;
+/**
+ * Sandbox policy — PROVIDER-LEVEL ONLY.
+ *
+ * Phase 8 sandbox simplification: the source-level sandbox configuration
+ * has been REMOVED. Sandbox is now exclusively a provider-level setting
+ * with two states: ON (required) and OFF (unrestricted).
+ *
+ * The previous architecture had 4 choices (required, optional,
+ * unrestricted, provider_default) and a source > provider > system
+ * inheritance hierarchy. This was unnecessarily complex and caused
+ * data loss when admins changed sandbox without re-pasting the full
+ * capabilities JSON.
+ *
+ * The new architecture:
+ *   - Provider sets sandbox_policy: 'required' or 'unrestricted'.
+ *   - Sources do NOT have sandbox_policy.
+ *   - System default remains 'required'.
+ *   - Legacy source sandbox_policy values are ignored/removed.
+ *   - Legacy 'optional' policy is normalized to 'required'.
+ */
+
+export const sandboxPolicies = ['required', 'unrestricted'] as const;
 
 export type SandboxPolicy = (typeof sandboxPolicies)[number];
-
-/**
- * Phase 10 (GOAL 20): the SOURCE-level configuration choices. A source may
- * explicitly store one of the three concrete policies, or it may explicitly
- * INHERIT the provider's policy — modeled by the sentinel value
- * `provider_default`, which is a CONFIGURATION choice, never a stored
- * policy: parsing a source form with `provider_default` removes any
- * `sandbox_policy` key from the source capabilities JSON so the hierarchy
- * below resolves through the provider.
- */
-export const sandboxPolicyChoices = ['provider_default', ...sandboxPolicies] as const;
-
-export type SandboxPolicyChoice = (typeof sandboxPolicyChoices)[number];
 
 export const defaultSandboxPolicy: SandboxPolicy = 'required';
 
@@ -25,99 +33,64 @@ export function isSandboxPolicy(value: unknown): value is SandboxPolicy {
   return typeof value === 'string' && sandboxPolicies.includes(value as SandboxPolicy);
 }
 
-/** True when the value is one of the source-form choices (incl. inherit). */
-export function isSandboxPolicyChoice(value: unknown): value is SandboxPolicyChoice {
-  return typeof value === 'string' && sandboxPolicyChoices.includes(value as SandboxPolicyChoice);
-}
-
 /**
- * The EXPLICITLY CONFIGURED source policy, or `null` when the source does
- * not carry one (inherit). This is the CONFIGURED value (GOAL 20) — never
- * conflated with the EFFECTIVE policy below. Malformed values read as
- * inherit (fall-through), matching the historical behavior for garbage.
+ * Returns the provider's sandbox policy, or the system default if
+ * missing/invalid. Sources are no longer consulted — sandbox is
+ * provider-level only.
  */
-export function configuredSandboxPolicy(sourceCapabilities: unknown): SandboxPolicy | null {
-  if (!isRecord(sourceCapabilities)) return null;
-  const value = sourceCapabilities.sandbox_policy;
-  return isSandboxPolicy(value) ? value : null;
-}
-
-/**
- * Resolves the EFFECTIVE policy with the standard capability hierarchy:
- * source override → provider default → system default.
- *
- * A source-level value overrides the provider default when explicitly
- * configured; missing or malformed values fall through, and the secure
- * system default applies when neither level sets the key. The sandbox
- * policy is a fully independent playback setting and never interacts with
- * any other capability.
- */
-export function sandboxPolicyFromCapabilities(providerCapabilities: unknown, sourceCapabilities?: unknown): SandboxPolicy {
-  for (const capability of [sourceCapabilities, providerCapabilities]) {
-    if (!isRecord(capability)) continue;
-    const value = capability.sandbox_policy;
+export function sandboxPolicyFromCapabilities(providerCapabilities: unknown, _sourceCapabilities?: unknown): SandboxPolicy {
+  if (isRecord(providerCapabilities)) {
+    const value = providerCapabilities.sandbox_policy;
     if (isSandboxPolicy(value)) return value;
+    // Legacy 'optional' is normalized to 'required'.
+    if (value === 'optional') return 'required';
   }
   return defaultSandboxPolicy;
 }
 
-export function withSandboxPolicy(capabilities: Record<string, unknown>, policy: SandboxPolicy) {
+/**
+ * Merges a sandbox policy into a capabilities object, preserving
+ * all existing keys. Used by the provider form to set sandbox_policy
+ * without losing other capability fields.
+ */
+export function withSandboxPolicy<T extends Record<string, unknown>>(capabilities: T, policy: SandboxPolicy): T {
   return { ...capabilities, sandbox_policy: policy };
 }
 
 /**
- * Phase 10 (GOAL 20): a source's capabilities for the `provider_default`
- * choice — the key is REMOVED so the source inherits the provider. Passing
- * an explicit policy stores it exactly as before. Generic over the input
- * record so a `JsonObject` stays a `JsonObject` (JSON-assignable).
+ * Returns the iframe sandbox attribute string for a given policy.
+ * - 'required' → secure sandbox attribute
+ * - 'unrestricted' → undefined (no sandbox attribute)
  */
-export function withSourceSandboxChoice<T extends Record<string, unknown>>(capabilities: T, choice: SandboxPolicyChoice): T {
-  if (choice === 'provider_default') {
-    const next = { ...capabilities };
-    delete (next as Record<string, unknown>).sandbox_policy;
-    return next;
-  }
-  return withSandboxPolicy(capabilities, choice) as unknown as T;
-}
-
-export function iframeSandboxAttribute(policy: SandboxPolicy = defaultSandboxPolicy) {
+export function iframeSandboxAttribute(policy: SandboxPolicy = defaultSandboxPolicy): string | undefined {
   return policy === 'unrestricted' ? undefined : 'allow-forms allow-presentation allow-same-origin allow-scripts';
 }
 
 /**
- * Phase 11 (GOAL D): the FULL sandbox resolution provenance for one embed
- * source — what the admin CONFIGURED at each level versus what the runtime
- * must actually apply. The playback runtime consumes
- * `effectiveSandboxPolicy`; `configured`/`provider` exist so admin-facing
- * surfaces (and tests) can never conflate a stored override with the
- * applied policy again.
+ * Sandbox policy runtime — resolves the effective policy from the
+ * provider capabilities only (sources no longer carry sandbox_policy).
  */
 export type SandboxPolicyRuntime = {
-  /** The source-level EXPLICIT policy, or `null` when the source inherits. */
+  /** Always null — sources no longer have sandbox_policy. */
   configuredSandboxPolicy: SandboxPolicy | null;
-  /** The provider-level policy (the inheritance target of `null`). */
+  /** The provider-level policy. */
   providerSandboxPolicy: SandboxPolicy | null;
-  /** The policy the runtime MUST apply (source > provider > system default). */
+  /** The policy the runtime MUST apply (provider > system default). */
   effectiveSandboxPolicy: SandboxPolicy;
 };
 
-/**
- * Phase 11 (GOAL D): resolves the complete configured-vs-effective runtime
- * picture from the two capability records. Pure — the server embeds this on
- * every resolved embed PlayerSource so the client never has to guess, and
- * `effectiveSandboxPolicy` is ALWAYS the value `sandboxPolicyFromCapabilities`
- * computes (single source of truth for the hierarchy).
- */
-export function resolveSandboxRuntime(providerCapabilities: unknown, sourceCapabilities?: unknown): SandboxPolicyRuntime {
+export function resolveSandboxRuntime(providerCapabilities: unknown, _sourceCapabilities?: unknown): SandboxPolicyRuntime {
+  const providerPolicy = isRecord(providerCapabilities) && isSandboxPolicy(providerCapabilities.sandbox_policy)
+    ? providerCapabilities.sandbox_policy as SandboxPolicy
+    : (isRecord(providerCapabilities) && providerCapabilities.sandbox_policy === 'optional' ? 'required' : null);
   return {
-    configuredSandboxPolicy: configuredSandboxPolicy(sourceCapabilities),
-    providerSandboxPolicy: configuredSandboxPolicy(providerCapabilities),
-    effectiveSandboxPolicy: sandboxPolicyFromCapabilities(providerCapabilities, sourceCapabilities),
+    configuredSandboxPolicy: null,
+    providerSandboxPolicy: providerPolicy,
+    effectiveSandboxPolicy: providerPolicy ?? defaultSandboxPolicy,
   };
 }
 
-export function sandboxPolicyDescription(policy: SandboxPolicy) {
+export function sandboxPolicyDescription(policy: SandboxPolicy): string {
   if (policy === 'unrestricted') return 'Sandbox disabled for this embed. Use only when the provider explicitly requires it.';
-  if (policy === 'optional') return 'Sandbox remains enabled by default; the provider may be reviewed for a different policy later.';
-  return 'Sandbox remains enabled with MAVERO’s secure iframe permissions.';
+  return 'Sandbox enabled with MAVERO\'s secure iframe permissions.';
 }

@@ -2,21 +2,17 @@ import { fail, redirect } from '@sveltejs/kit';
 import { isRedirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
-import { createProvider, deleteProvider, listAdminProviders, listAdminSources, listProviderHealthSummaries, updateProvider } from '$lib/server/streaming/admin-service';
+import { createProvider, deleteProvider, listAdminProviders, listProviderHealthSummaries, updateProvider } from '$lib/server/streaming/admin-service';
 import { parseId, parseProviderForm } from '$lib/server/streaming/validation';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
-import { configuredSandboxPolicy, type SandboxPolicy } from '$lib/shared/sandbox-policy';
+
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin/providers' });
-  // Phase 12 (GOAL F): sources ride along so the provider console can warn
-  // when an explicit SOURCE-level sandbox override outranks the provider's
-  // policy (the exact configured-vs-effective mismatch that made an admin
-  // "Unrestricted" choice appear to be ignored at runtime).
-  const [providers, health, sources] = await Promise.all([
+  // Phase 8: sandbox is provider-level only. Sources are no longer fetched here.
+  const [providers, health] = await Promise.all([
     listAdminProviders(locals.supabase),
     listProviderHealthSummaries(locals.supabase),
-    listAdminSources(locals.supabase),
   ]);
   // Phase 7: build a capability map keyed by adapter_id for the UI matrix.
   // lookupProviderCapabilities returns null for unknown adapters (display "Unknown").
@@ -34,13 +30,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       };
     }
   }
-  // Per-provider source sandbox overrides (source EXPLICIT policy ≠ null).
-  const sourceSandboxOverrides: Record<string, Array<{ id: string; name: string; policy: SandboxPolicy }>> = {};
-  for (const source of sources) {
-    const policy = configuredSandboxPolicy(source.capabilities);
-    if (!policy) continue;
-    (sourceSandboxOverrides[source.provider_id] ??= []).push({ id: source.id, name: source.name, policy });
-  }
+  // Phase 8: source sandbox overrides are no longer computed — sandbox
+  // is provider-level only. The sourceSandboxOverrides field is kept
+  // as an empty object for backwards compatibility with the page data
+  // shape, but it is always empty now.
+  const sourceSandboxOverrides: Record<string, Array<{ id: string; name: string; policy: string }>> = {};
   return { providers, health, capabilityMap, sourceSandboxOverrides, notice: url.searchParams.get('notice') };
 };
 
@@ -61,7 +55,23 @@ export const actions: Actions = {
     try {
       const form = await request.formData();
       const id = parseId(form, 'Provider');
-      const { id: _ignored, ...input } = { id, ...parseProviderForm(form) };
+      const parsed = parseProviderForm(form);
+      // Phase 8: for provider EDITS, preserve existing capabilities and
+      // only merge the sandbox_policy. The form no longer sends a raw
+      // capabilities JSON textarea (it was blank, causing data loss).
+      // Fetch the existing provider's capabilities and merge the new
+      // sandbox_policy into them.
+      const { data: existing } = await locals.supabase
+        .from('streaming_providers')
+        .select('capabilities')
+        .eq('id', id)
+        .maybeSingle();
+      const existingCapabilities = (existing?.capabilities && typeof existing.capabilities === 'object' && !Array.isArray(existing.capabilities))
+        ? { ...(existing.capabilities as Record<string, unknown>) }
+        : {};
+      // Merge sandbox_policy into existing capabilities (preserving all other keys).
+      const mergedCapabilities = { ...existingCapabilities, sandbox_policy: parsed.capabilities.sandbox_policy };
+      const { id: _ignored, ...input } = { id, ...parsed, capabilities: mergedCapabilities };
       await updateProvider(locals.supabase, id, input);
       throw redirect(303, '/admin/providers?notice=Provider%20updated.');
     } catch (error) {

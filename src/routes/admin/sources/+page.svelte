@@ -7,7 +7,8 @@
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
   import { integrationTypes, identifierModes, providerStatuses, sourceVisibilities } from '$lib/shared/streaming';
-  import { sandboxPolicyChoices, sandboxPolicyDescription, sandboxPolicyFromCapabilities, configuredSandboxPolicy, type SandboxPolicyChoice } from '$lib/shared/sandbox-policy';
+  // Phase 8: sandbox is provider-level only. Source forms no longer have
+  // any sandbox-related imports or UI controls.
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -16,9 +17,6 @@
   const typeLabels = { template: 'Template', api: 'API', direct: 'Direct', embed: 'Embed', custom: 'Custom' };
   const visibilityLabels = { public: 'Public', internal: 'Internal', hidden: 'Hidden' };
   const identifierLabels = { tmdb_id: 'TMDB ID', anilist_id: 'AniList ID', imdb_id: 'IMDb ID', slug: 'Slug', custom: 'Custom' };
-  const sandboxPolicyLabels: Record<string, string> = { required: 'Required', optional: 'Optional', unrestricted: 'Unrestricted' };
-  const sourceConfiguredSandboxChoice = (source: PageData['sources'][number]): SandboxPolicyChoice => configuredSandboxPolicy(source.capabilities) ?? 'provider_default';
-  const sourceEffectiveSandboxPolicy = (source: PageData['sources'][number]) => sandboxPolicyFromCapabilities(data.providers.find((provider) => provider.id === source.provider_id)?.capabilities, source.capabilities);
   const providerName = (id: string) => data.providers.find((provider) => provider.id === id)?.name ?? 'Unknown provider';
 
   function statusToneFor(status: string): 'good' | 'warn' | 'bad' | 'neutral' {
@@ -194,7 +192,6 @@
     <div class="form-grid two"><label>Language<input name="language" maxlength="60" placeholder="Original" value={editingSource?.language ?? ''} /></label><label>Audio languages<input name="audio_languages" placeholder="English, Hindi" value={editingSource?.audio_languages?.join(', ') ?? ''} /></label></div>
     <div class="form-grid two"><label class="check"><input type="checkbox" name="enabled" checked={editingSource?.enabled ?? false} /> Enabled</label><label class="check"><input type="checkbox" name="subtitle_capability" checked={editingSource?.subtitle_capability ?? false} /> Subtitle capability</label></div>
     <label>Quality capability<input name="quality_capability" placeholder="HD, Full HD, 4K" value={editingSource?.quality_capability?.join(', ') ?? ''} /></label>
-    <label>Sandbox policy (applies to embed playback)<select name="sandbox_policy">{#each sandboxPolicyChoices as choice}<option value={choice} selected={editingSource ? sourceConfiguredSandboxChoice(editingSource) === choice : choice === 'provider_default'}>{choice === 'provider_default' ? 'Provider default — inherit' : sandboxPolicyLabels[choice]}</option>{/each}</select><small class="security-note">{editingSource ? `Configured: ${sourceConfiguredSandboxChoice(editingSource) === 'provider_default' ? 'Provider default — inherit' : sandboxPolicyLabels[sourceConfiguredSandboxChoice(editingSource)]} · Effective: ${sourceEffectiveSandboxPolicy(editingSource)}${sourceConfiguredSandboxChoice(editingSource) !== 'provider_default' ? ' — Source override is active' : ''}` : 'Provider default inherits the provider\'s sandbox policy; the system default is required.'}{#if editingSource} · {sandboxPolicyDescription(sourceEffectiveSandboxPolicy(editingSource))}{/if}</small></label>
     <div class="form-grid three"><label>Movie template<textarea name="movie_template" rows="2" placeholder="Configuration only">{editingSource?.movie_template ?? ''}</textarea></label><label>Series template<textarea name="series_template" rows="2" placeholder="Configuration only">{editingSource?.series_template ?? ''}</textarea></label><label>Anime template<textarea name="anime_template" rows="2" placeholder="Configuration only">{editingSource?.anime_template ?? ''}</textarea></label></div>
     <label>Capabilities JSON<textarea name="capabilities" rows="3" placeholder="JSON object, e.g. movies=true">&#123;&quot;movies&quot;:true&#125;</textarea>{#if editingSource}<small class="security-note">Current: {JSON.stringify(editingSource.capabilities ?? {}, null, 2)}</small>{/if}</label>
     <label>Description<textarea name="description" maxlength="500" rows="2">{editingSource?.description ?? ''}</textarea></label>

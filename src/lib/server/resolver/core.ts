@@ -48,9 +48,15 @@ function adapterFor(config: TrustedResolutionConfig, dependencies: ResolverDepen
 function resultFromAdapter(result: Awaited<ReturnType<ProviderAdapter['resolve']>>, context: Parameters<ProviderAdapter['resolve']>[0]): SourceResult {
   if (!result || (result.type !== 'direct' && result.type !== 'embed') || typeof result.url !== 'string') throw new ResolverError('PROVIDER_RESPONSE_INVALID');
   if (result.expiresAt && !isValidExpiry(result.expiresAt)) throw new ResolverError('SOURCE_EXPIRED');
-  const sourceCapabilities = context.config.source.capabilities;
-  const allowDynamic = allowDynamicEmbedOriginsFromCapabilities(sourceCapabilities);
-  const url = validatePlaybackUrl(result.url, result.type, allowedEmbedOriginsFromCapabilities(sourceCapabilities), allowDynamic);
+  // Phase 8: effective embed origins = union(provider, source).
+  // Provider values are authoritative; source values are backward-compatible fallback.
+  const providerCaps = context.config.provider.capabilities;
+  const sourceCaps = context.config.source.capabilities;
+  const providerOrigins = allowedEmbedOriginsFromCapabilities(providerCaps);
+  const sourceOrigins = allowedEmbedOriginsFromCapabilities(sourceCaps);
+  const effectiveOrigins = [...new Set([...providerOrigins, ...sourceOrigins])];
+  const allowDynamic = allowDynamicEmbedOriginsFromCapabilities(providerCaps) || allowDynamicEmbedOriginsFromCapabilities(sourceCaps);
+  const url = validatePlaybackUrl(result.url, result.type, effectiveOrigins, allowDynamic);
   return {
     type: result.type,
     url,

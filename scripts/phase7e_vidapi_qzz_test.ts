@@ -173,7 +173,7 @@ await assert.rejects(
   (error: unknown) => error instanceof ResolverError && error.code === 'PROVIDER_DISABLED'
 );
 
-// Sandbox policy resolves source-first (source override → provider default
+// Phase 8: sandbox is PROVIDER-LEVEL ONLY. Source sandbox_policy is ignored.
 // → system default), independently of the separate ad-protection setting:
 // the source-level explicit value beats the provider default, both ways.
 const sourceRequiredOverProvider = await resolveSourceFromConfig(
@@ -185,7 +185,7 @@ const sourceRequiredOverProvider = await resolveSourceFromConfig(
   content('movie', '550'),
   { adapters: genericAdapters }
 );
-assert.equal(sourceRequiredOverProvider.sandboxPolicy, 'required');
+assert.equal(sourceRequiredOverProvider.sandboxPolicy, 'unrestricted'); // Phase 8: source sandbox ignored, provider wins
 const sourceUnrestrictedOverProvider = await resolveSourceFromConfig(
   { sourceId, contentId: '550', mediaType: 'movie' },
   {
@@ -195,6 +195,6 @@ const sourceUnrestrictedOverProvider = await resolveSourceFromConfig(
   content('movie', '550'),
   { adapters: genericAdapters }
 );
-assert.equal(sourceUnrestrictedOverProvider.sandboxPolicy, 'unrestricted');
+assert.equal(sourceUnrestrictedOverProvider.sandboxPolicy, 'required'); // Phase 8: source sandbox ignored, provider wins
 
 console.log('Phase 7E VidAPI.qzz.io generic-template and resolver tests passed.');

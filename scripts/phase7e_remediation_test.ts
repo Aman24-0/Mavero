@@ -22,14 +22,14 @@ assert.equal(adjacentSource(sources, 'third', 1), undefined);
 assert.equal(adjacentSource(sources, 'missing', 1), undefined);
 
 assert.equal(sandboxPolicyFromCapabilities({}), 'required');
-assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'optional' }), 'optional');
+assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'optional' }), 'required'); // Phase 8: optional -> required
 assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'unrestricted' }), 'unrestricted');
 assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'invalid' }), 'required');
-// Hierarchy: source override → provider default → system default ('required').
-assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'unrestricted' }, { sandbox_policy: 'required' }), 'required');
-assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'required' }, { sandbox_policy: 'unrestricted' }), 'unrestricted');
+// Phase 8: source sandbox_policy is now IGNORED. Only provider policy matters.
+assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'unrestricted' }, { sandbox_policy: 'required' }), 'unrestricted'); // provider wins
+assert.equal(sandboxPolicyFromCapabilities({ sandbox_policy: 'required' }, { sandbox_policy: 'unrestricted' }), 'required'); // provider wins
 assert.equal(iframeSandboxAttribute('required')?.includes('allow-scripts'), true);
-assert.equal(iframeSandboxAttribute('optional')?.includes('allow-same-origin'), true);
+// Phase 8: 'optional' no longer exists — removed from sandboxPolicies.
 assert.equal(iframeSandboxAttribute('unrestricted'), undefined);
 assert.equal(sandboxPolicyDescription('unrestricted').includes('Sandbox disabled'), true);
 assert.deepEqual(withSandboxPolicy({ movie: true }, 'required'), { movie: true, sandbox_policy: 'required' });

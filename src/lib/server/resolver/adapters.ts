@@ -1,10 +1,11 @@
 import { ResolverError } from './errors';
 import { resolveTemplate, templateForContext } from './template';
-import { validatePlaybackUrl, allowedEmbedOriginsFromCapabilities, protocolForUrl } from './safe-url';
+import { validatePlaybackUrl, allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, protocolForUrl } from './safe-url';
 import type { AdapterResult, ProviderAdapter, ResolverContext } from './types';
 import type { IntegrationType } from '$lib/server/streaming/types';
 import { vidsrcProviderAdapter } from './vidsrc';
 import { vidlinkProviderAdapter } from './vidlink';
+import type { Json } from '$lib/server/supabase/database.types';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
   const sourceCapabilities = context.config.source.capabilities;
@@ -14,9 +15,35 @@ function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed
   return sourceType === 'direct' || providerType === 'direct' ? 'direct' : 'embed';
 }
 
+/**
+ * Phase 8: effective embed origins = union(provider.allowed_embed_origins,
+ * source.allowed_embed_origins). Provider values are authoritative;
+ * source values are a backward-compatible fallback. Duplicates removed.
+ */
+function effectiveEmbedOrigins(providerCapabilities: Json, sourceCapabilities: Json): string[] {
+  const providerOrigins = allowedEmbedOriginsFromCapabilities(providerCapabilities);
+  const sourceOrigins = allowedEmbedOriginsFromCapabilities(sourceCapabilities);
+  return [...new Set([...providerOrigins, ...sourceOrigins])];
+}
+
+/**
+ * Phase 8: dynamic origins are allowed if EITHER provider or source
+ * explicitly opts in.
+ */
+function effectiveAllowDynamic(providerCapabilities: Json, sourceCapabilities: Json): boolean {
+  return allowDynamicEmbedOriginsFromCapabilities(providerCapabilities) || allowDynamicEmbedOriginsFromCapabilities(sourceCapabilities);
+}
+
 function templateResult(context: ResolverContext, resultType: 'direct' | 'embed'): AdapterResult {
   const url = resolveTemplate(templateForContext(context), context);
-  const safeUrl = validatePlaybackUrl(url, resultType, allowedEmbedOriginsFromCapabilities(context.config.source.capabilities));
+  const providerCaps = context.config.provider.capabilities as Json;
+  const sourceCaps = context.config.source.capabilities as Json;
+  const safeUrl = validatePlaybackUrl(
+    url,
+    resultType,
+    effectiveEmbedOrigins(providerCaps, sourceCaps),
+    effectiveAllowDynamic(providerCaps, sourceCaps)
+  );
   return {
     type: resultType,
     url: safeUrl,
