@@ -48,26 +48,20 @@ export function canonicalKey(item: { type: string; id: string | number; external
   return `${item.type}:${item.id}`;
 }
 
-/** Section priority order — lower index = higher priority. */
-export const SECTION_PRIORITY: readonly string[] = [
-  'theatre',
-  'new-ott',
-  'popular-movie',
-  'popular-series',
-  'popular-anime',
-  'top-rated-movie',
-  'top-rated-series',
-  'top-rated-anime',
-  'genre-action',
-  'genre-adventure',
-  'genre-crime',
-  'genre-thriller',
-  'genre-scifi',
-  'genre-comedy',
-  'genre-drama',
-  'genre-horror',
-  'genre-romance',
-];
+/**
+ * Section priority order — lower index = higher priority.
+ *
+ * Phase 9: the canonical constant now lives in `$lib/shared/discover-batch.ts`
+ * so the client (DiscoverPage.svelte's excludeIdsFor) and the server
+ * (discover-batch.ts's dedup loop) use the SAME ordering. This file
+ * re-exports it for backward compatibility with server-only callers.
+ *
+ * The visual UI order in DiscoverPage.svelte is DIFFERENT (Comedy is
+ * rendered before Crime/Thriller/Sci-Fi). The visual order is intentional
+ * and MUST NOT change. Only the exclude-list computation walks
+ * SECTION_PRIORITY (canonical server order).
+ */
+export { SECTION_PRIORITY } from '$lib/shared/discover-batch';
 
 /** Genre priority for canonical assignment (first match wins). */
 export const GENRE_PRIORITY: readonly string[] = [

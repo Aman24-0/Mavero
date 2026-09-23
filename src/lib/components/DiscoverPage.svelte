@@ -16,6 +16,13 @@
   import { haptic } from '$lib/client/haptics';
   import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
   import { clearRailCache } from '$lib/client/discover/rail-cache';
+  // Phase 9 fix: import the canonical SECTION_PRIORITY + canonicalExcludeIds
+  // from the SHARED module (client-safe). The server dedup loop walks the
+  // SAME SECTION_PRIORITY, so Show More exclude lists honor the same
+  // canonical priority — even when the visual UI order differs (Comedy is
+  // rendered before Crime/Thriller/Sci-Fi, but those are higher canonical
+  // priority and must be excluded from Comedy's Show More).
+  import { canonicalExcludeIds } from '$lib/shared/discover-batch';
   import type { DiscoverSectionKey } from '$lib/server/content/types';
 
   let {
@@ -145,24 +152,34 @@
     }
   }
 
-  // Compute the exclude IDs for each section based on the batch results.
-  // A section's excludeIds = all canonical IDs from ALL sections that
-  // appear BEFORE it in the priority order.
-  // Uses the TMDB numeric ID (externalIds.tmdb) for canonical identity.
+  // ============================================================
+  // Cross-rail exclude list — CANONICAL PRIORITY, NOT VISUAL ORDER.
+  //
+  // Phase 9 critical fix:
+  //   The previous implementation walked the visual UI SECTIONS array,
+  //   which has Comedy rendered BEFORE Crime/Thriller/Sci-Fi. But the
+  //   server dedup loop walks SECTION_PRIORITY (canonical server order),
+  //   where Crime/Thriller/Sci-Fi come BEFORE Comedy.
+  //
+  //   This mismatch caused Show More on genre-comedy to NOT exclude
+  //   items already accepted into genre-crime / genre-thriller /
+  //   genre-scifi (which appear visually below comedy) — allowing the
+  //   same canonical ID to be reintroduced by Show More and breaking
+  //   the cross-rail dedup invariant.
+  //
+  //   Fix: delegate to `canonicalExcludeIds()` from the SHARED module.
+  //   It walks SECTION_PRIORITY (the SAME order the server uses), so
+  //   every section that is canonically higher-priority than the
+  //   current section contributes its IDs to the exclude list —
+  //   REGARDLESS of where the section appears in the visual UI.
+  //
+  //   The visual UI SECTIONS array above is INTENTIONALLY left in its
+  //   current order (Comedy before Crime/Thriller/Sci-Fi) — that order
+  //   matches the spec's "spectacle-first" UX. Only the exclude-list
+  //   computation is now canonical-priority-aware.
+  // ============================================================
   function excludeIdsFor(sectionKey: string): string[] {
-    const ids: string[] = [];
-    for (const section of SECTIONS) {
-      if (section.key === sectionKey) break;
-      const rail = batchRails[section.key];
-      if (rail) {
-        for (const item of rail.items) {
-          // Use TMDB numeric ID when available — matches server canonicalKey()
-          const tmdbId = (item as MediaItem & { externalIds?: { tmdb?: string } }).externalIds?.tmdb;
-          ids.push(`${item.type}:${tmdbId ?? item.id}`);
-        }
-      }
-    }
-    return ids;
+    return canonicalExcludeIds(sectionKey, batchRails);
   }
 
   async function loadAdultModeSettings() {

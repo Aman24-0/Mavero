@@ -716,6 +716,300 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 }
 
 // ============================================================
+// BEHAVIORAL TEST 17: canonicalExcludeIds — Comedy excludes Crime/Thriller/Sci-Fi
+// ============================================================
+// The visual UI order has Comedy BEFORE Crime/Thriller/Sci-Fi, but the
+// canonical server priority has Crime/Thriller/Sci-Fi BEFORE Comedy.
+//
+// excludeIdsFor('genre-comedy') MUST include IDs from genre-action,
+// genre-adventure, genre-crime, genre-thriller, genre-scifi — even
+// though Crime/Thriller/Sci-Fi are visually rendered AFTER Comedy.
+//
+// This is the critical Phase 9 fix: walking SECTION_PRIORITY (canonical
+// server order) instead of the visual SECTIONS array ensures Show More
+// on Comedy cannot reintroduce items already displayed in Crime/Thriller/Sci-Fi.
+{
+  const { canonicalExcludeIds, SECTION_PRIORITY } = await import('../src/lib/shared/discover-batch.ts');
+
+  // Simulated batch result: each genre rail has exactly ONE unique item.
+  // We deliberately place Movie X (tmdb:500) in genre-crime to verify
+  // it appears in genre-comedy's exclude list despite the visual order.
+  const movie500 = { type: 'movie', id: 'movie-500', externalIds: { tmdb: '500' } };
+  const movie501 = { type: 'movie', id: 'movie-501', externalIds: { tmdb: '501' } };
+  const movie502 = { type: 'movie', id: 'movie-502', externalIds: { tmdb: '502' } };
+  const movie503 = { type: 'movie', id: 'movie-503', externalIds: { tmdb: '503' } };
+  const movie504 = { type: 'movie', id: 'movie-504', externalIds: { tmdb: '504' } };
+  const movie505 = { type: 'movie', id: 'movie-505', externalIds: { tmdb: '505' } };
+
+  const batchRails = {
+    'genre-action':   { items: [movie501], page: 1, hasNextPage: false },
+    'genre-adventure':{ items: [movie502], page: 1, hasNextPage: false },
+    'genre-crime':    { items: [movie500], page: 1, hasNextPage: false }, // ← Movie X
+    'genre-thriller': { items: [movie503], page: 1, hasNextPage: false },
+    'genre-scifi':    { items: [movie504], page: 1, hasNextPage: false },
+    'genre-comedy':   { items: [movie505], page: 1, hasNextPage: false },
+  } as any;
+
+  const excludeForComedy = canonicalExcludeIds('genre-comedy', batchRails);
+
+  // The exclude list MUST contain all 5 higher-priority genre rails'
+  // canonical IDs — including genre-crime's movie:500 — even though
+  // genre-crime/genre-thriller/genre-scifi are visually rendered AFTER
+  // genre-comedy.
+  assert.ok(excludeForComedy.includes('movie:501'), '17.1 exclude includes genre-action ID');
+  assert.ok(excludeForComedy.includes('movie:502'), '17.2 exclude includes genre-adventure ID');
+  assert.ok(excludeForComedy.includes('movie:500'), '17.3 exclude includes genre-crime ID (Movie X) — CRITICAL');
+  assert.ok(excludeForComedy.includes('movie:503'), '17.4 exclude includes genre-thriller ID');
+  assert.ok(excludeForComedy.includes('movie:504'), '17.5 exclude includes genre-scifi ID');
+  // The exclude list MUST NOT contain genre-comedy's own item.
+  assert.ok(!excludeForComedy.includes('movie:505'), '17.6 exclude does NOT include genre-comedy own ID');
+
+  // Sanity: verify canonical priority order has crime/thriller/scifi BEFORE comedy.
+  assert.ok(
+    SECTION_PRIORITY.indexOf('genre-crime') < SECTION_PRIORITY.indexOf('genre-comedy'),
+    '17.7 canonical priority: genre-crime BEFORE genre-comedy'
+  );
+  assert.ok(
+    SECTION_PRIORITY.indexOf('genre-thriller') < SECTION_PRIORITY.indexOf('genre-comedy'),
+    '17.8 canonical priority: genre-thriller BEFORE genre-comedy'
+  );
+  assert.ok(
+    SECTION_PRIORITY.indexOf('genre-scifi') < SECTION_PRIORITY.indexOf('genre-comedy'),
+    '17.9 canonical priority: genre-scifi BEFORE genre-comedy'
+  );
+
+  passed += 9;
+  console.log('  ok 17.1 — genre-comedy exclude includes genre-action');
+  console.log('  ok 17.2 — genre-comedy exclude includes genre-adventure');
+  console.log('  ok 17.3 — genre-comedy exclude includes genre-crime (Movie X) — CRITICAL FIX');
+  console.log('  ok 17.4 — genre-comedy exclude includes genre-thriller');
+  console.log('  ok 17.5 — genre-comedy exclude includes genre-scifi');
+  console.log('  ok 17.6 — genre-comedy exclude does NOT include its own ID');
+  console.log('  ok 17.7 — canonical priority: crime BEFORE comedy');
+  console.log('  ok 17.8 — canonical priority: thriller BEFORE comedy');
+  console.log('  ok 17.9 — canonical priority: scifi BEFORE comedy');
+  ok('17. canonicalExcludeIds: genre-comedy excludes Crime/Thriller/Sci-Fi (canonical order, NOT visual)');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 18: canonicalExcludeIds — Drama excludes ALL higher-priority genres
+// ============================================================
+// genre-drama is the 7th genre in canonical priority. Its exclude list
+// MUST include IDs from ALL 6 higher-priority genre rails (action,
+// adventure, crime, thriller, scifi, comedy) — even though in the
+// visual UI order, drama is rendered AFTER comedy but the other
+// 5 genres are also visually before drama.
+//
+// This test specifically verifies that genre-comedy (canonical priority
+// 13, lower than drama's 14) is included in drama's exclude list, even
+// though in the visual UI comedy is rendered at position 11 and drama
+// at position 15 (so they're both visually in the "before drama" set).
+{
+  const { canonicalExcludeIds } = await import('../src/lib/shared/discover-batch.ts');
+
+  const batchRails = {
+    'genre-action':   { items: [{ type: 'movie', id: 'a1', externalIds: { tmdb: '601' } }], page: 1, hasNextPage: false },
+    'genre-adventure':{ items: [{ type: 'movie', id: 'a2', externalIds: { tmdb: '602' } }], page: 1, hasNextPage: false },
+    'genre-crime':    { items: [{ type: 'movie', id: 'a3', externalIds: { tmdb: '603' } }], page: 1, hasNextPage: false },
+    'genre-thriller': { items: [{ type: 'movie', id: 'a4', externalIds: { tmdb: '604' } }], page: 1, hasNextPage: false },
+    'genre-scifi':    { items: [{ type: 'movie', id: 'a5', externalIds: { tmdb: '605' } }], page: 1, hasNextPage: false },
+    'genre-comedy':   { items: [{ type: 'movie', id: 'a6', externalIds: { tmdb: '606' } }], page: 1, hasNextPage: false },
+    'genre-drama':    { items: [{ type: 'movie', id: 'a7', externalIds: { tmdb: '607' } }], page: 1, hasNextPage: false },
+  } as any;
+
+  const excludeForDrama = canonicalExcludeIds('genre-drama', batchRails);
+
+  // Drama's exclude list must contain ALL 6 higher-priority genre IDs.
+  assert.ok(excludeForDrama.includes('movie:601'), '18.1 drama excludes action');
+  assert.ok(excludeForDrama.includes('movie:602'), '18.2 drama excludes adventure');
+  assert.ok(excludeForDrama.includes('movie:603'), '18.3 drama excludes crime');
+  assert.ok(excludeForDrama.includes('movie:604'), '18.4 drama excludes thriller');
+  assert.ok(excludeForDrama.includes('movie:605'), '18.5 drama excludes scifi');
+  assert.ok(excludeForDrama.includes('movie:606'), '18.6 drama excludes comedy');
+  // Drama's own item must NOT be in the exclude list.
+  assert.ok(!excludeForDrama.includes('movie:607'), '18.7 drama does NOT exclude its own ID');
+
+  passed += 7;
+  console.log('  ok 18.1 — drama excludes action');
+  console.log('  ok 18.2 — drama excludes adventure');
+  console.log('  ok 18.3 — drama excludes crime');
+  console.log('  ok 18.4 — drama excludes thriller');
+  console.log('  ok 18.5 — drama excludes scifi');
+  console.log('  ok 18.6 — drama excludes comedy');
+  console.log('  ok 18.7 — drama does NOT exclude its own ID');
+  ok('18. canonicalExcludeIds: genre-drama excludes ALL 6 higher-priority genre rails');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 19: Show More cannot reintroduce higher-priority rail IDs
+// ============================================================
+// End-to-end simulation of the Show More flow:
+//   1. Batch places movie:500 into genre-crime (canonical priority 10).
+//   2. genre-comedy's Show More runs and the server /api/discover/rail
+//      endpoint receives the exclude list (which now correctly includes
+//      movie:500 thanks to the Phase 9 fix).
+//   3. The server's rail endpoint filters out excluded IDs.
+//
+// Simulate the rail endpoint's filter behavior using filterSeen() to
+// verify movie:500 cannot be reintroduced into genre-comedy's rail,
+// even if the TMDB API would naturally return it (because the movie
+// has both Crime and Comedy genres).
+{
+  const { canonicalExcludeIds } = await import('../src/lib/shared/discover-batch.ts');
+  const { filterSeen, canonicalKey } = await import('../src/lib/server/content/discover-dedup.ts');
+
+  // Step 1: Batch result — movie:500 is in genre-crime.
+  const movie500 = { type: 'movie', id: 'movie-500', externalIds: { tmdb: '500' }, tmdbGenreIds: [80, 35] } as any;
+  const batchRails = {
+    'genre-action':   { items: [], page: 1, hasNextPage: false },
+    'genre-adventure':{ items: [], page: 1, hasNextPage: false },
+    'genre-crime':    { items: [movie500], page: 1, hasNextPage: false },
+    'genre-thriller': { items: [], page: 1, hasNextPage: false },
+    'genre-scifi':    { items: [], page: 1, hasNextPage: false },
+    'genre-comedy':   { items: [], page: 1, hasNextPage: true }, // has more pages
+  } as any;
+
+  // Step 2: Compute genre-comedy's exclude list. With the Phase 9 fix,
+  // this list now includes movie:500 from genre-crime.
+  const excludeForComedy = canonicalExcludeIds('genre-comedy', batchRails);
+  assert.ok(excludeForComedy.includes('movie:500'), '19.1 exclude list includes movie:500 from genre-crime');
+
+  // Step 3: Simulate the rail endpoint behavior. The endpoint receives
+  // the exclude list as the `exclude` query param and parses it into a Set.
+  // It then calls filterSeen(result.items, excludeSet) to remove excluded
+  // IDs from the TMDB response.
+  const excludeSet = new Set(excludeForComedy);
+
+  // Simulate TMDB returning movie:500 in genre-comedy's page 2 response
+  // (this happens naturally because the movie has both Crime and Comedy genres).
+  const tmdbResponsePage2 = [movie500, { type: 'movie', id: 'other-1', externalIds: { tmdb: '999' } } as any];
+
+  // The rail endpoint filters out excluded IDs.
+  const filtered = filterSeen(tmdbResponsePage2, excludeSet);
+
+  // movie:500 MUST be filtered out — it's in genre-crime (higher priority).
+  assert.ok(!filtered.some(i => canonicalKey(i) === 'movie:500'), '19.2 movie:500 filtered out of comedy Show More');
+  // The other item (movie:999) MUST remain — it's not in the exclude list.
+  assert.ok(filtered.some(i => canonicalKey(i) === 'movie:999'), '19.3 unrelated item (movie:999) preserved');
+
+  // Verify the cross-rail invariant after Show More:
+  //   movie:500 appears in genre-crime's rail (initial batch)
+  //   movie:500 does NOT appear in genre-comedy's rail (Show More)
+  const allDisplayedIds: string[] = [];
+  for (const [, rail] of Object.entries(batchRails)) {
+    for (const item of (rail as any).items) allDisplayedIds.push(canonicalKey(item));
+  }
+  // After Show More, genre-comedy's rail is `filtered`.
+  for (const item of filtered) allDisplayedIds.push(canonicalKey(item));
+
+  // Count movie:500 across all displayed rails.
+  const count500 = allDisplayedIds.filter(k => k === 'movie:500').length;
+  assert.equal(count500, 1, '19.4 movie:500 appears exactly ONCE across all rails (in genre-crime only)');
+
+  passed += 4;
+  console.log('  ok 19.1 — exclude list includes movie:500 from genre-crime');
+  console.log('  ok 19.2 — movie:500 filtered out of comedy Show More');
+  console.log('  ok 19.3 — unrelated item (movie:999) preserved');
+  console.log('  ok 19.4 — movie:500 appears exactly ONCE across all rails');
+  ok('19. Show More on genre-comedy cannot reintroduce movie:500 from genre-crime');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 20: Cross-rail invariant holds after multiple Show More calls
+// ============================================================
+// Final end-to-end invariant: for every canonical ID, count across all
+// currently displayed Discover rails <= 1. This must remain true after:
+//   - initial page load (batch)
+//   - Show More on any rail
+//   - Show More on a lower-priority rail whose canonical higher-priority
+//     rail appears visually below it (the Phase 9 fix scenario)
+{
+  const { canonicalExcludeIds } = await import('../src/lib/shared/discover-batch.ts');
+  const { filterSeen, canonicalKey } = await import('../src/lib/server/content/discover-dedup.ts');
+
+  // Initial batch: each genre rail has unique items, BUT some items
+  // appear in MULTIPLE genres' TMDB queries (natural — a movie has
+  // multiple genres). The batch dedup correctly places each into ONE rail.
+  const movieX = { type: 'movie', id: 'x', externalIds: { tmdb: '500' }, tmdbGenreIds: [80, 35] } as any; // Crime+Comedy → genre-crime
+  const movieY = { type: 'movie', id: 'y', externalIds: { tmdb: '501' }, tmdbGenreIds: [53, 878] } as any; // Thriller+SciFi → genre-thriller
+  const movieZ = { type: 'movie', id: 'z', externalIds: { tmdb: '502' }, tmdbGenreIds: [35] } as any;     // Comedy only → genre-comedy
+
+  const batchRails = {
+    'genre-action':   { items: [], page: 1, hasNextPage: false },
+    'genre-adventure':{ items: [], page: 1, hasNextPage: false },
+    'genre-crime':    { items: [movieX], page: 1, hasNextPage: false },
+    'genre-thriller': { items: [movieY], page: 1, hasNextPage: false },
+    'genre-scifi':    { items: [], page: 1, hasNextPage: true }, // needs Show More
+    'genre-comedy':   { items: [movieZ], page: 1, hasNextPage: true }, // needs Show More
+    'genre-drama':    { items: [], page: 1, hasNextPage: false },
+  } as any;
+
+  // === Phase 1: Show More on genre-scifi ===
+  // TMDB returns movieY (Thriller+SciFi) on scifi page 2 — but movieY
+  // is already in genre-thriller (higher canonical priority).
+  const excludeForScifi = canonicalExcludeIds('genre-scifi', batchRails);
+  assert.ok(excludeForScifi.includes('movie:501'), '20.1 scifi exclude includes movie:501 from thriller');
+  const scifiShowMoreResponse = [movieY, { type: 'movie', id: 'scifi-only', externalIds: { tmdb: '700' } } as any];
+  const scifiFiltered = filterSeen(scifiShowMoreResponse, new Set(excludeForScifi));
+  assert.ok(!scifiFiltered.some(i => canonicalKey(i) === 'movie:501'), '20.2 movie:501 NOT reintroduced into scifi');
+
+  // === Phase 2: Show More on genre-comedy ===
+  // TMDB returns movieX (Crime+Comedy) on comedy page 2 — but movieX
+  // is already in genre-crime (higher canonical priority, but visually
+  // rendered AFTER comedy in the UI).
+  const excludeForComedy = canonicalExcludeIds('genre-comedy', batchRails);
+  assert.ok(excludeForComedy.includes('movie:500'), '20.3 comedy exclude includes movie:500 from crime (CRITICAL)');
+  const comedyShowMoreResponse = [movieX, { type: 'movie', id: 'comedy-only', externalIds: { tmdb: '701' } } as any];
+  const comedyFiltered = filterSeen(comedyShowMoreResponse, new Set(excludeForComedy));
+  assert.ok(!comedyFiltered.some(i => canonicalKey(i) === 'movie:500'), '20.4 movie:500 NOT reintroduced into comedy');
+
+  // === Final invariant: count every canonical ID across all rails ===
+  // Build the full "displayed" snapshot:
+  //   - initial batch rails
+  //   - scifi Show More additions
+  //   - comedy Show More additions
+  const allDisplayedIds: string[] = [];
+  for (const [, rail] of Object.entries(batchRails)) {
+    for (const item of (rail as any).items) allDisplayedIds.push(canonicalKey(item));
+  }
+  for (const item of scifiFiltered) allDisplayedIds.push(canonicalKey(item));
+  for (const item of comedyFiltered) allDisplayedIds.push(canonicalKey(item));
+
+  // Count duplicates.
+  const counts = new Map<string, number>();
+  for (const key of allDisplayedIds) counts.set(key, (counts.get(key) ?? 0) + 1);
+  let duplicates = 0;
+  for (const [key, count] of counts) {
+    if (count > 1) {
+      duplicates++;
+      console.error(`  DUPLICATE: ${key} appears ${count} times after Show More`);
+    }
+  }
+
+  assert.equal(duplicates, 0, '20.5 zero duplicate canonical IDs after multiple Show More calls');
+
+  // Spot-check: each movie appears exactly once.
+  assert.equal(counts.get('movie:500'), 1, '20.6 movie:500 appears exactly once (in genre-crime)');
+  assert.equal(counts.get('movie:501'), 1, '20.7 movie:501 appears exactly once (in genre-thriller)');
+  assert.equal(counts.get('movie:502'), 1, '20.8 movie:502 appears exactly once (in genre-comedy)');
+  assert.equal(counts.get('movie:700'), 1, '20.9 movie:700 (scifi-only) appears exactly once');
+  assert.equal(counts.get('movie:701'), 1, '20.10 movie:701 (comedy-only) appears exactly once');
+
+  passed += 10;
+  console.log('  ok 20.1 — scifi exclude includes thriller ID');
+  console.log('  ok 20.2 — thriller ID NOT reintroduced into scifi Show More');
+  console.log('  ok 20.3 — comedy exclude includes crime ID (CRITICAL FIX)');
+  console.log('  ok 20.4 — crime ID NOT reintroduced into comedy Show More');
+  console.log('  ok 20.5 — zero duplicate canonical IDs after multiple Show More calls');
+  console.log('  ok 20.6 — movie:500 in genre-crime only');
+  console.log('  ok 20.7 — movie:501 in genre-thriller only');
+  console.log('  ok 20.8 — movie:502 in genre-comedy only');
+  console.log('  ok 20.9 — movie:700 (scifi-only) unique');
+  console.log('  ok 20.10 — movie:701 (comedy-only) unique');
+  ok('20. Cross-rail invariant holds after multiple Show More calls (incl. lower-priority rail with visually-higher-priority IDs)');
+}
+
+// ============================================================
 // SOURCE CONTRACT TESTS — wiring
 // ============================================================
 
@@ -729,6 +1023,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 }
 
 // F2. DiscoverPage wired with batchStatus + page + hasNextPage propagation
+//     + canonical-priority-aware excludeIdsFor
 {
   const discoverPage = read('src/lib/components/DiscoverPage.svelte');
   ok(discoverPage.includes('loadBatchRails'));
@@ -743,8 +1038,104 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(discoverPage.includes('initialHasNextPage={batchRails'));
   ok(discoverPage.includes('initialPage={batchRails'));
   ok(discoverPage.includes('clearRailCache'));
-  ok(discoverPage.includes('externalIds?.tmdb'));
-  ok('F2. DiscoverPage wired with batchStatus + page + hasNextPage propagation');
+  // Phase 9 refactor: `externalIds?.tmdb` now lives in
+  // canonicalExcludeIds() (shared module) — DiscoverPage no longer
+  // inlines the canonical-key computation. The next assertions verify
+  // the delegation is in place.
+  // Phase 9 critical fix: excludeIdsFor() MUST delegate to
+  // canonicalExcludeIds() from the SHARED module — NOT walk the visual
+  // SECTIONS array. The visual UI order has Comedy BEFORE Crime/Thriller/
+  // Sci-Fi, but the canonical server priority has them AFTER — so the
+  // old visual-order walk excluded the wrong set of rails.
+  ok(discoverPage.includes("from '$lib/shared/discover-batch'"), 'F2. imports canonicalExcludeIds from shared module');
+  ok(discoverPage.includes('canonicalExcludeIds'), 'F2. excludeIdsFor delegates to canonicalExcludeIds');
+  ok(discoverPage.includes('return canonicalExcludeIds(sectionKey, batchRails)'), 'F2. excludeIdsFor returns canonicalExcludeIds result');
+  ok('F2. DiscoverPage wired with batchStatus + page + hasNextPage + canonical-priority excludeIdsFor');
+}
+
+// F2b. Visual UI order UNCHANGED — Comedy before Crime/Thriller/Sci-Fi
+//
+// Phase 9 contract: the visual UI order in DiscoverPage.svelte MUST
+// remain as spec'd (Action → Adventure → Comedy → Crime → Thriller →
+// Sci-Fi → Drama → Horror → Romance). Only the exclude-list computation
+// walks canonical priority. This test locks the visual order so a
+// future refactor cannot accidentally reorder the rendered rails.
+{
+  const discoverPage = read('src/lib/components/DiscoverPage.svelte');
+  // Find the SECTIONS array literal and extract the genre entries' order.
+  const sectionsStart = discoverPage.indexOf('const SECTIONS: SectionDef[]');
+  ok(sectionsStart > -1, 'F2b. SECTIONS array present');
+  const sectionsEnd = discoverPage.indexOf('];', sectionsStart);
+  const sectionsBlock = discoverPage.slice(sectionsStart, sectionsEnd);
+  // Extract genre section keys in their visual order.
+  const genreKeys: string[] = [];
+  const genreKeyRegex = /key:\s*'(genre-[a-z]+)'/g;
+  let match: RegExpExecArray | null;
+  while ((match = genreKeyRegex.exec(sectionsBlock)) !== null) {
+    genreKeys.push(match[1]);
+  }
+  // Expected visual order — Comedy BEFORE Crime/Thriller/Sci-Fi.
+  const expectedVisualOrder = [
+    'genre-action',
+    'genre-adventure',
+    'genre-comedy',    // ← visual position 3
+    'genre-crime',     // ← visual position 4 (AFTER comedy)
+    'genre-thriller',  // ← visual position 5 (AFTER comedy)
+    'genre-scifi',     // ← visual position 6 (AFTER comedy)
+    'genre-drama',
+    'genre-horror',
+    'genre-romance',
+  ];
+  assert.deepEqual(genreKeys, expectedVisualOrder, 'F2b. visual UI genre order = Action/Adventure/Comedy/Crime/Thriller/Sci-Fi/Drama/Horror/Romance');
+  ok('F2b. visual UI order UNCHANGED — Comedy before Crime/Thriller/Sci-Fi (spec preserved)');
+}
+
+// F2c. SECTION_PRIORITY in shared module uses canonical server order
+//      (Crime/Thriller/Sci-Fi BEFORE Comedy — opposite of visual)
+{
+  const sharedModule = read('src/lib/shared/discover-batch.ts');
+  // Find SECTION_PRIORITY array literal.
+  const prioStart = sharedModule.indexOf('export const SECTION_PRIORITY');
+  ok(prioStart > -1, 'F2c. SECTION_PRIORITY exported from shared module');
+  const prioEnd = sharedModule.indexOf('];', prioStart);
+  const prioBlock = sharedModule.slice(prioStart, prioEnd);
+  // Extract section keys in canonical order.
+  const canonicalKeys: string[] = [];
+  const keyRegex = /'(genre-[a-z]+|[a-z-]+)'/g;
+  let match: RegExpExecArray | null;
+  while ((match = keyRegex.exec(prioBlock)) !== null) {
+    if (match[1].startsWith('genre-')) canonicalKeys.push(match[1]);
+  }
+  // Expected canonical order — Crime/Thriller/Sci-Fi BEFORE Comedy.
+  const expectedCanonicalOrder = [
+    'genre-action',
+    'genre-adventure',
+    'genre-crime',     // ← canonical position 3 (BEFORE comedy)
+    'genre-thriller',  // ← canonical position 4 (BEFORE comedy)
+    'genre-scifi',     // ← canonical position 5 (BEFORE comedy)
+    'genre-comedy',    // ← canonical position 6 (AFTER crime/thriller/scifi)
+    'genre-drama',
+    'genre-horror',
+    'genre-romance',
+  ];
+  assert.deepEqual(canonicalKeys, expectedCanonicalOrder, 'F2c. canonical SECTION_PRIORITY order = Action/Adventure/Crime/Thriller/Sci-Fi/Comedy/Drama/Horror/Romance');
+  ok('F2c. shared SECTION_PRIORITY = canonical server order (Crime/Thriller/Sci-Fi BEFORE Comedy)');
+}
+
+// F2d. Server discover-dedup re-exports SECTION_PRIORITY from shared
+//      (single source of truth — no duplicated array literal)
+{
+  const dedupModule = read('src/lib/server/content/discover-dedup.ts');
+  ok(
+    dedupModule.includes("export { SECTION_PRIORITY } from '$lib/shared/discover-batch'"),
+    'F2d. server discover-dedup re-exports SECTION_PRIORITY from shared module (single source of truth)'
+  );
+  // Negative assertion: no duplicated SECTION_PRIORITY literal in the server file.
+  ok(
+    !dedupModule.includes("const SECTION_PRIORITY: readonly string[] = ["),
+    'F2d. no duplicated SECTION_PRIORITY literal in server discover-dedup'
+  );
+  ok('F2d. server re-exports shared SECTION_PRIORITY (no duplication)');
 }
 
 // F3. DiscoverSection: $effect wakes on batchStatus change + uses pure decideSectionLoad
