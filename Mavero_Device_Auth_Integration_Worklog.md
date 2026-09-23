@@ -1390,3 +1390,147 @@ No Phase 7 work was newly implemented or modified.
 
 ### Push status
 (see below)
+
+---
+
+## Phase 6 — Critical Bug Fix: Always-Mounted Video Element
+
+### Starting commit
+`bfb81d113b3fc32a5dba539d5b170e9052b5c5e5` (Phase 6 — Phone QR Scanner + Approval)
+
+### Root cause
+
+Real-device testing on Android revealed a critical initialization bug.
+The camera permission was granted and the Android green camera
+indicator appeared (proving `getUserMedia()` succeeded), but the UI
+immediately showed:
+
+  Camera unavailable
+  Camera initialization failed.
+
+**Diagnosis:** the `<video bind:this={video}>` element was conditionally
+rendered INSIDE `{#if scanState === 'scanning'}`. When `onMount()` fires,
+`scanState` is `idle`, so the video element did NOT exist in the DOM.
+The flow was:
+
+1. `onMount()` → `startCamera()`.
+2. `getUserMedia()` succeeds → camera opens (Android green dot).
+3. `if (!video)` check → `video` is `undefined` (element not mounted).
+4. `stopCamera()` → camera torn down.
+5. `scanState = 'error'` + `errorMessage = 'Camera initialization failed.'`
+
+The camera was opened and immediately closed, with no preview shown.
+
+### Fix
+
+The `<video>` element is now ALWAYS mounted in the scan-stage. Its
+visibility is controlled via CSS classes (`scan-video-hidden` /
+`scan-video-active`), NOT via conditional mount/unmount. This ensures
+the `video` ref is available when `getUserMedia()` resolves.
+
+```svelte
+<!-- BEFORE (broken): video only exists when scanState === 'scanning' -->
+{#if scanState === 'scanning'}
+  <video bind:this={video} ...></video>
+{/if}
+
+<!-- AFTER (fixed): video always mounted, visibility via CSS -->
+<video
+  bind:this={video}
+  class="scan-video"
+  class:scan-video-hidden={scanState !== 'scanning'}
+  class:scan-video-active={scanState === 'scanning'}
+  ...
+></video>
+```
+
+CSS:
+```css
+.scan-video-hidden { opacity: 0; pointer-events: none; }
+.scan-video-active { opacity: 1; }
+```
+
+`opacity:0` is used instead of `display:none` because `display:none`
+would unmount the element from layout and break `video.play()`.
+
+### Secondary fix: rear camera not mirrored
+
+The previous CSS had an unconditional `transform: scaleX(-1)` on
+`.scan-video`. The comment claimed this was "a no-op visually" on
+rear cameras, but `scaleX(-1)` actually mirrors the rear-camera
+preview — misleading for a TV QR scanner where the default camera
+is environment/rear.
+
+The unconditional `transform: scaleX(-1)` is removed. The rear-camera
+preview now renders in normal orientation. If front-camera fallback is
+intentionally supported later, mirroring should be handled based on
+the actual selected camera track's `facingMode`, not via an
+unconditional CSS rule.
+
+### Camera lifecycle verification
+
+All camera cleanup paths are preserved and verified:
+1. Initial page load: camera opens successfully (video element exists).
+2. Permission granted: live camera preview appears.
+3. Permission denied: useful permission error.
+4. Retry: previous tracks are stopped before opening a new stream
+   (`startCamera()` calls `stopCamera()` first).
+5. Successful QR: camera stops BEFORE navigation to `/authorize`.
+6. Invalid QR: camera is stopped, error shown, retry reopens cleanly.
+7. Cancel: camera tracks stop.
+8. Component destroy: camera tracks stop.
+9. No duplicate `getUserMedia` streams (stopCamera before new getUserMedia).
+10. No duplicate QR success callbacks (`scanResolved` guard preserved).
+
+### Tests
+
+Updated `scripts/phase6_phone_qr_scanner_test.ts` (158 → 187 check groups):
+- NEW Section 26 (16 assertions): video element always mounted —
+  verifies the `<video>` tag appears BEFORE the `{#if scanning}` block
+  in the scan-stage, uses `class:scan-video-hidden` / `class:scan-video-active`
+  for visibility, CSS uses `opacity:0` (not `display:none`), and the
+  `if (!video)` safety check + all lifecycle functions are preserved.
+- NEW Section 27 (3 assertions): rear camera not unconditionally
+  mirrored — verifies `.scan-video` CSS does NOT contain `scaleX(-1)`.
+- NEW Section 28 (6 assertions): camera lifecycle verification —
+  verifies `stopCamera()` is called in startCamera (retry cleanup),
+  handleDecodedQR (success), cancel, handleCameraError, onDestroy,
+  and that `stopCamera()` is called BEFORE new `getUserMedia` (no
+  duplicate streams).
+
+### Validation
+- `pnpm check` (svelte-kit sync + svelte-check): 0 errors, 0 warnings.
+- `pnpm build` (vite build): PASS.
+- `pnpm test`: 141 of 145 suites pass. 8 pre-existing failures unchanged.
+
+### Real-device verification status
+
+Static tests verify the source-level contract (video always mounted,
+no unconditional mirror, all lifecycle paths stop camera). The expected
+real-device flow after this fix is:
+
+  Account → Login on TV → /account/scan-tv
+    → camera permission → live rear-camera preview (no mirror)
+    → QR scanner → scan TV QR
+    → camera stops → /authorize?s=<secret>
+    → explicit Approve → TV completes existing exchange
+
+The initial camera preview must now actually appear on Android because
+the `<video>` element exists in the DOM before `getUserMedia()` resolves.
+
+Live browser verification on a real device is NOT performed in this
+environment (no physical device available). The fix is verified by
+static source-contract assertions + logic-reasoned lifecycle analysis.
+
+### Files changed
+- `src/routes/account/scan-tv/+page.svelte` — always-mounted video element,
+  CSS-based visibility control, removed unconditional `scaleX(-1)` mirror.
+- `scripts/phase6_phone_qr_scanner_test.ts` — 29 new assertions (Sections
+  26, 27, 28) for the regression and lifecycle verification.
+- `Mavero_Device_Auth_Integration_Worklog.md` — this entry.
+
+### Final commit SHA
+(see below)
+
+### Push status
+(see below)

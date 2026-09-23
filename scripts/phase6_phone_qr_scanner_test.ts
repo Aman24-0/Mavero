@@ -546,4 +546,144 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok('25. no Phase 7 work (scanner does not exchange or claim)');
 }
 
+// ============================================================
+// 26. REGRESSION — VIDEO ELEMENT ALWAYS MOUNTED (CRITICAL FIX)
+// ============================================================
+// Phase 6 critical bug: the <video bind:this={video}> element was
+// previously rendered INSIDE {#if scanState === 'scanning'}. When
+// onMount() fires, scanState is 'idle', so the video element did
+// NOT exist in the DOM. getUserMedia() succeeded (Android green
+// camera dot appeared), but `if (!video)` then tore down the
+// camera, producing a misleading "Camera initialization failed"
+// error.
+//
+// FIX: the <video> element is now ALWAYS mounted. Its visibility
+// is controlled via CSS classes (scan-video-hidden / scan-video-active),
+// NOT via conditional mount/unmount. This ensures the video ref is
+// available when getUserMedia() resolves.
+{
+  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+
+  // The video element is NOT inside an {#if scanState === 'scanning'} block.
+  // Verify by checking that the <video> tag appears BEFORE any {#if} block
+  // in the scan-stage, and that the {#if} blocks only render overlays.
+  const stageStart = scanner.indexOf('<div class="scan-stage"');
+  const stageEnd = scanner.indexOf('</div>\n</div>', stageStart);
+  const stage = scanner.slice(stageStart, stageEnd !== -1 ? stageEnd : undefined);
+
+  // The video element exists in the stage.
+  ok(stage.includes('<video'), '26. scan-stage: <video> element is mounted in the stage');
+
+  // The video element has bind:this={video} — always bound.
+  ok(stage.includes('bind:this={video}'), '26. video: bind:this={video} is present');
+
+  // The video element is NOT inside {#if scanState === 'scanning'}.
+  // Find the {#if scanState === 'scanning'} block and verify the <video>
+  // tag appears BEFORE it (i.e., outside the conditional).
+  const scanningIfIdx = stage.indexOf("{#if scanState === 'scanning'}");
+  const videoIdx = stage.indexOf('<video');
+  ok(videoIdx !== -1, '26. video element found in stage');
+  ok(scanningIfIdx !== -1, '26. {#if scanning} block found in stage');
+  ok(videoIdx < scanningIfIdx, '26. video element is mounted BEFORE the {#if scanning} block (always mounted, not conditionally created)');
+
+  // The video element uses class: directives for visibility (NOT conditional mount).
+  ok(stage.includes('class:scan-video-hidden'), '26. video: uses class:scan-video-hidden for visibility control');
+  ok(stage.includes('class:scan-video-active'), '26. video: uses class:scan-video-active for visibility control');
+  ok(stage.includes("scanState !== 'scanning'"), '26. video: hidden class applied when NOT scanning');
+
+  // The CSS uses opacity (not display:none) to hide the video.
+  ok(scanner.includes('.scan-video-hidden'), '26. CSS: .scan-video-hidden class defined');
+  ok(scanner.includes('opacity: 0'), '26. CSS: hidden video uses opacity:0 (not display:none)');
+  ok(scanner.includes('.scan-video-active'), '26. CSS: .scan-video-active class defined');
+  ok(scanner.includes('opacity: 1'), '26. CSS: active video uses opacity:1');
+
+  // The if (!video) safety check is PRESERVED (not weakened).
+  ok(scanner.includes('if (!video)'), '26. safety check: if (!video) guard preserved');
+
+  // The camera lifecycle functions are preserved.
+  ok(scanner.includes('function startCamera'), '26. lifecycle: startCamera preserved');
+  ok(scanner.includes('function stopCamera'), '26. lifecycle: stopCamera preserved');
+  ok(scanner.includes('track.stop()'), '26. lifecycle: track.stop() preserved');
+  ok(scanner.includes('onDestroy'), '26. lifecycle: onDestroy preserved');
+
+  ok('26. video element always mounted (critical fix verified)');
+}
+
+// ============================================================
+// 27. REAR CAMERA NOT UNCONDITIONALLY MIRRORED
+// ============================================================
+// Phase 6 secondary fix: the previous CSS had `transform: scaleX(-1)`
+// applied unconditionally to .scan-video. The comment claimed this
+// was "a no-op visually" on rear cameras, but scaleX(-1) actually
+// mirrors the rear-camera preview. For a TV QR scanner where the
+// default camera is environment/rear, the mirror is misleading.
+//
+// FIX: the unconditional transform: scaleX(-1) is removed. The
+// rear-camera preview now renders in normal orientation.
+{
+  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+
+  // Extract the .scan-video CSS rule and verify it does NOT have scaleX(-1).
+  const videoRuleStart = scanner.indexOf('.scan-video {');
+  const videoRuleEnd = scanner.indexOf('}', videoRuleStart);
+  const videoRule = scanner.slice(videoRuleStart, videoRuleEnd !== -1 ? videoRuleEnd : undefined);
+
+  ok(!videoRule.includes('scaleX(-1)'), '27. .scan-video CSS: does NOT apply scaleX(-1) mirror');
+  ok(!videoRule.includes('transform: scaleX'), '27. .scan-video CSS: no transform: scaleX mirror');
+
+  // Verify there is no unconditional mirror anywhere in the scanner CSS
+  // targeting the video element.
+  ok(!scanner.match(/\.scan-video[^{]*\{[^}]*scaleX/s), '27. scanner CSS: no scaleX mirror on .scan-video anywhere');
+
+  ok('27. rear camera not unconditionally mirrored');
+}
+
+// ============================================================
+// 28. CAMERA LIFECYCLE VERIFICATION — ALL PATHS STOP CAMERA
+// ============================================================
+// Verify the camera is stopped in every terminal path after the fix.
+{
+  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+
+  // startCamera() calls stopCamera() at the beginning (retry cleanup).
+  const startFn = scanner.slice(
+    scanner.indexOf('async function startCamera'),
+    scanner.indexOf('async function startCamera') + 800
+  );
+  ok(startFn.includes('stopCamera()'), '28. startCamera: calls stopCamera for retry cleanup');
+
+  // handleDecodedQR stops camera before navigating.
+  const decodeFn = scanner.slice(
+    scanner.indexOf('async function handleDecodedQR'),
+    scanner.indexOf('async function handleDecodedQR') + 400
+  );
+  ok(decodeFn.includes('stopCamera()'), '28. handleDecodedQR: stops camera on success');
+
+  // cancel() stops camera.
+  const cancelFn = scanner.slice(
+    scanner.indexOf('function cancel()'),
+    scanner.indexOf('function cancel()') + 200
+  );
+  ok(cancelFn.includes('stopCamera()'), '28. cancel: stops camera');
+
+  // handleCameraError stops camera.
+  const errFn = scanner.slice(
+    scanner.indexOf('function handleCameraError'),
+    scanner.indexOf('function handleCameraError') + 200
+  );
+  ok(errFn.includes('stopCamera()'), '28. handleCameraError: stops camera');
+
+  // onDestroy stops camera.
+  const destroyBlock = scanner.slice(
+    scanner.indexOf('onDestroy('),
+    scanner.indexOf('onDestroy(') + 100
+  );
+  ok(destroyBlock.includes('stopCamera()'), '28. onDestroy: stops camera');
+
+  // No duplicate getUserMedia streams — startCamera always calls stopCamera first.
+  ok(startFn.includes('stopCamera();'), '28. startCamera: stopCamera() called before new getUserMedia (no duplicate streams)');
+
+  ok('28. camera lifecycle: all terminal paths stop camera (retry, success, cancel, error, destroy)');
+}
+
 console.log(`\nPhase 6 phone QR scanner + approval tests passed (${passed} check groups).`);

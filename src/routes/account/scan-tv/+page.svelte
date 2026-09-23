@@ -307,23 +307,48 @@
 
   <!-- Camera + scan frame area -->
   <div class="scan-stage" role="region" aria-label="QR code scanner">
+    <!--
+      Phase 6 fix: the <video> element is ALWAYS mounted — its
+      existence does NOT depend on scanState. The video element
+      must be in the DOM BEFORE startCamera() attempts to attach a
+      MediaStream, because onMount() runs while scanState is 'idle'
+      (before any scanning state), and getUserMedia() resolves
+      asynchronously. If the video element were conditionally
+      rendered inside {#if scanState === 'scanning'}, it would
+      not exist when getUserMedia resolves, and the camera would
+      be opened (Android green dot) but immediately torn down by
+      the `if (!video)` safety check, producing a misleading
+      "Camera initialization failed" error.
+
+      Visibility is controlled via CSS classes on the stage and
+      video element instead of conditional mount/unmount:
+        - .scan-video-hidden: opacity 0 + pointer-events none
+          (used when scanState is idle/starting/error/validating,
+          so the user sees the overlay, not the camera)
+        - .scan-video-active: opacity 1 (used during scanning)
+    -->
+    <video
+      bind:this={video}
+      class="scan-video"
+      class:scan-video-hidden={scanState !== 'scanning'}
+      class:scan-video-active={scanState === 'scanning'}
+      autoplay
+      playsinline
+      muted
+      aria-label="Live camera preview for QR scanning"
+      aria-hidden={scanState !== 'scanning'}
+    ></video>
+
+    <!-- Hidden canvas for frame capture. Never displayed. -->
+    <canvas bind:this={canvas} class="scan-canvas-hidden" aria-hidden="true"></canvas>
+
     {#if scanState === 'idle' || scanState === 'starting'}
       <div class="scan-overlay scan-loading" role="status" aria-live="polite">
         <LoaderCircle size={28} class="spin" />
         <p>Starting camera…</p>
       </div>
     {:else if scanState === 'scanning'}
-      <!-- Camera preview. The video element is the live camera feed.
-           The scan frame overlay is a visual guide for the user. -->
-      <video
-        bind:this={video}
-        class="scan-video"
-        autoplay
-        playsinline
-        muted
-        aria-label="Live camera preview for QR scanning"
-      ></video>
-      <!-- Scan frame guide overlay -->
+      <!-- Scan frame guide overlay — rendered on top of the always-mounted video. -->
       <div class="scan-frame" aria-hidden="true">
         <div class="scan-frame-corner scan-frame-tl"></div>
         <div class="scan-frame-corner scan-frame-tr"></div>
@@ -358,9 +383,6 @@
         </div>
       </div>
     {/if}
-
-    <!-- Hidden canvas for frame capture. Never displayed. -->
-    <canvas bind:this={canvas} class="scan-canvas-hidden" aria-hidden="true"></canvas>
   </div>
 </div>
 
@@ -409,10 +431,34 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    /* Mirror the video on front-facing cameras for natural UX.
-       On rear/environment cameras this is a no-op visually. */
-    transform: scaleX(-1);
+    /* Phase 6 fix: the video element is ALWAYS mounted (so it exists
+       when getUserMedia resolves), and its visibility is controlled
+       by the scan-video-hidden / scan-video-active classes below.
+       Transitions on opacity give a smooth fade between states.
+       Do NOT use display:none — that would unmount the element from
+       the layout and break video.play(). */
+    transition: opacity 220ms ease;
   }
+
+  /* When NOT scanning, hide the camera preview so the user sees the
+     overlay (loading / error / validating) instead. */
+  .scan-video-hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* When scanning, show the camera preview. */
+  .scan-video-active {
+    opacity: 1;
+  }
+
+  /* Phase 6 fix: the rear/environment camera is NOT mirrored.
+     The previous `transform: scaleX(-1)` was applied unconditionally
+     and mirrored the rear-camera preview, which is misleading for a
+     TV QR scanner (the default camera is environment/rear).
+     If front-camera fallback is intentionally supported later,
+     handle mirroring based on the actual selected camera track's
+     facingMode, not via an unconditional CSS rule. */
 
   .scan-overlay {
     position: relative; z-index: 2;
