@@ -68,6 +68,11 @@ export const RATE_LIMITED_MESSAGE = 'Too many requests. Please slow down and try
  *     (each approval calls Supabase generateLink which is rate-limited server-side).
  *   * pairing exchange: unauthenticated TV exchange → 10/min per IP
  *     (each exchange consumes a Supabase OTP).
+ *   * pairing info: unauthenticated metadata lookup → 30/min per IP
+ *     (called once per phone authorization page load; the secret is
+ *     in the POST body, not the URL).
+ *   * pairing cancel: unauthenticated cancellation → 20/min per IP
+ *     (called once per cancel action; low-frequency but abuse-protected).
  */
 export const RATE_LIMIT_RULES = {
   resolve: { limit: 30, windowMs: 60_000 },
@@ -81,6 +86,8 @@ export const RATE_LIMIT_RULES = {
   pairingPoll: { limit: 60, windowMs: 60_000 },
   pairingApprove: { limit: 20, windowMs: 60_000 },
   pairingExchange: { limit: 10, windowMs: 60_000 },
+  pairingInfo: { limit: 30, windowMs: 60_000 },
+  pairingCancel: { limit: 20, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;

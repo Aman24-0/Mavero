@@ -192,16 +192,18 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Validates pathname.
   ok(scanner.includes("url.pathname !== '/authorize'"), '8. scanner: rejects non-/authorize paths');
 
-  // Validates secret exists and has minimum length.
-  ok(scanner.includes("url.searchParams.get('s')"), '8. scanner: extracts secret param');
-  ok(scanner.includes('secret.length < 16'), '8. scanner: rejects short secrets');
+  // Phase 8: the secret is now extracted from the URL FRAGMENT (#s=),
+  // NOT the query string (?s=). The scanner parses the fragment via
+  // URLSearchParams on the hash (minus the leading '#').
+  ok(scanner.includes('fragmentParams'), '8. scanner: parses fragment params');
+  ok(scanner.includes("fragmentParams.get('s')"), '8. scanner: extracts secret from fragment (#s=)');
+  ok(!scanner.includes("url.searchParams.get('s')"), '8. scanner: does NOT extract secret from query (?s=)');
 
-  // Rejects unexpected query params.
-  ok(scanner.includes('allowedParams'), '8. scanner: has allowedParams whitelist');
-  ok(scanner.includes("'s'"), '8. scanner: only allows `s` param');
+  // Phase 8: any query params are rejected (the secret must NOT be in ?s=).
+  ok(scanner.includes("'unexpected-query-params'"), '8. scanner: rejects any query params');
 
-  // Rejects hash fragments.
-  ok(scanner.includes('url.hash'), '8. scanner: rejects hash fragments');
+  // Phase 8: missing fragment is rejected.
+  ok(scanner.includes("'missing-fragment'"), '8. scanner: rejects missing fragment');
 
   ok('8. QR payload validation (origin, path, secret, params, hash)');
 }
@@ -212,8 +214,9 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 {
   const scanner = read('src/routes/account/scan-tv/+page.svelte');
 
-  // On valid QR, navigates to /authorize?s=<secret>.
-  ok(scanner.includes('goto(`/authorize?s='), '9. scanner: navigates to /authorize?s=<secret>');
+  // Phase 8: scanner navigates to /authorize#s=<secret> (fragment, not query).
+  ok(scanner.includes('goto(`/authorize#s='), '9. scanner: navigates to /authorize#s=<secret> (fragment)');
+  ok(!scanner.includes('goto(`/authorize?s='), '9. scanner: does NOT navigate to /authorize?s=<secret> (query)');
   ok(scanner.includes('encodeURIComponent(result.secret)'), '9. scanner: URL-encodes the secret');
 
   // Does NOT navigate to the raw decoded URL — uses the validated secret.
@@ -243,11 +246,14 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Rejects missing/short secret.
   ok(scanner.includes("'missing-or-short-secret'"), '10. scanner: rejects missing/short secret');
 
-  // Rejects unexpected params.
-  ok(scanner.includes("'unexpected-param'"), '10. scanner: rejects unexpected query params');
+  // Phase 8: rejects any query params (secret must be in fragment, not query).
+  ok(scanner.includes("'unexpected-query-params'"), '10. scanner: rejects unexpected query params');
 
-  // Rejects hash fragments.
-  ok(scanner.includes("'unexpected-hash'"), '10. scanner: rejects hash fragments');
+  // Phase 8: rejects unexpected fragment params.
+  ok(scanner.includes("'unexpected-fragment-param'"), '10. scanner: rejects unexpected fragment params');
+
+  // Phase 8: rejects missing fragment.
+  ok(scanner.includes("'missing-fragment'"), '10. scanner: rejects missing fragment');
 
   ok('10. arbitrary external URLs rejected');
 }
@@ -358,7 +364,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const authorize = read('src/routes/authorize/+page.svelte');
 
   // Scanner navigates to /authorize on valid QR.
-  ok(scanner.includes('/authorize?s='), '16. scanner: navigates to /authorize');
+  ok(scanner.includes('/authorize#s='), '16. scanner: navigates to /authorize (fragment)');
 
   // /authorize page still exists with its approval UI.
   ok(authorize.includes('approve'), '16. /authorize: still has approve function');
@@ -390,7 +396,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   // Scanner only navigates to /authorize — the existing page handles
   // device info display + explicit approval.
-  ok(scanner.includes('goto(`/authorize?s='), '17. scanner: only navigates (does not approve)');
+  ok(scanner.includes('goto(`/authorize#s='), '17. scanner: only navigates to /authorize#s= (does not approve)');
 
   ok('17. scanner does NOT directly approve the pairing (explicit approval on /authorize)');
 }

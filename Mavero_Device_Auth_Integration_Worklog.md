@@ -1597,3 +1597,89 @@ NOT performed. Static contract + deterministic simulation only.
 
 ### Push status
 (see below)
+
+---
+
+## Original Roadmap Phase 8 — Security / Rate-limit Hardening
+
+### Starting commit
+`780bc1e47fec48368bca46b5584bcdde9b7fa139` (Phase 7 — QR session handoff)
+
+### Verified credential exposure
+
+The pairing secret was previously placed in the URL query string:
+- `/authorize?s=<secret>` — appeared in server logs, browser history, referrer headers.
+- `GET /api/auth/device-pairing/info?s=<secret>` — same exposure.
+
+The secret is high-entropy (32 bytes) and short-lived (5 minutes), but placing it in a query URL unnecessarily exposes it to logging surfaces.
+
+### Security changes
+
+1. **QR URL uses fragment (#s=) instead of query (?s=):**
+   - `src/routes/api/auth/device-pairing/create/+server.ts`: QR URL changed from `/authorize?s=<secret>` to `/authorize#s=<encodeURIComponent(secret)>`.
+   - A URL fragment is NOT sent to the HTTP server — the secret never appears in server logs, browser history request lines, or referrer headers.
+
+2. **Phone scanner validates fragment:**
+   - `src/routes/account/scan-tv/+page.svelte`: `validateMaveroPairingURL()` now extracts the secret from the URL fragment (`url.hash`), not the query string (`url.searchParams`). Rejects any query params. Rejects missing fragments. Rejects unexpected fragment params.
+
+3. **Authorize page reads secret from fragment:**
+   - `src/routes/authorize/+page.svelte`: reads `window.location.hash` (client-side only) via `URLSearchParams`. Calls `/info` via POST with JSON body `{ secret }` — NOT via GET with `?s=`.
+
+4. **`/info` endpoint converted from GET to POST:**
+   - `src/routes/api/auth/device-pairing/info/+server.ts`: changed from `GET ?s=<secret>` to `POST` with JSON body `{ secret }`. Uses `readJsonBody` with 4KB limit. Secret is in the POST body, not the URL.
+
+### Rate-limit changes
+
+5. **`pairingInfo` rate-limit bucket added:**
+   - `src/lib/server/http/rate-limit.ts`: `pairingInfo: { limit: 30, windowMs: 60_000 }` — 30/min per IP.
+   - Applied to `POST /api/auth/device-pairing/info`.
+
+6. **`pairingCancel` rate-limit bucket added:**
+   - `pairingCancel: { limit: 20, windowMs: 60_000 }` — 20/min per IP.
+   - Applied to `POST /api/auth/device-pairing/cancel`.
+
+7. **Existing rate limits preserved (not weakened):**
+   - `pairingCreate`: 10/min per IP.
+   - `pairingPoll`: 60/min per IP+secret.
+   - `pairingApprove`: 20/min per user.
+   - `pairingExchange`: 10/min per IP.
+
+### Preserved Phase 7 atomic exchange
+
+- `claim_device_pairing` RPC: `SELECT ... FOR UPDATE` → capture OLD `exchange_code` → UPDATE `consumed` + clear `exchange_code` → RETURN OLD. **Unchanged.**
+- Approval race fix: `.select('id')` after `.update()` + affected-rows check. **Unchanged.**
+- Exchange failure semantics: pairing consumed before exchange — intentional. **Unchanged.**
+
+### Files changed
+- `src/lib/server/http/rate-limit.ts` — added `pairingInfo` + `pairingCancel` buckets.
+- `src/routes/api/auth/device-pairing/create/+server.ts` — QR URL uses `#s=` fragment.
+- `src/routes/account/scan-tv/+page.svelte` — scanner validates `#s=` fragment.
+- `src/routes/authorize/+page.svelte` — reads secret from fragment, POST /info.
+- `src/routes/api/auth/device-pairing/info/+server.ts` — converted to POST + rate limit.
+- `src/routes/api/auth/device-pairing/cancel/+server.ts` — added rate limit.
+- `scripts/device_pairing_test.ts` — updated assertions for POST /info + #s= fragment.
+- `scripts/phase6_phone_qr_scanner_test.ts` — updated assertions for fragment validation.
+- `scripts/phase8_security_hardening_test.ts` (NEW) — 123 check groups.
+- `scripts/stremio_player_phase8_test.ts` — test-chain ending updated.
+- `package.json` — test chain appends phase8_security_hardening_test.
+- `Mavero_Device_Auth_Integration_Worklog.md` — this entry.
+
+### Tests
+- NEW `scripts/phase8_security_hardening_test.ts` — 123 check groups: QR fragment, scanner validation, authorize fragment reading, POST /info, rate limits, no-store, no secret logging, Phase 7 preservation.
+- UPDATED `scripts/device_pairing_test.ts` — Section 8 now verifies POST /info + fragment QR URL.
+- UPDATED `scripts/phase6_phone_qr_scanner_test.ts` — Sections 8-10 now verify fragment validation.
+
+### Validation
+- `pnpm check`: 0 errors, 0 warnings.
+- `pnpm build`: PASS.
+- `pnpm test`: 143 of 145 suites pass. 8 pre-existing failures unchanged.
+
+### Known limitations
+- No live browser verification of the fragment-based flow. Static contract + logic-reasoned only.
+- The fragment is client-side only — the SvelteKit server load cannot read it. The authorize page reads `window.location.hash` in `onMount`.
+
+### Final commit SHA
+(see below)
+
+### Push status
+(see below)

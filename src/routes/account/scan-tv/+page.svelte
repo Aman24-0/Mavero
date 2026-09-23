@@ -222,25 +222,38 @@
       return { valid: false, reason: 'wrong-path' };
     }
 
-    // Must have the `s` parameter (the pairing secret).
-    const secret = url.searchParams.get('s');
+    // Phase 8: the secret is in the URL FRAGMENT (#s=<secret>), NOT
+    // the query string (?s=<secret>). A URL fragment is NOT sent to
+    // the HTTP server, so the secret never appears in server logs,
+    // browser history request lines, or referrer headers.
+
+    // Reject if there are ANY query parameters — the secret must NOT
+    // be in the query string, and no other params are expected.
+    if (url.searchParams.toString() !== '') {
+      return { valid: false, reason: 'unexpected-query-params' };
+    }
+
+    // The fragment must be exactly #s=<secret>.
+    // URL.hash includes the leading '#'.
+    const hash = url.hash;
+    if (!hash || hash.length <= 1) {
+      return { valid: false, reason: 'missing-fragment' };
+    }
+
+    // Parse the fragment as if it were a query string: #s=<secret>.
+    // URLSearchParams handles decoding.
+    const fragmentParams = new URLSearchParams(hash.slice(1)); // remove '#'
+    const secret = fragmentParams.get('s');
     if (!secret || secret.length < 16) {
       return { valid: false, reason: 'missing-or-short-secret' };
     }
 
-    // Reject if there are unexpected query parameters. Only `s` is
-    // allowed — no token, user_id, session_id, or other credential
-    // params should be present.
-    const allowedParams = new Set(['s']);
-    for (const key of url.searchParams.keys()) {
-      if (!allowedParams.has(key)) {
-        return { valid: false, reason: 'unexpected-param' };
+    // Reject if there are unexpected fragment parameters. Only `s` is allowed.
+    const allowedFragmentParams = new Set(['s']);
+    for (const key of fragmentParams.keys()) {
+      if (!allowedFragmentParams.has(key)) {
+        return { valid: false, reason: 'unexpected-fragment-param' };
       }
-    }
-
-    // Reject if there's a hash fragment (could carry credential data).
-    if (url.hash && url.hash.length > 1) {
-      return { valid: false, reason: 'unexpected-hash' };
     }
 
     return { valid: true, secret };
@@ -271,9 +284,9 @@
     scanState = 'validating';
     haptic('light');
     // Use the validated secret (NOT the raw decoded data) to build
-    // the navigation URL. This prevents any injection of unexpected
-    // params or hash fragments.
-    void goto(`/authorize?s=${encodeURIComponent(result.secret)}`);
+    // the navigation URL. Phase 8: the secret is placed in the URL
+    // fragment (#s=) so it is NOT sent to the HTTP server.
+    void goto(`/authorize#s=${encodeURIComponent(result.secret)}`);
   }
 
   // ── User actions ───────────────────────────────────────────────

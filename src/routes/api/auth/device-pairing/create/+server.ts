@@ -53,10 +53,13 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // Build the QR URL — the phone will scan this and open the authorize page.
-  // The QR URL points to the Mavero app's authorize page with the secret.
-  // In production this would be the public app URL.
+  // Phase 8: the pairing secret is placed in the URL FRAGMENT (#s=) rather
+  // than the query string (?s=). A URL fragment is NOT sent to the HTTP
+  // server, so the secret never appears in server logs, browser history
+  // request lines, or referrer headers. The phone scanner extracts it
+  // client-side and passes it via POST body to /info and /approve.
   const origin = new URL(request.url).origin;
-  const qrUrl = `${origin}/authorize?s=${pairing.secret}`;
+  const qrUrl = `${origin}/authorize#s=${encodeURIComponent(pairing.secret)}`;
 
   return json({
     ok: true,

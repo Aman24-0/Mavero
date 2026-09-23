@@ -217,20 +217,30 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 // 8. PAIRING INFO API (for phone authorization page)
 // ============================================================
+// Phase 8: /info is now POST (not GET) with JSON body { secret }
+// instead of GET ?s=<secret>. This keeps the secret out of URLs.
 {
   const api = read('src/routes/api/auth/device-pairing/info/+server.ts');
 
-  ok(api.includes('GET'), 'info API: GET handler');
+  ok(api.includes('POST'), 'info API: POST handler (Phase 8: POST with JSON body)');
+  ok(!api.includes('export const GET'), 'info API: no GET handler (Phase 8: converted to POST)');
   ok(api.includes('device_pairing_requests'), 'info API: queries pairing table');
   ok(api.includes('secret_hash'), 'info API: looks up by secret_hash');
   ok(api.includes('deviceName'), 'info API: returns deviceName');
   ok(api.includes('browser'), 'info API: returns browser');
   ok(api.includes('os'), 'info API: returns os');
 
-  // No sensitive data returned.
-  ok(!api.includes('access_token'), 'info API: no access_token');
-  ok(!api.includes('refresh_token'), 'info API: no refresh_token');
-  ok(!api.includes('exchange_code'), 'info API: does NOT return exchange_code');
+  // Phase 8: secret is in POST body, not URL.
+  ok(!api.includes("url.searchParams.get('s')"), 'info API: does NOT read secret from URL query (Phase 8: POST body)');
+  ok(api.includes('readJsonBody'), 'info API: uses readJsonBody (Phase 8: POST JSON body)');
+  ok(api.includes("body.value?.secret"), 'info API: extracts secret from POST body');
+
+  // No sensitive data in JSON response.
+  ok(!api.match(/json\(\s*\{[^}]*access_token/), 'info API: no access_token in JSON response');
+  ok(!api.match(/json\(\s*\{[^}]*refresh_token/), 'info API: no refresh_token in JSON response');
+  // exchange_code may appear in JSDoc comments explaining what is NOT
+  // returned — we check it's NOT in any json() response body.
+  ok(!api.match(/json\(\s*\{[^}]*exchange_code/), 'info API: no exchange_code in JSON response');
   ok(!api.includes('approved_by_user_id'), 'info API: does NOT return approver user ID');
 
   ok('8. pairing info API contract');
@@ -726,9 +736,10 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const createApi = read('src/routes/api/auth/device-pairing/create/+server.ts');
   const service = read('src/lib/server/auth/device-pairing.ts');
 
-  // The QR URL contains only the pairing secret, not tokens.
+  // Phase 8: QR URL uses fragment (#s=) not query (?s=).
   ok(createApi.includes('qrUrl'), 'create API: builds QR URL');
-  ok(createApi.includes('/authorize?s='), 'create API: QR URL points to /authorize with secret param');
+  ok(createApi.includes('/authorize#s='), 'create API: QR URL uses fragment (#s=) not query (?s=)');
+  ok(!createApi.includes('/authorize?s='), 'create API: QR URL does NOT use query (?s=)');
 
   // The secret is a 32-byte random string.
   ok(service.includes('getRandomValues'), 'service: uses crypto.getRandomValues');
@@ -927,7 +938,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(!statusApi.match(/\bexchangeCode\b/), 'K. status API: no exchangeCode reference at all');
 
   // Info API does NOT return exchange_code.
-  ok(!infoApi.includes('exchange_code'), 'K. info API: does NOT select or return exchange_code');
+  ok(!infoApi.match(/json\(\s*\{[^}]*exchange_code/), 'K. info API: does NOT return exchange_code in JSON');
 
   // Exchange API does NOT return exchange_code.
   ok(!exchangeApi.match(/json.*exchange_code/i), 'K. exchange API: does NOT return exchange_code in JSON response');

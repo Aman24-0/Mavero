@@ -1,12 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { Check, Monitor, Smartphone, Tv, Laptop, ShieldCheck, AlertCircle, LoaderCircle } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
   import { haptic } from '$lib/client/haptics';
 
-  let pairingSecret = $state(page.url.searchParams.get('s') ?? '');
+  // Phase 8: the pairing secret is extracted from the URL FRAGMENT
+  // (#s=<secret>), NOT the query string. A URL fragment is NOT sent
+  // to the HTTP server, so the secret never appears in server logs,
+  // browser history request lines, or referrer headers.
+  //
+  // The fragment is only available client-side (in the browser), so
+  // we read it in onMount via window.location.hash — NOT from SvelteKit's
+  // page.url.searchParams (which only reflects the query string).
+  let pairingSecret = $state('');
   let loading = $state(true);
   let deviceName = $state('');
   let browser = $state<string | null>(null);
@@ -19,19 +26,34 @@
   let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   onMount(() => {
-    if (!pairingSecret) {
-      error = 'No pairing request found.';
-      loading = false;
-      return;
+    // Phase 8: extract the secret from the URL fragment (#s=<secret>).
+    // The fragment is client-side only — it is NOT sent to the server.
+    const hash = window.location.hash;
+    if (hash && hash.length > 1) {
+      // Parse the fragment as if it were a query string: #s=<secret>.
+      const fragmentParams = new URLSearchParams(hash.slice(1)); // remove '#'
+      const secret = fragmentParams.get('s');
+      if (secret && secret.length >= 16) {
+        pairingSecret = secret;
+        void loadPairingInfo();
+        return;
+      }
     }
-    void loadPairingInfo();
+    error = 'No pairing request found.';
+    loading = false;
   });
 
   async function loadPairingInfo() {
     loading = true;
     try {
-      const res = await fetch(`/api/auth/device-pairing/info?s=${encodeURIComponent(pairingSecret)}`, {
-        headers: { accept: 'application/json' },
+      // Phase 8: call /info via POST with the secret in the JSON body,
+      // NOT via GET with the secret in the URL query string. This keeps
+      // the secret out of server logs, browser history, and referrer
+      // headers.
+      const res = await fetch('/api/auth/device-pairing/info', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ secret: pairingSecret }),
       });
       const payload = await res.json();
       if (!res.ok || !payload.ok) {

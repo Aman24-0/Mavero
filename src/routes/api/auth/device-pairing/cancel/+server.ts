@@ -4,6 +4,7 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { env as privateEnv } from '$env/dynamic/private';
 import { cancelPairingRequest } from '$lib/server/auth/device-pairing';
 import { readJsonBody } from '$lib/server/http/body';
+import { checkRateLimit } from '$lib/server/http/rate-limit';
 import type { Database } from '$lib/server/supabase/database.types';
 
 const MAX_BODY_BYTES = 4 * 1024;
@@ -24,8 +25,21 @@ type CancelRequest = {
  *     can cancel the request.
  *   - Only 'pending' requests can be cancelled (atomic state transition).
  *   - After cancellation, the request cannot be approved or consumed.
+ *
+ * Phase 8: rate-limited via the `pairingCancel` bucket (20/min per IP).
  */
 export const POST: RequestHandler = async ({ request }) => {
+  // Rate limit by IP — unauthenticated endpoint (the pairing secret
+  // is the authorization, not a Supabase session).
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const rateResult = checkRateLimit('pairingCancel', `pairing:cancel:${ip}`);
+  if (!rateResult.allowed) {
+    return json(
+      { ok: false, message: 'Too many requests. Please try again shortly.' },
+      { status: 429, headers: { 'retry-after': String(rateResult.retryAfterSeconds), 'cache-control': 'no-store' } }
+    );
+  }
+
   const body = await readJsonBody<CancelRequest>(request, MAX_BODY_BYTES);
   if (!body.ok) return json({ ok: false, message: body.message }, { status: body.status, headers: { 'cache-control': 'no-store' } });
 

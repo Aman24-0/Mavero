@@ -2,23 +2,56 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { env as publicEnv } from '$env/dynamic/public';
 import { env as privateEnv } from '$env/dynamic/private';
-import { getPairingBySecret } from '$lib/server/auth/device-pairing';
+import { readJsonBody } from '$lib/server/http/body';
+import { checkRateLimit } from '$lib/server/http/rate-limit';
 import type { Database } from '$lib/server/supabase/database.types';
 
+const MAX_BODY_BYTES = 4 * 1024;
+
+type InfoRequest = {
+  secret?: unknown;
+};
+
 /**
- * GET /api/auth/device-pairing/info?s=<pairing_secret>
+ * POST /api/auth/device-pairing/info
+ *
+ * Phase 8: converted from GET (?s=<secret>) to POST with JSON body
+ * ({ secret }). The pairing secret is a bearer credential — placing it
+ * in the URL query string exposed it to server logs, browser history,
+ * and referrer headers. The POST body is NOT logged by default.
  *
  * Returns safe device metadata for a pairing request. Used by the
- * phone authorization page to display device information before
- * the user approves.
+ * phone authorization page to display device information before the
+ * user approves.
  *
  * No authentication required — the pairing secret is the authorization
  * for reading this specific request's metadata.
+ *
+ * Phase 8: rate-limited via the `pairingInfo` bucket (30/min per IP).
+ *
+ * SECURITY:
+ *   - cache-control: no-store on every response.
+ *   - Never returns exchange_code, access_token, refresh_token, or
+ *     any session material.
+ *   - The secret is NOT logged.
  */
-export const GET: RequestHandler = async ({ url }) => {
-  const secret = url.searchParams.get('s');
-  if (!secret || secret.length < 16) {
-    return json({ ok: false, message: 'Invalid pairing request.' }, { status: 400, headers: { 'cache-control': 'no-store' } });
+export const POST: RequestHandler = async ({ request }) => {
+  // Rate limit by IP — unauthenticated endpoint.
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const rateResult = checkRateLimit('pairingInfo', `pairing:info:${ip}`);
+  if (!rateResult.allowed) {
+    return json(
+      { ok: false, message: 'Too many requests. Please try again shortly.' },
+      { status: 429, headers: { 'retry-after': String(rateResult.retryAfterSeconds), 'cache-control': 'no-store' } }
+    );
+  }
+
+  const body = await readJsonBody<InfoRequest>(request, MAX_BODY_BYTES);
+  if (!body.ok) return json({ ok: false, message: body.message }, { status: body.status, headers: { 'cache-control': 'no-store' } });
+
+  const secret = body.value?.secret;
+  if (typeof secret !== 'string' || secret.length < 16) {
+    return json({ ok: false, message: 'A valid pairing secret is required.' }, { status: 400, headers: { 'cache-control': 'no-store' } });
   }
 
   const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
@@ -32,10 +65,6 @@ export const GET: RequestHandler = async ({ url }) => {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 
-  // Look up the full pairing request for device metadata display.
-  const { createClient: _, ...rest } = { createClient };
-  // Actually, we need to query the pairing request by secret_hash.
-  // Let's add a helper that returns device metadata.
   try {
     const crypto = await import('node:crypto');
     const secretHash = crypto.createHash('sha256').update(secret).digest('hex');
