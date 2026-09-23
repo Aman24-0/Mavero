@@ -59,9 +59,15 @@
 --
 -- PRIVILEGE MODEL:
 --   SECURITY DEFINER + EXECUTE revoked from PUBLIC/anon/authenticated.
---   Only the postgres superuser (Supabase service-role key) can call.
---   Follows the existing convention from
---   20260925000000_phase6_provider_health_atomicity.sql.
+--   EXECUTE is explicitly GRANTED to `service_role` — the Postgres
+--   role used by the Supabase service-role admin client
+--   (PRIVATE_SUPABASE_SERVICE_ROLE_KEY). Supabase's `service_role`
+--   is a separate Postgres role whose RLS bypass does NOT bypass
+--   missing function EXECUTE privileges, so the explicit grant is
+--   REQUIRED for `admin.rpc('claim_device_pairing', ...)` to work
+--   in production. Convention precedent:
+--   20260820000000_phase5_auth_sync.sql grants
+--   `execute on function public.handle_new_user() to service_role`.
 -- ============================================================
 
 create or replace function public.claim_device_pairing(
@@ -122,11 +128,26 @@ end;
 $$;
 
 -- ============================================================
--- Privilege lockdown — follow the existing convention.
+-- Privilege lockdown + service_role grant.
 -- ============================================================
--- Revoke EXECUTE from PUBLIC, authenticated, and anon (defense in
--- depth). No grant to any role — the postgres superuser (Supabase
--- service-role key) bypasses all privilege checks.
+-- EXECUTE is revoked from PUBLIC/anon/authenticated (defense in
+-- depth: closes the default PostgreSQL grant that ALL roles
+-- inherit from, plus the explicit Supabase client roles).
+--
+-- EXECUTE is explicitly GRANTED to `service_role`. The application
+-- calls this RPC via the service-role admin client
+-- (PRIVATE_SUPABASE_SERVICE_ROLE_KEY), and Supabase's permission
+-- model treats `service_role` as a SEPARATE Postgres role whose
+-- RLS bypass does NOT bypass missing function EXECUTE privileges.
+-- Without this explicit grant, the deployed RPC fails with
+-- `permission denied for function claim_device_pairing` and the
+-- exchange endpoint returns HTTP 503.
+--
+-- Convention precedent: 20260820000000_phase5_auth_sync.sql grants
+-- `execute on function public.handle_new_user() to service_role`
+-- after revoking from public/anon/authenticated. We follow the same
+-- pattern here.
 revoke execute on function public.claim_device_pairing(text, timestamptz) from PUBLIC;
 revoke execute on function public.claim_device_pairing(text, timestamptz) from authenticated;
 revoke execute on function public.claim_device_pairing(text, timestamptz) from anon;
+grant execute on function public.claim_device_pairing(text, timestamptz) to service_role;

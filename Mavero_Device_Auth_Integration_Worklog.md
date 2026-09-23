@@ -529,3 +529,171 @@ To https://github.com/Aman24-0/Mavero.git
 - Local `main`: `b5f1b44`
 - Remote `refs/heads/main`: `b5f1b4465928ccaec32bb0c97228bdf42988441f`
 - Working tree: clean. No uncommitted files remain.
+
+---
+
+## Phase 3.2 Second Corrective — service_role EXECUTE Grant
+
+### Audit trigger
+A direct audit of commit `98d12c8` (the first corrective commit that
+introduced the `claim_device_pairing` RPC) found another
+production-blocking issue in the migration.
+
+### The bug
+`supabase/migrations/20260929000000_device_pairing_claim_rpc.sql`
+contained:
+
+```sql
+revoke execute on function public.claim_device_pairing(text, timestamptz) from PUBLIC;
+revoke execute on function public.claim_device_pairing(text, timestamptz) from authenticated;
+revoke execute on function public.claim_device_pairing(text, timestamptz) from anon;
+```
+
+but had NO `grant execute ... to service_role;`. The original
+privilege-model comment incorrectly claimed "the postgres superuser
+(Supabase service-role key) bypasses all privilege checks". This is
+NOT accurate for Supabase's `service_role` Postgres role.
+
+### Why service_role needs an explicit EXECUTE grant
+Supabase's `service_role` is a separate Postgres role used by the
+service-role admin client (`PRIVATE_SUPABASE_SERVICE_ROLE_KEY`).
+Its documented behavior is:
+- It **bypasses Row Level Security (RLS)** policies.
+- It does **NOT bypass function EXECUTE privilege checks**.
+
+PostgreSQL functions (including PL/pgSQL functions invoked via
+PostgREST's `/rpc/...` endpoint or the supabase-js `.rpc(...)` method)
+require explicit `EXECUTE` privilege for the calling role. Without
+the grant, the deployed RPC fails with:
+
+```
+permission denied for function claim_device_pairing
+```
+
+and the `/api/auth/device-pairing/exchange` endpoint returns HTTP 503
+on every call — every TV login would fail in production.
+
+### Convention precedent
+The existing migration `20260820000000_phase5_auth_sync.sql:131`
+uses the correct pattern:
+
+```sql
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+grant execute on function public.handle_new_user() to service_role;
+```
+
+We follow this exact pattern.
+
+### Chosen fix
+Add the explicit grant to the migration:
+
+```sql
+revoke execute on function public.claim_device_pairing(text, timestamptz) from PUBLIC;
+revoke execute on function public.claim_device_pairing(text, timestamptz) from authenticated;
+revoke execute on function public.claim_device_pairing(text, timestamptz) from anon;
+grant execute on function public.claim_device_pairing(text, timestamptz) to service_role;
+```
+
+The header comment block of the migration is also updated to
+document the corrected privilege model.
+
+### Security properties preserved
+- `SECURITY DEFINER` — function runs with the owner's privileges.
+- `set search_path = public` — pinned search_path prevents
+  schema hijacking.
+- Schema-qualified table references
+  (`public.device_pairing_requests`).
+- No `EXECUTE` for `PUBLIC`, `anon`, or `authenticated` (defense
+  in depth — closes the default PostgreSQL grant that ALL roles
+  inherit from, plus the explicit Supabase client roles).
+- `service_role` is the ONLY Data API role granted EXECUTE.
+- `exchange_code` remains inaccessible to clients (RPC returns it
+  only to the winning service-role caller, never serialized to
+  JSON).
+- Pairing secret remains inaccessible to logs.
+- RPC still performs the entire claim atomically
+  (SELECT FOR UPDATE → capture OLD → UPDATE → RETURN OLD).
+
+### Tests updated
+`scripts/device_pairing_test.ts` Section 9b-1 was expanded to:
+- verify `revoke execute ... from PUBLIC` exists.
+- verify `revoke execute ... from authenticated` exists.
+- verify `revoke execute ... from anon` exists.
+- verify `grant execute ... to service_role` exists.
+- verify NO grant to `anon`, `authenticated`, or `public` exists.
+- verify `set search_path = public` is present.
+- verify schema-qualified table references in both SELECT and UPDATE.
+
+Total check groups: 336 → 343.
+
+### pnpm check
+`svelte-check found 0 errors and 0 warnings` — PASS.
+
+### pnpm test
+- `scripts/device_pairing_test.ts` — 343 check groups pass.
+- `scripts/device_session_registry_test.ts` — 120 groups pass
+  (no regression).
+- `scripts/account_sessions_test.ts` — 81 groups pass
+  (no regression).
+- The 8 pre-existing unrelated test failures documented in the
+  previous worklog entry remain unchanged (require live Supabase
+  credentials or test Phase 5/6/7 features outside the device-
+  pairing surface).
+
+### pnpm build
+`vite build` succeeds — PASS.
+
+### Runtime DB verification status
+NOT performed — no live Supabase/Postgres credentials available
+in this environment. The privilege grant is verified by:
+1. Static source-contract assertion (the migration contains the
+   exact `grant execute ... to service_role` statement).
+2. Static assertion that no grant to anon/authenticated/public
+   exists.
+3. Cross-reference with the existing convention in
+   `20260820000000_phase5_auth_sync.sql` which uses the same
+   pattern and is known to work in the production deployment.
+
+A live integration test against a real Postgres instance would be
+required to fully verify runtime behavior — this remains a
+documented limitation.
+
+### Corrective commit SHA
+The corrective commit is the HEAD of `origin/main` as of this push,
+with commit message:
+
+```
+fix(auth): grant service role access to pairing claim RPC
+```
+
+(The exact SHA is intentionally not hardcoded in this worklog
+narrative to avoid a self-referential amend loop — `git log -1
+origin/main` is the canonical source of truth.)
+
+Stacked on top of `98d12c8`. No history rewrite of `98d12c8` or
+any prior commit. One logical corrective commit on top of `98d12c8`.
+
+Files changed (3):
+- `supabase/migrations/20260929000000_device_pairing_claim_rpc.sql`
+  (added `grant execute ... to service_role`; updated header comment
+  to document the corrected privilege model)
+- `scripts/device_pairing_test.ts`
+  (expanded Section 9b-1 to verify the service_role grant + all
+  revokes + search_path pinning + schema-qualified references)
+- `Mavero_Device_Auth_Integration_Worklog.md` (this entry)
+
+### Push status
+Pushed to `origin/main` (force-push was required because the commit
+was amended to fold in its own worklog-finalization text — keeping
+the single-corrective-commit requirement. The Phase 3.2 commit
+`98d12c8` and all earlier commits were NOT rewritten.)
+
+```
+$ git push --force-with-lease origin main
+To https://github.com/Aman24-0/Mavero.git
+   8fa9abc...<HEAD> main -> main (forced update)
+```
+
+- Working tree: clean. No uncommitted files remain.
+- Exactly ONE logical commit added after `98d12c8`.
+- Run `git log -1 origin/main` to see the final SHA.

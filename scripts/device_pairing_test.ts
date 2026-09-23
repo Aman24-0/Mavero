@@ -379,7 +379,25 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(migration.includes('create or replace function public.claim_device_pairing'), '9b-1. RPC function defined');
   ok(migration.includes('language plpgsql'), '9b-1. RPC is PL/pgSQL');
   ok(migration.includes('security definer'), '9b-1. RPC is SECURITY DEFINER');
-  ok(migration.includes('revoke execute on function public.claim_device_pairing'), '9b-1. RPC EXECUTE revoked from PUBLIC/anon/authenticated');
+
+  // 1a. Privilege model: revokes from PUBLIC/anon/authenticated,
+  //     explicit GRANT to service_role (the role used by the
+  //     service-role admin client — RLS bypass does NOT bypass
+  //     missing function EXECUTE privileges).
+  ok(migration.includes('revoke execute on function public.claim_device_pairing(text, timestamptz) from PUBLIC'), '9b-1a. RPC: EXECUTE revoked from PUBLIC');
+  ok(migration.includes('revoke execute on function public.claim_device_pairing(text, timestamptz) from authenticated'), '9b-1a. RPC: EXECUTE revoked from authenticated');
+  ok(migration.includes('revoke execute on function public.claim_device_pairing(text, timestamptz) from anon'), '9b-1a. RPC: EXECUTE revoked from anon');
+  ok(migration.includes('grant execute on function public.claim_device_pairing(text, timestamptz) to service_role'), '9b-1a. RPC: EXECUTE granted to service_role (REQUIRED — service_role RLS bypass does NOT bypass function EXECUTE privilege)');
+
+  // 1b. No grants to anon/authenticated/PUBLIC (defense in depth).
+  ok(!migration.match(/grant\s+execute[^;]*\bto\s+(anon|authenticated|public)\b/i), '9b-1b. RPC: NO grant to anon/authenticated/public');
+
+  // 1c. RPC pins search_path (defense against search_path hijacking).
+  ok(migration.includes('set search_path = public'), '9b-1c. RPC: search_path pinned to public');
+
+  // 1d. RPC uses schema-qualified table references.
+  ok(migration.includes('from public.device_pairing_requests'), '9b-1d. RPC: SELECT uses schema-qualified table name');
+  ok(migration.includes('update public.device_pairing_requests'), '9b-1d. RPC: UPDATE uses schema-qualified table name');
 
   // 2. RPC uses SELECT ... FOR UPDATE to capture OLD exchange_code.
   ok(migration.includes('select id, exchange_code into v_row'), '9b-2. RPC captures OLD exchange_code into v_row');
