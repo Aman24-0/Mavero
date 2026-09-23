@@ -118,7 +118,12 @@
   // in priority order with a global seen set. The results are distributed
   // to each DiscoverSection as initialItems, and the excludeIds (all
   // canonical IDs from higher-priority rails) are passed for Show More.
-  let batchRails = $state<Record<string, { items: MediaItem[]; hasNextPage: boolean } | undefined>>({});
+  // Phase 9: each rail result now also includes `page` (the ACTUAL last
+  // fetched page the batch consumed) and `hasNextPage` — both passed
+  // through to DiscoverSection so Show More resumes from the correct
+  // continuation page and the hasNextPage flag is authoritative (not
+  // inferred from item count).
+  let batchRails = $state<Record<string, { items: MediaItem[]; page: number; hasNextPage: boolean } | undefined>>({});
   let batchStatus = $state<'pending' | 'success' | 'failed'>('pending');
 
   async function loadBatchRails() {
@@ -561,8 +566,10 @@
           providers={sectionDef.providerFilter ? ottProviders : []}
           viewAllHref={sectionDef.viewAllHref ?? ''}
           initialItems={batchRails[sectionDef.key]?.items ?? []}
+          initialHasNextPage={batchRails[sectionDef.key]?.hasNextPage ?? false}
+          initialPage={batchRails[sectionDef.key]?.page ?? 1}
           excludeIds={excludeIdsFor(sectionDef.key)}
-          batchPending={batchStatus === 'pending'}
+          batchStatus={batchStatus}
         />
       {/each}
       <!-- Phase 8: Indian Adult Shows — the LAST content rail before the

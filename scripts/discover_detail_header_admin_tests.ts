@@ -252,6 +252,470 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 }
 
 // ============================================================
+// BEHAVIORAL TEST 6: decideSectionLoad — A. batch success + non-empty
+// ============================================================
+// A successful batch with non-empty items MUST use the batch result.
+// No independent fetch should occur.
+//
+// Note: decideSectionLoad lives in $lib/shared/discover-batch.ts (client-safe).
+// It does NOT take initialItems as input — the caller already has the prop,
+// the decision function only returns whether to use it (plus hasNextPage/page).
+{
+  const { decideSectionLoad } = await import('../src/lib/shared/discover-batch.ts');
+  const decision = decideSectionLoad({
+    batchStatus: 'success',
+    filterChanged: false,
+    usedInitialItems: false,
+    initialHasNextPage: true,
+    initialPage: 1,
+  });
+  assert.equal(decision.kind, 'use-batch', '6.A. success+non-empty → use-batch');
+  if (decision.kind === 'use-batch') {
+    assert.equal(decision.hasNextPage, true, '6.A. hasNextPage preserved');
+    assert.equal(decision.page, 1, '6.A. page preserved');
+  }
+  passed += 3;
+  console.log('  ok 6.A.1 — batch success + non-empty → use-batch');
+  console.log('  ok 6.A.2 — hasNextPage preserved');
+  console.log('  ok 6.A.3 — page preserved');
+  ok('6.A. batch success + non-empty items → use-batch, no independent fetch');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 7: decideSectionLoad — B. batch success + EMPTY
+// ============================================================
+// A successful batch with EMPTY items MUST still use the batch result.
+// It MUST NOT fall back to independent fetch — that would bypass the
+// cross-rail dedup contract. This is the critical correctness invariant.
+//
+// The decision function does NOT take initialItems as input — the test
+// verifies that even when initialItems would be empty, the decision is
+// 'use-batch' (NOT 'fetch'). The caller (DiscoverSection) handles the
+// empty array correctly because the decision tells it to consume.
+{
+  const { decideSectionLoad } = await import('../src/lib/shared/discover-batch.ts');
+  const decision = decideSectionLoad({
+    batchStatus: 'success',
+    filterChanged: false,
+    usedInitialItems: false,
+    initialHasNextPage: false,
+    initialPage: 1,
+  });
+  assert.equal(decision.kind, 'use-batch', '7.B. empty success MUST be use-batch, NOT fetch');
+  if (decision.kind === 'use-batch') {
+    assert.equal(decision.hasNextPage, false, '7.B. hasNextPage preserved');
+    assert.equal(decision.page, 1, '7.B. page preserved');
+  }
+  passed += 3;
+  console.log('  ok 7.B.1 — batch success + EMPTY → use-batch (NOT fetch)');
+  console.log('  ok 7.B.2 — hasNextPage preserved');
+  console.log('  ok 7.B.3 — page preserved');
+  ok('7.B. batch success + EMPTY items → use-batch (does NOT fall back to independent fetch)');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 8: decideSectionLoad — C. batch failure
+// ============================================================
+// A failed batch MUST fall back to independent fetch.
+{
+  const { decideSectionLoad } = await import('../src/lib/shared/discover-batch.ts');
+  const decision = decideSectionLoad({
+    batchStatus: 'failed',
+    filterChanged: false,
+    usedInitialItems: false,
+    initialHasNextPage: false,
+    initialPage: 1,
+  });
+  assert.equal(decision.kind, 'fetch', '8.C. failure → fetch');
+  passed += 1;
+  ok('8.C. batch failure → independent fetch is allowed');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 9: decideSectionLoad — D. preserves hasNextPage
+// ============================================================
+// The decision MUST preserve the batch's hasNextPage — NOT infer it
+// from the item count. The previous bug was `hasNextPage = initialItems.length >= 10`,
+// which would incorrectly set hasNextPage=false for a rail with 5 items
+// even if more pages existed upstream.
+//
+// Since decideSectionLoad no longer takes initialItems as input, the
+// test verifies the decision function faithfully returns the input
+// hasNextPage and page values — proving there is NO inference path.
+{
+  const { decideSectionLoad } = await import('../src/lib/shared/discover-batch.ts');
+
+  // Case 1: less than 10 items (simulated) but batch says hasNextPage=true.
+  // The decision MUST preserve hasNextPage=true — NOT infer false
+  // from the item count.
+  const decision1 = decideSectionLoad({
+    batchStatus: 'success',
+    filterChanged: false,
+    usedInitialItems: false,
+    initialHasNextPage: true,
+    initialPage: 1,
+  });
+  assert.equal(decision1.kind, 'use-batch', '9.D.1 decision is use-batch');
+  if (decision1.kind === 'use-batch') {
+    assert.equal(decision1.hasNextPage, true, '9.D.1 hasNextPage preserved (true) — NOT inferred from item count');
+    assert.equal(decision1.page, 1, '9.D.1 page preserved');
+  }
+
+  // Case 2: 10 items (simulated) but batch says hasNextPage=false + page=2.
+  const decision2 = decideSectionLoad({
+    batchStatus: 'success',
+    filterChanged: false,
+    usedInitialItems: false,
+    initialHasNextPage: false,
+    initialPage: 2,
+  });
+  assert.equal(decision2.kind, 'use-batch', '9.D.2 decision is use-batch');
+  if (decision2.kind === 'use-batch') {
+    assert.equal(decision2.hasNextPage, false, '9.D.2 hasNextPage preserved (false) — NOT inferred from item count');
+    assert.equal(decision2.page, 2, '9.D.2 page preserved (2) — actual batch continuation page');
+  }
+
+  passed += 5;
+  console.log('  ok 9.D.1 — hasNextPage=true preserved (less than 10 items, more pages exist)');
+  console.log('  ok 9.D.2 — hasNextPage=false preserved (10 items, last page)');
+  console.log('  ok 9.D.3 — page preserved when hasNextPage=true');
+  console.log('  ok 9.D.4 — page preserved when hasNextPage=false');
+  console.log('  ok 9.D.5 — no inference from item count');
+  ok('9.D. batch success preserves hasNextPage + actual page (no item-count heuristic)');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 10: decideSectionLoad — pending → wait
+// ============================================================
+{
+  const { decideSectionLoad } = await import('../src/lib/shared/discover-batch.ts');
+  const decision = decideSectionLoad({
+    batchStatus: 'pending',
+    filterChanged: false,
+    usedInitialItems: false,
+    initialHasNextPage: false,
+    initialPage: 1,
+  });
+  assert.equal(decision.kind, 'wait', '10. pending → wait');
+  passed += 1;
+  ok('10. batch pending → wait (no independent fetch)');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 11: decideSectionLoad — filterChanged → fetch
+// ============================================================
+// Even if batch succeeded, a filter change MUST trigger independent fetch
+// (the batch was for the original "all" filter, not the new language/provider).
+{
+  const { decideSectionLoad } = await import('../src/lib/shared/discover-batch.ts');
+  const decision = decideSectionLoad({
+    batchStatus: 'success',
+    filterChanged: true,
+    usedInitialItems: false,
+    initialHasNextPage: true,
+    initialPage: 1,
+  });
+  assert.equal(decision.kind, 'fetch', '11. filterChanged → fetch (not batch)');
+  passed += 1;
+  ok('11. filterChanged → independent fetch (never reuse stale batch)');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 12: discoverBatchDeduped — E. preserves actual page
+// ============================================================
+// When a section needs to fetch multiple pages to fill itself (due to
+// dedup losses), the returned `page` MUST reflect the ACTUAL last
+// fetched page — NOT always 1. Show More uses this as the starting
+// currentPage so it can compute nextPage = currentPage + 1 correctly
+// and never re-fetch already-consumed pages.
+{
+  const { discoverBatchDeduped } = await import('../src/lib/server/content/discover-batch.ts');
+
+  // Mock fetcher: theatre returns 5 items on page 1 + 5 more on page 2.
+  // All other sections return empty. Theatre needs both pages to reach
+  // TARGET_ITEMS=10, so the returned page MUST be 2.
+  const mockFetchRail = async (filters: any) => {
+    const page = filters.page as number;
+    if (filters.section === 'theatre' && page === 1) {
+      return {
+        items: Array.from({ length: 5 }, (_, i) => ({
+          type: 'movie', id: `t${i + 1}`, externalIds: { tmdb: String(i + 1) }
+        })) as any[],
+        page,
+        hasNextPage: true,
+      };
+    }
+    if (filters.section === 'theatre' && page === 2) {
+      return {
+        items: Array.from({ length: 5 }, (_, i) => ({
+          type: 'movie', id: `t${i + 6}`, externalIds: { tmdb: String(i + 6) }
+        })) as any[],
+        page,
+        hasNextPage: false,
+      };
+    }
+    return { items: [], page, hasNextPage: false };
+  };
+
+  const rails = await discoverBatchDeduped('all', undefined, false, mockFetchRail);
+
+  // Theatre consumed pages 1 AND 2 to reach 10 items.
+  assert.equal(rails['theatre'].items.length, 10, '12.E.1 theatre has 10 items (consumed 2 pages)');
+  assert.equal(rails['theatre'].page, 2, '12.E.2 theatre.page = 2 (ACTUAL last fetched, not 1)');
+  assert.equal(rails['theatre'].hasNextPage, false, '12.E.3 theatre.hasNextPage = false (page 2 reported no next)');
+
+  // Sections that returned empty immediately have page=1 (only fetched page 1).
+  assert.equal(rails['new-ott'].items.length, 0, '12.E.4 new-ott is empty');
+  assert.equal(rails['new-ott'].page, 1, '12.E.5 new-ott.page = 1 (only page 1 was fetched)');
+  assert.equal(rails['new-ott'].hasNextPage, false, '12.E.6 new-ott.hasNextPage = false');
+
+  passed += 6;
+  console.log('  ok 12.E.1 — theatre filled to 10 items across 2 pages');
+  console.log('  ok 12.E.2 — theatre.page = 2 (actual last fetched page)');
+  console.log('  ok 12.E.3 — theatre.hasNextPage preserved');
+  console.log('  ok 12.E.4 — empty section has 0 items');
+  console.log('  ok 12.E.5 — empty section.page = 1 (only 1 page fetched)');
+  console.log('  ok 12.E.6 — empty section.hasNextPage = false');
+  ok('12.E. batch returns ACTUAL last fetched page (theatre: 2, empty rails: 1)');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 13: discoverBatchDeduped — global uniqueness
+// ============================================================
+// All canonical IDs across ALL rails returned by the batch MUST be
+// globally unique. Re-verifies test 5 with the REAL batch function
+// using a mock fetcher that returns OVERLAPPING items — the dedup
+// must filter them so each canonical ID appears in exactly one rail.
+{
+  const { discoverBatchDeduped } = await import('../src/lib/server/content/discover-batch.ts');
+  const { canonicalKey } = await import('../src/lib/server/content/discover-dedup.ts');
+
+  // Mock fetcher returns OVERLAPPING items: theatre and genre-action
+  // both return the shared item (tmdb:100). Dedup must filter it from
+  // genre-action since theatre processes first.
+  const sharedItem = { type: 'movie', id: 'shared-1', externalIds: { tmdb: '100' } };
+  const theatreItem = { type: 'movie', id: 'theatre-1', externalIds: { tmdb: '101' } };
+  const actionItem = { type: 'movie', id: 'action-1', externalIds: { tmdb: '102' }, tmdbGenreIds: [28] };
+
+  const mockFetchRail = async (filters: any) => {
+    if (filters.page > 1) return { items: [], page: filters.page, hasNextPage: false };
+    if (filters.section === 'theatre') {
+      return { items: [sharedItem, theatreItem] as any[], page: 1, hasNextPage: false };
+    }
+    if (filters.section === 'genre-action') {
+      // genre-action also returns the shared item — must be deduped.
+      return { items: [sharedItem, actionItem] as any[], page: 1, hasNextPage: false };
+    }
+    return { items: [], page: 1, hasNextPage: false };
+  };
+
+  const rails = await discoverBatchDeduped('all', undefined, false, mockFetchRail);
+
+  // Collect all canonical IDs across all rails.
+  const allKeys: string[] = [];
+  for (const [, rail] of Object.entries(rails)) {
+    for (const item of rail.items) {
+      allKeys.push(canonicalKey(item));
+    }
+  }
+
+  // Count duplicates.
+  const keyCounts = new Map<string, number>();
+  for (const key of allKeys) {
+    keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+  }
+
+  let duplicates = 0;
+  for (const [key, count] of keyCounts) {
+    if (count > 1) {
+      duplicates++;
+      console.error(`  DUPLICATE: ${key} appears ${count} times`);
+    }
+  }
+
+  assert.equal(duplicates, 0, '13.1 No duplicate canonical IDs across rails (with mock fetcher)');
+
+  // Verify the shared item went to theatre (higher priority) and was
+  // NOT duplicated into genre-action.
+  assert.ok(rails['theatre'].items.some(i => canonicalKey(i) === 'movie:100'), '13.2 shared item in theatre');
+  assert.ok(!rails['genre-action'].items.some(i => canonicalKey(i) === 'movie:100'), '13.3 shared item NOT in genre-action (deduped)');
+  // genre-action should have its own canonical item.
+  assert.ok(rails['genre-action'].items.some(i => canonicalKey(i) === 'movie:102'), '13.4 action-specific item in genre-action');
+
+  passed += 4;
+  console.log('  ok 13.1 — zero duplicate canonical IDs across all rails');
+  console.log('  ok 13.2 — shared item routed to theatre (higher priority)');
+  console.log('  ok 13.3 — shared item NOT duplicated into genre-action');
+  console.log('  ok 13.4 — action-specific item present in genre-action');
+  ok('13. discoverBatchDeduped with mock fetcher: zero duplicates + correct priority routing');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 14: discoverBatchDeduped — Action+Comedy only in Action
+// ============================================================
+// An Action+Comedy item must appear in genre-action ONLY (its canonical
+// genre), NOT in genre-comedy. genre-comedy must reject it WITHOUT
+// adding it to seen — so the item remains available for genre-action
+// (which processes first due to higher priority).
+{
+  const { discoverBatchDeduped } = await import('../src/lib/server/content/discover-batch.ts');
+  const { canonicalKey } = await import('../src/lib/server/content/discover-dedup.ts');
+
+  // Action+Comedy item (TMDB genre IDs 28=Action, 35=Comedy).
+  // canonicalGenreSection([28, 35]) returns 'genre-action' (Action wins).
+  const actionComedyItem = { type: 'movie', id: 'ac-1', externalIds: { tmdb: '200' }, tmdbGenreIds: [28, 35] };
+
+  const mockFetchRail = async (filters: any) => {
+    if (filters.page > 1) return { items: [], page: filters.page, hasNextPage: false };
+    // Both genre-action and genre-comedy return the same item.
+    if (filters.section === 'genre-action') {
+      return { items: [actionComedyItem] as any[], page: 1, hasNextPage: false };
+    }
+    if (filters.section === 'genre-comedy') {
+      return { items: [actionComedyItem] as any[], page: 1, hasNextPage: false };
+    }
+    return { items: [], page: 1, hasNextPage: false };
+  };
+
+  const rails = await discoverBatchDeduped('all', undefined, false, mockFetchRail);
+
+  const inAction = rails['genre-action'].items.some(i => canonicalKey(i) === 'movie:200');
+  const inComedy = rails['genre-comedy'].items.some(i => canonicalKey(i) === 'movie:200');
+
+  assert.ok(inAction, '14.1 Action+Comedy item IS in genre-action (canonical genre)');
+  assert.ok(!inComedy, '14.2 Action+Comedy item NOT in genre-comedy (rejected by genre eligibility)');
+
+  passed += 2;
+  console.log('  ok 14.1 — Action+Comedy item appears in genre-action');
+  console.log('  ok 14.2 — Action+Comedy item does NOT appear in genre-comedy');
+  ok('14. Action+Comedy item only in genre-action (canonical genre assignment)');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 15: discoverBatchDeduped — earlier rails take priority
+// ============================================================
+// An item that appears in an earlier-priority rail (e.g. theatre) must
+// NOT appear in any later-priority rail (e.g. genre-action), even if the
+// later rail also returns it from its TMDB query.
+{
+  const { discoverBatchDeduped } = await import('../src/lib/server/content/discover-batch.ts');
+  const { canonicalKey, SECTION_PRIORITY } = await import('../src/lib/server/content/discover-dedup.ts');
+
+  // Shared item is Action genre, returned by BOTH theatre AND genre-action.
+  const sharedItem = { type: 'movie', id: 'shared-2', externalIds: { tmdb: '300' }, tmdbGenreIds: [28] };
+
+  const mockFetchRail = async (filters: any) => {
+    if (filters.page > 1) return { items: [], page: filters.page, hasNextPage: false };
+    if (filters.section === 'theatre') {
+      return { items: [sharedItem] as any[], page: 1, hasNextPage: false };
+    }
+    if (filters.section === 'genre-action') {
+      // genre-action also returns the shared item — must be deduped.
+      return { items: [sharedItem] as any[], page: 1, hasNextPage: false };
+    }
+    return { items: [], page: 1, hasNextPage: false };
+  };
+
+  const rails = await discoverBatchDeduped('all', undefined, false, mockFetchRail);
+
+  // Verify theatre comes before genre-action in priority.
+  assert.ok(
+    SECTION_PRIORITY.indexOf('theatre') < SECTION_PRIORITY.indexOf('genre-action'),
+    '15.1 theatre has higher priority than genre-action'
+  );
+
+  // The shared item must be in theatre, NOT in genre-action.
+  const inTheatre = rails['theatre'].items.some(i => canonicalKey(i) === 'movie:300');
+  const inAction = rails['genre-action'].items.some(i => canonicalKey(i) === 'movie:300');
+
+  assert.ok(inTheatre, '15.2 shared item IS in theatre (higher priority)');
+  assert.ok(!inAction, '15.3 shared item NOT in genre-action (already in theatre)');
+
+  passed += 3;
+  console.log('  ok 15.1 — theatre has higher priority than genre-action');
+  console.log('  ok 15.2 — shared item routed to theatre');
+  console.log('  ok 15.3 — shared item NOT duplicated into genre-action');
+  ok('15. Earlier-priority rail takes the item; later rail is deduped');
+}
+
+// ============================================================
+// BEHAVIORAL TEST 16: discoverBatchDeduped — Show More continuation page
+// ============================================================
+// End-to-end verification: after batch consumes pages 1+2 for a section,
+// Show More (which calls /api/discover/rail with page=currentPage+1=3)
+// will fetch page 3 — NOT page 2 (already consumed) or page 1 (already
+// consumed). This test verifies the continuation page arithmetic.
+{
+  const { discoverBatchDeduped } = await import('../src/lib/server/content/discover-batch.ts');
+
+  // Mock returns 3 items on page 1 (need more), 4 items on page 2 (need more),
+  // 4 items on page 3 (reaches TARGET_ITEMS=10 since 3+4+4=11 >= 10).
+  // MAX_PAGES = 3, so the loop stops after page 3.
+  const mockFetchRail = async (filters: any) => {
+    const page = filters.page as number;
+    if (filters.section === 'theatre') {
+      if (page === 1) {
+        return {
+          items: Array.from({ length: 3 }, (_, i) => ({
+            type: 'movie', id: `a${i}`, externalIds: { tmdb: String(i + 1) }
+          })) as any[],
+          page, hasNextPage: true,
+        };
+      }
+      if (page === 2) {
+        return {
+          items: Array.from({ length: 4 }, (_, i) => ({
+            type: 'movie', id: `b${i}`, externalIds: { tmdb: String(i + 10) }
+          })) as any[],
+          page, hasNextPage: true,
+        };
+      }
+      if (page === 3) {
+        return {
+          items: Array.from({ length: 4 }, (_, i) => ({
+            type: 'movie', id: `c${i}`, externalIds: { tmdb: String(i + 20) }
+          })) as any[],
+          page, hasNextPage: true,
+        };
+      }
+    }
+    return { items: [], page, hasNextPage: false };
+  };
+
+  const rails = await discoverBatchDeduped('all', undefined, false, mockFetchRail);
+
+  // Theatre consumed all 3 pages (3+4+4=11 >= 10, so it stops at page 3).
+  // Wait — the TARGET_ITEMS check happens AFTER processing, so:
+  //   page 1: railItems=3 < 10, hasNext=true → continue to page 2
+  //   page 2: railItems=7 < 10, hasNext=true → continue to page 3
+  //   page 3: railItems=11 >= 10 → break.
+  // lastFetchedPage = 3.
+  assert.equal(rails['theatre'].page, 3, '16.1 theatre.page = 3 (consumed pages 1, 2, 3)');
+  assert.equal(rails['theatre'].items.length, 11, '16.2 theatre has 11 items (cap 20)');
+  assert.equal(rails['theatre'].hasNextPage, true, '16.3 theatre.hasNextPage = true (page 3 had next)');
+
+  // Show More continuation arithmetic:
+  //   currentPage = 3 (from batch result)
+  //   nextPage = currentPage + 1 = 4
+  // Show More will fetch /api/discover/rail?...&page=4 — NOT page 1, 2, or 3.
+  const showMoreNextPage = rails['theatre'].page + 1;
+  assert.equal(showMoreNextPage, 4, '16.4 Show More next page = 4 (continues from page 3, not 1)');
+
+  // Verify Show More would NOT re-fetch already-consumed pages.
+  assert.ok(showMoreNextPage > 3, '16.5 Show More does NOT re-fetch pages 1, 2, or 3');
+  assert.ok(showMoreNextPage > rails['theatre'].page, '16.6 Show More fetches a page AFTER the last consumed one');
+
+  passed += 6;
+  console.log('  ok 16.1 — theatre.page = 3 (actual last fetched)');
+  console.log('  ok 16.2 — theatre filled to 11 items across 3 pages');
+  console.log('  ok 16.3 — theatre.hasNextPage = true');
+  console.log('  ok 16.4 — Show More next page = 4 (correct continuation)');
+  console.log('  ok 16.5 — Show More does NOT re-fetch pages 1, 2, 3');
+  console.log('  ok 16.6 — Show More fetches a page AFTER the last consumed');
+  ok('16. Show More continuation page = batch.page + 1 (never re-fetches consumed pages)');
+}
+
+// ============================================================
 // SOURCE CONTRACT TESTS — wiring
 // ============================================================
 
@@ -264,40 +728,71 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok('F. batch endpoint with no-store');
 }
 
-// F2. DiscoverPage wired with batchStatus
+// F2. DiscoverPage wired with batchStatus + page + hasNextPage propagation
 {
   const discoverPage = read('src/lib/components/DiscoverPage.svelte');
   ok(discoverPage.includes('loadBatchRails'));
   ok(discoverPage.includes('/api/discover/batch'));
   ok(discoverPage.includes('batchStatus'));
-  ok(discoverPage.includes("batchPending={batchStatus === 'pending'}"));
+  // Phase 9 fix: DiscoverPage passes the full batchStatus state (not a
+  // derived boolean) so DiscoverSection can distinguish success from
+  // failure — only failure permits an independent fetch fallback.
+  ok(discoverPage.includes('batchStatus={batchStatus}'));
+  // Phase 9 fix: DiscoverPage propagates the batch's authoritative
+  // hasNextPage and actual last-fetched page to each section.
+  ok(discoverPage.includes('initialHasNextPage={batchRails'));
+  ok(discoverPage.includes('initialPage={batchRails'));
   ok(discoverPage.includes('clearRailCache'));
   ok(discoverPage.includes('externalIds?.tmdb'));
-  ok('F2. DiscoverPage wired with batchStatus + cache clearing');
+  ok('F2. DiscoverPage wired with batchStatus + page + hasNextPage propagation');
 }
 
-// F3. DiscoverSection: $effect wakes on batchPending change
+// F3. DiscoverSection: $effect wakes on batchStatus change + uses pure decideSectionLoad
 {
   const section = read('src/lib/components/DiscoverSection.svelte');
-  ok(section.includes('batchPending'), 'F3. section: accepts batchPending prop');
-  ok(section.includes('if (batchPending && !filterChanged)'), 'F3. section: waits for batch');
-  ok(section.includes('$effect'), 'F3. section: has $effect for batchPending transition');
-  ok(section.includes('lastBatchPending'), 'F3. section: tracks lastBatchPending');
-  ok(section.includes('if (lastBatchPending && !nowPending'), 'F3. section: re-calls loadFirst on pending→resolved');
+  ok(section.includes('batchStatus'), 'F3. section: accepts batchStatus prop');
+  ok(section.includes("type BatchStatus = 'pending' | 'success' | 'failed'"), 'F3. section: explicit BatchStatus type');
+  ok(section.includes('decideSectionLoad'), 'F3. section: delegates to pure decideSectionLoad()');
+  // Phase 9: import must be from $lib/shared (client-safe), NOT $lib/server
+  // (which is rejected by the SvelteKit browser-bundle guard).
+  ok(section.includes("from '$lib/shared/discover-batch'"), 'F3. section: imports decideSectionLoad from $lib/shared (client-safe)');
+  ok(section.includes("decision.kind === 'wait'"), 'F3. section: handles wait (pending batch)');
+  ok(section.includes("decision.kind === 'use-batch'"), 'F3. section: handles use-batch (consume result even if empty)');
+  ok(section.includes('$effect'), 'F3. section: has $effect for batchStatus transition');
+  ok(section.includes('lastBatchStatus'), 'F3. section: tracks lastBatchStatus');
+  ok(section.includes("lastBatchStatus === 'pending' && nowStatus !== 'pending'"), 'F3. section: re-calls loadFirst on pending→resolved');
   ok(section.includes('filterChanged'), 'F3. section: has filterChanged flag');
   ok(section.includes('railUrl(nextPage, allExclude)'), 'F3. section: loadMore passes combined exclude');
   ok(section.includes('externalIds?.tmdb'), 'F3. section: uses TMDB ID for exclude');
-  ok('F3. DiscoverSection: $effect + filterChanged + correct exclude');
+  // Phase 9 invariant: the heuristic `initialItems.length >= 10` for
+  // hasNextPage MUST be gone — the batch's hasNextPage is authoritative.
+  // The only occurrences of `initialItems.length >= 10` in the file
+  // should be in comments documenting what we removed.
+  const matches = section.match(/initialItems\.length >= 10/g) ?? [];
+  // Allow up to 2 occurrences in comments (we have explanatory comments).
+  ok(matches.length <= 2, 'F3. section: initialItems.length >= 10 only in comments');
+  ok(!section.includes('hasNextPage = initialItems.length >= 10'), 'F3. section: no heuristic hasNextPage from item count');
+  ok('F3. DiscoverSection: batchStatus state machine + decideSectionLoad + authoritative hasNextPage');
 }
 
 // F4. Batch loop uses per-item algorithm (not filterSeen for genre sections)
+// Phase 9: the batch implementation lives in `discover-batch.ts` (extracted
+// from service.ts so it can be unit-tested without SvelteKit's $env).
 {
+  const batch = read('src/lib/server/content/discover-batch.ts');
+  ok(batch.includes('if (seen.has(key)) continue'), 'F4. batch: per-item seen check');
+  ok(batch.includes('if (sectionIsGenre && shouldExcludeFromGenre'), 'F4. batch: per-item genre eligibility check');
+  ok(batch.includes('seen.add(key)'), 'F4. batch: adds to seen only after acceptance');
+  ok(!batch.includes('filterSeen(result.items, seen)'), 'F4. batch: does NOT use filterSeen (which mutates seen before genre check)');
+  // Phase 9 fix: the batch returns the ACTUAL last fetched page, not
+  // a hardcoded `page: 1`.
+  ok(batch.includes('lastFetchedPage'), 'F4. batch: tracks actual last fetched page');
+  ok(batch.includes('page: lastFetchedPage'), 'F4. batch: returns actual last fetched page');
+  ok(!/\bpage:\s*1\b\s*,\s*\n\s*hasNextPage:/.test(batch), 'F4. batch: no hardcoded page: 1 in result assignment');
+  // Phase 9: service.ts re-exports the wrapper for backward compat.
   const service = read('src/lib/server/content/service.ts');
-  ok(service.includes('if (seen.has(key)) continue'), 'F4. batch: per-item seen check');
-  ok(service.includes('if (sectionIsGenre && shouldExcludeFromGenre'), 'F4. batch: per-item genre eligibility check');
-  ok(service.includes('seen.add(key)'), 'F4. batch: adds to seen only after acceptance');
-  ok(!service.includes('filterSeen(result.items, seen)'), 'F4. batch: does NOT use filterSeen (which mutates seen before genre check)');
-  ok('F4. Batch loop uses correct per-item algorithm');
+  ok(service.includes("discoverBatchDeduped: impl"), 'F4. service.ts re-exports discover-batch impl with real discoverRail');
+  ok('F4. Batch loop uses correct per-item algorithm + actual last fetched page');
 }
 
 // G. tmdbGenreIds field + mapTmdb

@@ -475,16 +475,16 @@ export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult 
 /**
  * Cross-rail deduplicated discover batch.
  *
- * Fetches ALL non-adult Discover sections in priority order, maintaining
- * a global seen set so each title appears in ONE primary location only.
+ * Phase 9: the implementation now lives in `discover-batch.ts` so it
+ * can be unit-tested without loading the TMDB adapter chain (which
+ * transitively imports SvelteKit's `$env` virtual module — unavailable
+ * outside the SvelteKit runtime). The pure logic accepts an injectable
+ * `fetchRail` parameter; this wrapper binds it to the real `discoverRail`.
  *
- * For genre sections, a title is assigned to exactly ONE canonical genre
- * (first matching genre in priority order) — it does NOT appear in
- * every genre it belongs to.
- *
- * If a rail loses items to higher-priority rails, bounded continuation
- * (up to 3 pages) is used to fill the rail to a minimum of 10 items
- * when possible.
+ * See `discover-batch.ts` for the full contract:
+ *   - cross-rail dedup with global seen set
+ *   - canonical genre assignment (Action+Comedy → genre-action only)
+ *   - actual last-fetched page tracking (Phase 9 fix)
  *
  * Adult sections are NOT included in the batch — they remain independently
  * fetched by the existing per-rail endpoint.
@@ -494,61 +494,8 @@ export async function discoverBatchDeduped(
   provider?: string,
   canAccessAdult = false
 ): Promise<Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }>> {
-  const { SECTION_PRIORITY, shouldExcludeFromGenre, isGenreSection, canonicalKey } = await import('./discover-dedup');
-  const seen = new Set<string>();
-  const results: Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }> = {};
-  const TARGET_ITEMS = 10;
-  const MAX_PAGES = 3;
-
-  for (const section of SECTION_PRIORITY) {
-    let railItems: NormalizedMediaItem[] = [];
-    let currentPage = 1;
-    let hasNext = false;
-    const sectionIsGenre = isGenreSection(section);
-
-    while (currentPage <= MAX_PAGES) {
-      const result = await discoverRail(
-        { section: section as DiscoverSectionKey, language, provider, page: currentPage },
-        canAccessAdult
-      );
-
-      // Phase 8 fix: the dedup algorithm must NOT use filterSeen() for
-      // genre sections because filterSeen() adds items to the seen set
-      // BEFORE genre eligibility is checked. An item that is rejected
-      // by canonical genre assignment must NOT occupy a slot in seen —
-      // it must remain available for its correct canonical genre rail.
-      //
-      // Correct algorithm per item:
-      //   A. canonical ID already in seen? → reject (already displayed)
-      //   B. section is genre + canonical genre ≠ this section? → reject
-      //      WITHOUT adding to seen (it belongs to a different genre rail)
-      //   C. otherwise → accept + add canonical ID to seen
-      for (const item of result.items) {
-        if (railItems.length >= 20) break; // cap per rail
-        const key = canonicalKey(item);
-        if (seen.has(key)) continue;      // A: already displayed
-        if (sectionIsGenre && shouldExcludeFromGenre(item, section)) continue; // B: wrong genre
-        // C: accept
-        seen.add(key);
-        railItems.push(item);
-      }
-
-      if (railItems.length >= TARGET_ITEMS || !result.hasNextPage) {
-        hasNext = result.hasNextPage;
-        break;
-      }
-      currentPage++;
-      hasNext = result.hasNextPage;
-    }
-
-    results[section] = {
-      items: railItems.slice(0, 20), // Cap at 20 per rail
-      page: 1,
-      hasNextPage: hasNext,
-    };
-  }
-
-  return results;
+  const { discoverBatchDeduped: impl } = await import('./discover-batch');
+  return impl(language, provider, canAccessAdult, discoverRail);
 }
 
 /**

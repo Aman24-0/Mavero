@@ -173,3 +173,18 @@ export function shouldExcludeFromGenre(
   if (canonical === null) return false; // No genre info — don't exclude
   return canonical !== targetGenreSection;
 }
+
+// ============================================================
+// Phase 9 — Batch state machine: re-export from $lib/shared.
+//
+// The pure `decideSectionLoad` function and its types live in
+// `$lib/shared/discover-batch.ts` so they can be imported by BOTH
+// client code (DiscoverSection.svelte — a client component) and
+// server code (this file, server tests). Server-only types like
+// NormalizedMediaItem are intentionally NOT in the shared module —
+// the decision function only needs scalar fields (hasNextPage, page)
+// and never touches item shape.
+// ============================================================
+
+export type { BatchResolution, SectionLoadDecision, DecideSectionLoadInput } from '$lib/shared/discover-batch';
+export { decideSectionLoad } from '$lib/shared/discover-batch';

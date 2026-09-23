@@ -27,6 +27,37 @@
   import { getCachedRail, setCachedRail } from '$lib/client/discover/rail-cache';
   import { page } from '$app/state';
   import type { DiscoverLanguage, DiscoverSectionKey } from '$lib/server/content/types';
+  // Phase 9 fix: import the pure decision function from the SHARED module
+  // (not from $lib/server/* which is server-only and rejected by the
+  // SvelteKit browser-bundle guard).
+  import { decideSectionLoad } from '$lib/shared/discover-batch';
+
+  // Phase 9 fix: the batch lifecycle is now an explicit state machine.
+  //
+  //   pending → success | failed
+  //
+  // - pending:  DiscoverSection shows a loading skeleton and waits. It
+  //             MUST NOT independently fetch /api/discover/rail — that
+  //             would bypass the global cross-rail dedup contract.
+  // - success:  DiscoverSection consumes the batch result for its section,
+  //             EVEN IF initialItems is empty. An empty successful rail
+  //             is the authoritative initial dataset, not a signal to
+  //             fall back to independent fetching.
+  // - failed:   Only then may DiscoverSection fall back to an independent
+  //             /api/discover/rail fetch.
+  //
+  // The decision tree is centralized in `decideSectionLoad()` (pure
+  // function — see discover-dedup.ts) so it is unit-testable without
+  // rendering the component.
+  //
+  // Phase 9 fix: `initialHasNextPage` and `initialPage` are passed
+  // explicitly from the batch result. We no longer infer hasNextPage
+  // from `initialItems.length >= 10` — the batch result is authoritative.
+  // `initialPage` reflects the ACTUAL last page the batch consumed for
+  // this section, so Show More computes `nextPage = currentPage + 1`
+  // from the correct continuation point (never re-fetching already-
+  // consumed pages).
+  type BatchStatus = 'pending' | 'success' | 'failed';
 
   type LanguageOption = { value: DiscoverLanguage; label: string };
   type ProviderOption = { value: string; label: string; logoUrl?: string };
@@ -41,8 +72,10 @@
     initialLanguage = 'all' as DiscoverLanguage,
     initialProvider = '',
     initialItems = [] as MediaItem[],
+    initialHasNextPage = false,
+    initialPage = 1,
     excludeIds = [] as string[],
-    batchPending = false,
+    batchStatus = 'pending' as BatchStatus,
   }: {
     section: DiscoverSectionKey;
     title: string;
@@ -53,8 +86,10 @@
     initialLanguage?: DiscoverLanguage;
     initialProvider?: string;
     initialItems?: MediaItem[];
+    initialHasNextPage?: boolean;
+    initialPage?: number;
     excludeIds?: string[];
-    batchPending?: boolean;
+    batchStatus?: BatchStatus;
   } = $props();
 
   const LANGUAGE_OPTIONS: LanguageOption[] = [
@@ -118,27 +153,45 @@
   }
 
   async function loadFirst() {
-    // Phase 8 fix: if initialItems were provided by the batch dedup AND
-    // the user has NOT changed language/provider, use them directly.
-    // The filterChanged flag ensures stale "all" language items are
-    // never reused after a filter change.
-    if (initialItems.length > 0 && !usedInitialItems && !filterChanged) {
+    // Phase 9 fix: use the pure decision function so the batch lifecycle
+    // is unambiguous and unit-testable. The decision tree:
+    //   - filterChanged        → fetch independently (stale batch unusable)
+    //   - batch pending        → wait, do NOT fetch independently
+    //   - batch failed         → fall back to independent fetch
+    //   - batch success + not-yet-consumed → consume batch result,
+    //     EVEN IF EMPTY. This is the critical correctness invariant:
+    //     an empty successful rail is authoritative, not a signal to
+    //     bypass dedup with an independent fetch.
+    //   - batch success + already consumed → independent fetch (retry)
+    const decision = decideSectionLoad({
+      batchStatus,
+      filterChanged,
+      usedInitialItems,
+      initialHasNextPage,
+      initialPage,
+    });
+
+    if (decision.kind === 'wait') {
+      // Batch pending — show skeleton, do NOT fetch.
+      loading = true;
+      return;
+    }
+
+    if (decision.kind === 'use-batch') {
+      // Batch success — consume the result even if empty.
+      // Phase 9 fix: use the authoritative hasNextPage from the batch,
+      // NOT the heuristic `initialItems.length >= 10`.
+      // Phase 9 fix: use the actual last-fetched page from the batch,
+      // so Show More resumes from the correct continuation page.
       items = [...initialItems];
-      currentPage = 1;
-      hasNextPage = initialItems.length >= 10;
+      currentPage = decision.page;
+      hasNextPage = decision.hasNextPage;
       loading = false;
       usedInitialItems = true;
       return;
     }
 
-    // If batch is pending and we haven't changed filters, show loading
-    // skeleton and wait — do NOT independently fetch page 1.
-    if (batchPending && !filterChanged) {
-      loading = true;
-      return;
-    }
-
-    // Reset and fetch page 1.
+    // decision.kind === 'fetch' — independent fetch path.
     requestSequence += 1;
     const requestId = requestSequence;
     requestController?.abort();
@@ -265,29 +318,30 @@
     };
   });
 
-  // Phase 8 fix: reactive $effect that re-calls loadFirst() when
-  // batchPending transitions from true → false. This is the critical
+  // Phase 9 fix: reactive $effect that re-calls loadFirst() when
+  // batchStatus transitions out of 'pending'. This is the critical
   // missing piece — without this, DiscoverSection shows a skeleton
   // forever after the batch resolves because loadFirst() was only
-  // called once (during onMount) and returned early due to batchPending.
+  // called once (during onMount) and returned early due to pending.
   //
-  // When batchPending becomes false:
-  //   - If batch succeeded: initialItems are now populated → loadFirst()
-  //     consumes them directly (no independent page-1 fetch).
-  //   - If batch failed: initialItems are empty → loadFirst() falls
-  //     through to the normal independent fetch path.
+  // When batchStatus leaves 'pending':
+  //   - If batch succeeded: decideSectionLoad() returns 'use-batch' →
+  //     loadFirst() consumes initialItems (even if empty) directly,
+  //     preserving initialHasNextPage and initialPage.
+  //   - If batch failed: decideSectionLoad() returns 'fetch' →
+  //     loadFirst() falls through to the independent fetch path.
   //
   // The guard `!filterChanged` ensures we don't re-trigger after the
   // user has changed language/provider (those paths already call
   // loadFirst() directly).
   // svelte-ignore state_referenced_locally -- intentional initial-value capture for transition detection
-  let lastBatchPending = batchPending;
+  let lastBatchStatus: BatchStatus = batchStatus;
   $effect(() => {
-    const nowPending = batchPending;
-    if (lastBatchPending && !nowPending && !filterChanged && mounted) {
+    const nowStatus: BatchStatus = batchStatus;
+    if (lastBatchStatus === 'pending' && nowStatus !== 'pending' && !filterChanged && mounted) {
       void loadFirst();
     }
-    lastBatchPending = nowPending;
+    lastBatchStatus = nowStatus;
   });
 
   // Build the dropdown options. For language-filterable sections we
