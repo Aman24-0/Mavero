@@ -30,6 +30,24 @@
 
 import type { NormalizedMediaItem } from './types';
 
+/**
+ * Returns the canonical key for a media item: `${type}:${tmdbId}`.
+ * Uses the TMDB numeric ID from externalIds when available, falling back
+ * to the item's id field. Does NOT merge movie/series by title.
+ *
+ * Example: movie:550, series:1399
+ * Movie and series with the same numeric TMDB ID remain distinct.
+ */
+export function canonicalKey(item: { type: string; id: string | number; externalIds?: { tmdb?: string } }): string {
+  const tmdbId = item.externalIds?.tmdb;
+  if (tmdbId) {
+    return `${item.type}:${tmdbId}`;
+  }
+  // Fallback for items without externalIds — use the raw id.
+  // This should be rare (mapTmdb always sets externalIds.tmdb).
+  return `${item.type}:${item.id}`;
+}
+
 /** Section priority order — lower index = higher priority. */
 export const SECTION_PRIORITY: readonly string[] = [
   'theatre',
@@ -79,14 +97,6 @@ const GENRE_ID_TO_SECTION: Record<number, string> = {
 
 /** All genre section keys (for reverse lookup). */
 const ALL_GENRE_SECTIONS = new Set(Object.values(GENRE_ID_TO_SECTION));
-
-/**
- * Returns the canonical key for a media item: `${type}:${id}`.
- * Uses TMDB ID when available. Does NOT merge movie/series by title.
- */
-export function canonicalKey(item: { type: string; id: string | number }): string {
-  return `${item.type}:${item.id}`;
-}
 
 /**
  * Determines which genre section a title should be assigned to,

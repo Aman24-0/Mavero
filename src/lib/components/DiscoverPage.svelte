@@ -15,6 +15,7 @@
   import AppFooter from '$components/AppFooter.svelte';
   import { haptic } from '$lib/client/haptics';
   import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
+  import { clearRailCache } from '$lib/client/discover/rail-cache';
   import type { DiscoverSectionKey } from '$lib/server/content/types';
 
   let {
@@ -118,24 +119,31 @@
   // to each DiscoverSection as initialItems, and the excludeIds (all
   // canonical IDs from higher-priority rails) are passed for Show More.
   let batchRails = $state<Record<string, { items: MediaItem[]; hasNextPage: boolean } | undefined>>({});
-  let batchLoaded = $state(false);
+  let batchStatus = $state<'pending' | 'success' | 'failed'>('pending');
 
   async function loadBatchRails() {
     try {
       const response = await fetch('/api/discover/batch?language=all');
-      if (!response.ok) return;
+      if (!response.ok) { batchStatus = 'failed'; return; }
       const payload = await response.json();
-      if (!payload.ok || !payload.rails) return;
+      if (!payload.ok || !payload.rails) { batchStatus = 'failed'; return; }
       batchRails = payload.rails;
-      batchLoaded = true;
+      batchStatus = 'success';
+      // Phase 8 fix: clear the rail cache so stale independent-rail data
+      // from the old architecture cannot bypass the new global dedup.
+      // The batch results are the authoritative initial state — cached
+      // independent rails may contain duplicates.
+      clearRailCache();
     } catch {
-      // Silent fail — sections will fetch independently.
+      // Silent fail — sections will fall back to independent fetches.
+      batchStatus = 'failed';
     }
   }
 
   // Compute the exclude IDs for each section based on the batch results.
   // A section's excludeIds = all canonical IDs from ALL sections that
   // appear BEFORE it in the priority order.
+  // Uses the TMDB numeric ID (externalIds.tmdb) for canonical identity.
   function excludeIdsFor(sectionKey: string): string[] {
     const ids: string[] = [];
     for (const section of SECTIONS) {
@@ -143,7 +151,9 @@
       const rail = batchRails[section.key];
       if (rail) {
         for (const item of rail.items) {
-          ids.push(`${item.type}:${item.id}`);
+          // Use TMDB numeric ID when available — matches server canonicalKey()
+          const tmdbId = (item as MediaItem & { externalIds?: { tmdb?: string } }).externalIds?.tmdb;
+          ids.push(`${item.type}:${tmdbId ?? item.id}`);
         }
       }
     }
@@ -552,6 +562,7 @@
           viewAllHref={sectionDef.viewAllHref ?? ''}
           initialItems={batchRails[sectionDef.key]?.items ?? []}
           excludeIds={excludeIdsFor(sectionDef.key)}
+          batchPending={batchStatus === 'pending'}
         />
       {/each}
       <!-- Phase 8: Indian Adult Shows — the LAST content rail before the

@@ -42,6 +42,7 @@
     initialProvider = '',
     initialItems = [] as MediaItem[],
     excludeIds = [] as string[],
+    batchPending = false,
   }: {
     section: DiscoverSectionKey;
     title: string;
@@ -53,6 +54,7 @@
     initialProvider?: string;
     initialItems?: MediaItem[];
     excludeIds?: string[];
+    batchPending?: boolean;
   } = $props();
 
   const LANGUAGE_OPTIONS: LanguageOption[] = [
@@ -83,6 +85,11 @@
   // fetching independently. On language/provider change, the flag is
   // cleared and a normal fetch is performed.
   let usedInitialItems = $state(false);
+  // Phase 8 fix: tracks whether the user has changed language/provider.
+  // Once true, the original batch initialItems are NEVER reused — even
+  // if usedInitialItems is reset to false. This prevents stale "all"
+  // language items from appearing after a filter change.
+  let filterChanged = $state(false);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; initialLanguage is a prop snapshot
   let language = $state<DiscoverLanguage>(initialLanguage);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; initialProvider is a prop snapshot
@@ -91,7 +98,10 @@
   let requestController: AbortController | undefined;
   let mounted = false;
 
-  function railUrl(targetPage: number, includeExclude = false) {
+  // Phase 8 fix: railUrl now accepts an explicit exclude list instead of
+  // relying on a boolean flag that only serialized the prop excludeIds.
+  // This fixes the bug where current-rail items were NOT sent to the server.
+  function railUrl(targetPage: number, excludeList: string[] = []) {
     const params = new URLSearchParams({
       section,
       language,
@@ -99,23 +109,32 @@
     });
     if (providerFilter && provider) params.set('provider', provider);
     // Phase 8: send the exclude list for Show More so the server can
-    // filter out items already displayed in higher-priority rails.
-    if (includeExclude && excludeIds.length > 0) {
-      params.set('exclude', excludeIds.slice(0, 500).join(','));
+    // filter out items already displayed in higher-priority rails AND
+    // in this rail's current items.
+    if (excludeList.length > 0) {
+      params.set('exclude', excludeList.slice(0, 500).join(','));
     }
     return `/api/discover/rail?${params.toString()}`;
   }
 
   async function loadFirst() {
-    // Phase 8: if initialItems were provided by the batch dedup, use them
-    // directly instead of fetching independently. This is the server-authoritative
-    // dedup path — the batch endpoint already applied the global seen set.
-    if (initialItems.length > 0 && !usedInitialItems) {
+    // Phase 8 fix: if initialItems were provided by the batch dedup AND
+    // the user has NOT changed language/provider, use them directly.
+    // The filterChanged flag ensures stale "all" language items are
+    // never reused after a filter change.
+    if (initialItems.length > 0 && !usedInitialItems && !filterChanged) {
       items = [...initialItems];
       currentPage = 1;
-      hasNextPage = initialItems.length >= 10; // heuristic — batch provides up to 20
+      hasNextPage = initialItems.length >= 10;
       loading = false;
       usedInitialItems = true;
+      return;
+    }
+
+    // If batch is pending and we haven't changed filters, show loading
+    // skeleton and wait — do NOT independently fetch page 1.
+    if (batchPending && !filterChanged) {
+      loading = true;
       return;
     }
 
@@ -176,12 +195,12 @@
     showMoreError = ''; // Phase 2-L: clear any previous Show-more error.
     try {
       const nextPage = currentPage + 1;
-      // Phase 8: pass includeExclude=true so the server filters out
-      // items already displayed in this rail AND in higher-priority rails.
-      // The excludeIds prop contains all canonical IDs from higher-priority
-      // rails + this rail's current items.
-      const allExclude = [...excludeIds, ...items.map(i => `${i.type}:${i.id}`)];
-      const response = await fetch(railUrl(nextPage, true));
+      // Phase 8 fix: build the COMBINED exclude list (higher-priority
+      // rail IDs + current rail items) and pass it explicitly to railUrl().
+      // The previous code called railUrl(nextPage, true) which only
+      // serialized the prop excludeIds — current-rail items were NOT sent.
+      const allExclude = [...excludeIds, ...items.map(i => `${i.type}:${i.externalIds?.tmdb ?? i.id}`)];
+      const response = await fetch(railUrl(nextPage, allExclude));
       if (requestId !== requestSequence) return;
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload?.error?.message || 'Could not load more titles.');
@@ -214,9 +233,13 @@
     const nextLang = next as DiscoverLanguage;
     if (nextLang === language) return;
     language = nextLang;
-    // Phase 8: clear the initial-items flag so a real fetch happens
-    // (the batch dedup only applies to the initial 'all' language load).
+    // Phase 8 fix: set filterChanged so stale "all" language initialItems
+    // are NEVER reused. A fresh filtered rail request will be performed.
     usedInitialItems = false;
+    filterChanged = true;
+    // Clear items to show loading skeleton for the new language.
+    items = [];
+    loading = true;
     // Reset to page 1, replace results (do NOT append old-language items).
     void loadFirst();
   }
@@ -224,8 +247,11 @@
   function changeProvider(next: string) {
     if (next === provider) return;
     provider = next;
-    // Phase 8: clear the initial-items flag for the same reason.
+    // Phase 8 fix: same as language change — stale initialItems must not be reused.
     usedInitialItems = false;
+    filterChanged = true;
+    items = [];
+    loading = true;
     void loadFirst();
   }
 
