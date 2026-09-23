@@ -1077,3 +1077,149 @@ Pushed to `origin/main`.
 - Working tree: clean. No uncommitted files remain.
 - Exactly ONE commit added after `57cafd7`.
 - Run `git log -1 origin/main` to see the final SHA.
+
+---
+
+## Phase 5 — TV/Desktop QR UI
+
+### Starting commit
+`ee72d4ae5eef2596b76f8dadfdc38feffa3aed1e` (Phase 3 hardening + Phase 4 backend)
+
+### Audit findings
+
+**Already complete (preserved, NOT rewritten):**
+- Local QR generation via `qrcode` package (no external service).
+- QR encodes only `/authorize?s=<secret>` (no tokens, no user IDs).
+- Create → pending → polling → approved → exchange → success → redirect to /discover.
+- Countdown timer (1s tick, clamped to 0, stops on terminal states).
+- Polling (3s interval, within pairingPoll 60/min rate limit, 5-consecutive-error circuit breaker).
+- Expired + error + success states with retry.
+- Exchange endpoint used (no `/consume`, no client-side exchange_code).
+- Timers cleared in `onDestroy`.
+- `prefers-reduced-motion` respected (spin animation disabled).
+- Bare route preserved (`/tv-login` in `+layout.svelte` bare-route check).
+- `cache-control: no-store` on backend responses.
+
+**Gaps found (fixed in this commit):**
+1. QR was hardcoded 240px — not responsive. TV/large-screen users got a tiny QR hard to scan from a distance.
+2. `<img width="240" height="240">` hardcoded attributes didn't match responsive sizing.
+3. No large-screen/TV responsive CSS — single fixed layout, tiny text not readable from TV viewing distance.
+4. No `autofocus` / focus management on retry buttons — TV-remote/keyboard users had to tab to the retry action after an expired/error state.
+5. No explicit `aria-live` regions — state transitions weren't announced to screen readers.
+6. Back button defaulted to `/account` with label "Back" — vague on a TV. (AuthShell is shared, so I override via props rather than modifying AuthShell globally.)
+7. No stale-callback protection — if a user clicked retry while a previous fetch was in-flight, the stale callback could mutate state belonging to the newer request.
+
+### Implementation
+
+**`src/routes/tv-login/+page.svelte`** — targeted Phase 5 improvements:
+
+1. **Responsive QR sizing:**
+   - QR raster now 480px (was 240px) — high-DPI friendly, sharp on large screens.
+   - Display size controlled by CSS via `clamp()` + media queries:
+     - Default (mobile/small): `min(240px, 60vw)` — caps by 60vw on narrow screens.
+     - ≥768px (small desktop): 280px.
+     - ≥1024px (large desktop): 320px.
+     - ≥1920px (TV): 360px.
+   - Removed hardcoded `width="240" height="240"` attributes from `<img>` — CSS controls display size.
+   - Added `decoding="async"` + `loading="eager"` for above-the-fold QR.
+
+2. **TV-readable typography:**
+   - Text sizes scale up at each breakpoint:
+     - Instructions: `.88rem` → `.92rem` → `.96rem` → `1.02rem` (TV).
+     - Countdown: `1rem` → `1.05rem` → `1.12rem` → `1.2rem` (TV).
+     - Success heading: `1.4rem` → `1.5rem` → (same) → `1.65rem` (TV).
+   - Countdown uses `font-variant-numeric: tabular-nums` so digits don't shift width as the timer counts down.
+   - Icons scale up 1.1x on ≥1024px for visibility from a distance.
+
+3. **Keyboard/remote focus management:**
+   - Added `bind:this` refs to the expired/error retry buttons (`expiredRetryBtn`, `errorRetryBtn`).
+   - Added a `$effect` that focuses the retry button when the state transitions to `expired` or `error` — uses `tick()` to wait for the DOM to reflect the new state before focusing.
+   - This is the a11y-safe alternative to the `autofocus` HTML attribute (which Svelte's a11y lint correctly warns against).
+   - Retry button min-height increased to 44px (touch/remote target standard).
+   - Focus-visible outline strengthened to 3px + 3px offset.
+
+4. **ARIA live regions:**
+   - Loading state: `role="status" aria-live="polite"`.
+   - Pending/waiting state: `role="status" aria-live="polite"`.
+   - Exchanging/success states: `role="status" aria-live="polite"`.
+   - Expired/error states: `role="alert" aria-live="polite"` (announced immediately).
+   - Countdown: `aria-live="off"` (1s updates would be noise).
+
+5. **Stale-callback protection (request token):**
+   - Added a monotonically-increasing `requestToken` counter.
+   - Each `createPairing()` call captures `const myToken = ++requestToken`.
+   - Stale async callbacks (from a previous attempt whose fetch resolved after the user clicked retry) check `if (myToken !== requestToken) return` before mutating state.
+   - The countdown and polling timers also check the token on each tick and clear themselves if stale.
+   - This closes a subtle race where a slow `/create` response from a previous attempt could overwrite the state of a newer retry.
+
+6. **AuthShell back button override (no global AuthShell change):**
+   - `backHref="/discover"` — the consumer landing page (an unauthenticated TV going "back" from `/tv-login` lands on the discover page, which works for guests).
+   - `backLabel="Back to Mavero"` — clearer than "Back" on a TV where the user may not understand what they're going back to.
+   - AuthShell itself is NOT modified — only the props passed from `/tv-login`.
+
+7. **Timer cleanup hardened:**
+   - `createPairing()` now sets `pollTimer = undefined` and `countdownTimer = undefined` after clearing, so the `if (timer)` guards work correctly on subsequent retries.
+   - Previously, a cleared-but-not-undefined timer ID would pass the `if (timer)` check, though `clearInterval` on an already-cleared ID is a no-op. The explicit `undefined` reset makes the lifecycle cleaner and more defensive.
+
+### Files changed
+- `src/routes/tv-login/+page.svelte` — responsive QR, TV typography, focus management, ARIA live regions, stale-callback protection, AuthShell back button override, timer cleanup hardening.
+- `scripts/phase5_tv_login_ui_test.ts` — NEW (168 check groups).
+- `scripts/stremio_player_phase8_test.ts` — test-chain ending assertion updated.
+- `package.json` — test chain appends `phase5_tv_login_ui_test.ts`.
+- `Mavero_Device_Auth_Integration_Worklog.md` — this entry.
+
+### Backend files changed
+**NONE.** The Phase 4 backend (create/status/approve/cancel/exchange endpoints, `claim_device_pairing` RPC, `device_pairing_requests` schema, rate-limit buckets) is preserved unchanged. The `/tv-login` page only consumes the existing backend API.
+
+### Tests added
+- NEW `scripts/phase5_tv_login_ui_test.ts` (168 check groups):
+  1. /tv-login exists + bare route preserved.
+  2. Local QR generation (no external service).
+  3. QR encodes only the pairing URL (no credentials).
+  4. No raw credential logging.
+  5. Create endpoint called on mount.
+  6. Status polling + stops on terminal states (approved/cancelled/expired/error circuit breaker).
+  7. Polling frequency respects Phase 4 rate limit (3s interval, within 60/min).
+  8. Countdown + stops on terminal states (clamped to 0).
+  9. Expired state exists with retry.
+  10. Retry creates a fresh pairing request (stale-callback safe via request token).
+  11. Exchange endpoint used.
+  12. No /consume endpoint (exchange is atomic).
+  13. Success state exists with redirect to /discover.
+  14. Error state exists with retry + no credential leakage.
+  15. No duplicate timer/poll lifecycle (cleanup + undefined reset).
+  16. Keyboard/focus-visible support ($effect focuses retry button on state transition).
+  17. Responsive large-screen QR sizing (240→280→320→360px at 768/1024/1920px).
+  18. Reduced-motion support (spin + transitions disabled).
+  19. TV-readable typography (scaled text, tabular-nums countdown).
+  20. ARIA live regions for state transitions (alert/status/off).
+  21. AuthShell back button overridden for TV (not globally modified).
+  22. Buttons meet 44px touch/remote target.
+  23. No camera / phone-scanner APIs (Phase 6 separation maintained).
+  24. No horizontal overflow (QR capped by 60vw, gutter clamped).
+  25. Regression: existing pairing contracts preserved.
+
+### Validation
+- `pnpm check` (svelte-kit sync + svelte-check): 0 errors, 0 warnings.
+- `pnpm build` (vite build): PASS.
+- `pnpm test`: 140 of 145 suites pass. 8 pre-existing failures unchanged.
+
+### Phase 6 separation — explicitly NOT implemented
+- ❌ No QR scanner component.
+- ❌ No `getUserMedia()` / camera APIs.
+- ❌ No `qr-scanner` / `jsQR` / `ZXing` / `@zxing` imports.
+- ❌ No "Login on TV" button in Account page.
+- ❌ No `/account/scan-tv` route.
+- ❌ No phone-side scanning modal.
+- ❌ No phone-side authorization redesign.
+- ✅ Existing `/authorize` page left untouched.
+
+### Known limitations
+- No live browser verification of actual QR rendering, focus behavior, or layout at each viewport. Tests are static source-contract + logic-reasoned. A Playwright/cypress E2E test that loads `/tv-login` at each viewport and verifies the QR display size would be Phase 9 scope.
+- The `$effect` focus management relies on `tick()` + `bind:this` which is the standard Svelte 5 pattern. On very old TV browsers without `Element.focus()` support, the focus call would silently fail (no error, just no focus) — acceptable degradation.
+
+### Final commit SHA
+(see below)
+
+### Push status
+(see below)

@@ -182,15 +182,15 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   const testScript: string = pkg.scripts.test;
   // Phase 9 appended the stremio_player_phase9_test.ts suite after Phase 8;
   // Phase 10 appended stremio_player_phase10_test.ts — the chain still runs
-  // phase 7 before phase 8 before phase 9 and now ENDS with the Phase 4
-  // QR-challenge-backend suite (Phase 9–20 extension + Phase 1–4 Device Auth,
-  // with Phase 4 QR challenge backend appended last).
+  // phase 7 before phase 8 before phase 9 and now ENDS with the Phase 5
+  // TV/Desktop QR UI suite (Phase 9–20 extension + Phase 1–5 Device Auth,
+  // with Phase 5 TV/Desktop QR UI appended last).
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
       testScript.indexOf('stremio_player_phase8_test.ts') < testScript.indexOf('stremio_player_phase9_test.ts') &&
-      testScript.trimEnd().endsWith('phase4_qr_challenge_backend_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the Phase 4 QR-challenge-backend suite (Phase 9–20 extension + Phase 1–4 Device Auth)',
+      testScript.trimEnd().endsWith('phase5_tv_login_ui_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the Phase 5 TV/Desktop QR UI suite (Phase 9–20 extension + Phase 1–5 Device Auth)',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');
