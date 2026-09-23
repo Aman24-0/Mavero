@@ -13,23 +13,24 @@ import { checkRateLimit } from '$lib/server/http/rate-limit';
  * TV browser. Returns the pairing secret (for QR code generation) and
  * the short code (for manual entry fallback).
  *
- * Rate limited to prevent abuse.
+ * Phase 4 hardening: rate-limited via the dedicated `pairingCreate`
+ * bucket (10/min per IP). Each challenge persists a row + secret_hash,
+ * so a tighter limit than `search` is appropriate.
+ *
+ * Serverless honesty: this rate limit is per-instance (Netlify function
+ * instance). A distributed attacker could exceed 10/min globally, but
+ * the limit caps the per-instance cost and protects the upstream
+ * Supabase INSERT. The deployment-level control (Netlify WAF / per-IP
+ * limits) is the authoritative global layer.
  */
 export const POST: RequestHandler = async ({ request }) => {
-  // Rate limit by IP.
+  // Rate limit by IP — unauthenticated endpoint.
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
-  const rateResult = checkRateLimit('resolve' as never, `pairing:${ip}`);
-  // Use a simple inline rate limit check (reuse existing infrastructure
-  // pattern but with a custom identity).
-  // Actually, let's use the existing checkRateLimit with a new bucket name.
-  // But adding a new bucket requires modifying rate-limit.ts. For Phase 3,
-  // let's add the bucket name to the existing file. For now, use the
-  // 'search' bucket as a reasonable proxy (30/min per identity).
-  const searchRate = checkRateLimit('search', `pairing:${ip}`);
-  if (!searchRate.allowed) {
+  const rateResult = checkRateLimit('pairingCreate', `pairing:create:${ip}`);
+  if (!rateResult.allowed) {
     return json(
       { ok: false, message: 'Too many pairing requests. Please try again shortly.' },
-      { status: 429, headers: { 'retry-after': String(searchRate.retryAfterSeconds), 'cache-control': 'no-store' } }
+      { status: 429, headers: { 'retry-after': String(rateResult.retryAfterSeconds), 'cache-control': 'no-store' } }
     );
   }
 
@@ -52,7 +53,6 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // Build the QR URL — the phone will scan this and open the authorize page.
-  const authorizeUrl = `${publicEnv.PUBLIC_SUPABASE_URL ? '' : ''}`; // placeholder
   // The QR URL points to the Mavero app's authorize page with the secret.
   // In production this would be the public app URL.
   const origin = new URL(request.url).origin;

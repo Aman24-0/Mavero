@@ -247,7 +247,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Heartbeat throttle.
   ok(service.includes('HEARTBEAT_INTERVAL_MS'), 'heartbeat interval constant defined');
   ok(service.includes('5 * 60 * 1000'), 'heartbeat interval is 5 minutes');
-  ok(service.includes('now - lastSeen < HEARTBEAT_INTERVAL_MS'), 'heartbeat checks staleness before writing');
+  // Phase 3 hardening: the heartbeat check is now enforced inside the
+  // register_device_session RPC (migration 20260930000000) via
+  // `extract(epoch from (p_now - v_row.last_seen_at)) * 1000 < p_heartbeat_interval_ms`.
+  // The service passes p_heartbeat_interval_ms to the RPC.
+  ok(service.includes('p_heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS'), 'service passes heartbeat interval to RPC (enforced server-side)');
 
   // No token storage.
   ok(!service.includes('access_token'), 'service does NOT reference access_token');

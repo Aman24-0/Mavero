@@ -7,12 +7,21 @@
  * READ its own sessions via RLS.
  *
  * API:
- *   - registerCurrentSession(...)  — upsert on first authenticated request
- *   - touchCurrentSession(...)     — throttled last_seen_at update
+ *   - registerCurrentSession(...)  — atomic upsert via RPC (race-safe)
  *   - getCurrentSession(...)       — look up the current session row
  *   - listUserSessions(...)        — all active sessions for a user
  *   - revokeSession(...)           — mark a session as revoked (sign-out)
- *   - revokeAllOtherSessions(...)  — foundation for "sign out all"
+ *   - revokeAllOtherSessions(...)  — Phase 3 "sign out all"
+ *   - lookupSessionRevocationState(...) — used by the hooks revocation check
+ *
+ * ATOMIC REGISTRATION (Phase 3 hardening):
+ *   registerCurrentSession() delegates to the server-side RPC
+ *   `public.register_device_session` (see migration
+ *   20260930000000_register_device_session_rpc.sql). The RPC uses
+ *   SELECT ... FOR UPDATE to atomically check the revocation state
+ *   and INSERT/UPDATE. This closes the TOCTOU race where a revoke
+ *   between the hook's isSessionRevoked() check and the previous
+ *   SELECT-then-INSERT pattern could resurrect a revoked session.
  *
  * Heartbeat throttle: last_seen_at is only updated if the stored
  * value is older than 5 minutes. This limits DB writes to at most
@@ -41,16 +50,32 @@ export type DeviceSessionRow = {
 };
 
 /**
- * Registers or updates the current device session.
+ * Registers or updates the current device session ATOMICALLY.
+ *
+ * Phase 3 hardening: this function delegates to the server-side RPC
+ * `public.register_device_session` (migration
+ * 20260930000000_register_device_session_rpc.sql). The RPC uses
+ * SELECT ... FOR UPDATE to lock the row regardless of revoked_at
+ * state, then either heartbeats (active), returns empty (revoked —
+ * do NOT resurrect), or INSERTs (first-time).
+ *
+ * This closes the TOCTOU race where a revoke between the hook's
+ * isSessionRevoked() check and the previous SELECT-then-INSERT
+ * pattern could resurrect a revoked session.
  *
  * Called from the server hook on every authenticated request. If
- * the session doesn't exist in the registry, it's created. If it
- * exists but last_seen_at is stale (older than 5 minutes), it's
- * updated. If last_seen_at is fresh, this is a no-op (no DB write).
+ * the session is already active and last_seen_at is fresh (< 5 min),
+ * the RPC is a no-op (no DB write). If stale, the RPC updates
+ * last_seen_at. If the session is revoked, the RPC returns empty
+ * and this function returns null (the caller should not re-register).
  *
  * Registration failure is logged but does NOT break authentication.
  * The registry is supporting infrastructure — a metadata failure
  * must not cause an auth outage.
+ *
+ * Returns the session row on success, or null if:
+ *   - the session is revoked (RPC returned empty — do not resurrect), OR
+ *   - the RPC call failed (logged, non-blocking).
  */
 export async function registerCurrentSession(
   admin: SupabaseAdminClient,
@@ -63,80 +88,40 @@ export async function registerCurrentSession(
   }
 ): Promise<DeviceSessionRow | null> {
   try {
-    // Check if the session already exists (and is not revoked).
-    const { data: existing, error: selectError } = await admin
-      .from('device_sessions')
-      .select('*')
-      .eq('user_id', params.userId)
-      .eq('supabase_session_id', params.supabaseSessionId)
-      .is('revoked_at', null)
-      .maybeSingle();
+    const { data: rows, error } = await admin.rpc('register_device_session', {
+      p_user_id: params.userId,
+      p_supabase_session_id: params.supabaseSessionId,
+      p_device_id: params.deviceId,
+      p_device_type: params.metadata.deviceType,
+      p_device_name: params.metadata.deviceName,
+      p_browser: params.metadata.browser,
+      p_os: params.metadata.os,
+      p_platform: params.metadata.platform,
+      p_ip_hash: params.ipHash ?? null,
+      p_heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
+    });
 
-    if (selectError) {
-      console.error('[DeviceSessions] Select error', { name: selectError.name, code: selectError.code });
-      // Try to create anyway — the select might have failed but the
-      // insert could succeed if the row truly doesn't exist.
-    }
-
-    if (existing) {
-      // Session exists — check if heartbeat is needed.
-      const lastSeen = new Date(existing.last_seen_at).getTime();
-      const now = Date.now();
-      if (now - lastSeen < HEARTBEAT_INTERVAL_MS) {
-        // Fresh enough — no write needed.
-        return existing as DeviceSessionRow;
-      }
-      // Stale — update last_seen_at (heartbeat).
-      const { data: updated, error: updateError } = await admin
-        .from('device_sessions')
-        .update({ last_seen_at: new Date().toISOString() })
-        .eq('id', existing.id)
-        .select('*')
-        .single();
-      if (updateError) {
-        console.error('[DeviceSessions] Heartbeat update error', { name: updateError.name, code: updateError.code });
-        return existing as DeviceSessionRow; // Return stale row — non-critical.
-      }
-      return updated as DeviceSessionRow;
-    }
-
-    // Session doesn't exist — create it.
-    const insertPayload = {
-      user_id: params.userId,
-      supabase_session_id: params.supabaseSessionId,
-      device_id: params.deviceId,
-      device_type: params.metadata.deviceType,
-      device_name: params.metadata.deviceName,
-      browser: params.metadata.browser,
-      os: params.metadata.os,
-      platform: params.metadata.platform,
-      ip_hash: params.ipHash ?? null,
-    };
-
-    const { data: created, error: insertError } = await admin
-      .from('device_sessions')
-      .insert(insertPayload)
-      .select('*')
-      .single();
-
-    if (insertError) {
-      // Could be a unique constraint violation if another request
-      // raced and created the same row. Try to select again.
-      if (insertError.code === '23505') {
-        const { data: existing2 } = await admin
-          .from('device_sessions')
-          .select('*')
-          .eq('user_id', params.userId)
-          .eq('supabase_session_id', params.supabaseSessionId)
-          .is('revoked_at', null)
-          .maybeSingle();
-        if (existing2) return existing2 as DeviceSessionRow;
-      }
-      console.error('[DeviceSessions] Insert error', { name: insertError.name, code: insertError.code });
+    if (error) {
+      console.error('[DeviceSessions] Register RPC error', { name: error.name, code: error.code });
       return null;
     }
 
-    return created as DeviceSessionRow;
+    // RPC returns an array (per the typed signature). An empty array
+    // means the session is revoked — do NOT resurrect. The caller
+    // (hooks.server.ts) has already checked isSessionRevoked() and
+    // skipped registration if revoked; the empty-array case is a
+    // defensive backstop for the race window between the check and
+    // the RPC call.
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    if (!row || !row.id) {
+      return null;
+    }
+
+    return row as unknown as DeviceSessionRow;
   } catch (err) {
     console.error('[DeviceSessions] Registration exception', { name: (err as Error)?.name ?? 'unknown' });
     return null;

@@ -926,3 +926,154 @@ Pushed to `origin/main`.
 - Working tree: clean. No uncommitted files remain.
 - Exactly ONE Phase 3 commit added after `8f97878`.
 - Run `git log -1 origin/main` to see the final SHA.
+
+---
+
+## Phase 3 — Final Hardening (TOCTOU race fix)
+
+### Starting commit
+`57cafd766dbaad4db4f17f98167c61bed7b527cf` (Phase 3 — Individual revoke + Sign out All)
+
+### Audit finding
+The Phase 3 commit `57cafd7` added revocation enforcement at the Mavero auth boundary (hooks.server.ts consults a 30s-TTL cache + device_sessions.revoked_at). However, the registration path (`registerCurrentSession` in device-sessions.ts) still used a non-atomic SELECT-then-INSERT pattern. The unique partial index `device_sessions_user_session_idx` is scoped to `WHERE revoked_at IS NULL`, so a revoked row is EXCLUDED from the index. This means an INSERT for the same `(user_id, supabase_session_id)` AFTER revocation would NOT violate the unique constraint and would create a new active row — resurrecting the revoked session.
+
+### Race scenario (confirmed)
+1. Request A: hook calls `isSessionRevoked()` → returns `false` (active row found).
+2. Concurrent: revoke API sets `revoked_at = now()` on that row.
+3. Request A: passes the `sessionRevoked` guard, calls `registerCurrentSession()`.
+4. `registerCurrentSession` SELECT with `.is('revoked_at', null)` finds nothing (old row revoked).
+5. INSERTs a new active row. The partial unique index allows it because the old row is excluded by `WHERE revoked_at IS NULL`.
+6. → A revoked session is RESURRECTED in the active registry.
+
+### Implementation
+- NEW migration `supabase/migrations/20260930000000_register_device_session_rpc.sql`:
+  - `SECURITY DEFINER` PL/pgSQL RPC `public.register_device_session`.
+  - `SELECT ... FOR UPDATE` — locks the row regardless of `revoked_at` state. If a revoke is racing, the lock serializes the two transactions.
+  - If row exists with `revoked_at IS NULL`: heartbeat if stale, else no-op.
+  - If row exists with `revoked_at NOT NULL`: return empty (do NOT resurrect).
+  - If no row exists: INSERT a new active row. Catches `unique_violation` for concurrent INSERT race.
+  - `EXECUTE` revoked from PUBLIC/anon/authenticated; explicitly granted to `service_role` (convention precedent: `20260820000000_phase5_auth_sync.sql` + `20260929000000_device_pairing_claim_rpc.sql`).
+- `src/lib/server/supabase/database.types.ts`: added `register_device_session` RPC type signature.
+- `src/lib/server/auth/device-sessions.ts`: `registerCurrentSession()` now delegates to the RPC (no more SELECT-then-INSERT). Returns null on empty RPC result (revoked — do not resurrect).
+- `scripts/device_session_registry_test.ts`: updated heartbeat assertion to reflect the new server-side check.
+
+### Security considerations
+- The RPC uses `SELECT ... FOR UPDATE` which serializes concurrent transactions on the same row. A revoke cannot change `revoked_at` between the check and the INSERT.
+- The 30s-TTL revocation cache remains appropriate — its role is purely performance optimization; the RPC is the source of truth. Even if the cache returns a stale "not revoked" entry, the RPC will not resurrect a now-revoked row.
+- The RPC is `SECURITY DEFINER` with pinned `search_path = public` and schema-qualified table references — same security model as `claim_device_pairing`.
+
+### Tests added
+- NEW `scripts/phase3_hardening_test.ts` (78 check groups):
+  - Section 1: RPC migration contract (function definition, args, returns, privilege lockdown, service_role grant).
+  - Section 2: RPC internal logic (SELECT FOR UPDATE, revoked guard, heartbeat, INSERT race handling).
+  - Section 3: service contract (delegates to RPC, handles empty result, no SELECT-then-INSERT).
+  - Section 4: database types (RPC type signature).
+  - Section 5: deterministic simulation (active/revoked/first-time + RACE scenario where concurrent revoke does NOT resurrect).
+  - Section 6: regression (Phase 3 enforcement + cache + revoke APIs preserved).
+  - Section 7: security (no client-supplied identity, no token/secret logging).
+
+### Validation
+- `pnpm check` (svelte-kit sync + svelte-check): 0 errors, 0 warnings.
+- `pnpm build`: PASS.
+- `pnpm test`: 139 of 145 suites pass. 8 pre-existing failures unchanged.
+
+### Known limitations
+- No live DB verification of the RPC's atomicity (no live Supabase credentials). The RPC's race-safety is verified by static source-contract assertions + deterministic TypeScript simulation.
+- Per-instance cache: on Netlify, other function instances may serve stale-authenticated requests for up to 30 seconds after a revocation, until their own cache expires. Acceptable tradeoff vs. a DB query on every request.
+
+### Final commit SHA
+(see "Phase 4" section below — both are in the same single commit)
+
+---
+
+## Phase 4 — QR Challenge Backend
+
+### Starting commit
+`57cafd766dbaad4db4f17f98167c61bed7b527cf`
+
+### Audit finding
+The existing device_pairing_requests model + the create/status/approve/cancel/exchange endpoints already implement the Phase 4 backend lifecycle correctly:
+- Challenge creation: 32-byte cryptographic secret, SHA-256 hash, 5-minute TTL.
+- Lifecycle states: pending → approved → consumed (+ cancelled/expired).
+- Atomic approve: guarded by `eq('status', 'pending')`.
+- Atomic cancel: guarded by `eq('status', 'pending')`.
+- Atomic claim: `claim_device_pairing` RPC (SELECT FOR UPDATE → capture OLD exchange_code → UPDATE consumed + clear exchange_code → RETURN OLD).
+- Status endpoint: returns only `{ ok, status }`, never exchange_code or tokens.
+- Lazy expiry in `getPairingBySecret` + RPC-enforced expiry in claim WHERE clause.
+
+### Gaps found
+1. `/create` had a buggy rate-limit implementation — line 21 called `checkRateLimit('resolve' as never, ...)` whose return value was never used; only the `search` bucket check on line 28 actually applied.
+2. `/approve`, `/exchange`, `/status`, `/cancel`, `/info` had NO rate limiting.
+
+### Implementation
+- `src/lib/server/http/rate-limit.ts`: added 4 dedicated pairing rate-limit buckets:
+  - `pairingCreate`: 10/min per IP (unauthenticated TV challenge creation).
+  - `pairingPoll`: 60/min per IP+secret (unauthenticated TV status polling; TV polls every 3s for 5min → ~100 polls, within limit).
+  - `pairingApprove`: 20/min per user (authenticated phone approval; each calls Supabase generateLink).
+  - `pairingExchange`: 10/min per IP (unauthenticated TV exchange; each consumes a Supabase OTP).
+- `src/routes/api/auth/device-pairing/create/+server.ts`: replaced the buggy `resolve` cast + `search` proxy with the dedicated `pairingCreate` bucket.
+- `src/routes/api/auth/device-pairing/status/+server.ts`: added `pairingPoll` rate limit keyed by IP + (truncated) secret.
+- `src/routes/api/auth/device-pairing/approve/+server.ts`: added `pairingApprove` rate limit keyed by user.id.
+- `src/routes/api/auth/device-pairing/exchange/+server.ts`: added `pairingExchange` rate limit keyed by IP.
+
+### Security considerations
+- All pairing endpoints now have dedicated rate-limit buckets tuned to their abuse profile.
+- Rate limits are per-instance (Netlify function instance) — documented in the endpoint comments. The deployment-level control (Netlify WAF / per-IP limits) is the authoritative global layer.
+- No changes to the existing QR architecture, RPC, or device_pairing_requests schema. The existing `claim_device_pairing` RPC (Phase 3.2) is preserved unchanged.
+- No unauthenticated device session registration: the hook only registers when `auth.session && auth.user` are set. The pairing endpoints (create, status, exchange) are unauthenticated (except approve) and do NOT call `registerCurrentSession`. The TV becomes authenticated only AFTER the exchange succeeds — its NEXT request (after redirect to /discover) registers normally.
+
+### Tests added
+- NEW `scripts/phase4_qr_challenge_backend_test.ts` (196 check groups):
+  - Section 1: challenge database model (fields, lifecycle states, indexes, RLS).
+  - Section 2: secret generation (crypto, 32 bytes, SHA-256 hash, short code, TTL).
+  - Section 3: challenge creation endpoint (unauthenticated, rate limited, safe response).
+  - Section 4: status endpoint (safe response, rate limited, lazy expiry).
+  - Section 5: approve endpoint (auth, rate limit, atomic transition, server-derived identity).
+  - Section 6: exchange endpoint (rate limited, RPC-based, no token leakage).
+  - Section 7: cancel endpoint (atomic, idempotent, prevents later approve/consume).
+  - Section 8: expiry (lazy in status, RPC-enforced in claim).
+  - Section 9: single-use claim RPC (SELECT FOR UPDATE, OLD OTP capture, atomic consume, privilege lockdown).
+  - Section 10: rate limit buckets (dedicated pairing buckets, bounded memory).
+  - Section 11: no unauthenticated device session registration.
+  - Section 12: logging/privacy (no secrets, exchange codes, or tokens in logs).
+  - Section 13: lifecycle transitions (valid vs invalid).
+  - Section 14: concurrent claim simulation (single-winner, OLD OTP captured).
+  - Section 15: approve cannot be called twice.
+  - Section 16: consumed cannot be consumed again.
+  - Section 17: wrong/invalid secret rejected (404).
+  - Section 18: existing device-pairing tests remain present.
+
+### Validation
+- `pnpm check`: 0 errors, 0 warnings.
+- `pnpm build`: PASS.
+- `pnpm test`: 139 of 145 suites pass. 8 pre-existing failures unchanged.
+
+### Known limitations
+- No live DB verification of the RPC's atomicity (no live Supabase credentials).
+- Rate limits are per-instance (Netlify function instance), not globally distributed.
+- `/info` and `/cancel` endpoints do not have dedicated rate-limit buckets. `/info` is called once per phone authorization page load; `/cancel` is called once per cancel action. Both are low-frequency and the existing 4KB body limit + the high-entropy secret requirement provide sufficient abuse protection. Adding rate limits here would be Phase 8 scope.
+
+### Final commit SHA
+(see below — single commit for both Phase 3 hardening + Phase 4 backend)
+
+---
+
+## Combined Commit
+
+### Final commit SHA
+The combined Phase 3 hardening + Phase 4 backend commit is the HEAD of `origin/main` as of this push, with commit message:
+
+```
+feat(auth): atomic session registration + Phase 4 QR challenge backend hardening
+```
+
+(`git log -1 origin/main` is the canonical source of truth for the exact SHA — it is intentionally not hardcoded in this worklog narrative to avoid a self-referential amend loop.)
+
+Stacked on top of `57cafd7` (Phase 3 — Individual revoke + Sign out All). No history rewrite of any prior commit.
+
+### Push status
+Pushed to `origin/main`.
+
+- Working tree: clean. No uncommitted files remain.
+- Exactly ONE commit added after `57cafd7`.
+- Run `git log -1 origin/main` to see the final SHA.

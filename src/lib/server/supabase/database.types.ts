@@ -1099,6 +1099,55 @@ export type Database = {
           exchange_code: string | null
         }[]
       }
+      // Added by 20260930000000_register_device_session_rpc.sql.
+      // SECURITY DEFINER function: atomically registers or heartbeats
+      // a device session. Closes the TOCTOU race between the hook's
+      // isSessionRevoked() check and the previous registerCurrentSession()
+      // SELECT-then-INSERT pattern.
+      //
+      // Why this exists: the unique partial index on
+      // (user_id, supabase_session_id) WHERE revoked_at IS NULL means
+      // a revoked row is EXCLUDED from the index — so a separate
+      // INSERT after revocation would NOT violate the constraint and
+      // would resurrect the revoked session. This RPC uses
+      // SELECT ... FOR UPDATE to lock the row regardless of revoked_at
+      // state, then either heartbeats (active), no-ops (revoked —
+      // returns empty), or INSERTs (first-time).
+      //
+      // Returns: at most one row with the session fields + a
+      // `registered` flag (true=INSERT, false=heartbeat/no-op,
+      // empty result = session is revoked, do not resurrect).
+      register_device_session: {
+        Args: {
+          p_user_id: string
+          p_supabase_session_id: string
+          p_device_id: string
+          p_device_type: string
+          p_device_name: string
+          p_browser: string | null
+          p_os: string | null
+          p_platform: string | null
+          p_ip_hash: string | null
+          p_heartbeat_interval_ms?: number
+          p_now?: string
+        }
+        Returns: {
+          id: string | null
+          user_id: string | null
+          supabase_session_id: string | null
+          device_id: string | null
+          device_type: string | null
+          device_name: string | null
+          browser: string | null
+          os: string | null
+          platform: string | null
+          ip_hash: string | null
+          created_at: string | null
+          last_seen_at: string | null
+          revoked_at: string | null
+          registered: boolean | null
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

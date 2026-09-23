@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { env as publicEnv } from '$env/dynamic/public';
 import { env as privateEnv } from '$env/dynamic/private';
 import { readJsonBody } from '$lib/server/http/body';
+import { checkRateLimit } from '$lib/server/http/rate-limit';
 import { claimAndExchangePairing } from '$lib/server/auth/device-pairing';
 import type { Database } from '$lib/server/supabase/database.types';
 
@@ -19,13 +20,14 @@ type ExchangeRequest = {
  *
  * This endpoint is the SINGLE owner of the exchange credential. It:
  *   1. Validates the pairing secret.
- *   2. Atomically claims the approved pairing request via a single
- *      UPDATE…RETURNING (Postgres row-level lock serializes
- *      concurrent attempts). The exchange_code is cleared from the
- *      DB in the SAME statement — it exists in server memory only
- *      for the duration of step 4.
+ *   2. Atomically claims the approved pairing request via a server-side
+ *      PL/pgSQL RPC (claim_device_pairing) that uses SELECT ... FOR UPDATE
+ *      to capture the OLD exchange_code BEFORE the UPDATE, then UPDATEs
+ *      the row to 'consumed' and clears exchange_code in the SAME
+ *      transaction. The OLD OTP is returned to the caller.
  *   3. Only the request that successfully claims it receives the
- *      exchange_code in RETURNING.
+ *      exchange_code from the RPC. The code lives in server memory
+ *      only for the duration of step 4.
  *   4. Calls locals.supabase.auth.exchangeCodeForSession(code) —
  *      this establishes the TV's OWN independent Supabase session
  *      via the SSR cookie mechanism (NOT a copy of the phone's
@@ -34,19 +36,21 @@ type ExchangeRequest = {
  *      no further state mutation is needed.
  *
  * Concurrency safety:
- *   Two concurrent requests with the same secret both target the
- *   same row. Postgres acquires a row lock on the first UPDATE;
- *   the second UPDATE blocks, then re-evaluates the WHERE clause
- *   after the first commits. Because the first UPDATE set
- *   status='consumed' and consumed_at = now(), the second UPDATE's
- *   WHERE status='approved' no longer matches — RETURNING yields
- *   zero rows. The second request fails safely with HTTP 409
- *   (already consumed). No exchange_code is ever exposed to either
- *   client.
+ *   Two concurrent requests with the same secret both call the RPC.
+ *   Inside the RPC, the first transaction's SELECT ... FOR UPDATE
+ *   acquires a row-level lock; the second transaction blocks, then
+ *   re-evaluates the WHERE clause after the first commits. The
+ *   second SELECT finds no row (status is now 'consumed') and the
+ *   RPC returns an empty result set — the caller falls through to
+ *   the diagnostic branch (HTTP 409).
  *
  * No authentication required — the pairing secret is the
  * authorization. This is called by the TV AFTER detecting 'approved'
  * status via polling.
+ *
+ * Phase 4 hardening: rate-limited via the `pairingExchange` bucket
+ * (10/min per IP). Each exchange consumes a Supabase OTP, so a tighter
+ * cap than polling is appropriate.
  *
  * SECURITY:
  *   - The exchange_code is NEVER returned to the client.
@@ -63,6 +67,17 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const secret = body.value?.secret;
   if (typeof secret !== 'string' || secret.length < 16) {
     return json({ ok: false, message: 'A valid pairing secret is required.' }, { status: 400, headers: { 'cache-control': 'no-store' } });
+  }
+
+  // Rate limit by IP — unauthenticated endpoint. Each exchange
+  // consumes a Supabase OTP, so a tighter cap than polling.
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const rateResult = checkRateLimit('pairingExchange', `pairing:exchange:${ip}`);
+  if (!rateResult.allowed) {
+    return json(
+      { ok: false, message: 'Too many exchange attempts. Please try again shortly.' },
+      { status: 429, headers: { 'retry-after': String(rateResult.retryAfterSeconds), 'cache-control': 'no-store' } }
+    );
   }
 
   const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;

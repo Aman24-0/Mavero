@@ -60,6 +60,14 @@ export const RATE_LIMITED_MESSAGE = 'Too many requests. Please slow down and try
  *   * 4k: one upstream fetch per call → 20/min.
  *   * search: TMDB classification per query → 30/min.
  *   * stremio session: token minting per play → 20/min.
+ *   * pairing create: unauthenticated TV challenge creation → 10/min per IP
+ *     (tighter than search because each challenge persists a row + secret_hash).
+ *   * pairing poll: unauthenticated TV status polling → 60/min per IP+secret
+ *     (the TV polls every 3s; 60/min accommodates 5min TTL with margin).
+ *   * pairing approve: authenticated phone approval → 20/min per user
+ *     (each approval calls Supabase generateLink which is rate-limited server-side).
+ *   * pairing exchange: unauthenticated TV exchange → 10/min per IP
+ *     (each exchange consumes a Supabase OTP).
  */
 export const RATE_LIMIT_RULES = {
   resolve: { limit: 30, windowMs: 60_000 },
@@ -69,6 +77,10 @@ export const RATE_LIMIT_RULES = {
   downloader4k: { limit: 20, windowMs: 60_000 },
   search: { limit: 30, windowMs: 60_000 },
   stremioSession: { limit: 20, windowMs: 60_000 },
+  pairingCreate: { limit: 10, windowMs: 60_000 },
+  pairingPoll: { limit: 60, windowMs: 60_000 },
+  pairingApprove: { limit: 20, windowMs: 60_000 },
+  pairingExchange: { limit: 10, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;
