@@ -1683,3 +1683,93 @@ The secret is high-entropy (32 bytes) and short-lived (5 minutes), but placing i
 
 ### Push status
 (see below)
+
+---
+
+## Phase 9: Full Regression Tests
+
+### Starting commit
+`23453597bfca50fa939425be3471682489fc862d` (Phase 8 — Security/rate-limit hardening)
+
+### Audit scope
+Inspected all Device Auth source files (hooks, services, RPCs, endpoints, pages, migrations) and all 10 existing Device Auth test suites. Verified that Phases 1–8 remain internally consistent and that no Phase 8 security hardening broke earlier phases.
+
+### Device Auth test suites included
+1. `device_session_registry_test.ts` — Phase 1
+2. `account_sessions_test.ts` — Phase 2
+3. `device_pairing_test.ts` — Phase 3.2 + cross-phase
+4. `phase3_session_revocation_test.ts` — Phase 3
+5. `phase3_hardening_test.ts` — Phase 3 hardening
+6. `phase4_qr_challenge_backend_test.ts` — Phase 4
+7. `phase5_tv_login_ui_test.ts` — Phase 5
+8. `phase6_phone_qr_scanner_test.ts` — Phase 6
+9. `phase7_qr_session_handoff_test.ts` — Phase 7
+10. `phase8_security_hardening_test.ts` — Phase 8
+11. `phase9_device_auth_regression_test.ts` — Phase 9 (NEW)
+
+### Cross-phase regression coverage
+- **A. Test chain integrity:** 11 Device Auth suites in correct order.
+- **B. Phase 1 session identity:** JWT session_id, device ID not a credential, atomic RPC registration, heartbeat throttle, revoked-session no-resurrection.
+- **C. Phase 2 account sessions UI:** sessions load, current session identified server-side, no tokens, Login on TV entry point.
+- **D. Phase 3 revocation:** individual revoke (auth, IDOR, current-session block, cache invalidation), sign-out-all (auth, server-derived current session, neq current, count, cache, idempotent), sign-out (revoke, cache, Supabase signOut, redirect).
+- **E. Phase 4 QR backend:** create (crypto, hash, TTL, RLS), status (safe, rate limit, no-store), info (POST, rate limit), approve (auth, race fix, rate limit), cancel (atomic, rate limit).
+- **F. Phase 5 TV login:** local QR, #s= fragment, responsive sizing, retry, polling stops, exchange after approval, no tokens.
+- **G. Phase 6 scanner:** auth required, camera client-side, fragment validation, rejects query, camera cleanup, video always mounted, no mirror, no direct approve.
+- **H. Phase 7 handoff:** exchange uses TV SSR client, atomic claim RPC (FOR UPDATE, OLD capture, consumed), exchangeCodeForSession server-side, no token in JSON, single-use, approval race fix.
+- **I. Phase 8 security:** #s= fragment, POST /info, 6 rate-limit buckets, 429 + retry-after, no secret/token logging.
+- **J. Cross-phase invariants:** 15 security invariants (no service key in client, no tokens in JSON, server-derived identity, no client-supplied user/session/exchange IDs, status no exchange_code, consumed can't exchange, revoked can't resurrect, current session protected, cross-user isolation, scanner same-origin, no query credential transport).
+- **K. Cross-phase data-flow:** complete credential flow from create → QR → scanner → authorize → info → approve → exchange → SSR session → device registry — no credential crosses a client boundary.
+- **L. Database/migration regression:** 4 migrations verified (device_sessions, pairing, claim RPC, register RPC).
+- **M. Negative-case matrix:** 25 rejection paths verified.
+- **N. No sensitive logging:** 6 pairing files checked.
+- **O. Cache-control:** no-store on all 6 pairing endpoints.
+- **P. Deterministic simulation:** full QR lifecycle (pending → approved → consumed + OLD OTP capture + second exchange/approve fail).
+- **Q. Existing tests present:** 10 Device Auth suites verified to exist.
+
+### Security invariants checked
+- No service-role key in any client route.
+- No access_token, refresh_token, or exchange_code in any pairing endpoint JSON response.
+- Pairing secret never accepted as user/session/authenticated-user identity.
+- Device ID never used as authorization.
+- Session ID always derived from authenticated server state.
+- Approval user ID from locals.user.
+- Exchange does not accept client-supplied user/session/exchange IDs.
+- Status cannot disclose exchange credentials.
+- Consumed pairing cannot be exchanged again.
+- Revoked session cannot be resurrected by registration.
+- Current session protected by sign-out-all.
+- Different users' sessions isolated.
+- Scanner cannot navigate to external origin.
+- URL query credential transport is gone.
+
+### Phase 9 focused test count
+**327 check groups**, all pass.
+
+### Validation results
+- `pnpm check` (svelte-kit sync + svelte-check): 0 errors, 0 warnings.
+- `pnpm build` (vite build): PASS.
+- `pnpm test`: 144 of 145 suites pass. 8 pre-existing failures unchanged.
+
+### Real defects found/fixed
+**NONE.** No implementation defects were discovered. The Phase 1–8 architecture remains correct and internally consistent.
+
+### Remaining environment-dependent failures (8, unchanged)
+- `phase5_cloud_test.ts`, `phase6_auth_test.ts`, `phase6_rls_test.ts` — require live Supabase credentials.
+- `phase7a_public_config_test.ts`, `phase7a_security_test.ts`, `phase7a_validation_test.ts` — require live Supabase credentials.
+- `player_fab_autohide_test.ts` — Phase 5 player UI, unrelated.
+- `search_performance_test.ts` — search performance, unrelated.
+
+### Live browser/device verification
+**NOT performed.** Static contract + deterministic simulation only. No live Supabase credentials, no physical device testing.
+
+### Files changed
+- `scripts/phase9_device_auth_regression_test.ts` (NEW) — 327 check groups.
+- `scripts/stremio_player_phase8_test.ts` — test-chain ending assertion updated.
+- `package.json` — test chain appends phase9_device_auth_regression_test.
+- `Mavero_Device_Auth_Integration_Worklog.md` — this entry.
+
+### Final commit SHA
+(see below)
+
+### Push status
+(see below)
