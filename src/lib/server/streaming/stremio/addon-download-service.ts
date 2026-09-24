@@ -225,12 +225,41 @@ const MAX_BACKOFF_MS = 2_000;
 /**
  * Transient error codes that qualify for a retry. HTTP 4xx, INVALID_RESPONSE,
  * INVALID_JSON and BLOCKED_URL are NOT transient.
+ *
+ * Phase A (addon reliability): `HTTP_ERROR` is in this set because the fetcher
+ * maps ALL non-2xx responses (both 4xx and 5xx) to `HTTP_ERROR`. The retry
+ * decision in `isTransientHttpError` further distinguishes 5xx (transient,
+ * retryable) from 4xx (permanent, NOT retryable) using the `httpStatus`
+ * field that `resolveAddonOnce` plumbs through from the underlying
+ * StreamServiceError. This implements §A3 — "Do NOT blindly retry permanent
+ * failures such as normal 4xx responses."
  */
 const RETRYABLE_ERROR_CODES: ReadonlySet<StreamErrorCode> = new Set<StreamErrorCode>([
   'TIMEOUT',
   'NETWORK',
   'HTTP_ERROR', // 5xx is often transient; the fetcher maps all non-2xx to HTTP_ERROR
 ]);
+
+/**
+ * Phase A (§A3): decides whether an HTTP_ERROR unavailable result qualifies
+ * for a retry. The fetcher's closed error vocabulary collapses 4xx and 5xx
+ * into a single HTTP_ERROR code, so we use the httpStatus carried alongside
+ * the errorCode to make the right call:
+ *
+ *   * 5xx (500-599) — transient (the addon server is failing temporarily).
+ *   * 4xx (400-499) — permanent (the addon is rejecting the request: auth,
+ *     not-found, bad-request). Retrying would just produce the same 4xx.
+ *
+ * When httpStatus is missing (defensive — should not happen with the current
+ * fetcher, but possible if a future error path forgets to set it), we default
+ * to retryable to preserve backward compatibility with the pre-Phase-A
+ * behavior (which retried ALL HTTP_ERROR responses).
+ */
+function isTransientHttpError(errorCode: StreamErrorCode | undefined, httpStatus: number | undefined): boolean {
+  if (errorCode !== 'HTTP_ERROR') return false;
+  if (httpStatus === undefined) return true; // defensive default — preserves back-compat
+  return httpStatus >= 500 && httpStatus < 600;
+}
 
 /** The content fact the downloader needs (same shape as the player session). */
 export type DownloaderContentLookup = {
@@ -390,6 +419,12 @@ function diagnosticsOf(raw: number, unsupported: number, _dropped: Record<Downlo
  * out their full per-request timeout (previously the aggregate
  * AbortController existed but the signal never reached the network layer,
  * making the 40s budget dead code).
+ *
+ * Phase A (addon reliability): the return type now carries `httpStatus`
+ * when status='unavailable' AND the underlying StreamServiceError had one.
+ * This is INTERNAL — it is NOT serialized into the public API response
+ * (which only exposes the closed `errorCode` vocabulary). The retry loop
+ * uses it to distinguish transient 5xx from permanent 4xx (§A3).
  */
 async function resolveAddonOnce(
   addon: StreamingAddon,
@@ -399,7 +434,7 @@ async function resolveAddonOnce(
   attempt: number,
   deps: ResolveSingleAddonDeps,
   overallSignal?: AbortSignal,
-): Promise<{ status: AddonDownloadStatus; streams: AddonDownloadStreamView[]; errorCode?: StreamErrorCode; diagnostics?: AddonDownloadDiagnostics }> {
+): Promise<{ status: AddonDownloadStatus; streams: AddonDownloadStreamView[]; errorCode?: StreamErrorCode; httpStatus?: number; diagnostics?: AddonDownloadDiagnostics }> {
   try {
     const body = await fetchStremioStreamResponse(plan.endpointUrl, {
       fetcher: deps.fetcher,
@@ -437,8 +472,8 @@ async function resolveAddonOnce(
     };
   } catch (error) {
     const serviceError = asStreamServiceError(error);
-    console.warn(`[AddonDownloader] fetch failed addon=${addon.slug} attempt=${attempt} reason=${serviceError.code}`);
-    return { status: 'unavailable', streams: [], errorCode: serviceError.code };
+    console.warn(`[AddonDownloader] fetch failed addon=${addon.slug} attempt=${attempt} reason=${serviceError.code}${serviceError.httpStatus !== undefined ? ` http=${serviceError.httpStatus}` : ''}`);
+    return { status: 'unavailable', streams: [], errorCode: serviceError.code, ...(serviceError.httpStatus !== undefined ? { httpStatus: serviceError.httpStatus } : {}) };
   }
 }
 
@@ -654,26 +689,82 @@ export async function resolveSingleAddonDownload(client: SupabaseClient<Database
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const runtimeContext = runtimeContextOf(lookup);
 
+  // Phase A (addon reliability): retry budget is SHARED between transient-error
+  // and empty-result retries. The total attempt count is bounded by
+  // `maxRetries + 1` (default 2). Possible transitions:
+  //
+  //   loaded               → return immediately (no retry)
+  //   empty  (1st attempt) → retry once
+  //   empty  (2nd attempt) → final empty (no further retry)
+  //   unavailable          → retry only if the error code is in
+  //                         RETRYABLE_ERROR_CODES AND (when the code is
+  //                         HTTP_ERROR) the httpStatus is 5xx (NOT 4xx)
+  //                         AND the budget allows it; otherwise return
+  //                         final unavailable.
+  //
+  // The final status returned reflects the LAST attempt's status: if the
+  // second attempt was empty, the addon is reported as `empty` (NOT
+  // `unavailable`), so the frontend can show the honest-zero UX instead of
+  // a failure state.
   let lastErrorCode: StreamErrorCode | undefined;
-  let attempts = 0;
+  let lastStatus: AddonDownloadStatus = 'unavailable';
+  let lastStreams: AddonDownloadStreamView[] = [];
   let lastDiagnostics: AddonDownloadDiagnostics | undefined;
+  let attempts = 0;
   for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
     attempts = attempt;
     const result = await resolveAddonOnce(addon, plan.plan, streamType, runtimeContext, attempt, deps);
     lastDiagnostics = result.diagnostics;
-    if (result.status !== 'unavailable') {
-      return { ...base, status: result.status, streams: result.streams, attempts, ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
+    lastStatus = result.status;
+    lastStreams = result.streams;
+
+    // LOADED: streams found — return immediately. No retry needed.
+    if (result.status === 'loaded') {
+      return { ...base, status: 'loaded', streams: result.streams, attempts, ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
     }
-    lastErrorCode = result.errorCode;
-    const isTransient = result.errorCode !== undefined && RETRYABLE_ERROR_CODES.has(result.errorCode);
-    if (!isTransient || attempt > maxRetries) {
-      break;
+
+    // Track the error code for the unavailable path (used in the final return).
+    if (result.status === 'unavailable') {
+      lastErrorCode = result.errorCode;
     }
-    console.info(`[AddonDownloader] retrying addon=${addon.slug} attempt=${attempt + 1}/${maxRetries + 1} after backoff`);
-    await sleep(nextBackoffMs(attempt, initialBackoff, maxBackoff));
+
+    // Decide whether to retry. Two retry-qualifying conditions:
+    //   1. Transient error on an unavailable result:
+    //        * TIMEOUT / NETWORK → always retryable.
+    //        * HTTP_ERROR → retryable ONLY when httpStatus is 5xx (500-599).
+    //          4xx (400-499) is permanent and MUST NOT be retried (§A3).
+    //        * INVALID_RESPONSE / INVALID_JSON / BLOCKED_URL / etc. are NOT
+    //          in RETRYABLE_ERROR_CODES and never qualify.
+    //   2. Empty result (the addon returned a valid response with ZERO
+    //      eligible streams). Stremio addons are known to occasionally return
+    //      0 streams on the first call and streams on the second — bounded
+    //      retry surfaces that case without turning into an infinite loop.
+    const isTransientError = result.status === 'unavailable'
+      && result.errorCode !== undefined
+      && RETRYABLE_ERROR_CODES.has(result.errorCode)
+      && !(result.errorCode === 'HTTP_ERROR' && !isTransientHttpError(result.errorCode, result.httpStatus));
+    const isEmptyResult = result.status === 'empty';
+    const canRetry = attempt <= maxRetries;
+    if ((isTransientError || isEmptyResult) && canRetry) {
+      const reason = isTransientError ? 'transient-error' : 'empty-result';
+      console.info(`[AddonDownloader] retrying addon=${addon.slug} attempt=${attempt + 1}/${maxRetries + 1} reason=${reason} after backoff`);
+      await sleep(nextBackoffMs(attempt, initialBackoff, maxBackoff));
+      continue;
+    }
+
+    // Cannot retry — break out and return the final status below.
+    break;
   }
 
-  return { ...base, status: 'unavailable', streams: [], errorCode: lastErrorCode ?? 'UNEXPECTED', attempts, ...(lastDiagnostics ? { diagnostics: lastDiagnostics } : {}) };
+  // Retry budget exhausted (or no retry was possible). Return the LAST
+  // observed status so the frontend gets the most accurate label:
+  //   * status='empty'        → honest zero (no errorCode — NOT a failure)
+  //   * status='unavailable'  → request failed after retry budget (errorCode set)
+  if (lastStatus === 'unavailable') {
+    return { ...base, status: 'unavailable', streams: [], errorCode: lastErrorCode ?? 'UNEXPECTED', attempts, ...(lastDiagnostics ? { diagnostics: lastDiagnostics } : {}) };
+  }
+  // lastStatus === 'empty'
+  return { ...base, status: 'empty', streams: lastStreams, attempts, ...(lastDiagnostics ? { diagnostics: lastDiagnostics } : {}) };
 }
 
 export { MAX_DOWNLOAD_STREAMS_PER_ADDON };

@@ -77,7 +77,7 @@ function fetcherFor(routes: Record<string, unknown>, calls: string[]): typeof fe
     const key = String(url);
     calls.push(key);
     const handler = routes[key] ?? routes['*'];
-    if (handler instanceof Response) return handler;
+    if (handler instanceof Response) return handler.clone();
     if (typeof handler === 'function') return (handler as () => Response)();
     return new Response('not found', { status: 404 });
   }) as typeof fetch;
