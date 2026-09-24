@@ -263,9 +263,10 @@ function sectionG(): void {
   if (rowMatch) {
     const rowBlock = rowMatch[1];
     const shareButton = (rowBlock.match(/<button[^>]*class="mad-action mad-action-share"/g) ?? []).length;
-    const downloadAnchor = (rowBlock.match(/<a[^>]*class="mad-action"/g) ?? []).length;
-    ok(shareButton === 1, `G (Phase 18): exactly ONE Share button in the row (got ${shareButton})`);
-    ok(downloadAnchor === 0, `G (Phase 18): NO Download anchor in the row (got ${downloadAnchor})`);
+    // Phase D: Download + Play anchors are now present for capable streams.
+    // The Share button (a <button>) is still exactly ONE — Download + Play
+    // are <a> anchors, not <button> elements.
+    ok(shareButton === 1, `G (Phase D): exactly ONE Share <button> in the row (got ${shareButton})`);
   }
 }
 
@@ -275,8 +276,9 @@ function sectionG(): void {
 
 function sectionH(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(!component.includes('Play size='), 'H: NO Play icon in the component');
-  ok(!component.includes('mad-action-play'), 'H: NO mad-action-play CSS class');
+  // Phase D: Play icon + mad-action-play are now intentionally present.
+  ok(component.includes('Play size='), 'H (Phase D): Play icon IS present in the component');
+  ok(component.includes('mad-action-play'), 'H (Phase D): mad-action-play CSS class IS present');
   ok(!component.includes('externalPlayerLaunchFor'), 'H: NO externalPlayerLaunchFor call in the component (the Play/Watch launch helper is gone from the card)');
   ok(!component.includes('openHref') && !component.includes('openTarget') && !component.includes('openTitle'), 'H: NO open-href/open-target/open-title helpers (the Play launch helpers are gone)');
   ok(!component.includes('aria-label="Watch') && !component.includes('>Watch<') && !component.includes('Watch</button'), 'H: NO Watch button/label in the component');
@@ -519,8 +521,10 @@ async function sectionQ(): Promise<void> {
 function sectionR(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   // Phase 18 (task §7): Download button is REMOVED. Only Share remains.
-  ok(!component.includes('downloadAttributesFor'), 'R (Phase 18): downloadAttributesFor is REMOVED (no Download button)');
-  ok(!component.includes('href={stream.url}'), 'R (Phase 18): href={stream.url} is REMOVED (no Download anchor)');
+  // Phase D: Download + Play are now present. downloadActionFor is imported
+  // from the shared stream-actions module (capability-aware anchor building).
+  ok(component.includes('downloadActionFor'), 'R (Phase D): downloadActionFor is imported (Download present)');
+  ok(component.includes('playActionFor'), 'R (Phase D): playActionFor is imported (Play present)');
   ok(!component.includes('handleDownload'), 'R (Phase 18): handleDownload is REMOVED');
   ok(!component.includes('openingKey'), 'R (Phase 18): openingKey state is REMOVED');
   // Share is preserved.

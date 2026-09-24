@@ -282,9 +282,14 @@ function section20(): void {
 function section21(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   ok(!component.includes('downloadAttributesFor'), '21: downloadAttributesFor is absent');
-  ok(!component.includes('handleDownload'), '21: handleDownload is absent');
-  ok(!component.includes('openingKey'), '21: openingKey state is absent');
-  ok(!component.includes('Download size='), '21: Download icon is absent');
+  // Phase D: Download + Play are now intentionally present.
+  ok(component.includes('Download size='), '21 (Phase D): Download icon IS present');
+  ok(component.includes('Play size='), '21 (Phase D): Play icon IS present');
+  ok(component.includes('downloadActionFor'), '21 (Phase D): downloadActionFor is imported');
+  ok(component.includes('playActionFor'), '21 (Phase D): playActionFor is imported');
+  // Phase 18's handleDownload/openingKey are still absent (Phase D uses different helper names).
+  ok(!component.includes('handleDownload'), '21: old handleDownload is absent (Phase D uses downloadActionFor instead)');
+  ok(!component.includes('openingKey'), '21: old openingKey state is absent');
 }
 
 // ---------------------------------------------------------------------------

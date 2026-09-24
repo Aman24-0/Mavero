@@ -369,14 +369,15 @@ async function sectionL(): Promise<void> {
 
 function sectionMNO(): void {
   // Phase 18 (task §1/§7): the downloader card now has ONLY ONE action — Share.
-  // Download + Play/Watch + Copy are ALL REMOVED.
+  // Phase D: Download + Play are now intentionally present (capability-aware). Copy remains removed.
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(!component.includes('copyStreamUrl'), 'M (Phase 18): Copy action is REMOVED');
-  ok(!component.includes('Play size='), 'M (Phase 18): Play/Watch action is REMOVED');
-  ok(!component.includes('mad-action-play'), 'M (Phase 18): the mad-action-play CSS class is gone');
-  // Phase 18 (task §7): Download button is REMOVED. Only Share remains.
-  ok(!component.includes('downloadAttributesFor'), 'N (Phase 18): Download action is REMOVED (no downloadAttributesFor)');
-  ok(!component.includes('href={stream.url}'), 'N (Phase 18): Download anchor is REMOVED (no href={stream.url})');
+  ok(!component.includes('copyStreamUrl'), 'M: Copy action is still REMOVED (not reintroduced)');
+  // Phase D: Play icon + mad-action-play are now present.
+  ok(component.includes('Play size='), 'M (Phase D): Play icon IS present');
+  ok(component.includes('mad-action-play'), 'M (Phase D): mad-action-play CSS class IS present');
+  // Phase D: downloadActionFor + playActionFor are imported (replaces old downloadAttributesFor).
+  ok(component.includes('downloadActionFor'), 'N (Phase D): downloadActionFor is imported (Download present)');
+  ok(component.includes('playActionFor'), 'N (Phase D): playActionFor is imported (Play present)');
   ok(component.includes('navigator.share'), 'M (Phase 18): Share uses navigator.share() with the original URL');
   ok(component.includes('Share2 size='), 'M (Phase 18): the Share button is present (lucide Share2 icon)');
   ok(!component.includes('/api/playback/compat') && !component.includes('media-worker'), 'M/N: the downloader UI references NO compat/worker path');

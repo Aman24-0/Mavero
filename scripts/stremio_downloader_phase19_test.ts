@@ -245,13 +245,14 @@ function section18(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 19. Mavero cards remain Share-only (no Download/Play/Copy)
+// 19. Mavero cards have Download + Play + Share (Phase D)
 // ---------------------------------------------------------------------------
 
 function section19(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(!component.includes('downloadAttributesFor'), '19: Mavero has NO Download button');
-  ok(!component.includes('Play size='), '19: Mavero has NO Play button');
+  // Phase D: Download + Play are now present (capability-aware).
+  ok(component.includes('downloadActionFor'), '19 (Phase D): Mavero has downloadActionFor (Download present)');
+  ok(component.includes('Play size='), '19 (Phase D): Mavero has Play icon');
   ok(!component.includes('copyStreamUrl'), '19: Mavero has NO Copy button');
   ok(component.includes('navigator.share'), '19: Mavero has Share (navigator.share)');
 }

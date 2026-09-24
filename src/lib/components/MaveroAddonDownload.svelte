@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX, ChevronDown } from 'lucide-svelte';
+  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX, ChevronDown, Download, Play } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import {
     filterStreams,
@@ -17,6 +17,12 @@
     type FilterableStream,
     type SizeFilterValue,
   } from '$lib/shared/downloader-filters';
+  import {
+    streamCapabilities,
+    downloadActionFor,
+    playActionFor,
+    type CapabilityStream,
+  } from '$lib/shared/stream-actions';
   import type { AudioClass } from '$lib/shared/stream-selection';
 
   /**
@@ -421,6 +427,20 @@
     }
   }
 
+  // Phase D: capability-aware action helpers. These delegate to the shared
+  // stream-actions module so the capability rules + action construction live
+  // in ONE place (imported by both the component and the tests). The
+  // component never re-implements capability logic.
+  function capsFor(stream: StreamView) {
+    return streamCapabilities(stream as CapabilityStream);
+  }
+  function downloadAttr(stream: StreamView) {
+    return downloadActionFor(stream as CapabilityStream);
+  }
+  function playAttr(stream: StreamView) {
+    return playActionFor(stream as CapabilityStream, { android: typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent) });
+  }
+
   onMount(load);
 </script>
 
@@ -636,6 +656,8 @@
           {#each filteredStreams as stream, index (stream.url + '-' + index)}
             {@const key = `${activeTab.addonSlug}-${index}`}
             {@const KindIcon = kindIcon(stream.kind)}
+            {@const dlAction = downloadAttr(stream)}
+            {@const plAction = playAttr(stream)}
             <article class="mad-row" role="listitem" aria-label={streamLabel(stream)}>
               <!-- Phase B (card UX §B2): structured card layout. Kind icon +
                    filename/title as the primary scannable identity; metadata
@@ -683,21 +705,69 @@
                   {/if}
                 </div>
               </div>
-              <!-- Phase 18 (task §7): ONLY Share. No Download button. -->
-              <button
-                class="mad-action mad-action-share"
-                class:done={shareKey === key && shareState === 'shared'}
-                class:failed={shareKey === key && shareState === 'failed'}
-                type="button"
-                aria-label={shareKey === key && shareState === 'shared' ? 'URI shared' : shareKey === key && shareState === 'failed' ? 'Share failed' : 'Share original URI'}
-                title="Share (original URI)"
-                onclick={(event) => { event.stopPropagation(); void handleShare(stream, activeTab.addonName, key); }}
-              >
-                {#if shareKey === key && shareState === 'sharing'}<Loader2 size={13} class="mad-spin" />
-                {:else if shareKey === key && shareState === 'shared'}<Check size={13} />
-                {:else if shareKey === key && shareState === 'failed'}<AlertTriangle size={13} />
-                {:else}<Share2 size={13} />{/if}
-              </button>
+              <!-- Phase D: capability-aware actions. Download + Play are
+                   shown only when the stream kind supports them. Share is
+                   always available. The actions use the EXACT ORIGINAL URI —
+                   no proxy, no rewrite, no forced 1DM. Download uses the
+                   browser's native anchor mechanism; Play uses the shared
+                   external-player launch helper (Android intent for mpv on
+                   Chrome with browser_fallback_url; direct link elsewhere). -->
+              <div class="mad-row-actions">
+                {#if dlAction}
+                  {#if dlAction.kind === 'anchor'}
+                    <a
+                      class="mad-action mad-action-download"
+                      href={dlAction.href}
+                      download={dlAction.download}
+                      target={dlAction.target}
+                      rel={dlAction.rel}
+                      aria-label="Download original file"
+                      title="Download (original URL)"
+                      onclick={(event) => event.stopPropagation()}
+                    >
+                      <Download size={13} />
+                    </a>
+                  {:else}
+                    <!-- magnet/P2P — direct anchor to the magnet URI. The OS
+                         resolves the handler (torrent app if registered). -->
+                    <a
+                      class="mad-action mad-action-download"
+                      href={dlAction.href}
+                      aria-label="Open in torrent app"
+                      title="Open in torrent app (original magnet URI)"
+                      onclick={(event) => event.stopPropagation()}
+                    >
+                      <Download size={13} />
+                    </a>
+                  {/if}
+                {/if}
+                {#if plAction}
+                  <a
+                    class="mad-action mad-action-play"
+                    href={plAction.href}
+                    aria-label="Play in external player"
+                    title="Play in external player"
+                    onclick={(event) => event.stopPropagation()}
+                  >
+                    <Play size={13} />
+                  </a>
+                {/if}
+                <!-- Phase D: Share preserved (Phase 18 contract intact). -->
+                <button
+                  class="mad-action mad-action-share"
+                  class:done={shareKey === key && shareState === 'shared'}
+                  class:failed={shareKey === key && shareState === 'failed'}
+                  type="button"
+                  aria-label={shareKey === key && shareState === 'shared' ? 'URI shared' : shareKey === key && shareState === 'failed' ? 'Share failed' : 'Share original URI'}
+                  title="Share (original URI)"
+                  onclick={(event) => { event.stopPropagation(); void handleShare(stream, activeTab.addonName, key); }}
+                >
+                  {#if shareKey === key && shareState === 'sharing'}<Loader2 size={13} class="mad-spin" />
+                  {:else if shareKey === key && shareState === 'shared'}<Check size={13} />
+                  {:else if shareKey === key && shareState === 'failed'}<AlertTriangle size={13} />
+                  {:else}<Share2 size={13} />{/if}
+                </button>
+              </div>
             </article>
           {/each}
         </div>
@@ -840,6 +910,10 @@
   .mad-action.done { border-color: var(--accent); color: var(--accent); }
   .mad-action.failed { border-color: #d48a64; color: #d48a64; }
   .mad-action-share { color: var(--ink); }
+  /* Phase D: Download + Play action classes. */
+  .mad-action-download { color: var(--ink-soft); }
+  .mad-action-play { color: var(--ink-soft); }
+  .mad-row-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
   @keyframes mad-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-chip { transition: none; } }
   /* Phase B (card UX §B2): on very narrow viewports (≤ 360px), allow the

@@ -184,8 +184,9 @@ function sectionStreamTypes(): void {
 function sectionO(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
   // Phase 18 (task §7): Download button is REMOVED. Only Share remains.
-  ok(!component.includes('downloadAttributesFor'), 'O (Phase 18): downloadAttributesFor is REMOVED (no Download button)');
-  ok(!component.includes('href={stream.url}'), 'O (Phase 18): href={stream.url} is REMOVED (no Download anchor)');
+  // Phase D: downloadActionFor is now imported (replaces downloadAttributesFor).
+  ok(component.includes('downloadActionFor'), 'O (Phase D): downloadActionFor is imported (Download present)');
+  ok(component.includes('playActionFor'), 'O (Phase D): playActionFor is imported (Play present)');
   ok(component.includes('handleShare'), 'O (Phase 18): handleShare is present (Share is the only action)');
   ok(component.includes('navigator.share'), 'O (Phase 18): navigator.share is present');
 }
@@ -215,10 +216,11 @@ function sectionQRS(): void {
   ok(!component.includes('Copy size='), 'Q (no Copy): Copy icon is absent');
   ok(!component.includes('copiedKey'), 'Q (no Copy): copiedKey state is absent');
 
-  ok(!component.includes('Play size='), 'R (no Play): Play icon is absent');
-  ok(!component.includes('mad-action-play'), 'R (no Play): mad-action-play CSS class is absent');
-  ok(!component.includes('externalPlayerLaunchFor'), 'R (no Play): externalPlayerLaunchFor is absent');
-  ok(!component.includes('openHref') && !component.includes('openTarget') && !component.includes('openTitle'), 'R (no Play): open-href/open-target/open-title helpers are absent');
+  // Phase D: Play icon + mad-action-play are now intentionally present.
+  ok(component.includes('Play size='), 'R (Phase D): Play icon IS present');
+  ok(component.includes('mad-action-play'), 'R (Phase D): mad-action-play CSS class IS present');
+  ok(!component.includes('externalPlayerLaunchFor'), 'R: externalPlayerLaunchFor is absent from the component (delegated to shared stream-actions module)');
+  ok(!component.includes('openHref') && !component.includes('openTarget') && !component.includes('openTitle'), 'R: open-href/open-target/open-title helpers are absent');
 
   ok(!component.includes('aria-label="Watch') && !component.includes('>Watch<'), 'S (no Watch): no Watch button/label');
 
@@ -227,7 +229,8 @@ function sectionQRS(): void {
   const rowMatch = component.match(/<article class="mad-row"[^>]*>([\s\S]*?)<\/article>/);
   if (rowMatch) {
     const allActions = (rowMatch[1].match(/<(?:a|button)[^>]*class="mad-action/g) ?? []).length;
-    ok(allActions === 1, `S (Phase 18): exactly ONE action element (Share only) (got ${allActions})`);
+    // Phase D: 1-3 action elements per row (Download + Play + Share depending on capability).
+    ok(allActions >= 1, `S (Phase D): at least ONE action element in the row (got ${allActions})`);
   }
 }
 

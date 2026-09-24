@@ -174,7 +174,7 @@ function section4_a11yFocus(): void {
 
 function section5_actionsPreserved(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // Share action is preserved (the ONLY action on the card).
+  // Phase D: Share action is preserved (handleShare + navigator.share + url = stream.url).
   ok(component.includes('class="mad-action mad-action-share"'), '5: Share button keeps mad-action mad-action-share class');
   ok(component.includes('handleShare'), '5: handleShare function preserved');
   ok(component.includes('await navigator.share('), '5: navigator.share is awaited');
@@ -183,22 +183,24 @@ function section5_actionsPreserved(): void {
   ok(component.includes('title: shareTitle('), '5: navigator.share receives a title from shareTitle()');
   ok(component.includes('function legacyCopy'), '5: legacyCopy clipboard fallback preserved');
   ok(component.includes("execCommand('copy')"), '5: execCommand fallback preserved');
-  // NO Download/Play/Copy actions reintroduced (Phase 18 boundary preserved).
-  ok(!component.includes('downloadAttributesFor'), '5: NO downloadAttributesFor (Download not reintroduced)');
-  ok(!component.includes('handleDownload'), '5: NO handleDownload (Download not reintroduced)');
-  ok(!component.includes('openingKey'), '5: NO openingKey state (Download not reintroduced)');
+  // Phase D: Download + Play are now intentionally present (capability-aware).
+  ok(component.includes('downloadActionFor'), '5 (Phase D): downloadActionFor is imported (Download present)');
+  ok(component.includes('playActionFor'), '5 (Phase D): playActionFor is imported (Play present)');
+  ok(component.includes('Download size='), '5 (Phase D): Download icon is present');
+  ok(component.includes('Play size='), '5 (Phase D): Play icon is present');
+  ok(component.includes('mad-action-download'), '5 (Phase D): mad-action-download CSS class present');
+  ok(component.includes('mad-action-play'), '5 (Phase D): mad-action-play CSS class present');
+  // Copy is still absent (not reintroduced).
   ok(!component.includes('copyStreamUrl'), '5: NO copyStreamUrl (Copy not reintroduced)');
   ok(!component.includes('handleCopy'), '5: NO handleCopy (Copy not reintroduced)');
-  ok(!component.includes('Play size='), '5: NO Play icon (Play not reintroduced)');
-  ok(!component.includes('mad-action-play'), '5: NO mad-action-play class (Play not reintroduced)');
-  // The Share button is the ONLY mad-action button in the row (Phase 18 contract).
+  // Watch label is absent (Play says "Play in external player", not "Watch").
+  ok(!component.includes('aria-label="Watch') && !component.includes('>Watch<') && !component.includes('Watch</button'), '5: NO Watch button/label');
+  // The Share button is still exactly ONE <button> per row.
   const rowMatch = component.match(/<article class="mad-row"[^>]*>([\s\S]*?)<\/article>/);
   if (rowMatch) {
     const rowBlock = rowMatch[1];
     const shareButtons = (rowBlock.match(/<button[^>]*class="mad-action mad-action-share"/g) ?? []).length;
-    const allActions = (rowBlock.match(/class="mad-action(?:\s|")/g) ?? []).length;
-    ok(shareButtons === 1, `5: exactly ONE Share button in the row (got ${shareButtons})`);
-    ok(allActions === 1, `5: exactly ONE mad-action element total in the row (got ${allActions}) — no other actions`);
+    ok(shareButtons === 1, `5: exactly ONE Share <button> in the row (got ${shareButtons})`);
   }
 }
 
