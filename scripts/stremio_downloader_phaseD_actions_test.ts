@@ -293,7 +293,12 @@ function section_sourceContract(): void {
 
   // CORRECTION 2: stream-actions.ts imports the canonical externalPlayerLaunchFor
   // from external-player.ts — NO duplicated implementation.
-  ok(helperSource.includes("import { externalPlayerLaunchFor } from '$lib/shared/external-player'"), 'SOURCE: stream-actions imports canonical externalPlayerLaunchFor from external-player.ts');
+  // Phase F follow-up (Pixeldrain bypass): stream-actions.ts ALSO imports
+  // transformPixeldrainUrl from external-player.ts so the Download flow
+  // can rewrite Pixeldrain URLs to the API download endpoint (bypassing
+  // hotlink protection). Both imports live on one line.
+  ok(/import \{[^}]*\bexternalPlayerLaunchFor\b[^}]*\} from '\$lib\/shared\/external-player'/.test(helperSource), 'SOURCE: stream-actions imports canonical externalPlayerLaunchFor from external-player.ts');
+  ok(/import \{[^}]*\btransformPixeldrainUrl\b[^}]*\} from '\$lib\/shared\/external-player'/.test(helperSource), 'SOURCE (Phase F): stream-actions imports transformPixeldrainUrl for the Pixeldrain hotlink bypass in the Download flow');
   ok(!helperSource.includes('function externalPlayerLaunchForResult'), 'SOURCE: NO duplicated externalPlayerLaunchForResult (CORRECTION 2 — removed)');
   ok(helperSource.includes('return externalPlayerLaunchFor(url, options)'), 'SOURCE: playActionFor delegates to externalPlayerLaunchFor (canonical helper)');
 

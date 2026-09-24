@@ -392,8 +392,16 @@ function sectionMNO(): void {
   ok(android?.kind === 'android-intent' && android.href.startsWith('intent://provider.example/dl/Movie.1080p.mkv?token=x#Intent;scheme=https;'), 'O: the Android launch is a VIEW intent carrying the ORIGINAL host/path/query');
   ok(android?.href.includes(`package=${MPV_ANDROID_PACKAGE}`), `O: the intent targets mpv-android (${MPV_ANDROID_PACKAGE})`);
   ok(android?.href.includes(`S.browser_fallback_url=${encodeURIComponent(httpsUrl)}`), 'O: the fallback URL preserves the FULL original address (graceful when mpv is NOT installed)');
+  // Phase F follow-up (MICRO FIX): the intent now carries `type=video/any` so
+  // mpv is offered as the video handler regardless of the URL filename
+  // extension. This is critical for extensionless signed media URLs where
+  // the filename lives only inside a response-content-disposition query
+  // parameter (Cloudflare R2, AWS S3 presigned, etc.).
+  ok(android?.href.includes('type=video/any'), 'O (Phase F): the intent includes type=video/any — force-to-player mechanism for extensionless HTTP(S) media URLs');
+  ok(android?.href.includes('scheme=https;type=video/any;package=is.xyz.mpv'), 'O (Phase F): the intent parameter order is scheme -> type=video/any -> package (mpv resolves as the video handler)');
   const plain = externalPlayerLaunchFor('http://pixeldrain.example/api/file/ab12cd', { android: true });
   ok(plain?.href.startsWith('intent://pixeldrain.example/api/file/ab12cd#Intent;scheme=http;') === true, 'O: cleartext http launches work (scheme carried into the intent)');
+  ok(plain?.href.includes('type=video/any'), 'O (Phase F): cleartext http extensionless URL also receives type=video/any');
   const desktop = externalPlayerLaunchFor(httpsUrl, { android: false });
   ok(desktop?.kind === 'direct' && desktop.href === httpsUrl, 'O: non-Android environments get the original URL directly (desktop browsers never break)');
   ok(externalPlayerLaunchFor('ftp://x.example/a.mkv', { android: true }) === null, 'O: unsupported schemes never launch');
@@ -401,6 +409,94 @@ function sectionMNO(): void {
   ok(externalPlayerHint({ kind: 'android-intent' }) === 'To play this source, install mpv.', 'O: the exact-launch hint states the mpv requirement');
   ok(externalPlayerHint({ kind: 'direct' }) === 'This source opens in an external player.', 'O: the fallback hint describes the handoff honestly');
   ok(isAndroidUserAgent('Mozilla/5.0 (Linux; Android 14; Pixel 8)') && !isAndroidUserAgent('Mozilla/5.0 (Windows NT 10.0)'), 'O: Android detection is best-effort by user agent');
+
+  // ============================================================
+  // Phase F — MICRO FIX regression: extensionless signed media URL
+  // (Cloudflare R2 / AWS S3 presigned style). The URL has NO .mkv
+  // extension in the pathname — the filename lives only inside the
+  // response-content-disposition query parameter. Without type=video/any,
+  // Android would fall back to the browser (which downloads the file as
+  // an attachment) instead of offering mpv. With type=video/any, mpv is
+  // offered as the video handler.
+  // ============================================================
+  const extensionlessSignedUrl =
+    'https://fb507c8169932d200a2746bc267fdd8b.r2.cloudflarestorage.com/hub/748f3c2d32e5df245b51aa0ff771db58' +
+    '?X-Amz-Algorithm=AWS4-HMAC-SHA256' +
+    '&X-Amz-Credential=test' +
+    '&response-content-disposition=' + encodeURIComponent('attachment; filename="Swapped.2026.1080p.NF.WEB-DL.Multi.DDP5.1.Atmos.H.264-4kHdHub.Com.mkv"') +
+    '&X-Amz-Signature=test';
+  const extensionlessLaunch = externalPlayerLaunchFor(extensionlessSignedUrl, { android: true });
+  ok(extensionlessLaunch?.kind === 'android-intent', 'O (Phase F extensionless): the extensionless signed URL produces an android-intent launch');
+  ok(extensionlessLaunch?.href.includes('type=video/any'), 'O (Phase F extensionless): the intent includes type=video/any — mpv is offered as the video handler even though the URL has no .mkv extension in the pathname');
+  ok(extensionlessLaunch?.href.includes('package=is.xyz.mpv'), 'O (Phase F extensionless): the intent targets mpv-android');
+  // The intent target preserves the original host + path + query (the
+  // response-content-disposition query parameter is preserved verbatim).
+  const expectedIntentPrefix = 'intent://fb507c8169932d200a2746bc267fdd8b.r2.cloudflarestorage.com/hub/748f3c2d32e5df245b51aa0ff771db58?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=test&response-content-disposition=';
+  ok(extensionlessLaunch?.href.startsWith(expectedIntentPrefix), 'O (Phase F extensionless): the intent target preserves the original host + path + the start of the original query string');
+  // The full original URL is preserved as the fallback (the user can
+  // still open the URL in the browser if mpv is not installed).
+  ok(extensionlessLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(extensionlessSignedUrl)}`), 'O (Phase F extensionless): the browser fallback contains the FULL ORIGINAL URL verbatim after encoding (no rewrite)');
+  // A normal .mkv URL still works (regression check — the new fix doesn't
+  // break the existing .mkv URL behavior).
+  const mkvUrl = 'https://free.flixnest.app/api/4khdhub/media/video.mkv?t=test';
+  const mkvLaunch = externalPlayerLaunchFor(mkvUrl, { android: true });
+  ok(mkvLaunch?.kind === 'android-intent', 'O (Phase F mkv regression): a normal .mkv URL still produces an android-intent launch');
+  ok(mkvLaunch?.href.includes('type=video/any'), 'O (Phase F mkv regression): the .mkv URL intent also includes type=video/any (consistent — the type is always present)');
+  ok(mkvLaunch?.href.startsWith('intent://free.flixnest.app/api/4khdhub/media/video.mkv?t=test#Intent;scheme=https;'), 'O (Phase F mkv regression): the .mkv URL host/path/query preserved in the intent target');
+  // Cleartext http extensionless URL also receives type=video/any.
+  const httpExtensionless = 'https://example.com/path/abc123?token=test';
+  const httpExtensionlessLaunch = externalPlayerLaunchFor(httpExtensionless, { android: true });
+  ok(httpExtensionlessLaunch?.href.includes('type=video/any'), 'O (Phase F http extensionless): cleartext http extensionless URL also receives type=video/any');
+  // Desktop behavior is unchanged for extensionless URLs.
+  const desktopExtensionless = externalPlayerLaunchFor(extensionlessSignedUrl, { android: false });
+  ok(desktopExtensionless?.kind === 'direct' && desktopExtensionless.href === extensionlessSignedUrl, 'O (Phase F extensionless): desktop/non-Android behavior unchanged — the original URL is returned directly (no intent, no rewrite)');
+  // Invalid/unsupported schemes are still rejected.
+  ok(externalPlayerLaunchFor('ftp://x.example/extensionless', { android: true }) === null, 'O (Phase F extensionless): unsupported schemes are still rejected (no type=video/any for ftp)');
+  ok(externalPlayerLaunchFor('not a url', { android: true }) === null, 'O (Phase F extensionless): invalid URLs still rejected');
+
+  // ============================================================
+  // Phase F — Pixeldrain hotlink bypass regression
+  // ============================================================
+  // Pixeldrain URLs (pixeldrain.com/dl/<id>, /u/<id>, /ulong/<id>) are
+  // rewritten to the official API download endpoint
+  // (pixeldrain.com/api/file/<id>/download) which does not enforce hotlink
+  // protection. For Pixeldrain URLs on Android, the fallback URL is the
+  // mpv Play Store install link (so users without mpv are prompted to
+  // install it instead of seeing the hotlink error page).
+  const pixeldrainDlUrl = 'https://pixeldrain.com/dl/abc123def';
+  const pixeldrainDlLaunch = externalPlayerLaunchFor(pixeldrainDlUrl, { android: true });
+  ok(pixeldrainDlLaunch?.kind === 'android-intent', 'P (Phase F Pixeldrain): /dl/<id> URL produces an android-intent launch');
+  // The intent target uses the REWRITTEN URL (API endpoint), not the original /dl/<id> URL.
+  ok(pixeldrainDlLaunch?.href.startsWith('intent://pixeldrain.com/api/file/abc123def/download'), 'P (Phase F Pixeldrain): the intent target uses the REWRITTEN API endpoint (pixeldrain.com/api/file/<id>/download) — not the original /dl/<id> URL that triggers hotlink protection');
+  ok(pixeldrainDlLaunch?.href.includes('type=video/any'), 'P (Phase F Pixeldrain): the intent includes type=video/any (mpv offered as the video handler)');
+  ok(pixeldrainDlLaunch?.href.includes('package=is.xyz.mpv'), 'P (Phase F Pixeldrain): the intent targets mpv-android');
+  // The fallback URL is the mpv Play Store install link (NOT the original
+  // Pixeldrain URL, which would show the hotlink error page).
+  const playStoreUrl = 'https://play.google.com/store/apps/details?id=is.xyz.mpv';
+  ok(pixeldrainDlLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(playStoreUrl)}`), 'P (Phase F Pixeldrain): the fallback URL is the mpv Play Store install link (so users without mpv are prompted to install it — NOT the original Pixeldrain URL that would show the hotlink error page)');
+  // The /u/<id> URL (HTML viewer page) is also rewritten to the API download endpoint.
+  const pixeldrainViewerUrl = 'https://pixeldrain.com/u/xyz789';
+  const pixeldrainViewerLaunch = externalPlayerLaunchFor(pixeldrainViewerUrl, { android: true });
+  ok(pixeldrainViewerLaunch?.href.startsWith('intent://pixeldrain.com/api/file/xyz789/download'), 'P (Phase F Pixeldrain): /u/<id> URL (HTML viewer page) is also rewritten to the API download endpoint');
+  // The /ulong/<id> URL is also rewritten.
+  const pixeldrainUlongUrl = 'https://pixeldrain.com/ulong/longid123';
+  const pixeldrainUlongLaunch = externalPlayerLaunchFor(pixeldrainUlongUrl, { android: true });
+  ok(pixeldrainUlongLaunch?.href.startsWith('intent://pixeldrain.com/api/file/longid123/download'), 'P (Phase F Pixeldrain): /ulong/<id> URL is also rewritten to the API download endpoint');
+  // The API endpoint URL is left unchanged (no rewrite needed).
+  const pixeldrainApiUrl = 'https://pixeldrain.com/api/file/alreadyapi/download';
+  const pixeldrainApiLaunch = externalPlayerLaunchFor(pixeldrainApiUrl, { android: true });
+  ok(pixeldrainApiLaunch?.href.startsWith('intent://pixeldrain.com/api/file/alreadyapi/download'), 'P (Phase F Pixeldrain): API endpoint URL is left unchanged (no rewrite)');
+  // The CDN URL is left unchanged (different host — cdn.pixeldrain.com).
+  const pixeldrainCdnUrl = 'https://cdn.pixeldrain.com/cdnfile123';
+  const pixeldrainCdnLaunch = externalPlayerLaunchFor(pixeldrainCdnUrl, { android: true });
+  ok(pixeldrainCdnLaunch?.href.startsWith('intent://cdn.pixeldrain.com/cdnfile123'), 'P (Phase F Pixeldrain): CDN URL (cdn.pixeldrain.com) is left unchanged (different host)');
+  // Pixeldrain URL with query string — the query is preserved in the rewritten URL.
+  const pixeldrainWithQueryUrl = 'https://pixeldrain.com/dl/queryid?token=test&sig=abc';
+  const pixeldrainWithQueryLaunch = externalPlayerLaunchFor(pixeldrainWithQueryUrl, { android: true });
+  ok(pixeldrainWithQueryLaunch?.href.startsWith('intent://pixeldrain.com/api/file/queryid/download?token=test&sig=abc'), 'P (Phase F Pixeldrain): the query string is preserved in the rewritten API URL (auth tokens survive)');
+  // Desktop behavior for Pixeldrain URLs: the URL is rewritten to the API endpoint (no intent).
+  const desktopPixeldrain = externalPlayerLaunchFor(pixeldrainDlUrl, { android: false });
+  ok(desktopPixeldrain?.kind === 'direct' && desktopPixeldrain.href === 'https://pixeldrain.com/api/file/abc123def/download', 'P (Phase F Pixeldrain): desktop non-Android behavior — the URL is rewritten to the API endpoint (no intent, no hotlink protection)');
 }
 
 // ---------------------------------------------------------------------------

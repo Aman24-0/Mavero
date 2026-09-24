@@ -40,7 +40,7 @@
  */
 
 import type { AudioClass } from '$lib/shared/stream-selection';
-import { externalPlayerLaunchFor } from '$lib/shared/external-player';
+import { externalPlayerLaunchFor, transformPixeldrainUrl } from '$lib/shared/external-player';
 
 /** The stream kind values used by the downloader (mirrors DownloaderStreamKind). */
 export type StreamKind = 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
@@ -169,11 +169,17 @@ export function downloadActionFor(stream: CapabilityStream): DownloadAction {
 
   // HTTP/HTTPS — browser native <a href download> anchor.
   if (!url.startsWith('https://') && !url.startsWith('http://')) return null;
+  // Phase F follow-up (Pixeldrain hotlink bypass): rewrite Pixeldrain URLs
+  // to the official API download endpoint so the browser doesn't navigate
+  // to an HTML "hotlink not allowed" error page. The rewritten URL serves
+  // the file with Content-Disposition: attachment (the browser triggers a
+  // native download). For non-Pixeldrain URLs, the URL is unchanged.
+  const effectiveUrl = transformPixeldrainUrl(url);
   const filename = typeof stream.filename === 'string' && stream.filename.trim() ? stream.filename.trim() : null;
   let hint = filename;
   if (!hint) {
     try {
-      const path = new URL(url).pathname;
+      const path = new URL(effectiveUrl).pathname;
       const last = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1)).trim();
       hint = last || null;
     } catch {
@@ -181,7 +187,7 @@ export function downloadActionFor(stream: CapabilityStream): DownloadAction {
     }
   }
   const safeHint = (hint ?? 'stream').replace(/[\r\n"<>\\]/g, '').slice(0, 160) || 'stream';
-  return { flow: 'direct-download', kind: 'anchor', href: url, download: safeHint, target: '_blank', rel: 'noopener noreferrer' };
+  return { flow: 'direct-download', kind: 'anchor', href: effectiveUrl, download: safeHint, target: '_blank', rel: 'noopener noreferrer' };
 }
 
 // ---------------------------------------------------------------------------
