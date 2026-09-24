@@ -135,6 +135,61 @@ export function transformPixeldrainUrl(url: string): string {
 }
 
 /**
+ * Extracts the Pixeldrain file ID from any Pixeldrain URL pattern and
+ * returns the VIEWER PAGE URL (`pixeldrain.com/u/<id>`).
+ *
+ * This is used by the DOWNLOAD flow (not Play). The viewer page is the
+ * ONLY Pixeldrain-supported endpoint for downloading free-tier files
+ * without hotlink detection. The viewer page's Download button makes a
+ * same-origin request (Referer: https://pixeldrain.com/u/<id>) —
+ * Pixeldrain sees a same-origin request and serves the file without
+ * triggering the `hotlink_detected` error.
+ *
+ * ROOT CAUSE (Phase F follow-up 3):
+ *   ALL Pixeldrain download endpoints (`/d/<id>`, `/api/file/<id>/download`,
+ *   `/api/file/<id>?download`) enforce hotlink protection based on the
+ *   Referer header. When the browser navigates to these endpoints from
+ *   mavero1.netlify.app, Pixeldrain detects the non-Pixeldrain Referer and
+ *   returns a `hotlink_detected` error (or a captcha challenge). mpv's HTTP
+ *   client sends NO Referer — which is why Play works but Download fails.
+ *   The previous fix (rewriting `/d/<id>` → `/api/file/<id>/download`) was
+ *   insufficient because BOTH endpoints enforce the same Referer-based
+ *   hotlink protection.
+ *
+ * SUPPORTED FLOW:
+ *   The Pixeldrain viewer page (`/u/<id>`) has a Download button that
+ *   makes a same-origin request. When the viewer page is loaded inside
+ *   the DownloadSheet's iframe overlay (embedded-sheet flow), the user
+ *   clicks the Download button inside the iframe — the request has
+ *   Referer: https://pixeldrain.com/u/<id> (same-origin) — Pixeldrain
+ *   serves the file without hotlink detection.
+ *
+ * Rewrites:
+ *   https://pixeldrain.com/dl/<id>     → https://pixeldrain.com/u/<id>
+ *   https://pixeldrain.com/d/<id>      → https://pixeldrain.com/u/<id>
+ *   https://pixeldrain.com/u/<id>      → https://pixeldrain.com/u/<id> (unchanged)
+ *   https://pixeldrain.com/ulong/<id>  → https://pixeldrain.com/u/<id>
+ *   https://pixeldrain.com/api/file/<id>            → https://pixeldrain.com/u/<id>
+ *   https://pixeldrain.com/api/file/<id>/download   → https://pixeldrain.com/u/<id>
+ *   https://cdn.pixeldrain.com/<id>                 → unchanged (CDN — no hotlink protection)
+ *   any other URL                                   → unchanged
+ */
+export function transformPixeldrainViewerUrl(url: string): string {
+  if (typeof url !== 'string' || url === '') return url;
+  // Match any pixeldrain.com URL with a file ID. The file ID is the
+  // path segment after /dl/, /d/, /u/, /ulong/, or /api/file/.
+  // cdn.pixeldrain.com is NOT matched (different host, no hotlink protection).
+  const match = url.match(
+    /^([^:]*:\/\/(?:[^/]*\.)?pixeldrain\.com)\/(?:dl|d|u|ulong|api\/file)\/([^/?#]+)(?:\/[^?#]*)?([^]*)$/i,
+  );
+  if (!match) return url;
+  const [, origin, id] = match;
+  // The viewer page URL is /u/<id> — no query string (the viewer page
+  // doesn't use query parameters for the file ID).
+  return `${origin}/u/${id}`;
+}
+
+/**
  * Returns true when the URL is a Pixeldrain URL that was (or would be)
  * rewritten by `transformPixeldrainUrl`. Used to decide whether the
  * Android intent fallback should be the mpv Play Store URL (so users
@@ -143,7 +198,10 @@ export function transformPixeldrainUrl(url: string): string {
  */
 export function isPixeldrainUrl(url: string): boolean {
   if (typeof url !== 'string' || url === '') return false;
-  return /^([^:]*:\/\/(?:[^/]*\.)?pixeldrain\.com)\//i.test(url);
+  // Match pixeldrain.com or www.pixeldrain.com — NOT cdn.pixeldrain.com
+  // (the CDN host has a different URL scheme, no hotlink protection, and
+  // should be treated as a direct-download URL just like any other CDN).
+  return /^https?:\/\/(?:www\.)?pixeldrain\.com\//i.test(url);
 }
 
 /**

@@ -129,54 +129,57 @@ function section_download(): void {
   ok(downloadActionFor(makeStream({ url: 'ftp://x.com/a', kind: 'https' })) === null, 'DL: non-http URL → null');
 
   // ============================================================
-  // Phase F Issue #2 — Pixeldrain Download hotlink bypass
+  // Phase F follow-up 3 — Pixeldrain Download hotlink fix
+  // (REAL runtime/network root cause)
   // ============================================================
-  // Pixeldrain URLs are rewritten to the official API download endpoint
-  // (pixeldrain.com/api/file/<id>/download) which does not enforce hotlink
-  // protection. The browser Download anchor uses the REWRITTEN URL so the
-  // browser doesn't navigate to an HTML "hotlink not allowed" error page.
-  // The rewritten URL serves the file with Content-Disposition: attachment
-  // (the browser triggers a native download).
+  // ROOT CAUSE: ALL Pixeldrain download endpoints (/d/<id>,
+  // /api/file/<id>/download, /api/file/<id>?download) enforce
+  // Referer-based hotlink protection on free-tier files. The browser
+  // sends a Referer from mavero1.netlify.app → Pixeldrain detects a
+  // hotlink → returns a `hotlink_detected` error page. mpv's HTTP
+  // client sends NO Referer → no hotlink detected (Play works).
+  // The previous fix (rewriting /d/ → /api/file/<id>/download) was
+  // insufficient because BOTH endpoints enforce the same protection.
+  //
+  // FIX: for Pixeldrain URLs, the Download action uses the
+  // `embedded-sheet` flow (open the viewer page /u/<id> inside the
+  // DownloadSheet iframe). The viewer page's Download button makes
+  // a same-origin request → no hotlink detection → file is served.
 
   // /d/<id> — the STANDARD Pixeldrain download URL (the production-failing pattern).
-  // Before the fix, the regex missed /d/ so the URL passed through unchanged,
-  // and Pixeldrain's /d/ endpoint returned a hotlink error when the browser
-  // sent a Referer from mavero1.netlify.app.
   const dlPixeldrainD = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/d/production123', kind: 'https' }));
-  ok(dlPixeldrainD !== null, 'DL (Phase F Issue #2 /d/): Pixeldrain /d/<id> stream has a Download action');
-  ok(dlPixeldrainD?.flow === 'direct-download', 'DL (Phase F Issue #2 /d/): flow=direct-download (browser native anchor)');
-  ok(dlPixeldrainD?.kind === 'anchor' && dlPixeldrainD.href === 'https://pixeldrain.com/api/file/production123/download', 'DL (Phase F Issue #2 /d/): the Download href is REWRITTEN to the API endpoint (not the original /d/<id> URL that triggers hotlink detection) — the browser navigates to /api/file/<id>/download which serves the file with Content-Disposition: attachment');
+  ok(dlPixeldrainD !== null, 'DL (Phase F #3 /d/): Pixeldrain /d/<id> stream has a Download action');
+  ok(dlPixeldrainD?.flow === 'embedded-sheet', 'DL (Phase F #3 /d/): flow=embedded-sheet (routes through the DownloadSheet iframe — NOT direct-download which triggers hotlink detection)');
+  ok(dlPixeldrainD?.kind === 'iframe' && dlPixeldrainD.href === 'https://pixeldrain.com/u/production123', 'DL (Phase F #3 /d/): the Download href is the VIEWER PAGE /u/<id> (NOT the API download endpoint which also enforces hotlink protection) — the user clicks Download inside the iframe → same-origin request → no hotlink detection');
 
   // /dl/<id> — the alternative Pixeldrain download URL.
   const dlPixeldrainDl = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/dl/abc123def', kind: 'https' }));
-  ok(dlPixeldrainDl?.kind === 'anchor' && dlPixeldrainDl.href === 'https://pixeldrain.com/api/file/abc123def/download', 'DL (Phase F Issue #2 /dl/): /dl/<id> URL is also rewritten to the API endpoint');
+  ok(dlPixeldrainDl?.flow === 'embedded-sheet' && dlPixeldrainDl?.kind === 'iframe' && dlPixeldrainDl.href === 'https://pixeldrain.com/u/abc123def', 'DL (Phase F #3 /dl/): /dl/<id> URL is also routed to the viewer page /u/<id>');
 
-  // /u/<id> — the Pixeldrain viewer page (HTML). Without the rewrite, the
-  // browser would navigate to an HTML page (not a download). The rewrite
-  // makes the browser hit the API download endpoint instead.
+  // /u/<id> — the Pixeldrain viewer page (already the correct page — no rewrite needed, but still uses embedded-sheet flow).
   const dlPixeldrainU = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/u/xyz789', kind: 'https' }));
-  ok(dlPixeldrainU?.kind === 'anchor' && dlPixeldrainU.href === 'https://pixeldrain.com/api/file/xyz789/download', 'DL (Phase F Issue #2 /u/): /u/<id> viewer-page URL is rewritten to the API download endpoint (so the browser downloads the file, not the HTML viewer page)');
+  ok(dlPixeldrainU?.flow === 'embedded-sheet' && dlPixeldrainU?.kind === 'iframe' && dlPixeldrainU.href === 'https://pixeldrain.com/u/xyz789', 'DL (Phase F #3 /u/): /u/<id> viewer page URL is routed through the embedded-sheet flow (same URL — the viewer page IS the correct download flow)');
 
   // /ulong/<id> — the long-term Pixeldrain download URL.
   const dlPixeldrainUlong = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/ulong/longid123', kind: 'https' }));
-  ok(dlPixeldrainUlong?.kind === 'anchor' && dlPixeldrainUlong.href === 'https://pixeldrain.com/api/file/longid123/download', 'DL (Phase F Issue #2 /ulong/): /ulong/<id> URL is also rewritten to the API endpoint');
+  ok(dlPixeldrainUlong?.flow === 'embedded-sheet' && dlPixeldrainUlong?.kind === 'iframe' && dlPixeldrainUlong.href === 'https://pixeldrain.com/u/longid123', 'DL (Phase F #3 /ulong/): /ulong/<id> URL is also routed to the viewer page /u/<id>');
 
-  // Pixeldrain API endpoint URL — already on the API, so no rewrite needed.
+  // Pixeldrain API endpoint URL — also routed to the viewer page (the API endpoint also enforces hotlink protection).
   const dlPixeldrainApi = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/api/file/alreadyapi/download', kind: 'https' }));
-  ok(dlPixeldrainApi?.kind === 'anchor' && dlPixeldrainApi.href === 'https://pixeldrain.com/api/file/alreadyapi/download', 'DL (Phase F Issue #2 API): API endpoint URL is left unchanged (no rewrite needed — already on /api/file/<id>/download)');
+  ok(dlPixeldrainApi?.flow === 'embedded-sheet' && dlPixeldrainApi?.kind === 'iframe' && dlPixeldrainApi.href === 'https://pixeldrain.com/u/alreadyapi', 'DL (Phase F #3 API): API endpoint URL is ALSO routed to the viewer page /u/<id> (the API endpoint enforces the SAME hotlink protection — only the viewer page avoids it)');
 
-  // Pixeldrain CDN URL — different host (cdn.pixeldrain.com), left unchanged.
+  // Pixeldrain CDN URL — different host (cdn.pixeldrain.com), NOT a hotlink concern. Uses direct-download (unchanged).
   const dlPixeldrainCdn = downloadActionFor(makeStream({ url: 'https://cdn.pixeldrain.com/cdnfile123', kind: 'https' }));
-  ok(dlPixeldrainCdn?.kind === 'anchor' && dlPixeldrainCdn.href === 'https://cdn.pixeldrain.com/cdnfile123', 'DL (Phase F Issue #2 CDN): CDN URL (cdn.pixeldrain.com) is left unchanged (different host — no hotlink protection)');
+  ok(dlPixeldrainCdn?.flow === 'direct-download' && dlPixeldrainCdn?.kind === 'anchor' && dlPixeldrainCdn.href === 'https://cdn.pixeldrain.com/cdnfile123', 'DL (Phase F #3 CDN): CDN URL (cdn.pixeldrain.com) uses direct-download (NOT embedded-sheet) — different host, no hotlink protection, no viewer-page rewrite');
 
-  // Pixeldrain URL with query string — the query is preserved in the rewrite.
+  // Pixeldrain URL with query string — the query is DROPPED (the viewer page doesn't use query parameters).
   const dlPixeldrainQuery = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/d/queryid?token=test&sig=abc', kind: 'https' }));
-  ok(dlPixeldrainQuery?.kind === 'anchor' && dlPixeldrainQuery.href === 'https://pixeldrain.com/api/file/queryid/download?token=test&sig=abc', 'DL (Phase F Issue #2 query): the query string is preserved in the rewritten API URL (auth tokens survive the rewrite)');
+  ok(dlPixeldrainQuery?.flow === 'embedded-sheet' && dlPixeldrainQuery?.kind === 'iframe' && dlPixeldrainQuery.href === 'https://pixeldrain.com/u/queryid', 'DL (Phase F #3 query): the query string is DROPPED in the viewer page URL (the viewer page /u/<id> does not use query parameters — the file ID is all that matters)');
 
   // === CRITICAL: non-Pixeldrain HTTP(S) Download is UNCHANGED ===
   // (regression check — the Pixeldrain fix must not affect non-Pixeldrain URLs).
   const dlNonPixeldrain = downloadActionFor(makeStream({ url: 'https://cdn.example/movie.mkv', kind: 'https' }));
-  ok(dlNonPixeldrain?.kind === 'anchor' && dlNonPixeldrain.href === 'https://cdn.example/movie.mkv', 'DL (Phase F Issue #2 regression): non-Pixeldrain HTTP(S) URL is UNCHANGED — the href is the original URL (no rewrite, no transformation)');
+  ok(dlNonPixeldrain?.flow === 'direct-download' && dlNonPixeldrain?.kind === 'anchor' && dlNonPixeldrain.href === 'https://cdn.example/movie.mkv', 'DL (Phase F #3 regression): non-Pixeldrain HTTP(S) URL uses direct-download with the ORIGINAL URL unchanged (no rewrite, no embedded-sheet, no transformation)');
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +362,9 @@ function section_sourceContract(): void {
   // can rewrite Pixeldrain URLs to the API download endpoint (bypassing
   // hotlink protection). Both imports live on one line.
   ok(/import \{[^}]*\bexternalPlayerLaunchFor\b[^}]*\} from '\$lib\/shared\/external-player'/.test(helperSource), 'SOURCE: stream-actions imports canonical externalPlayerLaunchFor from external-player.ts');
-  ok(/import \{[^}]*\btransformPixeldrainUrl\b[^}]*\} from '\$lib\/shared\/external-player'/.test(helperSource), 'SOURCE (Phase F): stream-actions imports transformPixeldrainUrl for the Pixeldrain hotlink bypass in the Download flow');
+  ok(/import \{[^}]*\btransformPixeldrainUrl\b[^}]*\} from '\$lib\/shared\/external-player'/.test(helperSource), 'SOURCE (Phase F): stream-actions imports transformPixeldrainUrl for the Pixeldrain Play flow (rewrites to /api/file/<id>/download)');
+  ok(/import \{[^}]*\btransformPixeldrainViewerUrl\b[^}]*\} from '\$lib\/shared\/external-player'/.test(helperSource), 'SOURCE (Phase F #3): stream-actions imports transformPixeldrainViewerUrl for the Pixeldrain Download flow (rewrites to /u/<id> viewer page)');
+  ok(/import \{[^}]*\bisPixeldrainUrl\b[^}]*\} from '\$lib\/shared\/external-player'/.test(helperSource), 'SOURCE (Phase F #3): stream-actions imports isPixeldrainUrl for the Pixeldrain URL detection in the Download flow');
   ok(!helperSource.includes('function externalPlayerLaunchForResult'), 'SOURCE: NO duplicated externalPlayerLaunchForResult (CORRECTION 2 — removed)');
   ok(helperSource.includes('return externalPlayerLaunchFor(url, options)'), 'SOURCE: playActionFor delegates to externalPlayerLaunchFor (canonical helper)');
 

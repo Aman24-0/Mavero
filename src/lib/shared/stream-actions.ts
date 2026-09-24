@@ -40,7 +40,7 @@
  */
 
 import type { AudioClass } from '$lib/shared/stream-selection';
-import { externalPlayerLaunchFor, transformPixeldrainUrl } from '$lib/shared/external-player';
+import { externalPlayerLaunchFor, transformPixeldrainUrl, transformPixeldrainViewerUrl, isPixeldrainUrl } from '$lib/shared/external-player';
 
 /** The stream kind values used by the downloader (mirrors DownloaderStreamKind). */
 export type StreamKind = 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
@@ -169,12 +169,36 @@ export function downloadActionFor(stream: CapabilityStream): DownloadAction {
 
   // HTTP/HTTPS — browser native <a href download> anchor.
   if (!url.startsWith('https://') && !url.startsWith('http://')) return null;
-  // Phase F follow-up (Pixeldrain hotlink bypass): rewrite Pixeldrain URLs
-  // to the official API download endpoint so the browser doesn't navigate
-  // to an HTML "hotlink not allowed" error page. The rewritten URL serves
-  // the file with Content-Disposition: attachment (the browser triggers a
-  // native download). For non-Pixeldrain URLs, the URL is unchanged.
-  const effectiveUrl = transformPixeldrainUrl(url);
+
+  // Phase F follow-up 3 (Pixeldrain Download hotlink fix):
+  // ALL Pixeldrain download endpoints (/d/<id>, /api/file/<id>/download,
+  // /api/file/<id>?download) enforce Referer-based hotlink protection on
+  // free-tier files. When the browser navigates to these endpoints from
+  // mavero1.netlify.app, Pixeldrain detects the non-Pixeldrain Referer and
+  // returns a `hotlink_detected` error page. mpv's HTTP client sends NO
+  // Referer — which is why Play works but Download fails.
+  //
+  // The ONLY Pixeldrain-supported download flow for free-tier files is
+  // through the VIEWER PAGE (pixeldrain.com/u/<id>). The viewer page's
+  // Download button makes a same-origin request (Referer:
+  // https://pixeldrain.com/u/<id>) — Pixeldrain serves the file without
+  // hotlink detection.
+  //
+  // FIX: for Pixeldrain URLs, route the Download action through the
+  // embedded-sheet flow (open the viewer page /u/<id> inside the
+  // DownloadSheet's iframe overlay). The user clicks the Download button
+  // on the viewer page inside the iframe — the request is same-origin —
+  // no hotlink detection. If the iframe is blocked by CSP/X-Frame-Options,
+  // the DownloadSheet's existing iframe-error detection + external-open
+  // fallback handles it (the user gets an "Open in new tab" link).
+  if (isPixeldrainUrl(url)) {
+    const viewerUrl = transformPixeldrainViewerUrl(url);
+    return { flow: 'embedded-sheet', kind: 'iframe', href: viewerUrl };
+  }
+
+  // Non-Pixeldrain HTTP/HTTPS — browser native <a href download> anchor.
+  // The URL is unchanged (no rewrite, no transformation).
+  const effectiveUrl = url;
   const filename = typeof stream.filename === 'string' && stream.filename.trim() ? stream.filename.trim() : null;
   let hint = filename;
   if (!hint) {
