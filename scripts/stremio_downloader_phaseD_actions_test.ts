@@ -307,6 +307,30 @@ function section_sourceContract(): void {
   ok(component.includes("dlAction.flow === 'direct-download'"), 'SOURCE: component checks flow=direct-download');
   ok(component.includes("dlAction.flow === 'external-open'"), 'SOURCE: component checks flow=external-open');
   ok(component.includes("dlAction.flow === 'embedded-sheet'"), 'SOURCE: component checks flow=embedded-sheet (third-party page path)');
+
+  // CORRECTION 1 (actual wiring): the embedded-sheet flow calls the
+  // onOpenInSheet callback (wired to DownloadSheet's iframe overlay).
+  ok(component.includes('onOpenInSheet'), 'SOURCE: component has onOpenInSheet prop (embedded-sheet callback)');
+  ok(component.includes('onOpenInSheet(dlAction.href)'), 'SOURCE: embedded-sheet flow calls onOpenInSheet(url) — actual wiring, not just a model');
+  // The DownloadSheet wires the callback to its iframe overlay.
+  const sheetSource = read('src/lib/components/DownloadSheet.svelte');
+  ok(sheetSource.includes('onOpenInSheet={openEmbeddedSheet}'), 'SOURCE: DownloadSheet wires onOpenInSheet to openEmbeddedSheet');
+  ok(sheetSource.includes('embeddedSheetUrl'), 'SOURCE: DownloadSheet has embeddedSheetUrl state (iframe overlay)');
+  ok(sheetSource.includes('function openEmbeddedSheet'), 'SOURCE: DownloadSheet has openEmbeddedSheet handler');
+  ok(sheetSource.includes('function closeEmbeddedSheet'), 'SOURCE: DownloadSheet has closeEmbeddedSheet handler (back button)');
+  ok(sheetSource.includes('handleEmbeddedIframeLoad'), 'SOURCE: DownloadSheet has handleEmbeddedIframeLoad (reuses iframe onload pattern)');
+  ok(sheetSource.includes('handleEmbeddedIframeError'), 'SOURCE: DownloadSheet has handleEmbeddedIframeError (reuses iframe onerror pattern)');
+  ok(sheetSource.includes('dl-embedded-overlay'), 'SOURCE: DownloadSheet has dl-embedded-overlay (the actual iframe overlay element)');
+  ok(sheetSource.includes('dl-embedded-frame'), 'SOURCE: DownloadSheet renders a <iframe> inside the overlay');
+  ok(sheetSource.includes('embeddedSheetError'), 'SOURCE: DownloadSheet has embeddedSheetError state (iframe-blocked detection)');
+  // The external-open fallback is present when the iframe is blocked.
+  ok(sheetSource.includes("Couldn't embed this page"), 'SOURCE: iframe-blocked shows "Couldn\'t embed this page" message');
+  ok(sheetSource.includes('Open in new tab'), 'SOURCE: iframe-blocked shows "Open in new tab" external fallback');
+  // The Back button returns to the MaveroAddonDownload panel.
+  ok(sheetSource.includes('closeEmbeddedSheet'), 'SOURCE: Back button calls closeEmbeddedSheet (returns to stream list)');
+  // No proxy — the iframe src is the EXACT ORIGINAL URL.
+  ok(!sheetSource.includes('/api/proxy'), 'SOURCE: NO proxy API in DownloadSheet');
+  ok(!sheetSource.includes('proxyMediaUrl'), 'SOURCE: NO proxyMediaUrl in DownloadSheet');
 }
 
 // ---------------------------------------------------------------------------

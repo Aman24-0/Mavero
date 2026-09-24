@@ -57,6 +57,12 @@
   export let episode: number | undefined = undefined;
   // svelte-ignore export_let_unused -- accepted by the parent DownloadSheet for API compatibility; the title is displayed in the parent sheet header, not duplicated here (Phase 18 task §1)
   export let title = '';
+  // Phase D: callback to the parent DownloadSheet for the embedded-sheet flow.
+  // When the Download action flow is 'embedded-sheet' (external/provider-page URL),
+  // the component calls this callback with the URL. The DownloadSheet opens the
+  // URL in its existing iframe overlay (with onload/onerror + external-open fallback).
+  // If no callback is provided (standalone usage), falls back to an external-open anchor.
+  export let onOpenInSheet: ((url: string) => void) | undefined = undefined;
 
   type StreamView = {
     url: string;
@@ -750,17 +756,29 @@
                          Mavero does NOT proxy or bypass security. (External streams
                          are hidden by Phase 18, so this path exists in the model but
                          is not triggered in the current card UI.) -->
-                    <a
-                      class="mad-action mad-action-download"
-                      href={dlAction.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label="Open download page"
-                      title="Open download page (external)"
-                      onclick={(event) => event.stopPropagation()}
-                    >
-                      <Download size={13} />
-                    </a>
+                    {#if onOpenInSheet}
+                      <button
+                        class="mad-action mad-action-download"
+                        type="button"
+                        aria-label="Open download page"
+                        title="Open download page (embedded sheet)"
+                        onclick={(event) => { event.stopPropagation(); onOpenInSheet(dlAction.href); }}
+                      >
+                        <Download size={13} />
+                      </button>
+                    {:else}
+                      <a
+                        class="mad-action mad-action-download"
+                        href={dlAction.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Open download page"
+                        title="Open download page (external)"
+                        onclick={(event) => event.stopPropagation()}
+                      >
+                        <Download size={13} />
+                      </a>
+                    {/if}
                   {/if}
                 {/if}
                 {#if plAction}

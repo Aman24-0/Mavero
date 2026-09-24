@@ -241,6 +241,36 @@
     iframeError = true;
   }
 
+  // ----- Phase D: embedded-sheet overlay for third-party provider/download pages -----
+  // When the user clicks Download on an external/provider-page stream card inside
+  // MaveroAddonDownload, the callback `onOpenInSheet(url)` fires. The DownloadSheet
+  // sets `embeddedSheetUrl` and shows an iframe overlay that reuses the SAME
+  // iframe load/error + external-open-fallback mechanism as the provider iframes.
+  // No second DownloadSheet, no new iframe architecture — just a conditional
+  // overlay on top of the existing body.
+  let embeddedSheetUrl: string | null = null;
+  let embeddedSheetLoading = false;
+  let embeddedSheetError = false;
+
+  function openEmbeddedSheet(url: string): void {
+    if (!url) return;
+    embeddedSheetUrl = url;
+    embeddedSheetLoading = true;
+    embeddedSheetError = false;
+  }
+  function closeEmbeddedSheet(): void {
+    embeddedSheetUrl = null;
+    embeddedSheetLoading = false;
+    embeddedSheetError = false;
+  }
+  function handleEmbeddedIframeLoad() {
+    embeddedSheetLoading = false;
+  }
+  function handleEmbeddedIframeError() {
+    embeddedSheetLoading = false;
+    embeddedSheetError = true;
+  }
+
   // ----- Provider dropdown -----
   function toggleDropdown() {
     dropdownOpen = !dropdownOpen;
@@ -383,6 +413,7 @@
               {season}
               {episode}
               {title}
+              onOpenInSheet={openEmbeddedSheet}
             />
           </div>
         {:else if is4kDownloader}
@@ -509,6 +540,50 @@
           </div>
         {/if}
       </div>
+
+      <!-- Phase D: embedded-sheet iframe overlay for third-party provider/download
+           pages. When the user clicks Download on an external/provider-page stream
+           card inside MaveroAddonDownload, the `onOpenInSheet(url)` callback fires
+           and `embeddedSheetUrl` is set. This overlay renders the provider page in
+           an iframe — reusing the SAME onload/onerror + external-open-fallback
+           mechanism as the provider iframes above. If the iframe is blocked by
+           CSP / X-Frame-Options / browser security, the user sees the external-open
+           fallback. No proxy, no CSP bypass, no scraping. The "Back" button
+           returns to the MaveroAddonDownload panel. -->
+      {#if embeddedSheetUrl}
+        <div class="dl-embedded-overlay">
+          <div class="dl-embedded-header">
+            <button type="button" class="dl-embedded-back" onclick={closeEmbeddedSheet} aria-label="Back to stream list">
+              <ArrowLeftRight size={14} /> Back
+            </button>
+            {#if embeddedSheetLoading}
+              <span class="dl-spin"><Loader2 size={14} /></span>
+            {/if}
+          </div>
+          {#if embeddedSheetError}
+            <div class="dl-empty dl-embedded-error">
+              <AlertTriangle size={22} />
+              <h3>Couldn't embed this page</h3>
+              <p>This download page may not allow embedding. You can still open it in a new tab.</p>
+              <a class="dl-open-external" href={embeddedSheetUrl} target="_blank" rel="noopener noreferrer">
+                <ExternalLink size={14} /> Open in new tab
+              </a>
+            </div>
+          {:else}
+            <iframe
+              class="dl-frame dl-embedded-frame"
+              class:hidden={embeddedSheetLoading}
+              title="Embedded download page"
+              src={embeddedSheetUrl}
+              loading="eager"
+              referrerpolicy="no-referrer"
+              allow="fullscreen; encrypted-media"
+              onload={handleEmbeddedIframeLoad}
+              onerror={handleEmbeddedIframeError}
+            ></iframe>
+          {/if}
+        </div>
+      {/if}
 
       <div class="dl-safe-area" aria-hidden="true"></div>
     </div>
@@ -697,6 +772,63 @@
     min-height: 0;
     overflow-y: auto;
     padding: 14px 16px 16px;
+  }
+
+  /* Phase D: embedded-sheet overlay for third-party provider/download pages.
+     Covers the body when an embeddedSheetUrl is set — the iframe + error
+     + external-open fallback reuse the SAME visual language as the provider
+     iframes. The "Back" button returns to the MaveroAddonDownload panel. */
+  .dl-embedded-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-2);
+    z-index: 2;
+  }
+  .dl-embedded-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  .dl-embedded-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: rgba(245, 246, 250, .04);
+    color: var(--ink);
+    padding: 4px 12px;
+    font: inherit;
+    font-size: .72rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .dl-embedded-back:hover, .dl-embedded-back:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+    outline: 0;
+  }
+  .dl-embedded-frame {
+    flex: 1 1 auto;
+    min-height: 0;
+    border: 0;
+    width: 100%;
+    background: var(--surface-2);
+  }
+  .dl-embedded-error {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 24px;
+    text-align: center;
   }
 
   /* iframe area: occupies essentially all remaining sheet space. */
