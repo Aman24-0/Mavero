@@ -5,8 +5,8 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { X, Download, ExternalLink, ChevronDown, AlertTriangle, Loader2, CalendarClock, Info, ArrowLeftRight } from 'lucide-svelte';
+  import { onDestroy } from 'svelte';
+  import { X, ExternalLink, ChevronDown, AlertTriangle, Loader2, CalendarClock, Info, ArrowLeftRight, RotateCw } from 'lucide-svelte';
   import {
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
@@ -27,6 +27,15 @@
   export let open = false;
   export let title = '';
   export let providers: PublicDownloadProvider[] = [];
+  // Phase E final corrective (§6): the parent passes loading/failed/retry
+  // state so the sheet can render Loading / Error states internally. The
+  // sheet is ALWAYS OPENABLE by the user (the parent's Download button is
+  // no longer gated on provider-config completion) — when the prefetch is
+  // loading/failed/empty, the sheet shows the appropriate state instead of
+  // never opening.
+  export let providersLoading = false;
+  export let providersFailed = false;
+  export let onRetryProviders: () => void = () => {};
   export let selectedProviderId: string | null = null;
   export let mediaType: DownloadMediaType = 'movie';
   export let tmdbId = '';
@@ -400,7 +409,30 @@
       </header>
 
       <div class="dl-body">
-        {#if isMaveroDownloader}
+        {#if providersLoading}
+          <!-- Phase E final corrective (§6): Loading state. The parent's
+               prefetch is in-flight. The sheet is OPENED IMMEDIATELY when
+               the user clicks Download (not gated on prefetch completion),
+               so this state renders while the /api/downloader/config fetch
+               resolves. The user sees a clear spinner + message. -->
+          <div class="dl-empty">
+            <span class="dl-spin"><Loader2 size={26} /></span>
+            <h3>Loading download providers…</h3>
+            <p>Preparing the available downloaders for this title.</p>
+          </div>
+        {:else if providersFailed}
+          <!-- Phase E final corrective (§6): Error state. The prefetch
+               failed (network error, 503 from /api/downloader/config, etc.).
+               The user can retry the prefetch directly from the sheet. -->
+          <div class="dl-empty">
+            <AlertTriangle size={26} />
+            <h3>Downloader temporarily unavailable</h3>
+            <p>Could not load the downloader registry. Please retry — if the problem persists, the service may be briefly down.</p>
+            <button type="button" class="dl-open-external" onclick={onRetryProviders}>
+              <RotateCw size={14} /> Retry
+            </button>
+          </div>
+        {:else if isMaveroDownloader}
           <!-- Phase 14: the BUILT-IN Mavero Downloader — the addon-grouped
                "best available links" panel rendered INLINE (no cross-origin
                iframe, no URL template). The server ranks + filters; this

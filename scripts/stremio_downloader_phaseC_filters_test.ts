@@ -170,9 +170,13 @@ function section_size(): void {
   // upper end, so 1 GB does NOT match <1 GB. 0.999 GB does match.
   ok(!streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 1 * GB }) }, 'under1'), 'SIZE: exactly 1 GB does NOT match <1 GB (exclusive upper bound)');
   ok(streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: Math.floor(0.999 * GB) }) }, 'under1'), 'SIZE: 0.999 GB matches <1 GB');
-  // 20 GB is exactly the boundary of over20 — the range is inclusive on the
-  // lower end (min: 20*GB), so 20 GB DOES match >20 GB.
-  ok(streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 20 * GB }) }, 'over20'), 'SIZE: exactly 20 GB matches >20 GB (inclusive lower bound)');
+  // Phase E final corrective (§10): "> 20 GB" is STRICTLY greater than 20 GB.
+  // The label uses ">" so the boundary is exclusive on the lower end — exactly
+  // 20 GB does NOT match. This makes the contract consistent with the "< N GB"
+  // ranges which are also strict (exactly N GB does NOT match "< N GB").
+  ok(!streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 20 * GB }) }, 'over20'), 'SIZE: exactly 20 GB does NOT match >20 GB (strict lower bound — consistent with "< N GB" exclusive upper)');
+  ok(streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 20 * GB + 1 }) }, 'over20'), 'SIZE: 20 GB + 1 byte matches >20 GB (strict greater-than)');
+  ok(streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 25 * GB }) }, 'over20'), 'SIZE: 25 GB matches >20 GB');
   // Corrective audit: unknown-size streams are EXCLUDED when a specific size
   // filter is active (per the approved plan §6 — excluding unknown-size IS
   // the intended behavior of a specific size filter; the "should not silently
@@ -384,8 +388,17 @@ function section_sourceContract(): void {
   ok(helperSource.includes('export function languageOptions'), 'SOURCE: helper exports languageOptions');
   ok(helperSource.includes('export function activeFilterChips'), 'SOURCE: helper exports activeFilterChips');
   ok(helperSource.includes('export function hasActiveFilters'), 'SOURCE: helper exports hasActiveFilters');
-  // The component uses chip-based UI (not native <select>).
-  ok(component.includes('mad-chip'), 'SOURCE: component uses mad-chip class (chip-based UI)');
+  // Phase E final corrective: the chip-based UI lives INSIDE the
+  // DownloaderFilterSheet component (grouped TYPE/QUALITY/AUDIO/SIZE
+  // sections). The main surface no longer renders `mad-chip` directly —
+  // it has a "Filters" trigger button that opens the grouped sheet. The
+  // active-filter chips (mad-active-chip) on the main surface remain for
+  // quick removal of selected dimensions. The filter-chip class lives
+  // in DownloaderFilterSheet.svelte (verified separately).
+  ok(component.includes('mad-active-chip'), 'SOURCE: component has removable active-filter chips');
+  ok(component.includes('DownloaderFilterSheet'), 'SOURCE: component wires the grouped DownloaderFilterSheet');
+  const filterSheet = read('src/lib/components/DownloaderFilterSheet.svelte');
+  ok(filterSheet.includes('filter-chip'), 'SOURCE: DownloaderFilterSheet renders grouped chips (filter-chip class lives in the sheet)');
   // The component uses chip-based UI (not native <select>). Check that no
   // actual <select> HTML element exists in the markup — the string `<select`
   // may still appear in comments documenting the Phase C migration.
@@ -410,26 +423,24 @@ function section_sourceContract(): void {
   ok(component.includes('aria-label='), 'SOURCE: filter elements have aria-label');
   // The filter state resets when switching tabs.
   ok(component.includes('resetFilters'), 'SOURCE: component resets filters on tab switch');
-  // Phase C corrective: Size uses a SelectionSheet popover (NOT a chip row).
-  // Type, Quality, and Language remain chip rows.
-  ok(component.includes('SelectionSheet'), 'SOURCE: component imports SelectionSheet for the Size filter popover');
-  // Phase E V2: the Size filter is now inside the Filters SelectionSheet
-  // (not a separate trigger button on the main surface). The sizeSheetOpen
-  // state + sizeSheetOptions still exist (the Filters sheet uses them).
-  ok(component.includes('sizeSheetOpen'), 'SOURCE: component has sizeSheetOpen state for the Size popover');
-  ok(component.includes('sizeSheetOptions'), 'SOURCE: component derives sizeSheetOptions from the dynamic size collection');
-  // The SelectionSheet for Size is still rendered.
-  ok(component.includes('open={sizeSheetOpen}'), 'SOURCE: Size SelectionSheet instance exists');
-  // The Filters sheet contains the Size options alongside Type/Quality/Language.
-  ok(component.includes('filterSheetOpen'), 'SOURCE: Filters sheet state exists (replaces permanent filter rows)');
-  // Type, Quality, Language remain in the Filters sheet (not on the main surface).
-  ok(component.includes('mad-filter-trigger'), 'SOURCE: compact filter trigger button on the main surface (stream-first IA)');
-  // Phase E V2: all filter rows (including Size) moved to the Filters
-  // SelectionSheet. The main surface has NO permanent chip rows — only the
-  // compact filter trigger button. Check that the component has the
-  // Filters sheet instance + Info button.
-  ok(component.includes('open={filterSheetOpen}'), 'SOURCE: Filters SelectionSheet instance exists');
+  // Phase E final corrective: the OLD separate SelectionSheet for Size
+  // (sizeSheetOpen / sizeSheetOptions / openSizeSheet / closeSizeSheet /
+  // selectSize / sizeTriggerLabel) is GONE — they were dead code since the
+  // Filters sheet was introduced. All four dimensions (TYPE/QUALITY/AUDIO/
+  // SIZE) now live INSIDE the grouped DownloaderFilterSheet. We verify the
+  // dead code is GONE (it was unreachable before — openSizeSheet was never
+  // called by any template binding).
+  ok(!component.includes('sizeSheetOpen'), 'SOURCE: dead sizeSheetOpen state is REMOVED (Phase E final — filters consolidated into DownloaderFilterSheet)');
+  ok(!component.includes('openSizeSheet'), 'SOURCE: dead openSizeSheet handler is REMOVED');
+  ok(!component.includes('closeSizeSheet'), 'SOURCE: dead closeSizeSheet handler is REMOVED');
+  ok(!component.includes('selectSize'), 'SOURCE: dead selectSize handler is REMOVED');
+  // The Info SelectionSheet is still rendered (recommended apps).
+  ok(component.includes('SelectionSheet'), 'SOURCE: Info SelectionSheet primitive is still used (recommended apps sheet)');
   ok(component.includes('open={infoSheetOpen}'), 'SOURCE: Info SelectionSheet instance exists');
+  // The Filters sheet (grouped DownloaderFilterSheet) is rendered + contains
+  // all four dimensions (TYPE/QUALITY/AUDIO/SIZE) with Apply/Clear actions.
+  ok(component.includes('filterSheetOpen'), 'SOURCE: Filters sheet state exists (replaces permanent filter rows)');
+  ok(component.includes('open={filterSheetOpen}'), 'SOURCE: DownloaderFilterSheet instance exists');
   ok(component.includes('mad-info-btn'), 'SOURCE: Info button exists on the main surface');
   ok(component.includes('transportLabel'), 'SOURCE: transportLabel helper exists (card transport/type visibility)');
   ok(component.includes('mad-transport'), 'SOURCE: mad-transport CSS class exists (transport label on cards)');

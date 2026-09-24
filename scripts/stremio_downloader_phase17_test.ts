@@ -245,8 +245,12 @@ function sectionT(): void {
   ok(component.includes('DownloaderFilters'), 'T: DownloaderFilters type imported from shared helper');
   ok(component.includes('filters.type'), 'T: filters.type state exists');
   ok(component.includes('typeOptions(') && component.includes('currentTypeOptions'), 'T: Type options are DYNAMICALLY derived from the stream collection');
-  // Phase C: chips replace native <select> — verify chip-based UI.
-  ok(component.includes('mad-chip'), 'T: Type filter uses Mavero-themed chips (not native <select>)');
+  // Phase E final corrective: chip-based UI lives INSIDE the grouped
+  // DownloaderFilterSheet component (filter-chip class). The main surface
+  // has active-filter chips (mad-active-chip) for quick removal. The
+  // standalone `mad-chip` class was removed in Phase E final — chips were
+  // moved into the grouped sheet.
+  ok(component.includes('mad-active-chip') || component.includes('DownloaderFilterSheet'), 'T: Type filter uses Mavero-themed chips in the grouped DownloaderFilterSheet (not native <select>)');
   ok(component.includes("'http'") || component.includes("'https'") || component.includes("'hls'"), 'T: Type filter kind classification includes http/https/hls');
   // Phase 18 (task §5): External is NOT a Type filter option.
   ok(!component.includes("value=\"external\""), 'T (Phase 18): External is NOT a Type filter option');
@@ -413,13 +417,22 @@ function sectionAD(): void {
   // Phase 18 (task §2): new compact instructions.
   // Phase E V2: instruction text changed to stream-first wording.
   ok(component.includes('Use Download, Play or Share on any link'), 'AD (Phase E V2): instruction present (stream-first wording)');
-  // Phase 18 (task §3): suggested apps in ONE compact row.
-  ok(component.includes('mad-apps'), 'AD (Phase 18): the mad-apps container exists (one row)');
-  ok(component.includes('idm.internet.download.manager'), 'AD: 1DM Play Store link present');
-  ok(component.includes('is.xyz.mpv'), 'AD: MPV Play Store link present');
-  // Phase 18 (task §4): filters in ONE horizontally scrollable row, ABOVE addon chips.
-  ok(component.includes('mad-filters'), 'AD (Phase 18): the mad-filters container exists (one row)');
-  ok(component.includes('width: 100%') || component.includes('width:100%'), 'AD (Phase 19): the filter row uses width: 100% (full available width)');
+  // Phase E final corrective: suggested apps moved to the Info sheet
+  // (Phase E V2 stream-first IA). The main surface has an Info button
+  // that opens the SelectionSheet with the suggested apps. The old
+  // `mad-apps` container was REMOVED from the main surface.
+  ok(component.includes('mad-info-btn'), 'AD (Phase E final): Info button exists on the main surface (replaces the always-visible mad-apps row)');
+  ok(component.includes('idm.internet.download.manager'), 'AD: 1DM Play Store link still referenced (in the Info sheet)');
+  ok(component.includes('is.xyz.mpv'), 'AD: MPV Play Store link still referenced (in the Info sheet)');
+  // Phase E final corrective: filters are consolidated into the grouped
+  // DownloaderFilterSheet. The main surface has a compact filter trigger
+  // button (mad-filter-trigger) that opens the sheet. The old `mad-filters`
+  // container was REMOVED.
+  ok(component.includes('mad-filter-trigger'), 'AD (Phase E final): compact filter trigger button on the main surface (replaces mad-filters row)');
+  // Phase E final corrective: the main surface no longer has a fixed-width
+  // filter row (mad-filters was removed). The compact filter trigger button
+  // sits in a mad-filter-bar that flexes to full available width.
+  ok(component.includes('mad-filter-bar'), 'AD (Phase E final): mad-filter-bar container exists (replaces the old mad-filters row)');
   // Phase 18 (task §5): Type filter does NOT include External.
   ok(!component.includes('value="external"'), 'AD (Phase 18): External is NOT a Type filter option');
   // Phase 18 (task §17): NO footer disclaimer.

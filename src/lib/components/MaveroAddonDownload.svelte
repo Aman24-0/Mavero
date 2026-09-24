@@ -142,34 +142,11 @@
   $: activeChips = activeFilterChips(filters);
   $: anyFiltersActive = hasActiveFilters(filters);
 
-  // Phase C corrective: Size uses a SelectionSheet popover (per the approved
-  // plan STEP 4: "compact Mavero-themed popover/sheet"). The existing
-  // SelectionSheet primitive is reused — no new component framework.
-  let sizeSheetOpen = false;
-
-  // Map the dynamic SizeOptions to SelectionSheet's { key, label, description }.
-  // SelectionSheet uses `key` (not `value`) — we map accordingly. The count
-  // goes into the `description` field so the user sees how many streams match
-  // each range before selecting. Type is inferred — no inline type alias
-  // (Svelte's parser doesn't handle `type X = ...` before `$:` cleanly).
-  $: sizeSheetOptions = currentSizeOptions.map((opt) => ({
-    key: opt.value,
-    label: opt.label,
-    description: `${opt.count} stream${opt.count === 1 ? '' : 's'}`,
-  }));
-
-  // The Size trigger button shows the current filter label (or "Size" when
-  // unfiltered) + a chevron icon.
-  $: sizeTriggerLabel = filters.size === 'all' ? 'Size' : sizeFilterLabel(filters.size as SizeFilterValue);
-
-  function openSizeSheet(): void { sizeSheetOpen = true; }
-  function closeSizeSheet(): void { sizeSheetOpen = false; }
-  function selectSize(key: string): void {
-    filters = { ...filters, size: key as DownloaderFilters['size'] };
-    sizeSheetOpen = false;
-  }
-
   // Phase E V2: Info sheet + Filters sheet (stream-first IA).
+  // The previous Size SelectionSheet was REMOVED in Phase E final — the
+  // grouped DownloaderFilterSheet (TYPE/QUALITY/AUDIO/SIZE) handles ALL
+  // four dimensions in one sheet. The dead size-sheet state + handlers
+  // were unreachable and are gone.
   let infoSheetOpen = false;
   function openInfoSheet(): void { infoSheetOpen = true; }
   function closeInfoSheet(): void { infoSheetOpen = false; }
@@ -186,6 +163,9 @@
   }
 
   // Phase E V2: Type filter visibility — only show Type when >1 type is available.
+  // Used by the DownloaderFilterSheet's `visible: showTypeFilter` flag on the
+  // TYPE section. When the active collection has only one kind (e.g. all
+  // HTTPS), the TYPE section is hidden to avoid clutter.
   $: showTypeFilter = currentTypeOptions.length > 2; // >2 because "All" is always first
 
   // Phase E V2: presentation window / Show More.
@@ -799,22 +779,6 @@
   {/if}
 </div>
 
-<!-- Phase C corrective: Size filter as a SelectionSheet popover/sheet (per
-     the approved plan STEP 4). Reuses the existing SelectionSheet primitive
-     — no new component framework. Options are dynamically derived from the
-     FULL active-tab stream collection. Counts are shown in the description
-     field. Selecting an option sets filters.size and closes the sheet —
-     NO addon refetch. -->
-<SelectionSheet
-  open={sizeSheetOpen}
-  eyebrow="MAVERO / Filter"
-  title="Size"
-  options={sizeSheetOptions}
-  selected={filters.size}
-  onClose={closeSizeSheet}
-  onSelect={selectSize}
-/>
-
 <!-- Phase E V2: Info sheet — recommended apps moved from the main surface
      into a Mavero-styled sheet. Opens when the Info button is clicked.
      Uses the EXISTING repository app icon assets (/icons/1DM.png + /icons/MPV.png).
@@ -877,46 +841,12 @@
   .mad-info-btn { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); cursor: pointer; flex: 0 0 auto; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .mad-info-btn:hover, .mad-info-btn:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
 
-  /* Suggested apps — Mavero surface cards. */
-  .mad-apps { display: flex; gap: 6px; }
-  .mad-app { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); text-decoration: none; flex: 1 1 0; min-width: 0; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
-  .mad-app:hover { border-color: var(--line-strong); background: var(--accent-soft); }
-  .mad-app-icon { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; flex: 0 0 auto; }
-  .mad-app-name { color: var(--ink); font-size: 0.6rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
   /* State messages — centered, muted, with Mavero surface. */
   .mad-state { display: flex; min-height: 100px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 12px; color: var(--muted); font-size: 0.68rem; text-align: center; }
   .mad-state-error { color: var(--color-warning); }
   .mad-retry { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 5px 12px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out); }
   .mad-retry:hover { border-color: var(--accent); color: var(--accent); }
   .mad-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-
-  /* Filter controls — back-compat + Phase E refinement. */
-  .mad-filters { display: flex; gap: 4px; width: 100%; }
-  .mad-filter { flex: 1 1 0; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--ink); padding: 4px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; text-align: center; }
-  .mad-filter:hover { border-color: var(--line-strong); }
-  .mad-filter:focus-visible { border-color: var(--accent); outline: none; }
-  .mad-filter-group { display: flex; flex-direction: column; gap: 5px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); }
-
-  /* Chip rows — horizontally scrollable Mavero pills. */
-  .mad-chips { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; min-height: 28px; }
-  .mad-chips::-webkit-scrollbar { display: none; }
-  .mad-chip { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
-  .mad-chip:hover { border-color: var(--line-strong); color: var(--ink); background: var(--color-surface-raised); }
-  .mad-chip:focus-visible { border-color: var(--accent); outline: none; }
-  .mad-chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
-  .mad-chip-label { line-height: 1.3; }
-  .mad-chip-count { display: inline-flex; min-width: 16px; height: 15px; align-items: center; justify-content: center; border-radius: 999px; background: var(--color-border-strong); color: var(--muted); padding: 0 4px; font-size: 0.48rem; font-weight: 700; }
-  /* Phase E V2: mad-chip.active .mad-chip-count rule removed — chips are now inside SelectionSheet, not on the main surface. */
-
-  /* Size trigger — popover button consistent with chips. */
-  .mad-size-trigger { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
-  .mad-size-trigger:hover { border-color: var(--line-strong); color: var(--ink); background: var(--color-surface-raised); }
-  .mad-size-trigger:focus-visible { border-color: var(--accent); outline: none; }
-  .mad-size-trigger.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
-  .mad-size-trigger-label { line-height: 1.3; }
-  .mad-size-trigger :global(.mad-size-trigger-chevron) { transition: transform var(--motion-fast) var(--ease-out); }
-  /* Phase E V2: aria-expanded chevron rotation rule removed — size trigger is now inside SelectionSheet, not on the main surface. */
 
   /* Active filter chips + Clear. */
   .mad-active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px; border-radius: var(--radius-sm); background: var(--accent-soft); }
@@ -984,7 +914,6 @@
   .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 4px; min-width: 0; }
   .mad-row-header { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .mad-kind { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); flex: 0 0 auto; }
-  .mad-row-label { overflow: hidden; color: var(--ink); font-size: 0.64rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
   .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--ink); font-size: 0.62rem; font-weight: 650; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; flex: 1 1 auto; min-width: 0; }
   .mad-row-detail-fallback { color: var(--muted); font-weight: 600; }
 
@@ -1019,13 +948,13 @@
   .mad-row-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
 
   @keyframes mad-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-chip, .mad-tab, .mad-app, .mad-size-trigger { transition: none; } .mad-skeleton-kind, .mad-skeleton-line, .mad-skeleton-badge, .mad-skeleton-action { animation: none; opacity: 0.5; } }
+  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-tab { transition: none; } .mad-skeleton-kind, .mad-skeleton-line, .mad-skeleton-badge, .mad-skeleton-action { animation: none; opacity: 0.5; } }
 
   /* Phase E: responsive breakpoints. */
   /* Narrow mobile (≤ 360px) — host badge drops off to save space. */
   @media (max-width: 360px) { .mad-badge-host { display: none; } .mad-action { width: 30px; height: 30px; } .mad-instructions p { font-size: 0.52rem; } }
   /* Tablet / desktop (≥ 700px) — more breathing room, larger fonts. */
-  @media (min-width: 700px) { .mad { gap: 10px; } .mad-filter-group { padding: 8px 10px; gap: 6px; } .mad-chip { padding: 5px 11px; font-size: 0.6rem; } .mad-size-trigger { padding: 5px 11px; font-size: 0.6rem; } .mad-tab { padding: 6px 12px; font-size: 0.66rem; } .mad-row { padding: 10px 12px; gap: 10px; } .mad-kind { width: 28px; height: 28px; } .mad-row-detail { font-size: 0.66rem; } .mad-badge { font-size: 0.56rem; padding: 3px 7px; } .mad-action { width: 34px; height: 34px; } .mad-list { gap: 6px; } }
+  @media (min-width: 700px) { .mad { gap: 10px; } .mad-tab { padding: 6px 12px; font-size: 0.66rem; } .mad-row { padding: 10px 12px; gap: 10px; } .mad-kind { width: 28px; height: 28px; } .mad-row-detail { font-size: 0.66rem; } .mad-badge { font-size: 0.56rem; padding: 3px 7px; } .mad-action { width: 34px; height: 34px; } .mad-list { gap: 6px; } }
   /* Large screen / TV (≥ 1024px) — clear focus states, navigable controls. */
-  @media (min-width: 1024px) { .mad { min-height: 320px; } .mad-filter-group { padding: 10px 12px; } .mad-row:hover { box-shadow: var(--shadow-sm); } }
+  @media (min-width: 1024px) { .mad { min-height: 320px; } .mad-row:hover { box-shadow: var(--shadow-sm); } }
 </style>

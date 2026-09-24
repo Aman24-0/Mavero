@@ -342,8 +342,15 @@ function section_regression(): void {
   // Phase C filters still intact.
   ok(component.includes('filterStreams'), 'REG: filterStreams still imported (Phase C intact)');
   ok(component.includes('DownloaderFilters'), 'REG: DownloaderFilters type still imported');
-  ok(component.includes('mad-chip'), 'REG: Type/Quality/Language chip rows preserved');
-  ok(component.includes('SelectionSheet'), 'REG: Size SelectionSheet preserved');
+  // Phase E final corrective: chip rows moved INSIDE the DownloaderFilterSheet
+  // (filter-chip class in the sheet). Main surface has active-filter chips
+  // (mad-active-chip) for quick removal of selected dimensions.
+  ok(component.includes('mad-active-chip') || component.includes('DownloaderFilterSheet'), 'REG: chip-based UI preserved (moved to DownloaderFilterSheet, active chips on main surface)');
+  // Phase E final corrective: dead Size SelectionSheet is REMOVED (was
+  // unreachable in Phase E V2 — openSizeSheet was never called). The Info
+  // SelectionSheet (recommended apps) is still preserved.
+  ok(component.includes('SelectionSheet'), 'REG: SelectionSheet primitive preserved (Info sheet for recommended apps)');
+  ok(!component.includes('sizeSheetOpen'), 'REG (Phase E final): dead Size SelectionSheet state REMOVED (consolidated into DownloaderFilterSheet)');
   // Phase B card metadata still intact.
   ok(component.includes('mad-badge'), 'REG: structured badges preserved (Phase B)');
   ok(component.includes('Captions'), 'REG: subtitle badge preserved (Phase B)');

@@ -245,7 +245,9 @@ function section15to18(): void {
   ok(component.includes('languageOptions(') && component.includes('currentLanguageOptions'), '15: language list is dynamic');
   // 16: Type filter.
   ok(component.includes('filters.type'), '16: filters.type state exists');
-  ok(component.includes('mad-chip'), '16: Type filter uses Mavero-themed chips (not native <select>)');
+  // Phase E final corrective: chip UI lives INSIDE the DownloaderFilterSheet
+  // (filter-chip class). The main surface has active-filter chips (mad-active-chip).
+  ok(component.includes('mad-active-chip') || component.includes('DownloaderFilterSheet'), '16: Type filter uses Mavero-themed chips in the grouped DownloaderFilterSheet (not native <select>)');
   ok(component.includes('typeOptions(') && component.includes('currentTypeOptions'), '16: Type options dynamically derived (includes HTTP/HLS when present)');
   // 17: Size filter.
   ok(component.includes('filters.size'), '17: filters.size state exists');
@@ -341,11 +343,15 @@ function section25(): void {
 
 function section26(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('mad-apps'), '26: mad-apps container exists (one row)');
+  // Phase E final corrective: suggested apps moved into the Info sheet
+  // (Phase E V2 stream-first IA). The main surface has an Info button that
+  // opens the SelectionSheet with the suggested apps. The old `mad-apps`
+  // container is REMOVED from the main surface.
+  ok(component.includes('mad-info-btn'), '26 (Phase E final): Info button exists on the main surface (replaces the always-visible mad-apps row)');
   ok(!component.includes('Suggested Downloader'), '26: "Suggested Downloader" heading is absent');
   ok(!component.includes('Suggested Player'), '26: "Suggested Player" heading is absent');
-  ok(component.includes('idm.internet.download.manager'), '26: 1DM Play Store link present');
-  ok(component.includes('is.xyz.mpv'), '26: MPV Play Store link present');
+  ok(component.includes('idm.internet.download.manager'), '26: 1DM Play Store link still referenced (in the Info sheet)');
+  ok(component.includes('is.xyz.mpv'), '26: MPV Play Store link still referenced (in the Info sheet)');
 }
 
 // ---------------------------------------------------------------------------
@@ -354,12 +360,16 @@ function section26(): void {
 
 function section27(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('mad-filters'), '27: mad-filters container exists');
-  // Phase 19 (task §11): the filter row uses flex + width: 100% (full width, NO horizontal scroll).
-  const filtersStyle = component.match(/\.mad-filters\s*\{([^}]*)\}/);
-  if (filtersStyle) {
-    ok(filtersStyle[1].includes('width: 100%') || filtersStyle[1].includes('width:100%'), '27 (Phase 19): mad-filters uses width: 100% (full available width)');
-    ok(filtersStyle[1].includes('display: flex'), '27: mad-filters uses display: flex (one row)');
+  // Phase E final corrective: the permanent `mad-filters` row is GONE —
+  // filters are consolidated into the grouped DownloaderFilterSheet. The
+  // main surface has a compact filter trigger button (mad-filter-trigger)
+  // inside a flex mad-filter-bar.
+  ok(component.includes('mad-filter-bar'), '27 (Phase E final): mad-filter-bar container exists (replaces the old mad-filters row)');
+  ok(component.includes('mad-filter-trigger'), '27 (Phase E final): compact filter trigger button exists (opens the DownloaderFilterSheet)');
+  // The filter bar is a flex container.
+  const filterBarStyle = component.match(/\.mad-filter-bar\s*\{([^}]*)\}/);
+  if (filterBarStyle) {
+    ok(filterBarStyle[1].includes('display: flex') || filterBarStyle[1].includes('display:flex'), '27: mad-filter-bar uses display: flex (one row)');
   }
 }
 

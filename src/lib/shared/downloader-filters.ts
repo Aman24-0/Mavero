@@ -116,7 +116,15 @@ export const NO_FILTERS: DownloaderFilters = { type: 'all', quality: 'all', size
 
 const GB = 1024 ** 3;
 
-/** Range boundaries for each size filter value (in bytes). `max` = exclusive upper bound. */
+/**
+ * Range boundaries for each size filter value (in bytes).
+ *
+ * `under*` ranges use `max` as the EXCLUSIVE upper bound (exactly N GB
+ * does NOT match "< N GB"). `over20` uses `min` as the EXCLUSIVE lower
+ * bound (exactly 20 GB does NOT match "> 20 GB"). The matcher applies
+ * `bytes >= range.min && bytes < range.max` for `under*` and a strict
+ * `bytes > range.min` for `over20` — see `streamMatchesSize`.
+ */
 const SIZE_RANGES: Record<SizeFilterValue, { min: number; max: number }> = {
   under1: { min: 0, max: 1 * GB },
   under2: { min: 0, max: 2 * GB },
@@ -124,6 +132,9 @@ const SIZE_RANGES: Record<SizeFilterValue, { min: number; max: number }> = {
   under5: { min: 0, max: 5 * GB },
   under10: { min: 0, max: 10 * GB },
   under20: { min: 0, max: 20 * GB },
+  // Phase E final corrective: `over20` is STRICTLY greater than 20 GB.
+  // The label is "> 20 GB" so exactly 20 GB must NOT match. The matcher
+  // uses `bytes > 20 * GB` for this case (see streamMatchesSize).
   over20: { min: 20 * GB, max: Number.MAX_SAFE_INTEGER },
 };
 
@@ -180,11 +191,12 @@ export function streamMatchesQuality(stream: FilterableStream, quality: Download
  *   specific size filter   → stream matches ONLY when it has a known
  *                             positive size that falls within the range
  *
- * Boundary semantics (matching the existing Phase 18 implementation):
+ * Boundary semantics (Phase E final corrective — Option A "strict" semantics):
  *   - "under N GB" ranges are EXCLUSIVE on the upper end (exactly N GB does
  *     NOT match "< N GB")
- *   - "over20" is INCLUSIVE on the lower end (exactly 20 GB DOES match
- *     "> 20 GB")
+ *   - "over20" is EXCLUSIVE on the lower end (exactly 20 GB does NOT match
+ *     "> 20 GB") — the label uses ">", so strictly greater-than is the
+ *     consistent contract.
  *   - unknown / undefined / non-positive size → does NOT match any specific
  *     filter (only matches 'all')
  */
@@ -196,6 +208,10 @@ export function streamMatchesSize(stream: FilterableStream, size: DownloaderFilt
   // specific size filter per the approved plan §6.
   if (bytes === undefined || bytes <= 0) return false;
   const range = SIZE_RANGES[size];
+  // `over20` is strict greater-than (label "> 20 GB").
+  // `under*` ranges are inclusive on the lower (0) bound + exclusive on the
+  // upper bound (label "< N GB").
+  if (size === 'over20') return bytes > range.min;
   return bytes >= range.min && bytes < range.max;
 }
 

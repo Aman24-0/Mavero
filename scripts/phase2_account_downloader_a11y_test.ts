@@ -64,31 +64,43 @@ ok(/\/api\/settings\/adult-mode/.test(account), '2J-4d. /api/settings/adult-mode
 // ============================================================
 const detail = read('src/lib/components/DetailPage.svelte');
 
-// The downloadProvidersFailed flag is now rendered (not just set silently).
-ok(/downloadProvidersFailed/.test(detail), '2K-1a. downloadProvidersFailed state still tracked');
-ok(/showDownloadFailure/.test(detail), '2K-1b. showDownloadFailure derived state added (renders the failure)');
-ok(/showDownloadFailure = \$derived\(isMovieLike && downloadProvidersFailed && !downloadProvidersLoading && !downloadProvidersLoaded\)/.test(detail), '2K-1c. showDownloadFailure condition: failed + not loading + not loaded (Phase 4-E: $derived)');
+// ============================================================
+// Phase 2-K — downloader error UX — Phase E final corrective (§6):
+// the old "Download unavailable · Retry" inline affordance on the
+// DetailPage is GONE. The Download button is now ALWAYS visible for
+// movie-like items (decoupled from prefetch). The Loading / Error /
+// Retry state lives INSIDE the DownloadSheet component. The
+// `downloadProvidersFailed` flag is still tracked, but it is passed
+// to the sheet (via `providersFailed` prop) instead of being rendered
+// inline on the DetailPage.
+// ============================================================
 
-// The failure affordance is rendered in the actions row.
-ok(/download-unavailable/.test(detail), '2K-2a. download-unavailable CSS class added (failure affordance)');
-ok(/Download unavailable · Retry/.test(detail), '2K-2b. "Download unavailable · Retry" label rendered on failure');
-ok(/onclick={retryDownloadProviders}/.test(detail), '2K-2c. Retry button calls retryDownloadProviders (real retry action)');
-ok(/function retryDownloadProviders\(\)/.test(detail), '2K-2d. retryDownloadProviders function defined');
+// The downloadProvidersFailed flag is still tracked (for the sheet).
+ok(/downloadProvidersFailed/.test(detail), '2K-1a. downloadProvidersFailed state still tracked (passed to sheet via providersFailed prop)');
+
+// Phase E final: showDownloadButton is gated ONLY on isMovieLike (no prefetch gating).
+ok(/showDownloadButton = \$derived\(isMovieLike\)/.test(detail), '2K-1b (Phase E final). showDownloadButton is gated ONLY on isMovieLike (decoupled from prefetch completion — no silent button disappearance)');
+
+// retryDownloadProviders function is still defined + wired to the sheet's Retry button.
+ok(/function retryDownloadProviders\(\)/.test(detail), '2K-2a. retryDownloadProviders function defined');
+ok(/onRetryProviders={retryDownloadProviders}/.test(detail), '2K-2b. retryDownloadProviders is wired to the sheet via onRetryProviders prop (the Retry button is INSIDE the sheet)');
 
 // The retry actually re-attempts the prefetch (not a fake action).
 ok(/retryDownloadProviders\(\) \{[\s\S]*?loadDownloadProviders\(\)/.test(detail), '2K-3a. retryDownloadProviders calls loadDownloadProviders (re-attempts the prefetch)');
 ok(/void loadDownloadProviders\(\);/.test(detail), '2K-3b. retry is async (void) - does not block the UI thread');
 
-// The loading state is reflected in the retry button.
-ok(/downloadProvidersLoading \? 'Retrying…' : 'Download unavailable · Retry'/.test(detail), '2K-4a. retry button reflects loading state (Retrying… while re-fetching)');
-ok(/disabled={downloadProvidersLoading}/.test(detail), '2K-4b. retry button disabled while loading (prevents double-fire)');
+// The DownloadSheet now accepts providersLoading / providersFailed / onRetryProviders props
+// so the sheet can render Loading / Error / Retry states internally.
+const sheet = read('src/lib/components/DownloadSheet.svelte');
+ok(/export let providersLoading = false;/.test(sheet), '2K-4a (Phase E final). DownloadSheet accepts providersLoading prop (renders Loading state internally)');
+ok(/export let providersFailed = false;/.test(sheet), '2K-4b (Phase E final). DownloadSheet accepts providersFailed prop (renders Error state internally)');
+ok(/export let onRetryProviders/.test(sheet), '2K-4c (Phase E final). DownloadSheet accepts onRetryProviders callback (wires the Retry button)');
+ok(/Loading download providers/.test(sheet), '2K-4d (Phase E final). DownloadSheet renders "Loading download providers…" in the Loading branch');
+ok(/Downloader temporarily unavailable/.test(sheet), '2K-4e (Phase E final). DownloadSheet renders "Downloader temporarily unavailable" in the Error branch');
+ok(/Retry/.test(sheet), '2K-4f (Phase E final). DownloadSheet renders Retry button (calls onRetryProviders)');
 
-// The normal Download button is still shown on success (no regression).
-ok(/showDownloadButton = \$derived\(isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0\)/.test(detail), '2K-5a. showDownloadButton preserved (success path intact) — Phase 4-E: $derived');
-ok(/onclick={openDownloadSheet}/.test(detail), '2K-5b. normal Download button still opens the sheet on success');
-
-// The audit fix is annotated.
-ok(/Phase 2-K \(audit UIX-2\)/.test(detail), '2K-6a. fix annotated with Phase 2-K (audit UIX-2) comment');
+// The normal Download button is always shown for movie-like items (no regression).
+ok(/onclick=\{openDownloadSheet\}/.test(detail), '2K-5b. normal Download button still opens the sheet (always wired, no prefetch gating)');
 
 // No leaking of server errors (the label is generic, not the raw error message).
 ok(!/\{errorMessage\}.*Download/.test(detail) && !/error\.message.*Download/.test(detail), '2K-7a. no server error message leaked in the download affordance (generic label)');

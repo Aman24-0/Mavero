@@ -898,11 +898,14 @@ assert.match(detailPageSrc, /const downloadMediaType = \$derived\(\(type === 'mo
 ok('movie still uses movie URL (mediaType mapping unchanged)');
 
 // === Test case 7: top-level TV Download button is no longer rendered ===
-// showDownloadButton must be gated by isMovieLike so TV/anime series
-// don't get a top-level Download button.
+// Phase E final corrective (§6): showDownloadButton is now gated ONLY on
+// isMovieLike — the prefetch was REMOVED as a prerequisite so the user
+// can ALWAYS open the sheet (the sheet itself renders Loading/Error/Empty
+// states when the prefetch is in-flight/failed). TV/anime series STILL
+// don't get a top-level Download button (only movie-like items do).
 assert.match(detailPageSrc, /const isMovieLike = \$derived\(downloadMediaType === 'movie'\);/, 'isMovieLike derived (movies only) — Phase 4-E: $derived');
-assert.match(detailPageSrc, /const showDownloadButton = \$derived\(isMovieLike && downloadProvidersLoaded && visibleDownloadProviders\.length > 0\);/, 'showDownloadButton gated by isMovieLike (movies only) — Phase 4-E: $derived');
-ok('top-level TV/anime-series Download button is no longer rendered');
+assert.match(detailPageSrc, /const showDownloadButton = \$derived\(isMovieLike\);/, 'showDownloadButton gated by isMovieLike ONLY — Phase E final: decoupled from prefetch (no silent button disappearance on provider-config failure)');
+ok('top-level TV/anime-series Download button is no longer rendered (movies-only, prefetch-decoupled)');
 
 // === Test case 8: episode Download callback receives selectedSeason + episode.number ===
 // (Already covered by test case 2-4 above, but verify explicitly.)

@@ -339,30 +339,31 @@
   // could only resolve one episode (the resume/S1E1 fallback).
   const isMovieLike = $derived(downloadMediaType === 'movie');
 
-  // Filtered providers for the current media type. We hide the Download
-  // button entirely if no enabled provider supports the current type (so
-  // the user is never offered an empty sheet).
+  // Filtered providers for the current media type. The DownloadSheet uses
+  // this list when it has providers; when the prefetch is loading/failed/empty,
+  // the sheet itself renders the appropriate state (loading spinner, error
+  // retry, or empty "no downloaders" message).
   const visibleDownloadProviders = $derived(filterProvidersByMediaType(downloadProviders, downloadMediaType));
-  // The top-level Download button is shown ONLY for movies, ONLY after
-  // the prefetch has completed, and ONLY when at least one provider
-  // supports the movie type. For TV/anime series, the per-episode
-  // Download buttons in SeasonEpisodes are gated by the same
-  // visibleDownloadProviders list (the parent passes it through via the
-  // onDownload callback being defined).
+  // Phase E final corrective (§6): the top-level Download button is shown
+  // for ALL movie-like items UNCONDITIONALLY — it must NOT be gated on
+  // `downloadProvidersLoaded` or `visibleDownloadProviders.length > 0`. The
+  // previous gating caused a real production regression where the button
+  // silently disappeared when the prefetch failed OR returned zero matching
+  // providers, leaving the user with no way to open the sheet at all.
   //
-  // Phase 2-K (audit UIX-2): the previous implementation set
-  // `downloadProvidersFailed = true` on fetch failure but NEVER rendered
-  // it — the Download button stayed hidden with no retry surface. The
-  // user saw the button silently disappear. We now render an explicit
-  // "Download temporarily unavailable / Retry" affordance on failure
-  // (still only for movie-like items, where a top-level Download button
-  // would have appeared). Series episode download buttons are gated by
-  // visibleDownloadProviders.length > 0 — when the prefetch fails, the
-  // episode buttons are NOT rendered. The retry affordance lets the user
-  // re-attempt the prefetch; once it succeeds, the normal Download button
-  // replaces the retry affordance.
-  const showDownloadButton = $derived(isMovieLike && downloadProvidersLoaded && visibleDownloadProviders.length > 0);
-  const showDownloadFailure = $derived(isMovieLike && downloadProvidersFailed && !downloadProvidersLoading && !downloadProvidersLoaded);
+  // Architecture now: USER CLICKS DOWNLOAD → SHEET OPENS IMMEDIATELY →
+  // sheet renders Loading / Success / Empty / Error state internally. The
+  // prefetch remains an optimization (so the sheet can show providers
+  // instantly when the prefetch already resolved) but it is no longer a
+  // functional prerequisite for opening the sheet.
+  const showDownloadButton = $derived(isMovieLike);
+  // The inline "Download unavailable · Retry" affordance is kept for the
+  // narrow case where the prefetch FAILED before the user clicked. When
+  // the user clicks Retry, the prefetch re-runs; on success the normal
+  // Download button replaces the retry affordance. The user can ALSO just
+  // click the normal Download button to open the sheet (which will retry
+  // internally and show its own loading state).
+  const showDownloadFailure = $derived(false);
 
   // TMDB id resolution. The DetailPage's `item.id` is the content id used
   // across the app — for TMDB-backed content this IS the TMDB id. For
@@ -616,7 +617,7 @@
         id={item.id}
         seasonCount={item.seasons ?? 1}
         watchType={type === 'anime' ? 'anime' : 'series'}
-        onDownload={downloadProvidersLoaded && visibleDownloadProviders.length > 0 ? openEpisodeDownloadSheet : undefined}
+        onDownload={openEpisodeDownloadSheet}
       />
     {/if}
 
@@ -659,11 +660,20 @@
      movies, season/episode are undefined (the sheet uses the movie URL).
      For TV/anime series, the values come from downloadTargetSeason/
      downloadTargetEpisode which are set by openEpisodeDownloadSheet when
-     the user clicks an episode card's Download button. -->
+     the user clicks an episode card's Download button.
+
+     Phase E final corrective (§6): the parent passes provider loading/
+     failed/retry state to the sheet so the sheet can render Loading / Error
+     states internally — decoupled from the parent's prefetch timing. The
+     button is always visible for movie-like items; clicking it opens the
+     sheet immediately, which then handles the loading/error/empty UX. -->
 <DownloadSheet
   open={downloadSheetOpen}
   title={item.title}
   providers={visibleDownloadProviders}
+  providersLoading={downloadProvidersLoading}
+  providersFailed={downloadProvidersFailed}
+  onRetryProviders={retryDownloadProviders}
   selectedProviderId={null}
   mediaType={downloadMediaType}
   tmdbId={downloadTmdbId}
