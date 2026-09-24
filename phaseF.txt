@@ -1,0 +1,1243 @@
+# MAVERO — PHASE F
+# FINAL PRODUCTION HARDENING + A→E REGRESSION CLOSURE
+# ONE-PASS COMPLETION PHASE
+#
+# Repository:
+# https://github.com/Aman24-0/Mavero
+#
+# Current baseline:
+# main @ f577193
+#
+# IMPORTANT:
+# This is the FINAL Phase F implementation pass.
+#
+# Do NOT treat this as another exploratory phase.
+# Do NOT split the work into Phase F1/F2/F3.
+# Do NOT stop after fixing the first issue you find.
+# Do NOT repeatedly patch the same phase.
+#
+# Goal:
+# Perform one deep implementation + audit pass that closes all
+# remaining production-relevant issues/regressions from Phase A through
+# Phase E, while preserving every currently working feature.
+#
+# Phase F is NOT permission for a redesign.
+# It is a production-hardening + regression-closure phase.
+
+======================================================================
+0. NON-NEGOTIABLE RULES
+======================================================================
+
+1. FIRST inspect the actual current repository state at main/f577193.
+   Do not trust previous AI reports, comments, commit messages, or
+   "complete" claims.
+
+2. Compare:
+   PLAN / HISTORICAL REQUIREMENT
+   vs
+   ACTUAL CURRENT CODE
+   vs
+   ACTUAL RUNTIME BEHAVIOR
+   vs
+   TEST COVERAGE.
+
+3. A feature is NOT complete merely because:
+   - a function exists
+   - a test contains a string
+   - a comment says "complete"
+   - TypeScript accepts it
+   - vite build succeeds
+   - a previous report says PASS.
+
+4. For behavior that can fail only at runtime, add/run an actual
+   runtime test. Prefer exercising the compiled Svelte component or
+   actual browser/runtime path where practical.
+
+5. Do NOT remove valid streams just to make the UI cleaner.
+
+6. Do NOT collapse streams from different hosts.
+
+7. Do NOT use filename equality as proof of duplication.
+
+8. Preserve query/token variants unless canonical-stream rules explicitly
+   say they are duplicates.
+
+9. Do NOT introduce arbitrary stream limits such as 10/20/etc.
+   Server resolution must preserve the valid resolved collection.
+
+10. Show More must operate on already-resolved streams.
+    Do NOT refetch addons merely because the user clicks Show More.
+
+11. Filters must operate on the full normalized/resolved collection
+    BEFORE presentation-window/pagination.
+
+12. Do not proxy arbitrary media.
+
+13. Do not bypass iframe CSP/X-Frame-Options/security restrictions.
+
+14. Do not force 1DM as the only downloader/player.
+
+15. Do not assume HLS/DASH are ordinary downloadable files.
+
+16. Do not expose raw media URLs as the primary UI when the existing
+    capability/action model handles them.
+
+17. Do not redesign DownloadSheet, presentation-window, AppShell,
+    player architecture, Supabase auth, or unrelated UI unless the
+    audit proves a production regression requiring the change.
+
+18. Preserve existing working behavior.
+
+19. Any intentional behavior that looks unusual must be verified before
+    changing it.
+
+20. No Phase G work.
+
+======================================================================
+1. CURRENT PHASE-E BASELINE — DO NOT REGRESS
+======================================================================
+
+Current Phase E runtime fix is:
+
+src/lib/components/MaveroAddonDownload.svelte
+
+The previous production crash was:
+
+Cannot read properties of undefined (reading 'initial')
+
+The buggy code initialized visibleStreams/remainingStreams from
+presentationResult before the Svelte reactive statement had executed.
+
+Current fix initializes them as [] and assigns them in the reactive block.
+
+This fix is VERIFIED and MUST remain intact.
+
+Do NOT redesign presentation-window.ts.
+
+Current verified behavior includes:
+
+- DownloadSheet opens.
+- Mavero Downloader panel mounts.
+- presentation-window no longer crashes.
+- Show More architecture remains intact.
+- Full stream collection remains available.
+- filters happen before presentation window.
+- HTTPS preference remains.
+- different hosts remain usable.
+- third-party embedded download-page flow remains.
+- external fallback remains.
+- PWA meta warning was addressed.
+- Phase-E runtime regression test exists.
+
+Do not undo or unnecessarily rewrite any of this.
+
+======================================================================
+2. PHASE A → E REGRESSION AUDIT
+======================================================================
+
+Perform a REAL end-to-end regression audit of ALL downloader phases:
+
+Phase A
+Phase B
+Phase C
+Phase D
+Phase E
+
+Use the actual implementation as source of truth.
+
+Create a matrix:
+
+AREA | CURRENT CODE | TEST | RUNTIME STATUS | ACTION
+
+Do not mark PASS merely because a source-contract test exists.
+
+----------------------------------------------------------------------
+PHASE A — ADDON RELIABILITY / STREMIO PARITY
+----------------------------------------------------------------------
+
+Verify:
+
+- addon discovery
+- addon resolution
+- timeout behavior
+- retry behavior
+- failure isolation
+- one failing addon must not kill other addons
+- malformed addon responses
+- empty addon responses
+- slow addon
+- abort/cancellation behavior
+- normalized stream handling
+- no accidental stream truncation
+- server ranking still works
+- valid streams survive normalization
+- resolver errors are isolated correctly.
+
+Test with:
+- 0 addons
+- 1 successful addon
+- multiple successful addons
+- one failing + one successful addon
+- timeout + successful addon
+- malformed response + successful addon
+- duplicate streams
+- different-host same-content streams.
+
+Fix any actual regression found.
+
+----------------------------------------------------------------------
+PHASE B — DEDUP + STREAM CARD DATA
+----------------------------------------------------------------------
+
+Verify canonicalStreamKey behavior.
+
+Required:
+
+HTTP/HTTPS:
+scheme + lowercase host + path + full query
+with default ports normalized.
+
+Magnets:
+normalized BTIH identity.
+
+Fallback:
+raw URL.
+
+Verify:
+
+- same canonical URL => duplicate
+- same content but different host => NOT duplicate
+- different query/token => NOT automatically duplicate
+- www vs non-www behavior remains intentional
+- different servers remain independently usable
+- magnet duplicates are correctly handled
+- stream host is displayed correctly
+- stream metadata survives
+- subtitles survive
+- player-normalizer subtitle data remains mirrored correctly
+- no accidental metadata loss.
+
+Do not "improve" dedup by becoming more aggressive.
+
+----------------------------------------------------------------------
+PHASE C — FILTERS / SHOW MORE / PRESENTATION
+----------------------------------------------------------------------
+
+Verify all filter behavior against FULL resolved collection.
+
+Filters:
+
+- Type
+- Quality
+- Size
+- Language
+- Dual Audio
+- Multi Audio
+- English
+- Hindi
+- Clear filters
+- filtered-empty state
+- dynamic options/counts.
+
+Important semantic rules:
+
+Size:
+- All keeps unknown/invalid sizes.
+- A specific size filter excludes unknown/invalid size when the
+  comparison cannot be made.
+- Boundary semantics must remain consistent.
+
+Language:
+- Do not invent metadata.
+- English can match dual where the normalized metadata represents it.
+- Hindi can match dual where represented.
+- Dual Audio matches dual/multi according to existing Phase-C
+  normalization rules.
+- Multi Audio remains distinct where intended.
+
+Show More:
+- initial presentation window is not permanent deletion.
+- remaining streams remain accessible.
+- Show More must NOT refetch.
+- Show More must work after filters.
+- Show More must not resurrect streams excluded by active filters.
+- changing filters must recompute from full active-tab streams.
+- changing addon tabs must reset/recompute presentation state correctly.
+- clearing filters must restore the complete valid collection.
+- no stream should disappear merely because it was outside the initial
+  presentation window.
+
+Verify presentation-window behavior:
+
+- one quality
+- multiple qualities
+- multiple hosts for same quality
+- HTTPS + HTTP
+- HTTP only
+- HLS/DASH
+- magnet/P2P
+- unknown quality
+- empty collection.
+
+Do not rewrite presentation-window unless a concrete bug is proven.
+
+----------------------------------------------------------------------
+PHASE D — ACTIONS / DOWNLOAD / PLAY / SHARE
+----------------------------------------------------------------------
+
+Audit the capability model.
+
+Verify every stream/action combination:
+
+- download-capable
+- playable
+- shareable
+- unsupported capability
+- external/provider-page URL
+- direct media URL
+- HLS
+- DASH
+- magnet/P2P
+- HTTP
+- HTTPS.
+
+Verify:
+
+- correct action is exposed
+- unsupported actions are not falsely presented
+- direct media is handed off correctly
+- external player helper is canonical
+- no duplicate helper implementations
+- share uses EXACT original URI
+- no URL rewrite
+- no proxy
+- no forced 1DM.
+
+Third-party download page flow:
+
+- provider page opens inside DownloadSheet when embedding is allowed
+- loading state works
+- iframe error works
+- CSP/X-Frame-Options failure does NOT break the sheet
+- external fallback is available
+- Back returns to Mavero downloader panel
+- no CSP bypass
+- no proxy.
+
+Verify DownloadSheet provider-loading failure/empty states.
+
+The Download button must not become unavailable merely because provider
+config is slow/fails if the current architecture intentionally lets the
+sheet handle provider loading.
+
+----------------------------------------------------------------------
+PHASE E — STREAM-FIRST IA / FILTER SHEET / ADMIN / UI
+----------------------------------------------------------------------
+
+Verify:
+
+- stream-first information architecture
+- grouped filter sheet
+- Type shown only when meaningful
+- dynamic filter options
+- counts from full collection
+- info sheet
+- suggested app icons
+- admin link types
+- persisted admin configuration
+- admin filtering
+- HTTPS best presentation candidate
+- remaining valid streams preserved
+- Show More
+- transport clarity
+- skeleton/loading state
+- mobile layout
+- desktop layout
+- keyboard accessibility
+- focus-visible states
+- reduced motion where implemented
+- no native select styling regression
+- no overlap/z-index regression
+- no sheet overflow regression
+- safe-area handling.
+
+Also verify Detail/Series download entry points.
+
+The previously found runtime initialization-order bug must remain
+covered by a runtime test.
+
+======================================================================
+3. SEARCH FOR THE SAME CLASS OF RUNTIME BUG EVERYWHERE
+======================================================================
+
+The previous production bug happened because a Svelte $: value was read
+inside a normal variable initializer before the reactive assignment ran.
+
+Do a repository-wide audit for equivalent patterns.
+
+Look specifically for:
+
+$: value = ...
+let x = value.foo
+
+$: derived = ...
+const y = derived.bar
+
+reactive values consumed before initialization
+
+derived values used by markup/helper code before guaranteed assignment
+
+async state assumed to exist during component creation
+
+props/state accessed in unsafe initialization expressions
+
+array/object properties read from possibly undefined reactive state.
+
+Do NOT blindly rewrite every reactive declaration.
+
+For every finding classify:
+
+SAFE
+ACTUAL BUG
+INTENTIONAL
+NEEDS RUNTIME TEST.
+
+Fix every ACTUAL BUG found.
+
+Add regression tests for each fixed runtime initialization bug.
+
+======================================================================
+4. SVELTE 5 / LEGACY REACTIVITY CONSISTENCY
+======================================================================
+
+Current codebase contains both existing Svelte patterns and newer Svelte 5
+patterns.
+
+Do NOT perform a wholesale migration.
+
+Instead audit for dangerous mixed patterns:
+
+- $:
+- $state
+- $derived
+- $effect
+- onMount
+- event handlers
+- reactive declarations depending on async data.
+
+Only change code where there is a proven correctness/runtime problem.
+
+The goal is stability, not framework-style cleanup.
+
+======================================================================
+5. DOWNLOAD-SHEET FULL STATE MACHINE AUDIT
+======================================================================
+
+Treat DownloadSheet as a state machine.
+
+Verify every state:
+
+A. closed
+B. opening
+C. provider loading
+D. provider loaded
+E. provider empty
+F. provider error
+G. Mavero Downloader active
+H. third-party provider active
+I. embedded page loading
+J. embedded page success
+K. embedded page blocked/error
+L. external fallback
+M. closing
+N. reopening after previous failure.
+
+Test transitions:
+
+closed → open
+open → provider loading
+loading → success
+loading → error
+loading → empty
+success → provider switch
+provider switch → Mavero
+Mavero → third-party
+third-party → embedded
+embedded → error
+error → external
+external → back
+back → Mavero
+close → reopen.
+
+Look for stale state:
+
+- old iframe URL remaining
+- old embedded error remaining
+- old provider remaining
+- old filters remaining unexpectedly
+- old active tab remaining
+- old Show More state leaking between content items
+- old AbortController affecting a new request
+- timers/listeners surviving close.
+
+Fix real issues.
+
+======================================================================
+6. CONTENT / CONTENT-TYPE REGRESSION
+======================================================================
+
+Audit movie, series and anime paths.
+
+Verify:
+
+movie:
+- no season/episode assumptions.
+
+series:
+- season + episode passed correctly.
+
+anime:
+- anime-specific provider/content handling remains intact.
+
+Verify DownloadSheet and MaveroAddonDownload for:
+
+movie
+series
+anime.
+
+Also verify invalid/missing:
+
+- contentId
+- tmdbId
+- title
+- season
+- episode.
+
+These must not produce runtime crashes.
+
+======================================================================
+7. NETWORK / ASYNC RACE AUDIT
+======================================================================
+
+Audit downloader async flows for race conditions.
+
+Examples:
+
+User opens content A.
+Request A starts.
+User closes/reopens with content B.
+Request B starts.
+A finishes after B.
+
+A must not overwrite B.
+
+Similarly:
+
+provider switch
+addon tab switch
+filter change
+close/reopen
+retry
+AbortController
+timeout
+late response.
+
+Do not introduce unnecessary cancellation complexity.
+
+Only fix proven stale-response/race bugs.
+
+Add regression tests where needed.
+
+======================================================================
+8. KNOWN HISTORICAL ISSUE — setAddonLinkTypes
+======================================================================
+
+Previously identified:
+
+setAddonLinkTypes uses read-merge-write behavior.
+
+Do NOT continue calling this "race-safe" unless the implementation
+actually guarantees atomicity/concurrency safety.
+
+Audit it.
+
+If it is genuinely vulnerable to lost updates:
+
+- fix it safely using the existing architecture,
+- preferably an atomic DB-side JSONB update/function or another
+  concurrency-safe mechanism,
+- preserve current data semantics,
+- add a regression/concurrency test.
+
+Do NOT redesign the entire admin system.
+
+If current usage makes the race impossible by construction, prove that
+and document the reasoning instead of changing working code.
+
+======================================================================
+9. SUPABASE / MIGRATION DRIFT AUDIT
+======================================================================
+
+There is a known historical concern:
+
+production schema migration history was behind repository migrations.
+
+Do NOT blindly run migrations.
+Do NOT fake schema_migrations rows.
+Do NOT reset production.
+Do NOT modify unrelated tables.
+
+Audit:
+
+- repository migration files
+- current production schema
+- schema_migrations
+- downloader provider tables/config
+- RLS
+- policies
+- functions
+- indexes.
+
+Determine exactly:
+
+1. Which repo migrations are already reflected in production.
+2. Which are missing.
+3. Which differences are intentional.
+4. Whether current application code depends on missing migrations.
+
+If migration drift still exists and affects Phase A–E functionality,
+resolve it safely.
+
+If it is unrelated and not required for this phase, do not perform a
+risky production migration merely for cleanliness.
+
+Report it explicitly.
+
+======================================================================
+10. SUPABASE SECURITY / RLS REGRESSION AUDIT
+======================================================================
+
+Re-check the downloader/provider data.
+
+Known historical observation:
+
+anon had broader table-level grants than ideal, while RLS prevented
+unauthorized mutation.
+
+Audit actual effective behavior.
+
+Required:
+
+Public consumer:
+- can read only intended public downloader/provider configuration.
+
+Unauthenticated user:
+- cannot mutate provider configuration.
+
+Authenticated non-admin:
+- cannot mutate admin-only provider configuration.
+
+Admin:
+- retains intended management capability.
+
+Do not break public provider reads.
+
+Do not tighten grants/RLS blindly.
+
+For every policy change, test:
+
+anon SELECT
+anon INSERT
+anon UPDATE
+anon DELETE
+
+authenticated non-admin
+admin.
+
+Only fix actual security regression or Phase-A–E relevant issue.
+
+======================================================================
+11. DATABASE FUNCTION SECURITY AUDIT
+======================================================================
+
+Re-check functions previously identified:
+
+- update_direct_play_sources_updated_at()
+- bump_download_providers_config_version()
+
+Verify:
+
+- SECURITY INVOKER/DEFINER is intentional
+- search_path is safe/pinned where required
+- no privilege escalation
+- no behavior regression.
+
+Do not rewrite working functions without evidence.
+
+======================================================================
+12. STREAM DISCOVERY / NORMALIZATION DATA PRESERVATION
+======================================================================
+
+Trace the complete pipeline:
+
+Stremio Addon
+→ addon resolution
+→ raw stream
+→ normalization
+→ classification
+→ ranking
+→ filtering
+→ presentation window
+→ UI.
+
+At every stage answer:
+
+"What valid data can be lost here?"
+
+Specifically check:
+
+- host
+- URL
+- query parameters
+- quality
+- codec
+- container
+- audio
+- language
+- subtitles
+- size
+- transport
+- availability
+- confidence
+- external/direct classification.
+
+A stream may be hidden by UI presentation, but it must not be
+accidentally destroyed upstream.
+
+======================================================================
+13. EXISTING WORKER / COMPAT ARCHITECTURE
+======================================================================
+
+The old media-worker/compat architecture was intentionally removed.
+
+Do NOT resurrect it.
+
+Audit only for dead references that could cause runtime/build problems:
+
+- MAVERO_MEDIA_WORKER_URL
+- media-worker imports
+- compat session secret
+- worker pairing
+- compat manifest/status routes
+- mavero-compat client path
+- worker-specific token generation
+- worker-specific tests/docs.
+
+IMPORTANT:
+
+Keep format detection for unsupported containers such as:
+
+- MKV
+- HEVC
+- DTS
+
+if current functionality uses it.
+
+Do NOT reintroduce FFmpeg worker conversion.
+
+Remove/fix only genuinely dead references that are still active and
+can cause incorrect runtime behavior.
+
+Do not delete historical documentation merely for cosmetic cleanup
+unless it is actively misleading or part of the current product path.
+
+======================================================================
+14. EXISTING PLAYER REGRESSION AUDIT
+======================================================================
+
+Phase A–E changes must not break playback.
+
+Run/inspect existing player tests.
+
+Specifically verify historical fixes:
+
+- viewport media-query listener cleanup
+- MediaSession handler registration
+- auto-hide condition
+- embed-load timeout re-arm
+- direct-source playback
+- HLS
+- DASH
+- HTTP
+- HTTPS
+- external/embed provider behavior.
+
+Do not redesign PlayerShell.
+
+Only fix regressions introduced by downloader/Phase A–E work.
+
+======================================================================
+15. DISCOVER / ACCOUNT / NAVIGATION REGRESSION AUDIT
+======================================================================
+
+Phase E should not regress unrelated existing application paths.
+
+Run existing tests for:
+
+- Discover
+- Search
+- My List
+- Account
+- Navigation
+- Upcoming
+- adult-mode enforcement
+- watch history
+- session handling
+- signout
+- admin navigation.
+
+If any failure is caused by Phase A–E changes, fix it.
+
+Do NOT use Phase F as an excuse to redesign those features.
+
+======================================================================
+16. ACCESSIBILITY / RESPONSIVE REGRESSION
+======================================================================
+
+Audit downloader UI at:
+
+- mobile narrow viewport
+- mobile landscape
+- tablet
+- desktop
+- large desktop.
+
+Verify:
+
+- no horizontal overflow except intentional horizontal chip rails
+- no clipped controls
+- no overlapping sheet/header/content
+- close button reachable
+- filters reachable
+- Show More reachable
+- focus-visible
+- keyboard navigation
+- dialog semantics where applicable
+- aria labels
+- buttons have correct semantics
+- iframe has meaningful title
+- reduced-motion behavior
+- safe-area bottom spacing.
+
+Do not change the visual design unless fixing a concrete regression.
+
+======================================================================
+17. RUNTIME TESTING REQUIREMENT
+======================================================================
+
+The previous Phase E crash proved that source-contract tests alone are
+insufficient.
+
+Phase F MUST contain a meaningful runtime regression layer.
+
+At minimum exercise:
+
+1. DownloadSheet with Mavero Downloader.
+2. DownloadSheet with third-party provider.
+3. Provider loading.
+4. Provider error.
+5. Provider empty.
+6. MaveroAddonDownload with zero streams.
+7. one stream.
+8. multiple qualities.
+9. multiple hosts.
+10. filter application.
+11. filter clear.
+12. Show More.
+13. content switch.
+14. movie.
+15. series.
+16. anime.
+17. close/reopen.
+18. embedded provider page.
+19. embedded error/fallback.
+20. callback/action path.
+
+Tests must fail when the corresponding runtime bug is reintroduced.
+
+Do not create tests that merely search for source strings.
+
+======================================================================
+18. FULL TEST MATRIX
+======================================================================
+
+Before making changes:
+
+Run:
+
+pnpm run check
+pnpm test
+pnpm run build
+
+Then run the relevant runtime tests.
+
+After ALL changes:
+
+pnpm run check
+pnpm test
+pnpm run build
+
+All must pass.
+
+If any existing test fails:
+
+- determine whether it is a real regression
+- fix the root cause
+- do not delete/disable the test
+- do not weaken assertions just to get green.
+
+If test suite becomes too large/slow, do NOT remove existing tests.
+Keep the existing test chain intact.
+
+======================================================================
+19. TEST QUALITY AUDIT
+======================================================================
+
+Classify existing tests:
+
+A. source-contract
+B. pure unit
+C. integration
+D. runtime/SSR
+E. browser/runtime.
+
+Do not claim broad runtime coverage from A/B tests.
+
+Where a production bug class is runtime-only, add C/D/E coverage.
+
+The goal is not a huge number of tests.
+
+The goal is tests that would actually catch the bugs we have already
+experienced.
+
+======================================================================
+20. PRODUCTION CONFIG / ENVIRONMENT AUDIT
+======================================================================
+
+Check only Phase A–E relevant environment variables/config.
+
+Verify:
+
+- no required env is silently missing
+- public vs server-only variables are correct
+- downloader provider config loads correctly
+- addon config loads correctly
+- no worker env is still required
+- no stale compatibility env is required
+- production and build-time assumptions match.
+
+Do not print secrets.
+
+Do not expose tokens/keys in the final report.
+
+======================================================================
+21. PERFORMANCE REGRESSION AUDIT
+======================================================================
+
+Do not optimize blindly.
+
+Verify Phase A–E did not introduce:
+
+- duplicate addon requests
+- unnecessary refetch on filter change
+- unnecessary refetch on Show More
+- repeated provider config resolution
+- repeated session resolution
+- unbounded client cache
+- unbounded stream arrays
+- listener leaks
+- timer leaks
+- AbortController leaks.
+
+Preserve the existing Phase-2 optimizations:
+
+- session resolution optimization
+- auth payload projection
+- public HTTP cache headers
+- bounded content cache
+- watch-page parallelization
+- account sync gating
+- discover cache/skeleton
+- player lifecycle fixes.
+
+Do not revert those optimizations.
+
+======================================================================
+22. IMPORTANT KNOWN HISTORICAL PHASE-2 / PHASE-3 ITEMS
+======================================================================
+
+Do a regression-only verification of:
+
+Phase 2:
+- session projection
+- cache headers
+- content cache bounds
+- watch parallelization
+- sync gating
+- discover cache
+- player lifecycle
+- account/downloader accessibility
+- repo hygiene.
+
+Phase 3:
+- observability
+- health
+- resolver resilience
+- classification cache
+- history retention
+- instrumentation/security errors.
+
+Do NOT redesign these.
+
+Only repair a regression if current behavior is demonstrably broken.
+
+======================================================================
+23. DO NOT BREAK THESE CURRENT WORKING FEATURES
+======================================================================
+
+The following are protected:
+
+Downloader:
+- addon resolution
+- retries/timeouts
+- failure isolation
+- canonical dedup
+- different-host preservation
+- subtitles
+- metadata
+- filters
+- size semantics
+- language semantics
+- Show More
+- presentation window
+- HTTPS preference
+- Mavero Downloader
+- third-party download providers
+- embedded download page
+- external fallback
+- share
+- player/download capability model.
+
+App:
+- Discover
+- Search
+- My List
+- Account
+- Watch
+- Player
+- Upcoming
+- Admin
+- authentication
+- device/TV pairing
+- adult-mode enforcement.
+
+Architecture:
+- no media-worker resurrection
+- no arbitrary media proxy
+- no CSP bypass
+- no forced 1DM
+- no unnecessary architecture rewrite.
+
+======================================================================
+24. DEFINITION OF DONE
+======================================================================
+
+Phase F is COMPLETE only if ALL are true:
+
+[ ] Full A→E regression audit performed.
+[ ] Every actual regression fixed.
+[ ] No known production runtime bug remains in downloader path.
+[ ] Reactive initialization-order class audited repository-wide.
+[ ] DownloadSheet state transitions audited.
+[ ] Downloader async race conditions audited.
+[ ] Filters tested against full resolved collection.
+[ ] Show More tested after filters and content/tab changes.
+[ ] Different-host streams remain usable.
+[ ] Third-party download flow remains safe.
+[ ] Direct/HLS/DASH/magnet capability semantics preserved.
+[ ] Movie/series/anime paths verified.
+[ ] Player regression suite passes.
+[ ] Discover/account/navigation regression suite passes.
+[ ] Supabase downloader/RLS behavior verified.
+[ ] Known setAddonLinkTypes concurrency issue resolved OR proven safe.
+[ ] Migration drift investigated and handled safely if relevant.
+[ ] No production migration is blindly/falsely applied.
+[ ] No worker/compat architecture is resurrected.
+[ ] No unnecessary redesign introduced.
+[ ] Runtime tests exist for critical downloader paths.
+[ ] Existing tests were not deleted/weakened.
+[ ] pnpm check = 0 errors / 0 warnings.
+[ ] pnpm test = 0 failures.
+[ ] pnpm build = success.
+[ ] Final git diff reviewed.
+[ ] No accidental secrets/config changes.
+[ ] No unrelated feature changes.
+[ ] Commit pushed to main.
+
+======================================================================
+25. FINAL SELF-AUDIT BEFORE CLAIMING COMPLETE
+======================================================================
+
+Before writing the final report, stop and perform this exact exercise:
+
+For every Phase A–E requirement:
+
+1. Where is it implemented?
+2. What happens at runtime?
+3. What test proves it?
+4. Could a valid stream/data/state be lost?
+5. Could an async race break it?
+6. Could mobile/desktop behave differently?
+7. Could an empty/error/loading state break it?
+8. Could a previous feature have regressed?
+9. Is the behavior intentional?
+10. If it is not tested, add a test.
+
+Do NOT mark "PASS" because a file contains the expected code.
+
+======================================================================
+26. FINAL REPORT FORMAT
+======================================================================
+
+Return a detailed report containing:
+
+# PHASE F FINAL REPORT
+
+## 1. Baseline
+- starting commit
+- final commit
+
+## 2. Deep Audit Summary
+Table:
+
+Phase | Area | Result | Evidence | Changes
+
+Use only:
+PASS
+FIXED
+INTENTIONAL
+NOT APPLICABLE
+
+Do not use vague "mostly complete".
+
+## 3. Bugs Found
+For every bug:
+
+- exact file
+- exact function/component
+- root cause
+- runtime impact
+- fix
+- regression test.
+
+## 4. A→E Regression Results
+
+Phase A:
+...
+
+Phase B:
+...
+
+Phase C:
+...
+
+Phase D:
+...
+
+Phase E:
+...
+
+## 5. Runtime Verification
+List actual runtime scenarios executed.
+
+## 6. Supabase Audit
+- migration state
+- RLS
+- grants
+- functions
+- provider config
+- any changes.
+
+## 7. Security
+- URL handling
+- iframe security
+- capabilities
+- auth/RLS
+- secrets
+- worker/compat.
+
+## 8. Performance
+- duplicate requests
+- refetch behavior
+- cache behavior
+- listener/timer cleanup.
+
+## 9. Tests
+
+Exact:
+
+pnpm run check:
+...
+
+pnpm test:
+...
+
+pnpm run build:
+...
+
+Runtime tests:
+...
+
+## 10. Files Changed
+Only list actual changed files and why.
+
+## 11. Protected Features Verified
+List important existing features confirmed working.
+
+## 12. Remaining Issues
+Only genuinely remaining issues.
+Do not hide them.
+Do not call them complete if they are not complete.
+
+## 13. Final Verdict
+
+Only say:
+
+PHASE F COMPLETE
+
+if the Definition of Done above is genuinely satisfied.
+
+Otherwise say:
+
+PHASE F NOT COMPLETE
+
+and identify exactly what remains.
+
+======================================================================
+27. FINAL HARD CONSTRAINT
+======================================================================
+
+This is intended to be ONE COMPLETE PHASE.
+
+Do not finish after the first bug.
+
+Do not say "Phase F complete" merely because tests are green.
+
+Do not create another "Phase F corrective pass" for something that could
+reasonably have been found in this audit.
+
+Perform the deep audit FIRST, fix ALL Phase-A→E regressions and
+Phase-F-scoped production issues found, then run the complete
+verification suite, review the final diff, commit and push.
+
+Do not start Phase G.
