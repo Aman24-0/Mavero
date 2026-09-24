@@ -4,6 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#06060a" />
+    <!-- PWA: prefer the modern `mobile-web-app-capable` meta (the deprecation
+         warning fires for `apple-mobile-web-app-capable` alone). iOS still
+         needs `apple-mobile-web-app-capable` for full-screen standalone mode
+         on older iOS versions, so we keep BOTH for backwards compatibility —
+         newer browsers prefer the unprefixed `mobile-web-app-capable`. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="MAVERO" />

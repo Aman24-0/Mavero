@@ -171,11 +171,27 @@
   // Phase E V2: presentation window / Show More.
   // The filtered streams are split into an initial window (best HTTPS per
   // quality) + remaining streams. Show More reveals the next batch.
+  //
+  // Phase E final runtime fix: `presentationResult` is a `$:` reactive
+  // value — it is NOT yet computed during component instance
+  // initialization. Reading `presentationResult.initial` in a `let`
+  // initializer would throw `Cannot read properties of undefined
+  // (reading 'initial')` at runtime (the production DownloadSheet
+  // crash). Initialize `visibleStreams` + `remainingStreams` to empty
+  // arrays; the reactive block below reassigns them after
+  // `presentationResult` is computed.
   $: presentationResult = selectPresentationWindow(filteredStreams as PresentableStream[]);
-  let visibleStreams: typeof filteredStreams = presentationResult.initial as typeof filteredStreams;
-  let remainingStreams: typeof filteredStreams = presentationResult.remaining as typeof filteredStreams;
-  // Reset visible/remaining when filters or tab change.
-  $: { presentationResult; visibleStreams = presentationResult.initial as typeof filteredStreams; remainingStreams = presentationResult.remaining as typeof filteredStreams; }
+  let visibleStreams: typeof filteredStreams = [];
+  let remainingStreams: typeof filteredStreams = [];
+  // Reset visible/remaining when filters or tab change. This reactive
+  // block runs AFTER `presentationResult` is computed (Svelte orders
+  // reactive statements by dependency), so accessing `.initial` /
+  // `.remaining` here is safe.
+  $: {
+    presentationResult;
+    visibleStreams = presentationResult.initial as typeof filteredStreams;
+    remainingStreams = presentationResult.remaining as typeof filteredStreams;
+  }
 
   function handleShowMore(): void {
     const next = showMoreBatch(visibleStreams, remainingStreams);
