@@ -77,9 +77,9 @@ function section_capability(): void {
   const p2p = streamCapabilities({ kind: 'p2p' });
   ok(p2p.download === true && p2p.play === false && p2p.share === true, 'CAP: P2P → Download + Share (no Play)');
 
-  // External → Share only
+  // External → Download (embedded-sheet) + Share (NOT Play)
   const external = streamCapabilities({ kind: 'external' });
-  ok(external.download === false, 'CAP: External → Download NOT available');
+  ok(external.download === true, 'CAP: External → Download available (embedded-sheet flow — provider/download page)');
   ok(external.play === false, 'CAP: External → Play NOT available');
   ok(external.share === true, 'CAP: External → Share available');
 }
@@ -119,9 +119,10 @@ function section_download(): void {
   const dlDash = downloadActionFor(makeStream({ url: 'https://cdn.example/manifest.mpd', kind: 'dash' }));
   ok(dlDash === null, 'DL: DASH → Download NOT available (manifest, not a file)');
 
-  // External → null
+  // External → embedded-sheet flow (provider/download page, not a direct file)
   const dlExt = downloadActionFor(makeStream({ url: 'https://external.example/page', kind: 'external' }));
-  ok(dlExt === null, 'DL: External → Download NOT available');
+  ok(dlExt !== null, 'DL: External → Download available (embedded-sheet flow)');
+  ok(dlExt?.flow === 'embedded-sheet', 'DL: External → flow=embedded-sheet');
 
   // Empty/invalid URL → null
   ok(downloadActionFor(makeStream({ url: '', kind: 'https' })) === null, 'DL: empty URL → null');
@@ -207,6 +208,42 @@ function section_security(): void {
 }
 
 // ---------------------------------------------------------------------------
+// DOWNLOAD FLOW CLASSIFICATION (Phase D corrective §1)
+// ---------------------------------------------------------------------------
+
+function section_downloadFlows(): void {
+  // Direct media URL → direct-download flow (browser native anchor).
+  const dlDirect = downloadActionFor(makeStream({ url: 'https://cdn.example/movie.mkv', kind: 'https' }));
+  ok(dlDirect?.flow === 'direct-download', 'FLOW: HTTPS → flow=direct-download (direct media file path)');
+  ok(dlDirect?.kind === 'anchor', 'FLOW: HTTPS → kind=anchor (browser native <a>)');
+
+  // Magnet/P2P → external-open flow (OS magnet handler).
+  const dlMagnet = downloadActionFor(makeStream({ url: 'magnet:?xt=urn:btih:abc', kind: 'magnet' }));
+  ok(dlMagnet?.flow === 'external-open', 'FLOW: Magnet → flow=external-open (OS magnet handler)');
+
+  // External kind → embedded-sheet flow (provider/download page → DownloadSheet iframe).
+  const dlExternal = downloadActionFor(makeStream({ url: 'https://provider.example/download-page', kind: 'external' }));
+  ok(dlExternal?.flow === 'embedded-sheet', 'FLOW: External → flow=embedded-sheet (provider/download page)');
+  ok(dlExternal?.kind === 'iframe', 'FLOW: External → kind=iframe (route through DownloadSheet)');
+  ok(dlExternal?.href === 'https://provider.example/download-page', 'FLOW: External href = original URL (no rewrite)');
+
+  // HLS/DASH → no download (manifest, not a file).
+  ok(downloadActionFor(makeStream({ url: 'https://x.com/p.m3u8', kind: 'hls' })) === null, 'FLOW: HLS → no download');
+  ok(downloadActionFor(makeStream({ url: 'https://x.com/m.mpd', kind: 'dash' })) === null, 'FLOW: DASH → no download');
+
+  // No proxy — all flows use the EXACT ORIGINAL URL as href.
+  const allFlows = [
+    downloadActionFor(makeStream({ url: 'https://cdn.example/a.mkv?t=1', kind: 'https' })),
+    downloadActionFor(makeStream({ url: 'magnet:?xt=urn:btih:abc&tr=x', kind: 'magnet' })),
+    downloadActionFor(makeStream({ url: 'https://provider.example/page?id=1', kind: 'external' })),
+  ];
+  ok(allFlows.every((f) => f !== null && !f.href.includes('/api/proxy') && !f.href.includes('proxyMediaUrl')), 'FLOW: no proxy URL in any download flow');
+  ok(allFlows[0]?.href === 'https://cdn.example/a.mkv?t=1', 'FLOW: direct-download href = original (verbatim, query preserved)');
+  ok(allFlows[1]?.href === 'magnet:?xt=urn:btih:abc&tr=x', 'FLOW: external-open href = original magnet (verbatim)');
+  ok(allFlows[2]?.href === 'https://provider.example/page?id=1', 'FLOW: embedded-sheet href = original provider URL (verbatim)');
+}
+
+// ---------------------------------------------------------------------------
 // SOURCE-LEVEL CONTRACT — component imports + renders the actions
 // ---------------------------------------------------------------------------
 
@@ -253,6 +290,23 @@ function section_sourceContract(): void {
   // Actions have accessible labels.
   ok(component.includes('aria-label="Download'), 'SOURCE: Download has aria-label');
   ok(component.includes('aria-label="Play'), 'SOURCE: Play has aria-label');
+
+  // CORRECTION 2: stream-actions.ts imports the canonical externalPlayerLaunchFor
+  // from external-player.ts — NO duplicated implementation.
+  ok(helperSource.includes("import { externalPlayerLaunchFor } from '$lib/shared/external-player'"), 'SOURCE: stream-actions imports canonical externalPlayerLaunchFor from external-player.ts');
+  ok(!helperSource.includes('function externalPlayerLaunchForResult'), 'SOURCE: NO duplicated externalPlayerLaunchForResult (CORRECTION 2 — removed)');
+  ok(helperSource.includes('return externalPlayerLaunchFor(url, options)'), 'SOURCE: playActionFor delegates to externalPlayerLaunchFor (canonical helper)');
+
+  // CORRECTION 1: the DownloadAction type has a `flow` field for the
+  // third-party download-page handling (embedded-sheet path).
+  ok(helperSource.includes("flow: 'direct-download'"), 'SOURCE: DownloadAction has flow=direct-download (direct media file)');
+  ok(helperSource.includes("flow: 'external-open'"), 'SOURCE: DownloadAction has flow=external-open (magnet OS handler)');
+  ok(helperSource.includes("flow: 'embedded-sheet'"), 'SOURCE: DownloadAction has flow=embedded-sheet (third-party provider page → DownloadSheet iframe)');
+
+  // The component renders the three flows distinctly.
+  ok(component.includes("dlAction.flow === 'direct-download'"), 'SOURCE: component checks flow=direct-download');
+  ok(component.includes("dlAction.flow === 'external-open'"), 'SOURCE: component checks flow=external-open');
+  ok(component.includes("dlAction.flow === 'embedded-sheet'"), 'SOURCE: component checks flow=embedded-sheet (third-party page path)');
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +339,7 @@ section_download();
 section_play();
 section_share();
 section_security();
+section_downloadFlows();
 section_sourceContract();
 section_regression();
 

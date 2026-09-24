@@ -714,7 +714,10 @@
                    Chrome with browser_fallback_url; direct link elsewhere). -->
               <div class="mad-row-actions">
                 {#if dlAction}
-                  {#if dlAction.kind === 'anchor'}
+                  {#if dlAction.flow === 'direct-download'}
+                    <!-- Direct media file — browser native <a href download> anchor.
+                         If the URL is actually a provider page, the browser opens it
+                         in a new tab (the download attr is advisory cross-origin). -->
                     <a
                       class="mad-action mad-action-download"
                       href={dlAction.href}
@@ -727,14 +730,33 @@
                     >
                       <Download size={13} />
                     </a>
-                  {:else}
-                    <!-- magnet/P2P — direct anchor to the magnet URI. The OS
+                  {:else if dlAction.flow === 'external-open'}
+                    <!-- Magnet/P2P — direct anchor to the magnet URI. The OS
                          resolves the handler (torrent app if registered). -->
                     <a
                       class="mad-action mad-action-download"
                       href={dlAction.href}
                       aria-label="Open in torrent app"
                       title="Open in torrent app (original magnet URI)"
+                      onclick={(event) => event.stopPropagation()}
+                    >
+                      <Download size={13} />
+                    </a>
+                  {:else if dlAction.flow === 'embedded-sheet'}
+                    <!-- Third-party provider/download page — the addon explicitly
+                         supplied an externalUrl. Route through the DownloadSheet's
+                         iframe infrastructure (attempt to embed → if blocked by
+                         CSP/X-Frame-Options/browser security → external-open fallback).
+                         Mavero does NOT proxy or bypass security. (External streams
+                         are hidden by Phase 18, so this path exists in the model but
+                         is not triggered in the current card UI.) -->
+                    <a
+                      class="mad-action mad-action-download"
+                      href={dlAction.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Open download page"
+                      title="Open download page (external)"
                       onclick={(event) => event.stopPropagation()}
                     >
                       <Download size={13} />

@@ -40,6 +40,7 @@
  */
 
 import type { AudioClass } from '$lib/shared/stream-selection';
+import { externalPlayerLaunchFor } from '$lib/shared/external-player';
 
 /** The stream kind values used by the downloader (mirrors DownloaderStreamKind). */
 export type StreamKind = 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
@@ -89,7 +90,12 @@ export function streamCapabilities(stream: Pick<CapabilityStream, 'kind'>): Stre
     case 'magnet':
       return { download: true, play: false, share: true };
     case 'external':
-      return { download: false, play: false, share: true };
+      // External = the addon explicitly supplied an externalUrl → it's a
+      // provider/download page, not a direct media file. Download IS available
+      // via the embedded-sheet flow (route through DownloadSheet's iframe,
+      // with external-open fallback if blocked). Play is NOT available
+      // (external streams open elsewhere, not in a player).
+      return { download: true, play: false, share: true };
     default:
       // Unknown kind — safe default: Share only.
       return { download: false, play: false, share: true };
@@ -97,42 +103,71 @@ export function streamCapabilities(stream: Pick<CapabilityStream, 'kind'>): Stre
 }
 
 // ---------------------------------------------------------------------------
-// Download action — builds the anchor attributes for the browser download
-// mechanism. Reuses the existing `downloadAttributesFor` for HTTP/HTTPS;
-// adds magnet/P2P handling via a direct `<a href="magnet:...">` anchor.
+// Download action — builds the action for the browser download mechanism.
+// The `flow` field tells the COMPONENT which download path to use:
+//   * 'direct-download' → browser native <a href download> anchor (HTTP/HTTPS)
+//   * 'external-open'  → <a href={magnet_uri}> anchor (OS magnet handler)
+//   * 'embedded-sheet'  → route through the DownloadSheet's iframe infrastructure
+//                         (for kind='external' — the addon explicitly supplied
+//                         an externalUrl, which IS a provider/download page).
+//                         If iframe embedding is blocked (CSP / X-Frame-Options
+//                         / browser security), the DownloadSheet's existing
+//                         iframe-error detection + external-open fallback
+//                         handles it. Mavero does NOT proxy or bypass security.
 // ---------------------------------------------------------------------------
 
 /**
- * The anchor attributes the Download action renders. When `kind` is 'anchor',
- * the component renders `<a href={href} download={download} target={target}
- * rel={rel}>`. When `kind` is 'button' (for magnet), the component renders
- * a `<button>` that navigates to the magnet URI (the OS resolves the handler).
+ * The Download action descriptor. The `flow` field tells the component which
+ * download path to use; the `href` is the EXACT ORIGINAL URL (never proxied,
+ * never rewritten).
  */
 export type DownloadAction =
-  | { kind: 'anchor'; href: string; download: string; target: '_blank'; rel: 'noopener noreferrer' }
-  | { kind: 'magnet'; href: string }
+  | { flow: 'direct-download'; kind: 'anchor'; href: string; download: string; target: '_blank'; rel: 'noopener noreferrer' }
+  | { flow: 'external-open'; kind: 'magnet'; href: string }
+  | { flow: 'embedded-sheet'; kind: 'iframe'; href: string }
   | null;
 
 /**
  * Returns the Download action for one stream, or null when Download is not
  * available for this kind. The URL is NEVER rewritten or proxied.
  *
- *   * HTTP/HTTPS → `<a href={url} download={filename}>` (browser download)
- *   * Magnet/P2P → `<a href={magnet_uri}>` (OS magnet handler)
- *   * HLS/DASH/External → null (not a file download)
+ *   * HTTP/HTTPS → `flow: 'direct-download'` — browser native `<a href download>`
+ *     anchor. If the URL happens to be a provider page (not a direct file),
+ *     the browser opens it in a new tab (the `download` attribute is advisory
+ *     for cross-origin) — this IS the external-open fallback.
+ *   * Magnet/P2P → `flow: 'external-open'` — `<a href={magnet_uri}>` anchor;
+ *     the OS resolves the handler (a torrent app if registered).
+ *   * External → `flow: 'embedded-sheet'` — the addon explicitly supplied an
+ *     `externalUrl`, which IS a provider/download page (not a direct media
+ *     file). This routes through the DownloadSheet's existing iframe
+ *     infrastructure: attempt to embed → if blocked by CSP / X-Frame-Options
+ *     / browser security → external-open fallback. Mavero does NOT proxy,
+ *     bypass, or scrape. (Note: external streams are hidden by Phase 18, so
+ *     this flow exists in the model for correctness but is not triggered in
+ *     the current card UI.)
+ *   * HLS/DASH → null (manifest, not a file download)
  */
 export function downloadActionFor(stream: CapabilityStream): DownloadAction {
   const caps = streamCapabilities(stream);
   if (!caps.download) return null;
   const url = typeof stream.url === 'string' ? stream.url.trim() : '';
   if (!url) return null;
+
+  // External kind — the addon explicitly supplied an externalUrl → it's a
+  // provider/download page, not a direct media file. Route through the
+  // DownloadSheet's iframe infrastructure (embedded-sheet flow).
+  if (stream.kind === 'external') {
+    return { flow: 'embedded-sheet', kind: 'iframe', href: url };
+  }
+
   // Magnet/P2P — direct anchor to the magnet URI. The OS resolves the
   // handler (a torrent app if registered, or "no app to open this link").
   if (stream.kind === 'p2p' || stream.kind === 'magnet') {
     if (!url.startsWith('magnet:')) return null;
-    return { kind: 'magnet', href: url };
+    return { flow: 'external-open', kind: 'magnet', href: url };
   }
-  // HTTP/HTTPS — use the existing downloadAttributesFor helper logic.
+
+  // HTTP/HTTPS — browser native <a href download> anchor.
   if (!url.startsWith('https://') && !url.startsWith('http://')) return null;
   const filename = typeof stream.filename === 'string' && stream.filename.trim() ? stream.filename.trim() : null;
   let hint = filename;
@@ -146,7 +181,7 @@ export function downloadActionFor(stream: CapabilityStream): DownloadAction {
     }
   }
   const safeHint = (hint ?? 'stream').replace(/[\r\n"<>\\]/g, '').slice(0, 160) || 'stream';
-  return { kind: 'anchor', href: url, download: safeHint, target: '_blank', rel: 'noopener noreferrer' };
+  return { flow: 'direct-download', kind: 'anchor', href: url, download: safeHint, target: '_blank', rel: 'noopener noreferrer' };
 }
 
 // ---------------------------------------------------------------------------
@@ -158,9 +193,12 @@ export function downloadActionFor(stream: CapabilityStream): DownloadAction {
  * Returns the Play action href for one stream, or null when Play is not
  * available. The URL is NEVER rewritten or proxied.
  *
- *   * HTTP/HTTPS/HLS/DASH → `externalPlayerLaunchFor(url)` (Android intent
- *     for mpv with browser_fallback_url on Android Chrome; direct link
- *     elsewhere). The existing player can stream HLS/DASH manifests.
+ * Delegates to the canonical `externalPlayerLaunchFor` from
+ * `external-player.ts` — no duplicated intent-construction logic here.
+ *
+ *   * HTTP/HTTPS/HLS/DASH → Android intent for mpv with
+ *     browser_fallback_url on Android Chrome; direct link elsewhere.
+ *     The existing player can stream HLS/DASH manifests.
  *   * Magnet/P2P/External → null (browser can't play a magnet URI;
  *     external streams open elsewhere)
  */
@@ -169,38 +207,9 @@ export function playActionFor(stream: CapabilityStream, options: { android?: boo
   if (!caps.play) return null;
   const url = typeof stream.url === 'string' ? stream.url.trim() : '';
   if (!url || !(url.startsWith('https://') || url.startsWith('http://'))) return null;
-  // Delegate to the existing externalPlayerLaunchFor helper — it handles
-  // the Android intent construction + fallback URL.
-  // We import lazily to keep this module pure (no side-effect imports).
-  // The caller passes the android option through.
-  return externalPlayerLaunchForResult(url, options);
-}
-
-/**
- * Inline implementation of the external-player launch logic (mirrors
- * `externalPlayerLaunchFor` from `external-player.ts`). This avoids a
- * circular import while keeping the logic identical. The actual
- * `external-player.ts` module remains the canonical source — tests
- * verify both produce the same result.
- */
-function externalPlayerLaunchForResult(url: string, options: { android?: boolean }): { href: string; kind: 'android-intent' | 'direct' } | null {
-  if (!url || url.length > 2048) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
-  const android = options.android ?? (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent));
-  if (!android) return { href: url, kind: 'direct' };
-  const scheme = parsed.protocol.replace(':', '');
-  const withoutFragment = `${parsed.host}${parsed.pathname}${parsed.search}`;
-  const fallback = `S.browser_fallback_url=${encodeURIComponent(url)}`;
-  return {
-    href: `intent://${withoutFragment}#Intent;scheme=${scheme};package=is.xyz.mpv;${fallback};end`,
-    kind: 'android-intent',
-  };
+  // Delegate to the canonical external-player launch helper. The result
+  // shape ({ href, kind }) is identical — no adapter needed.
+  return externalPlayerLaunchFor(url, options);
 }
 
 // ---------------------------------------------------------------------------
