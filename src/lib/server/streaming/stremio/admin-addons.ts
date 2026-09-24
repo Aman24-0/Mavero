@@ -71,6 +71,8 @@ export type AdminAddonView = {
   lastSuccessAt?: string;
   lastError?: string;
   updatedAt: string;
+  /** Phase E V2: capabilities object (contains downloaderLinkTypes config). */
+  capabilities: Record<string, unknown>;
 };
 
 /** Safe preview model returned after a successful manifest validation. */
@@ -146,6 +148,7 @@ export function toAdminAddonView(row: AddonListRow): AdminAddonView {
     lastSuccessAt: mapped.lastSuccessAt,
     lastError: mapped.lastError,
     updatedAt: mapped.updatedAt,
+    capabilities: mapped.capabilities,
   };
 }
 

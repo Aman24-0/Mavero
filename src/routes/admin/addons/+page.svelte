@@ -6,6 +6,7 @@
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
+  import { ALL_DOWNLOAD_LINK_TYPES, linkTypeLabel, linkTypeDescription, getLinkTypesConfig, DEFAULT_LINK_TYPES_CONFIG, type DownloadLinkType } from '$lib/shared/download-link-types';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -226,6 +227,29 @@
       <div><dt>Last successful refresh</dt><dd>{formatDate(detailAddon.lastSuccessAt)}</dd></div>
       {#if detailAddon.lastError}<div><dt>Refresh status</dt><dd class="bad">{detailAddon.lastError}</dd></div>{/if}
     </dl>
+
+    <!-- Phase E V2: Downloader Link Types configuration. -->
+    <div class="link-types-section">
+      <h4 class="link-types-heading">DOWNLOADER · Link Types</h4>
+      <p class="link-types-desc">Choose which link types the Mavero Downloader exposes for this addon.</p>
+      <form method="POST" action="?/saveLinkTypes" class="link-types-form" onsubmit={guard('saveLinkTypes')}>
+        <input type="hidden" name="id" value={detailAddon.id} />
+        <div class="link-types-grid">
+          {#each ALL_DOWNLOAD_LINK_TYPES as type (type)}
+            <div class="link-type-row">
+              <label class="link-type-toggle">
+                <input type="checkbox" name={`linkType_${type}`} checked={getLinkTypesConfig(detailAddon.capabilities)[type as DownloadLinkType]} />
+                <span class="link-type-label">{linkTypeLabel(type)}</span>
+              </label>
+              <span class="link-type-desc">{linkTypeDescription(type)}</span>
+            </div>
+          {/each}
+        </div>
+        <div class="sheet-actions">
+          <button class="btn btn-primary" type="submit" disabled={pending !== ''} aria-busy={pending === 'saveLinkTypes'}>{pending === 'saveLinkTypes' ? 'Saving…' : 'Save changes'}</button>
+        </div>
+      </form>
+    </div>
   {/if}
 </AdminSheet>
 
@@ -388,4 +412,15 @@
     .record-actions { gap: 4px; }
     .preview-grid, .meta-grid { grid-template-columns: 1fr; }
   }
+
+  /* Phase E V2: link-types config UI */
+  .link-types-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--color-border); }
+  .link-types-heading { margin: 0 0 4px; color: var(--color-primary); font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  .link-types-desc { margin: 0 0 10px; color: var(--color-text-muted); font-size: .72rem; }
+  .link-types-grid { display: grid; gap: 8px; }
+  .link-type-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+  .link-type-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: 0 0 auto; }
+  .link-type-toggle input { width: 18px; height: 18px; accent-color: var(--color-primary); cursor: pointer; }
+  .link-type-label { color: var(--color-text); font-size: .76rem; font-weight: 700; white-space: nowrap; }
+  .link-type-desc { color: var(--color-text-muted); font-size: .68rem; }
 </style>

@@ -61,7 +61,9 @@ export function selectPresentationWindow<T extends PresentableStream>(streams: T
 
   for (const [, group] of byQuality) {
     // Find the best HTTPS candidate in this quality group.
-    const httpsCandidate = group.find((s) => s.kind === 'https' || s.kind === 'http');
+    // Phase E final: HTTP IS NOT HTTPS. Only kind === 'https' qualifies.
+    // If no HTTPS candidate exists, fall back to the best valid non-HTTP candidate.
+    const httpsCandidate = group.find((s) => s.kind === 'https');
     const best = httpsCandidate ?? group[0];
     if (best) {
       initial.push(best);

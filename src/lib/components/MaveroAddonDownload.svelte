@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX, ChevronDown, Download, Play, SlidersHorizontal, HelpCircle } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
+  import DownloaderFilterSheet from '$components/DownloaderFilterSheet.svelte';
   import {
     filterStreams,
     typeOptions,
@@ -584,6 +585,23 @@
           <span class="mad-spin"><Loader2 size={16} /></span>
           <span>{activeTab.status === 'retrying' ? 'Trying again…' : `Finding links from ${activeTab.addonName}…`}</span>
         </div>
+        <!-- Phase E V2: skeleton loading cards — card-like placeholders while addon resolves. -->
+        <div class="mad-skeleton-list" aria-hidden="true">
+          {#each Array(3) as _}
+            <div class="mad-skeleton-card">
+              <div class="mad-skeleton-kind"></div>
+              <div class="mad-skeleton-content">
+                <div class="mad-skeleton-line mad-skeleton-line-wide"></div>
+                <div class="mad-skeleton-badges">
+                  <div class="mad-skeleton-badge"></div>
+                  <div class="mad-skeleton-badge"></div>
+                  <div class="mad-skeleton-badge"></div>
+                </div>
+              </div>
+              <div class="mad-skeleton-action"></div>
+            </div>
+          {/each}
+        </div>
       {:else if activeTab.status === 'unavailable'}
         <div class="mad-state mad-state-error" role="status">
           <AlertTriangle size={14} />
@@ -822,31 +840,29 @@
   }}
 />
 
-<!-- Phase E V2: Filters sheet — all 4 filter dimensions in one sheet.
-     Type is only shown when >1 type is available (Phase E V2 §9).
-     Reuses SelectionSheet for Size; Type/Quality/Language use inline chips
-     within the sheet's options list. The sheet replaces the permanent
-     4-row filter stack on the main surface. -->
-<SelectionSheet
+<!-- Phase E V2 final: Grouped multi-dimensional Filter Sheet with section
+     headings (TYPE/QUALITY/AUDIO/SIZE), multi-select without closing,
+     Apply/Clear actions, keyboard accessible. Replaces the flat
+     SelectionSheet that mixed all dimensions into one list. -->
+<DownloaderFilterSheet
   open={filterSheetOpen}
-  eyebrow="MAVERO / Filter"
-  title="Filters"
-  options={[
-    ...currentTypeOptions.map((o) => ({ key: `type:${o.value}`, label: `${o.label}`, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
-    ...currentQualityOptions.map((o) => ({ key: `quality:${o.value}`, label: o.label, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
-    ...currentLanguageOptions.map((o) => ({ key: `lang:${o.value}`, label: o.label, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
-    ...currentSizeOptions.map((o) => ({ key: `size:${o.value}`, label: o.label, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
+  sections={[
+    { dimension: 'type', heading: 'TYPE', options: currentTypeOptions, visible: showTypeFilter },
+    { dimension: 'quality', heading: 'QUALITY', options: currentQualityOptions, visible: true },
+    { dimension: 'language', heading: 'AUDIO', options: currentLanguageOptions, visible: true },
+    { dimension: 'size', heading: 'SIZE', options: currentSizeOptions, visible: true },
   ]}
-  selected=""
-  onClose={closeFilterSheet}
-  onSelect={(key) => {
-    const [dim, val] = key.split(':');
-    if (dim === 'type') filters = { ...filters, type: filters.type === val ? 'all' : val as DownloaderFilters['type'] };
-    else if (dim === 'quality') filters = { ...filters, quality: filters.quality === val ? 'all' : val };
-    else if (dim === 'lang') filters = { ...filters, language: filters.language === val ? 'all' : val };
-    else if (dim === 'size') filters = { ...filters, size: filters.size === val ? 'all' : val as DownloaderFilters['size'] };
-    filterSheetOpen = false;
+  selected={{ type: filters.type, quality: filters.quality, language: filters.language, size: filters.size }}
+  onApply={(applied) => {
+    filters = {
+      type: (applied.type as DownloaderFilters['type']) || 'all',
+      quality: applied.quality || 'all',
+      language: applied.language || 'all',
+      size: (applied.size as DownloaderFilters['size']) || 'all',
+    };
   }}
+  onClear={clearAllFilters}
+  onClose={closeFilterSheet}
 />
 
 <style>
@@ -891,7 +907,7 @@
   .mad-chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .mad-chip-label { line-height: 1.3; }
   .mad-chip-count { display: inline-flex; min-width: 16px; height: 15px; align-items: center; justify-content: center; border-radius: 999px; background: var(--color-border-strong); color: var(--muted); padding: 0 4px; font-size: 0.48rem; font-weight: 700; }
-  .mad-chip.active .mad-chip-count { background: var(--accent); color: var(--color-bg); }
+  /* Phase E V2: mad-chip.active .mad-chip-count rule removed — chips are now inside SelectionSheet, not on the main surface. */
 
   /* Size trigger — popover button consistent with chips. */
   .mad-size-trigger { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
@@ -900,7 +916,7 @@
   .mad-size-trigger.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .mad-size-trigger-label { line-height: 1.3; }
   .mad-size-trigger :global(.mad-size-trigger-chevron) { transition: transform var(--motion-fast) var(--ease-out); }
-  .mad-size-trigger[aria-expanded="true"] :global(.mad-size-trigger-chevron) { transform: rotate(180deg); }
+  /* Phase E V2: aria-expanded chevron rotation rule removed — size trigger is now inside SelectionSheet, not on the main surface. */
 
   /* Active filter chips + Clear. */
   .mad-active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px; border-radius: var(--radius-sm); background: var(--accent-soft); }
@@ -929,6 +945,18 @@
   .mad-showing-count { color: var(--muted); font-size: 0.52rem; font-weight: 600; }
   .mad-show-more-btn { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 5px 14px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .mad-show-more-btn:hover, .mad-show-more-btn:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+
+  /* Phase E V2: Skeleton loading cards — card-like shape, no fake metadata. */
+  .mad-skeleton-list { display: flex; flex-direction: column; gap: 5px; }
+  .mad-skeleton-card { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); padding: 8px 10px; }
+  .mad-skeleton-kind { width: 26px; height: 26px; border-radius: 6px; background: var(--color-surface-raised); flex: 0 0 auto; animation: mad-skeleton-pulse 1.5s var(--ease-out) infinite; }
+  .mad-skeleton-content { flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .mad-skeleton-line { height: 10px; border-radius: 4px; background: var(--color-surface-raised); animation: mad-skeleton-pulse 1.5s var(--ease-out) infinite; }
+  .mad-skeleton-line-wide { width: 80%; }
+  .mad-skeleton-badges { display: flex; gap: 4px; }
+  .mad-skeleton-badge { width: 40px; height: 14px; border-radius: 4px; background: var(--color-surface-raised); animation: mad-skeleton-pulse 1.5s var(--ease-out) infinite; }
+  .mad-skeleton-action { width: 32px; height: 32px; border-radius: var(--radius-sm); background: var(--color-surface-raised); flex: 0 0 auto; animation: mad-skeleton-pulse 1.5s var(--ease-out) infinite; }
+  @keyframes mad-skeleton-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
 
   /* Addon tabs — horizontally scrollable pills with status. */
   .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
@@ -991,7 +1019,7 @@
   .mad-row-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
 
   @keyframes mad-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-chip, .mad-tab, .mad-app, .mad-size-trigger { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-chip, .mad-tab, .mad-app, .mad-size-trigger { transition: none; } .mad-skeleton-kind, .mad-skeleton-line, .mad-skeleton-badge, .mad-skeleton-action { animation: none; opacity: 0.5; } }
 
   /* Phase E: responsive breakpoints. */
   /* Narrow mobile (≤ 360px) — host badge drops off to save space. */
