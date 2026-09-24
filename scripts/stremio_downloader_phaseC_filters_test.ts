@@ -182,6 +182,7 @@ function section_size(): void {
   ok(!streamMatchesSize(unknownSizeStream, 'under5'), 'SIZE: unknown-size stream is EXCLUDED under <5 GB filter (cannot confirm it satisfies the range)');
   ok(!streamMatchesSize(unknownSizeStream, 'over20'), 'SIZE: unknown-size stream is EXCLUDED under >20 GB filter (cannot confirm it satisfies the range)');
   ok(!streamMatchesSize(unknownSizeStream, 'under1'), 'SIZE: unknown-size stream is EXCLUDED under <1 GB filter');
+  ok(!streamMatchesSize(unknownSizeStream, 'under10'), 'SIZE: unknown-size stream is EXCLUDED under <10 GB filter');
   ok(streamMatchesSize(unknownSizeStream, 'all'), 'SIZE: unknown-size stream is RETAINED under All (no filter active)');
   // Also verify zero / negative size is treated like unknown.
   ok(!streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 0 }) }, 'under5'), 'SIZE: zero-size stream is EXCLUDED under <5 GB');
@@ -278,12 +279,14 @@ function section_combinations(): void {
   // language + size
   const hindiUnder10 = filterStreams(MIXED_STREAMS, { ...NO_FILTERS, language: 'Hindi', size: 'under10' });
   ok(hindiUnder10.every((s) => s.audioLanguages?.includes('Hindi')), 'COMBO: language+size → all results contain Hindi');
-  ok(hindiUnder10.every((s) => s.sizeBytes === undefined || (s.sizeBytes / GB) < 10), 'COMBO: language+size → all results are under 10 GB OR unknown size');
+  ok(hindiUnder10.every((s) => s.sizeBytes !== undefined && s.sizeBytes > 0 && (s.sizeBytes / GB) < 10), 'COMBO: language+size → all results have KNOWN positive size under 10 GB (unknown-size EXCLUDED by the specific size filter)');
+  ok(!hindiUnder10.some((s) => s.sizeBytes === undefined || s.sizeBytes <= 0), 'COMBO: language+size → no unknown/zero/negative-size streams in results');
 
   // type + quality + language + size (all four)
   const allFour = filterStreams(MIXED_STREAMS, { type: 'https', quality: '1080p', language: 'multi', size: 'under10' });
   ok(allFour.every((s) => s.kind === 'https' && s.quality === '1080p' && s.audio === 'multi'), 'COMBO: all four → all results are HTTPS 1080p multi');
-  ok(allFour.every((s) => s.sizeBytes === undefined || (s.sizeBytes / GB) < 10), 'COMBO: all four → all results under 10 GB OR unknown size');
+  ok(allFour.every((s) => s.sizeBytes !== undefined && s.sizeBytes > 0 && (s.sizeBytes / GB) < 10), 'COMBO: all four → all results have KNOWN positive size under 10 GB (unknown-size EXCLUDED)');
+  ok(!allFour.some((s) => s.sizeBytes === undefined || s.sizeBytes <= 0), 'COMBO: all four → no unknown/zero/negative-size streams in results');
   ok(allFour.length === 2, `COMBO: HTTPS+1080p+Multi+<10GB → 2 streams (got ${allFour.length})`); // the 8GB multi streams
 }
 

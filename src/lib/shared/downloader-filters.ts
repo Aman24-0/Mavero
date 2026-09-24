@@ -47,13 +47,18 @@
  *
  * UNKNOWN-SIZE HANDLING (per the approved plan §6):
  *
- * The previous implementation silently deleted unknown-size streams when ANY
- * size filter was active (`if (bytes === undefined) return false;`). Phase C
- * fixes this: unknown-size streams are PRESERVED when a size filter is active
- * — they are shown alongside size-matching streams with no size badge. The
- * size filter acts as a soft preference (size-matching streams rank above
- * unknown-size streams) rather than a hard exclusion. This is the
- * "should not silently delete" behavior the approved plan requires.
+ * For a SPECIFIC size filter (e.g. "< 1 GB"), the intended behavior is to
+ * show streams KNOWN to satisfy the range. A stream with unknown size
+ * CANNOT be confirmed to satisfy the range, so excluding it IS the
+ * explicitly intended behavior — the plan's "should not silently delete
+ * unknown-size streams unless that is explicitly the selected filter's
+ * intended behavior" clause does NOT apply to specific size filters.
+ *
+ * Behavior:
+ *   size === 'all'         → every stream matches (including unknown-size)
+ *   specific size filter   → stream matches ONLY when it has a known
+ *                             positive size that falls within the range
+ *   unknown / zero / non-positive → does NOT match any specific filter
  *
  * Pure module: no DOM, no network, no Svelte, no server imports.
  */
@@ -345,11 +350,13 @@ export function qualityOptions(streams: FilterableStream[]): QualityOption[] {
 export type SizeOption = { value: 'all' | SizeFilterValue; label: string; count: number };
 
 /**
- * Derives the Size chip options from the FULL stream collection. Only size
- * ranges that actually contain streams are shown. "All" is always first.
- * Unknown-size streams are counted under "All" but not under any specific
- * range (they don't match any range — they're preserved by the soft filter
- * but don't count as "matching" a specific range).
+ * Derives the Size options from the FULL stream collection. Only size ranges
+ * that actually contain streams (known positive size within the range) are
+ * shown. "All" is always first with the total count. Unknown-size streams
+ * are counted under "All" but do NOT appear under any specific range — a
+ * specific size filter excludes them (we cannot confirm they satisfy the
+ * range), so the count for each range only includes streams with a known
+ * positive size that falls within that range.
  */
 export function sizeOptions(streams: FilterableStream[]): SizeOption[] {
   const order: SizeFilterValue[] = ['under1', 'under2', 'under3', 'under5', 'under10', 'under20', 'over20'];
