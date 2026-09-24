@@ -718,7 +718,15 @@ function sectionN(): void {
   ok(android?.kind === 'android-intent', 'N: Android launch is an android-intent');
   ok(android?.href.startsWith('intent://provider.example/dl/Movie.1080p.mkv?token=x#Intent;scheme=https;'), 'N: the intent carries the ORIGINAL host/path/query');
   ok(android?.href.includes(`package=${MPV_ANDROID_PACKAGE}`), `N: the intent targets mpv-android (${MPV_ANDROID_PACKAGE})`);
-  ok(android?.href.includes(`S.browser_fallback_url=${encodeURIComponent(httpsUrl)}`), 'N: the fallback URL preserves the FULL original address');
+  // Phase F Issue #1: the fallback URL is now ALWAYS the mpv Play Store
+  // install link (NOT the original URL). When mpv is installed, Android
+  // resolves the intent to mpv. When mpv is NOT installed, Chrome falls
+  // back to S.browser_fallback_url which is now the Play Store install
+  // page — so the user is prompted to install mpv instead of the browser
+  // downloading the file as an attachment.
+  const playStoreUrl = 'https://play.google.com/store/apps/details?id=is.xyz.mpv';
+  ok(android?.href.includes(`S.browser_fallback_url=${encodeURIComponent(playStoreUrl)}`), 'N (Phase F Issue #1): the fallback URL is the mpv Play Store install link (NOT the original URL) — mpv-not-installed users get the install prompt');
+  ok(!android?.href.includes(`S.browser_fallback_url=${encodeURIComponent(httpsUrl)}`), 'N (Phase F Issue #1): the fallback is NOT the original URL (regression — old behavior would download the file as an attachment)');
 
   const plain = externalPlayerLaunchFor('http://pixeldrain.com/api/file/ab12cd', { android: true });
   ok(plain?.href.startsWith('intent://pixeldrain.com/api/file/ab12cd#Intent;scheme=http;'), 'N: cleartext http launches work (scheme carried into the intent)');

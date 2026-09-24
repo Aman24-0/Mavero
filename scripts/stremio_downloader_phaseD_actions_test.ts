@@ -127,6 +127,56 @@ function section_download(): void {
   // Empty/invalid URL → null
   ok(downloadActionFor(makeStream({ url: '', kind: 'https' })) === null, 'DL: empty URL → null');
   ok(downloadActionFor(makeStream({ url: 'ftp://x.com/a', kind: 'https' })) === null, 'DL: non-http URL → null');
+
+  // ============================================================
+  // Phase F Issue #2 — Pixeldrain Download hotlink bypass
+  // ============================================================
+  // Pixeldrain URLs are rewritten to the official API download endpoint
+  // (pixeldrain.com/api/file/<id>/download) which does not enforce hotlink
+  // protection. The browser Download anchor uses the REWRITTEN URL so the
+  // browser doesn't navigate to an HTML "hotlink not allowed" error page.
+  // The rewritten URL serves the file with Content-Disposition: attachment
+  // (the browser triggers a native download).
+
+  // /d/<id> — the STANDARD Pixeldrain download URL (the production-failing pattern).
+  // Before the fix, the regex missed /d/ so the URL passed through unchanged,
+  // and Pixeldrain's /d/ endpoint returned a hotlink error when the browser
+  // sent a Referer from mavero1.netlify.app.
+  const dlPixeldrainD = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/d/production123', kind: 'https' }));
+  ok(dlPixeldrainD !== null, 'DL (Phase F Issue #2 /d/): Pixeldrain /d/<id> stream has a Download action');
+  ok(dlPixeldrainD?.flow === 'direct-download', 'DL (Phase F Issue #2 /d/): flow=direct-download (browser native anchor)');
+  ok(dlPixeldrainD?.kind === 'anchor' && dlPixeldrainD.href === 'https://pixeldrain.com/api/file/production123/download', 'DL (Phase F Issue #2 /d/): the Download href is REWRITTEN to the API endpoint (not the original /d/<id> URL that triggers hotlink detection) — the browser navigates to /api/file/<id>/download which serves the file with Content-Disposition: attachment');
+
+  // /dl/<id> — the alternative Pixeldrain download URL.
+  const dlPixeldrainDl = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/dl/abc123def', kind: 'https' }));
+  ok(dlPixeldrainDl?.kind === 'anchor' && dlPixeldrainDl.href === 'https://pixeldrain.com/api/file/abc123def/download', 'DL (Phase F Issue #2 /dl/): /dl/<id> URL is also rewritten to the API endpoint');
+
+  // /u/<id> — the Pixeldrain viewer page (HTML). Without the rewrite, the
+  // browser would navigate to an HTML page (not a download). The rewrite
+  // makes the browser hit the API download endpoint instead.
+  const dlPixeldrainU = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/u/xyz789', kind: 'https' }));
+  ok(dlPixeldrainU?.kind === 'anchor' && dlPixeldrainU.href === 'https://pixeldrain.com/api/file/xyz789/download', 'DL (Phase F Issue #2 /u/): /u/<id> viewer-page URL is rewritten to the API download endpoint (so the browser downloads the file, not the HTML viewer page)');
+
+  // /ulong/<id> — the long-term Pixeldrain download URL.
+  const dlPixeldrainUlong = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/ulong/longid123', kind: 'https' }));
+  ok(dlPixeldrainUlong?.kind === 'anchor' && dlPixeldrainUlong.href === 'https://pixeldrain.com/api/file/longid123/download', 'DL (Phase F Issue #2 /ulong/): /ulong/<id> URL is also rewritten to the API endpoint');
+
+  // Pixeldrain API endpoint URL — already on the API, so no rewrite needed.
+  const dlPixeldrainApi = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/api/file/alreadyapi/download', kind: 'https' }));
+  ok(dlPixeldrainApi?.kind === 'anchor' && dlPixeldrainApi.href === 'https://pixeldrain.com/api/file/alreadyapi/download', 'DL (Phase F Issue #2 API): API endpoint URL is left unchanged (no rewrite needed — already on /api/file/<id>/download)');
+
+  // Pixeldrain CDN URL — different host (cdn.pixeldrain.com), left unchanged.
+  const dlPixeldrainCdn = downloadActionFor(makeStream({ url: 'https://cdn.pixeldrain.com/cdnfile123', kind: 'https' }));
+  ok(dlPixeldrainCdn?.kind === 'anchor' && dlPixeldrainCdn.href === 'https://cdn.pixeldrain.com/cdnfile123', 'DL (Phase F Issue #2 CDN): CDN URL (cdn.pixeldrain.com) is left unchanged (different host — no hotlink protection)');
+
+  // Pixeldrain URL with query string — the query is preserved in the rewrite.
+  const dlPixeldrainQuery = downloadActionFor(makeStream({ url: 'https://pixeldrain.com/d/queryid?token=test&sig=abc', kind: 'https' }));
+  ok(dlPixeldrainQuery?.kind === 'anchor' && dlPixeldrainQuery.href === 'https://pixeldrain.com/api/file/queryid/download?token=test&sig=abc', 'DL (Phase F Issue #2 query): the query string is preserved in the rewritten API URL (auth tokens survive the rewrite)');
+
+  // === CRITICAL: non-Pixeldrain HTTP(S) Download is UNCHANGED ===
+  // (regression check — the Pixeldrain fix must not affect non-Pixeldrain URLs).
+  const dlNonPixeldrain = downloadActionFor(makeStream({ url: 'https://cdn.example/movie.mkv', kind: 'https' }));
+  ok(dlNonPixeldrain?.kind === 'anchor' && dlNonPixeldrain.href === 'https://cdn.example/movie.mkv', 'DL (Phase F Issue #2 regression): non-Pixeldrain HTTP(S) URL is UNCHANGED — the href is the original URL (no rewrite, no transformation)');
 }
 
 // ---------------------------------------------------------------------------
@@ -198,9 +248,20 @@ function section_security(): void {
   const play = playActionFor(makeStream({ url: 'https://cdn.example/movie.mkv?t=abc', kind: 'https' }), { android: false });
   ok(play?.href === 'https://cdn.example/movie.mkv?t=abc', 'SEC: Play direct href = original URL (query preserved)');
 
-  // Android intent: the fallback URL is the encoded original URL.
+  // Android intent: the fallback URL is the MPV Play Store install link
+  // (Phase F Issue #1 — ALWAYS the Play Store URL, NOT the original URL).
+  // When mpv is installed, Android resolves the intent to mpv. When mpv
+  // is NOT installed, Chrome falls back to S.browser_fallback_url which
+  // is now the Play Store install page — so the user is prompted to
+  // install mpv instead of the browser downloading the file.
   const playAndroid = playActionFor(makeStream({ url: 'https://cdn.example/movie.mkv?t=abc', kind: 'https' }), { android: true });
-  ok(playAndroid?.href.includes(encodeURIComponent('https://cdn.example/movie.mkv?t=abc')), 'SEC: Android fallback URL = encoded original');
+  const playStoreUrl = 'https://play.google.com/store/apps/details?id=is.xyz.mpv';
+  ok(playAndroid?.href.includes(encodeURIComponent(playStoreUrl)), 'SEC (Phase F Issue #1): Android fallback URL = MPV Play Store install link (NOT the original URL) — mpv-not-installed users get the install prompt');
+  ok(!playAndroid?.href.includes(encodeURIComponent('https://cdn.example/movie.mkv?t=abc')), 'SEC (Phase F Issue #1): Android fallback is NOT the original URL (regression — old behavior would download the file as an attachment)');
+  // The intent data (scheme + host + path + query) carries the ORIGINAL
+  // URL verbatim — only the S.browser_fallback_url parameter is the Play
+  // Store link. mpv (when installed) receives the original media URL.
+  ok(playAndroid?.href.includes('intent://cdn.example/movie.mkv?t=abc#Intent;'), 'SEC (Phase F Issue #1): the intent data carries the ORIGINAL host/path/query verbatim (only the fallback parameter changed to the Play Store URL)');
 
   // Magnet download href = exact magnet URI.
   const dlMagnet = downloadActionFor(makeStream({ url: 'magnet:?xt=urn:btih:abc&dn=test', kind: 'magnet' }));

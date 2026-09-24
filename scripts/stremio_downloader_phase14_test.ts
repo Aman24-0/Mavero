@@ -391,7 +391,15 @@ function sectionMNO(): void {
   const android = externalPlayerLaunchFor(httpsUrl, { android: true });
   ok(android?.kind === 'android-intent' && android.href.startsWith('intent://provider.example/dl/Movie.1080p.mkv?token=x#Intent;scheme=https;'), 'O: the Android launch is a VIEW intent carrying the ORIGINAL host/path/query');
   ok(android?.href.includes(`package=${MPV_ANDROID_PACKAGE}`), `O: the intent targets mpv-android (${MPV_ANDROID_PACKAGE})`);
-  ok(android?.href.includes(`S.browser_fallback_url=${encodeURIComponent(httpsUrl)}`), 'O: the fallback URL preserves the FULL original address (graceful when mpv is NOT installed)');
+  // Phase F follow-up Issue #1: the fallback URL is NOW ALWAYS the mpv
+  // Play Store install link — when mpv is not installed, the user is
+  // prompted to install it instead of the browser downloading the file
+  // as an attachment. The ORIGINAL media URL is preserved in the intent
+  // data (scheme + host + path + query carried verbatim — only the
+  // fallback parameter changed).
+  const playStoreUrl = 'https://play.google.com/store/apps/details?id=is.xyz.mpv';
+  ok(android?.href.includes(`S.browser_fallback_url=${encodeURIComponent(playStoreUrl)}`), 'O (Phase F Issue #1): the fallback URL is the mpv Play Store install link (NOT the original media URL) — so mpv-not-installed users are prompted to install mpv');
+  ok(!android?.href.includes(`S.browser_fallback_url=${encodeURIComponent(httpsUrl)}`), 'O (Phase F Issue #1): the fallback URL is NOT the original media URL (regression — the old behavior would dump the user into the browser download flow)');
   // Phase F follow-up (MICRO FIX): the intent now carries `type=video/any` so
   // mpv is offered as the video handler regardless of the URL filename
   // extension. This is critical for extensionless signed media URLs where
@@ -435,7 +443,10 @@ function sectionMNO(): void {
   ok(extensionlessLaunch?.href.startsWith(expectedIntentPrefix), 'O (Phase F extensionless): the intent target preserves the original host + path + the start of the original query string');
   // The full original URL is preserved as the fallback (the user can
   // still open the URL in the browser if mpv is not installed).
-  ok(extensionlessLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(extensionlessSignedUrl)}`), 'O (Phase F extensionless): the browser fallback contains the FULL ORIGINAL URL verbatim after encoding (no rewrite)');
+  // Phase F Issue #1: the fallback is ALWAYS the mpv Play Store URL (not the
+  // original URL) — so mpv-not-installed users are prompted to install mpv.
+  ok(extensionlessLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(playStoreUrl)}`), 'O (Phase F extensionless Issue #1): the fallback is the mpv Play Store install link (NOT the original signed URL) — mpv-not-installed users get the install prompt');
+  ok(!extensionlessLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(extensionlessSignedUrl)}`), 'O (Phase F extensionless Issue #1): the fallback is NOT the original signed URL (regression — old behavior would download the file as an attachment)');
   // A normal .mkv URL still works (regression check — the new fix doesn't
   // break the existing .mkv URL behavior).
   const mkvUrl = 'https://free.flixnest.app/api/4khdhub/media/video.mkv?t=test';
@@ -457,23 +468,56 @@ function sectionMNO(): void {
   // ============================================================
   // Phase F — Pixeldrain hotlink bypass regression
   // ============================================================
-  // Pixeldrain URLs (pixeldrain.com/dl/<id>, /u/<id>, /ulong/<id>) are
-  // rewritten to the official API download endpoint
+  // Pixeldrain URLs (pixeldrain.com/dl/<id>, /d/<id>, /u/<id>, /ulong/<id>)
+  // are rewritten to the official API download endpoint
   // (pixeldrain.com/api/file/<id>/download) which does not enforce hotlink
-  // protection. For Pixeldrain URLs on Android, the fallback URL is the
-  // mpv Play Store install link (so users without mpv are prompted to
-  // install it instead of seeing the hotlink error page).
+  // protection. For ALL Pixeldrain URLs on Android, the fallback URL is
+  // the mpv Play Store install link (so users without mpv are prompted
+  // to install it instead of seeing the hotlink error page).
+  //
+  // CRITICAL: the /d/<id> pattern is the STANDARD Pixeldrain download URL.
+  // The previous regex only matched /dl/, /u/, /ulong/ — NOT /d/. This
+  // caused the addon's /d/<id> URLs to pass through unchanged, triggering
+  // Pixeldrain's hotlink detection on the Download flow (the browser
+  // sends a Referer header from mavero1.netlify.app; mpv's HTTP client
+  // doesn't, which is why Play worked but Download failed).
+  // The fix: the regex alternation now includes `d` (tried AFTER `dl`
+  // so /dl/<id> still matches as `dl`, not `d`+`l`).
+
+  // === Issue #2 test case: /d/<id> (the production-failing pattern) ===
+  const pixeldrainDUrl = 'https://pixeldrain.com/d/production123';
+  const pixeldrainDLaunch = externalPlayerLaunchFor(pixeldrainDUrl, { android: true });
+  ok(pixeldrainDLaunch?.kind === 'android-intent', 'P (Phase F Issue #2 /d/): /d/<id> URL produces an android-intent launch');
+  ok(pixeldrainDLaunch?.href.startsWith('intent://pixeldrain.com/api/file/production123/download'), 'P (Phase F Issue #2 /d/): /d/<id> is REWRITTEN to /api/file/<id>/download (the standard Pixeldrain download URL is now correctly matched — previously the regex missed /d/ and the URL passed through unchanged, triggering hotlink detection)');
+  ok(pixeldrainDLaunch?.href.includes('type=video/any'), 'P (Phase F Issue #2 /d/): the intent includes type=video/any');
+  ok(pixeldrainDLaunch?.href.includes('package=is.xyz.mpv'), 'P (Phase F Issue #2 /d/): the intent targets mpv-android');
+  ok(pixeldrainDLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(playStoreUrl)}`), 'P (Phase F Issue #2 /d/): the fallback is the mpv Play Store URL (consistent with Issue #1)');
+  // Also verify the /d/<id> URL is rewritten for the Download flow
+  // (downloadActionFor applies transformPixeldrainUrl to HTTP/HTTPS URLs).
+  // We verify via the transformer directly (downloadActionFor is in
+  // stream-actions.ts, tested in the Phase D suite).
+  // Desktop behavior for /d/<id>: URL is rewritten to the API endpoint.
+  const desktopPixeldrainD = externalPlayerLaunchFor(pixeldrainDUrl, { android: false });
+  ok(desktopPixeldrainD?.kind === 'direct' && desktopPixeldrainD.href === 'https://pixeldrain.com/api/file/production123/download', 'P (Phase F Issue #2 /d/ desktop): /d/<id> is rewritten to /api/file/<id>/download on desktop too (so desktop Download clicks don\'t navigate to the hotlink error page)');
+
+  // === Existing /dl/<id> test case ===
   const pixeldrainDlUrl = 'https://pixeldrain.com/dl/abc123def';
   const pixeldrainDlLaunch = externalPlayerLaunchFor(pixeldrainDlUrl, { android: true });
   ok(pixeldrainDlLaunch?.kind === 'android-intent', 'P (Phase F Pixeldrain): /dl/<id> URL produces an android-intent launch');
   // The intent target uses the REWRITTEN URL (API endpoint), not the original /dl/<id> URL.
   ok(pixeldrainDlLaunch?.href.startsWith('intent://pixeldrain.com/api/file/abc123def/download'), 'P (Phase F Pixeldrain): the intent target uses the REWRITTEN API endpoint (pixeldrain.com/api/file/<id>/download) — not the original /dl/<id> URL that triggers hotlink protection');
   ok(pixeldrainDlLaunch?.href.includes('type=video/any'), 'P (Phase F Pixeldrain): the intent includes type=video/any (mpv offered as the video handler)');
+  // Verify the /dl/<id> URL is matched as `dl` (NOT `d`+`l`) — the regex
+  // alternation tries `dl` first. If the regex incorrectly matched `d`+`l`,
+  // the captured id would be `l/abc123def` (wrong). The rewritten URL
+  // `pixeldrain.com/api/file/abc123def/download` proves the id is `abc123def`
+  // (not `l/abc123def`), confirming the regex backtracking works correctly.
+  ok(pixeldrainDlLaunch?.href.includes('/api/file/abc123def/download'), 'P (Phase F Pixeldrain regex): /dl/<id> is matched as `dl` (the id is `abc123def`, not `l/abc123def` — the alternation tries `dl` before `d`)');
   ok(pixeldrainDlLaunch?.href.includes('package=is.xyz.mpv'), 'P (Phase F Pixeldrain): the intent targets mpv-android');
-  // The fallback URL is the mpv Play Store install link (NOT the original
-  // Pixeldrain URL, which would show the hotlink error page).
-  const playStoreUrl = 'https://play.google.com/store/apps/details?id=is.xyz.mpv';
-  ok(pixeldrainDlLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(playStoreUrl)}`), 'P (Phase F Pixeldrain): the fallback URL is the mpv Play Store install link (so users without mpv are prompted to install it — NOT the original Pixeldrain URL that would show the hotlink error page)');
+  // The fallback URL is the mpv Play Store install link (always — Issue #1
+  // makes this consistent for ALL HTTP/HTTPS URLs, Pixeldrain included).
+  // `playStoreUrl` was declared earlier in this section.
+  ok(pixeldrainDlLaunch?.href.includes(`S.browser_fallback_url=${encodeURIComponent(playStoreUrl)}`), 'P (Phase F Pixeldrain): the fallback URL is the mpv Play Store install link (consistent with Issue #1 — ALL HTTP/HTTPS URLs get the Play Store fallback)');
   // The /u/<id> URL (HTML viewer page) is also rewritten to the API download endpoint.
   const pixeldrainViewerUrl = 'https://pixeldrain.com/u/xyz789';
   const pixeldrainViewerLaunch = externalPlayerLaunchFor(pixeldrainViewerUrl, { android: true });
