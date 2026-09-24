@@ -211,10 +211,29 @@
       }
       lockBodyScroll();
       focusSheet();
+      // Phase F §5 — reset stale embedded-overlay state on OPEN too, so a
+      // previous close→reopen cycle never re-renders the embedded iframe
+      // overlay with a stale URL/loading/error from the prior session.
+      // Defense in depth: also reset in the close branch below.
+      embeddedSheetUrl = null;
+      embeddedSheetLoading = false;
+      embeddedSheetError = false;
     } else if (!open && lastOpen) {
       restoreBodyScroll();
       restoreFocus();
       dropdownOpen = false;
+      // Phase F §5 — reset the embedded-overlay state on CLOSE. The
+      // reactive iframe block (above) handles iframe-state reset, but
+      // the embedded overlay is only mutated by user-triggered
+      // openEmbeddedSheet / closeEmbeddedSheet / iframe-load / iframe-error
+      // handlers. Without this reset, if the user closes the sheet via
+      // X or backdrop (NOT the "Back" button) while the embedded overlay
+      // is visible with an error, reopening the sheet would re-render
+      // the overlay on top of the freshly-mounted MaveroAddonDownload
+      // panel, showing the stale error from the prior session.
+      embeddedSheetUrl = null;
+      embeddedSheetLoading = false;
+      embeddedSheetError = false;
     }
     lastOpen = open;
   }

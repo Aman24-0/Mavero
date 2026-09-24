@@ -1054,7 +1054,12 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // same loss-point pattern (invalid shape + typed fetch failure; slug and
   // closed error code ONLY) so a downloader "0 links / Failed" addon is
   // explainable from server logs alone.
-  ok(warnTotal === 9 && logTotal === 0, `T: stremio server modules log through exactly the 9 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics, Phase 14 +2 downloader loss-point diagnostics)`);
+  // Phase F §8: admin-addons.ts adds TWO sanctioned warns — the
+  // set_addon_link_types RPC fallback diagnostics (RPC unavailable →
+  // legacy read-modify-write fallback; warns the operator that the
+  // migration 20261002000000_phaseF_set_addon_link_types_rpc.sql needs
+  // applying to enable atomic merges). Slug/error-code only — no secrets.
+  ok(warnTotal === 11 && logTotal === 0, `T: stremio server modules log through exactly the 11 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics, Phase 14 +2 downloader loss-point diagnostics, Phase F +2 setAddonLinkTypes RPC fallback diagnostics)`);
   // Phase 10: session-env.ts may REFERENCE the env-var NAME for the documented
   // signing-key derivation (one-way, domain-separated SHA-256 — the raw key is
   // never used as a credential nor leaves the server). Zero references in every

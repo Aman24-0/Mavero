@@ -267,9 +267,34 @@ export async function setAddonEnabled(client: StreamingClient, id: unknown, enab
 }
 
 /**
- * Phase E V2: saves the downloader link-types configuration for one addon.
+ * Phase F §8 — saves the downloader link-types configuration for one addon
+ * ATOMICALLY via a Postgres RPC (`set_addon_link_types`).
+ *
+ * HISTORICAL CONTEXT:
+ *   The previous implementation used a read-modify-write of the
+ *   `capabilities` jsonb column. This was a classic lost-update race:
+ *   two concurrent admin requests could silently overwrite each other's
+ *   writes (e.g. admin A sets magnet=false, admin B sets http=false
+ *   concurrently → admin A's magnet=false is silently LOST).
+ *
+ * FIX (Phase F §8):
+ *   The atomic Postgres function `public.set_addon_link_types(uuid, jsonb)`
+ *   (migration `20261002000000_phaseF_set_addon_link_types_rpc.sql`) does
+ *   an UPDATE with jsonb_set inside a single statement. Postgres takes a
+ *   row-level lock during the UPDATE, so concurrent calls serialize
+ *   correctly at the row level — both writes survive.
+ *
+ * FALLBACK:
+ *   If the RPC is unavailable (the migration hasn't been applied to the
+ *   current Supabase project yet), we fall back to the legacy
+ *   read-modify-write. The fallback is correct for single-call scenarios
+ *   but vulnerable to the lost-update race in concurrent scenarios. A
+ *   warning is emitted to the server log so the operator knows the
+ *   migration needs applying.
+ *
  * The config is stored in the `capabilities` jsonb column under the key
- * `downloaderLinkTypes`. Existing capabilities are preserved (merged).
+ * `downloaderLinkTypes`. ALL OTHER capability keys are preserved by
+ * jsonb_set (it only modifies the specified path).
  */
 export async function setAddonLinkTypes(
   client: StreamingClient,
@@ -277,7 +302,42 @@ export async function setAddonLinkTypes(
   linkTypes: Record<string, boolean>,
 ): Promise<void> {
   const addonId = assertAddonId(id);
-  // Read the current capabilities, merge the new linkTypes, write back.
+  // Primary path: atomic RPC. The Postgres function does the
+  // jsonb_set merge inside a single UPDATE statement, which serializes
+  // correctly at the row level (no lost updates).
+  try {
+    const { error: rpcError } = await client.rpc('set_addon_link_types', {
+      p_addon_id: addonId,
+      p_link_types: linkTypes as unknown as Json,
+    });
+    if (!rpcError) return;
+    // Detect "function does not exist" (Supabase returns PGRST202 or
+    // 42883). Fall back to the legacy read-modify-write so the admin UI
+    // keeps working before the migration is applied.
+    const code = (rpcError as { code?: string }).code ?? '';
+    const message = rpcError.message ?? '';
+    const functionMissing =
+      code === '42883' || // undefined function
+      code === 'PGRST202' || // Supabase REST schema cache miss
+      /set_addon_link_types/i.test(message) ||
+      /does not exist/i.test(message);
+    if (!functionMissing) throw rpcError;
+    console.warn(
+      '[setAddonLinkTypes] RPC set_addon_link_types unavailable — falling back to legacy read-modify-write. Apply migration 20261002000000_phaseF_set_addon_link_types_rpc.sql to enable atomic merges. Lost-update race is possible under concurrent admin writes.',
+    );
+  } catch (rpcErr) {
+    // Re-throw genuine RPC errors (network/cancellation). Only fall back
+    // for the "function does not exist" case above.
+    const message = rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
+    if (!/set_addon_link_types|does not exist|42883|PGRST202/i.test(message)) throw rpcErr;
+    console.warn(
+      '[setAddonLinkTypes] RPC failed — falling back to legacy read-modify-write.',
+      message,
+    );
+  }
+
+  // Fallback: legacy read-modify-write (preserves other capability keys
+  // but is vulnerable to the lost-update race in concurrent scenarios).
   const { data: existing, error: readError } = await client
     .from('streaming_addons')
     .select('capabilities')

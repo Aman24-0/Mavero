@@ -1148,6 +1148,14 @@ export type Database = {
           registered: boolean | null
         }[]
       }
+      // Added by 20261002000000_phaseF_set_addon_link_types_rpc.sql.
+      // Phase F §8: atomic merge of capabilities.downloaderLinkTypes.
+      // SECURITY INVOKER — RLS still applies; only is_admin() callers
+      // can mutate. Preserves all other capability keys via jsonb_set.
+      set_addon_link_types: {
+        Args: { p_addon_id: string; p_link_types: unknown }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
