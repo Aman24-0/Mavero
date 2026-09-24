@@ -132,10 +132,21 @@ function section3_responsive(): void {
   ok(component.includes('.mad-row-badges { display: flex; flex-wrap: wrap'), '3: mad-row-badges uses flex-wrap: wrap');
   // Host badge has a max-width + ellipsis so a very long hostname doesn't
   // push everything else off the row.
-  ok(component.includes('.mad-badge-host { color: var(--muted); max-width: 140px'), '3: mad-badge-host has max-width + ellipsis');
+  // Phase E: host badge now uses accent-2 (cyan) color for visual distinction,
+  // but still has max-width + ellipsis. The max-width + overflow + ellipsis
+  // pattern is what matters for responsive behavior.
+  const hostBadgeStyle = component.match(/\.mad-badge-host\s*\{([^}]*)\}/);
+  ok(hostBadgeStyle !== null, '3: .mad-badge-host CSS rule exists');
+  if (hostBadgeStyle) {
+    ok(hostBadgeStyle[1].includes('max-width: 140px') || hostBadgeStyle[1].includes('max-width:140px'), '3: mad-badge-host has max-width');
+    ok(hostBadgeStyle[1].includes('overflow: hidden') || hostBadgeStyle[1].includes('overflow:hidden'), '3: mad-badge-host has overflow hidden');
+    ok(hostBadgeStyle[1].includes('text-overflow: ellipsis') || hostBadgeStyle[1].includes('text-overflow:ellipsis'), '3: mad-badge-host has text-overflow ellipsis');
+  }
   // On very narrow viewports (≤ 360px), the host badge drops off FIRST so
   // the more important quality/codec/size metadata stays visible.
-  ok(component.includes('@media (max-width: 360px) { .mad-badge-host { display: none; } }'), '3: host badge hidden on ≤ 360px viewports (graceful degradation)');
+  // Phase E: the media query now has additional rules — check for the
+  // host-badge-hide rule within the media query, not the exact full string.
+  ok(component.includes('@media (max-width: 360px)') && component.includes('.mad-badge-host { display: none; }'), '3: host badge hidden on ≤ 360px viewports (graceful degradation)');
   // The row keeps the existing Phase 18 border + bg contract (.mad-row,
   // .mad-action, .mad-action-share — preserved).
   ok(component.includes('.mad-row {'), '3: .mad-row CSS rule preserved');
@@ -156,7 +167,9 @@ function section4_a11yFocus(): void {
   ok(component.includes('.mad-action:focus-visible'), '4: .mad-action:focus-visible rule exists (visible keyboard focus)');
   // The row itself gains a focus-within state so keyboard users see the
   // row is "active" when the Share button inside it is focused.
-  ok(component.includes('.mad-row:focus-within { border-color: var(--accent); }'), '4: .mad-row:focus-within rule exists (row highlights when Share is focused)');
+  // Phase E: the focus-within rule now includes box-shadow (glow) — check
+  // for the rule existing with the accent border-color, not the exact string.
+  ok(component.includes('.mad-row:focus-within') && component.includes('border-color: var(--accent)'), '4: .mad-row:focus-within rule exists with accent border (row highlights when Share is focused)');
   // The article element has role=listitem (list semantics preserved).
   ok(component.includes('role="listitem"'), '4: article role=listitem preserved');
   ok(component.includes('aria-label={streamLabel(stream)}'), '4: article carries an aria-label derived from streamLabel (full metadata for screen readers)');

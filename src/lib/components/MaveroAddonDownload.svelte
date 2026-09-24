@@ -833,104 +833,106 @@
 />
 
 <style>
-  /* Phase 18 (task §15): MAXIMIZE stream area. Compact everything else. */
-  .mad { display: flex; flex-direction: column; gap: 6px; min-height: 260px; color: var(--ink); }
-  .mad-instructions { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); }
-  .mad-instructions p { margin: 0; color: var(--muted); font-size: 0.54rem; line-height: 1.35; }
-  /* Phase 18 (task §3): ONE compact horizontal row for suggested apps. */
+  /* Phase E: Mavero visual redesign — dark cyberpunk surfaces, restrained
+     accent treatments, strong hierarchy, readable contrast. All hardcoded
+     rgba backgrounds replaced with Mavero design tokens. */
+  .mad { display: flex; flex-direction: column; gap: 8px; min-height: 260px; color: var(--ink); }
+
+  /* Instructions — compact info banner with Mavero surface + accent border. */
+  .mad-instructions { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: var(--radius-sm); background: var(--color-surface); }
+  .mad-instructions p { margin: 0; color: var(--muted); font-size: 0.56rem; line-height: 1.4; }
+
+  /* Suggested apps — Mavero surface cards. */
   .mad-apps { display: flex; gap: 6px; }
-  .mad-app { display: flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); text-decoration: none; flex: 1 1 0; min-width: 0; }
+  .mad-app { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); text-decoration: none; flex: 1 1 0; min-width: 0; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
   .mad-app:hover { border-color: var(--line-strong); background: var(--accent-soft); }
-  .mad-app-icon { width: 24px; height: 24px; border-radius: 5px; object-fit: cover; flex: 0 0 auto; }
+  .mad-app-icon { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; flex: 0 0 auto; }
   .mad-app-name { color: var(--ink); font-size: 0.6rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-state { display: flex; min-height: 100px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 8px; color: var(--muted); font-size: 0.66rem; text-align: center; }
-  .mad-state-error { color: #d48a64; }
-  .mad-retry { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 4px 10px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; }
+
+  /* State messages — centered, muted, with Mavero surface. */
+  .mad-state { display: flex; min-height: 100px; flex: 1 1 auto; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; padding: 12px; color: var(--muted); font-size: 0.68rem; text-align: center; }
+  .mad-state-error { color: var(--color-warning); }
+  .mad-retry { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 5px 12px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out); }
   .mad-retry:hover { border-color: var(--accent); color: var(--accent); }
   .mad-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-  /* Phase C: Mavero-themed chip rows replace the four native <select>
-     dropdowns. Each row is horizontally scrollable (overflow-x: auto) so
-     many options don't cause horizontal overflow on narrow screens. The
-     chips use the same design tokens as the existing .mad-tab addon chips
-     (border, accent-soft when active, etc.) — no new color system. */
-  .mad-filters { display: flex; gap: 4px; width: 100%; } /* kept for back-compat */
-  .mad-filter { flex: 1 1 0; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 4px 4px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; text-align: center; } /* kept for back-compat */
+
+  /* Filter controls — back-compat + Phase E refinement. */
+  .mad-filters { display: flex; gap: 4px; width: 100%; }
+  .mad-filter { flex: 1 1 0; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--ink); padding: 4px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; text-align: center; }
   .mad-filter:hover { border-color: var(--line-strong); }
   .mad-filter:focus-visible { border-color: var(--accent); outline: none; }
-  .mad-filter-group { display: flex; flex-direction: column; gap: 4px; }
-  .mad-chips { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; min-height: 26px; }
+  .mad-filter-group { display: flex; flex-direction: column; gap: 5px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); }
+
+  /* Chip rows — horizontally scrollable Mavero pills. */
+  .mad-chips { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; min-height: 28px; }
   .mad-chips::-webkit-scrollbar { display: none; }
-  .mad-chip { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 3px 8px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
-  .mad-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+  .mad-chip { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+  .mad-chip:hover { border-color: var(--line-strong); color: var(--ink); background: var(--color-surface-raised); }
   .mad-chip:focus-visible { border-color: var(--accent); outline: none; }
   .mad-chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .mad-chip-label { line-height: 1.3; }
-  .mad-chip-count { display: inline-flex; min-width: 14px; height: 14px; align-items: center; justify-content: center; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 0 4px; font-size: 0.48rem; font-weight: 700; }
-  .mad-chip.active .mad-chip-count { background: var(--accent); color: var(--ink); }
-  /* Phase C corrective: Size trigger button (opens SelectionSheet popover).
-     Visually consistent with the chip rows but acts as a popover trigger. */
-  .mad-size-trigger { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 3px 8px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
-  .mad-size-trigger:hover { border-color: var(--line-strong); color: var(--ink); }
+  .mad-chip-count { display: inline-flex; min-width: 16px; height: 15px; align-items: center; justify-content: center; border-radius: 999px; background: var(--color-border-strong); color: var(--muted); padding: 0 4px; font-size: 0.48rem; font-weight: 700; }
+  .mad-chip.active .mad-chip-count { background: var(--accent); color: var(--color-bg); }
+
+  /* Size trigger — popover button consistent with chips. */
+  .mad-size-trigger { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+  .mad-size-trigger:hover { border-color: var(--line-strong); color: var(--ink); background: var(--color-surface-raised); }
   .mad-size-trigger:focus-visible { border-color: var(--accent); outline: none; }
   .mad-size-trigger.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .mad-size-trigger-label { line-height: 1.3; }
-  .mad-size-trigger :global(.mad-size-trigger-chevron) { transition: transform 120ms ease; }
+  .mad-size-trigger :global(.mad-size-trigger-chevron) { transition: transform var(--motion-fast) var(--ease-out); }
   .mad-size-trigger[aria-expanded="true"] :global(.mad-size-trigger-chevron) { transform: rotate(180deg); }
-  /* Phase C: active-filter chips + Clear. */
-  .mad-active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-  .mad-active-chip { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 2px 6px; font: inherit; font-size: 0.52rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
-  .mad-active-chip:hover { border-color: var(--accent); background: var(--accent); color: var(--ink); }
+
+  /* Active filter chips + Clear. */
+  .mad-active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px; border-radius: var(--radius-sm); background: var(--accent-soft); }
+  .mad-active-chip { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--accent); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink); padding: 3px 7px; font: inherit; font-size: 0.52rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: background var(--motion-fast) var(--ease-out); }
+  .mad-active-chip:hover { border-color: var(--accent); background: var(--accent); color: var(--color-bg); }
   .mad-active-chip:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
   .mad-active-chip-label { line-height: 1.3; }
-  .mad-clear { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--ink-soft); padding: 2px 8px; font: inherit; font-size: 0.52rem; font-weight: 700; cursor: pointer; white-space: nowrap; margin-left: auto; }
+  .mad-clear { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--ink-soft); padding: 3px 10px; font: inherit; font-size: 0.52rem; font-weight: 700; cursor: pointer; white-space: nowrap; margin-left: auto; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .mad-clear:hover { border-color: var(--accent); color: var(--accent); }
   .mad-clear:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-  /* Phase C: filtered-empty state — visually distinct from addon failure. */
+
+  /* Filtered-empty state. */
   .mad-state-filtered-empty { color: var(--muted); }
   .mad-state-filtered-empty .mad-retry { margin-left: 4px; }
-  .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; }
+
+  /* Addon tabs — horizontally scrollable pills with status. */
+  .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
   .mad-tabs::-webkit-scrollbar { display: none; }
-  .mad-tab { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; }
-  .mad-tab:hover { border-color: var(--line-strong); color: var(--ink); }
+  .mad-tab { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 5px 10px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+  .mad-tab:hover { border-color: var(--line-strong); color: var(--ink); background: var(--color-surface-raised); }
   .mad-tab.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
   .mad-tab-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-tab-state { min-width: 16px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 1px 5px; font-size: 0.52rem; font-weight: 700; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
+  .mad-tab-state { min-width: 16px; border-radius: 999px; background: var(--color-border-strong); color: var(--muted); padding: 1px 5px; font-size: 0.52rem; font-weight: 700; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
   .mad-tab-state.ok { color: var(--accent); }
-  .mad-tab-state.failed { color: #d48a64; }
+  .mad-tab-state.failed { color: var(--color-warning); }
   .mad-tab-state.loading { background: transparent; padding: 1px 2px; }
   .mad-tab-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-  .mad-filter-count { color: var(--muted); font-size: 0.52rem; font-weight: 700; padding: 0 1px; }
-  /* Phase 18 (task §15): stream list gets MAXIMUM vertical space. */
-  .mad-list { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; overflow-y: auto; scrollbar-width: thin; min-height: 0; }
+  .mad-filter-count { color: var(--muted); font-size: 0.54rem; font-weight: 700; padding: 2px 4px; }
+
+  /* Stream list — maximum vertical space, thin scrollbar. */
+  .mad-list { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; overflow-y: auto; scrollbar-width: thin; min-height: 0; }
   .mad-list::-webkit-scrollbar { width: 3px; }
   .mad-list::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 2px; }
-  /* Phase B (card UX §B2): the row keeps the existing Phase 18 border + bg
-     contract so all prior tests still match (.mad-row, .mad-action,
-     .mad-action-share preserved). The internal structure gains a header
-     line (kind icon + filename/title) and a badges row (quality / codec /
-     container / audio / size / host). The row stays compact (no growth in
-     vertical footprint beyond what Phase 18 already used). */
-  .mad-row { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.025); padding: 6px 8px; transition: border-color 120ms ease, background 120ms ease; }
-  .mad-row:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.04); }
-  .mad-row:focus-within { border-color: var(--accent); }
-  .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; min-width: 0; }
-  .mad-row-header { display: flex; align-items: center; gap: 5px; min-width: 0; }
-  .mad-kind { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); flex: 0 0 auto; }
-  /* mad-row-label kept for back-compat with any external selector — no longer rendered. */
+
+  /* Stream cards — Mavero dark surface with restrained accent treatment. */
+  .mad-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--color-surface); padding: 8px 10px; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out); }
+  .mad-row:hover { border-color: var(--line-strong); background: var(--color-surface-elevated); }
+  .mad-row:focus-within { border-color: var(--accent); box-shadow: var(--glow-primary); }
+  .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 4px; min-width: 0; }
+  .mad-row-header { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .mad-kind { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); flex: 0 0 auto; }
   .mad-row-label { overflow: hidden; color: var(--ink); font-size: 0.64rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--ink); font-size: 0.6rem; font-weight: 650; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; flex: 1 1 auto; min-width: 0; }
+  .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--ink); font-size: 0.62rem; font-weight: 650; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; flex: 1 1 auto; min-width: 0; }
   .mad-row-detail-fallback { color: var(--muted); font-weight: 600; }
-  /* Phase B (card UX §B2): badges row. Wraps on small screens so a stream
-     with many metadata badges never overflows the row horizontally — the
-     Share button stays pinned on the right. */
-  .mad-row-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; }
-  .mad-badge { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line); border-radius: 4px; background: rgba(255, 255, 255, 0.03); color: var(--ink-soft); padding: 1px 5px; font-size: 0.5rem; font-weight: 700; line-height: 1.4; white-space: nowrap; }
-  /* lucide-svelte icons render their <svg> as component children, so the
-     selector must be :global() to escape Svelte's CSS scoping. */
+
+  /* Badges row — wraps on small screens, Mavero-styled pills. */
+  .mad-row-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+  .mad-badge { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line); border-radius: 4px; background: var(--color-surface-raised); color: var(--ink-soft); padding: 2px 6px; font-size: 0.52rem; font-weight: 700; line-height: 1.4; white-space: nowrap; }
   .mad-badge :global(svg) { flex: 0 0 auto; opacity: 0.85; }
   .mad-kind :global(svg) { flex: 0 0 auto; }
-  /* Quality color coding uses existing tokens — no neon, no glow. */
-  .mad-badge-quality { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
+  .mad-badge-quality { border-color: var(--accent-border); background: var(--accent-soft); color: var(--ink); }
   .mad-badge-4k { color: var(--accent); }
   .mad-badge-1080 { color: var(--ink); }
   .mad-badge-720 { color: var(--ink-soft); }
@@ -940,25 +942,29 @@
   .mad-badge-container { color: var(--ink-soft); }
   .mad-badge-audio { color: var(--ink-soft); }
   .mad-badge-size { color: var(--ink); }
-  .mad-badge-host { color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+  .mad-badge-host { color: var(--accent-2); max-width: 140px; overflow: hidden; text-overflow: ellipsis; border-color: var(--color-secondary-soft); }
   .mad-badge-host span { overflow: hidden; text-overflow: ellipsis; }
   .mad-badge-subtitles { color: var(--ink-soft); }
-  /* Phase 18 (task §16): compact Share button. */
-  .mad-action { position: relative; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255, 255, 255, 0.03); cursor: pointer; text-decoration: none; flex: 0 0 auto; }
+
+  /* Action buttons — 32px touch targets, Mavero surface + accent on hover. */
+  .mad-action { position: relative; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-soft); background: var(--color-surface-raised); cursor: pointer; text-decoration: none; flex: 0 0 auto; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .mad-action:hover, .mad-action:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
   .mad-action:active { transform: scale(0.96); }
   .mad-action.done { border-color: var(--accent); color: var(--accent); }
-  .mad-action.failed { border-color: #d48a64; color: #d48a64; }
+  .mad-action.failed { border-color: var(--color-warning); color: var(--color-warning); }
   .mad-action-share { color: var(--ink); }
-  /* Phase D: Download + Play action classes. */
   .mad-action-download { color: var(--ink-soft); }
   .mad-action-play { color: var(--ink-soft); }
-  .mad-row-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .mad-row-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+
   @keyframes mad-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-chip { transition: none; } }
-  /* Phase B (card UX §B2): on very narrow viewports (≤ 360px), allow the
-     host badge to drop off the badge row first so the more important
-     quality/codec/size metadata stays visible. The host is also in the
-     Share title and the stream URL, so it's not lost — just deprioritized. */
-  @media (max-width: 360px) { .mad-badge-host { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-chip, .mad-tab, .mad-app, .mad-size-trigger { transition: none; } }
+
+  /* Phase E: responsive breakpoints. */
+  /* Narrow mobile (≤ 360px) — host badge drops off to save space. */
+  @media (max-width: 360px) { .mad-badge-host { display: none; } .mad-action { width: 30px; height: 30px; } .mad-instructions p { font-size: 0.52rem; } }
+  /* Tablet / desktop (≥ 700px) — more breathing room, larger fonts. */
+  @media (min-width: 700px) { .mad { gap: 10px; } .mad-filter-group { padding: 8px 10px; gap: 6px; } .mad-chip { padding: 5px 11px; font-size: 0.6rem; } .mad-size-trigger { padding: 5px 11px; font-size: 0.6rem; } .mad-tab { padding: 6px 12px; font-size: 0.66rem; } .mad-row { padding: 10px 12px; gap: 10px; } .mad-kind { width: 28px; height: 28px; } .mad-row-detail { font-size: 0.66rem; } .mad-badge { font-size: 0.56rem; padding: 3px 7px; } .mad-action { width: 34px; height: 34px; } .mad-list { gap: 6px; } }
+  /* Large screen / TV (≥ 1024px) — clear focus states, navigable controls. */
+  @media (min-width: 1024px) { .mad { min-height: 320px; } .mad-filter-group { padding: 10px 12px; } .mad-row:hover { box-shadow: var(--shadow-sm); } }
 </style>
