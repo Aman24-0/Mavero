@@ -164,21 +164,32 @@ export function streamMatchesQuality(stream: FilterableStream, quality: Download
  * delete unknown-size streams unless that is explicitly the selected filter's
  * intended behavior."
  *
- * Phase C interpretation: unknown-size streams are PRESERVED (not deleted)
- * when a size filter is active. The size filter is a SOFT preference — it
- * matches streams with a known size that fall within the range, AND preserves
- * unknown-size streams so they remain visible (the user can still see them,
- * just without a size match). This is the most transparent behavior — nothing
- * is silently hidden.
+ * Corrective-audit interpretation: for a SPECIFIC size filter (e.g. "< 1 GB"),
+ * the intended behavior is to show streams KNOWN to satisfy the range. A
+ * stream with unknown size CANNOT be confirmed to satisfy the range, so
+ * excluding it IS the explicitly intended behavior — the "should not silently
+ * delete" clause does NOT apply to specific size filters.
  *
- * If a future phase wants strict size filtering (exclude unknown), it can
- * add a `strict` parameter. For now, the soft behavior is the default.
+ * Behavior:
+ *   size === 'all'         → every stream matches (including unknown-size)
+ *   specific size filter   → stream matches ONLY when it has a known
+ *                             positive size that falls within the range
+ *
+ * Boundary semantics (matching the existing Phase 18 implementation):
+ *   - "under N GB" ranges are EXCLUSIVE on the upper end (exactly N GB does
+ *     NOT match "< N GB")
+ *   - "over20" is INCLUSIVE on the lower end (exactly 20 GB DOES match
+ *     "> 20 GB")
+ *   - unknown / undefined / non-positive size → does NOT match any specific
+ *     filter (only matches 'all')
  */
 export function streamMatchesSize(stream: FilterableStream, size: DownloaderFilters['size']): boolean {
   if (size === 'all') return true;
   const bytes = stream.sizeBytes;
-  // Unknown-size streams are PRESERVED (not excluded) when a size filter is active.
-  if (bytes === undefined || bytes <= 0) return true;
+  // Unknown-size streams do NOT match a specific size filter — we cannot
+  // confirm they satisfy the range. This is the "intended behavior" of a
+  // specific size filter per the approved plan §6.
+  if (bytes === undefined || bytes <= 0) return false;
   const range = SIZE_RANGES[size];
   return bytes >= range.min && bytes < range.max;
 }

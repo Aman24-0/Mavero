@@ -173,14 +173,26 @@ function section_size(): void {
   // 20 GB is exactly the boundary of over20 — the range is inclusive on the
   // lower end (min: 20*GB), so 20 GB DOES match >20 GB.
   ok(streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 20 * GB }) }, 'over20'), 'SIZE: exactly 20 GB matches >20 GB (inclusive lower bound)');
-  // Unknown-size streams are PRESERVED (not silently deleted) per Phase C.
+  // Corrective audit: unknown-size streams are EXCLUDED when a specific size
+  // filter is active (per the approved plan §6 — excluding unknown-size IS
+  // the intended behavior of a specific size filter; the "should not silently
+  // delete" clause does NOT apply because we cannot confirm the stream
+  // satisfies the range).
   const unknownSizeStream = makeStream({ url: 'x', sizeBytes: undefined });
-  ok(streamMatchesSize(unknownSizeStream, 'under5'), 'SIZE: unknown-size stream is PRESERVED under <5 GB filter (not silently deleted)');
-  ok(streamMatchesSize(unknownSizeStream, 'over20'), 'SIZE: unknown-size stream is PRESERVED under >20 GB filter (not silently deleted)');
+  ok(!streamMatchesSize(unknownSizeStream, 'under5'), 'SIZE: unknown-size stream is EXCLUDED under <5 GB filter (cannot confirm it satisfies the range)');
+  ok(!streamMatchesSize(unknownSizeStream, 'over20'), 'SIZE: unknown-size stream is EXCLUDED under >20 GB filter (cannot confirm it satisfies the range)');
+  ok(!streamMatchesSize(unknownSizeStream, 'under1'), 'SIZE: unknown-size stream is EXCLUDED under <1 GB filter');
+  ok(streamMatchesSize(unknownSizeStream, 'all'), 'SIZE: unknown-size stream is RETAINED under All (no filter active)');
+  // Also verify zero / negative size is treated like unknown.
+  ok(!streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: 0 }) }, 'under5'), 'SIZE: zero-size stream is EXCLUDED under <5 GB');
+  ok(!streamMatchesSize({ ...makeStream({ url: 'x', sizeBytes: -1 }) }, 'under5'), 'SIZE: negative-size stream is EXCLUDED under <5 GB');
   // Size filtering works on the mixed collection.
   const under1 = filterStreams(MIXED_STREAMS, { ...NO_FILTERS, size: 'under1' });
   ok(under1.some((s) => s.quality === '480p'), 'SIZE: <1 GB filter includes the 480p (500 MB) stream');
-  ok(under1.some((s) => s.sizeBytes === undefined), 'SIZE: <1 GB filter PRESERVES unknown-size streams (not silently deleted)');
+  ok(!under1.some((s) => s.sizeBytes === undefined), 'SIZE: <1 GB filter EXCLUDES unknown-size streams (corrected behavior — results match the label)');
+  // Unknown-size streams ARE retained under 'all'.
+  const allSizes = filterStreams(MIXED_STREAMS, { ...NO_FILTERS, size: 'all' });
+  ok(allSizes.some((s) => s.sizeBytes === undefined), 'SIZE: All filter RETAINS unknown-size streams (no silent deletion when no filter is active)');
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +400,29 @@ function section_sourceContract(): void {
   ok(component.includes('aria-label='), 'SOURCE: filter chips have aria-label');
   // The filter state resets when switching tabs.
   ok(component.includes('resetFilters'), 'SOURCE: component resets filters on tab switch');
+  // Phase C corrective: Size uses a SelectionSheet popover (NOT a chip row).
+  // Type, Quality, and Language remain chip rows.
+  ok(component.includes('SelectionSheet'), 'SOURCE: component imports SelectionSheet for the Size filter popover');
+  ok(component.includes('sizeSheetOpen'), 'SOURCE: component has sizeSheetOpen state for the Size popover');
+  ok(component.includes('sizeSheetOptions'), 'SOURCE: component derives sizeSheetOptions from the dynamic size collection');
+  ok(component.includes('<SelectionSheet'), 'SOURCE: component renders a <SelectionSheet> instance for Size');
+  ok(component.includes('mad-size-trigger'), 'SOURCE: component has a mad-size-trigger button that opens the Size sheet');
+  ok(component.includes('aria-haspopup="dialog"'), 'SOURCE: Size trigger has aria-haspopup=dialog (accessible popover semantics)');
+  ok(component.includes('aria-expanded={sizeSheetOpen}'), 'SOURCE: Size trigger has aria-expanded (reflects open state)');
+  ok(component.includes('selectSize'), 'SOURCE: component wires selectSize handler (sets filters.size + closes sheet)');
+  // Size is NOT a chip row (it's a popover trigger) — verify the Size trigger
+  // button exists with the popover class, not the chip class. We don't slice
+  // the section (slicing between aria-labels is fragile because the Language
+  // div's class attribute precedes its aria-label). Instead, verify the Size
+  // trigger + SelectionSheet exist, and that the Size trigger uses
+  // mad-size-trigger (not mad-chip).
+  ok(component.includes('class="mad-size-trigger"'), 'SOURCE: Size trigger uses mad-size-trigger class (popover trigger, not a chip)');
+  // Count mad-chips divs — should be 3 (Type + Quality + Language), NOT 4
+  // (Size is now a popover, not a chip row).
+  const chipsDivCount = (component.match(/<div class="mad-chips"/g) ?? []).length;
+  ok(chipsDivCount === 3, `SOURCE: exactly 3 mad-chips rows (Type+Quality+Language) — Size is a popover (got ${chipsDivCount})`);
+  // Type, Quality, Language remain chip rows.
+  ok(component.includes('mad-chips'), 'SOURCE: Type/Quality/Language still use mad-chips (chip rows preserved)');
 }
 
 // ---------------------------------------------------------------------------

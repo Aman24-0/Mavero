@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX } from 'lucide-svelte';
+  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX, ChevronDown } from 'lucide-svelte';
+  import SelectionSheet from '$components/SelectionSheet.svelte';
   import {
     filterStreams,
     typeOptions,
@@ -11,8 +12,10 @@
     clearFilterDimension,
     hasActiveFilters,
     NO_FILTERS,
+    sizeFilterLabel,
     type DownloaderFilters,
     type FilterableStream,
+    type SizeFilterValue,
   } from '$lib/shared/downloader-filters';
   import type { AudioClass } from '$lib/shared/stream-selection';
 
@@ -123,6 +126,33 @@
   // removable chips for each active dimension + a single Clear action.
   $: activeChips = activeFilterChips(filters);
   $: anyFiltersActive = hasActiveFilters(filters);
+
+  // Phase C corrective: Size uses a SelectionSheet popover (per the approved
+  // plan STEP 4: "compact Mavero-themed popover/sheet"). The existing
+  // SelectionSheet primitive is reused — no new component framework.
+  let sizeSheetOpen = false;
+
+  // Map the dynamic SizeOptions to SelectionSheet's { key, label, description }.
+  // SelectionSheet uses `key` (not `value`) — we map accordingly. The count
+  // goes into the `description` field so the user sees how many streams match
+  // each range before selecting. Type is inferred — no inline type alias
+  // (Svelte's parser doesn't handle `type X = ...` before `$:` cleanly).
+  $: sizeSheetOptions = currentSizeOptions.map((opt) => ({
+    key: opt.value,
+    label: opt.label,
+    description: `${opt.count} stream${opt.count === 1 ? '' : 's'}`,
+  }));
+
+  // The Size trigger button shows the current filter label (or "Size" when
+  // unfiltered) + a chevron icon.
+  $: sizeTriggerLabel = filters.size === 'all' ? 'Size' : sizeFilterLabel(filters.size as SizeFilterValue);
+
+  function openSizeSheet(): void { sizeSheetOpen = true; }
+  function closeSizeSheet(): void { sizeSheetOpen = false; }
+  function selectSize(key: string): void {
+    filters = { ...filters, size: key as DownloaderFilters['size'] };
+    sizeSheetOpen = false;
+  }
 
   // Phase C: when the active tab changes, RESET filters to 'all'. The filter
   // state is per-tab (different addons have different stream types). This
@@ -469,23 +499,26 @@
           </button>
         {/each}
       </div>
-      <!-- Size chips: horizontally scrollable, only present size ranges, with counts. -->
-      <div class="mad-chips" role="group" aria-label="Filter by size">
-        {#each currentSizeOptions as opt}
-          <button
-            class="mad-chip"
-            class:active={filters.size === opt.value}
-            type="button"
-            aria-pressed={filters.size === opt.value}
-            aria-label={`${opt.label} (${opt.count})`}
-            title={`${opt.label} (${opt.count})`}
-            onclick={() => (filters = { ...filters, size: filters.size === opt.value ? 'all' : opt.value })}
-          >
-            <span class="mad-chip-label">{opt.label}</span>
-            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
-          </button>
-        {/each}
-      </div>
+      <!-- Phase C corrective: Size uses a SelectionSheet popover (per the
+           approved plan STEP 4: "compact Mavero-themed popover/sheet").
+           The trigger button shows the current filter label + a chevron.
+           The sheet opens below with all dynamically-derived size options +
+           counts. Reuses the existing SelectionSheet primitive — no new
+           component framework. -->
+      <button
+        class="mad-size-trigger"
+        class:active={filters.size !== 'all'}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={sizeSheetOpen}
+        aria-label={`Filter by size${filters.size !== 'all' ? `: ${sizeTriggerLabel}` : ''}`}
+        title="Filter by size"
+        onclick={openSizeSheet}
+      >
+        <HardDrive size={11} aria-hidden="true" />
+        <span class="mad-size-trigger-label">{sizeTriggerLabel}</span>
+        <ChevronDown size={10} aria-hidden="true" class="mad-size-trigger-chevron" />
+      </button>
       <!-- Language chips: horizontally scrollable, detected languages + Dual Audio + Multi Audio. -->
       <div class="mad-chips" role="group" aria-label="Filter by language">
         {#each currentLanguageOptions as opt}
@@ -673,6 +706,22 @@
   {/if}
 </div>
 
+<!-- Phase C corrective: Size filter as a SelectionSheet popover/sheet (per
+     the approved plan STEP 4). Reuses the existing SelectionSheet primitive
+     — no new component framework. Options are dynamically derived from the
+     FULL active-tab stream collection. Counts are shown in the description
+     field. Selecting an option sets filters.size and closes the sheet —
+     NO addon refetch. -->
+<SelectionSheet
+  open={sizeSheetOpen}
+  eyebrow="MAVERO / Filter"
+  title="Size"
+  options={sizeSheetOptions}
+  selected={filters.size}
+  onClose={closeSizeSheet}
+  onSelect={selectSize}
+/>
+
 <style>
   /* Phase 18 (task §15): MAXIMIZE stream area. Compact everything else. */
   .mad { display: flex; flex-direction: column; gap: 6px; min-height: 260px; color: var(--ink); }
@@ -708,6 +757,15 @@
   .mad-chip-label { line-height: 1.3; }
   .mad-chip-count { display: inline-flex; min-width: 14px; height: 14px; align-items: center; justify-content: center; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 0 4px; font-size: 0.48rem; font-weight: 700; }
   .mad-chip.active .mad-chip-count { background: var(--accent); color: var(--ink); }
+  /* Phase C corrective: Size trigger button (opens SelectionSheet popover).
+     Visually consistent with the chip rows but acts as a popover trigger. */
+  .mad-size-trigger { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 3px 8px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
+  .mad-size-trigger:hover { border-color: var(--line-strong); color: var(--ink); }
+  .mad-size-trigger:focus-visible { border-color: var(--accent); outline: none; }
+  .mad-size-trigger.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .mad-size-trigger-label { line-height: 1.3; }
+  .mad-size-trigger :global(.mad-size-trigger-chevron) { transition: transform 120ms ease; }
+  .mad-size-trigger[aria-expanded="true"] :global(.mad-size-trigger-chevron) { transform: rotate(180deg); }
   /* Phase C: active-filter chips + Clear. */
   .mad-active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
   .mad-active-chip { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 2px 6px; font: inherit; font-size: 0.52rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
