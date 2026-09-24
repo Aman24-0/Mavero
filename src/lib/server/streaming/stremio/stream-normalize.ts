@@ -297,7 +297,7 @@ function normalizeSubtitleEntry(entry: unknown): NormalizedStreamSubtitle | null
   };
 }
 
-function normalizeSubtitleTracks(value: unknown): NormalizedStreamSubtitle[] | undefined {
+export function normalizeSubtitleTracks(value: unknown): NormalizedStreamSubtitle[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const tracks: NormalizedStreamSubtitle[] = [];
   const seen = new Set<string>();

@@ -1,4 +1,4 @@
-import { detectAudioLanguages, detectVideoCodec, detectContainer, detectContainerFromTexts, extractQuality, type StremioStreamQuality } from './stream-normalize';
+import { detectAudioLanguages, detectVideoCodec, detectContainer, detectContainerFromTexts, extractQuality, normalizeSubtitleTracks, type NormalizedStreamSubtitle, type StremioStreamQuality } from './stream-normalize';
 import { protocolForUrl } from '$lib/server/resolver/safe-url';
 import type { PlaybackProtocol } from '$lib/server/resolver/types';
 
@@ -94,6 +94,18 @@ export type DownloaderStreamEntry = {
   container?: string;
   /** Video codec label derived from addon-supplied text. */
   codec?: string;
+  /**
+   * Phase B (§B2 subtitles): addon-provided subtitle tracks, shape-checked.
+   * Mirrors the player normalizer's `NormalizedStremioStream.subtitles`
+   * field — the extraction logic is shared via `normalizeSubtitleTracks`.
+   * The subtitle URLs are NEVER fetched by Mavero (the security boundary
+   * from the player path applies equally to the downloader). This field
+   * is populated ONLY when the addon explicitly supplies a `subtitles`
+   * array on the stream entry; it is undefined for the vast majority of
+   * streams (most addons don't carry subtitle tracks on the stream entry
+   * itself — they're for the player path).
+   */
+  subtitles?: NormalizedStreamSubtitle[];
   /** Quality label + height from addon-supplied text. */
   quality: StremioStreamQuality;
   /** The protocol classification (hls/dash/mp4/unknown) — for the player path. */
@@ -352,6 +364,11 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
   const codec = detectVideoCodec([filename, name, title, description]);
   const container = detectContainer(filename, url) ?? detectContainerFromTexts([filename, name, title, description]);
   const quality = extractQuality(name, title, filename);
+  // Phase B (§B2 subtitles): mirror the player normalizer's subtitle
+  // extraction. The addon's `subtitles` array (if present) is shape-checked
+  // into NormalizedStreamSubtitle tracks. The URLs are never fetched — the
+  // same security boundary as the player path applies.
+  const subtitles = normalizeSubtitleTracks(record.subtitles);
 
   return {
     index,
@@ -373,6 +390,7 @@ function classifyDownloaderEntry(entry: unknown, index: number): DownloaderStrea
     ...(audioLanguages?.length ? { audioLanguages } : {}),
     ...(container ? { container } : {}),
     ...(codec ? { codec } : {}),
+    ...(subtitles?.length ? { subtitles } : {}),
     quality,
     protocol,
     transport,

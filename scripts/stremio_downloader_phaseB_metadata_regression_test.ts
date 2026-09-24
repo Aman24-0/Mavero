@@ -96,7 +96,11 @@ const noSleep = async () => Promise.resolve();
 const MIXED_PAYLOAD = {
   streams: [
     // 1080p H.264 MKV HTTPS with Multi audio (real language names → audioLanguages populated)
-    { name: '1080p', title: 'Dhurandhar 1080p WEB-DL H264 Hindi English Multi Audio', url: 'https://hub.example/movie-1080p.mkv', behaviorHints: { videoSize: 4_724_904_960, filename: 'Dhurandhar.1080p.WEB-DL.H264.Multi.mkv' } },
+    // + 2 subtitle tracks (Phase B compliance audit point 1)
+    { name: '1080p', title: 'Dhurandhar 1080p WEB-DL H264 Hindi English Multi Audio', url: 'https://hub.example/movie-1080p.mkv', behaviorHints: { videoSize: 4_724_904_960, filename: 'Dhurandhar.1080p.WEB-DL.H264.Multi.mkv' }, subtitles: [
+      { url: 'https://subs.example/en.vtt', lang: 'English', label: 'English' },
+      { url: 'https://subs.example/hi.vtt', lang: 'Hindi', label: 'Hindi' },
+    ] },
     // 720p HEVC MP4 with dual audio
     { name: '720p', title: 'Dhurandhar 720p WEB-DL HEVC Hindi English Dual Audio', url: 'https://hub.example/movie-720p.mp4', behaviorHints: { videoSize: 2_000_000_000, filename: 'Dhurandhar.720p.WEB-DL.HEVC.Dual.mp4' } },
     // 4K (2160p) AV1 MKV
@@ -322,6 +326,41 @@ async function section8_pipelineOrderPreserved(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// §B4.9 — Subtitle tracks preserved end-to-end (Phase B compliance audit point 1)
+// The subtitle data IS available in the raw Stremio response (`record.subtitles`)
+// and the player normalizer already extracts it. Phase B must surface it through
+// the downloader pipeline too. This test verifies the preservation.
+// ---------------------------------------------------------------------------
+
+async function section9_subtitlesPreserved(): Promise<void> {
+  const calls: string[] = [];
+  const result = await resolveSingleAddonDownload({} as never, movieRequest, HUB.id, {
+    loadAddons: loadAddonsOf([HUB]),
+    loadAddonById: loadAddonByIdOf([HUB]),
+    loadContent: loadContentOf(CONTENT),
+    dnsResolver: publicDns,
+    sleep: noSleep,
+    fetcher: fetcherFor({
+      'https://hdhub.example/stream/movie/tt8633518.json': json(MIXED_PAYLOAD),
+    }, calls),
+  });
+  // The 1080p stream carries 2 subtitle tracks.
+  const s1080 = result.streams.find((s) => s.quality === '1080p');
+  ok(s1080?.subtitles !== undefined, `9: 1080p stream has subtitles field populated (got ${s1080?.subtitles})`);
+  ok(s1080?.subtitles?.length === 2, `9: 1080p stream has 2 subtitle tracks preserved (got ${s1080?.subtitles?.length})`);
+  ok(s1080?.subtitles?.[0]?.url === 'https://subs.example/en.vtt', '9: first subtitle URL preserved verbatim');
+  ok(s1080?.subtitles?.[0]?.language === 'English', '9: first subtitle language preserved');
+  ok(s1080?.subtitles?.[1]?.url === 'https://subs.example/hi.vtt', '9: second subtitle URL preserved verbatim');
+  ok(s1080?.subtitles?.[1]?.language === 'Hindi', '9: second subtitle language preserved');
+  // Streams without subtitles → subtitles field is undefined.
+  const s720 = result.streams.find((s) => s.quality === '720p');
+  ok(s720?.subtitles === undefined, `9: 720p stream (no subtitles in payload) has undefined subtitles (got ${s720?.subtitles})`);
+  // The subtitle URLs are NOT in the calls list (never fetched).
+  ok(!calls.includes('https://subs.example/en.vtt'), '9: subtitle URL was NEVER fetched');
+  ok(!calls.includes('https://subs.example/hi.vtt'), '9: subtitle URL was NEVER fetched');
+}
+
+// ---------------------------------------------------------------------------
 // runner
 // ---------------------------------------------------------------------------
 
@@ -333,5 +372,6 @@ await section5_audioPreserved();
 await section6_sizeTransportUrlPreserved();
 await section7_hostFieldSemantics();
 await section8_pipelineOrderPreserved();
+await section9_subtitlesPreserved();
 
-console.log(`stremio_downloader_phaseB_metadata_regression_test: ${passed} checks passed (Phase B §B4: metadata-preservation regression — kinds/quality/codec/container/audio/size/transport/URL/host preserved, pipeline order intact)`);
+console.log(`stremio_downloader_phaseB_metadata_regression_test: ${passed} checks passed (Phase B §B4: metadata-preservation regression — kinds/quality/codec/container/audio/size/transport/URL/host/subtitles preserved, pipeline order intact)`);

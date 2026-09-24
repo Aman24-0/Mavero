@@ -251,6 +251,31 @@ function section8_hostField(): void {
 }
 
 // ---------------------------------------------------------------------------
+// §B2.9 — Subtitle badge (Phase B compliance audit point 1)
+// The subtitle data IS available in the raw Stremio response (`record.subtitles`)
+// AND in the player normalizer's existing model. Phase B must surface it.
+// ---------------------------------------------------------------------------
+
+function section9_subtitleBadge(): void {
+  const component = read('src/lib/components/MaveroAddonDownload.svelte');
+  // The Captions icon is imported (lucide-svelte).
+  ok(component.includes('Captions'), '9: Captions icon imported for subtitle badge');
+  // The StreamView type carries the subtitles field.
+  ok(component.includes('subtitles?:'), '9: StreamView.subtitles field declared on the client');
+  // The subtitle badge is conditional on stream.subtitles?.length.
+  ok(component.includes('{#if stream.subtitles?.length}'), '9: subtitle badge is conditional on stream.subtitles?.length');
+  ok(component.includes('mad-badge-subtitles'), '9: mad-badge-subtitles CSS class exists');
+  // The badge shows the track count.
+  ok(component.includes('{stream.subtitles.length}'), '9: subtitle badge shows the track count');
+  // The badge has a title attribute for tooltip + a11y.
+  ok(component.includes('title={`Subtitles:'), '9: subtitle badge has a title attribute');
+  // The Captions icon is aria-hidden (decorative).
+  ok(component.includes('<Captions size={10} aria-hidden="true"'), '9: Captions icon is aria-hidden (decorative)');
+  // CSS for the subtitle badge uses existing tokens (no new color system).
+  ok(component.includes('.mad-badge-subtitles { color: var(--ink-soft); }'), '9: subtitle badge uses --ink-soft token');
+}
+
+// ---------------------------------------------------------------------------
 // runner
 // ---------------------------------------------------------------------------
 
@@ -262,5 +287,6 @@ section5_actionsPreserved();
 section6_reducedMotion();
 section7_tvUsability();
 section8_hostField();
+section9_subtitleBadge();
 
-console.log(`stremio_downloader_phaseB_card_test: ${passed} checks passed (Phase B §B2: structured card UX — kind/quality/codec/container/audio/size/host badges + design tokens + responsive + a11y + focus + reduced-motion + TV usability + Share action preserved)`);
+console.log(`stremio_downloader_phaseB_card_test: ${passed} checks passed (Phase B §B2: structured card UX — kind/quality/codec/container/audio/size/host/subtitles badges + design tokens + responsive + a11y + focus + reduced-motion + TV usability + Share action preserved)`);

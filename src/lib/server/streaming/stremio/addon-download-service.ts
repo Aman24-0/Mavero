@@ -102,6 +102,14 @@ export type AddonDownloadStreamView = {
    * exposed via `url` — this is pre-parsed for display convenience only.
    */
   host?: string;
+  /**
+   * Phase B (§B2 subtitles): addon-provided subtitle tracks, shape-checked
+   * by the shared `normalizeSubtitleTracks` helper (mirrors the player
+   * normalizer). Undefined when the addon did not supply a `subtitles`
+   * array. The subtitle URLs are NEVER fetched by Mavero (security
+   * boundary preserved from the player path).
+   */
+  subtitles?: { url: string; language?: string; label?: string }[];
   /** Metadata-completeness confidence — NEVER a playback guarantee. */
   confidence: 'high' | 'medium' | 'low';
 };
@@ -342,6 +350,7 @@ function toStreamViewAll(stream: DownloadStreamViewAll): AddonDownloadStreamView
     ...(stream.availability !== undefined ? { availability: stream.availability } : {}),
     ...(stream.tag ? { tag: stream.tag } : {}),
     ...(stream.host ? { host: stream.host } : {}),
+    ...(stream.subtitles?.length ? { subtitles: stream.subtitles } : {}),
     confidence: stream.confidence,
   };
 }

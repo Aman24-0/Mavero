@@ -258,18 +258,31 @@ function hostClassFor(url: string): DownloadHostClass {
 }
 
 /**
- * Phase B (card UX §B2): extracts the displayable hostname (lowercased,
- * leading "www." stripped) for HTTP/HTTPS/external URLs. Returns undefined
- * for magnet URIs (no host concept) and for unparseable URL strings.
+ * Phase B (card UX §B2): extracts the displayable hostname (lowercased)
+ * for HTTP/HTTPS/external URLs. Returns undefined for magnet URIs (no host
+ * concept) and for unparseable URL strings.
  *
- * This is pure presentation metadata — the full URL is already exposed
- * via `url`. The helper exists so the card doesn't have to parse URLs
- * itself (server-side responsibility per the approved plan).
+ * The hostname is parsed from `new URL(url).hostname` — it is the ACTUAL
+ * URL hostname, never inferred from filename or release metadata. This is
+ * the §B3 "hosting/server identity where useful" requirement: the card
+ * shows the real hosting server so the user can distinguish two streams
+ * that look like the same release but live on different infrastructure.
+ *
+ * Leading "www." is NOT stripped. This keeps the display label consistent
+ * with `canonicalStreamKey` (which also does not strip www) — so two URLs
+ * that differ only in www prefix (www.x.com vs x.com) are shown as TWO
+ * distinct cards with TWO distinct labels, matching their treatment as
+ * two distinct streams. The `hostClassFor` ranking helper still strips
+ * www for matching against the KNOWN_HOSTS set, but that is a separate
+ * (internal) concern — the user-facing host label is the actual hostname.
+ *
+ * The full URL is already exposed via `url` — this field is just
+ * pre-parsed for display convenience, never a new disclosure.
  */
 function hostOf(url: string): string | undefined {
   if (url.startsWith('magnet:?')) return undefined;
   try {
-    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    const host = new URL(url).hostname.toLowerCase();
     return host || undefined;
   } catch {
     return undefined;
@@ -573,6 +586,7 @@ function canonicalUrlKey(url: string): string {
 // ---------------------------------------------------------------------------
 
 import type { DownloaderStreamEntry, DownloaderStreamKind } from './stream-normalize-downloader';
+import type { NormalizedStreamSubtitle } from './stream-normalize';
 
 /**
  * Phase 17 (task §1/§2/§3): a downloader stream view that preserves EVERY
@@ -609,16 +623,27 @@ export type DownloadStreamViewAll = {
   tag?: string;
   hostClass: DownloadHostClass;
   /**
-   * Phase B (card UX §B2): the lowercased hostname (with leading "www."
-   * stripped) of the stream URL, derived server-side. Used by the card to
+   * Phase B (card UX §B2): the lowercased hostname of the stream URL,
+   * derived server-side via `new URL(url).hostname`. Used by the card to
    * show hosting/server identity at a glance so the user can distinguish
    * two streams that look like the same release but live on different
    * hosting infrastructure (PixelDrain vs FSL vs CineDoze vs any other
    * host). For magnet URIs this is undefined (the host concept does not
-   * apply). The full URL is already exposed via `url` — this field is just
-   * pre-parsed for display convenience, never a new disclosure.
+   * apply). The full URL is already exposed via `url` — this field is
+   * just pre-parsed for display convenience, never a new disclosure.
+   *
+   * Leading "www." is NOT stripped — the displayed label is the actual
+   * hostname, consistent with `canonicalStreamKey`'s treatment of www
+   * vs non-www as different streams (they ARE different DNS records).
    */
   host?: string;
+  /**
+   * Phase B (§B2 subtitles): addon-provided subtitle tracks, shape-checked
+   * by the shared `normalizeSubtitleTracks` helper. Undefined when the
+   * addon did not supply a `subtitles` array on the stream entry. The
+   * subtitle URLs are NEVER fetched by Mavero (security boundary).
+   */
+  subtitles?: NormalizedStreamSubtitle[];
   /** Position inside the addon's raw stream list (stable tiebreaker). */
   index: number;
   /** Presentation rank — LOWER IS BETTER (never excludes). */
@@ -717,6 +742,7 @@ export function buildDownloadCandidatesAll(entries: DownloaderStreamEntry[]): Bu
       ...(entry.tag ? { tag: entry.tag } : {}),
       hostClass,
       ...(host ? { host } : {}),
+      ...(entry.subtitles?.length ? { subtitles: entry.subtitles } : {}),
       index: entry.index,
       score,
       confidence: confidenceFor(candidateForScore, score),

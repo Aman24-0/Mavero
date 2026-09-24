@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server } from 'lucide-svelte';
+  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions } from 'lucide-svelte';
 
   /**
    * MAVERO Downloader — Compact discovery surface (Phase 18).
@@ -54,6 +54,8 @@
     tag?: string;
     /** Phase B (card UX §B2): server-derived hostname for hosting/server identity display. */
     host?: string;
+    /** Phase B (§B2 subtitles): addon-supplied subtitle tracks (mirrored from the player normalizer). */
+    subtitles?: { url: string; language?: string; label?: string }[];
     confidence: 'high' | 'medium' | 'low';
   };
   type TabStatus = 'loading' | 'retrying' | 'loaded' | 'empty' | 'unavailable';
@@ -544,6 +546,12 @@
                       <span>{stream.host}</span>
                     </span>
                   {/if}
+                  {#if stream.subtitles?.length}
+                    <span class="mad-badge mad-badge-subtitles" title={`Subtitles: ${stream.subtitles.length} track${stream.subtitles.length === 1 ? '' : 's'}${stream.subtitles.some((t) => t.language) ? ` (${stream.subtitles.map((t) => t.language).filter(Boolean).join(', ')})` : ''}`}>
+                      <Captions size={10} aria-hidden="true" />
+                      <span>{stream.subtitles.length}</span>
+                    </span>
+                  {/if}
                 </div>
               </div>
               <!-- Phase 18 (task §7): ONLY Share. No Download button. -->
@@ -645,6 +653,7 @@
   .mad-badge-size { color: var(--ink); }
   .mad-badge-host { color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
   .mad-badge-host span { overflow: hidden; text-overflow: ellipsis; }
+  .mad-badge-subtitles { color: var(--ink-soft); }
   /* Phase 18 (task §16): compact Share button. */
   .mad-action { position: relative; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255, 255, 255, 0.03); cursor: pointer; text-decoration: none; flex: 0 0 auto; }
   .mad-action:hover, .mad-action:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
