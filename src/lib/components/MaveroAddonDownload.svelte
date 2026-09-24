@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check } from 'lucide-svelte';
+  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server } from 'lucide-svelte';
 
   /**
    * MAVERO Downloader — Compact discovery surface (Phase 18).
@@ -52,6 +52,8 @@
     streamType?: string;
     availability?: number;
     tag?: string;
+    /** Phase B (card UX §B2): server-derived hostname for hosting/server identity display. */
+    host?: string;
     confidence: 'high' | 'medium' | 'low';
   };
   type TabStatus = 'loading' | 'retrying' | 'loaded' | 'empty' | 'unavailable';
@@ -140,6 +142,56 @@
       stream.kind.toUpperCase(),
     ];
     return parts.filter((part): part is string => Boolean(part)).join(' · ');
+  }
+
+  /**
+   * Phase B (card UX §B2): structured-badge helpers. The card now renders
+   * each metadata dimension as its own pill (kind icon + quality + codec +
+   * container + audio + size + host) so the user can scan a list of links
+   * at a glance — comparable to Nuvio / Streamio-style source selectors in
+   * information density, without copying any proprietary markup. The old
+   * `streamLabel` text is preserved as the Share button's accessible
+   * label fallback (so screen readers still get a full description).
+   */
+  function kindIcon(kind: StreamView['kind']): typeof FileVideo {
+    switch (kind) {
+      case 'http': return FileVideo;
+      case 'https': return FileVideo;
+      case 'hls': return Radio;
+      case 'dash': return Radio;
+      case 'p2p': return Users;
+      case 'magnet': return Magnet;
+      default: return FileVideo;
+    }
+  }
+
+  function kindLabel(kind: StreamView['kind']): string {
+    switch (kind) {
+      case 'http': return 'HTTP';
+      case 'https': return 'HTTPS';
+      case 'hls': return 'HLS';
+      case 'dash': return 'DASH';
+      case 'p2p': return 'P2P';
+      case 'magnet': return 'MAGNET';
+      default: return kind.toUpperCase();
+    }
+  }
+
+  function qualityBadgeClass(quality: string): string {
+    switch (quality) {
+      case '4K': return 'mad-badge-quality mad-badge-4k';
+      case '1080p': return 'mad-badge-quality mad-badge-1080';
+      case '720p': return 'mad-badge-quality mad-badge-720';
+      case '480p': return 'mad-badge-quality mad-badge-480';
+      default: return 'mad-badge-quality mad-badge-auto';
+    }
+  }
+
+  function audioLabel(stream: StreamView): string | undefined {
+    if (stream.audio === 'multi') return 'Multi';
+    if (stream.audio === 'dual') return 'Dual';
+    if (stream.audioLanguages?.length) return stream.audioLanguages.slice(0, 3).join(',');
+    return undefined;
   }
 
   function streamDetail(stream: StreamView): string | undefined {
@@ -452,10 +504,47 @@
         <div class="mad-list" role="list" aria-label={`${activeTab.addonName} streams`}>
           {#each filteredStreams as stream, index (stream.url + '-' + index)}
             {@const key = `${activeTab.addonSlug}-${index}`}
-            <article class="mad-row" role="listitem">
+            {@const KindIcon = kindIcon(stream.kind)}
+            <article class="mad-row" role="listitem" aria-label={streamLabel(stream)}>
+              <!-- Phase B (card UX §B2): structured card layout. Kind icon +
+                   filename/title as the primary scannable identity; metadata
+                   badges below give quality/codec/container/audio/size/host
+                   at a glance. The card stays compact (one row + one badges
+                   row) so density is preserved. -->
               <div class="mad-row-main">
-                <span class="mad-row-label">{streamLabel(stream)}</span>
-                {#if streamDetail(stream)}<span class="mad-row-detail">{streamDetail(stream)}</span>{/if}
+                <div class="mad-row-header">
+                  <span class="mad-kind" title={kindLabel(stream.kind)} aria-hidden="true">
+                    <KindIcon size={13} />
+                  </span>
+                  {#if streamDetail(stream)}
+                    <span class="mad-row-detail">{streamDetail(stream)}</span>
+                  {:else}
+                    <span class="mad-row-detail mad-row-detail-fallback">{kindLabel(stream.kind)} · {stream.quality === 'auto' ? 'Auto' : stream.quality}</span>
+                  {/if}
+                </div>
+                <div class="mad-row-badges">
+                  <span class={qualityBadgeClass(stream.quality)}>{stream.quality === 'auto' ? 'Auto' : stream.quality}</span>
+                  {#if stream.codec && stream.codec !== 'unknown'}<span class="mad-badge mad-badge-codec">{stream.codec}</span>{/if}
+                  {#if stream.container}<span class="mad-badge mad-badge-container">{stream.container}</span>{/if}
+                  {#if audioLabel(stream)}
+                    <span class="mad-badge mad-badge-audio" title={stream.audioLanguages?.length ? `Audio: ${stream.audioLanguages.join(', ')}` : 'Audio'}>
+                      <Volume2 size={10} aria-hidden="true" />
+                      <span>{audioLabel(stream)}</span>
+                    </span>
+                  {/if}
+                  {#if formatSize(stream.sizeBytes)}
+                    <span class="mad-badge mad-badge-size" title="File size">
+                      <HardDrive size={10} aria-hidden="true" />
+                      <span>{formatSize(stream.sizeBytes)}</span>
+                    </span>
+                  {/if}
+                  {#if stream.host}
+                    <span class="mad-badge mad-badge-host" title={`Hosting server: ${stream.host}`}>
+                      <Server size={10} aria-hidden="true" />
+                      <span>{stream.host}</span>
+                    </span>
+                  {/if}
+                </div>
               </div>
               <!-- Phase 18 (task §7): ONLY Share. No Download button. -->
               <button
@@ -518,10 +607,44 @@
   .mad-list { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; overflow-y: auto; scrollbar-width: thin; min-height: 0; }
   .mad-list::-webkit-scrollbar { width: 3px; }
   .mad-list::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 2px; }
-  .mad-row { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.025); padding: 6px 8px; }
-  .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+  /* Phase B (card UX §B2): the row keeps the existing Phase 18 border + bg
+     contract so all prior tests still match (.mad-row, .mad-action,
+     .mad-action-share preserved). The internal structure gains a header
+     line (kind icon + filename/title) and a badges row (quality / codec /
+     container / audio / size / host). The row stays compact (no growth in
+     vertical footprint beyond what Phase 18 already used). */
+  .mad-row { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.025); padding: 6px 8px; transition: border-color 120ms ease, background 120ms ease; }
+  .mad-row:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.04); }
+  .mad-row:focus-within { border-color: var(--accent); }
+  .mad-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; min-width: 0; }
+  .mad-row-header { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .mad-kind { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); flex: 0 0 auto; }
+  /* mad-row-label kept for back-compat with any external selector — no longer rendered. */
   .mad-row-label { overflow: hidden; color: var(--ink); font-size: 0.64rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-  .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 0.54rem; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; }
+  .mad-row-detail { display: -webkit-box; overflow: hidden; color: var(--ink); font-size: 0.6rem; font-weight: 650; word-break: break-word; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; flex: 1 1 auto; min-width: 0; }
+  .mad-row-detail-fallback { color: var(--muted); font-weight: 600; }
+  /* Phase B (card UX §B2): badges row. Wraps on small screens so a stream
+     with many metadata badges never overflows the row horizontally — the
+     Share button stays pinned on the right. */
+  .mad-row-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; }
+  .mad-badge { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line); border-radius: 4px; background: rgba(255, 255, 255, 0.03); color: var(--ink-soft); padding: 1px 5px; font-size: 0.5rem; font-weight: 700; line-height: 1.4; white-space: nowrap; }
+  /* lucide-svelte icons render their <svg> as component children, so the
+     selector must be :global() to escape Svelte's CSS scoping. */
+  .mad-badge :global(svg) { flex: 0 0 auto; opacity: 0.85; }
+  .mad-kind :global(svg) { flex: 0 0 auto; }
+  /* Quality color coding uses existing tokens — no neon, no glow. */
+  .mad-badge-quality { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
+  .mad-badge-4k { color: var(--accent); }
+  .mad-badge-1080 { color: var(--ink); }
+  .mad-badge-720 { color: var(--ink-soft); }
+  .mad-badge-480 { color: var(--muted); }
+  .mad-badge-auto { color: var(--muted); }
+  .mad-badge-codec { color: var(--ink-soft); }
+  .mad-badge-container { color: var(--ink-soft); }
+  .mad-badge-audio { color: var(--ink-soft); }
+  .mad-badge-size { color: var(--ink); }
+  .mad-badge-host { color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+  .mad-badge-host span { overflow: hidden; text-overflow: ellipsis; }
   /* Phase 18 (task §16): compact Share button. */
   .mad-action { position: relative; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255, 255, 255, 0.03); cursor: pointer; text-decoration: none; flex: 0 0 auto; }
   .mad-action:hover, .mad-action:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
@@ -530,5 +653,10 @@
   .mad-action.failed { border-color: #d48a64; color: #d48a64; }
   .mad-action-share { color: var(--ink); }
   @keyframes mad-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row { transition: none; } }
+  /* Phase B (card UX §B2): on very narrow viewports (≤ 360px), allow the
+     host badge to drop off the badge row first so the more important
+     quality/codec/size metadata stays visible. The host is also in the
+     Share title and the stream URL, so it's not lost — just deprioritized. */
+  @media (max-width: 360px) { .mad-badge-host { display: none; } }
 </style>

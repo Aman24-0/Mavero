@@ -92,6 +92,16 @@ export type AddonDownloadStreamView = {
   streamType?: string;
   availability?: number;
   tag?: string;
+  /**
+   * Phase B (card UX §B2): the lowercased hostname (leading "www."
+   * stripped) of the stream URL, derived server-side. Used by the card to
+   * show hosting/server identity so the user can distinguish two streams
+   * that look like the same release but live on different hosting
+   * infrastructure (PixelDrain vs FSL vs CineDoze vs any other host).
+   * Undefined for magnet URIs (no host concept). The full URL is already
+   * exposed via `url` — this is pre-parsed for display convenience only.
+   */
+  host?: string;
   /** Metadata-completeness confidence — NEVER a playback guarantee. */
   confidence: 'high' | 'medium' | 'low';
 };
@@ -331,6 +341,7 @@ function toStreamViewAll(stream: DownloadStreamViewAll): AddonDownloadStreamView
     ...(stream.streamType ? { streamType: stream.streamType } : {}),
     ...(stream.availability !== undefined ? { availability: stream.availability } : {}),
     ...(stream.tag ? { tag: stream.tag } : {}),
+    ...(stream.host ? { host: stream.host } : {}),
     confidence: stream.confidence,
   };
 }

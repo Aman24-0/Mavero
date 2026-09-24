@@ -258,6 +258,25 @@ function hostClassFor(url: string): DownloadHostClass {
 }
 
 /**
+ * Phase B (card UX §B2): extracts the displayable hostname (lowercased,
+ * leading "www." stripped) for HTTP/HTTPS/external URLs. Returns undefined
+ * for magnet URIs (no host concept) and for unparseable URL strings.
+ *
+ * This is pure presentation metadata — the full URL is already exposed
+ * via `url`. The helper exists so the card doesn't have to parse URLs
+ * itself (server-side responsibility per the approved plan).
+ */
+function hostOf(url: string): string | undefined {
+  if (url.startsWith('magnet:?')) return undefined;
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    return host || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Normalized release identity text (for OPTIONAL dedup — see selectDownloadStreams).
  * Two providers serving the same release under different display names produce
  * the SAME release key. The stream NAME is excluded (display noise).
@@ -589,6 +608,17 @@ export type DownloadStreamViewAll = {
   availability?: number;
   tag?: string;
   hostClass: DownloadHostClass;
+  /**
+   * Phase B (card UX §B2): the lowercased hostname (with leading "www."
+   * stripped) of the stream URL, derived server-side. Used by the card to
+   * show hosting/server identity at a glance so the user can distinguish
+   * two streams that look like the same release but live on different
+   * hosting infrastructure (PixelDrain vs FSL vs CineDoze vs any other
+   * host). For magnet URIs this is undefined (the host concept does not
+   * apply). The full URL is already exposed via `url` — this field is just
+   * pre-parsed for display convenience, never a new disclosure.
+   */
+  host?: string;
   /** Position inside the addon's raw stream list (stable tiebreaker). */
   index: number;
   /** Presentation rank — LOWER IS BETTER (never excludes). */
@@ -640,6 +670,9 @@ export function buildDownloadCandidatesAll(entries: DownloaderStreamEntry[]): Bu
       filename: entry.filename,
     });
     const hostClass = hostClassFor(entry.url);
+    // Phase B (card UX §B2): derive the displayable hostname server-side
+    // so the card doesn't have to parse URLs (server-side responsibility).
+    const host = hostOf(entry.url);
     // Build a candidate shape for scoring (the score function reads quality/
     // codec/audio/size/protocol/hostClass — all of which are present here).
     const candidateForScore: DownloadStreamCandidate = {
@@ -683,6 +716,7 @@ export function buildDownloadCandidatesAll(entries: DownloaderStreamEntry[]): Bu
       ...(entry.availability !== undefined ? { availability: entry.availability } : {}),
       ...(entry.tag ? { tag: entry.tag } : {}),
       hostClass,
+      ...(host ? { host } : {}),
       index: entry.index,
       score,
       confidence: confidenceFor(candidateForScore, score),
@@ -694,16 +728,88 @@ export function buildDownloadCandidatesAll(entries: DownloaderStreamEntry[]): Bu
 }
 
 /**
- * Phase 17 (task §3): selects ALL discovery entries — NO truncation, NO
- * dedup (the same magnet URI offered twice stays as 2 entries — the user
- * can see both). The `max` parameter is accepted for back-compat but is
- * NEVER used to truncate.
+ * Phase B (duplicate-link / hosting-server handling): canonical stream
+ * identity for the per-addon discovery path. Two entries with the SAME
+ * canonical-stream-key are TRUE duplicates (the same stream offered twice
+ * by the addon) — only one survives. Two entries with DIFFERENT keys are
+ * DISTINCT streams — both survive, even if their release metadata
+ * (filename / title / quality / codec / size) is identical.
  *
- * True-duplicate dedup is intentionally DISABLED for the discovery path —
- * the goal is faithful parity with Stremio. If Stremio shows 15 entries,
- * MAVERO shows 15 entries (even if 2 are the same URL).
+ * The key is derived from the URL ONLY — never from release metadata. This
+ * is the safe direction required by the approved plan: "REMOVE USELESS
+ * DUPLICATES, NOT REMOVE USEFUL DIFFERENT HOST COPIES." Two streams that
+ * look identical but live on different hosting infrastructure (PixelDrain
+ * vs FSL vs CineDoze vs any other host) ALWAYS survive because their
+ * hostnames differ → their canonical-stream-keys differ.
+ *
+ * Per-kind key derivation:
+ *   * HTTP / HTTPS URL → scheme + lowercased host (default port stripped)
+ *     + pathname + FULL query string. The full query is kept (not
+ *     normalized) because we cannot safely tell a cache-buster token from
+ *     a meaningful file-id parameter without fetching the URL (forbidden
+ *     by the security boundary). Two URLs that differ only in a query
+ *     parameter are therefore treated as DISTINCT — this is the safe
+ *     default that never collapses a useful alternative.
+ *   * Magnet URI → the btih hash (lowercased). Two magnets with the same
+ *     btih are the SAME torrent regardless of tracker ordering or display
+ *     name; two magnets with different btih are DIFFERENT torrents.
+ *   * External URL → falls through to HTTP/HTTPS handling (or raw URL on
+ *     parse failure). External streams are hidden from the UI by Phase 18,
+ *     but they still pass through dedup so the addon chip count is stable.
+ *   * Anything unparseable → the raw URL string (last-resort identity;
+ *     identical raw strings still collapse to one).
+ */
+function canonicalStreamKey(url: string): string {
+  // Magnet:?xt=urn:btih:<HASH>&... — normalize by btih only.
+  if (url.startsWith('magnet:?')) {
+    const xtMatch = /xt=urn:btih:([a-z0-9]+)/i.exec(url);
+    if (xtMatch) return `magnet:btih:${xtMatch[1].toLowerCase()}`;
+    return url; // malformed magnet — fall back to raw string identity
+  }
+  try {
+    const parsed = new URL(url);
+    parsed.hostname = parsed.hostname.toLowerCase();
+    if ((parsed.protocol === 'https:' && parsed.port === '443') || (parsed.protocol === 'http:' && parsed.port === '80')) {
+      parsed.port = '';
+    }
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Phase B: selects ALL eligible discovery entries, ordered by presentation
+ * rank, with TRUE-DUPLICATE dedup applied. The `max` parameter is accepted
+ * for back-compat with existing callers but defaults to
+ * Number.MAX_SAFE_INTEGER and is NEVER used to truncate.
+ *
+ * Dedup contract (§B1 — duplicate-link / hosting-server handling):
+ *   * Two entries with the SAME canonical-stream-key (same HTTP/HTTPS URL
+ *     OR same magnet btih) → ONE survives (the higher-ranked one wins).
+ *   * Two entries with DIFFERENT canonical-stream-keys → BOTH survive,
+ *     even when their release metadata (filename / title / quality / codec
+ *     / size) is identical. This is the safe direction: useful different-
+ *     host copies are NEVER collapsed.
+ *
+ * The previous Phase 17 behavior (no dedup at all — "show what Stremio
+ * shows, even duplicates") is replaced by the more useful behavior above:
+ * the same stream offered twice by an addon no longer floods the UI, but
+ * genuinely different releases and different hosting servers stay
+ * available. The result is deterministic: identical input always produces
+ * an identical, ordered output.
  */
 export function selectDownloadStreamsAll(entries: DownloadStreamViewAll[], _max: number = MAX_DOWNLOAD_STREAMS_PER_ADDON): DownloadStreamViewAll[] {
-  // Already sorted by buildDownloadCandidatesAll. Return as-is — NO truncation.
-  return entries;
+  // Already sorted by buildDownloadCandidatesAll by (score, index). Walk in
+  // rank order and keep the FIRST occurrence of each canonical-stream-key.
+  // The higher-ranked entry wins on collision — never the lower-ranked one.
+  const seen = new Set<string>();
+  const deduped: DownloadStreamViewAll[] = [];
+  for (const entry of entries) {
+    const key = canonicalStreamKey(entry.url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(entry);
+  }
+  return deduped;
 }
