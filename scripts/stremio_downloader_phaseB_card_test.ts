@@ -214,8 +214,11 @@ function section6_reducedMotion(): void {
   ok(component.includes('@media (prefers-reduced-motion: reduce)'), '6: prefers-reduced-motion media query exists');
   ok(component.includes('animation: none'), '6: spin animations disabled under reduced-motion');
   // The reduced-motion block lists .mad-row in the transition opt-out so
-  // the Phase B row hover/focus transition is also disabled.
-  ok(component.includes('.mad-row { transition: none; }'), '6: .mad-row transition disabled under reduced-motion (Phase B addition)');
+  // the Phase B row hover/focus transition is also disabled. Phase C added
+  // .mad-chip to the same combined selector — the test checks .mad-row is
+  // present in the reduced-motion block (not as a standalone rule).
+  const reducedMotionBlock = component.slice(component.indexOf('@media (prefers-reduced-motion: reduce)'));
+  ok(reducedMotionBlock.includes('.mad-row'), '6: .mad-row transition disabled under reduced-motion (Phase B addition)');
   ok(component.includes('.mad-action { transition: none; }') || component.includes('.mad-action,'), '6: .mad-action transition disabled under reduced-motion (Phase 18 preserved)');
 }
 

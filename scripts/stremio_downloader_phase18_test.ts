@@ -239,18 +239,20 @@ async function section14(): Promise<void> {
 
 function section15to18(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
+  // Phase C: filter state is now a single `filters: DownloaderFilters` object.
   // 15: Language filter.
-  ok(component.includes('filterLanguage'), '15: filterLanguage state exists');
-  ok(component.includes('detectedLanguages'), '15: language list is dynamic');
+  ok(component.includes('filters.language'), '15: filters.language state exists');
+  ok(component.includes('languageOptions(') && component.includes('currentLanguageOptions'), '15: language list is dynamic');
   // 16: Type filter.
-  ok(component.includes('filterType'), '16: filterType state exists');
-  ok(component.includes('value="http"') && component.includes('value="hls"'), '16: Type filter has HTTP/HLS');
+  ok(component.includes('filters.type'), '16: filters.type state exists');
+  ok(component.includes('mad-chip'), '16: Type filter uses Mavero-themed chips (not native <select>)');
+  ok(component.includes('typeOptions(') && component.includes('currentTypeOptions'), '16: Type options dynamically derived (includes HTTP/HLS when present)');
   // 17: Size filter.
-  ok(component.includes('filterSize'), '17: filterSize state exists');
-  ok(component.includes('under1') && component.includes('over20'), '17: Size filter has under1 + over20');
+  ok(component.includes('filters.size'), '17: filters.size state exists');
+  ok(component.includes('sizeOptions(') && component.includes('currentSizeOptions'), '17: Size options dynamically derived (includes under1/over20 when present)');
   // 18: Quality filter.
-  ok(component.includes('filterQuality'), '18: filterQuality state exists');
-  ok(component.includes('1080p') && component.includes('4K'), '18: Quality filter has 1080p + 4K');
+  ok(component.includes('filters.quality'), '18: filters.quality state exists');
+  ok(component.includes('qualityOptions(') && component.includes('currentQualityOptions'), '18: Quality options dynamically derived (includes 1080p/4K when present)');
 }
 
 // ---------------------------------------------------------------------------
@@ -259,8 +261,9 @@ function section15to18(): void {
 
 function section19(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('applyFilters'), '19: applyFilters is a pure client-side function');
-  ok(component.includes('filteredStreams = applyFilters('), '19: filteredStreams is derived (no refetch)');
+  // Phase C: filter logic lives in the shared pure helper `filterStreams`.
+  ok(component.includes('filterStreams'), '19: filterStreams imported from shared pure helper (no refetch)');
+  ok(component.includes('filteredStreams = filterStreams('), '19: filteredStreams is derived from filterStreams (no refetch)');
 }
 
 // ---------------------------------------------------------------------------
@@ -361,10 +364,13 @@ function section27(): void {
 
 function section28(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  const filtersIndex = component.indexOf('mad-filters');
+  // Phase C: the filter container is now `.mad-filter-group` (chip rows
+  // replaced the native <select> dropdowns). The old `.mad-filters` CSS
+  // rule is kept for back-compat but is no longer in the markup.
+  const filtersIndex = component.indexOf('mad-filter-group') !== -1 ? component.indexOf('mad-filter-group') : component.indexOf('mad-filters');
   const tabsIndex = component.indexOf('mad-tabs');
-  ok(filtersIndex !== -1 && tabsIndex !== -1, '28: both mad-filters and mad-tabs exist');
-  ok(filtersIndex < tabsIndex, `28: mad-filters comes BEFORE mad-tabs (filters=${filtersIndex}, tabs=${tabsIndex})`);
+  ok(filtersIndex !== -1 && tabsIndex !== -1, '28: both filter-group and mad-tabs exist');
+  ok(filtersIndex < tabsIndex, `28: filter-group comes BEFORE mad-tabs (filters=${filtersIndex}, tabs=${tabsIndex})`);
 }
 
 // ---------------------------------------------------------------------------

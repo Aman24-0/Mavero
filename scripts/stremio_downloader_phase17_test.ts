@@ -237,34 +237,45 @@ function sectionQRS(): void {
 
 function sectionT(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // Type filter
-  ok(component.includes('filterType'), 'T: filterType state exists');
-  ok(component.includes('value="all"'), 'T: Type filter has an "all" option');
-  ok(component.includes('value="http"') && component.includes('value="hls"') && component.includes('value="dash"'), 'T: Type filter includes HTTP/HLS/DASH');
-  ok(component.includes('value="p2p"') && component.includes('value="magnet"'), 'T: Type filter includes P2P/Magnet');
+  // Phase C: filter state is now a single `filters: DownloaderFilters` object
+  // (type/quality/size/language dimensions) imported from the shared helper.
+  ok(component.includes('DownloaderFilters'), 'T: DownloaderFilters type imported from shared helper');
+  ok(component.includes('filters.type'), 'T: filters.type state exists');
+  ok(component.includes('typeOptions(') && component.includes('currentTypeOptions'), 'T: Type options are DYNAMICALLY derived from the stream collection');
+  // Phase C: chips replace native <select> — verify chip-based UI.
+  ok(component.includes('mad-chip'), 'T: Type filter uses Mavero-themed chips (not native <select>)');
+  ok(component.includes("'http'") || component.includes("'https'") || component.includes("'hls'"), 'T: Type filter kind classification includes http/https/hls');
   // Phase 18 (task §5): External is NOT a Type filter option.
-  ok(!component.includes('value="external"'), 'T (Phase 18): External is NOT a Type filter option');
+  ok(!component.includes("value=\"external\""), 'T (Phase 18): External is NOT a Type filter option');
 }
 
 function sectionU(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('filterSize'), 'U: filterSize state exists');
-  ok(component.includes('under1') && component.includes('under2') && component.includes('under5'), 'U: Size filter includes under1/under2/under5 values');
-  ok(component.includes('over20'), 'U: Size filter includes over20 value');
+  ok(component.includes('filters.size'), 'U: filters.size state exists');
+  ok(component.includes('sizeOptions(') && component.includes('currentSizeOptions'), 'U: Size options are DYNAMICALLY derived');
+  // Phase C: size filter values live in the shared helper module.
+  const helperSource = read('src/lib/shared/downloader-filters.ts');
+  ok(helperSource.includes("'under1'") && helperSource.includes("'under2'") && helperSource.includes("'under5'"), 'U: Size filter includes under1/under2/under5 values in the shared helper');
+  ok(helperSource.includes("'over20'"), 'U: Size filter includes over20 value in the shared helper');
 }
 
 function sectionV(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('filterQuality'), 'V: filterQuality state exists');
-  ok(component.includes('360p') && component.includes('480p') && component.includes('720p') && component.includes('1080p'), 'V: Quality filter includes 360/480/720/1080p');
-  ok(component.includes('2K') && component.includes('4K'), 'V: Quality filter includes 2K/4K');
+  ok(component.includes('filters.quality'), 'V: filters.quality state exists');
+  ok(component.includes('qualityOptions(') && component.includes('currentQualityOptions'), 'V: Quality options are DYNAMICALLY derived');
+  // Phase C: quality values are dynamic (only present qualities shown). The
+  // shared helper recognizes 4K/1080p/720p/480p/auto as the standard order.
+  const helperSource = read('src/lib/shared/downloader-filters.ts');
+  ok(helperSource.includes("'4K'") && helperSource.includes("'1080p'") && helperSource.includes("'720p'") && helperSource.includes("'480p'"), 'V: Quality filter recognizes 4K/1080p/720p/480p in the shared helper');
 }
 
 function sectionW(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  ok(component.includes('filterLanguage'), 'W: filterLanguage state exists');
-  ok(component.includes('detectedLanguages'), 'W: language list is DYNAMICALLY generated from loaded streams');
-  ok(component.includes('value="all"'), 'W: Language filter has an "all" option');
+  ok(component.includes('filters.language'), 'W: filters.language state exists');
+  ok(component.includes('languageOptions(') && component.includes('currentLanguageOptions'), 'W: language list is DYNAMICALLY generated from loaded streams');
+  // Phase C: language options include Dual Audio + Multi Audio (semantic, not exact-label).
+  const helperSource = read('src/lib/shared/downloader-filters.ts');
+  ok(helperSource.includes("'dual'") && helperSource.includes("'multi'"), 'W: Language filter includes Dual Audio + Multi Audio options in the shared helper');
 }
 
 // ---------------------------------------------------------------------------
@@ -273,9 +284,11 @@ function sectionW(): void {
 
 function sectionX(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // The filters are pure client-side state — they never call loadAddon/loadTabs.
-  ok(component.includes('applyFilters'), 'X: applyFilters is a pure client-side function');
-  ok(component.includes('filteredStreams = applyFilters('), 'X: filteredStreams is derived from applyFilters (no refetch)');
+  // Phase C: the filter logic lives in the shared pure helper `filterStreams`.
+  // The component imports it — it never re-implements matching. Filters are
+  // pure client-side state — they never call loadAddon/loadTabs.
+  ok(component.includes('filterStreams'), 'X: filterStreams is imported from the shared pure helper');
+  ok(component.includes('filteredStreams = filterStreams('), 'X: filteredStreams is derived from filterStreams (no refetch)');
   // The addon chip count uses tab.streams.length (raw), NOT filteredStreams.length.
   ok(component.includes('tab.streams.length'), 'X: the addon chip uses tab.streams.length (RAW fetched count, not filtered)');
 }

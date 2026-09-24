@@ -1,6 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions } from 'lucide-svelte';
+  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX } from 'lucide-svelte';
+  import {
+    filterStreams,
+    typeOptions,
+    qualityOptions,
+    sizeOptions,
+    languageOptions,
+    activeFilterChips,
+    clearFilterDimension,
+    hasActiveFilters,
+    NO_FILTERS,
+    type DownloaderFilters,
+    type FilterableStream,
+  } from '$lib/shared/downloader-filters';
+  import type { AudioClass } from '$lib/shared/stream-selection';
 
   /**
    * MAVERO Downloader — Compact discovery surface (Phase 18).
@@ -40,7 +54,7 @@
     kind: 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
     quality: string;
     codec: string;
-    audio: string;
+    audio: AudioClass;
     audioLanguages?: string[];
     container?: string;
     filename?: string;
@@ -81,50 +95,56 @@
   let shareState: 'sharing' | 'shared' | 'failed' | '' = '';
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // Phase 18 (task §4/§12): FOUR filter controls.
-  // Phase 18 (task §5): Type filter does NOT include "External".
-  let filterType: 'all' | StreamView['kind'] = 'all';
-  let filterSize: 'all' | 'under1' | 'under2' | 'under3' | 'under5' | 'under10' | 'under20' | 'over20' = 'all';
-  let filterQuality: 'all' | '360p' | '480p' | '720p' | '1080p' | '2K' | '4K' = 'all';
-  let filterLanguage: string = 'all';
+  // Phase C: filter state is a single object (DownloaderFilters). The four
+  // dimensions (type/quality/size/language) default to 'all'. The filter
+  // LOGIC lives in the shared pure helper `filterStreams` so the same rules
+  // are used by the tests — the component never re-implements matching.
+  let filters: DownloaderFilters = { ...NO_FILTERS };
 
   $: activeTab = tabs.find((tab) => tab.addonId === activeTabId) ?? null;
   $: activeStreams = activeTab?.streams ?? [];
-  $: filteredStreams = applyFilters(activeStreams, filterType, filterSize, filterQuality, filterLanguage);
+  // Phase C: filters operate on the FULL active-tab stream collection (never
+  // a pre-truncated subset). Changing a filter recomputes the view from the
+  // already-resolved collection — NO addon refetch. filterStreams is generic
+  // over T so the full StreamView type (with codec/transport/confidence) is
+  // preserved through the filter — the card still gets every field it needs.
+  $: filteredStreams = filterStreams(activeStreams, filters);
 
-  // Phase 18 (task §12 FILTER 4): dynamically generate the language list.
-  $: allLoadedStreams = tabs.flatMap((tab) => tab.streams);
-  $: detectedLanguages = Array.from(new Set(allLoadedStreams.flatMap((s) => s.audioLanguages ?? []))).sort();
+  // Phase C: dynamic option derivation — only show options actually present
+  // in the current active-tab stream collection, with counts from the FULL
+  // collection (not just the visible cards). These helpers only read the
+  // filterable fields, so the cast to FilterableStream[] is safe.
+  $: currentTypeOptions = typeOptions(activeStreams as FilterableStream[]);
+  $: currentQualityOptions = qualityOptions(activeStreams as FilterableStream[]);
+  $: currentSizeOptions = sizeOptions(activeStreams as FilterableStream[]);
+  $: currentLanguageOptions = languageOptions(activeStreams as FilterableStream[]);
 
-  function applyFilters(streams: StreamView[], fType: typeof filterType, fSize: typeof filterSize, fQuality: typeof filterQuality, fLang: string): StreamView[] {
-    return streams.filter((stream) => {
-      if (fType !== 'all' && stream.kind !== fType) return false;
-      if (fSize !== 'all') {
-        const bytes = stream.sizeBytes;
-        if (bytes === undefined) return false;
-        const gb = bytes / 1024 ** 3;
-        if (fSize === 'under1' && gb >= 1) return false;
-        if (fSize === 'under2' && gb >= 2) return false;
-        if (fSize === 'under3' && gb >= 3) return false;
-        if (fSize === 'under5' && gb >= 5) return false;
-        if (fSize === 'under10' && gb >= 10) return false;
-        if (fSize === 'under20' && gb >= 20) return false;
-        if (fSize === 'over20' && gb < 20) return false;
-      }
-      if (fQuality !== 'all') {
-        const q = stream.quality;
-        if (fQuality === '2K') {
-          if (q !== '4K') return false;
-        } else if (q !== fQuality) {
-          return false;
-        }
-      }
-      if (fLang !== 'all') {
-        const langs = stream.audioLanguages ?? [];
-        if (!langs.includes(fLang)) return false;
-      }
-      return true;
-    });
+  // Phase C: active-filter chips + Clear. When filters are active, show
+  // removable chips for each active dimension + a single Clear action.
+  $: activeChips = activeFilterChips(filters);
+  $: anyFiltersActive = hasActiveFilters(filters);
+
+  // Phase C: when the active tab changes, RESET filters to 'all'. The filter
+  // state is per-tab (different addons have different stream types). This
+  // prevents stale filter state from hiding all streams when the user
+  // switches tabs.
+  function resetFilters(): void {
+    filters = { ...NO_FILTERS };
+  }
+
+  function clearAllFilters(): void {
+    resetFilters();
+  }
+
+  function removeFilter(dimension: 'type' | 'quality' | 'size' | 'language'): void {
+    filters = clearFilterDimension(filters, dimension);
+  }
+
+  // When the user switches tabs, reset the filters so stale state doesn't
+  // hide all streams in the new tab.
+  function selectTab(id: string): void {
+    if (id !== activeTabId) resetFilters();
+    activeTabId = id;
   }
 
   function formatSize(bytes?: number): string | undefined {
@@ -306,10 +326,6 @@
     void load();
   }
 
-  function selectTab(id: string): void {
-    activeTabId = id;
-  }
-
   async function handleShare(stream: StreamView, addonName: string, key: string): Promise<void> {
     if (shareKey === key && shareState === 'sharing') return;
     const url = stream.url; // the EXACT ORIGINAL URI (HTTP/HTTPS/magnet/P2P)
@@ -412,44 +428,111 @@
   {:else if tabs.length === 0}
     <div class="mad-state" role="status"><Info size={16} /><span>No Stremio addons enabled.</span></div>
   {:else}
-    <!-- Phase 18 (task §4): FILTER ROW — one horizontally scrollable row,
-         ABOVE the addon chips. Order: Type · Size · Quality · Language. -->
-    <div class="mad-filters">
-      <select class="mad-filter" bind:value={filterType} aria-label="Filter by type">
-        <option value="all">Type</option>
-        <option value="http">HTTP</option>
-        <option value="https">HTTPS</option>
-        <option value="hls">HLS</option>
-        <option value="dash">DASH</option>
-        <option value="p2p">P2P</option>
-        <option value="magnet">Magnet</option>
-      </select>
-      <select class="mad-filter" bind:value={filterSize} aria-label="Filter by size">
-        <option value="all">Size</option>
-        <option value="under1">&lt; 1 GB</option>
-        <option value="under2">&lt; 2 GB</option>
-        <option value="under3">&lt; 3 GB</option>
-        <option value="under5">&lt; 5 GB</option>
-        <option value="under10">&lt; 10 GB</option>
-        <option value="under20">&lt; 20 GB</option>
-        <option value="over20">&gt; 20 GB</option>
-      </select>
-      <select class="mad-filter" bind:value={filterQuality} aria-label="Filter by quality">
-        <option value="all">Quality</option>
-        <option value="360p">360p</option>
-        <option value="480p">480p</option>
-        <option value="720p">720p</option>
-        <option value="1080p">1080p</option>
-        <option value="2K">2K</option>
-        <option value="4K">4K</option>
-      </select>
-      <select class="mad-filter" bind:value={filterLanguage} aria-label="Filter by language">
-        <option value="all">Language</option>
-        {#each detectedLanguages as lang}
-          <option value={lang}>{lang}</option>
+    <!-- Phase C: DYNAMIC FILTER CHIP ROWS — replace the four native <select>
+         dropdowns with horizontally scrollable Mavero-themed chip rows. Each
+         row shows only options actually present in the current active-tab
+         stream collection, with counts from the FULL collection (not just the
+         visible cards). No zero-result options. No browser-default white
+         dropdown problem. -->
+    <div class="mad-filter-group" role="group" aria-label="Stream filters">
+      <!-- Type chips: horizontally scrollable, only present kinds, with counts. -->
+      <div class="mad-chips" role="group" aria-label="Filter by type">
+        {#each currentTypeOptions as opt}
+          <button
+            class="mad-chip"
+            class:active={filters.type === opt.value}
+            type="button"
+            aria-pressed={filters.type === opt.value}
+            aria-label={`${opt.label} (${opt.count})`}
+            title={`${opt.label} (${opt.count})`}
+            onclick={() => (filters = { ...filters, type: filters.type === opt.value ? 'all' : opt.value })}
+          >
+            <span class="mad-chip-label">{opt.label}</span>
+            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
+          </button>
         {/each}
-      </select>
+      </div>
+      <!-- Quality chips: horizontally scrollable, only present qualities, with counts. -->
+      <div class="mad-chips" role="group" aria-label="Filter by quality">
+        {#each currentQualityOptions as opt}
+          <button
+            class="mad-chip"
+            class:active={filters.quality === opt.value}
+            type="button"
+            aria-pressed={filters.quality === opt.value}
+            aria-label={`${opt.label} (${opt.count})`}
+            title={`${opt.label} (${opt.count})`}
+            onclick={() => (filters = { ...filters, quality: filters.quality === opt.value ? 'all' : opt.value })}
+          >
+            <span class="mad-chip-label">{opt.label}</span>
+            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
+          </button>
+        {/each}
+      </div>
+      <!-- Size chips: horizontally scrollable, only present size ranges, with counts. -->
+      <div class="mad-chips" role="group" aria-label="Filter by size">
+        {#each currentSizeOptions as opt}
+          <button
+            class="mad-chip"
+            class:active={filters.size === opt.value}
+            type="button"
+            aria-pressed={filters.size === opt.value}
+            aria-label={`${opt.label} (${opt.count})`}
+            title={`${opt.label} (${opt.count})`}
+            onclick={() => (filters = { ...filters, size: filters.size === opt.value ? 'all' : opt.value })}
+          >
+            <span class="mad-chip-label">{opt.label}</span>
+            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
+          </button>
+        {/each}
+      </div>
+      <!-- Language chips: horizontally scrollable, detected languages + Dual Audio + Multi Audio. -->
+      <div class="mad-chips" role="group" aria-label="Filter by language">
+        {#each currentLanguageOptions as opt}
+          <button
+            class="mad-chip"
+            class:active={filters.language === opt.value}
+            type="button"
+            aria-pressed={filters.language === opt.value}
+            aria-label={`${opt.label} (${opt.count})`}
+            title={`${opt.label} (${opt.count})`}
+            onclick={() => (filters = { ...filters, language: filters.language === opt.value ? 'all' : opt.value })}
+          >
+            <span class="mad-chip-label">{opt.label}</span>
+            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
+          </button>
+        {/each}
+      </div>
     </div>
+
+    <!-- Phase C: ACTIVE FILTER CHIPS + CLEAR. When filters are active, show
+         removable chips for each active dimension + a single Clear action.
+         This makes the filter state visually obvious and keyboard-accessible. -->
+    {#if anyFiltersActive}
+      <div class="mad-active-filters" role="status" aria-label="Active filters">
+        {#each activeChips as chip (chip.dimension)}
+          <button
+            class="mad-active-chip"
+            type="button"
+            aria-label={`Remove ${chip.label} filter`}
+            title={`Remove ${chip.label} filter`}
+            onclick={() => removeFilter(chip.dimension)}
+          >
+            <span class="mad-active-chip-label">{chip.label}</span>
+            <X size={10} aria-hidden="true" />
+          </button>
+        {/each}
+        <button
+          class="mad-clear"
+          type="button"
+          aria-label="Clear all filters"
+          title="Clear all filters"
+          onclick={clearAllFilters}
+        >
+          Clear
+        </button>
+      </div>
+    {/if}
 
     <!-- Phase 18 (task §4): addon chips come AFTER the filter row. -->
     <div class="mad-tabs" role="tablist" aria-label="Addons">
@@ -493,6 +576,19 @@
           <Info size={14} />
           <span>{activeTab.addonName} returned zero streams.</span>
           <button type="button" class="mad-retry" onclick={() => retryTab(activeTab)}><RotateCw size={11} /> Retry</button>
+        </div>
+      {:else if filteredStreams.length === 0}
+        <!-- Phase C: FILTERED EMPTY STATE — distinct from addon failure. The
+             addon DID return streams (activeStreams.length > 0) but the active
+             filters produce zero matches. Show a "No matching links" message
+             with a Clear-filters action so the user can recover directly.
+             This is NOT an addon failure — it's a valid-data + filter mismatch. -->
+        <div class="mad-state mad-state-filtered-empty" role="status">
+          <SearchX size={14} aria-hidden="true" />
+          <span>No matching links</span>
+          {#if anyFiltersActive}
+            <button type="button" class="mad-retry" onclick={clearAllFilters}><RotateCw size={11} /> Clear filters</button>
+          {/if}
         </div>
       {:else}
         <!-- Phase 18 (task §13): "X shown" indicator. -->
@@ -593,12 +689,37 @@
   .mad-retry { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 4px 10px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; }
   .mad-retry:hover { border-color: var(--accent); color: var(--accent); }
   .mad-spin { display: grid; place-items: center; animation: mad-spin 0.9s linear infinite; }
-  /* Phase 19 (task §11): filter row occupies the FULL available width.
-     The four filters use flex: 1 so they distribute evenly — no blank right-side area. */
-  .mad-filters { display: flex; gap: 4px; width: 100%; }
-  .mad-filter { flex: 1 1 0; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 4px 4px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; text-align: center; }
+  /* Phase C: Mavero-themed chip rows replace the four native <select>
+     dropdowns. Each row is horizontally scrollable (overflow-x: auto) so
+     many options don't cause horizontal overflow on narrow screens. The
+     chips use the same design tokens as the existing .mad-tab addon chips
+     (border, accent-soft when active, etc.) — no new color system. */
+  .mad-filters { display: flex; gap: 4px; width: 100%; } /* kept for back-compat */
+  .mad-filter { flex: 1 1 0; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.02); color: var(--ink); padding: 4px 4px; font: inherit; font-size: 0.56rem; font-weight: 600; cursor: pointer; text-align: center; } /* kept for back-compat */
   .mad-filter:hover { border-color: var(--line-strong); }
   .mad-filter:focus-visible { border-color: var(--accent); outline: none; }
+  .mad-filter-group { display: flex; flex-direction: column; gap: 4px; }
+  .mad-chips { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; min-height: 26px; }
+  .mad-chips::-webkit-scrollbar { display: none; }
+  .mad-chip { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 3px 8px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
+  .mad-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+  .mad-chip:focus-visible { border-color: var(--accent); outline: none; }
+  .mad-chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .mad-chip-label { line-height: 1.3; }
+  .mad-chip-count { display: inline-flex; min-width: 14px; height: 14px; align-items: center; justify-content: center; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); padding: 0 4px; font-size: 0.48rem; font-weight: 700; }
+  .mad-chip.active .mad-chip-count { background: var(--accent); color: var(--ink); }
+  /* Phase C: active-filter chips + Clear. */
+  .mad-active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .mad-active-chip { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--ink); padding: 2px 6px; font: inherit; font-size: 0.52rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  .mad-active-chip:hover { border-color: var(--accent); background: var(--accent); color: var(--ink); }
+  .mad-active-chip:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .mad-active-chip-label { line-height: 1.3; }
+  .mad-clear { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--ink-soft); padding: 2px 8px; font: inherit; font-size: 0.52rem; font-weight: 700; cursor: pointer; white-space: nowrap; margin-left: auto; }
+  .mad-clear:hover { border-color: var(--accent); color: var(--accent); }
+  .mad-clear:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  /* Phase C: filtered-empty state — visually distinct from addon failure. */
+  .mad-state-filtered-empty { color: var(--muted); }
+  .mad-state-filtered-empty .mad-retry { margin-left: 4px; }
   .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 1px; scrollbar-width: none; }
   .mad-tabs::-webkit-scrollbar { display: none; }
   .mad-tab { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.02); color: var(--ink-soft); padding: 4px 9px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; }
@@ -662,7 +783,7 @@
   .mad-action.failed { border-color: #d48a64; color: #d48a64; }
   .mad-action-share { color: var(--ink); }
   @keyframes mad-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-chip { transition: none; } }
   /* Phase B (card UX §B2): on very narrow viewports (≤ 360px), allow the
      host badge to drop off the badge row first so the more important
      quality/codec/size metadata stays visible. The host is also in the
