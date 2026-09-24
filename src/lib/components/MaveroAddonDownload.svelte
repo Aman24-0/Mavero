@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX, ChevronDown, Download, Play } from 'lucide-svelte';
+  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, Captions, X, SearchX, ChevronDown, Download, Play, SlidersHorizontal, HelpCircle } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import {
     filterStreams,
@@ -23,6 +23,7 @@
     playActionFor,
     type CapabilityStream,
   } from '$lib/shared/stream-actions';
+  import { linkTypeLabel, linkTypeCategory, type DownloadLinkType } from '$lib/shared/download-link-types';
   import type { AudioClass } from '$lib/shared/stream-selection';
 
   /**
@@ -165,6 +166,25 @@
     filters = { ...filters, size: key as DownloaderFilters['size'] };
     sizeSheetOpen = false;
   }
+
+  // Phase E V2: Info sheet + Filters sheet (stream-first IA).
+  let infoSheetOpen = false;
+  function openInfoSheet(): void { infoSheetOpen = true; }
+  function closeInfoSheet(): void { infoSheetOpen = false; }
+
+  let filterSheetOpen = false;
+  function openFilterSheet(): void { filterSheetOpen = true; }
+  function closeFilterSheet(): void { filterSheetOpen = false; }
+
+  // Phase E V2: transport label for each stream kind (HTTPS · Direct, HLS · Stream, etc.)
+  function transportLabel(kind: StreamView['kind']): string {
+    const label = linkTypeLabel(kind as DownloadLinkType);
+    const category = linkTypeCategory(kind as DownloadLinkType);
+    return `${label} · ${category}`;
+  }
+
+  // Phase E V2: Type filter visibility — only show Type when >1 type is available.
+  $: showTypeFilter = currentTypeOptions.length > 2; // >2 because "All" is always first
 
   // Phase C: when the active tab changes, RESET filters to 'all'. The filter
   // state is per-tab (different addons have different stream types). This
@@ -454,23 +474,12 @@
   <!-- Phase 18 (task §1): NO redundant heading. The parent DownloadSheet
        already shows "MAVERO / DOWNLOAD" + the movie title. -->
 
-  <!-- Phase 18 (task §2): compact 2-line instruction block. -->
+  <!-- Phase E V2: compact instruction + Info button (stream-first IA). -->
   <div class="mad-instructions">
-    <p>Share the link to download manager to download</p>
-    <p>Share the link to stream supported player to Play.</p>
-  </div>
-
-  <!-- Phase 18 (task §3): suggested apps in ONE compact horizontal row. -->
-  <!-- Phase 19 (task §10): labels "1DM+ Downloader" + "MPV Player" with REAL icons. -->
-  <div class="mad-apps">
-    <a class="mad-app" href="https://play.google.com/store/apps/details?id=idm.internet.download.manager" target="_blank" rel="noopener noreferrer" aria-label="1DM+ Downloader on Google Play">
-      <img src="/icons/1DM.png" alt="" class="mad-app-icon" width="24" height="24" loading="lazy" />
-      <span class="mad-app-name">1DM+ Downloader</span>
-    </a>
-    <a class="mad-app" href="https://play.google.com/store/apps/details?id=is.xyz.mpv" target="_blank" rel="noopener noreferrer" aria-label="MPV Player on Google Play">
-      <img src="/icons/MPV.png" alt="" class="mad-app-icon" width="24" height="24" loading="lazy" />
-      <span class="mad-app-name">MPV Player</span>
-    </a>
+    <p>Use Download, Play or Share on any link.</p>
+    <button type="button" class="mad-info-btn" onclick={openInfoSheet} aria-label="More information" title="More information">
+      <HelpCircle size={14} />
+    </button>
   </div>
 
   {#if tabsLoading}
@@ -484,89 +493,49 @@
   {:else if tabs.length === 0}
     <div class="mad-state" role="status"><Info size={16} /><span>No Stremio addons enabled.</span></div>
   {:else}
-    <!-- Phase C: DYNAMIC FILTER CHIP ROWS — replace the four native <select>
-         dropdowns with horizontally scrollable Mavero-themed chip rows. Each
-         row shows only options actually present in the current active-tab
-         stream collection, with counts from the FULL collection (not just the
-         visible cards). No zero-result options. No browser-default white
-         dropdown problem. -->
-    <div class="mad-filter-group" role="group" aria-label="Stream filters">
-      <!-- Type chips: horizontally scrollable, only present kinds, with counts. -->
-      <div class="mad-chips" role="group" aria-label="Filter by type">
-        {#each currentTypeOptions as opt}
-          <button
-            class="mad-chip"
-            class:active={filters.type === opt.value}
-            type="button"
-            aria-pressed={filters.type === opt.value}
-            aria-label={`${opt.label} (${opt.count})`}
-            title={`${opt.label} (${opt.count})`}
-            onclick={() => (filters = { ...filters, type: filters.type === opt.value ? 'all' : opt.value })}
-          >
-            <span class="mad-chip-label">{opt.label}</span>
-            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
-          </button>
-        {/each}
-      </div>
-      <!-- Quality chips: horizontally scrollable, only present qualities, with counts. -->
-      <div class="mad-chips" role="group" aria-label="Filter by quality">
-        {#each currentQualityOptions as opt}
-          <button
-            class="mad-chip"
-            class:active={filters.quality === opt.value}
-            type="button"
-            aria-pressed={filters.quality === opt.value}
-            aria-label={`${opt.label} (${opt.count})`}
-            title={`${opt.label} (${opt.count})`}
-            onclick={() => (filters = { ...filters, quality: filters.quality === opt.value ? 'all' : opt.value })}
-          >
-            <span class="mad-chip-label">{opt.label}</span>
-            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
-          </button>
-        {/each}
-      </div>
-      <!-- Phase C corrective: Size uses a SelectionSheet popover (per the
-           approved plan STEP 4: "compact Mavero-themed popover/sheet").
-           The trigger button shows the current filter label + a chevron.
-           The sheet opens below with all dynamically-derived size options +
-           counts. Reuses the existing SelectionSheet primitive — no new
-           component framework. -->
-      <button
-        class="mad-size-trigger"
-        class:active={filters.size !== 'all'}
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={sizeSheetOpen}
-        aria-label={`Filter by size${filters.size !== 'all' ? `: ${sizeTriggerLabel}` : ''}`}
-        title="Filter by size"
-        onclick={openSizeSheet}
-      >
-        <HardDrive size={11} aria-hidden="true" />
-        <span class="mad-size-trigger-label">{sizeTriggerLabel}</span>
-        <ChevronDown size={10} aria-hidden="true" class="mad-size-trigger-chevron" />
-      </button>
-      <!-- Language chips: horizontally scrollable, detected languages + Dual Audio + Multi Audio. -->
-      <div class="mad-chips" role="group" aria-label="Filter by language">
-        {#each currentLanguageOptions as opt}
-          <button
-            class="mad-chip"
-            class:active={filters.language === opt.value}
-            type="button"
-            aria-pressed={filters.language === opt.value}
-            aria-label={`${opt.label} (${opt.count})`}
-            title={`${opt.label} (${opt.count})`}
-            onclick={() => (filters = { ...filters, language: filters.language === opt.value ? 'all' : opt.value })}
-          >
-            <span class="mad-chip-label">{opt.label}</span>
-            <span class="mad-chip-count" aria-hidden="true">{opt.count}</span>
-          </button>
-        {/each}
-      </div>
+    <!-- Phase E V2: addon chips come FIRST (stream-first IA). -->
+    <div class="mad-tabs" role="tablist" aria-label="Addons">
+      {#each tabs as tab (tab.addonId)}
+        <button
+          class="mad-tab"
+          class:active={tab.addonId === activeTabId}
+          type="button"
+          role="tab"
+          aria-selected={tab.addonId === activeTabId}
+          onclick={() => selectTab(tab.addonId)}
+        >
+          <span class="mad-tab-name">{tab.addonName}</span>
+          {#if tab.status === 'loading' || tab.status === 'retrying'}
+            <span class="mad-tab-state loading" role="status"><span class="mad-tab-spin"><Loader2 size={9} /></span></span>
+          {:else if tab.status === 'unavailable'}
+            <span class="mad-tab-state failed" role="status">Failed</span>
+          {:else if tab.status === 'loaded' && tab.streams.length > 0}
+            <span class="mad-tab-state ok" role="status">{tab.streams.length}</span>
+          {:else}
+            <span class="mad-tab-state" role="status">0</span>
+          {/if}
+        </button>
+      {/each}
     </div>
 
-    <!-- Phase C: ACTIVE FILTER CHIPS + CLEAR. When filters are active, show
-         removable chips for each active dimension + a single Clear action.
-         This makes the filter state visually obvious and keyboard-accessible. -->
+    <!-- Phase E V2: compact filter bar — "X links + Filters" (stream-first). -->
+    {#if activeTab && activeStreams.length > 0}
+      <div class="mad-filter-bar">
+        <span class="mad-filter-count">
+          {#if filteredStreams.length === activeStreams.length}
+            {activeStreams.length} links
+          {:else}
+            {filteredStreams.length} of {activeStreams.length}
+          {/if}
+        </span>
+        <button type="button" class="mad-filter-trigger" onclick={openFilterSheet} aria-label="Open filters" title="Open filters">
+          <SlidersHorizontal size={13} />
+          <span>Filters</span>
+        </button>
+      </div>
+    {/if}
+
+    <!-- Phase E V2: active filter chips (only when filters are active). -->
     {#if anyFiltersActive}
       <div class="mad-active-filters" role="status" aria-label="Active filters">
         {#each activeChips as chip (chip.dimension)}
@@ -592,31 +561,6 @@
         </button>
       </div>
     {/if}
-
-    <!-- Phase 18 (task §4): addon chips come AFTER the filter row. -->
-    <div class="mad-tabs" role="tablist" aria-label="Addons">
-      {#each tabs as tab (tab.addonId)}
-        <button
-          class="mad-tab"
-          class:active={tab.addonId === activeTabId}
-          type="button"
-          role="tab"
-          aria-selected={tab.addonId === activeTabId}
-          onclick={() => selectTab(tab.addonId)}
-        >
-          <span class="mad-tab-name">{tab.addonName}</span>
-          {#if tab.status === 'loading' || tab.status === 'retrying'}
-            <span class="mad-tab-state loading" role="status"><span class="mad-tab-spin"><Loader2 size={9} /></span></span>
-          {:else if tab.status === 'unavailable'}
-            <span class="mad-tab-state failed" role="status">Failed</span>
-          {:else if tab.status === 'loaded' && tab.streams.length > 0}
-            <span class="mad-tab-state ok" role="status">{tab.streams.length}</span>
-          {:else}
-            <span class="mad-tab-state" role="status">0</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
 
     {#if activeTab}
       {#if activeTab.status === 'loading' || activeTab.status === 'retrying'}
@@ -680,6 +624,7 @@
                   {:else}
                     <span class="mad-row-detail mad-row-detail-fallback">{kindLabel(stream.kind)} · {stream.quality === 'auto' ? 'Auto' : stream.quality}</span>
                   {/if}
+                  <span class="mad-transport" title={transportLabel(stream.kind)}>{transportLabel(stream.kind)}</span>
                 </div>
                 <div class="mad-row-badges">
                   <span class={qualityBadgeClass(stream.quality)}>{stream.quality === 'auto' ? 'Auto' : stream.quality}</span>
@@ -832,6 +777,57 @@
   onSelect={selectSize}
 />
 
+<!-- Phase E V2: Info sheet — recommended apps moved from the main surface
+     into a Mavero-styled sheet. Opens when the Info button is clicked.
+     Reuses the existing SelectionSheet primitive. -->
+<SelectionSheet
+  open={infoSheetOpen}
+  eyebrow="MAVERO / Info"
+  title="Recommended Apps"
+  options={[
+    { key: '1dm', label: '1DM+ Downloader', description: 'Download manager', icon: '1DM' },
+    { key: 'mpv', label: 'MPV Player', description: 'Video player', icon: 'MPV' },
+  ]}
+  selected=""
+  onClose={closeInfoSheet}
+  onSelect={(key) => {
+    const urls: Record<string, string> = {
+      '1dm': 'https://play.google.com/store/apps/details?id=idm.internet.download.manager',
+      'mpv': 'https://play.google.com/store/apps/details?id=is.xyz.mpv',
+    };
+    const url = urls[key];
+    if (url && typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer');
+    infoSheetOpen = false;
+  }}
+/>
+
+<!-- Phase E V2: Filters sheet — all 4 filter dimensions in one sheet.
+     Type is only shown when >1 type is available (Phase E V2 §9).
+     Reuses SelectionSheet for Size; Type/Quality/Language use inline chips
+     within the sheet's options list. The sheet replaces the permanent
+     4-row filter stack on the main surface. -->
+<SelectionSheet
+  open={filterSheetOpen}
+  eyebrow="MAVERO / Filter"
+  title="Filters"
+  options={[
+    ...currentTypeOptions.map((o) => ({ key: `type:${o.value}`, label: `${o.label}`, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
+    ...currentQualityOptions.map((o) => ({ key: `quality:${o.value}`, label: o.label, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
+    ...currentLanguageOptions.map((o) => ({ key: `lang:${o.value}`, label: o.label, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
+    ...currentSizeOptions.map((o) => ({ key: `size:${o.value}`, label: o.label, description: `${o.count} stream${o.count === 1 ? '' : 's'}` })),
+  ]}
+  selected=""
+  onClose={closeFilterSheet}
+  onSelect={(key) => {
+    const [dim, val] = key.split(':');
+    if (dim === 'type') filters = { ...filters, type: filters.type === val ? 'all' : val as DownloaderFilters['type'] };
+    else if (dim === 'quality') filters = { ...filters, quality: filters.quality === val ? 'all' : val };
+    else if (dim === 'lang') filters = { ...filters, language: filters.language === val ? 'all' : val };
+    else if (dim === 'size') filters = { ...filters, size: filters.size === val ? 'all' : val as DownloaderFilters['size'] };
+    filterSheetOpen = false;
+  }}
+/>
+
 <style>
   /* Phase E: Mavero visual redesign — dark cyberpunk surfaces, restrained
      accent treatments, strong hierarchy, readable contrast. All hardcoded
@@ -839,8 +835,10 @@
   .mad { display: flex; flex-direction: column; gap: 8px; min-height: 260px; color: var(--ink); }
 
   /* Instructions — compact info banner with Mavero surface + accent border. */
-  .mad-instructions { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: var(--radius-sm); background: var(--color-surface); }
-  .mad-instructions p { margin: 0; color: var(--muted); font-size: 0.56rem; line-height: 1.4; }
+  .mad-instructions { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: var(--radius-sm); background: var(--color-surface); }
+  .mad-instructions p { margin: 0; color: var(--muted); font-size: 0.56rem; line-height: 1.4; flex: 1 1 auto; }
+  .mad-info-btn { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); cursor: pointer; flex: 0 0 auto; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+  .mad-info-btn:hover, .mad-info-btn:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
 
   /* Suggested apps — Mavero surface cards. */
   .mad-apps { display: flex; gap: 6px; }
@@ -896,6 +894,14 @@
   /* Filtered-empty state. */
   .mad-state-filtered-empty { color: var(--muted); }
   .mad-state-filtered-empty .mad-retry { margin-left: 4px; }
+
+  /* Phase E V2: compact filter bar — "X links + Filters" (stream-first IA). */
+  .mad-filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px; }
+  .mad-filter-trigger { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 4px 10px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+  .mad-filter-trigger:hover, .mad-filter-trigger:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+
+  /* Phase E V2: transport label on cards (HTTPS · Direct, HLS · Stream, etc.) */
+  .mad-transport { display: inline-flex; align-items: center; border: 1px solid var(--color-secondary-soft); border-radius: 4px; background: var(--color-secondary-soft); color: var(--accent-2); padding: 1px 5px; font-size: 0.48rem; font-weight: 700; white-space: nowrap; flex: 0 0 auto; }
 
   /* Addon tabs — horizontally scrollable pills with status. */
   .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }

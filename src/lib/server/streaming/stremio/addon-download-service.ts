@@ -8,6 +8,7 @@ import { loadEnabledAddons } from './stream-resolver';
 import { planAddonStreamRequest, stremioStreamTypeFor } from './stream-ids';
 import { fetchStremioStreamResponse, STREAM_MAX_BYTES } from './stream-fetch';
 import { normalizeStremioStreamResponseForDownloader, type DownloaderStreamKind } from './stream-normalize-downloader';
+import { getLinkTypesConfig, isLinkTypeAllowed, type DownloadLinkType } from '$lib/shared/download-link-types';
 import { buildDownloadCandidatesAll, selectDownloadStreamsAll, parseRuntimeSeconds, MAX_DOWNLOAD_STREAMS_PER_ADDON, type DownloadRuntimeContext, type DownloadCodec, type DownloadQuality, type DownloadSkipReason, type DownloadStreamViewAll } from './download-selection';
 import { StreamServiceError, asStreamServiceError, type StreamErrorCode } from './stream-errors';
 
@@ -476,11 +477,19 @@ async function resolveAddonOnce(
     // externalUrl/externalUris entries as kind='external' (for diagnostics),
     // but the UI must NOT show them. Filter them out BEFORE building the view
     // so the addon chip count reflects NON-EXTERNAL streams only.
-    const nonExternalEntries = normalized.entries.filter((e) => e.kind !== 'external');
-    const { entries, kindCounts, malformed } = buildDownloadCandidatesAll(nonExternalEntries);
+    // Phase E V2: also apply admin-controlled link-type visibility. The
+    // addon's capabilities.downloaderLinkTypes config controls which kinds
+    // are exposed. Default (absent config): ALL non-external types allowed.
+    const linkTypesConfig = getLinkTypesConfig(addon.capabilities);
+    const visibleEntries = normalized.entries.filter((e) => {
+      if (e.kind === 'external') return false; // Phase 18: external always hidden
+      return isLinkTypeAllowed(e.kind as DownloadLinkType, linkTypesConfig);
+    });
+    const externalCount = normalized.entries.length - normalized.entries.filter((e) => e.kind !== 'external').length;
+    const hiddenByAdminCount = normalized.entries.filter((e) => e.kind !== 'external' && !isLinkTypeAllowed(e.kind as DownloadLinkType, linkTypesConfig)).length;
+    const { entries, kindCounts, malformed } = buildDownloadCandidatesAll(visibleEntries);
     const selected = selectDownloadStreamsAll(entries, MAX_DOWNLOAD_STREAMS_PER_ADDON);
-    const externalCount = normalized.entries.length - nonExternalEntries.length;
-    const diagnostics = diagnosticsOfAll(normalized.entries.length, normalized.malformed, kindCounts, selected.length, malformed, externalCount);
+    const diagnostics = diagnosticsOfAll(normalized.entries.length, normalized.malformed, kindCounts, selected.length, malformed, externalCount + hiddenByAdminCount);
     const kindSummary = Object.entries(kindCounts).filter(([, count]) => count > 0).map(([kind, count]) => `${kind}:${count}`).join(',') || 'none';
     console.info(
       `[AddonDownloader] resolved addon=${addon.slug} idProperty=${plan.idProperty} videoId=${plan.videoId} attempt=${attempt} raw=${diagnostics.raw} external=${externalCount} malformed=${diagnostics.malformed} kinds=${kindSummary} selected=${diagnostics.selected}`,

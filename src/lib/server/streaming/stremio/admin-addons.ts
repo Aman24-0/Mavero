@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '$lib/server/supabase/database.types';
+import type { Database, Json } from '$lib/server/supabase/database.types';
 import { mapAddonRow, mapAddonToInsert, type StreamingAddonRow } from '$lib/server/streaming/addons';
 import type { StreamingAddon } from '$lib/shared/streaming-addons';
 import { validateAddonManifestUrl } from '$lib/server/streaming/addon-validation';
@@ -261,6 +261,36 @@ export async function setAddonEnabled(client: StreamingClient, id: unknown, enab
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new StreamingValidationError('Addon not found.');
+}
+
+/**
+ * Phase E V2: saves the downloader link-types configuration for one addon.
+ * The config is stored in the `capabilities` jsonb column under the key
+ * `downloaderLinkTypes`. Existing capabilities are preserved (merged).
+ */
+export async function setAddonLinkTypes(
+  client: StreamingClient,
+  id: unknown,
+  linkTypes: Record<string, boolean>,
+): Promise<void> {
+  const addonId = assertAddonId(id);
+  // Read the current capabilities, merge the new linkTypes, write back.
+  const { data: existing, error: readError } = await client
+    .from('streaming_addons')
+    .select('capabilities')
+    .eq('id', addonId)
+    .maybeSingle();
+  if (readError) throw readError;
+  if (!existing) throw new StreamingValidationError('Addon not found.');
+  const caps = (existing.capabilities && typeof existing.capabilities === 'object' && !Array.isArray(existing.capabilities))
+    ? { ...(existing.capabilities as Record<string, unknown>) }
+    : {};
+  caps.downloaderLinkTypes = linkTypes;
+  const { error: updateError } = await client
+    .from('streaming_addons')
+    .update({ capabilities: caps as Json })
+    .eq('id', addonId);
+  if (updateError) throw updateError;
 }
 
 /**

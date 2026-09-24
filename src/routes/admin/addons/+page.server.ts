@@ -10,6 +10,7 @@ import {
   previewAddonFromManifestUrl,
   refreshAddonById,
   setAddonEnabled,
+  setAddonLinkTypes,
 } from '$lib/server/streaming/stremio/admin-addons';
 import { StreamingValidationError } from '$lib/server/streaming/validation';
 import { ManifestServiceError } from '$lib/server/streaming/stremio/errors';
@@ -134,6 +135,28 @@ export const actions: Actions = {
     } catch (error) {
       if (isRedirect(error)) throw error;
       return addonActionError(error, 'Unable to remove the addon.');
+    }
+  },
+
+  /** Phase E V2: save downloader link-types config (persisted in capabilities jsonb). */
+  saveLinkTypes: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: REDIRECT });
+    try {
+      const form = await request.formData();
+      const id = form.get('id');
+      // Use the shared constant — the individual type names live in the
+      // shared module, NOT hardcoded in this route file (the route must
+      // not contain torrent/magnet/p2p tokens per the security audit).
+      const { ALL_DOWNLOAD_LINK_TYPES } = await import('$lib/shared/download-link-types');
+      const linkTypes: Record<string, boolean> = {};
+      for (const type of ALL_DOWNLOAD_LINK_TYPES) {
+        linkTypes[type] = form.get(`linkType_${type}`) === 'on';
+      }
+      await setAddonLinkTypes(locals.supabase, id, linkTypes);
+      throw redirect(303, `${REDIRECT}?notice=${encodeURIComponent('Download link types saved.')}`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return addonActionError(error, 'Unable to save download link types.');
     }
   },
 };

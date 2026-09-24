@@ -398,34 +398,46 @@ function section_sourceContract(): void {
   ok(component.includes('mad-active-chip'), 'SOURCE: component has removable active-filter chips');
   ok(component.includes('mad-clear'), 'SOURCE: component has a Clear button');
   ok(component.includes('clearAllFilters'), 'SOURCE: component wires clearAllFilters');
-  // Accessibility: chips have aria-pressed for selected state.
-  ok(component.includes('aria-pressed='), 'SOURCE: filter chips have aria-pressed (accessible selected state)');
-  ok(component.includes('aria-label='), 'SOURCE: filter chips have aria-label');
+  // Phase E V2: the permanent chip rows were moved to a SelectionSheet.
+  // The aria-pressed attribute is no longer on the main surface — the
+  // SelectionSheet uses aria-selected for its options. Check for the
+  // filter-trigger button + aria-label instead.
+  ok(component.includes('mad-filter-trigger'), 'SOURCE: filter trigger button exists (stream-first IA)');
+  ok(component.includes('aria-label="Open filters"'), 'SOURCE: filter trigger has aria-label');
+  // The SelectionSheet instances exist for filters + size + info.
+  ok(component.includes('filterSheetOpen'), 'SOURCE: filterSheetOpen state exists (Filters sheet)');
+  ok(component.includes('infoSheetOpen'), 'SOURCE: infoSheetOpen state exists (Info sheet)');
+  ok(component.includes('aria-label='), 'SOURCE: filter elements have aria-label');
   // The filter state resets when switching tabs.
   ok(component.includes('resetFilters'), 'SOURCE: component resets filters on tab switch');
   // Phase C corrective: Size uses a SelectionSheet popover (NOT a chip row).
   // Type, Quality, and Language remain chip rows.
   ok(component.includes('SelectionSheet'), 'SOURCE: component imports SelectionSheet for the Size filter popover');
+  // Phase E V2: the Size filter is now inside the Filters SelectionSheet
+  // (not a separate trigger button on the main surface). The sizeSheetOpen
+  // state + sizeSheetOptions still exist (the Filters sheet uses them).
   ok(component.includes('sizeSheetOpen'), 'SOURCE: component has sizeSheetOpen state for the Size popover');
   ok(component.includes('sizeSheetOptions'), 'SOURCE: component derives sizeSheetOptions from the dynamic size collection');
-  ok(component.includes('<SelectionSheet'), 'SOURCE: component renders a <SelectionSheet> instance for Size');
-  ok(component.includes('mad-size-trigger'), 'SOURCE: component has a mad-size-trigger button that opens the Size sheet');
-  ok(component.includes('aria-haspopup="dialog"'), 'SOURCE: Size trigger has aria-haspopup=dialog (accessible popover semantics)');
-  ok(component.includes('aria-expanded={sizeSheetOpen}'), 'SOURCE: Size trigger has aria-expanded (reflects open state)');
-  ok(component.includes('selectSize'), 'SOURCE: component wires selectSize handler (sets filters.size + closes sheet)');
-  // Size is NOT a chip row (it's a popover trigger) — verify the Size trigger
-  // button exists with the popover class, not the chip class. We don't slice
-  // the section (slicing between aria-labels is fragile because the Language
-  // div's class attribute precedes its aria-label). Instead, verify the Size
-  // trigger + SelectionSheet exist, and that the Size trigger uses
-  // mad-size-trigger (not mad-chip).
-  ok(component.includes('class="mad-size-trigger"'), 'SOURCE: Size trigger uses mad-size-trigger class (popover trigger, not a chip)');
-  // Count mad-chips divs — should be 3 (Type + Quality + Language), NOT 4
-  // (Size is now a popover, not a chip row).
-  const chipsDivCount = (component.match(/<div class="mad-chips"/g) ?? []).length;
-  ok(chipsDivCount === 3, `SOURCE: exactly 3 mad-chips rows (Type+Quality+Language) — Size is a popover (got ${chipsDivCount})`);
-  // Type, Quality, Language remain chip rows.
-  ok(component.includes('mad-chips'), 'SOURCE: Type/Quality/Language still use mad-chips (chip rows preserved)');
+  // The SelectionSheet for Size is still rendered.
+  ok(component.includes('open={sizeSheetOpen}'), 'SOURCE: Size SelectionSheet instance exists');
+  // The Filters sheet contains the Size options alongside Type/Quality/Language.
+  ok(component.includes('filterSheetOpen'), 'SOURCE: Filters sheet state exists (replaces permanent filter rows)');
+  // Type, Quality, Language remain in the Filters sheet (not on the main surface).
+  ok(component.includes('mad-filter-trigger'), 'SOURCE: compact filter trigger button on the main surface (stream-first IA)');
+  // Phase E V2: all filter rows (including Size) moved to the Filters
+  // SelectionSheet. The main surface has NO permanent chip rows — only the
+  // compact filter trigger button. Check that the component has the
+  // Filters sheet instance + Info button.
+  ok(component.includes('open={filterSheetOpen}'), 'SOURCE: Filters SelectionSheet instance exists');
+  ok(component.includes('open={infoSheetOpen}'), 'SOURCE: Info SelectionSheet instance exists');
+  ok(component.includes('mad-info-btn'), 'SOURCE: Info button exists on the main surface');
+  ok(component.includes('transportLabel'), 'SOURCE: transportLabel helper exists (card transport/type visibility)');
+  ok(component.includes('mad-transport'), 'SOURCE: mad-transport CSS class exists (transport label on cards)');
+  // Type, Quality, Language, Size are all inside the Filters sheet (not on the main surface).
+  ok(component.includes('currentTypeOptions'), 'SOURCE: typeOptions still derived (used by the Filters sheet)');
+  ok(component.includes('currentQualityOptions'), 'SOURCE: qualityOptions still derived');
+  ok(component.includes('currentLanguageOptions'), 'SOURCE: languageOptions still derived');
+  ok(component.includes('currentSizeOptions'), 'SOURCE: sizeOptions still derived');
 }
 
 // ---------------------------------------------------------------------------

@@ -369,13 +369,14 @@ function section27(): void {
 
 function section28(): void {
   const component = read('src/lib/components/MaveroAddonDownload.svelte');
-  // Phase C: the filter container is now `.mad-filter-group` (chip rows
-  // replaced the native <select> dropdowns). The old `.mad-filters` CSS
-  // rule is kept for back-compat but is no longer in the markup.
-  const filtersIndex = component.indexOf('mad-filter-group') !== -1 ? component.indexOf('mad-filter-group') : component.indexOf('mad-filters');
+  // Phase E V2: the IA is now stream-first — addon tabs come BEFORE filters.
+  // The filter-group was moved to a SelectionSheet (no longer on the main surface).
+  // Check that addon tabs come before the filter bar.
   const tabsIndex = component.indexOf('mad-tabs');
-  ok(filtersIndex !== -1 && tabsIndex !== -1, '28: both filter-group and mad-tabs exist');
-  ok(filtersIndex < tabsIndex, `28: filter-group comes BEFORE mad-tabs (filters=${filtersIndex}, tabs=${tabsIndex})`);
+  const filterBarIndex = component.indexOf('mad-filter-bar');
+  ok(tabsIndex !== -1, '28: mad-tabs exists');
+  ok(filterBarIndex !== -1, '28: mad-filter-bar exists (stream-first IA)');
+  ok(tabsIndex < filterBarIndex, `28: addon tabs come BEFORE filter bar (stream-first IA) (tabs=${tabsIndex}, filter=${filterBarIndex})`);
 }
 
 // ---------------------------------------------------------------------------

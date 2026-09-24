@@ -743,7 +743,7 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
 {
   const routeSource = readRepoFile('src/routes/admin/addons/+page.server.ts');
   ok(routeSource.includes("import { requireAdmin } from '$lib/server/streaming/admin-auth'"), 'L: admin route imports the shared requireAdmin gate');
-  ok(countOccurrences(routeSource, 'await requireAdmin(') === 7, 'L: requireAdmin runs on the load AND all six mutations (7 call sites)');
+  ok(countOccurrences(routeSource, 'await requireAdmin(') === 8, 'L: requireAdmin runs on the load AND all seven mutations (8 call sites)');
   for (const action of ['previewAddon', 'confirmAddon', 'setEnabled', 'refreshAddon', 'moveAddon', 'deleteAddon']) {
     ok(routeSource.includes(`${action}:`), `L: action ${action} exists and is gated`);
   }

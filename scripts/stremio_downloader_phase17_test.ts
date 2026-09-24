@@ -411,8 +411,8 @@ function sectionAD(): void {
   ok(!component.includes('>MAVERO Downloader<'), 'AD (Phase 18): the MAVERO Downloader heading is REMOVED from inner content');
   ok(!component.includes('>Available links<') && !component.includes('Available links</span>'), 'AD: "Available links" is REMOVED');
   // Phase 18 (task §2): new compact instructions.
-  ok(component.includes('Share the link to download manager to download'), 'AD (Phase 18): instruction 1 present (new wording)');
-  ok(component.includes('Share the link to stream supported player to Play'), 'AD (Phase 18): instruction 2 present (new wording)');
+  // Phase E V2: instruction text changed to stream-first wording.
+  ok(component.includes('Use Download, Play or Share on any link'), 'AD (Phase E V2): instruction present (stream-first wording)');
   // Phase 18 (task §3): suggested apps in ONE compact row.
   ok(component.includes('mad-apps'), 'AD (Phase 18): the mad-apps container exists (one row)');
   ok(component.includes('idm.internet.download.manager'), 'AD: 1DM Play Store link present');
