@@ -115,6 +115,12 @@ function fakeClient(captured: StreamingAddonUpdate[]) {
     limit(_count: number) {
       return Promise.resolve({ data: staleTargets, error: null });
     },
+    maybeSingle() {
+      // Phase E V2: return no existing capabilities (simulates a fresh addon
+      // with no admin config). The buildSuccessfulManifestUpdate function
+      // handles this gracefully (existingCapabilities = undefined).
+      return Promise.resolve({ data: null, error: null });
+    },
   };
   const client = { from(table: string) { assert.equal(table, 'streaming_addons'); return builder; } };
   return client as unknown as SupabaseClient<Database>;

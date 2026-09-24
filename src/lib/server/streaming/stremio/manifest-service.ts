@@ -86,9 +86,23 @@ export async function fetchNormalizedManifest(rawUrl: string, deps: ManifestSync
  * (spec §9–§10): metadata refreshed from the manifest, status `active`,
  * health marked successful, `last_error` cleared. Admin-owned columns are
  * never included.
+ *
+ * Phase E V2: the `capabilities` object is MERGED with the existing row's
+ * admin-owned keys (currently `downloaderLinkTypes`). This ensures admin
+ * link-type configuration survives manifest refresh. The caller must pass
+ * the existing capabilities so we can preserve admin-owned fields.
  */
-export function buildSuccessfulManifestUpdate(manifest: NormalizedStremioManifest, now: string): StreamingAddonUpdate {
+export function buildSuccessfulManifestUpdate(manifest: NormalizedStremioManifest, now: string, existingCapabilities?: Record<string, unknown> | null): StreamingAddonUpdate {
   const capabilities = getManifestCapabilities(manifest);
+  const manifestCaps = persistableCapabilities(manifest, now);
+  // Phase E V2: preserve admin-owned keys that are NOT manifest-derived.
+  // Currently: downloaderLinkTypes (set by the admin link-type config UI).
+  if (existingCapabilities && typeof existingCapabilities === 'object' && !Array.isArray(existingCapabilities)) {
+    const existing = existingCapabilities as Record<string, unknown>;
+    if (existing.downloaderLinkTypes !== undefined) {
+      manifestCaps.downloaderLinkTypes = existing.downloaderLinkTypes;
+    }
+  }
   return {
     name: manifest.name,
     description: manifest.description ?? null,
@@ -98,7 +112,7 @@ export function buildSuccessfulManifestUpdate(manifest: NormalizedStremioManifes
     supported_types: capabilities.supportedTypes,
     id_prefixes: capabilities.supportedIdPrefixes,
     resources: persistableResourceNames(manifest),
-    capabilities: persistableCapabilities(manifest, now) as StreamingAddonUpdate['capabilities'],
+    capabilities: manifestCaps as StreamingAddonUpdate['capabilities'],
     status: 'active',
     last_checked_at: now,
     last_success_at: now,
@@ -154,7 +168,15 @@ export async function syncAddonManifest(client: StreamingClient, target: AddonMa
   const now = (deps.now ?? defaultNowIso)();
   try {
     const { manifest, finalUrl } = await fetchNormalizedManifest(target.manifest_url, deps);
-    const update = buildSuccessfulManifestUpdate(manifest, now);
+    // Phase E V2: read the existing capabilities so admin-owned keys
+    // (downloaderLinkTypes) survive the manifest refresh.
+    const { data: existingRow } = await client
+      .from('streaming_addons')
+      .select('capabilities')
+      .eq('id', target.id)
+      .maybeSingle();
+    const existingCaps = existingRow?.capabilities;
+    const update = buildSuccessfulManifestUpdate(manifest, now, existingCaps as Record<string, unknown> | null);
     await persistAddonManifestUpdate(client, target.id, update);
     return { ok: true, manifest, finalUrl, update };
   } catch (error) {

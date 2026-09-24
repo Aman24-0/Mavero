@@ -24,6 +24,7 @@
     type CapabilityStream,
   } from '$lib/shared/stream-actions';
   import { linkTypeLabel, linkTypeCategory, type DownloadLinkType } from '$lib/shared/download-link-types';
+  import { selectPresentationWindow, showMoreBatch, type PresentableStream } from '$lib/shared/presentation-window';
   import type { AudioClass } from '$lib/shared/stream-selection';
 
   /**
@@ -185,6 +186,21 @@
 
   // Phase E V2: Type filter visibility — only show Type when >1 type is available.
   $: showTypeFilter = currentTypeOptions.length > 2; // >2 because "All" is always first
+
+  // Phase E V2: presentation window / Show More.
+  // The filtered streams are split into an initial window (best HTTPS per
+  // quality) + remaining streams. Show More reveals the next batch.
+  $: presentationResult = selectPresentationWindow(filteredStreams as PresentableStream[]);
+  let visibleStreams: typeof filteredStreams = presentationResult.initial as typeof filteredStreams;
+  let remainingStreams: typeof filteredStreams = presentationResult.remaining as typeof filteredStreams;
+  // Reset visible/remaining when filters or tab change.
+  $: { presentationResult; visibleStreams = presentationResult.initial as typeof filteredStreams; remainingStreams = presentationResult.remaining as typeof filteredStreams; }
+
+  function handleShowMore(): void {
+    const next = showMoreBatch(visibleStreams, remainingStreams);
+    visibleStreams = next.visible;
+    remainingStreams = next.remaining;
+  }
 
   // Phase C: when the active tab changes, RESET filters to 'all'. The filter
   // state is per-tab (different addons have different stream types). This
@@ -594,16 +610,11 @@
           {/if}
         </div>
       {:else}
-        <!-- Phase 18 (task §13): "X shown" indicator. -->
-        <div class="mad-filter-count">
-          {#if filteredStreams.length === activeStreams.length}
-            {activeStreams.length} links
-          {:else}
-            {filteredStreams.length} of {activeStreams.length}
-          {/if}
-        </div>
+        <!-- Phase E V2: the count is already shown in the filter bar above.
+             No duplicate count here — the stream list starts immediately.
+             Uses visibleStreams (the presentation window) instead of filteredStreams. -->
         <div class="mad-list" role="list" aria-label={`${activeTab.addonName} streams`}>
-          {#each filteredStreams as stream, index (stream.url + '-' + index)}
+          {#each visibleStreams as stream, index (stream.url + '-' + index)}
             {@const key = `${activeTab.addonSlug}-${index}`}
             {@const KindIcon = kindIcon(stream.kind)}
             {@const dlAction = downloadAttr(stream)}
@@ -756,6 +767,15 @@
             </article>
           {/each}
         </div>
+        <!-- Phase E V2: Show More + "Showing X of Y" indicator. -->
+        {#if remainingStreams.length > 0}
+          <div class="mad-show-more">
+            <span class="mad-showing-count">Showing {visibleStreams.length} of {filteredStreams.length}</span>
+            <button type="button" class="mad-show-more-btn" onclick={handleShowMore} aria-label="Show more streams">
+              Show more ({remainingStreams.length} remaining)
+            </button>
+          </div>
+        {/if}
       {/if}
     {/if}
   {/if}
@@ -779,14 +799,15 @@
 
 <!-- Phase E V2: Info sheet — recommended apps moved from the main surface
      into a Mavero-styled sheet. Opens when the Info button is clicked.
+     Uses the EXISTING repository app icon assets (/icons/1DM.png + /icons/MPV.png).
      Reuses the existing SelectionSheet primitive. -->
 <SelectionSheet
   open={infoSheetOpen}
   eyebrow="MAVERO / Info"
   title="Recommended Apps"
   options={[
-    { key: '1dm', label: '1DM+ Downloader', description: 'Download manager', icon: '1DM' },
-    { key: 'mpv', label: 'MPV Player', description: 'Video player', icon: 'MPV' },
+    { key: '1dm', label: '1DM+ Downloader', description: 'Download manager', image: '/icons/1DM.png' },
+    { key: 'mpv', label: 'MPV Player', description: 'Video player', image: '/icons/MPV.png' },
   ]}
   selected=""
   onClose={closeInfoSheet}
@@ -902,6 +923,12 @@
 
   /* Phase E V2: transport label on cards (HTTPS · Direct, HLS · Stream, etc.) */
   .mad-transport { display: inline-flex; align-items: center; border: 1px solid var(--color-secondary-soft); border-radius: 4px; background: var(--color-secondary-soft); color: var(--accent-2); padding: 1px 5px; font-size: 0.48rem; font-weight: 700; white-space: nowrap; flex: 0 0 auto; }
+
+  /* Phase E V2: Show More + Showing X of Y. */
+  .mad-show-more { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; }
+  .mad-showing-count { color: var(--muted); font-size: 0.52rem; font-weight: 600; }
+  .mad-show-more-btn { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 5px 14px; font: inherit; font-size: 0.56rem; font-weight: 700; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+  .mad-show-more-btn:hover, .mad-show-more-btn:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
 
   /* Addon tabs — horizontally scrollable pills with status. */
   .mad-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
