@@ -14,23 +14,36 @@
 //       class that silently killed the account session registry
 //     * make_interval(ms => …) raises 42883 — the SECOND, masked bug in the
 //       original claim body (invisible in production because 42702 fired first)
+//     * the THIRD root cause, reproduced: the pre-fix p_now default
+//       timezone('utc', now()) returns timestamp WITHOUT time zone and,
+//       cast back to timestamptz in a non-UTC session, is shifted by the
+//       session's UTC offset — under 'Asia/Kolkata' the default lands
+//       19 800 s (5 h 30 m) in the past: a 30 s lease is born dead (the
+//       observed lease_delta −17 970 s regression evidence class)
 //     * failed calls mutate no state
 //
 //   PHASE 2: the fix migration (20261004000000) applies cleanly.
 //
 //   PHASE 3 (fixed behavior):
 //     * impossible hash → 0 rows (NOT 42702) for claim; complete/release/fail
-//       dry-calls → 0 rows
+//       dry-calls → 0 rows (including explicit-p_now forms)
 //     * full lease state machine: approved → exchanging (credential KEPT,
 //       lease set, attempts incremented) → lease-busy second claim →
 //       release → approved → re-claim → complete → consumed (credential
 //       cleared) → replay-protected
 //     * fail path (terminal), attempt cap (5), lease-expiry takeover,
 //       pending/expired ineligible, p_now default
+//     * SESSION-TIMEZONE MATRIX (RC-3 regression): with the DEFAULT p_now
+//       (omitted — exactly how the app calls it) under BOTH 'Asia/Kolkata'
+//       (+05:30) and 'America/New_York' (−04:00): the lease lands ≈30 s in
+//       the future of the true now(), exchange_claimed_at is the true
+//       instant, and register writes last_seen_at at the true instant.
+//       The old default fails both zones in opposite directions (−5 h 30 m
+//       past / +4 h future) — no UTC-host environment can mask it.
 //     * register_device_session: insert / heartbeat-throttle / heartbeat /
 //       revoked-no-resurrection
 //     * security posture: SECURITY DEFINER + search_path=public preserved,
-//       signatures + defaults unchanged (wire contract), single claim
+//      signatures unchanged, p_now DEFAULT now() (corrected), single claim
 //       overload (no 2-arg ghost), EXECUTE granted to service_role ONLY
 //       (revoked from PUBLIC/anon/authenticated)
 //
@@ -107,6 +120,10 @@ async function main() {
   `);
 
   console.log('device_pairing_rpc_live_test (embedded PostgreSQL)');
+  // Pin the session TimeZone: PGlite defaults to the host's zone (Etc/GMT0
+  // here, but a non-UTC host must not change this suite's behavior — the
+  // dedicated timezone-matrix section exercises non-UTC zones explicitly).
+  await exec(`set time zone 'UTC'`);
   console.log('0. real migration chain applies cleanly');
 
   for (const file of CHAIN) {
@@ -144,6 +161,27 @@ async function main() {
     ok(ms.ok === false && ms.code === '42883',
       'make_interval(ms => …) is INVALID SQL (no ms parameter) — the second, masked bug in claim Step 3', ms.ok ? 'no error' : ms.code);
 
+    // RC-3 reproduction: the pre-fix p_now DEFAULT expression is
+    // session-TimeZone-dependent. timezone('utc', now()) yields the UTC
+    // WALL CLOCK (timestamp without time zone); casting it back to
+    // timestamptz re-interprets that wall clock in the session TimeZone.
+    await exec(`set time zone 'Asia/Kolkata'`);
+    const rc3 = rows(await tryQ(`select
+      pg_typeof(timezone('utc', now()))::text as expr_type,
+      extract(epoch from (now() - timezone('utc', now())::timestamptz))::int as instant_error_s`));
+    ok(rc3[0].expr_type === 'timestamp without time zone',
+      'RC-3: pre-fix default expression timezone(\'utc\', now()) returns timestamp WITHOUT time zone (the wall-clock round-trip)', String(rc3[0].expr_type));
+    ok(rc3[0].instant_error_s >= 19790 && rc3[0].instant_error_s <= 19810,
+      'RC-3: in a +05:30 session the default lands 19 800 s (5 h 30 m) in the PAST — a 30 s lease is born dead (the −17 970 s lease_delta evidence)',
+      String(rc3[0].instant_error_s));
+    const preDefault = rows(await tryQ(`select pg_get_function_arguments(p.oid) as args
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = 'claim_device_pairing'`));
+    ok(/timezone\('utc'::text,\s*now\(\)\)/i.test(String(preDefault[0].args)),
+      'RC-3: the pre-fix catalog default for p_now IS timezone(\'utc\', now()) (reproduced on the real deployed definition)',
+      String(preDefault[0].args));
+    await exec(`set time zone 'UTC'`);
+
     const state = rows(await tryQ(`select status, exchange_attempts, exchange_code,
       (exchange_lease_until is null) as lease_null, (exchange_claimed_at is null) as claimed_null
       from public.device_pairing_requests where secret_hash = '${A64}'`));
@@ -169,14 +207,16 @@ async function main() {
     ok(c1.ok === true, 'claim_device_pairing(repeat(\'0\',64)) EXECUTES (no 42702)');
     ok(c1.ok && c1.rows.length === 0, 'claim returns 0 rows for the impossible hash');
     const c2 = await tryQ(`select * from public.claim_device_pairing('${ZERO64}')`);
-    ok(c2.ok === true && c2.rows.length === 0, 'claim with defaults only (p_now default intact) returns 0 rows');
+    ok(c2.ok === true && c2.rows.length === 0, 'claim with defaults only (corrected p_now default now()) returns 0 rows');
     const c3 = await tryQ(`select * from public.claim_device_pairing('${ZERO64}', 30000, 5, now())`);
     ok(c3.ok === true && c3.rows.length === 0, 'claim with explicit p_now returns 0 rows');
 
     for (const [fn, label] of [
       [`select * from public.complete_device_pairing('${ZERO64}', '${ZERO_UUID}')`, 'complete_device_pairing'],
+      [`select * from public.complete_device_pairing('${ZERO64}', '${ZERO_UUID}', now())`, 'complete_device_pairing (explicit p_now)'],
       [`select * from public.release_device_pairing_exchange('${ZERO64}', '${ZERO_UUID}')`, 'release_device_pairing_exchange'],
       [`select * from public.fail_device_pairing('${ZERO64}', '${ZERO_UUID}')`, 'fail_device_pairing'],
+      [`select * from public.fail_device_pairing('${ZERO64}', '${ZERO_UUID}', now())`, 'fail_device_pairing (explicit p_now)'],
     ] as const) {
       const r = await tryQ(fn);
       ok(r.ok === true && r.rows.length === 0, `${label} impossible inputs → 0 rows (no 42702)`, r.ok ? '' : `${r.code} ${r.message.slice(0, 100)}`);
@@ -206,10 +246,13 @@ async function main() {
   from public.device_pairing_requests
   where secret_hash = '${A64}'`));
 
-console.log('LEASE DEBUG:', st[0]);
     ok(st[0].status === 'exchanging' && st[0].exchange_attempts === 1 && st[0].exchange_code === 'cred-A',
       'row: approved → exchanging, attempts 1, credential KEPT');
-    ok(st[0].lease_active === true && st[0].lease_bounded === true, 'lease is active and bounded (≈30s)');
+    // lease_delta_seconds surfaces the exact lease/now() gap in the failure
+    // hint — the diagnostic that exposed the -17970 s session-timezone
+    // regression (expected here: ≈ +30 s).
+    ok(st[0].lease_active === true && st[0].lease_bounded === true, 'lease is active and bounded (≈30s)',
+      `lease_delta_seconds=${st[0].lease_delta_seconds} exchange_lease_until=${String(st[0].exchange_lease_until)} current_now=${String(st[0].current_now)}`);
     ok(st[0].claimed === true, 'exchange_claimed_at recorded');
 
     // lease-busy second claim → 0 rows
@@ -294,7 +337,80 @@ console.log('LEASE DEBUG:', st[0]);
     ok(stE[0].status === 'pending' && stE[0].exchange_attempts === 0, 'ineligible claim attempts leave the row untouched');
   }
 
-  console.log('6. register_device_session fixed (atomic registry upsert)');
+  console.log('6. p_now default: session-TimeZone-independent (RC-3 regression)');
+  {
+    // The application NEVER sends p_now — the default is the only source
+    // of "now" in production. Exercise the DEFAULT under two non-UTC
+    // zones that fail in OPPOSITE directions with the old expression:
+    //   Asia/Kolkata (+05:30): old default → lease ≈ 30 s − 19 800 s (dead)
+    //   America/New_York (−04:00): old default → lease ≈ 30 s + 14 400 s
+    //     (blocks retries for 4+ hours)
+    // With the corrected default now() both zones must land ≈30 s ahead
+    // of the true instant — no host environment can mask a regression.
+    const leaseDeltas: number[] = [];
+    for (const [tz, H] of [
+      ['Asia/Kolkata', 'h'.repeat(64)],
+      ['America/New_York', 'j'.repeat(64)],
+    ] as const) {
+      await exec(`set time zone '${tz}'`);
+      await exec(`insert into public.device_pairing_requests
+        (secret_hash, short_code, status, exchange_code, expires_at)
+        values ('${H}', 'HHHH8888', 'approved', 'cred-H', now() + interval '5 minutes')`);
+      const c = await tryQ(`select * from public.claim_device_pairing('${H}', 30000, 5)`);
+      ok(c.ok === true && c.rows.length === 1 && c.rows[0].exchange_code === 'cred-H',
+        `claim with DEFAULT p_now under ${tz} executes and returns the credential`);
+      const lease = rows(await tryQ(`select
+        extract(epoch from (exchange_lease_until - now()))::float as lease_delta_s,
+        extract(epoch from (exchange_claimed_at - now()))::float as claimed_delta_s
+        from public.device_pairing_requests where secret_hash = '${H}'`));
+      ok(lease[0].lease_delta_s >= 25 && lease[0].lease_delta_s <= 40,
+        `lease ≈ 30 s in the FUTURE under ${tz} (RC-3: the old default gave ±hours)`,
+        String(lease[0].lease_delta_s));
+      ok(Math.abs(lease[0].claimed_delta_s) <= 5,
+        `exchange_claimed_at is the TRUE current instant under ${tz}`, String(lease[0].claimed_delta_s));
+      leaseDeltas.push(lease[0].lease_delta_s as number);
+    }
+    ok(Math.abs(leaseDeltas[0] - leaseDeltas[1]) <= 15,
+      'lease delta is IDENTICAL across both time zones (session-TimeZone independence)',
+      JSON.stringify(leaseDeltas));
+
+    // register with the DEFAULT p_now under a non-UTC zone: the written
+    // last_seen_at must be the true instant (old default: −5 h 30 m).
+    await exec(`set time zone 'Asia/Kolkata'`);
+    const U2 = '00000000-0000-0000-0000-0000000000cc';
+    const S2 = '00000000-0000-0000-0000-0000000000dd';
+    await exec(`insert into auth.users (id) values ('${U2}')`);
+    const reg = await tryQ(`select * from public.register_device_session(
+      '${U2}', '${S2}', 'dev-tv', 'tv', 'Big Screen', null, null, null, null)`);
+    ok(reg.ok === true && reg.rows.length === 1 && reg.rows[0].registered === true,
+      'register with DEFAULT p_now under Asia/Kolkata inserts (registered = true)');
+    const seen = rows(await tryQ(`select
+      extract(epoch from (last_seen_at - now()))::float as seen_delta_s,
+      extract(epoch from (created_at - now()))::float as created_delta_s
+      from public.device_sessions where user_id = '${U2}'`));
+    ok(Math.abs(seen[0].seen_delta_s) <= 5,
+      'register last_seen_at is the TRUE instant under Asia/Kolkata (RC-3: old default wrote 5 h 30 m in the past)',
+      String(seen[0].seen_delta_s));
+    ok(Math.abs(seen[0].created_delta_s) <= 5,
+      'register created_at is the TRUE instant under Asia/Kolkata', String(seen[0].created_delta_s));
+
+    // Custom lease length (interval arithmetic proof): 60 000 ms = 60 s.
+    await exec(`set time zone 'UTC'`);
+    const I64 = 'i'.repeat(64);
+    await exec(`insert into public.device_pairing_requests
+      (secret_hash, short_code, status, exchange_code, expires_at)
+      values ('${I64}', 'IIII9999', 'approved', 'cred-I', now() + interval '5 minutes')`);
+    const ci = await tryQ(`select * from public.claim_device_pairing('${I64}', 60000, 5)`);
+    ok(ci.ok === true && ci.rows.length === 1, 'claim with p_lease_ms = 60000 executes');
+    const leaseI = rows(await tryQ(`select
+      extract(epoch from (exchange_lease_until - now()))::float as lease_delta_s
+      from public.device_pairing_requests where secret_hash = '${I64}'`));
+    ok(leaseI[0].lease_delta_s >= 55 && leaseI[0].lease_delta_s <= 70,
+      'p_lease_ms * interval \'1 millisecond\' is EXACT (60 000 ms → ≈60 s lease, not make_interval 42883)',
+      String(leaseI[0].lease_delta_s));
+  }
+
+  console.log('7. register_device_session fixed (atomic registry upsert)');
   {
     const U = '00000000-0000-0000-0000-0000000000aa';
     const S = '00000000-0000-0000-0000-0000000000bb';
@@ -309,15 +425,15 @@ console.log('LEASE DEBUG:', st[0]);
     ok(r1.ok && r1.rows[0].user_id === U && r1.rows[0].device_type === 'desktop', 'returned row matches the input identity');
     const firstSeen = r1.ok ? String(r1.rows[0].last_seen_at) : '';
 
-    const cnt1 = rows(await tryQ(`select count(*)::int as n from public.device_sessions`));
-    ok(cnt1[0].n === 1, 'exactly one registry row');
+    const cnt1 = rows(await tryQ(`select count(*)::int as n from public.device_sessions where user_id = '${U}'`));
+    ok(cnt1[0].n === 1, 'exactly one registry row for this user');
 
     const r2 = await tryQ(call);
     ok(r2.ok === true && r2.rows.length === 1 && r2.rows[0].registered === false,
       'second call within the 5-minute heartbeat window → registered = false (no write)');
     ok(r2.ok && String(r2.rows[0].last_seen_at) === firstSeen, 'heartbeat THROTTLED (last_seen_at unchanged)');
-    const cnt2 = rows(await tryQ(`select count(*)::int as n from public.device_sessions`));
-    ok(cnt2[0].n === 1, 'still exactly one registry row');
+    const cnt2 = rows(await tryQ(`select count(*)::int as n from public.device_sessions where user_id = '${U}'`));
+    ok(cnt2[0].n === 1, 'still exactly one registry row for this user');
 
     await exec(`update public.device_sessions set last_seen_at = now() - interval '10 minutes' where user_id = '${U}'`);
     const r3 = await tryQ(call);
@@ -325,17 +441,18 @@ console.log('LEASE DEBUG:', st[0]);
     const beatFresh = rows(await tryQ(`select (last_seen_at > now() - interval '1 minute') as fresh,
       (last_seen_at::text) as seen from public.device_sessions where user_id = '${U}'`));
     ok(beatFresh[0].fresh === true, 'heartbeat updated last_seen_at to a FRESH timestamp', String(beatFresh[0].seen));
-    const cnt3 = rows(await tryQ(`select count(*)::int as n from public.device_sessions`));
+    const cnt3 = rows(await tryQ(`select count(*)::int as n from public.device_sessions where user_id = '${U}'`));
     ok(cnt3[0].n === 1, 'heartbeat does not duplicate rows');
 
     await exec(`update public.device_sessions set revoked_at = now() where user_id = '${U}'`);
     const r4 = await tryQ(call);
     ok(r4.ok === true && r4.rows.length === 0, 'revoked session → 0 rows (NO resurrection)');
-    const stR = rows(await tryQ(`select count(*)::int as n, count(revoked_at)::int as revoked from public.device_sessions`));
-    ok(stR[0].n === 1 && stR[0].revoked === 1, 'revoked row stays revoked, no new row created');
+    const stR = rows(await tryQ(`select count(*)::int as n, count(revoked_at)::int as revoked
+      from public.device_sessions where user_id = '${U}'`));
+    ok(stR[0].n === 1 && stR[0].revoked === 1, 'revoked row stays revoked, no new row created for this user');
   }
 
-  console.log('7. security posture + wire contract preserved');
+  console.log('8. security posture + wire contract preserved');
   {
     const sec = rows(await tryQ(`
       select count(*)::int as n from pg_proc p
@@ -375,13 +492,29 @@ console.log('LEASE DEBUG:', st[0]);
       'register signature unchanged', argsByName['register_device_session']);
 
     const fullArgs = rows(await tryQ(`
-      select pg_get_function_arguments(p.oid) as args
+      select p.proname, pg_get_function_arguments(p.oid) as args
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname = 'public' and p.proname = 'claim_device_pairing'`));
-    const fa = String(fullArgs[0].args);
+      where n.nspname = 'public'
+        and p.proname in ('claim_device_pairing', 'complete_device_pairing',
+                          'fail_device_pairing', 'register_device_session')
+      order by p.proname`));
+    const argsByFn: Record<string, string> = {};
+    for (const r of fullArgs) argsByFn[String(r.proname)] = String(r.args);
+    const fa = argsByFn['claim_device_pairing'];
     ok(fa.includes('p_lease_ms integer DEFAULT 30000') && fa.includes('p_max_attempts integer DEFAULT 5')
-      && fa.toLowerCase().includes("p_now timestamp with time zone default timezone('utc'::text, now())"),
-      'claim DEFAULTS preserved (30000 / 5 / timezone utc now)', fa);
+      && fa.toLowerCase().includes('p_now timestamp with time zone default now()'),
+      'claim DEFAULTS: 30000 / 5 / p_now now() (the RC-3 correction)', fa);
+    for (const [fn, label] of [
+      ['claim_device_pairing', 'claim'],
+      ['complete_device_pairing', 'complete'],
+      ['fail_device_pairing', 'fail'],
+      ['register_device_session', 'register'],
+    ] as const) {
+      const a = argsByFn[fn];
+      ok(/p_now timestamp with time zone default now\(\)/i.test(a),
+        `${label}: catalog p_now default is now() (true instant)`, a);
+      ok(!/timezone\(/i.test(a), `${label}: catalog p_now default has NO timezone(...) wall-clock round-trip`, a);
+    }
 
     const acl = rows(await tryQ(`
       select

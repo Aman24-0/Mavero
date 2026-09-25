@@ -32,13 +32,21 @@
 //      asserting it flags the exact historical ambiguities.
 //   4. Asserts the fix migration (20261004000000) preserves the wire
 //      contract: identical signatures (PostgREST binds by name),
-//      identical defaults, identical return types, SECURITY DEFINER,
-//      search_path, service_role-only EXECUTE, and that it uses
-//      CREATE OR REPLACE (no DROP, no schema/table changes).
-//   5. Advisories: scans every OTHER plpgsql function in the migration
-//      chain for the same pattern (printed, not asserted — device RPCs
-//      are the guarded surface; anything else gets reported here for
-//      follow-up).
+//      identical return types, SECURITY DEFINER, search_path,
+//      service_role-only EXECUTE, and that it uses CREATE OR REPLACE
+//      (no DROP, no schema/table changes). Defaults: every non-p_now
+//      default is verbatim; p_now's default is INTENTIONALLY corrected
+//      timezone('utc', now()) → now() (session-TimeZone-dependent
+//      instant — the third root cause; see the migration header).
+//   5. TIMESTAMP-DEFAULT HYGIENE: every p_now parameter of the final
+//      device RPCs defaults to exactly now() — never timezone(...),
+//      localtimestamp, or any wall-clock round-trip. Teeth: the
+//      pre-fix definitions are asserted to carry the buggy default.
+//   6. Advisories: scans every OTHER plpgsql function in the migration
+//      chain for the same ambiguity pattern AND for the same
+//      timestamptz-defaulting-to-timezone('utc', now()) pattern
+//      (printed, not asserted — device RPCs are the guarded surface;
+//      anything else gets reported here for follow-up).
 //
 // The LIVE counterpart (scripts/device_pairing_rpc_live_test.ts) applies
 // the real migration files to an embedded PostgreSQL and verifies
@@ -297,15 +305,55 @@ function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-/** Argument identity: names + types (defaults dropped) — matches pg_proc identity rules. */
+/** Strip SQL line/block comments but KEEP string literals (arg-list text). */
+function stripComments(sql: string): string {
+  return sql
+    .split('\n')
+    .map((line) => {
+      const idx = line.indexOf('--');
+      return idx === -1 ? line : line.slice(0, idx);
+    })
+    .join('\n')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+}
+
+interface ParamInfo {
+  name: string;
+  type: string;
+  defaultExpr: string | null; // null = no DEFAULT clause
+}
+
+/** Parse a function argument list into parameters (paren-aware, comment-stripped). */
+function parseParams(argList: string): ParamInfo[] {
+  const cleaned = stripComments(argList);
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of cleaned) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur);
+  const params: ParamInfo[] = [];
+  for (const part of parts) {
+    const m = part.trim().match(/^(\w+)\s+([\w\s]+?)\s*(?:\bdefault\s+([\s\S]+))?$/i);
+    if (!m) continue;
+    params.push({
+      name: m[1].toLowerCase(),
+      type: m[2].trim().toLowerCase(),
+      defaultExpr: m[3] ? normalizeWhitespace(m[3]) : null,
+    });
+  }
+  return params;
+}
+
+/** Argument identity: names + types (defaults dropped) — matches pg_proc
+ *  identity rules. Comment-aware: the fix migration documents the p_now
+ *  correction INSIDE its arg lists; comments must not perturb identity. */
 function argIdentity(argList: string): string {
-  return normalizeWhitespace(
-    argList
-      .split(',')
-      .map((a) => a.replace(/\bdefault\b.*$/i, '').trim())
-      .filter(Boolean)
-      .join(', ')
-  );
+  return parseParams(argList).map((p) => `${p.name} ${p.type}`).join(', ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -410,8 +458,35 @@ console.log('3. wire contract preserved (signatures, defaults, returns, security
     ok(argIdentity(before.argList) === argIdentity(after.argList),
       `${name}: argument identity unchanged (names+types)`,
       `${argIdentity(before.argList)} → ${argIdentity(after.argList)}`);
-    ok(normalizeWhitespace(before.argList) === normalizeWhitespace(after.argList),
-      `${name}: defaults preserved verbatim (incl. p_now default)`);
+
+    // Defaults: everything EXCEPT p_now must be verbatim; p_now is the
+    // single INTENTIONAL correction (timezone('utc', now()) → now()).
+    const beforeParams = parseParams(before.argList);
+    const afterParams = parseParams(after.argList);
+    ok(beforeParams.length === afterParams.length,
+      `${name}: parameter count unchanged`,
+      `${beforeParams.length} → ${afterParams.length}`);
+    const beforeByName = new Map(beforeParams.map((p) => [p.name, p]));
+    for (const ap of afterParams) {
+      const bp = beforeByName.get(ap.name);
+      assert.ok(bp, `${name}: param ${ap.name} existed pre-fix`);
+      if (ap.name === 'p_now') continue; // checked explicitly below
+      ok(bp.defaultExpr === ap.defaultExpr,
+        `${name}: default of ${ap.name} preserved verbatim`,
+        `${bp.defaultExpr} → ${ap.defaultExpr}`);
+    }
+    const beforeNow = beforeParams.find((p) => p.name === 'p_now');
+    const afterNow = afterParams.find((p) => p.name === 'p_now');
+    if (beforeNow || afterNow) {
+      assert.ok(beforeNow && afterNow, `${name}: p_now presence unchanged`);
+      ok(beforeNow.defaultExpr === "timezone('utc', now())",
+        `${name}: pre-fix p_now default is the historical timezone('utc', now()) (teeth)`,
+        String(beforeNow.defaultExpr));
+      ok(afterNow.defaultExpr === 'now()',
+        `${name}: fix p_now default corrected to now() (session-TimeZone-independent instant)`,
+        String(afterNow.defaultExpr));
+    }
+
     ok(before.returnsTable.length === after.returnsTable.length &&
        before.returnsTable.every((c, idx) => c === after.returnsTable[idx]),
       `${name}: RETURNS TABLE columns unchanged`);
@@ -445,14 +520,68 @@ console.log('3. wire contract preserved (signatures, defaults, returns, security
       `${name}: no make_interval(ms => …) (SQLSTATE 42883 trap)`);
   }
 
+  // No executable timezone('utc', now()) remains anywhere in the fix
+  // migration (comments documenting the old default are fine).
+  ok(!/timezone\s*\(\s*'utc'\s*,\s*now\(\s*\)\s*\)/i.test(stripCommentsAndStrings(fixSql)),
+    'fix migration contains NO executable timezone(\'utc\', now()) (comments excepted)');
+
   // Operator verification probe is documented in the migration.
   ok(fixSql.includes("repeat('0', 64)"), 'fix migration documents the repeat(\'0\', 64) operator probe');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. ADVISORY — same pattern scan across every other plpgsql function
+// 3b. TIMESTAMP-DEFAULT HYGIENE — every p_now defaults to exactly now()
 // ─────────────────────────────────────────────────────────────────────────────
-console.log('4. advisory scan — other plpgsql functions in the chain');
+console.log('3b. timestamp-default hygiene (p_now default now(), no wall-clock round-trips)');
+
+{
+  const preFixDefs = parseFunctionDefs(preFixMigrations);
+  const finalDefs = parseFunctionDefs(allMigrations);
+  const FUNCTIONS_WITH_P_NOW = [
+    'claim_device_pairing',
+    'complete_device_pairing',
+    'fail_device_pairing',
+    'register_device_session',
+  ] as const;
+
+  // Teeth: every pre-fix p_now default is the buggy wall-clock expression.
+  for (const name of FUNCTIONS_WITH_P_NOW) {
+    const def = preFixDefs.get(name);
+    assert.ok(def, `pre-fix ${name} def`);
+    const p = parseParams(def.argList).find((a) => a.name === 'p_now');
+    assert.ok(p, `pre-fix ${name} has p_now`);
+    ok(p.defaultExpr === "timezone('utc', now())",
+      `teeth: pre-fix ${name} p_now default was timezone('utc', now()) (session-tz-dependent)`,
+      String(p.defaultExpr));
+  }
+
+  // Fixed: every final p_now default is exactly now().
+  for (const name of FUNCTIONS_WITH_P_NOW) {
+    const def = finalDefs.get(name);
+    assert.ok(def, `final ${name} def`);
+    const params = parseParams(def.argList);
+    const p = params.find((a) => a.name === 'p_now');
+    assert.ok(p, `final ${name} has p_now`);
+    ok(p.type === 'timestamptz' || p.type === 'timestamp with time zone',
+      `${name}: p_now is timestamptz`, p.type);
+    ok(p.defaultExpr === 'now()',
+      `${name}: p_now default is exactly now() (true instant, session-TimeZone-independent)`,
+      String(p.defaultExpr));
+    ok(p.defaultExpr !== 'localtimestamp' && p.defaultExpr !== 'current_timestamp',
+      `${name}: p_now default avoids wall-clock forms`);
+  }
+
+  // release_device_pairing_exchange never had a p_now parameter — must stay so.
+  const rel = finalDefs.get('release_device_pairing_exchange');
+  assert.ok(rel, 'final release def');
+  ok(!parseParams(rel.argList).some((a) => a.name === 'p_now'),
+    'release_device_pairing_exchange has no p_now parameter (unchanged)');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. ADVISORY — same-pattern scans across every other plpgsql function
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('5. advisory scan — other plpgsql functions in the chain');
 
 {
   const finalDefs = parseFunctionDefs(allMigrations);
@@ -472,7 +601,24 @@ console.log('4. advisory scan — other plpgsql functions in the chain');
       console.log(`  ⚠ ADVISORY ${name} (${def.file}): ${hits.length} bare OUT-parameter name(s): ${hits.slice(0, 3).map((h) => `"${h.identifier}" in: ${h.context}`).join(' | ')}`);
     }
   }
-  console.log(`  advisory functions flagged: ${advisories} (device RPCs are the asserted surface)`);
+
+  // Same-class timestamp advisory: any OTHER function in the chain with a
+  // timestamptz parameter defaulting to timezone('utc', now()) — the exact
+  // RC-3 pattern (session-TimeZone-dependent instant). These live in
+  // already-applied historical migrations of NON-device subsystems
+  // (provider health, favorites) — reported for a follow-up migration,
+  // intentionally NOT fixed in the device-RPC hotfix.
+  let tzAdvisories = 0;
+  for (const [name, def] of finalDefs) {
+    if (deviceSet.has(name)) continue; // device RPCs are asserted in 3b
+    for (const p of parseParams(def.argList)) {
+      if (/timestamp with time zone|timestamptz/.test(p.type) && p.defaultExpr === "timezone('utc', now())") {
+        tzAdvisories += 1;
+        console.log(`  ⛔ TZ-ADVISORY ${name} (${def.file}): parameter ${p.name} ${p.type} default timezone('utc', now()) — session-TimeZone-dependent instant (same class as RC-3; needs its own forward migration)`);
+      }
+    }
+  }
+  console.log(`  advisory functions flagged: ${advisories} ambiguity, ${tzAdvisories} timezone-default (device RPCs are the asserted surface)`);
   ok(true, `advisory scan completed over ${finalDefs.size} tracked functions`);
 }
 

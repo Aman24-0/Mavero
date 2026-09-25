@@ -1,6 +1,7 @@
 -- ============================================================
--- Production hotfix — SQLSTATE 42702 (ambiguous column) in ALL
--- device-pairing exchange RPCs + register_device_session
+-- Production hotfix — COMPLETE device-RPC correctness fix:
+-- SQLSTATE 42702 (ambiguous column) + make_interval 42883 +
+-- session-timezone-dependent p_now defaults
 -- ============================================================
 --
 -- CONTEXT (production incident, deployed 6c6709a):
@@ -15,7 +16,7 @@
 --
 --     SELECT * FROM public.claim_device_pairing(repeat('0', 64), 30000, 5);
 --
--- ROOT CAUSE:
+-- ROOT CAUSE 1 — SQLSTATE 42702 (ambiguous column):
 --   PL/pgSQL `RETURNS TABLE(id uuid, exchange_code text, ...)`
 --   declares OUT-parameter VARIABLES named exactly like
 --   device_pairing_requests columns. The 20261003000000 function
@@ -28,33 +29,70 @@
 --   between an OUT variable and a column → deterministic 42702 on
 --   every execution, regardless of inputs, role, or schema state.
 --
+-- ROOT CAUSE 2 — invalid make_interval named argument (42883):
+--   PostgreSQL's make_interval has NO `ms` parameter
+--   (years/months/weeks/days/hours/mins/secs), so
+--   make_interval(ms => p_lease_ms) raises 42883 "function
+--   make_interval(ms => integer) does not exist" the moment a
+--   real approved row is claimed. It was invisible in production
+--   because the 42702 in Step 1 aborted every call before the
+--   lease UPDATE ran.
+--
+-- ROOT CAUSE 3 — session-timezone-dependent p_now default:
+--   All four p_now-bearing device RPCs declared
+--
+--     p_now timestamptz default timezone('utc', now())
+--
+--   timezone('utc', now()) returns timestamp WITHOUT time zone
+--   (the UTC wall-clock reading of now()). The implicit cast back
+--   to timestamptz — required by the parameter's type — interprets
+--   that wall clock in the CALLING SESSION's TimeZone GUC. The
+--   resulting instant is shifted by the session's UTC offset:
+--
+--     session TimeZone = 'Asia/Kolkata'  (+05:30)
+--       → p_now lands 5h30m IN THE PAST → a 30 s lease is born
+--         dead (observed in the embedded-PostgreSQL regression:
+--         exchange_lease_until 2026-09-25T15:43:26Z vs current
+--         now() 2026-09-25T20:42:56Z → lease_delta −17970 s).
+--     session TimeZone = 'America/New_York' (−04:00)
+--       → p_now lands 4h IN THE FUTURE → the lease blocks every
+--         retry for 4+ hours (exchange-lease-busy) and register
+--         writes last_seen_at 4h ahead.
+--
+--   In a UTC session (the default for Supabase's PostgREST pool)
+--   the expression happens to round-trip to the same instant, which
+--   is why the defect survived: any non-UTC session (SQL Editor,
+--   direct psql, a connection with a changed TimeZone, a future
+--   pool config change) breaks every lease/heartbeat comparison.
+--   now() ALONE is already `timestamp with time zone` — the true
+--   instant, immune to the session TimeZone. The double conversion
+--   has no benefit and a proven failure mode.
+--
 -- AUDIT RESULT (all device RPCs with RETURNS TABLE / OUT parameters):
 --   claim_device_pairing(text,int,int,timestamptz)         BROKEN
 --     - SELECT list: id, exchange_code, exchange_attempts  (42702)
 --     - attempt-cap UPDATE ... where id = v_row.id         (42702)
 --     - lease UPDATE ... where id = v_row.id               (42702)
---     - SECOND, MASKED BUG in the lease UPDATE:
---         make_interval(ms => p_lease_ms)
---       PostgreSQL's make_interval has NO `ms` parameter
---       (years/months/weeks/days/hours/mins/secs) → 42883
---       "function make_interval(ms => integer) does not
---       exist" the moment a real approved row is claimed.
---       It was invisible in production because the 42702 in
---       Step 1 aborts every call before Step 3 runs.
+--     - make_interval(ms => p_lease_ms) in the lease UPDATE (42883)
+--     - p_now default timezone('utc', now())               (RC-3)
 --   complete_device_pairing(text,uuid,timestamptz)          BROKEN
 --     - UPDATE ... and id = p_pairing_id                   (42702)
 --     - RETURNING id into v_id                             (42702)
+--     - p_now default timezone('utc', now())               (RC-3)
 --   release_device_pairing_exchange(text,uuid)             BROKEN
 --     - UPDATE ... and id = p_pairing_id                   (42702)
 --     - RETURNING id into v_id                             (42702)
+--     (no p_now parameter — not affected by RC-3)
 --   fail_device_pairing(text,uuid,timestamptz)             BROKEN
 --     - UPDATE ... and id = p_pairing_id                   (42702)
 --     - RETURNING id into v_id                             (42702)
+--     - p_now default timezone('utc', now())               (RC-3)
 --   register_device_session(uuid,uuid,text,...) [20260930] BROKEN
 --     - SELECT ... where user_id = ... supabase_session_id = ...
 --       (42702: both are OUT names AND columns)
 --     - heartbeat UPDATE ... where id = v_row.id           (42702)
 --     - unique-violation recovery SELECT ... revoked_at    (42702)
+--     - p_now default timezone('utc', now())               (RC-3)
 --     This explains why NO session ever appeared in the
 --     account registry after 94ce1ef deployed: every call
 --     failed inside the hooks' failure-safe wrapper and was
@@ -72,12 +110,30 @@
 --     (p_lease_ms * interval '1 millisecond') — exact integer-
 --     millisecond semantics for any lease value, no named-arg
 --     trap. 30000 ms = 30 s, identical to the intended lease.
+--   - p_now timestamptz default now() — the true `timestamp with
+--     time zone` instant from the same clock, with no
+--     wall-clock round-trip through the session TimeZone.
+--
+-- INTENTIONALLY CHANGED (the ONLY contract delta):
+--   p_now's DEFAULT expression in the four p_now-bearing
+--   functions: timezone('utc', now())  →  now()
+--   - Parameter name, type, position and nullability: unchanged
+--     (function identity is names+types, so CREATE OR REPLACE
+--     still replaces the same pg_proc entry in place — no
+--     overload, no PostgREST resolution change).
+--   - The application NEVER sends p_now (verified at every call
+--     site: device-pairing.ts claim/complete/release/fail and
+--     device-sessions.ts register all omit it), so the wire
+--     payload is byte-identical; only the server-side default
+--     evaluation changes — from a session-timezone-dependent
+--     instant to the true current instant.
+--   - An explicit p_now argument (used by tests and any future
+--     caller) binds exactly as before.
 --
 -- WHAT IS PRESERVED (verified by scripts/device_pairing_rpc_live_test.ts
 -- against a real PostgreSQL engine):
---   - function signatures (arg names, types, defaults — PostgREST
---     binds by name, so the wire contract is byte-identical)
---   - p_now default timezone('utc', now())
+--   - function signatures (arg names, types, order; PostgREST
+--     binds by name — every default except p_now is verbatim)
 --   - SECURITY DEFINER + set search_path = public
 --   - the pairing state machine, lease semantics (30 s default),
 --     attempt cap (5), one-time credential handling, replay safety
@@ -89,11 +145,11 @@
 -- DEPLOYMENT MECHANISM:
 --   This is a NEW FORWARD migration. 20261003000000 is already
 --   applied in production and immutable. CREATE OR REPLACE FUNCTION
---   requires — and here has — the IDENTICAL signature, so it
---   replaces the same pg_proc entry in place (no overload is
---   created; PostgREST call resolution is unchanged). ACLs are
---   preserved automatically by CREATE OR REPLACE; the grant block
---   at the end re-asserts them anyway.
+--   requires — and here has — the IDENTICAL signature (defaults are
+--   not part of identity), so it replaces the same pg_proc entry in
+--   place (no overload is created; PostgREST call resolution is
+--   unchanged). ACLs are preserved automatically by CREATE OR
+--   REPLACE; the grant block at the end re-asserts them anyway.
 --
 -- REQUIRES: 20260927000000, 20260928000000, 20260930000000,
 --           20261003000000 (already applied in production).
@@ -108,6 +164,10 @@ create or replace function public.claim_device_pairing(
   p_secret_hash text,
   p_lease_ms int default 30000,
   p_max_attempts int default 5,
+  -- now() is already timestamptz — the true instant, independent
+  -- of the session TimeZone. The historical default
+  -- timezone('utc', now()) round-tripped through a wall clock and
+  -- shifted by the session's UTC offset (RC-3).
   p_now timestamptz default now()
 )
 returns table(
@@ -208,7 +268,8 @@ $$;
 create or replace function public.complete_device_pairing(
   p_secret_hash text,
   p_pairing_id uuid,
-  p_now timestamptz default timezone('utc', now())
+  -- RC-3 fix: true instant (see claim_device_pairing note).
+  p_now timestamptz default now()
 )
 returns table(id uuid)
 language plpgsql
@@ -286,7 +347,8 @@ $$;
 create or replace function public.fail_device_pairing(
   p_secret_hash text,
   p_pairing_id uuid,
-  p_now timestamptz default timezone('utc', now())
+  -- RC-3 fix: true instant (see claim_device_pairing note).
+  p_now timestamptz default now()
 )
 returns table(id uuid)
 language plpgsql
@@ -335,7 +397,8 @@ create or replace function public.register_device_session(
   p_platform text,
   p_ip_hash text,
   p_heartbeat_interval_ms integer default 300000,
-  p_now timestamptz default timezone('utc', now())
+  -- RC-3 fix: true instant (see claim_device_pairing note).
+  p_now timestamptz default now()
 )
 returns table(
   id uuid,
@@ -530,5 +593,16 @@ grant execute on function public.register_device_session(
 --         'verify', 'verify', 'verify-script', null, null, null, null);
 --       rollback;
 --
--- 7d. REST-level check (same probes the deployment runs):
+-- 7d. p_now default posture (read-only): all four p_now-bearing
+--     functions must show DEFAULT now() — never timezone(...):
+--
+--       select p.proname, pg_get_function_arguments(p.oid)
+--       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--       where n.nspname = 'public' and p.proname in (
+--         'claim_device_pairing', 'complete_device_pairing',
+--         'fail_device_pairing', 'register_device_session')
+--       order by p.proname;
+--       -- expected: each row's p_now default reads "DEFAULT now()"
+--
+-- 7e. REST-level check (same probes the deployment runs):
 --       pnpm run verify:pairing-rpc
