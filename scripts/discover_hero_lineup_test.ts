@@ -164,6 +164,21 @@ const repoRoot = new URL('../', import.meta.url).pathname;
   // variable name; the singular prop would be `featuredItem` without
   // an `s`).
   assert.doesNotMatch(featuredItemsBlock![0], /\bfeaturedItem(?!s)\b/, 'featuredItems derivation does NOT reference the singular featuredItem prop');
+
+  // =========================================================================
+  // CRITICAL v3.1 — the route files MUST wire heroItems through to
+  // <DiscoverPage>. This was the production bug after 561cf45 deployed:
+  // the data layer returned heroItems correctly, but BOTH route files
+  // (src/routes/+page.svelte AND src/routes/discover/+page.svelte)
+  // invoked <DiscoverPage> WITHOUT the heroItems prop — so heroItems
+  // defaulted to [] inside DiscoverPage, featuredItems was [], and the
+  // carousel rendered the .hero-fallback "Featured title unavailable"
+  // section.
+  // =========================================================================
+  const rootRoute = await readFile(path.join(repoRoot, 'src/routes/+page.svelte'), 'utf8');
+  const discoverRoute = await readFile(path.join(repoRoot, 'src/routes/discover/+page.svelte'), 'utf8');
+  assert.match(rootRoute, /heroItems=\{data\.heroItems\}/, 'src/routes/+page.svelte passes heroItems={data.heroItems} to <DiscoverPage>');
+  assert.match(discoverRoute, /heroItems=\{data\.heroItems\}/, 'src/routes/discover/+page.svelte passes heroItems={data.heroItems} to <DiscoverPage>');
 }
 
 // ---------- Behavioral tests of the actual selector ----------

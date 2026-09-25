@@ -7,6 +7,7 @@
 
   <DiscoverPage
     featuredItem={data.featured}
+    heroItems={data.heroItems}
     movies={data.movies}
     series={data.series}
     anime={data.anime}
