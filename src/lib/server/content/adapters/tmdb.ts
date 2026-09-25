@@ -85,7 +85,7 @@ type TmdbEpisode = { id: number; episode_number?: number; season_number?: number
 type TmdbSeason = { season_number?: number; name?: string; episode_count?: number; air_date?: string; poster_path?: string | null; episodes?: TmdbEpisode[] };
 
 type TmdbMedia = TmdbMovie | TmdbTv;
-type TmdbProviderRegion = { flatrate?: { provider_id?: number }[]; buy?: { provider_id?: number }[]; rent?: { provider_id?: number }[] };
+type TmdbProviderRegion = { flatrate?: { provider_id?: number; provider_name?: string; logo_path?: string | null }[]; buy?: { provider_id?: number; provider_name?: string; logo_path?: string | null }[]; rent?: { provider_id?: number; provider_name?: string; logo_path?: string | null }[] };
 type TmdbWatchProviders = { results?: Record<string, TmdbProviderRegion> };
 
 export const tmdbOttProviders = ottProviders;
@@ -197,6 +197,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     id: `${type}-${raw.id}`,
     title,
     year: dateYear(isMovie ? movie.release_date : tv.first_air_date),
+    releaseDate: isMovie ? movie.release_date : tv.first_air_date,
     type,
     isAnime,
     animeFormat,
@@ -633,6 +634,21 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
           .map((p) => p.provider_id)
           .filter((id): id is number => typeof id === 'number')
       : undefined;
+    // P3: Extract India flatrate streaming providers for the DetailPage
+    // "Streaming on" section. Only flatrate (streaming subscription) —
+    // not rent/buy (the user spec says prefer flatrate/streaming only).
+    const streamingProviders = indiaProviders?.flatrate
+      ? indiaProviders.flatrate
+          .filter((p): p is { provider_id: number; provider_name: string; logo_path?: string | null } => typeof p.provider_id === 'number' && typeof p.provider_name === 'string')
+          .map((p) => ({
+            id: p.provider_id,
+            name: p.provider_name,
+            logo: p.logo_path ? image(p.logo_path, 'w342') : '',
+          }))
+      : undefined;
+    if (streamingProviders && streamingProviders.length > 0) {
+      item.streamingProviders = streamingProviders;
+    }
     const tmdbAdult = (raw as TmdbMovie).adult;
     // TV detail responses carry networks[] — the authoritative adult-network
     // identity signal (verified adult network registry, adult-networks.ts).

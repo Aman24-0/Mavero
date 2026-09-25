@@ -11,6 +11,8 @@ export type MediaItem = {
   id: string;
   title: string;
   year: number;
+  /** P2: Full ISO date (YYYY-MM-DD). Used by DetailPage for complete date display. */
+  releaseDate?: string;
   type: ContentType;
   /**
    * Phase 7F+ (anime routing): true when this title is anime. The card UI
@@ -55,6 +57,8 @@ export type MediaItem = {
     anilist?: string;
     mal?: string;
   };
+  /** P3: India streaming/OTT providers (flatrate only) from TMDB watch/providers. */
+  streamingProviders?: Array<{ id: number; name: string; logo: string }>;
 };
 
 const image = (id: string, width = 900) =>

@@ -84,6 +84,16 @@
   const castMembers = $derived(item.cast ?? []);
   const hasLongOverview = $derived(item.description.length > 240);
 
+  // P2: Format an ISO date string (YYYY-MM-DD) into a human-readable date.
+  // Returns the year-only fallback if the date is invalid/missing.
+  function formatDate(iso: string | undefined): string {
+    if (!iso) return String(item.year > 0 ? item.year : '');
+    const d = new Date(iso + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return String(item.year > 0 ? item.year : '');
+    // Use en-GB for day-before-month format (07 Mar 2026).
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
   onMount(() => {
     let active = true;
     const loadProgressState = async () => {
@@ -519,7 +529,7 @@
        ============================================================ -->
   <header class="hero">
     {#if item.backdrop}
-      <img src={item.backdropSmall || item.backdrop} alt="" class="hero-img" loading="eager" fetchpriority="high" />
+      <img src={item.backdropHero || item.backdrop} alt="" class="hero-img" loading="eager" fetchpriority="high" />
     {/if}
     <div class="hero-scrim" aria-hidden="true"></div>
     <button class="back-btn" type="button" onclick={goBack} aria-label="Go back">
@@ -547,7 +557,11 @@
             {#if item.rating > 0}
               <span class="rating"><Star size={12} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>
             {/if}
-            {#if item.year > 0}<span class="dot"></span><span>{item.year}</span>{/if}
+            {#if item.releaseDate}
+              <span class="dot"></span><span>{formatDate(item.releaseDate)}</span>
+            {:else if item.year > 0}
+              <span class="dot"></span><span>{item.year}</span>
+            {/if}
             {#if item.maturity}<span class="dot"></span><span>{item.maturity}</span>{/if}
             {#if type === 'series' && item.seasons}
               <span class="dot"></span><span>{item.seasons} season{item.seasons === 1 ? '' : 's'}</span>
@@ -620,6 +634,23 @@
        disconnected cards.
        ============================================================ -->
   <div class="detail-body">
+    <!-- P3: Streaming on — India flatrate OTT providers from TMDB. -->
+    {#if item.streamingProviders && item.streamingProviders.length > 0}
+      <section class="streaming-section" aria-labelledby="streaming-heading">
+        <h2 class="section-h" id="streaming-heading">Streaming on</h2>
+        <div class="streaming-providers" role="list">
+          {#each item.streamingProviders as provider (provider.id)}
+            <div class="streaming-provider" role="listitem">
+              {#if provider.logo}
+                <img src={provider.logo} alt="" class="streaming-logo" loading="lazy" decoding="async" width="32" height="32" />
+              {/if}
+              <span class="streaming-name">{provider.name}</span>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
     <!-- Cast -->
     {#if castMembers.length}
       <section class="cast-section" aria-labelledby="cast-heading">
@@ -961,6 +992,13 @@
   }
 
   /* Cast rail */
+  /* P3: Streaming on section — compact, above Cast. */
+  .streaming-section { margin-top: clamp(28px, 4vw, 40px); }
+  .streaming-providers { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .streaming-provider { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--color-border-strong); border-radius: 999px; background: var(--color-surface); }
+  .streaming-logo { width: 24px; height: 24px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
+  .streaming-name { color: var(--color-text); font-size: .75rem; font-weight: 600; white-space: nowrap; }
+
   .cast-section { margin-top: clamp(28px, 4vw, 40px); }
   .section-h {
     color: var(--color-text);

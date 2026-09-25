@@ -35,10 +35,19 @@ export type Season = {
   episodes?: Episode[];
 };
 
+/** P3: Streaming/OTT provider for the "Streaming on" section on DetailPage. */
+export type StreamingProvider = {
+  id: number;
+  name: string;
+  logo: string;
+};
+
 export type NormalizedMediaItem = {
   id: string;
   title: string;
   year: number;
+  /** P2: Full ISO date (YYYY-MM-DD) from TMDB release_date (movie) or first_air_date (TV). */
+  releaseDate?: string;
   type: ContentType;
   /**
    * True when this title is anime. TMDB marks Demon Slayer: Infinity
@@ -106,6 +115,8 @@ export type NormalizedMediaItem = {
    * Optional — some content sources may not provide genre IDs.
    */
   tmdbGenreIds?: number[];
+  /** P3: India streaming/OTT providers (flatrate only) from TMDB watch/providers. */
+  streamingProviders?: StreamingProvider[];
 };
 
 export type ContentDetail = NormalizedMediaItem & {

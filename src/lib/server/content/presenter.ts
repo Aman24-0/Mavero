@@ -6,6 +6,7 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     id: item.id,
     title: item.title,
     year: item.year,
+    releaseDate: item.releaseDate,
     type: item.type,
     isAnime: item.isAnime,
     animeFormat: item.animeFormat,
@@ -28,6 +29,7 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     tags: item.tags,
     trailerKey: item.trailerKey,
     cast: item.cast,
-    externalIds: item.externalIds
+    externalIds: item.externalIds,
+    streamingProviders: item.streamingProviders
   };
 }
