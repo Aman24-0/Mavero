@@ -56,7 +56,7 @@
   // When the user clicks an episode's Download button, SeasonEpisodes
   // fires onDownload(season, episode) which sets these two values + opens
   // the existing DownloadSheet. They are SEPARATE from `resumeEpisode`
-  // (which drives the main Play link's "Continue S1E1" behavior) so the
+  // (which drives the main Play link's "Resume S1E1" behavior) so the
   // download URL always targets the EXACT episode the user clicked —
   // never a resume fallback or S1E1 default.
   // For movies, these stay undefined (the sheet uses the movie URL).
@@ -86,7 +86,7 @@
 
   onMount(() => {
     let active = true;
-    void (async () => {
+    const loadProgressState = async () => {
       const status = await getFavoriteStatus(type, item.id);
       const progress = await getLocalProgressRecords();
       if (!active) return;
@@ -94,17 +94,23 @@
       hasActiveProgress = activeProgress;
       const effectiveStatus = status ?? (hasActiveProgress ? 'watching' : null);
       watchlistStatus = effectiveStatus;
-      // BUG #2 fix: decouple resumeEpisode from effectiveStatus. The
-      // existence of valid active watch_progress (hasActiveProgress) is
-      // sufficient — the user may have status='planned' but still have
-      // active progress from a Continue Watching click.
-      // BUG #13 fix: also compute resume for MOVIES (not just series).
-      // For movies, resumeEpisode stays undefined (no season/episode),
-      // but hasActiveProgress is used by the Play button label.
       if (type !== 'movie' && hasActiveProgress) {
         resumeEpisode = latestResumeEpisode(type, item.id, progress);
       }
-    })();
+    };
+    void loadProgressState();
+    // P0: Cloud convergence — for authenticated users, cloud sync may
+    // produce newer local progress than what was available on mount.
+    // Listen for the 'mavero:sync-status' event (dispatched by
+    // setSyncStatus() in cloud.ts when sync completes) and recompute
+    // the resume state. This makes DetailPage converge with cloud
+    // progress without requiring a hard refresh.
+    const handleSyncComplete = () => {
+      if (active) void loadProgressState();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('mavero:sync-status', handleSyncComplete);
+    }
     // Prefetch the downloader registry on mount so the Download button is
     // reachable as soon as config loads (instead of being hidden behind a
     // click handler that never fires because the button is hidden). This
@@ -122,7 +128,12 @@
       window.history.replaceState(window.history.state, '', cleanDetail);
       void goto(`/watch/${type}/${item.id}${query ? `?${query}` : ''}`);
     }
-    return () => { active = false; };
+    return () => {
+      active = false;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('mavero:sync-status', handleSyncComplete);
+      }
+    };
   });
 
   function openStatusSheet() { statusSheetOpen = true; }
@@ -558,7 +569,7 @@
             <div class="primary-actions">
               <a class="play-btn" href={watchHref}>
                 <Play size={16} fill="currentColor" strokeWidth={0} />
-                {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else if type === 'movie' && hasActiveProgress}Continue{:else}Play{/if}
+                {#if type === 'series' && resumeEpisode}Resume S{resumeEpisode.season}E{resumeEpisode.episode}{:else if type === 'movie' && hasActiveProgress}Resume{:else}Play{/if}
               </a>
               {#if showDownloadButton}
                 <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen}>

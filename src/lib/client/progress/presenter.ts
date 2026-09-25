@@ -24,10 +24,46 @@ function watchPath(contentType: WatchProgressRecord['contentType'], contentId: s
   return season !== undefined && episode !== undefined ? `${basePath}?season=${season}&episode=${episode}` : basePath;
 }
 
-function latestActiveEpisode(record: FavoriteRecord, progressRecords: WatchProgressRecord[]) {
-  return progressRecords
-    .filter((progress) => progress.contentType === record.contentType && progress.contentId === record.contentId && progress.completionState !== 'completed' && progress.currentTime > 0 && progress.season !== undefined && progress.episode !== undefined)
-    .sort((left, right) => Math.max(right.updatedAt, right.lastWatchedAt) - Math.max(left.updatedAt, left.lastWatchedAt))[0];
+/**
+ * P0: ONE canonical helper for finding the latest active progress record.
+ *
+ * Used by: DetailPage, favoriteToMedia, progressToMedia, Continue
+ * Watching, My List, resumeHref generation, resume episode selection.
+ *
+ * Rules:
+ *   - exact contentType + contentId match
+ *   - completionState !== 'completed'
+ *   - currentTime > 0 (true resumed playback, not just a zero-progress stub)
+ *   - for series/anime: season and episode must be valid positive integers
+ *
+ * Ordering:
+ *   1. latest max(updatedAt, lastWatchedAt) wins
+ *   2. tie-break: higher currentTime wins (user watched further)
+ *   3. never depends on array ordering
+ *
+ * For movies: returns the single active record (no season/episode requirement).
+ * For series/anime: returns the latest active episode record.
+ */
+export function getLatestActiveProgress(
+  contentType: WatchProgressRecord['contentType'],
+  contentId: string,
+  records: WatchProgressRecord[],
+): WatchProgressRecord | undefined {
+  const isSeriesLike = contentType === 'series' || contentType === 'anime';
+  return records
+    .filter((r) =>
+      r.contentType === contentType &&
+      r.contentId === contentId &&
+      r.completionState !== 'completed' &&
+      r.currentTime > 0 &&
+      (!isSeriesLike || (r.season !== undefined && r.episode !== undefined && r.season > 0 && r.episode > 0))
+    )
+    .sort((a, b) => {
+      const aTime = Math.max(a.updatedAt, a.lastWatchedAt);
+      const bTime = Math.max(b.updatedAt, b.lastWatchedAt);
+      if (bTime !== aTime) return bTime - aTime;
+      return b.currentTime - a.currentTime;
+    })[0];
 }
 
 export function progressToMedia(record: WatchProgressRecord): MediaItem {
@@ -39,25 +75,29 @@ export function progressToMedia(record: WatchProgressRecord): MediaItem {
 export function favoriteToMedia(record: FavoriteRecord, progressRecords: WatchProgressRecord[] = []): MediaItem {
   const status = record.status ?? 'planned';
   const item = base(record.snapshot, record);
-  const resume = status === 'watching' ? latestActiveEpisode(record, progressRecords) : undefined;
-  const defaultEpisode = status === 'watching' && record.contentType !== 'movie' ? { season: 1, episode: 1 } : undefined;
+  // P0: use the canonical getLatestActiveProgress helper.
+  const resume = status === 'watching' ? getLatestActiveProgress(record.contentType, record.contentId, progressRecords) : undefined;
+  const isSeriesLike = record.contentType !== 'movie';
+  const defaultEpisode = status === 'watching' && isSeriesLike ? { season: 1, episode: 1 } : undefined;
   const resumeHref = status === 'watching'
     ? watchPath(record.contentType, record.contentId, resume?.season ?? defaultEpisode?.season, resume?.episode ?? defaultEpisode?.episode)
     : undefined;
-  // BUG #6 fix: expose progress + progressLabel for My List cards.
-  // Continue Watching (progressToMedia) already exposes these; My List
-  // (favoriteToMedia) was missing them — cards showed no progress bar
-  // or remaining-time label even for titles the user is actively watching.
-  // Only expose progress when a valid active resume record exists
-  // (status='watching' + resume found). Don't fabricate progress.
   const progressPct = resume ? progressPercent(resume) : undefined;
   const progressLbl = resume ? progressLabel(resume) : undefined;
   return { ...item, resumeHref, progress: progressPct, progressLabel: progressLbl, tags: [status.charAt(0).toUpperCase() + status.slice(1)] };
 }
 
-export function latestResumeEpisode(contentType: WatchProgressRecord['contentType'], contentId: string, progressRecords: WatchProgressRecord[]) {
-  const progress = progressRecords
-    .filter((record) => record.contentType === contentType && record.contentId === contentId && record.completionState !== 'completed' && record.currentTime > 0 && record.season !== undefined && record.episode !== undefined)
-    .sort((left, right) => Math.max(right.updatedAt, right.lastWatchedAt) - Math.max(left.updatedAt, left.lastWatchedAt))[0];
-  return progress ? { season: progress.season as number, episode: progress.episode as number } : undefined;
+/**
+ * P0: Thin wrapper over getLatestActiveProgress for callers that only need
+ * the season/episode tuple (DetailPage, etc.). Uses the SAME canonical
+ * algorithm — no duplicate filtering/sorting logic.
+ */
+export function latestResumeEpisode(
+  contentType: WatchProgressRecord['contentType'],
+  contentId: string,
+  records: WatchProgressRecord[],
+): { season: number; episode: number } | undefined {
+  const record = getLatestActiveProgress(contentType, contentId, records);
+  if (!record || record.season === undefined || record.episode === undefined) return undefined;
+  return { season: record.season, episode: record.episode };
 }

@@ -177,7 +177,11 @@
     if (event.type === 'timeupdate' || event.type === 'seeked') {
       const ct = event.currentTime;
       currentPlaybackTime = ct;
-      const currentDuration = event.type === 'timeupdate' && typeof event.duration === 'number' ? event.duration : duration;
+      // P1 fix: only use event.duration if it's a valid positive number.
+      // A duration=0 or undefined from a provider must NOT erase a
+      // previously-persisted valid duration.
+      const eventDur = event.type === 'timeupdate' && typeof event.duration === 'number' && event.duration > 0 ? event.duration : undefined;
+      const currentDuration = eventDur ?? duration;
       if (currentDuration && currentDuration !== duration) duration = currentDuration;
       // BUG #8 fix: no implicit 90% completion — only the explicit 'ended'
       // event (handled below) marks a record as completed. A movie watched
