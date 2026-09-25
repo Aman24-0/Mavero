@@ -368,9 +368,17 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // registerCurrentSession delegates to the RPC.
   ok(service.includes("rpc('register_device_session'"), '13. service: calls register_device_session RPC');
 
-  // The registration is fire-and-forget (non-blocking).
-  ok(hooks.includes('void registerCurrentSession'), '13. hooks: fire-and-forget registration');
-  ok(hooks.includes('.catch'), '13. hooks: catches registration errors (non-blocking)');
+  // Newtask §3/§22: registration is AWAITED with a bounded timeout —
+  // fire-and-forget was the root cause of the one-time-injection bug
+  // (un-awaited promises may never complete on Netlify serverless).
+  ok(!hooks.includes('void registerCurrentSession'), '13a. hooks: registration is NOT fire-and-forget');
+  ok(/await\s+awaitWithTimeout\(\s*[\s\S]*?registerCurrentSession/.test(hooks), '13b. hooks: registration is awaited via awaitWithTimeout');
+  ok(hooks.includes('REGISTRATION_TIMEOUT_MS'), '13c. hooks: registration timeout constant is defined');
+  // Newtask §3/§22: registerCurrentSession never rejects (it catches
+  // internally and returns null); awaitWithTimeout additionally converts
+  // ANY unexpected rejection into { timedOut: false, value: null } — the
+  // rejection handler below is the catch path.
+  ok(/promise\.then\(\s*[\s\S]*?,\s*\(\)\s*=>\s*\{\s*clearTimeout\(timer\);\s*resolve\(null\);/.test(hooks), '13d. hooks: awaitWithTimeout converts registration rejection into a null result');
 
   ok('13. TV session registration path (hooks → registerCurrentSession → RPC)');
 }

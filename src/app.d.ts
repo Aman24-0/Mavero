@@ -40,6 +40,11 @@ declare global {
       // Projected payload — no tokens, no full session object.
       user: LayoutUser | null;
       isAuthenticated: boolean;
+      // Newtask §7 — server-derived device class (descriptive only,
+      // never an identity or authorization signal). Same string union
+      // as ClientDeviceType in $lib/shared/device-class.ts (kept as a
+      // literal here so app.d.ts stays import-free).
+      deviceType: 'mobile' | 'tablet' | 'desktop' | 'tv' | 'unknown';
     }
 
   }

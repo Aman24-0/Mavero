@@ -309,7 +309,8 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const page = read('src/routes/account/+page.svelte');
 
   // The button exists.
-  ok(page.includes('Sign out all devices'), 'account page: has "Sign out all devices" button');
+  // Newtask §15: wording matches endpoint semantics (all OTHER devices; current preserved).
+  ok(page.includes('Sign out all other devices'), 'account page: has "Sign out all other devices" button');
   ok(page.includes('signout-all-btn'), 'account page: has signout-all-btn class');
 
   // The confirmation dialog exists.

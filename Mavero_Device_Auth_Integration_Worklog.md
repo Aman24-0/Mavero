@@ -1843,3 +1843,56 @@ The existing Stremio infrastructure is focused on addon manifest/stream resoluti
 
 ### Final commit SHA
 (see below)
+
+---
+
+## Phase 10: Newtask — Complete Device Session + Big-Screen QR Login Repair
+
+### Starting commit
+`85b0764` (Phase F embedded-state runtime, main)
+
+### Audit (full-lifecycle, before any modification)
+
+Root causes found (Newtask numbering):
+
+1. **RC-1 CRITICAL — fire-and-forget registration** (`hooks.server.ts`): `void registerCurrentSession(...)` may never complete on Netlify serverless once the response returns. This is the root cause of the observed "one-time device injection" — one lucky write produced the frozen `Android • Chrome / 23/09/2026` row, and no later login ever registered or heartbeated.
+2. **RC-2 CRITICAL — global sign-out** (`auth/sign-out/+server.ts`): `signOut()` without scope defaults to GLOBAL — phone logout revoked the refresh tokens of EVERY device.
+3. **RC-3/4 — device-blind UI**: sign-in page had no "Login with QR" for desktop/TV; Account page showed "Login on TV" on every device class.
+4. **RC-5 — stale session list UI**: loaded once, no focus/visibility refresh, no stale-response race guard.
+5. **RC-6 — sessions API leaked the raw current session UUID** to the client (contradicting its own projection policy).
+6. **RC-7 — wording/semantics mismatch**: button said "Sign out all devices" while the endpoint (correctly) preserves the current session.
+7. **RC-8 — metadata gaps**: Brave is UA-indistinguishable from Chrome; iPad-as-Mac cannot be detected server-side by UA alone (the previous `'ontouchend' in globalThis` check is always false in Node).
+8. **RC-11 — two service-role clients** were created per authenticated request (revocation check + registration).
+9. **RC-12 — stale rows listed forever**: no reconciliation for rows whose Supabase session no longer exists.
+10. **RC-13 — no deviceType in the page payload**: device-aware UI was impossible.
+11. **RC-14 — QR login stale UI**: `/tv-login` success called `goto('/discover')` WITHOUT `invalidateAll()` — the TV kept the cached guest layout data.
+12. **RC-15/9 — tv-login success-navigation timer** was not cleared on destroy; state copy didn't name the scanner device.
+
+Verified correct and preserved: `register_device_session` RPC (atomic, no-resurrect, 5-min heartbeat), `claim_device_pairing` RPC, unique partial index `(user_id, supabase_session_id) WHERE revoked_at IS NULL`, revocation cache (bounded, 30s TTL), revoke/revoke-all endpoints, QR security model (hash-only secret, URL fragment, no tokens in QR, rate limits, independent TV session). **No new migration required.**
+
+### Changes
+
+- `src/hooks.server.ts` — registration is now AWAITED via `awaitWithTimeout(..., 1500ms)` (failure-safe: timeout/error logs safely and auth continues); ONE admin client per request; client-hints-aware metadata (sec-ch-ua + touch-hint cookie); centralized `ensureDeviceIdCookie`; register/heartbeat observability (`[DeviceSessions] register success` / `heartbeat ok` / `Registration timed out`), revoked-rejection warning.
+- `src/routes/auth/sign-out/+server.ts` — `signOut({ scope: 'local' })` (only the current browser session; other devices unaffected); revocation ordering documented (session_id → revoke row → invalidate cache → local signOut → redirect).
+- `src/lib/server/auth/device-metadata.ts` — `parseDeviceMetadata(ua, hints?)`: Brave via `sec-ch-ua` brands header; iPad-as-Mac via descriptive `mavero:device-hint=tablet` cookie (set by app.html inline script, first-visit, lax, descriptive-only); `ensureDeviceIdCookie` helper (httpOnly, lax, path /, 1yr, secure-on-https, zero writes for valid cookies); removed the dead `'ontouchend' in globalThis` check.
+- `src/lib/server/auth/device-sessions.ts` — `STALE_SESSION_RETENTION_MS` (30 days) reconciliation filter in `listUserSessions` (rows hidden, never deleted); `registered` RPC flag surfaced on the row type.
+- `src/routes/api/account/sessions/+server.ts` — raw `currentSessionId` no longer returned (client uses per-row `isCurrent` only).
+- `src/routes/+layout.server.ts` + `src/app.d.ts` — server-derived `deviceType` projected into the page payload (same parser as the registry).
+- `src/lib/shared/device-class.ts` (new) — `isBigScreen` / `isQrScannerDevice` / `deviceTypeLabel` (server/client-consistent capability logic; NOT CSS-based).
+- `src/routes/auth/sign-in/+page.svelte` — "Login with QR" secondary CTA under the Sign-in button, gated to desktop/TV, linking to the canonical `/tv-login` (no duplicated pairing logic).
+- `src/routes/account/+page.svelte` — "Login on Big Screen" (renamed, shown only on phone/tablet; hidden on desktop/TV/unknown); "Sign out all other devices" wording matches endpoint semantics; session-list refresh on focus + visibilitychange + 30s interval (visible-only) with silent mode (cards stay visible); monotonic `sessionRequestSeq` race guard; absolute-time tooltip on session cards; device-class label replaces the redundant browser·os line.
+- `src/routes/tv-login/+page.svelte` — `invalidateAll()` before `goto('/discover')` on QR success (no stale guest UI); success-navigation timer cleared on destroy; state copy names the scanner device ("Scan with your phone or tablet" / "Waiting for scan — approve login on your phone").
+- `src/app.html` — descriptive touch-hint cookie script (iPad-as-Mac detection, no PII/fingerprint, never auth).
+- Tests: NEW `scripts/device_session_registry_v2_test.ts` (95 checks — Newtask §34 A1–A8, B9–B16, C17–C21, D22–D25, E26–E28, §21 heartbeat 1–6, §20 stale, §23 cache, §4 identity, RPC SQL contract) and `scripts/big_screen_qr_ux_test.ts` (78 checks — F29–F36, G37–G50, layout projection, sessions DTO safety). Updated 6 existing suites whose assertions pinned the OLD broken contracts (fire-and-forget, global signOut, old wording, inline cookie logic) — each now asserts the NEW stronger contract. Both new suites appended to the `test` chain.
+
+### Verification
+
+- `pnpm check` — 0 errors, 0 warnings
+- `pnpm test` — full chain exit 0 (169 scripts)
+- `pnpm build` — success (@sveltejs/adapter-netlify)
+
+### Known limitations (documented, non-blocking)
+
+- First-visit iPad (desktop-mode UA) is classified `desktop` until the touch-hint cookie is set by the app.html script; classification corrects from the second request. This is the standard production pattern (no server-side iPad signal exists).
+- Per-instance revocation cache means up to 30s of stale-authenticated requests on OTHER Netlify function instances after a revoke (documented serverless honesty; unchanged).
+- Registration adds at most ~1.5s bounded wait, and only when the registry RPC hangs; the common path is one fast no-write RPC per request (heartbeat-throttled).

@@ -46,9 +46,17 @@ function safeLog(message: string, detail: { name?: string; code?: string | numbe
 }
 
 export const POST: RequestHandler = async ({ locals }) => {
-  // Phase 1 Device Auth: mark the current device session as revoked
-  // BEFORE calling signOut (which invalidates the access token).
-  // This is non-blocking — if revocation fails, sign-out still proceeds.
+  // Phase 1 Device Auth + Newtask §13: mark the current device session
+  // as revoked BEFORE calling signOut (which invalidates the access
+  // token). Ordering per the task contract:
+  //   1. derive current session_id (JWT claim, server-side)
+  //   2. mark the current device_sessions row revoked
+  //   3. invalidate the per-instance revocation cache
+  //   4. LOCAL Supabase sign-out (scope: 'local' — see below)
+  //   5. cookie clearing (Supabase SSR setAll on the redirect response)
+  //   6. redirect
+  // This revocation is failure-safe — if it fails, sign-out still
+  // proceeds (the registry row will be reconciled by stale cleanup).
   if (locals.session?.access_token && locals.user?.id) {
     try {
       const supabaseSessionId = extractSessionId(locals.session.access_token);
@@ -75,7 +83,14 @@ export const POST: RequestHandler = async ({ locals }) => {
   let signOutError: { code?: string } | null = null;
 
   try {
-    const result = await locals.supabase.auth.signOut();
+    // Newtask §13 (RC-2 fix): LOCAL scope sign-out. Supabase's DEFAULT
+    // scope is 'global', which revokes the refresh token for EVERY
+    // session of the user — signing out on the phone would kill the
+    // TV/laptop sessions too. 'local' terminates ONLY this browser's
+    // current session; other devices keep their independent sessions
+    // (they can still be revoked individually via the Account UI or
+    // via "Sign out all other devices").
+    const result = await locals.supabase.auth.signOut({ scope: 'local' });
     signOutError = result?.error ?? null;
   } catch (error) {
     // Unexpected exception from signOut() — must not crash the function.

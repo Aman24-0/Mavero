@@ -1,16 +1,24 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { ArrowRight, Mail, LockKeyhole, Eye, EyeOff, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-svelte';
+  import { ArrowRight, Mail, LockKeyhole, Eye, EyeOff, ShieldCheck, AlertCircle, CheckCircle2, QrCode } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
+  import { isBigScreen } from '$lib/shared/device-class';
 
   type AuthForm = { message?: string; email?: string; success?: boolean };
-  let { form }: { form?: AuthForm } = $props();
+  let { form, data }: { form?: AuthForm; data?: { deviceType?: string } } = $props();
   const queryMessage = page.url.searchParams.get('error') === 'confirmation'
     ? 'That confirmation link could not be completed. Please try signing in again.'
     : page.url.searchParams.get('error') === 'missing_confirmation'
       ? 'That confirmation link is incomplete. Please request a new one.'
       : '';
   const nextPath = page.url.searchParams.get('next') ?? '/account';
+
+  // Newtask §8/§27 — the QR-DISPLAY login option is only offered on
+  // big screens (desktop / TV). Phones and tablets are the QR-scanning
+  // / authorization side of the pairing flow, so they never see this
+  // CTA. The class comes from the server layout projection (same
+  // parser as the device_sessions registry) — not a CSS media query.
+  const showQrLogin = $derived(isBigScreen(data?.deviceType));
 
   let showPassword = $state(false);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; form is a server snapshot
@@ -87,6 +95,16 @@
         <span>Sign in</span> <ArrowRight size={14} />
       </button>
     </form>
+
+    <!-- Newtask §8 — big-screen QR login. Navigates to the existing
+         canonical big-screen QR route (/tv-login); NO pairing logic is
+         duplicated here. Hidden on phone/tablet (they are the scanner
+         side) and on unknown device classes (safest fallback). -->
+    {#if showQrLogin}
+      <a class="qr-cta" href="/tv-login">
+        <QrCode size={15} /> <span>Login with QR</span>
+      </a>
+    {/if}
 
     <!-- Forgot password — integrated inline toggle, not a <details> element. -->
     {#if !resetOpen}
@@ -215,6 +233,27 @@
   }
   .secondary-cta:hover { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .24); }
   .secondary-cta:active { transform: scale(.98); }
+
+  /* Newtask §8 — big-screen "Login with QR" secondary action.
+     Matches the secondary-cta visual language; rendered as a link
+     (navigation to /tv-login, not a form submit). */
+  .qr-cta {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 48px;
+    padding: 0 22px;
+    margin-top: -4px;
+    border-radius: 999px;
+    font-size: .84rem; font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    color: #f5f5f5;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid rgba(255, 255, 255, .14);
+    transition: transform 180ms cubic-bezier(.22,1,.36,1), background 180ms cubic-bezier(.22,1,.36,1), border-color 180ms cubic-bezier(.22,1,.36,1);
+  }
+  .qr-cta:hover { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .24); transform: translateY(-1px); }
+  .qr-cta:active { transform: scale(.98); }
+  .qr-cta:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 2px; }
 
   .inline-link {
     background: transparent; border: 0;

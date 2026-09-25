@@ -6,10 +6,60 @@ import type { Database } from '$lib/server/supabase/database.types';
 import { isEnvironmentFreePath } from '$lib/server/route-policy';
 import { resolveRequestIdFromHeaders, PUBLIC_REQUEST_ID_HEADER } from '$lib/server/http/request-id';
 import { captureException } from '$lib/server/observability/error-tracking';
+import type { SupabaseAdminClient } from '$lib/server/supabase/admin';
 import { extractSessionId } from '$lib/server/auth/jwt-session-id';
-import { parseDeviceMetadata, getOrCreateDeviceId } from '$lib/server/auth/device-metadata';
+import { parseDeviceMetadata, ensureDeviceIdCookie, readDeviceHintCookie, DEVICE_ID_COOKIE, DEVICE_HINT_COOKIE } from '$lib/server/auth/device-metadata';
 import { registerCurrentSession, lookupSessionRevocationState } from '$lib/server/auth/device-sessions';
 import { isSessionRevoked } from '$lib/server/auth/session-revocation-cache';
+
+// Session-registration timeout (Newtask §3 + §22).
+//
+// Registration is AWAITED with this bounded timeout so a successful
+// registry write actually completes before the request lifecycle ends
+// (fire-and-forget promises may never finish on Netlify serverless —
+// the function can freeze/reuse right after the response is returned,
+// which is exactly why the registry behaved like a one-time device
+// injection). The timeout bounds the added latency: worst case we add
+// REGISTRATION_TIMEOUT_MS to ONE request per session per heartbeat
+// interval; the common path (fresh heartbeat, < 5 min old) is a single
+// fast RPC that does no DB write.
+//
+// Failure model (unchanged, task §22): if the registry write times out
+// or fails, authentication CONTINUES — the registry is supporting
+// infrastructure, not a security gate. The error is logged safely
+// (requestId + error class only; never tokens or session IDs).
+const REGISTRATION_TIMEOUT_MS = 1500;
+
+/**
+ * Awaits a promise with a bounded timeout. Never rejects — resolves
+ * `{ timedOut: true, value: null }` when the deadline passes first.
+ * Used for session registration so a hanging Supabase RPC cannot
+ * stall the request indefinitely.
+ */
+async function awaitWithTimeout<T>(
+  promise: Promise<T>,
+  ms: number
+): Promise<{ timedOut: boolean; value: T | null }> {
+  let timedOut = false;
+  const bounded = new Promise<T | null>((resolve) => {
+    const timer = setTimeout(() => {
+      timedOut = true;
+      resolve(null);
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      }
+    );
+  });
+  const value = await bounded;
+  return { timedOut, value };
+}
 
 // Server hook.
 //
@@ -140,22 +190,30 @@ export const handle: Handle = async ({ event, resolve }) => {
   //   - The check fails-open on DB errors (the Supabase JWT remains the
   //     authoritative auth boundary; the registry is a supplementary
   //     revocation layer).
+  //
+  // Newtask §38/RC-11: the service-role admin client is created ONCE per
+  // request (previously the revocation check and the registration block
+  // each created their own client — two client instances per request).
   let sessionRevoked = false;
+  let supabaseSessionId: string | null = null;
+  let admin: SupabaseAdminClient | null = null;
   if (auth.session?.access_token && auth.user) {
     const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
     const adminKey = privateEnv.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
     if (adminUrl && adminKey) {
-      const supabaseSessionId = extractSessionId(auth.session.access_token);
+      supabaseSessionId = extractSessionId(auth.session.access_token);
       if (supabaseSessionId) {
         const { createClient } = await import('@supabase/supabase-js');
-        const admin = createClient<Database>(adminUrl, adminKey, {
+        // Newtask §38/RC-11: ONE admin client per request, shared by
+        // the revocation check and the registration block below.
+        admin = createClient<Database>(adminUrl, adminKey, {
           auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
           global: { fetch: event.fetch },
         });
         const { revoked } = await isSessionRevoked(
           auth.user.id,
           supabaseSessionId,
-          (uid, sid) => lookupSessionRevocationState(admin, uid, sid)
+          (uid, sid) => lookupSessionRevocationState(admin!, uid, sid)
         );
         if (revoked) {
           // Treat as guest: clear the auth context so the rest of the
@@ -166,6 +224,11 @@ export const handle: Handle = async ({ event, resolve }) => {
           event.locals.session = null;
           event.locals.user = null;
           sessionRevoked = true;
+          // Safe observability (Newtask §40) — no tokens, no session IDs.
+          console.warn('[DeviceSessions] revoked session rejected', {
+            requestId: event.locals.requestId,
+            deviceType: parseDeviceMetadata(event.request.headers.get('user-agent')).deviceType,
+          });
           // Do NOT fall through to registration. A revoked session must
           // not be re-registered (that would resurrect it in the list).
         }
@@ -173,59 +236,80 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  // Phase 1 Device Auth: register the current device session in the
-  // registry. This is NON-BLOCKING — if the admin client is missing
-  // or the registry write fails, authentication continues normally.
-  // The registry is supporting infrastructure, not a security gate.
+  // Phase 1 Device Auth (Newtask §3 rebuild): register the current
+  // device session in the registry.
   //
-  // Skip registration entirely when the session was just revoked
-  // above — a revoked session must not be re-registered.
-  if (!sessionRevoked && auth.session && auth.user) {
-    try {
-      const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
-      const adminKey = privateEnv.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
-      if (adminUrl && adminKey) {
-        const supabaseSessionId = extractSessionId(auth.session.access_token);
-        if (supabaseSessionId) {
-          // Device ID: read from cookie, create if missing.
-          const DEVICE_ID_COOKIE = 'mavero:device-id';
-          let deviceId = event.cookies.get(DEVICE_ID_COOKIE) ?? '';
-          if (!deviceId || deviceId.length < 8) {
-            deviceId = getOrCreateDeviceId(null);
-            event.cookies.set(DEVICE_ID_COOKIE, deviceId, {
-              path: '/',
-              httpOnly: true,
-              sameSite: 'lax',
-              maxAge: 60 * 60 * 24 * 365, // 1 year
-              secure: event.url.protocol === 'https:',
-            });
-          }
-          const metadata = parseDeviceMetadata(event.request.headers.get('user-agent'));
-          // Use the admin client inline — don't import createSupabaseAdminClient
-          // (which throws if env is missing). We already verified env above.
-          const { createClient } = await import('@supabase/supabase-js');
-          const admin = createClient<Database>(adminUrl, adminKey, {
-            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-            global: { fetch: event.fetch },
-          });
-          // Fire-and-forget — registration failure must not block auth.
-          void registerCurrentSession(admin, {
-            userId: auth.user.id,
-            supabaseSessionId,
-            deviceId,
-            metadata,
-          }).catch((err) => {
-            console.error('[DeviceSessions] Registration failed (non-blocking)', {
-              name: (err as Error)?.name ?? 'unknown',
-              requestId: event.locals.requestId,
-            });
-          });
-        }
+  // REGISTRATION CONTRACT (fixes the one-time-injection bug):
+  //   - The registration RPC is AWAITED with a bounded timeout
+  //     (REGISTRATION_TIMEOUT_MS) — a successful registry write must
+  //     actually complete before the request finishes. Under Netlify
+  //     serverless, a fire-and-forget promise may never run to
+  //     completion once the response is returned; that is why new
+  //     logins never appeared and last_seen_at never heartbeated.
+  //   - Failure-safe: on timeout or RPC error, authentication
+  //     continues normally (the registry is supporting infrastructure,
+  //     not a security gate). The failure is logged safely.
+  //   - No unnecessary DB writes: the RPC heartbeats at most once per
+  //     HEARTBEAT_INTERVAL_MS (5 min) per session; fresh sessions are
+  //     a single no-write RPC roundtrip.
+  //   - DO NOT resurrect revoked sessions: the RPC returns an empty
+  //     result for a revoked session and we simply do not register.
+  //
+  // Skipped entirely when the session was just revoked above.
+  if (!sessionRevoked && auth.session && auth.user && admin && supabaseSessionId) {
+    // Device ID: centralized cookie handling (Newtask §5/§38) —
+    // created only when absent/invalid; httpOnly, lax, path '/',
+    // 1 year, secure on HTTPS. Never holds a session token.
+    const deviceId = ensureDeviceIdCookie(
+      event.cookies.get(DEVICE_ID_COOKIE),
+      (value, options) => event.cookies.set(DEVICE_ID_COOKIE, value, options),
+      event.url.protocol === 'https:'
+    );
+
+    // Device metadata: real User-Agent parsing + client hints
+    // (sec-ch-ua brands for Brave, touch-hint cookie for iPad-as-Mac).
+    // Never hardcoded — see device-metadata.ts.
+    const metadata = parseDeviceMetadata(event.request.headers.get('user-agent'), {
+      clientHintsBrands: event.request.headers.get('sec-ch-ua'),
+      touchCapable: readDeviceHintCookie(event.cookies.get(DEVICE_HINT_COOKIE)),
+    });
+
+    const registration = await awaitWithTimeout(
+      registerCurrentSession(admin, {
+        userId: auth.user.id,
+        supabaseSessionId,
+        deviceId,
+        metadata,
+      }),
+      REGISTRATION_TIMEOUT_MS
+    );
+
+    if (registration.timedOut) {
+      // Bounded-timeout miss: auth continues, registry may be stale
+      // for this session until the next request heartbeats it.
+      console.error('[DeviceSessions] Registration timed out (non-blocking)', {
+        requestId: event.locals.requestId,
+      });
+    } else if (registration.value) {
+      // Safe observability (Newtask §40): distinguish a fresh
+      // registration from a heartbeat touch via the RPC's
+      // `registered` flag. Never log tokens or session IDs.
+      if (registration.value.registered === true) {
+        console.log('[DeviceSessions] register success', {
+          requestId: event.locals.requestId,
+          deviceType: metadata.deviceType,
+        });
+      } else {
+        console.log('[DeviceSessions] heartbeat ok', {
+          requestId: event.locals.requestId,
+          deviceType: metadata.deviceType,
+        });
       }
-    } catch {
-      // Any unexpected error in device session registration is
-      // non-critical. Authentication continues normally.
     }
+    // registration.value === null (and not timed out) ⇒ the RPC
+    // failed or the session was revoked in the race window.
+    // registerCurrentSession already logged the safe diagnostic;
+    // authentication continues (failure-safe contract).
   }
 
   // Phase 3-A: return the request ID in the response header so the

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, invalidateAll } from '$app/navigation';
   import { LoaderCircle, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
   import { haptic } from '$lib/client/haptics';
@@ -28,6 +28,12 @@
   let expiredRetryBtn: HTMLButtonElement | undefined = $state();
   let errorRetryBtn: HTMLButtonElement | undefined = $state();
 
+  // Newtask §25 (RC-9 fix): the success-navigation timer is tracked so
+  // onDestroy can clear it — if the user navigates away during the
+  // 1.5s success window, the pending goto() must never hijack their
+  // navigation.
+  let navTimer: ReturnType<typeof setTimeout> | undefined;
+
   // Phase 5: a monotonically-increasing request token. Each call to
   // createPairing() increments this. Stale async callbacks (from a
   // previous pairing attempt whose fetch resolved after the user
@@ -42,6 +48,7 @@
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
     if (countdownTimer) clearInterval(countdownTimer);
+    if (navTimer) clearTimeout(navTimer);
   });
 
   async function createPairing() {
@@ -201,7 +208,17 @@
         pairingState = 'success';
         // Navigate to discover after a brief delay so the user sees
         // the success state before the page transitions.
-        setTimeout(() => { void goto('/discover'); }, 1500);
+        //
+        // Newtask §25 (RC-14 fix): invalidateAll() reruns the root
+        // layout server load BEFORE navigating — this page loaded
+        // while the browser was UNAUTHENTICATED, so the cached layout
+        // data still says "guest". Without invalidation the TV would
+        // land on /discover still rendering the guest UI until a full
+        // page reload. The timer is tracked (navTimer) and cleared on
+        // destroy so it can never hijack a manual navigation.
+        navTimer = setTimeout(() => {
+          void invalidateAll().then(() => goto('/discover'));
+        }, 1500);
       } else {
         pairingState = 'error';
         errorMessage = 'Unable to establish a session. Please try again.';
@@ -293,7 +310,7 @@
           </div>
         </div>
         <div class="tv-qr-info">
-          <p class="tv-instructions">Open your phone camera and scan this code.</p>
+          <p class="tv-instructions">Scan with your phone or tablet</p>
           <!--
             aria-live="off" on the countdown — it updates every
             second and would be noise on a screen reader. The
@@ -314,7 +331,7 @@
       </div>
       <div class="tv-waiting" role="status" aria-live="polite">
         <LoaderCircle size={16} class="spin" />
-        <span>Waiting for approval on your phone…</span>
+        <span>Waiting for scan — approve login on your phone</span>
       </div>
     {:else if pairingState === 'exchanging'}
       <div class="tv-state-success" role="status" aria-live="polite">

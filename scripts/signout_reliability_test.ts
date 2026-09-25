@@ -31,7 +31,10 @@ console.log('Sign-out reliability regression tests');
 // --- 1. signOut() is wrapped in try/catch ---
 // The try block must contain the signOut() call, and the catch block
 // must return a controlled JSON response (not re-throw).
-assert.match(signOutSrc, /try\s*\{[\s\S]*?locals\.supabase\.auth\.signOut\(\)/, 'signOut() call is inside a try block');
+// Newtask §13: normal sign-out must be LOCAL scope — Supabase's default
+// ('global') revokes the refresh token for EVERY device session.
+assert.match(signOutSrc, /try\s*\{[\s\S]*?locals\.supabase\.auth\.signOut\(\{\s*scope:\s*['"]local['"]\s*\}\)/, 'signOut() uses LOCAL scope (current session only)');
+assert.ok(!/signOut\(\)\s*;/.test(signOutSrc), 'signOut() is never called without an explicit scope');
 assert.match(signOutSrc, /\}\s*catch\s*\([\s\S]*?\)\s*\{[\s\S]*?return\s+json\(/, 'catch block returns a controlled JSON response');
 
 // --- 2. Supabase { error } return path also handled ---

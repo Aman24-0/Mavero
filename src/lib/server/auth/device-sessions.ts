@@ -33,6 +33,24 @@ import type { DeviceMetadata } from './device-metadata';
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Stale-session retention threshold (Newtask §20).
+ *
+ * A device_sessions row is considered STALE for listing purposes when
+ * its last_seen_at is older than this threshold — the corresponding
+ * Supabase session either no longer exists (refresh token expired /
+ * global signout) or the user never returned. Because a live session
+ * heartbeats every 5 minutes (see HEARTBEAT_INTERVAL_MS), any row this
+ * old cannot belong to an actually-active session.
+ *
+ * We do NOT perform expensive `auth.sessions` lookups per request —
+ * the heartbeat-based threshold is the documented reconciliation
+ * strategy. Stale rows are HIDDEN from the active list but NOT
+ * deleted (audit history is preserved; `revoked_at` remains the
+ * logical revocation marker).
+ */
+const STALE_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 export type DeviceSessionRow = {
   id: string;
   user_id: string;
@@ -47,6 +65,8 @@ export type DeviceSessionRow = {
   created_at: string;
   last_seen_at: string;
   revoked_at: string | null;
+  /** RPC flag: true = INSERT (new registration), false = heartbeat/no-op. */
+  registered?: boolean;
 };
 
 /**
@@ -155,19 +175,26 @@ export async function getCurrentSession(
 }
 
 /**
- * Lists all active (non-revoked) sessions for a user.
- * Foundation for the future Account Sessions UI.
+ * Lists all active (non-revoked, non-stale) sessions for a user.
+ *
+ * Newtask §20 (stale-session reconciliation): rows whose last_seen_at
+ * is older than STALE_SESSION_RETENTION_MS are excluded — an obviously
+ * dead session (no heartbeat for 30 days) must never appear as active
+ * in the Account UI. Revoked rows were already excluded. Rows are
+ * never deleted here — history is preserved for audit.
  */
 export async function listUserSessions(
   admin: SupabaseAdminClient,
   userId: string
 ): Promise<DeviceSessionRow[]> {
   try {
+    const staleCutoff = new Date(Date.now() - STALE_SESSION_RETENTION_MS).toISOString();
     const { data, error } = await admin
       .from('device_sessions')
       .select('*')
       .eq('user_id', userId)
       .is('revoked_at', null)
+      .gt('last_seen_at', staleCutoff)
       .order('last_seen_at', { ascending: false });
     if (error) {
       console.error('[DeviceSessions] listUserSessions error', { name: error.name, code: error.code });

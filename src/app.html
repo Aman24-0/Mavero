@@ -22,6 +22,35 @@
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
+    <script>
+      // Newtask §6 — touch-capable Mac detection (iPad-as-Mac).
+      //
+      // iPads in default desktop mode ship a Macintosh User-Agent, so the
+      // server cannot distinguish them from a desktop Mac by UA alone. This
+      // inline script runs BEFORE hydration and sets a purely DESCRIPTIVE
+      // hint cookie on the first visit; every subsequent server render
+      // (including the device_sessions registry) classifies the device as
+      // a tablet.
+      //
+      // Privacy/safety: the value is a static string ("tablet") — no PII,
+      // no fingerprinting, no identifiers. It is never an authentication
+      // credential and never used for access control. Cookie flags:
+      // path=/, 1 year, SameSite=Lax (readable only by this origin over
+      // the same-site requests the server handles).
+      (function () {
+        try {
+          if (
+            document.cookie.indexOf('mavero:device-hint=') === -1 &&
+            navigator.maxTouchPoints > 1 &&
+            navigator.platform === 'MacIntel'
+          ) {
+            document.cookie = 'mavero:device-hint=tablet; path=/; max-age=31536000; samesite=lax';
+          }
+        } catch (e) {
+          /* descriptive only — never block rendering */
+        }
+      })();
+    </script>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>

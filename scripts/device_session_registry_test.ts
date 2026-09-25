@@ -198,12 +198,18 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(hooks.includes('registerCurrentSession'), 'hooks.server.ts imports registerCurrentSession');
   ok(hooks.includes('extractSessionId'), 'hooks.server.ts imports extractSessionId');
   ok(hooks.includes('parseDeviceMetadata'), 'hooks.server.ts imports parseDeviceMetadata');
-  ok(hooks.includes('getOrCreateDeviceId'), 'hooks.server.ts imports getOrCreateDeviceId');
+  // Newtask §5/§38: cookie handling is centralized in ensureDeviceIdCookie
+  // (device-metadata.ts) — hooks no longer inlines the cookie write logic.
+  ok(hooks.includes('ensureDeviceIdCookie'), 'hooks.server.ts imports ensureDeviceIdCookie');
+  ok(hooks.includes('DEVICE_ID_COOKIE'), 'hooks.server.ts uses the shared DEVICE_ID_COOKIE constant');
   // Phase 3: the registration guard now also checks !sessionRevoked so a
   // revoked session is NOT re-registered (which would resurrect it in the list).
   ok(hooks.includes('!sessionRevoked && auth.session && auth.user'), 'hooks only registers when authenticated AND not revoked');
   ok(hooks.includes('Non-blocking') || hooks.includes('non-blocking') || hooks.includes('NON-BLOCKING'), 'hooks documents non-blocking behavior');
-  ok(hooks.includes('mavero:device-id'), 'hooks sets device-id cookie');
+  // Newtask §5/§38: the cookie name lives in the shared DEVICE_ID_COOKIE
+  // constant ('mavero:device-id', asserted in the device-metadata section
+  // above) — hooks references the constant, not a duplicated literal.
+  ok(hooks.includes('event.cookies.set(DEVICE_ID_COOKIE'), 'hooks sets the device-id cookie via the shared constant');
   ok(!hooks.includes('locals.session.access_token') || !hooks.match(/console\.\w+.*access_token/), 'hooks does NOT log access tokens');
 
   // Guest traffic must never trigger registration.

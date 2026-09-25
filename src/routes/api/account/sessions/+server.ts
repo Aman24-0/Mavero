@@ -49,6 +49,10 @@ export const GET: RequestHandler = async ({ locals }) => {
   // supabase_session_id (raw), device_id, ip_hash, or any internal
   // database identifiers. The `id` field is exposed as a safe opaque
   // revocation token (it's a random UUID, not a credential).
+  //
+  // Newtask §16/RC-6: the raw currentSessionId is NO LONGER returned —
+  // the client only needs the per-row `isCurrent` flag (computed
+  // server-side from the JWT session_id claim).
   const projected = sessions.map((row: DeviceSessionRow) => ({
     id: row.id,
     deviceType: row.device_type,
@@ -61,5 +65,5 @@ export const GET: RequestHandler = async ({ locals }) => {
     isCurrent: row.supabase_session_id === currentSessionId,
   }));
 
-  return json({ ok: true, sessions: projected, currentSessionId }, { headers: { 'cache-control': 'no-store' } });
+  return json({ ok: true, sessions: projected }, { headers: { 'cache-control': 'no-store' } });
 };

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { Check, Cloud, Info, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
@@ -11,6 +11,7 @@
   import { favoriteToMedia } from '$lib/client/progress/presenter';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
   import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
+  import { isQrScannerDevice, deviceTypeLabel } from '$lib/shared/device-class';
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
 
@@ -168,13 +169,44 @@
     return Laptop;
   }
 
-  async function loadSessions() {
+  // Newtask §18 — stale-response race guard. Every loadSessions() call
+  // increments a monotonic sequence number and captures it; a response
+  // only mutates state when its sequence is STILL the latest. If request
+  // A starts, request B starts later and finishes first, a late-finishing
+  // A can NEVER overwrite B's newer data.
+  let sessionRequestSeq = 0;
+
+  // Newtask §10/§28 — the "Login on Big Screen" CTA (opens the phone QR
+  // scanner) is only shown on QR-scanner devices (phone/tablet).
+  // Desktop/TV users are the QR-DISPLAY side and should not be expected
+  // to use a camera; unknown classes hide it (safest fallback).
+  const showBigScreenLogin = $derived(isQrScannerDevice(data.deviceType));
+
+  // Newtask §29 — absolute timestamp (consistent, locale-formatted).
+  // The stored UTC value is untouched; this is display-only.
+  function absoluteTime(iso: string): string {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString(undefined, {
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: 'numeric', minute: '2-digit'
+    });
+  }
+
+  // Newtask §18 — `silent` refreshes keep existing cards visible while
+  // new data loads (no full-UI reset); only the FIRST load shows the
+  // loading skeleton.
+  async function loadSessions(options?: { silent?: boolean }) {
     if (!data.isAuthenticated) return;
-    sessionsLoading = true;
-    sessionsError = '';
+    const seq = ++sessionRequestSeq;
+    if (!options?.silent) {
+      sessionsLoading = true;
+      sessionsError = '';
+    }
     try {
       const res = await fetch('/api/account/sessions', { headers: { accept: 'application/json' } });
       const payload = await res.json();
+      if (seq !== sessionRequestSeq) return; // stale response — a newer request superseded us
       if (!res.ok || !payload.ok) {
         sessionsError = payload.message ?? 'Unable to load sessions.';
         sessions = [];
@@ -182,10 +214,11 @@
         sessions = payload.sessions ?? [];
       }
     } catch {
+      if (seq !== sessionRequestSeq) return; // stale
       sessionsError = 'Unable to load sessions. Please try again.';
       sessions = [];
     } finally {
-      sessionsLoading = false;
+      if (seq === sessionRequestSeq) sessionsLoading = false;
     }
   }
 
@@ -213,8 +246,11 @@
         showErrorToast(payload.message ?? 'Unable to revoke the session.');
       } else {
         showSuccessToast('Session revoked.');
-        // Remove the revoked session from the local list immediately.
+        // Remove the revoked session from the local list immediately,
+        // then silently re-sync from the server so the list reflects
+        // the true registry state (Newtask §18 post-action refresh).
         sessions = sessions.filter((s) => s.id !== revokeTarget!.id);
+        void loadSessions({ silent: true });
         haptic('success');
       }
     } catch {
@@ -360,6 +396,11 @@
     }
   }
 
+  // Newtask §18 — session freshness listeners/timers (created in onMount,
+  // removed in onDestroy so navigating away never leaks them).
+  let refreshSessionsSilently: (() => void) | null = null;
+  let sessionRefreshTimer: number | null = null;
+
   onMount(() => {
     // Phase 2-J (audit UIX-1): the dead mavero.settings localStorage load
     // was removed (autoplay / autoResume / reducedMotion toggles were
@@ -367,6 +408,36 @@
     void loadLocalState();
     void loadSessions();
     void loadAdultMode();
+
+    // Newtask §18 — session freshness strategy. Server fetch on:
+    //   - window focus (returning to the tab)
+    //   - document becoming visible (app-switcher return / unlock)
+    //   - a lightweight 30s interval (only while visible — no
+    //     aggressive background polling)
+    //   - after every action (revoke / sign-out-all handlers already
+    //     call loadSessions)
+    // All refreshes are SILENT — existing session cards stay visible
+    // while new data loads; the skeleton only renders on the first load.
+    // The race guard inside loadSessions drops any stale response that
+    // resolves after a newer one.
+    refreshSessionsSilently = () => {
+      if (document.visibilityState === 'visible') void loadSessions({ silent: true });
+    };
+    window.addEventListener('focus', refreshSessionsSilently);
+    document.addEventListener('visibilitychange', refreshSessionsSilently);
+    sessionRefreshTimer = window.setInterval(refreshSessionsSilently, 30_000);
+  });
+
+  onDestroy(() => {
+    if (refreshSessionsSilently) {
+      window.removeEventListener('focus', refreshSessionsSilently);
+      document.removeEventListener('visibilitychange', refreshSessionsSilently);
+      refreshSessionsSilently = null;
+    }
+    if (sessionRefreshTimer !== null) {
+      window.clearInterval(sessionRefreshTimer);
+      sessionRefreshTimer = null;
+    }
   });
 </script>
 
@@ -556,15 +627,19 @@
           <h2 id="sessions-title">Devices &amp; Sessions</h2>
         </div>
 
-        <!-- Phase 6 — Login on TV. Opens the phone-side QR scanner so the
-             authenticated user can scan a TV's QR code and approve it.
-             Only shown for authenticated users (the whole section is inside
-             {#if data.user}). -->
-        <div class="login-tv-row">
-          <a class="login-tv-btn" href="/account/scan-tv">
-            <Tv size={13} /> <span>Login on TV</span>
-          </a>
-        </div>
+        <!-- Newtask §9/§10/§28 — "Login on Big Screen". Opens the phone-side
+             QR scanner so the authenticated user can scan a big screen's
+             QR code and approve it. Shown ONLY on QR-scanner devices
+             (phone/tablet); desktop/TV are the QR-display side and
+             unknown classes hide it (safest fallback). The whole section
+             remains inside {#if data.user}. -->
+        {#if showBigScreenLogin}
+          <div class="login-tv-row">
+            <a class="login-tv-btn" href="/account/scan-tv">
+              <Monitor size={13} /> <span>Login on Big Screen</span>
+            </a>
+          </div>
+        {/if}
 
         {#if sessionsLoading}
           <div class="sessions-loading" role="status" aria-live="polite">
@@ -573,7 +648,7 @@
         {:else if sessionsError}
           <div class="sessions-error" role="alert">
             {sessionsError}
-            <button class="retry-btn" type="button" onclick={loadSessions}>Retry</button>
+            <button class="retry-btn" type="button" onclick={() => loadSessions()}>Retry</button>
           </div>
         {:else if sessions.length === 0}
           <div class="sessions-empty">
@@ -589,7 +664,7 @@
                   <div class="session-card-copy">
                     <strong class="session-card-name">{session.deviceName}</strong>
                     <span class="session-card-meta">
-                      {[session.browser, session.os].filter(Boolean).join(' · ') || 'Unknown browser'}
+                      {deviceTypeLabel(session.deviceType)}
                     </span>
                   </div>
                   {#if session.isCurrent}
@@ -597,7 +672,7 @@
                   {/if}
                 </div>
                 <div class="session-card-foot">
-                  <span class="session-time">{relativeTime(session.lastSeenAt)}</span>
+                  <span class="session-time" title={absoluteTime(session.lastSeenAt)}>{relativeTime(session.lastSeenAt)}</span>
                   {#if !session.isCurrent}
                     <button class="revoke-btn" type="button" onclick={() => openRevoke(session)} disabled={revokeBusy}>
                       Revoke
@@ -613,8 +688,10 @@
         <!-- Only shown when there is at least one OTHER active session. -->
         {#if !sessionsLoading && !sessionsError && sessions.filter((s) => !s.isCurrent).length > 0}
           <div class="signout-all-row">
+            <!-- Newtask §15 — wording matches the endpoint semantics exactly:
+                 every OTHER session is revoked; this device stays signed in. -->
             <button type="button" class="signout-all-btn" onclick={openSignoutAll} disabled={signoutAllBusy}>
-              <LogOut size={13} /> <span>Sign out all devices</span>
+              <LogOut size={13} /> <span>Sign out all other devices</span>
             </button>
           </div>
         {/if}
