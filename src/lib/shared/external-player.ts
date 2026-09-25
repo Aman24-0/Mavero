@@ -124,7 +124,7 @@ export function transformPixeldrainUrl(url: string): string {
   // `/dl/<id>` is matched as `dl` (not `d`+`l`); for `/d/<id>`, `dl`
   // doesn't match so the regex backtracks to `d`.
   const match = url.match(
-    /^([^:]*:\/\/(?:[^/]*\.)?pixeldrain\.com)\/(?:dl|d|u|ulong)\/([^/?#]+)([^]*)$/i,
+    /^([^:]*:\/\/(?:www\.)?pixeldrain\.(?:com|dev))\/(?:dl|d|u|ulong)\/([^/?#]+)([^]*)$/i,
   );
   if (!match) return url;
   const [, origin, id, rest] = match;
@@ -180,7 +180,7 @@ export function transformPixeldrainViewerUrl(url: string): string {
   // path segment after /dl/, /d/, /u/, /ulong/, or /api/file/.
   // cdn.pixeldrain.com is NOT matched (different host, no hotlink protection).
   const match = url.match(
-    /^([^:]*:\/\/(?:[^/]*\.)?pixeldrain\.com)\/(?:dl|d|u|ulong|api\/file)\/([^/?#]+)(?:\/[^?#]*)?([^]*)$/i,
+    /^([^:]*:\/\/(?:www\.)?pixeldrain\.(?:com|dev))\/(?:dl|d|u|ulong|api\/file)\/([^/?#]+)(?:\/[^?#]*)?([^]*)$/i,
   );
   if (!match) return url;
   const [, origin, id] = match;
@@ -198,10 +198,11 @@ export function transformPixeldrainViewerUrl(url: string): string {
  */
 export function isPixeldrainUrl(url: string): boolean {
   if (typeof url !== 'string' || url === '') return false;
-  // Match pixeldrain.com or www.pixeldrain.com — NOT cdn.pixeldrain.com
-  // (the CDN host has a different URL scheme, no hotlink protection, and
-  // should be treated as a direct-download URL just like any other CDN).
-  return /^https?:\/\/(?:www\.)?pixeldrain\.com\//i.test(url);
+  // Match pixeldrain.com, www.pixeldrain.com, pixeldrain.dev, www.pixeldrain.dev
+  // — NOT cdn.pixeldrain.com or cdn.pixeldrain.dev (the CDN hosts have a
+  // different URL scheme, no hotlink protection, and should be treated as
+  // direct-download URLs just like any other CDN).
+  return /^https?:\/\/(?:www\.)?pixeldrain\.(?:com|dev)\//i.test(url);
 }
 
 /**
