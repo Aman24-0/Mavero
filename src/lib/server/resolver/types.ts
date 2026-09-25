@@ -69,6 +69,19 @@ export type SafeSourceMetadata = {
   protocol?: PlaybackProtocol;
   note?: string;
   /**
+   * Embed Gateway: the upstream provider's HTTPS origin (e.g.
+   * `'https://vidlink.pro'`). Set by the resolver when `source.url` is
+   * wrapped into a Mavero gateway URL (`/api/embed/session/<token>`).
+   * Client-side provider adapters use this field (instead of
+   * `new URL(source.url).origin`) to select the correct postMessage
+   * adapter — the gateway URL's origin is Mavero, not the provider.
+   *
+   * This is NOT the full provider URL — just the origin, which is
+   * already hardcoded in each adapter's source code. No new information
+   * is leaked.
+   */
+  providerOrigin?: string;
+  /**
    * Phase 7F (MegaPlay): variants exposed by this source at runtime
    * (e.g. ['sub','dub']). Forwarded into PlayerSource.metadata.variants
    * so the source selector can render inline variant toggles.
@@ -173,4 +186,12 @@ export type ResolverDependencies = {
    * the existing per-operation timeouts. Injectable for tests.
    */
   deadlineMs?: number;
+  /**
+   * Embed Gateway: the signing secret for embed tokens. When omitted,
+   * the resolver lazily loads the env-configured secret from
+   * `$lib/server/embed-gateway/env.ts`. Injectable for tests — tests
+   * that import this module via tsx can pass a deterministic key
+   * without importing the env module (which uses `$env/dynamic/private`).
+   */
+  embedGatewaySecret?: string;
 };
