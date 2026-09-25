@@ -1896,3 +1896,78 @@ Verified correct and preserved: `register_device_session` RPC (atomic, no-resurr
 - First-visit iPad (desktop-mode UA) is classified `desktop` until the touch-hint cookie is set by the app.html script; classification corrects from the second request. This is the standard production pattern (no server-side iPad signal exists).
 - Per-instance revocation cache means up to 30s of stale-authenticated requests on OTHER Netlify function instances after a revoke (documented serverless honesty; unchanged).
 - Registration adds at most ~1.5s bounded wait, and only when the registry RPC hangs; the common path is one fast no-write RPC per request (heartbeat-throttled).
+
+---
+
+# Phase 11 — POST-94ce1ef PRODUCTION REGRESSION AUDIT + BIG-SCREEN QR LOGIN REPAIR
+
+**Date:** 2026-09-26 · **Baseline audited:** `94ce1ef` (passed all static tests, FAILED on real devices)
+
+## Real-device failure observed
+
+TV: QR ✓ → phone scans ✓ → /authorize loads ✓ → device info ✓ → Approve ✓ → TV detects approval ✓ → **"Something went wrong — Unable to establish a session."** The TV never became authenticated (stayed a guest), which also explains the TV-side library regressions (stale Continue Watching, 3-title My List — guest IndexedDB state).
+
+## Root causes found and fixed
+
+### RC-A (CRITICAL — the production regression): wrong Supabase primitive
+`claimAndExchangePairing()` passed the `generateLink({type:'magiclink'})` `properties.hashed_token` to `tvSupabase.auth.exchangeCodeForSession(...)`. That endpoint is the **PKCE authorization-code** exchange — it requires a `code_verifier` stored by a client that initiated an OAuth/PKCE flow. The big screen's SSR client never runs such a flow, so the call could NEVER succeed → guaranteed 503 → the exact observed error.
+
+**Fix (verified, not guessed):** `tvSupabase.auth.verifyOtp({ token_hash, type: 'email' })` on the big screen's OWN SSR client (`locals.supabase`).
+- Installed `@supabase/supabase-js@2.112.3` typings: `VerifyTokenHashParams { token_hash: string; type: EmailOtpType }` with `EmailOtpType` including `'email'`; doc example: `verifyOtp({ token_hash: tokenHash, type: 'email' })`.
+- GoTrue (supabase/auth master, `internal/api/verify.go` `verifyTokenHash`): type `email` looks up the confirmation **OR recovery** token (magiclink generateLink sets the recovery token; the handler dynamically adapts type/expiry to `magiclink`), then `recoverVerify` CLEARS the recovery token (one-time use) and `issueRefreshToken` returns a full session — persisted by the SSR client through the cookie adapter (`Set-Cookie` on the big screen's response). An independent session; the phone's tokens never move.
+
+### RC-B: consume-before-verify dead state
+The old claim RPC flipped `approved → consumed` and cleared the credential BEFORE verification — any verify failure permanently killed the pairing. **Fix:** lease state machine (forward migration `20261003000000_device_pairing_exchange_lease.sql`):
+`pending → approved → exchanging (30s lease, credential KEPT) → consumed | failed`, with `release_device_pairing_exchange` (recoverable → back to approved, same credential retried), `fail_device_pairing` (terminal — token dead at Supabase), lease-expiry takeover for crashed exchangers, attempts cap (5), and lazy expiry of pending/approved/exchanging rows past the 5-min TTL. No permanent dead state; replay impossible (consumed/failed never claimable).
+
+### RC-C: §5 acceptance check — cookies verified
+After verifyOtp the endpoint asserts the chunked `sb-*-auth-token` cookies were actually queued for THIS response (`event.cookies.getAll()`); missing cookies are a distinct logged failure (`cookie-establishment-failed`, terminal — the token was consumed).
+
+### RC-D: literal `<em>` regression
+`title="…<em>word.</em>"` rendered literally (Svelte interpolates text; `@html` is forbidden). Fixed via AuthShell's `titleAccent` prop on both pages (tv-login: "Sign in with your / phone.", authorize: "Authorize this / device."). No unsafe rendering introduced.
+
+### RC-E: TV-only copy → Big Screen copy
+"MAVERO / TV Sign in" → "MAVERO / Big Screen Sign in"; phone-or-tablet wording throughout ("Scan the QR code with your phone or tablet to sign in on this device."); scan page retitled "Login on Big Screen — Mavero".
+
+### RC-F: manual TV code — implemented completely
+Phone: Account → Login on Big Screen → scan **OR** "Enter TV code" form (auto-uppercase, trim, char filter, max 8, Enter submit, loading/expired/invalid/rate-limit states). Server: authenticated dual-rate-limited `POST /api/auth/device-pairing/lookup` (10/min user + 30/min IP; ~2^40 code entropy vs ~10²-10³ guesses per IP per 5-min lifetime) resolves the code to a one-time 32-byte **handle** (hashed at rest, user-bound, TTL = pairing TTL) — the pairing secret NEVER reaches the browser on this path. `/authorize#h=<handle>` (fragment) → same info/approve pipeline; handle-bound user enforcement server-side. Post-approval completion polling added to /authorize ("Signed in on the device" when the big screen consumes).
+
+### RC-G: secret in query strings — closed
+`GET /status?secret=…` → `POST /status` with the credential in the body (mirrors the Phase-8 /info hardening).
+
+### RC-H: error taxonomy (§21)
+Every exchange failure now logs a safe reason (`claim-rpc-missing` [PGRST202], `claim-rpc-failed`, `pairing-not-approved/-expired/-consumed/-failed`, `exchange-lease-busy`, `token-verification-failed` [terminal otp_expired vs transient], `cookie-establishment-failed`, `missing-supabase-config`) with requestId + safe name/code — never the secret, token hash, OTP, or tokens. The client gets a machine-readable `reason` + `retryable` flag and the TV auto-retries recoverable failures (bounded).
+
+### RC-I: migration verification (§22)
+CI has no production DB access → documented post-deployment check: `pnpm run verify:pairing-rpc` (`scripts/verify_claim_rpc.ts` — side-effect-free dry-calls with impossible hashes proving existence + signature + service_role executability of all 4 RPCs; exit 1 names the migration). Documented in DEPLOYMENT.md + docs/supabase-migration-runbook.md (new "Device pairing migrations" section with the full chain + SQL Editor signature check). Runtime safety net: `claim-rpc-missing` logging.
+
+### RC-J: TV library regressions — root cause + verified policy
+The stale TV data was GUEST state (QR never authenticated the TV). After the fix, the deterministic order holds: exchange sets cookies → `invalidateAll()` → goto /discover → page-level `syncAuthenticatedState()` AWAITED before rendering cloud-derived state (Discover `loadContinue`, My List `loadList`). Merge policy verified by REAL logic tests (not string matching): fresh-TV sync receives the full cloud My List + Continue Watching; deletion tombstones stay authoritative (stale local favorites AND progress cannot resurrect a cloud deletion); phone deletions/additions propagate; phone and TV derive identical libraries; Continue Watching excludes completed, one-per-title, latest episode wins.
+
+## Files changed
+
+- **New migration:** `supabase/migrations/20261003000000_device_pairing_exchange_lease.sql` (status set `exchanging`/`failed`; `exchange_lease_until`/`exchange_claimed_at`/`exchange_attempts`; manual-handle columns; claim RPC replaced — old 2-arg DROPPED, new 4-arg lease-aware; `complete_device_pairing` / `release_device_pairing_exchange` / `fail_device_pairing`; full-secret_hash index; service_role-only EXECUTE).
+- `src/lib/server/auth/device-pairing.ts` — verifyOtp exchange, lease claim/complete/release/fail, error taxonomy, cookie check, manual-handle (lookup/info-by-handle/approve-by-handle), `normalizeShortCode`.
+- `src/routes/api/auth/device-pairing/exchange/+server.ts` — cookie verification input, taxonomy response (`reason`/`retryable`).
+- `…/status/+server.ts` — GET→POST; secret + handle (auth-bound) branches.
+- `…/info/+server.ts` — secret + handle (auth-bound) branches.
+- `…/approve/+server.ts` — secret + handle converge into the same approval pipeline.
+- `…/lookup/+server.ts` (NEW) — authenticated dual-rate-limited short-code → handle.
+- `src/lib/server/http/rate-limit.ts` — `pairingCodeLookupUser` / `pairingCodeLookupIp` buckets.
+- `src/lib/server/supabase/database.types.ts` — new columns + 4 RPC signatures.
+- `src/routes/tv-login/+page.svelte` — `<em>` fix, Big Screen copy, POST polling, bounded auto-retry with `retryable` flag.
+- `src/routes/authorize/+page.svelte` — `<em>` fix, `#h=` handle path, post-approval completion polling, auth-required redirect CTA.
+- `src/routes/account/scan-tv/+page.svelte` — "Enter TV code" manual form (full §11 UX states), Big Screen copy.
+- `scripts/verify_claim_rpc.ts` (NEW) + `package.json` (`verify:pairing-rpc`).
+- `DEPLOYMENT.md`, `docs/supabase-migration-runbook.md` — verification procedure.
+- Tests: NEW `scripts/big_screen_qr_regression_test.ts` (155 checks — §24 A1–A5, B6–B15, C16–C22, D23–D34, E35–E41 + §16/§17/§18, F42–F48 + §21/§22/§23). Updated 8 existing suites from the old broken contracts (exchangeCodeForSession, claimAndExchangePairing, GET status, TV-only wording, consume-at-claim) to the new stronger ones — no assertions removed, all strengthened or kept.
+
+## Verification
+
+- `pnpm check` — 0 errors, 0 warnings
+- `pnpm test` — full chain exit 0 (incl. the new regression suite)
+- `pnpm build` — success (@sveltejs/adapter-netlify)
+
+## Remaining REAL-DEVICE verification (must be executed manually — §25 matrix)
+
+Static/deterministic tests cannot prove the live browser contract. Run on real devices: Android Chrome + Brave, Samsung Tizen browser, Windows/desktop Brave: QR scan → approve → TV authenticated → Account shows the TV session ("Tizen • Samsung Internet" from the parsed UA) → My List/Continue Watching match the phone → phone logout keeps TV → revoke kills only the TV → repeat with the manual code. Deploy gate: `pnpm run verify:pairing-rpc` after applying `20261003000000_device_pairing_exchange_lease.sql`.

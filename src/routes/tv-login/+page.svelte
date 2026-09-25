@@ -138,10 +138,15 @@
         if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined; }
         return;
       }
-      if (pairingState !== 'pending') return;
+      if (pairingState !== 'pending' && pairingState !== 'exchanging') return;
       try {
-        const res = await fetch(`/api/auth/device-pairing/status?secret=${encodeURIComponent(pairingSecret)}`, {
-          headers: { accept: 'application/json' },
+        // §23 (no secret in query strings): the status endpoint takes
+        // the secret in the POST body — never a URL query string
+        // (server logs / browser history / referrer exposure).
+        const res = await fetch('/api/auth/device-pairing/status', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ secret: pairingSecret }),
         });
         const payload = await res.json();
         if (token !== requestToken) return; // stale — newer retry superseded us
@@ -185,48 +190,99 @@
   }
 
   async function exchangeSession(token: number) {
-    try {
-      // Call the dedicated device-pairing exchange endpoint.
-      // This endpoint atomically claims the approved pairing request
-      // via the claim_device_pairing RPC (SELECT FOR UPDATE → capture
-      // the OLD OTP → UPDATE consumed + clear the stored OTP →
-      // RETURN OLD) and performs exchangeCodeForSession on the TV's
-      // own Supabase SSR client. The OTP NEVER reaches the client —
-      // no separate /consume call is needed.
-      const res = await fetch('/api/auth/device-pairing/exchange', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ secret: pairingSecret }),
-        redirect: 'manual',
-      });
-      if (token !== requestToken) return; // stale
+    // §4/§22 retry policy: transient failures (network, lease-busy,
+    // Supabase 5xx) are safely recoverable server-side — the pairing
+    // was released back to 'approved' with the SAME one-time
+    // credential, so an automatic retry can succeed. Terminal
+    // failures (expired / consumed / failed / rpc-missing) require
+    // a NEW pairing — surface the error state immediately.
+    const MAX_EXCHANGE_RETRIES = 3;
+    let attempt = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      attempt += 1;
+      try {
+        // Call the dedicated device-pairing exchange endpoint.
+        // This endpoint atomically claims the approved pairing via
+        // the claim_device_pairing RPC (SELECT FOR UPDATE → 30s
+        // lease → credential KEPT), verifies the token hash on the
+        // TV's own Supabase SSR client with verifyOtp({ token_hash,
+        // type: 'email' }), verifies the auth cookies were queued
+        // (Set-Cookie), then marks the pairing consumed. The token
+        // hash NEVER reaches the client — no separate /consume call
+        // is needed.
+        const res = await fetch('/api/auth/device-pairing/exchange', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ secret: pairingSecret }),
+          redirect: 'manual',
+        });
+        if (token !== requestToken) return; // stale
 
-      if (res.ok) {
-        // Exchange endpoint has finalized server-side: pairing is
-        // marked consumed, the OTP code is cleared, TV session
-        // cookies are set. No client-side consume call required.
-        pairingState = 'success';
-        // Navigate to discover after a brief delay so the user sees
-        // the success state before the page transitions.
-        //
-        // Newtask §25 (RC-14 fix): invalidateAll() reruns the root
-        // layout server load BEFORE navigating — this page loaded
-        // while the browser was UNAUTHENTICATED, so the cached layout
-        // data still says "guest". Without invalidation the TV would
-        // land on /discover still rendering the guest UI until a full
-        // page reload. The timer is tracked (navTimer) and cleared on
-        // destroy so it can never hijack a manual navigation.
-        navTimer = setTimeout(() => {
-          void invalidateAll().then(() => goto('/discover'));
-        }, 1500);
-      } else {
+        let payload: { ok?: boolean; message?: string; retryable?: boolean } = {};
+        try {
+          payload = await res.json();
+        } catch {
+          payload = { ok: false, message: 'Unable to establish a session. Please try again.' };
+        }
+        if (token !== requestToken) return; // stale
+
+        if (res.ok && payload.ok) {
+          // Exchange endpoint has finalized server-side: pairing is
+          // marked consumed, the credential is cleared, TV session
+          // cookies are set on THIS response. No client-side consume
+          // call required.
+          pairingState = 'success';
+          // Navigate to discover after a brief delay so the user sees
+          // the success state before the page transitions.
+          //
+          // RC-14 fix + §18 deterministic order: invalidateAll()
+          // reruns the root layout server load BEFORE navigating —
+          // this page loaded while the browser was UNAUTHENTICATED,
+          // so the cached layout data still says "guest". The
+          // destination page then performs its own authenticated
+          // cloud sync (DiscoverPage.loadContinue awaits
+          // syncAuthenticatedState) before rendering library state.
+          // The timer is tracked (navTimer) and cleared on destroy so
+          // it can never hijack a manual navigation.
+          navTimer = setTimeout(() => {
+            void invalidateAll().then(() => goto('/discover'));
+          }, 1500);
+          return;
+        }
+
+        const retryable = payload.retryable === true;
+        if (retryable && attempt <= MAX_EXCHANGE_RETRIES) {
+          // Recoverable failure — the server released the pairing
+          // back to 'approved' (or another exchange holds the short
+          // lease). Wait briefly and retry with the same credential.
+          await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+          if (token !== requestToken) return; // stale — user retried manually
+          continue;
+        }
+
+        pairingState = 'error';
+        // After exhausted retries the generic message is correct even
+        // for the last retryable response — the automatic retrying is
+        // over, the user must press "Try again" (new pairing).
+        errorMessage = retryable
+          ? 'Unable to establish a session. Please try again.'
+          : payload.message ?? 'Unable to establish a session. Please try again.';
+        return;
+      } catch {
+        if (token !== requestToken) return; // stale
+        if (attempt <= MAX_EXCHANGE_RETRIES) {
+          // Network error — same retry policy (the server-side lease
+          // bounds concurrent attempts; a lost response is
+          // self-corrected by the retry's verifyOtp result).
+          await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+          if (token !== requestToken) return; // stale
+          continue;
+        }
         pairingState = 'error';
         errorMessage = 'Unable to establish a session. Please try again.';
+        return;
       }
-    } catch {
-      if (token !== requestToken) return; // stale
-      pairingState = 'error';
-      errorMessage = 'Unable to establish a session. Please try again.';
     }
   }
 
@@ -257,30 +313,40 @@
 </script>
 
 <svelte:head>
-  <title>TV Sign in — Mavero</title>
-  <meta name="description" content="Scan a QR code to sign in on this device." />
+  <title>Big Screen Sign in — Mavero</title>
+  <meta name="description" content="Scan a QR code with your phone or tablet to sign in on this device." />
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
 <!--
-  Phase 5 — TV/Desktop QR UI.
+  Phase 5 — big-screen (TV / desktop / laptop) QR UI.
   AuthShell is shared with /auth/sign-in, /auth/sign-up, /auth/reset.
-  We override ONLY the back button props for the TV context:
-    - backHref="/discover" (the consumer landing page — a TV is
+  We override ONLY the back button props for the big-screen context:
+    - backHref="/discover" (the consumer landing page — a big screen is
       unauthenticated, so /account would just redirect to guest view;
       /discover is the sensible "back" destination).
     - backLabel="Back to Mavero" (clearer than "Back" on a TV where
       the user may not understand what they're going back to).
   AuthShell itself is NOT modified globally.
+
+  §8/§9 copy: this feature is NOT TV-only — the same page serves
+  Samsung TV, smart TV, desktop, laptop and any big-screen browser.
+  The title/subtitle say "phone or tablet", not "TV".
+  §8 rendering: the emphasized word goes through AuthShell's
+  titleAccent prop — never inline HTML markup in the title string.
+  (The previous title with an em-tag inline rendered the tag as
+  literal text because Svelte interpolates {title} as plain text,
+  by design — unsafe HTML rendering is forbidden here.)
 -->
 <AuthShell
-  eyebrow="MAVERO / TV Sign in"
-  title="Sign in with your <em>phone.</em>"
-  subtitle="Scan the QR code with your phone's camera to sign in on this device."
+  eyebrow="MAVERO / Big Screen Sign in"
+  title="Sign in with your"
+  titleAccent="phone."
+  subtitle="Scan the QR code with your phone or tablet to sign in on this device."
   backHref="/discover"
   backLabel="Back to Mavero"
 >
-  <div class="tv-login" role="region" aria-label="TV sign-in">
+  <div class="tv-login" role="region" aria-label="Big screen sign-in">
     {#if pairingState === 'loading'}
       <div class="tv-state-loading" role="status" aria-live="polite">
         <LoaderCircle size={32} class="spin" />
@@ -311,13 +377,6 @@
         </div>
         <div class="tv-qr-info">
           <p class="tv-instructions">Scan with your phone or tablet</p>
-          <!--
-            aria-live="off" on the countdown — it updates every
-            second and would be noise on a screen reader. The
-            countdown is visually prominent; the expiry transition
-            to the "Code expired" state IS announced via the
-            expired container's aria-live="polite".
-          -->
           <div class="tv-countdown" aria-live="off">
             Code expires in <span class="tv-countdown-value">{formatCountdown(countdown)}</span>
           </div>
@@ -326,6 +385,9 @@
               <span class="shortcode-label">Or enter code manually:</span>
               <span class="shortcode-value">{shortCode}</span>
             </div>
+            <!-- §10: the manual-code entry lives on the phone/tablet
+                 (Account → Login on Big Screen → Enter TV code). The
+                 big screen only DISPLAYS this code. -->
           {/if}
         </div>
       </div>

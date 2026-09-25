@@ -4,6 +4,55 @@
 
 ---
 
+## Device pairing migrations (Big Screen QR login)
+
+The big-screen QR login (TV / desktop / laptop sign-in via phone approval) depends on the **device pairing migration chain**. Application code ships assuming these RPCs exist — if they are missing, the QR flow fails at session establishment with a 503 "Unable to establish a session." and the server log shows `claim-rpc-missing` (or `claim-rpc-failed`).
+
+Apply in this exact order (all idempotent):
+
+| # | File | What it creates |
+|---|---|---|
+| 1 | `20260927000000_device_sessions.sql` | `public.device_sessions` registry + RLS + unique partial index. |
+| 2 | `20260928000000_device_pairing_requests.sql` | `public.device_pairing_requests` table + RLS. |
+| 3 | `20260929000000_device_pairing_claim_rpc.sql` | Original `claim_device_pairing` RPC (superseded by #4, kept for migration history integrity — #4 drops and replaces its function). |
+| 4 | `20260930000000_register_device_session_rpc.sql` | `register_device_session` atomic RPC. |
+| 5 | `20261003000000_device_pairing_exchange_lease.sql` | **Exchange lease state machine**: extends the status set (`exchanging`, `failed`), adds lease + manual-handle columns, replaces `claim_device_pairing` with the lease-aware 4-arg version, and adds `complete_device_pairing`, `release_device_pairing_exchange`, `fail_device_pairing`. |
+
+**NEVER edit an already-applied migration.** #5 explicitly `DROP`s the 2-argument `claim_device_pairing(text, timestamptz)` from #3 and recreates it with a different signature — that is the sanctioned forward-migration path (the alternative, `CREATE OR REPLACE` with different args, would silently create a function overload and make PostgREST calls ambiguous).
+
+### Post-deployment verification (REQUIRED)
+
+After deploying application code that includes pairing changes, run the live RPC-contract check from an environment that has the production variables:
+
+```bash
+PUBLIC_SUPABASE_URL=<url> PRIVATE_SUPABASE_SERVICE_ROLE_KEY=<key> \
+  pnpm run verify:pairing-rpc
+```
+
+The script performs **side-effect-free** dry-calls (impossible secret hashes / zero UUIDs) and verifies:
+
+1. `device_pairing_requests` has the `exchange_lease_until`, `exchange_claimed_at`, `exchange_attempts`, `manual_handle_hash`, `manual_handle_user_id`, `manual_handle_expires_at` columns.
+2. `claim_device_pairing`, `complete_device_pairing`, `release_device_pairing_exchange`, `fail_device_pairing` all exist, execute as `service_role`, and return the expected shape.
+3. The old 2-arg `claim_device_pairing` overload is gone.
+
+Exit code 0 = production satisfies the application contract. Exit 1 names the exact migration to apply. The runtime safety net: even if this check is skipped, the exchange endpoint detects the missing RPC (PostgREST `PGRST202`) and logs `claim-rpc-missing` with the request ID — grep Netlify function logs for `[Pairing] claim-rpc-missing` if QR login ever fails this way.
+
+Equivalent SQL Editor check:
+
+```sql
+select p.proname, pg_get_function_identity_arguments(p.oid) as args
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('claim_device_pairing', 'complete_device_pairing',
+                    'release_device_pairing_exchange', 'fail_device_pairing',
+                    'register_device_session');
+```
+
+Expected: `claim_device_pairing(p_secret_hash text, p_lease_ms integer, p_max_attempts integer, p_now timestamp with time zone)`, `complete_device_pairing(p_secret_hash text, p_pairing_id uuid, p_now timestamp with time zone)`, `release_device_pairing_exchange(p_secret_hash text, p_pairing_id uuid)`, `fail_device_pairing(p_secret_hash text, p_pairing_id uuid, p_now timestamp with time zone)` — and NO `claim_device_pairing(text, timestamptz)` row.
+
+---
+
 ## When to use this runbook
 
 Use this runbook when:

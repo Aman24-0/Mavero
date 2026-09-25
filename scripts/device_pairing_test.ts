@@ -67,7 +67,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(service.includes('getPairingBySecret'), 'exports getPairingBySecret');
   ok(service.includes('approvePairingRequest'), 'exports approvePairingRequest');
   ok(service.includes('cancelPairingRequest'), 'exports cancelPairingRequest');
-  ok(service.includes('claimAndExchangePairing'), 'exports claimAndExchangePairing (new atomic claim+exchange)');
+  ok(service.includes('claimVerifyAndEstablishPairingSession'), 'exports claimVerifyAndEstablishPairingSession (lease claim + verifyOtp + cookie establishment)');
 
   // The legacy consumePairingRequest is GONE (Phase 3.2).
   ok(!service.includes('export async function consumePairingRequest'), 'consumePairingRequest removed (Phase 3.2 — exchange endpoint finalizes atomically)');
@@ -133,8 +133,13 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const api = read('src/routes/api/auth/device-pairing/status/+server.ts');
   const service = read('src/lib/server/auth/device-pairing.ts');
 
-  ok(api.includes('GET'), 'status API: GET handler');
-  ok(!api.includes('locals.user'), 'status API: does NOT require authentication');
+  ok(api.includes('POST'), 'status API: POST handler (secret/handle in body, never a query string)');
+  // The TV's SECRET polling branch must not require auth (the TV is
+  // unauthenticated); the phone's HANDLE polling branch REQUIRES it
+  // (manual-code handle is bound to the approving user's session).
+  const secretBranch = api.slice(0, api.indexOf("if (typeof handle === 'string'"));
+  ok(!secretBranch.includes('locals.user'), 'status API: secret branch (TV) does NOT require authentication');
+  ok(api.includes("if (typeof handle === 'string'") && api.includes('const user = locals.user'), 'status API: handle branch (phone) REQUIRES authentication');
   ok(api.includes('getPairingBySecret'), 'status API: uses service');
 
   // Phase 3.2 invariant A: status service does NOT contain exchangeCode field.
@@ -255,17 +260,18 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   // Phase 3.2 invariant D: exchange endpoint owns credential handling.
   ok(api.includes('POST'), 'D. exchange API: POST handler');
-  ok(api.includes('claimAndExchangePairing'), 'D. exchange API: delegates to claimAndExchangePairing');
+  ok(api.includes('claimVerifyAndEstablishPairingSession'), 'D. exchange API: delegates to claimVerifyAndEstablishPairingSession');
   ok(api.includes('locals.supabase'), 'D. exchange API: uses TV\'s own Supabase SSR client (NOT admin)');
   ok(api.includes('cache-control'), 'D. exchange API: cache-control header');
   ok(!api.includes('access_token'), 'D. exchange API: no access_token in response');
   ok(!api.includes('refresh_token'), 'D. exchange API: no refresh_token in response');
   ok(!api.match(/json.*exchange_code/i), 'D. exchange API: does NOT return exchange_code in JSON');
-  ok(!api.includes('hashed_token'), 'D. exchange API: does NOT return hashed_token');
+  ok(!api.match(/json\(\s*\{[\s\S]{0,400}?hashed_token/), 'D. exchange API: does NOT return hashed_token in any JSON response');
+  ok(!api.match(/console\.\w+.*hashed_token/i), 'D. exchange API: does NOT log hashed_token');
 
   // The exchange endpoint does NOT do a separate SELECT before the claim.
   // The endpoint simply creates an admin client and delegates to
-  // claimAndExchangePairing, which performs the atomic claim via RPC.
+  // claimVerifyAndEstablishPairingSession, which performs the atomic lease claim via RPC.
   ok(!api.includes("from('device_pairing_requests').select"), 'D. exchange API: no SELECT in endpoint — claim is atomic via RPC in service');
 
   // Phase 3.2 invariant E + F: single-use + concurrency protection.
@@ -310,10 +316,10 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Supabase credentials available — see Runtime verification status
   // in the worklog).
 
-  // Extract the claimAndExchangePairing function body.
-  const fnStart = service.indexOf('export async function claimAndExchangePairing');
+  // Extract the claimVerifyAndEstablishPairingSession function body.
+  const fnStart = service.indexOf('export async function claimVerifyAndEstablishPairingSession');
   const fnEnd = service.indexOf('\n}\n', fnStart);
-  ok(fnStart !== -1, 'E/F. claimAndExchangePairing function exists');
+  ok(fnStart !== -1, 'E/F. claimVerifyAndEstablishPairingSession function exists');
   const fnBody = service.slice(fnStart, fnEnd !== -1 ? fnEnd : undefined);
 
   // The claim MUST go through the RPC, NOT a PostgREST
@@ -329,11 +335,24 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // The RPC returns at most one row; the service reads row[0].
   ok(fnBody.includes('Array.isArray(claimedRows)'), 'E/F. claim: handles RPC array result');
 
-  // Phase 3.2 invariant G: successful exchange finalizes consumption.
-  // The RPC's UPDATE has already committed status='consumed' before
-  // exchangeCodeForSession() is called. No separate /consume needed.
-  ok(fnBody.includes('exchangeCodeForSession'), 'G. claim: calls exchangeCodeForSession on TV\'s SSR client');
+  // Post-94ce1ef regression invariant G: the token hash is verified
+  // with verifyOtp({ token_hash, type: 'email' }) on the TV's OWN
+  // SSR client — NEVER exchangeCodeForSession (that is the PKCE
+  // authorization-code exchange and was the exact production
+  // regression observed on real devices).
+  ok(fnBody.includes('tvSupabase.auth.verifyOtp'), "G. claim: calls verifyOtp on TV's SSR client");
+  ok(fnBody.includes('token_hash: tokenHash'), 'G. claim: passes the stored token hash to verifyOtp');
+  ok(fnBody.includes("type: 'email'"), 'G. claim: verifyOtp uses the email token-hash type (GoTrue maps it onto the magiclink recovery token)');
+  ok(!fnBody.includes('.auth.exchangeCodeForSession('), 'G. claim: does NOT call exchangeCodeForSession with a magic-link hashed_token (the production regression)');
   ok(fnBody.includes('return { ok: true }'), 'G. claim: returns ok=true on success');
+
+  // Lease state machine (§4): claim → verify → complete/release/fail.
+  ok(fnBody.includes("'complete_device_pairing'"), 'G. claim: completes (exchanging → consumed) after successful verify + cookie check');
+  ok(fnBody.includes("'release_device_pairing_exchange'"), 'C. claim: releases (exchanging → approved) on recoverable verify failure');
+  ok(fnBody.includes("'fail_device_pairing'"), 'C. claim: fails (exchanging → failed, terminal) on a dead credential');
+  ok(fnBody.includes("'exchange-lease-busy'"), 'C. claim: reports lease-busy as retryable (another exchange holds the lease)');
+  ok(fnBody.includes("'claim-rpc-missing'"), '§22. claim: detects a missing RPC (PGRST202) distinctly from other failures');
+  ok(fnBody.includes("'cookie-establishment-failed'"), '§5. claim: verifies auth cookies were queued (Set-Cookie acceptance check) after verifyOtp');
 
   // Phase 3.2 invariant H: cancelled request cannot exchange.
   // The RPC's WHERE clause rejects cancelled (status != 'approved').
@@ -448,8 +467,9 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   // 10. Service reads claimed.exchange_code from the RPC result
   //     (which is the OLD value captured by the RPC).
-  ok(service.includes('const otpCode = claimed.exchange_code'), '9b-10. service: reads claimed.exchange_code (OLD value from RPC)');
-  ok(service.includes('exchangeCodeForSession(otpCode)'), '9b-10. service: passes OLD OTP to exchangeCodeForSession');
+  ok(service.includes('const tokenHash = claimed.exchange_code'), '9b-10. service: reads claimed.exchange_code (stored token hash from RPC)');
+  ok(service.includes('tvSupabase.auth.verifyOtp({'), '9b-10. service: verifies the token hash via verifyOtp (the correct Supabase primitive)');
+  ok(!service.includes('.auth.exchangeCodeForSession('), '9b-10. service: NO exchangeCodeForSession call remains anywhere (the production regression is gone)');
 
   // 11. The migration is sequenced AFTER the original device_pairing
   //     migration (lexicographic ordering of supabase migrations).
@@ -474,159 +494,207 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // documented as out-of-scope in the worklog — no live Supabase
 // credentials in this environment.)
 {
-  // Simulate the RPC contract:
-  //   - PRE-state: row has exchange_code='OTP_xyz', status='approved',
-  //                 consumed_at=NULL.
-  //   - RPC executes:
-  //       v_row.exchange_code = 'OTP_xyz'  (captured BEFORE update)
-  //       row.exchange_code = NULL          (after UPDATE)
-  //       row.status = 'consumed'           (after UPDATE)
-  //       row.consumed_at = now             (after UPDATE)
-  //   - RPC returns: { id, exchange_code: 'OTP_xyz' }   (OLD value)
+  // Simulate the LEASE-aware RPC contract (20261003000000 migration):
+  //   - PRE-state: row has exchange_code='TOKEN_hash', status='approved',
+  //                 consumed_at=NULL, lease=NULL.
+  //   - claim_device_pairing executes:
+  //       v_row.exchange_code = 'TOKEN_hash'  (captured BEFORE update)
+  //       row.status = 'exchanging'            (after UPDATE)
+  //       row.exchange_lease_until = now+30s   (after UPDATE)
+  //       row.exchange_code = 'TOKEN_hash'     (KEPT — retry support)
+  //   - RPC returns: { id, exchange_code: 'TOKEN_hash', exchange_attempts: 1 }
+  //   - After verifyOtp SUCCEEDS + cookies are set:
+  //       complete_device_pairing: status='consumed', consumed_at=now,
+  //       exchange_code=NULL, lease=NULL.
+  //   - After a RECOVERABLE verify failure:
+  //       release_device_pairing_exchange: status='approved', lease=NULL,
+  //       exchange_code KEPT (same credential retried).
 
   const preState = {
     id: 'pairing-123',
     secret_hash: 'abc',
-    status: 'approved' as const,
+    status: 'approved' as string,
     consumed_at: null as string | null,
-    exchange_code: 'OTP_xyz' as string | null,
+    exchange_code: 'TOKEN_hash' as string | null,
+    exchange_lease_until: null as string | null,
+    exchange_attempts: 0,
     expires_at: new Date(Date.now() + 60_000).toISOString(),
   };
 
-  // Simulate the RPC's SELECT ... FOR UPDATE: captures OLD exchange_code.
+  // claim_device_pairing: SELECT ... FOR UPDATE captures the OLD token hash.
   const v_row = {
     id: preState.id,
-    exchange_code: preState.exchange_code,   // OLD value, captured BEFORE UPDATE
+    exchange_code: preState.exchange_code,
+    exchange_attempts: preState.exchange_attempts,
   };
 
-  // Simulate the RPC's UPDATE: status=consumed, consumed_at=now,
-  // exchange_code=NULL.
-  const postState = {
+  // claim UPDATE: exchanging + lease, credential KEPT.
+  const afterClaim = {
     ...preState,
-    status: 'consumed' as const,
+    status: 'exchanging',
+    exchange_lease_until: new Date(Date.now() + 30_000).toISOString(),
+    exchange_attempts: v_row.exchange_attempts + 1,
+  };
+
+  const claimResult = {
+    id: v_row.id,
+    exchange_code: v_row.exchange_code,
+    exchange_attempts: v_row.exchange_attempts + 1,
+  };
+
+  // Invariant: the claim result contains the token hash, NOT NULL.
+  assert.equal(claimResult.exchange_code, 'TOKEN_hash', '9c. claim result must contain the stored token hash');
+  // Invariant: the claim did NOT consume — status is exchanging, not consumed.
+  assert.equal(afterClaim.status, 'exchanging', '9c. after claim: status must be exchanging (NOT consumed)');
+  // Invariant: the credential is KEPT for retry (recoverable failures).
+  assert.equal(afterClaim.exchange_code, 'TOKEN_hash', '9c. after claim: exchange_code is KEPT for retry');
+  // Invariant: a lease is active.
+  assert.ok(afterClaim.exchange_lease_until !== null, '9c. after claim: lease deadline is set');
+
+  // complete_device_pairing (verifyOtp success + cookies verified):
+  const afterComplete = {
+    ...afterClaim,
+    status: 'consumed',
     consumed_at: new Date().toISOString(),
     exchange_code: null as string | null,
+    exchange_lease_until: null as string | null,
   };
+  assert.equal(afterComplete.status, 'consumed', '9c. after complete: status is consumed');
+  assert.equal(afterComplete.exchange_code, null, '9c. after complete: credential cleared');
+  assert.ok(afterComplete.consumed_at !== null, '9c. after complete: consumed_at set');
 
-  // Simulate the RPC's RETURN NEXT v_row.id, v_row.exchange_code.
-  const rpcResult = {
-    id: v_row.id,
-    exchange_code: v_row.exchange_code,   // OLD value, NOT the post-update NULL
+  // release_device_pairing_exchange (recoverable failure):
+  const afterRelease = {
+    ...afterClaim,
+    status: 'approved',
+    exchange_lease_until: null as string | null,
   };
+  assert.equal(afterRelease.status, 'approved', '9c. after release: status safely back to approved');
+  assert.equal(afterRelease.exchange_code, 'TOKEN_hash', '9c. after release: credential KEPT for retry (same one-time token)');
 
-  // Invariant: the RPC result contains the OLD OTP, NOT NULL.
-  assert.equal(rpcResult.exchange_code, 'OTP_xyz', '9c. RPC result must contain OLD exchange_code (not the post-update NULL)');
+  // fail_device_pairing (terminal — token dead at Supabase):
+  const afterFail = {
+    ...afterClaim,
+    status: 'failed',
+    consumed_at: new Date().toISOString(),
+    exchange_code: null as string | null,
+    exchange_lease_until: null as string | null,
+  };
+  assert.equal(afterFail.status, 'failed', '9c. after fail: status is failed (terminal)');
+  assert.equal(afterFail.exchange_code, null, '9c. after fail: credential cleared (no replay of consumed auth)');
 
-  // Invariant: the DB row's exchange_code is NULL after the RPC.
-  assert.equal(postState.exchange_code, null, '9c. DB row exchange_code must be NULL after RPC commits');
+  passed += 10;
+  console.log('  ok 9c-1 — claim result contains the stored token hash');
+  console.log('  ok 9c-2 — after claim: status is exchanging (claim does NOT consume)');
+  console.log('  ok 9c-3 — after claim: credential KEPT for retry');
+  console.log('  ok 9c-4 — after claim: lease deadline is set');
+  console.log('  ok 9c-5 — after complete: status consumed, credential cleared');
+  console.log('  ok 9c-6 — after release: safely back to approved with the SAME credential');
+  console.log('  ok 9c-7 — after fail: terminal failed state, credential cleared');
+  console.log('  ok 9c-8 — no permanent dead state: release path exists');
+  console.log('  ok 9c-9 — no credential leakage: complete/fail both clear exchange_code');
+  console.log('  ok 9c-10 — winner receives non-null, non-empty token hash');
 
-  // Invariant: the DB row's status is 'consumed' after the RPC.
-  assert.equal(postState.status, 'consumed', '9c. DB row status must be consumed after RPC commits');
-
-  // Invariant: the DB row's consumed_at is set after the RPC.
-  assert.ok(postState.consumed_at !== null, '9c. DB row consumed_at must be set after RPC commits');
-
-  // The winner receives a non-null OTP from the RPC and uses it
-  // for exchangeCodeForSession().
-  assert.ok(rpcResult.exchange_code !== null && rpcResult.exchange_code !== '', '9c. winner receives a non-null, non-empty OTP');
-
-  passed += 5;
-  console.log('  ok 9c-1 — RPC result contains OLD exchange_code (not post-update NULL)');
-  console.log('  ok 9c-2 — DB row exchange_code is NULL after RPC commits');
-  console.log('  ok 9c-3 — DB row status is consumed after RPC commits');
-  console.log('  ok 9c-4 — DB row consumed_at is set after RPC commits');
-  console.log('  ok 9c-5 — winner receives non-null, non-empty OTP');
-
-  ok('9c. STATIC SIMULATION — RPC returns OLD OTP, DB row cleared (deterministic)');
+  ok('9c. STATIC SIMULATION — lease state machine (claim keeps credential; complete/fail clear it; release recovers)');
 }
 
 // ============================================================
-// 9d. CONCURRENCY SIMULATION — TWO REQUESTS, ONE WINNER
+// 9d. CONCURRENCY SIMULATION — TWO REQUESTS, ONE WINNER (lease)
 // ============================================================
 // Deterministic simulation of two concurrent exchange attempts
-// against the same approved pairing request. Verifies that exactly
-// one receives the OTP and the other receives nothing (empty RPC
-// result).
-//
-// This is NOT a live DB integration test — it is a deterministic
-// contract simulation of the documented Postgres FOR UPDATE
-// semantics. Runtime verification would require a real Postgres
-// instance (out of scope, documented in worklog).
+// against the same approved pairing request under the LEASE state
+// machine:
+//   - Request A claims (approved → exchanging, 30s lease active)
+//   - Request B claims while A's lease is ACTIVE → empty (busy)
+//   - A completes → consumed
+//   - A replay after consumption → empty (terminal)
+//   - A crashed-exchangeer scenario: lease EXPIRES → a takeover
+//     claim succeeds with the SAME stored credential
 {
-  // Pre-state: one approved pairing with OTP='OTP_xyz'.
+  // Pre-state: one approved pairing with token hash stored.
   let dbRow = {
     id: 'pairing-123',
     secret_hash: 'abc',
-    status: 'approved' as const,
+    status: 'approved' as string,
     consumed_at: null as string | null,
-    exchange_code: 'OTP_xyz' as string | null,
+    exchange_code: 'TOKEN_hash' as string | null,
+    exchange_lease_until: null as string | null,
+    exchange_attempts: 0,
   };
 
-  // Track winners.
-  const winners: { id: string; otp: string | null }[] = [];
+  const winners: { id: string; tokenHash: string | null }[] = [];
 
-  // Simulate request A: acquires row lock, captures OLD OTP, UPDATEs.
-  // (In a real Postgres transaction this is one atomic operation
-  // protected by SELECT ... FOR UPDATE.)
-  function simulateRequestA() {
-    if (dbRow.status !== 'approved' || dbRow.consumed_at !== null || dbRow.exchange_code === null) {
-      // RPC returns empty.
-      return null;
-    }
-    const captured = { id: dbRow.id, otp: dbRow.exchange_code };   // SELECT ... FOR UPDATE
+  // claim_device_pairing simulation (SELECT ... FOR UPDATE):
+  // eligible = approved OR (exchanging AND lease expired).
+  function claim(now: number): { id: string; tokenHash: string | null } | null {
+    const leaseExpired =
+      dbRow.exchange_lease_until !== null && new Date(dbRow.exchange_lease_until).getTime() < now;
+    const eligible = dbRow.status === 'approved' || (dbRow.status === 'exchanging' && leaseExpired);
+    if (!eligible) return null;
+    const captured = { id: dbRow.id, tokenHash: dbRow.exchange_code };
     dbRow = {
       ...dbRow,
-      status: 'consumed' as const,
-      consumed_at: new Date().toISOString(),
-      exchange_code: null,
-    };
-    return captured;   // RETURN NEXT v_row.id, v_row.exchange_code
-  }
-
-  // Simulate request B (after A commits): finds status='consumed',
-  // SELECT ... FOR UPDATE returns no row, RPC returns empty.
-  function simulateRequestB() {
-    if (dbRow.status !== 'approved' || dbRow.consumed_at !== null || dbRow.exchange_code === null) {
-      return null;
-    }
-    const captured = { id: dbRow.id, otp: dbRow.exchange_code };
-    dbRow = {
-      ...dbRow,
-      status: 'consumed' as const,
-      consumed_at: new Date().toISOString(),
-      exchange_code: null,
+      status: 'exchanging',
+      exchange_lease_until: new Date(now + 30_000).toISOString(),
+      exchange_attempts: dbRow.exchange_attempts + 1,
     };
     return captured;
   }
 
-  // Run A first (wins).
-  const resultA = simulateRequestA();
+  const T0 = Date.now();
+
+  // Request A claims first (wins the lease).
+  const resultA = claim(T0);
   if (resultA) winners.push(resultA);
 
-  // Run B second (loses — A already consumed).
-  const resultB = simulateRequestB();
+  // Request B claims while A's lease is ACTIVE → empty (busy).
+  const resultB = claim(T0 + 1_000);
   if (resultB) winners.push(resultB);
 
-  // Invariant: exactly ONE winner received the OTP.
-  assert.equal(winners.length, 1, '9d. exactly one exchange request wins');
+  // Invariant: exactly ONE winner so far.
+  assert.equal(winners.length, 1, '9d. exactly one exchange request holds the lease');
+  assert.equal(winners[0]?.tokenHash, 'TOKEN_hash', '9d. lease holder received the stored token hash');
+  assert.equal(resultB, null, '9d. concurrent request got NO credential (lease busy → retryable 409)');
 
-  // Invariant: the winner received the OLD OTP ('OTP_xyz').
-  assert.equal(winners[0]?.otp, 'OTP_xyz', '9d. winner received the OLD OTP');
+  // A completes (verifyOtp success + cookies) → consumed.
+  dbRow = { ...dbRow, status: 'consumed', consumed_at: new Date(T0 + 2_000).toISOString(), exchange_code: null, exchange_lease_until: null };
 
-  // Invariant: the loser (B) received no credential.
-  assert.equal(resultB, null, '9d. loser received no credential (RPC returned empty)');
+  // Replay attempt after consumption → empty (terminal, no reuse).
+  const resultReplay = claim(T0 + 3_000);
+  assert.equal(resultReplay, null, '9d. replay after consumption is rejected (no credential reuse)');
 
-  // Invariant: the DB row is now consumed with cleared exchange_code.
-  assert.equal(dbRow.status, 'consumed', '9d. DB row is consumed after both requests');
-  assert.equal(dbRow.exchange_code, null, '9d. DB row exchange_code is NULL after both requests');
+  // Crashed-exchangeer scenario on a SECOND pairing: lease expires,
+  // a takeover claim succeeds with the SAME credential.
+  let row2 = { ...dbRow, status: 'approved' as string, consumed_at: null, exchange_code: 'TOKEN_2' as string | null, exchange_lease_until: null, exchange_attempts: 1 };
+  const origDbRow = dbRow;
+  dbRow = row2;
+  const takeoverBeforeExpiry = claim(T0 + 10_000); // lease from a previous claim at T0+9.9s? not set here — status approved → eligible
+  assert.ok(takeoverBeforeExpiry !== null, '9d. fresh claim on approved pairing succeeds');
+  // Simulate the crash: lease stays 'exchanging', holder never completes.
+  const resultTakeoverWhileLeaseActive = claim(T0 + 10_001);
+  assert.equal(resultTakeoverWhileLeaseActive, null, '9d. takeover blocked while lease is active');
+  // After the 30s lease expires, a takeover claim succeeds.
+  const resultTakeover = claim(T0 + 45_000);
+  assert.ok(resultTakeover !== null, '9d. lease-expired takeover claim succeeds (no permanent dead state)');
+  assert.equal(resultTakeover.tokenHash, 'TOKEN_2', '9d. takeover reads the SAME stored credential (retry support)');
+  row2 = dbRow;
+  dbRow = origDbRow;
 
-  passed += 4;
-  console.log('  ok 9d-1 — exactly one exchange request wins the OTP');
-  console.log('  ok 9d-2 — winner received the OLD OTP value');
-  console.log('  ok 9d-3 — loser received no credential (RPC returned empty)');
-  console.log('  ok 9d-4 — DB row is consumed + cleared after both requests');
+  // Invariant: the first DB row is consumed with cleared credential.
+  assert.equal(dbRow.status, 'consumed', '9d. DB row is consumed after the winner completes');
+  assert.equal(dbRow.exchange_code, null, '9d. DB row credential is NULL after completion');
 
-  ok('9d. CONCURRENCY SIMULATION — single-winner under concurrent exchange (deterministic)');
+  passed += 8;
+  console.log('  ok 9d-1 — exactly one exchange request holds the lease');
+  console.log('  ok 9d-2 — lease holder received the stored token hash');
+  console.log('  ok 9d-3 — concurrent request got no credential (lease busy → retryable)');
+  console.log('  ok 9d-4 — replay after consumption rejected (no reuse)');
+  console.log('  ok 9d-5 — fresh claim on approved pairing succeeds');
+  console.log('  ok 9d-6 — takeover blocked while lease is active');
+  console.log('  ok 9d-7 — lease-expired takeover succeeds with the SAME credential');
+  console.log('  ok 9d-8 — DB row consumed + credential cleared after completion');
+
+  ok('9d. CONCURRENCY SIMULATION — single lease holder, busy-reject, takeover, no replay (deterministic)');
 }
 
 // ============================================================
@@ -691,7 +759,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(!page.includes('/api/auth/device-pairing/consume'), 'TV login: Phase 3.2 — no /consume call (exchange is atomic)');
 
   // Exchange code NOT in client state.
-  ok(!page.match(/\bexchangeCode\b/) || page.includes('exchangeCodeForSession'), 'TV login: exchangeCode only appears in exchangeCodeForSession comment');
+  ok(!page.match(/\bexchangeCode\b/), 'TV login: no exchangeCode reference in client code (token verification is server-side only)');
   ok(!page.includes('exchange_code'), 'TV login: does NOT reference exchange_code in client');
 
   // No tokens in the UI.
@@ -765,11 +833,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   // TV establishes its OWN session via dedicated exchange endpoint.
   ok(service.includes('generateLink'), 'service: uses generateLink (not token copy)');
-  ok(service.includes('hashed_token'), 'service: extracts OTP code (not access token)');
+  ok(service.includes('hashed_token'), 'service: extracts the token hash (not access token)');
 
-  // The exchange endpoint performs exchangeCodeForSession server-side
-  // on the TV's OWN Supabase SSR client (NOT admin).
-  ok(exchangeApi.includes('exchangeCodeForSession'), 'O. exchange API: calls exchangeCodeForSession server-side (via service)');
+  // The exchange endpoint verifies the token hash server-side on the
+  // TV's OWN Supabase SSR client (NOT admin) via verifyOtp.
+  ok(service.includes('tvSupabase.auth.verifyOtp'), 'O. service: verifies token hash via verifyOtp on the TV SSR client');
   ok(exchangeApi.includes('locals.supabase'), 'O. exchange API: uses TV browser\'s own Supabase SSR client');
   ok(!exchangeApi.includes('access_token'), 'O. exchange API: no access_token in response');
   ok(!exchangeApi.includes('refresh_token'), 'O. exchange API: no refresh_token in response');
@@ -777,12 +845,15 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // The exchange code is NEVER returned to the client.
   ok(!exchangeApi.match(/json.*exchange_code/i), 'O. exchange API: does NOT return exchange_code in JSON response');
 
-  // The exchange code is cleared in the SAME atomic UPDATE that
-  // marks the pairing as consumed — no separate /consume needed.
-  const fnStart = service.indexOf('export async function claimAndExchangePairing');
+  // The token hash is cleared in the SAME atomic RPC UPDATE that
+  // marks the pairing consumed (complete_device_pairing) — no
+  // separate /consume needed.
+  const leaseMigration = read('supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
+  const fnStart = service.indexOf('export async function claimVerifyAndEstablishPairingSession');
   const fnEnd = service.indexOf('\n}\n', fnStart);
   const fnBody = service.slice(fnStart, fnEnd);
-  ok(fnBody.includes('exchange_code: null'), 'O. claim: clears exchange_code atomically with status=consumed');
+  ok(fnBody.includes("'complete_device_pairing'"), 'O. claim: completes consumption via complete_device_pairing RPC');
+  ok(leaseMigration.includes('exchange_code = null'), 'O. migration: complete_device_pairing clears exchange_code atomically with status=consumed');
 
   // The TV's session is established via cookies set by the SSR
   // client — NOT by returning a token in JSON.
@@ -797,25 +868,28 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
-  const migration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
-  const fnStart = service.indexOf('export async function claimAndExchangePairing');
+  const migration = read('supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
+  const fnStart = service.indexOf('export async function claimVerifyAndEstablishPairingSession');
   const fnEnd = service.indexOf('\n}\n', fnStart);
   const fnBody = service.slice(fnStart, fnEnd);
 
   // Approve: only pending → approved (atomic).
   ok(service.includes("eq('status', 'pending')"), 'replay: approve guarded by status=pending');
 
-  // Claim: only approved → consumed (atomic, inside RPC).
-  // The WHERE clause lives in the RPC's SELECT ... FOR UPDATE.
+  // Claim: only approved (or lease-EXPIRED exchanging) rows are
+  // claimable — inside the RPC's SELECT ... FOR UPDATE.
   ok(migration.includes("status = 'approved'"), 'replay: RPC WHERE status=approved');
   ok(migration.includes('consumed_at is null'), 'replay: RPC WHERE consumed_at IS NULL');
   ok(migration.includes('expires_at > p_now'), 'replay: RPC WHERE expires_at > now');
   ok(migration.includes('for update;'), 'replay: RPC uses SELECT ... FOR UPDATE (row lock serializes concurrent claims)');
+  ok(migration.includes("and status = 'exchanging'"), 'replay: lease-takeover branch requires status=exchanging');
 
-  // Exchange code cleared in the SAME transaction as the claim — no
-  // second request can read it from the database.
-  ok(migration.includes('exchange_code = null'), 'replay: RPC UPDATE clears exchange_code in same transaction');
-  ok(migration.includes('return query select v_row.id'), 'replay: RPC returns OLD exchange_code captured before UPDATE');
+  // Terminal states are NEVER claimable again (replay protection):
+  // consumed/failed rows match neither claim branch.
+  ok(migration.includes("status = 'consumed',"), 'replay: complete marks consumed (terminal)');
+  ok(migration.includes("status = 'failed',"), 'replay: fail marks failed (terminal)');
+  ok(migration.includes('exchange_code = null'), 'replay: complete/fail clear the credential in the same transaction');
+  ok(migration.includes('return query select v_row.id'), 'replay: claim RPC returns the stored token hash captured before UPDATE');
 
   // No TOCTOU window: the service does NOT do a separate SELECT
   // before the claim. The exchange endpoint delegates to
@@ -832,7 +906,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
-  const migration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
+  const migration = read('supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
 
   ok(service.includes('5 * 60 * 1000'), 'TTL is 5 minutes');
   ok(service.includes('expires_at'), 'service: sets expires_at');
@@ -927,7 +1001,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const service = read('src/lib/server/auth/device-pairing.ts');
 
   // TV login does NOT reference exchangeCode or exchange_code.
-  ok(!tvLogin.match(/\bexchangeCode\b/) || tvLogin.includes('exchangeCodeForSession'), 'K. TV login: exchangeCode only in exchangeCodeForSession comment');
+  ok(!tvLogin.match(/\bexchangeCode\b/), 'K. TV login: no exchangeCode reference in client code');
   ok(!tvLogin.includes('exchange_code'), 'K. TV login: no exchange_code reference');
 
   // Authorize page does NOT reference exchangeCode.
@@ -1006,16 +1080,16 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // single-winner semantics under concurrent access.
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
-  const migration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
+  const migration = read('supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
   const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
 
   // The claim function exists and is the SINGLE entry point for exchange.
-  ok(service.includes('export async function claimAndExchangePairing'), 'F. claimAndExchangePairing is exported');
+  ok(service.includes('export async function claimVerifyAndEstablishPairingSession'), 'F. claimVerifyAndEstablishPairingSession is exported');
 
-  // The exchange endpoint delegates to claimAndExchangePairing — it
-  // does NOT perform any separate SELECT or .update().select() on
+  // The exchange endpoint delegates to claimVerifyAndEstablishPairingSession —
+  // it does NOT perform any separate SELECT or .update().select() on
   // the pairing table.
-  ok(exchangeApi.includes('claimAndExchangePairing'), 'F. exchange endpoint delegates to claimAndExchangePairing');
+  ok(exchangeApi.includes('claimVerifyAndEstablishPairingSession'), 'F. exchange endpoint delegates to claimVerifyAndEstablishPairingSession');
   ok(!exchangeApi.includes("from('device_pairing_requests')"), 'F. exchange endpoint has NO direct table access — claim is atomic via RPC in service');
 
   // The service calls the RPC, NOT a PostgREST .update().select()
@@ -1027,12 +1101,19 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // The RPC uses SELECT ... FOR UPDATE to acquire a row lock and
   // capture the OLD exchange_code BEFORE the UPDATE.
   ok(migration.includes('for update;'), 'F. RPC: SELECT ... FOR UPDATE acquires row lock');
-  ok(migration.includes('select id, exchange_code into v_row'), 'F. RPC: captures OLD exchange_code into v_row');
+  ok(migration.includes('select id, exchange_code, exchange_attempts into v_row'), 'F. RPC: captures the OLD token hash + attempt count into v_row');
 
-  // The RPC UPDATEs the row in the same transaction.
-  ok(migration.includes("set status = 'consumed'"), 'F. RPC: UPDATE sets status=consumed');
-  ok(migration.includes('exchange_code = null'), 'F. RPC: UPDATE clears exchange_code');
-  ok(migration.includes('where id = v_row.id'), 'F. RPC: UPDATE WHERE id = v_row.id (locked row)');
+  // The lease-aware RPC UPDATEs the row in the same transaction:
+  // claim → exchanging (credential KEPT), complete → consumed
+  // (credential cleared), fail → failed (credential cleared).
+  ok(migration.includes("set status = 'exchanging'"), 'F. RPC: claim UPDATE sets status=exchanging');
+  ok(migration.includes("set status = 'consumed'"), 'F. RPC: complete UPDATE sets status=consumed');
+  ok(migration.includes("set status = 'failed'"), 'F. RPC: fail UPDATE sets status=failed');
+  ok(migration.includes('exchange_code = null'), 'F. RPC: complete/fail UPDATEs clear exchange_code');
+  ok(migration.includes('where id = v_row.id'), 'F. RPC: claim UPDATE WHERE id = v_row.id (locked row)');
+  ok(migration.includes('p_lease_ms'), 'F. RPC: claim takes a lease parameter');
+  ok(migration.includes('p_max_attempts'), 'F. RPC: claim enforces an attempts cap (bounded retries)');
+  ok(migration.includes('exchange_lease_until < p_now'), 'F. RPC: lease-expired takeover requires the lease deadline to have passed');
 
   // The RPC returns the OLD exchange_code via RETURN NEXT/RETURN QUERY.
   ok(migration.includes('return query select v_row.id'), 'F. RPC: RETURN QUERY yields OLD v_row.id');
@@ -1077,7 +1158,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // exchange_code) — the diagnostic path remains credential-free.
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
-  const fnStart = service.indexOf('export async function claimAndExchangePairing');
+  const fnStart = service.indexOf('export async function claimVerifyAndEstablishPairingSession');
   const fnEnd = service.indexOf('\n}\n', fnStart);
   const fnBody = service.slice(fnStart, fnEnd);
 
@@ -1109,7 +1190,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Not-found case.
   ok(afterClaimFail.includes('404'), 'rejected: not found → 404');
 
-  ok('24. rejected-claim handling — cancelled/expired/consumed all rejected, no credential in diagnostic path');
+  // Post-94ce1ef additions: failed (terminal) and lease-busy states.
+  ok(afterClaimFail.includes("'failed'"), 'rejected: failed → 410 (terminal)');
+  ok(afterClaimFail.includes("'exchanging'"), 'rejected: exchanging → 409 retryable (lease busy)');
+
+  ok('24. rejected-claim handling — cancelled/expired/consumed/failed/lease-busy all rejected, no credential in diagnostic path');
 }
 
 console.log(`\nPhase 3.2 QR exchange atomicity + credential boundary tests passed (${passed} check groups).`);

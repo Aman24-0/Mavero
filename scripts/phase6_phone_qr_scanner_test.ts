@@ -64,7 +64,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   ok(page.length > 1000, '2. scanner page exists and is substantial');
   ok(page.includes('<svelte:head>'), '2. scanner page has svelte:head');
-  ok(page.includes('Scan TV QR'), '2. scanner page title');
+  ok(page.includes('Login on Big Screen'), '2. scanner page title (Big Screen wording, §9)');
   ok(page.includes('noindex,nofollow'), '2. scanner page has noindex');
 
   // Server load — auth required.
@@ -287,7 +287,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const scanner = read('src/routes/account/scan-tv/+page.svelte');
 
   // Invalid QR shows an error with a retry option.
-  ok(scanner.includes("isn't a Mavero TV login code"), '12. scanner: invalid QR message');
+  ok(scanner.includes("isn't a Mavero sign-in code"), '12. scanner: invalid QR message (device-neutral wording, §9)');
   ok(scanner.includes('scan-retry-btn'), '12. scanner: has retry button for invalid QR');
   ok(scanner.includes('Try again'), '12. scanner: retry button label');
 

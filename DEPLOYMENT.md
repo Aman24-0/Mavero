@@ -116,6 +116,19 @@ The application exposes a health endpoint at `/api/health`:
 - `GET /api/health?deep=1` — readiness (bounded 2s Supabase HEAD probe, 503 when unreachable).
 - `GET /api/health?stats=1` — cache + resolver stats (content cache, negative cache, provider cooldown).
 
+## Device-pairing RPC verification (Big Screen QR login)
+
+The big-screen QR login's session-establishment path requires the `claim_device_pairing` / `complete_device_pairing` / `release_device_pairing_exchange` / `fail_device_pairing` RPCs (migration `20261003000000_device_pairing_exchange_lease.sql`). A deployment that ships pairing code without the migration will fail QR login at the final step with 503 "Unable to establish a session." (server log: `[Pairing] claim-rpc-missing`).
+
+CI does not have production database access, so verification is a **documented post-deployment check**:
+
+```bash
+PUBLIC_SUPABASE_URL=<url> PRIVATE_SUPABASE_SERVICE_ROLE_KEY=<key> \
+  pnpm run verify:pairing-rpc
+```
+
+The check is side-effect-free (impossible-hash dry-calls). Full procedure and expected signatures: `docs/supabase-migration-runbook.md` → "Device pairing migrations (Big Screen QR login)".
+
 
 
 ## Content-Security-Policy (Phase 3)

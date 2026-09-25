@@ -366,11 +366,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(!exchangeApi.includes('registerCurrentSession'), '11. exchange endpoint: does NOT call registerCurrentSession');
 
   // The exchange endpoint establishes the TV's session via
-  // exchangeCodeForSession on locals.supabase. The TV becomes
+  // verifyOtp({ token_hash, type: 'email' }) on locals.supabase. The TV becomes
   // authenticated AFTER the exchange succeeds — its NEXT request
   // (after redirect to /discover) will register a device session
   // normally via the hook.
-  ok(exchangeApi.includes('exchangeCodeForSession') || exchangeApi.includes('claimAndExchangePairing'), '11. exchange endpoint: establishes TV session via exchangeCodeForSession');
+  ok(exchangeApi.includes('claimVerifyAndEstablishPairingSession'), '11. exchange endpoint: establishes the TV session via the claim-verify-establish service (verifyOtp on the TV SSR client)');
 
   ok('11. no unauthenticated device session registration (challenge creation does not register)');
 }
@@ -567,8 +567,8 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // getPairingBySecret returns null + error if not found.
   ok(service.includes('Pairing request not found.'), '17. getPairingBySecret: returns not-found error');
 
-  // claimAndExchangePairing returns 404 if the diagnostic lookup finds no row.
-  ok(service.includes('status: 404'), '17. claimAndExchangePairing: returns 404 for not-found');
+  // claimVerifyAndEstablishPairingSession returns 404 if the diagnostic lookup finds no row.
+  ok(service.includes('status: 404'), '17. claimVerifyAndEstablishPairingSession: returns 404 for not-found');
 
   // Status endpoint returns 404.
   const statusApi = read('src/routes/api/auth/device-pairing/status/+server.ts');

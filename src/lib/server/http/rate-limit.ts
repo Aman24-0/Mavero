@@ -73,6 +73,12 @@ export const RATE_LIMITED_MESSAGE = 'Too many requests. Please slow down and try
  *     in the POST body, not the URL).
  *   * pairing cancel: unauthenticated cancellation → 20/min per IP
  *     (called once per cancel action; low-frequency but abuse-protected).
+ *   * pairing code lookup (manual "Enter TV code" path): the 8-char
+ *     short code has ~2^40 entropy — brute-force protection is
+ *     mandatory. Dual buckets: 10/min per USER (abusive account) and
+ *     30/min per IP (distributed probing). With these caps an attacker
+ *     gets at most a few hundred guesses per 5-min code lifetime per IP
+ *     against a 2^39 expected-guess space.
  */
 export const RATE_LIMIT_RULES = {
   resolve: { limit: 30, windowMs: 60_000 },
@@ -88,6 +94,8 @@ export const RATE_LIMIT_RULES = {
   pairingExchange: { limit: 10, windowMs: 60_000 },
   pairingInfo: { limit: 30, windowMs: 60_000 },
   pairingCancel: { limit: 20, windowMs: 60_000 },
+  pairingCodeLookupUser: { limit: 10, windowMs: 60_000 },
+  pairingCodeLookupIp: { limit: 30, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;

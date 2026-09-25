@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Camera, CameraOff, AlertCircle, LoaderCircle, ScanLine, RefreshCw, X } from 'lucide-svelte';
+  import { ArrowLeft, Camera, CameraOff, AlertCircle, LoaderCircle, ScanLine, RefreshCw, X, Keyboard } from 'lucide-svelte';
   import { haptic } from '$lib/client/haptics';
   import jsQR from 'jsqr';
 
@@ -18,6 +18,94 @@
 
   let scanState: ScanState = $state('idle');
   let errorMessage = $state('');
+
+  // ── Manual-code entry state (§10/§11) ──
+  // Secondary path: the user types the 8-character code shown on
+  // the big screen ("Or enter code manually: DH84EXKP"). The code
+  // is resolved via the AUTHENTICATED, rate-limited /lookup
+  // endpoint into a one-time authorization handle — the raw
+  // pairing secret NEVER reaches the browser on this path.
+  //
+  // UX requirements (§11): auto-uppercase, trim, reject invalid
+  // characters, max length 8, clear validation, submit on Enter,
+  // loading / expired / invalid / rate-limit states.
+  let manualCode = $state('');
+  let manualBusy = $state(false);
+  let manualError = $state('');
+  let manualErrorKind = $state<'' | 'invalid' | 'expired' | 'rate-limited'>('');
+  let manualInput: HTMLInputElement | undefined = $state();
+
+  const MANUAL_CODE_MAX = 8;
+  // Same alphabet as the server (no ambiguous chars: no 0/O/1/I).
+  const MANUAL_CODE_PATTERN = /^[A-Z0-9]{8}$/;
+
+  function normalizeManualCode(raw: string): string {
+    // Uppercase, strip whitespace, keep only characters that can
+    // appear in a code (letters + digits). Invalid characters are
+    // dropped rather than rejected so typing stays smooth.
+    return raw
+      .toUpperCase()
+      .replace(/\s+/g, '')
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, MANUAL_CODE_MAX);
+  }
+
+  function onManualCodeInput(event: Event) {
+    const target = event.currentTarget as HTMLInputElement;
+    manualCode = normalizeManualCode(target.value);
+    target.value = manualCode;
+    // Clear the error as soon as the user edits the code.
+    if (manualError) {
+      manualError = '';
+      manualErrorKind = '';
+    }
+  }
+
+  function manualCodeValid(): boolean {
+    return MANUAL_CODE_PATTERN.test(manualCode);
+  }
+
+  async function submitManualCode() {
+    if (manualBusy) return;
+    // Client-side validation — clear message, no server roundtrip
+    // for obviously malformed input.
+    if (!manualCodeValid()) {
+      manualError = 'Enter the 8-character code shown on the big screen.';
+      manualErrorKind = 'invalid';
+      manualInput?.focus();
+      return;
+    }
+    manualBusy = true;
+    manualError = '';
+    manualErrorKind = '';
+    haptic('light');
+    try {
+      const res = await fetch('/api/auth/device-pairing/lookup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ code: manualCode }),
+      });
+      const payload = await res.json();
+      if (!res.ok || !payload.ok) {
+        manualError = payload.message ?? 'Invalid or expired code.';
+        manualErrorKind = payload.status === 'expired' ? 'expired' : payload.status === 'rate-limited' ? 'rate-limited' : 'invalid';
+        manualBusy = false;
+        return;
+      }
+      // Success — navigate to the SAME secure device-authorization
+      // page as the QR path, with the one-time handle in the URL
+      // FRAGMENT (never a query string). Entering the code did NOT
+      // approve anything — the explicit Approve click happens on
+      // /authorize, exactly like the QR flow.
+      stopCamera();
+      scanState = 'success';
+      void goto(`/authorize#h=${encodeURIComponent(payload.handle)}`);
+    } catch {
+      manualError = 'Network error. Please try again.';
+      manualErrorKind = 'invalid';
+      manualBusy = false;
+    }
+  }
 
   // Camera + DOM refs.
   let video: HTMLVideoElement | undefined = $state();
@@ -269,7 +357,7 @@
       // Invalid QR — show the "not a Mavero code" state and allow
       // the user to scan again. The secret is NOT logged.
       scanState = 'error';
-      errorMessage = "This QR code isn't a Mavero TV login code.";
+      errorMessage = "This QR code isn't a Mavero sign-in code."
       // Reset scanResolved so retry can detect a new QR.
       scanResolved = false;
       return;
@@ -305,8 +393,8 @@
 </script>
 
 <svelte:head>
-  <title>Scan TV QR — Mavero</title>
-  <meta name="description" content="Scan the QR code shown on your TV to sign in on that device." />
+  <title>Login on Big Screen — Mavero</title>
+  <meta name="description" content="Scan the QR code shown on the big screen, or enter the TV code, to sign in on that device." />
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
@@ -370,7 +458,7 @@
         <ScanLine size={20} class="scan-line-icon" />
       </div>
       <div class="scan-instruction" aria-live="polite">
-        Scan the QR code shown on your TV.
+        Scan the QR code shown on the big screen.
       </div>
     {:else if scanState === 'validating' || scanState === 'success'}
       <div class="scan-overlay scan-validating" role="status" aria-live="polite">
@@ -394,8 +482,58 @@
             <X size={14} /> Cancel
           </button>
         </div>
+        <!-- Camera broken? The manual-code path still works — the
+             form below is always available. -->
       </div>
     {/if}
+  </div>
+
+  <!-- §11 — manual-code entry: a secondary path alongside camera
+       scanning. Rendered under the scan stage so the camera stays
+       the primary flow; "OR" separates the two. The form is easy
+       to use on mobile: large mono input, auto-uppercase,
+       Enter submits, explicit Continue button. -->
+  <div class="manual-code-card">
+    <div class="manual-divider" role="separator" aria-label="Alternative to scanning">
+      <span class="manual-divider-line"></span>
+      <span class="manual-divider-label">OR</span>
+      <span class="manual-divider-line"></span>
+    </div>
+
+    <form class="manual-form" onsubmit={(event) => { event.preventDefault(); void submitManualCode(); }}>
+      <label class="manual-label" for="manual-code-input">
+        <Keyboard size={14} />
+        <span>Enter TV code</span>
+      </label>
+      <div class="manual-controls">
+        <input
+          id="manual-code-input"
+          bind:this={manualInput}
+          class="manual-input"
+          class:manual-input-error={manualError !== ''}
+          type="text"
+          autocomplete="one-time-code"
+          autocapitalize="characters"
+          spellcheck="false"
+          maxlength={MANUAL_CODE_MAX}
+          placeholder="DH84EXKP"
+          aria-label="TV code — 8 characters shown on the big screen"
+          aria-invalid={manualError !== ''}
+          aria-describedby={manualError ? 'manual-code-error' : 'manual-code-hint'}
+          value={manualCode}
+          oninput={onManualCodeInput}
+          disabled={manualBusy}
+        />
+        <button class="manual-submit" type="submit" disabled={manualBusy || !manualCodeValid()}>
+          {#if manualBusy}<LoaderCircle size={15} class="spin" />{:else}Continue{/if}
+        </button>
+      </div>
+      {#if manualError}
+        <p id="manual-code-error" class="manual-error" role="alert">{manualError}</p>
+      {:else}
+        <p id="manual-code-hint" class="manual-hint">The 8-character code under the QR code on the big screen.</p>
+      {/if}
+    </form>
   </div>
 </div>
 
@@ -555,6 +693,77 @@
     top: -9999px; left: -9999px;
   }
 
+  /* ── Manual-code entry (§11) ── */
+  .manual-code-card {
+    position: relative; z-index: 3;
+    padding: 0 16px calc(18px + env(safe-area-inset-bottom, 0px));
+    max-width: 440px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .manual-divider {
+    display: flex; align-items: center; gap: 12px;
+    margin: 2px 0 14px;
+  }
+  .manual-divider-line { flex: 1; height: 1px; background: rgba(255, 255, 255, .14); }
+  .manual-divider-label {
+    color: #969696; font-size: .64rem; font-weight: 800;
+    letter-spacing: .18em;
+  }
+  .manual-form {
+    display: grid; gap: 9px;
+    padding: 16px;
+    border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 16px;
+    background: rgba(13, 13, 13, .85);
+    backdrop-filter: blur(14px);
+  }
+  .manual-label {
+    display: inline-flex; align-items: center; gap: 7px;
+    color: #f5f5f5; font-size: .78rem; font-weight: 800;
+  }
+  .manual-label :global(svg) { color: var(--color-primary, #00e676); }
+  .manual-controls { display: flex; gap: 9px; }
+  .manual-input {
+    flex: 1; min-width: 0;
+    min-height: 48px;
+    padding: 0 14px;
+    border: 1px solid rgba(255, 255, 255, .16);
+    border-radius: 12px;
+    background: rgba(0, 0, 0, .45);
+    color: #f5f5f5;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.15rem; font-weight: 800;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    caret-color: var(--color-primary, #00e676);
+  }
+  .manual-input:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px; }
+  .manual-input::placeholder { color: #4a4a4a; letter-spacing: .18em; }
+  .manual-input:disabled { opacity: .55; }
+  .manual-input-error { border-color: var(--color-warning, #ffb74d); }
+  .manual-submit {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 48px; padding: 0 18px;
+    border: 1px solid transparent; border-radius: 12px;
+    color: #050708; background: var(--color-primary, #00e676);
+    font: inherit; font-size: .8rem; font-weight: 800;
+    cursor: pointer;
+    transition: transform 160ms ease, filter 160ms ease;
+  }
+  .manual-submit:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
+  .manual-submit:active:not(:disabled) { transform: scale(.98); }
+  .manual-submit:focus-visible { outline: 3px solid var(--color-focus, #f5f5f5); outline-offset: 3px; }
+  .manual-submit:disabled { opacity: .55; cursor: progress; }
+  .manual-error {
+    margin: 0; color: var(--color-warning, #ffb74d);
+    font-size: .72rem; line-height: 1.45;
+  }
+  .manual-hint {
+    margin: 0; color: #8a8a8a;
+    font-size: .72rem; line-height: 1.45;
+  }
+
   :global(.spin) { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -568,5 +777,6 @@
   @media (orientation: landscape) and (max-height: 500px) {
     .scan-frame { width: min(200px, 45vh); height: min(200px, 45vh); }
     .scan-instruction { padding: 12px 24px; font-size: .8rem; }
+    .manual-code-card { display: none; }
   }
 </style>

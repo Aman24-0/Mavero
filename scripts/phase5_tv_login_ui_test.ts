@@ -42,7 +42,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   ok(page.length > 1000, '1. /tv-login page exists and is substantial');
   ok(page.includes('<svelte:head>'), '1. page has svelte:head with title');
-  ok(page.includes('TV Sign in'), '1. page title includes "TV Sign in"');
+  ok(page.includes('Big Screen Sign in'), '1. page title includes "Big Screen Sign in" (§9 — not TV-only wording)');
   ok(page.includes('noindex,nofollow'), '1. page has noindex,nofollow meta');
 
   // Bare route — /tv-login renders without the normal AppShell sidebar.

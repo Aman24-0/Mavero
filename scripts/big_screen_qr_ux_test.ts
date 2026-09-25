@@ -114,14 +114,22 @@ const authorize = read('src/routes/authorize/+page.svelte');
   ok(tvLogin.includes('Generate new code'), 'G45d: retry regenerates the pairing');
 
   // 46. consumed QR cannot be reused (RPC-backed single claim).
-  const claimRpc = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
-  ok(claimRpc.includes('for update') && claimRpc.includes('consumed'), 'G46a: claim RPC atomically flips approved → consumed');
+  // Post-94ce1ef: the lease migration supersedes the original claim
+  // RPC — consumed/failed rows are never claimable again.
+  const claimRpc = read('supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
+  ok(claimRpc.includes('for update') && claimRpc.includes("status = 'consumed'"), 'G46a: claim RPC chain flips exchanging → consumed only via complete_device_pairing (terminal)');
   const exchange = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
   ok(exchange.includes('claim_device_pairing'), 'G46b: exchange endpoint uses the atomic claim RPC');
   ok(exchange.includes("'cache-control': 'no-store'"), 'G46c: exchange responses are no-store');
 
   // 47. successful QR login creates an independent Supabase session.
-  ok(exchange.includes('exchangeCodeForSession'), 'G47a: TV session established via its OWN exchangeCodeForSession call');
+  // Post-94ce1ef fix: the token hash is verified with verifyOtp on
+  // the TV's OWN SSR client (exchangeCodeForSession was the
+  // production regression — it requires a PKCE code verifier the TV
+  // never has).
+  const pairingService = read('src/lib/server/auth/device-pairing.ts');
+  ok(pairingService.includes('tvSupabase.auth.verifyOtp'), 'G47a: TV session established via verifyOtp on its OWN SSR client');
+  ok(!pairingService.includes('.auth.exchangeCodeForSession('), 'G47a2: exchangeCodeForSession never called (regression guard)');
   ok(exchange.includes('const tvSupabase = locals.supabase'), 'G47b: the TV\u2019s SSR client is used (cookies on the TV response)');
   ok(!exchange.includes('S_PHONE') && !exchange.includes('phone.*access_token'), 'G47c: no phone token copying in the exchange path');
 

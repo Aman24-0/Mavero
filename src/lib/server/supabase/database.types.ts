@@ -28,6 +28,13 @@ export type Database = {
           approved_by_user_id: string | null
           approved_at: string | null
           exchange_code: string | null
+          // Added by 20261003000000_device_pairing_exchange_lease.sql.
+          exchange_lease_until: string | null
+          exchange_claimed_at: string | null
+          exchange_attempts: number
+          manual_handle_hash: string | null
+          manual_handle_user_id: string | null
+          manual_handle_expires_at: string | null
           created_at: string
           expires_at: string
           consumed_at: string | null
@@ -45,6 +52,12 @@ export type Database = {
           approved_by_user_id?: string | null
           approved_at?: string | null
           exchange_code?: string | null
+          exchange_lease_until?: string | null
+          exchange_claimed_at?: string | null
+          exchange_attempts?: number
+          manual_handle_hash?: string | null
+          manual_handle_user_id?: string | null
+          manual_handle_expires_at?: string | null
           created_at?: string
           expires_at: string
           consumed_at?: string | null
@@ -62,6 +75,12 @@ export type Database = {
           approved_by_user_id?: string | null
           approved_at?: string | null
           exchange_code?: string | null
+          exchange_lease_until?: string | null
+          exchange_claimed_at?: string | null
+          exchange_attempts?: number
+          manual_handle_hash?: string | null
+          manual_handle_user_id?: string | null
+          manual_handle_expires_at?: string | null
           created_at?: string
           expires_at?: string
           consumed_at?: string | null
@@ -1070,33 +1089,77 @@ export type Database = {
         Args: { p_provider_id: string; p_source_id: string; p_failure_type: string; p_checked_at?: string }
         Returns: undefined
       }
-      // Added by 20260929000000_device_pairing_claim_rpc.sql.
-      // SECURITY DEFINER function: atomically claims an approved pairing
-      // request and returns the OLD (pre-update) exchange_code.
+      // Added by 20260929000000_device_pairing_claim_rpc.sql and REPLACED
+      // by 20261003000000_device_pairing_exchange_lease.sql (old signature
+      // (text, timestamptz) was dropped — the lease state machine needs a
+      // different arg list; CREATE OR REPLACE would have created an
+      // overload and PostgREST call ambiguity).
       //
-      // Why this exists: PostgREST's UPDATE ... RETURNING returns the
-      // NEW row values, so a single .update({exchange_code: null})
-      // .select('exchange_code') always yields NULL — the previous
-      // Phase 3.2 implementation was broken. This RPC captures the
-      // OLD exchange_code via SELECT ... FOR UPDATE inside the same
-      // transaction that flips status to 'consumed' and clears
-      // exchange_code.
+      // SECURITY DEFINER function: atomically claims an approved (or
+      // lease-EXPIRED exchanging) pairing request with a short lease.
       //
-      // Concurrency: SELECT ... FOR UPDATE serializes concurrent
-      // callers on the same row; only the first transaction finds
-      // the row matching (status='approved' AND consumed_at IS NULL),
-      // captures the OTP, updates, and returns it. Subsequent
-      // transactions find no row (status is now 'consumed') and the
-      // function returns an empty result set.
+      // State machine: pending → approved → exchanging (lease) →
+      // consumed | failed. Unlike the 20260929 version, the claim does
+      // NOT consume the row and does NOT clear exchange_code — the
+      // credential must survive a recoverable verifyOtp failure so the
+      // TV can retry (release_device_pairing_exchange flips the row
+      // back to approved; a crashed exchangeer's lease expiry allows a
+      // takeover claim).
       //
-      // Returns: at most one row { id, exchange_code }.
-      //   - Winner: id = pairing row id, exchange_code = OLD OTP.
-      //   - Loser / not-eligible: empty result set.
+      // The OLD exchange_code is captured via SELECT ... FOR UPDATE
+      // (PostgREST's UPDATE ... RETURNING only yields NEW values).
+      // Enforces p_max_attempts — beyond the cap the pairing is marked
+      // 'failed' (terminal, credential cleared).
+      //
+      // Returns: at most one row { id, exchange_code, exchange_attempts }.
+      //   - Winner: id = pairing row id, exchange_code = stored OTP.
+      //   - Loser / not-eligible / attempts-exhausted: empty result set.
       claim_device_pairing: {
-        Args: { p_secret_hash: string; p_now?: string }
+        Args: { p_secret_hash: string; p_lease_ms?: number; p_max_attempts?: number; p_now?: string }
         Returns: {
           id: string | null
           exchange_code: string | null
+          exchange_attempts: number | null
+        }[]
+      }
+      // Added by 20261003000000_device_pairing_exchange_lease.sql.
+      // SECURITY DEFINER function: exchanging → consumed. Called by the
+      // exchange endpoint AFTER verifyOtp succeeded AND the session
+      // cookies were written. Clears exchange_code + lease in the same
+      // atomic UPDATE. p_pairing_id binds the completion to the exact
+      // claim cycle the caller won. Returns the row id, or empty when
+      // the row was not in 'exchanging' for this caller.
+      complete_device_pairing: {
+        Args: { p_secret_hash: string; p_pairing_id: string; p_now?: string }
+        Returns: {
+          id: string | null
+        }[]
+      }
+      // Added by 20261003000000_device_pairing_exchange_lease.sql.
+      // SECURITY DEFINER function: exchanging → approved (safe
+      // recovery). Called when verifyOtp failed WITHOUT consuming the
+      // credential (transient network/5xx). The stored credential is
+      // KEPT so the same one-time token can be retried. Never used
+      // when GoTrue reports the token expired/invalid — that path is
+      // fail_device_pairing (replay of a consumed credential must be
+      // impossible). Returns the row id, or empty when not eligible.
+      release_device_pairing_exchange: {
+        Args: { p_secret_hash: string; p_pairing_id: string }
+        Returns: {
+          id: string | null
+        }[]
+      }
+      // Added by 20261003000000_device_pairing_exchange_lease.sql.
+      // SECURITY DEFINER function: exchanging → failed (terminal).
+      // Called when the credential is definitively dead (GoTrue
+      // otp_expired / invalid) or cookie establishment failed after a
+      // successful verification (the token is consumed — retry can
+      // never succeed). Clears the credential. Returns the row id, or
+      // empty when not eligible.
+      fail_device_pairing: {
+        Args: { p_secret_hash: string; p_pairing_id: string; p_now?: string }
+        Returns: {
+          id: string | null
         }[]
       }
       // Added by 20260930000000_register_device_session_rpc.sql.

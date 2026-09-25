@@ -1,19 +1,28 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { Check, Monitor, Smartphone, Tv, Laptop, ShieldCheck, AlertCircle, LoaderCircle } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
   import { haptic } from '$lib/client/haptics';
 
-  // Phase 8: the pairing secret is extracted from the URL FRAGMENT
-  // (#s=<secret>), NOT the query string. A URL fragment is NOT sent
-  // to the HTTP server, so the secret never appears in server logs,
-  // browser history request lines, or referrer headers.
+  // Phase 8: the pairing credential is extracted from the URL
+  // FRAGMENT (#s=<secret> for the QR-scan path, #h=<handle> for the
+  // manual-code path), NOT the query string. A URL fragment is NOT
+  // sent to the HTTP server, so the credential never appears in
+  // server logs, browser history request lines, or referrer headers.
+  //
+  // Two paths converge on THIS page (same authorization UI, same
+  // approval pipeline):
+  //   QR scan:        /authorize#s=<256-bit pairing secret>
+  //   Manual code:    /authorize#h=<256-bit one-time handle> — issued
+  //                   by the AUTHENTICATED short-code lookup and
+  //                   bound to that user's session.
   //
   // The fragment is only available client-side (in the browser), so
-  // we read it in onMount via window.location.hash — NOT from SvelteKit's
-  // page.url.searchParams (which only reflects the query string).
+  // we read it in onMount via window.location.hash — NOT from
+  // SvelteKit's page.url.searchParams (query string only).
   let pairingSecret = $state('');
+  let pairingHandle = $state('');
   let loading = $state(true);
   let deviceName = $state('');
   let browser = $state<string | null>(null);
@@ -22,19 +31,27 @@
   let error = $state('');
   let approving = $state(false);
   let approved = $state(false);
+  let deviceSessionState = $state<'waiting' | 'established' | 'unknown'>('waiting');
   let expired = $state(false);
+  let authRequired = $state(false);
   let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   onMount(() => {
-    // Phase 8: extract the secret from the URL fragment (#s=<secret>).
+    // Extract the credential from the URL fragment (#s= / #h=).
     // The fragment is client-side only — it is NOT sent to the server.
     const hash = window.location.hash;
     if (hash && hash.length > 1) {
-      // Parse the fragment as if it were a query string: #s=<secret>.
+      // Parse the fragment as if it were a query string.
       const fragmentParams = new URLSearchParams(hash.slice(1)); // remove '#'
       const secret = fragmentParams.get('s');
+      const handle = fragmentParams.get('h');
       if (secret && secret.length >= 16) {
         pairingSecret = secret;
+        void loadPairingInfo();
+        return;
+      }
+      if (handle && handle.length >= 16) {
+        pairingHandle = handle;
         void loadPairingInfo();
         return;
       }
@@ -43,22 +60,27 @@
     loading = false;
   });
 
+  onDestroy(() => {
+    if (pollTimer) clearInterval(pollTimer);
+  });
+
   async function loadPairingInfo() {
     loading = true;
     try {
-      // Phase 8: call /info via POST with the secret in the JSON body,
-      // NOT via GET with the secret in the URL query string. This keeps
-      // the secret out of server logs, browser history, and referrer
-      // headers.
+      // Call /info via POST with the credential in the JSON body,
+      // NOT via GET with it in the URL query string. This keeps the
+      // credential out of server logs, browser history, and
+      // referrer headers.
       const res = await fetch('/api/auth/device-pairing/info', {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ secret: pairingSecret }),
+        body: JSON.stringify(pairingHandle ? { handle: pairingHandle } : { secret: pairingSecret }),
       });
       const payload = await res.json();
       if (!res.ok || !payload.ok) {
         error = payload.message ?? 'Unable to load pairing request.';
         if (payload.status === 'expired') expired = true;
+        if (res.status === 401) authRequired = true;
         loading = false;
         return;
       }
@@ -81,21 +103,67 @@
       const res = await fetch('/api/auth/device-pairing/approve', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ secret: pairingSecret }),
+        body: JSON.stringify(pairingHandle ? { handle: pairingHandle } : { secret: pairingSecret }),
       });
       const payload = await res.json();
       if (!res.ok || !payload.ok) {
         error = payload.message ?? 'Unable to approve the device.';
         if (payload.status === 'expired') expired = true;
+        if (res.status === 401) authRequired = true;
         approving = false;
         return;
       }
       approved = true;
       haptic('success');
+      // Post-approval confirmation polling: the big screen detects
+      // 'approved', runs the exchange, and flips the pairing to
+      // 'consumed'. Polling here lets the phone honestly report
+      // "signed in on the device" instead of leaving the user
+      // wondering whether the TV made it.
+      startCompletionPolling();
     } catch {
       error = 'Network error. Please try again.';
       approving = false;
     }
+  }
+
+  function startCompletionPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    let consecutiveErrors = 0;
+    // Poll every 3s for up to 2 minutes (the pairing TTL bounds the
+    // flow; the big screen's exchange completes within seconds).
+    const deadline = Date.now() + 2 * 60 * 1000;
+    pollTimer = setInterval(async () => {
+      if (Date.now() > deadline) {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined; }
+        return;
+      }
+      try {
+        const res = await fetch('/api/auth/device-pairing/status', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify(pairingHandle ? { handle: pairingHandle } : { secret: pairingSecret }),
+        });
+        const payload = await res.json();
+        consecutiveErrors = 0;
+        if (!res.ok || !payload.ok) return;
+        if (payload.status === 'consumed') {
+          // The big screen completed its exchange — its own session
+          // cookies are set and its next request is authenticated.
+          deviceSessionState = 'established';
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined; }
+        } else if (payload.status === 'expired' || payload.status === 'failed' || payload.status === 'cancelled') {
+          deviceSessionState = 'unknown';
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined; }
+        }
+      } catch {
+        consecutiveErrors += 1;
+        if (consecutiveErrors > 5 && pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = undefined;
+        }
+      }
+    }, 3000);
   }
 
   let cancelling = $state(false);
@@ -105,11 +173,13 @@
     cancelling = true;
     haptic('light');
     try {
-      await fetch('/api/auth/device-pairing/cancel', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ secret: pairingSecret }),
-      });
+      if (pairingSecret) {
+        await fetch('/api/auth/device-pairing/cancel', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ secret: pairingSecret }),
+        });
+      }
     } catch {
       // Non-critical — navigate away regardless.
     }
@@ -134,9 +204,18 @@
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
+<!--
+  §8 rendering fix: the emphasized word goes through AuthShell's
+  titleAccent prop — NEVER inline HTML markup in the title string.
+  The previous title (with an em-tag inline after "Authorize this")
+  rendered the tag as literal text because Svelte interpolates
+  {title} as plain text (correct, safe behavior — unsafe HTML
+  rendering is forbidden and was not used to fix this).
+-->
 <AuthShell
   eyebrow="MAVERO / Device Authorization"
-  title="Authorize this <em>device.</em>"
+  title="Authorize this"
+  titleAccent="device."
   subtitle="A new device wants to sign in to your Mavero account."
 >
   <div class="authorize-page">
@@ -149,7 +228,13 @@
       <div class="authorize-success">
         <Check size={32} />
         <h2>Device authorized</h2>
-        <p>The device can now complete sign-in on its screen.</p>
+        {#if deviceSessionState === 'established'}
+          <p>Signed in on the device. You can safely close this page.</p>
+        {:else if deviceSessionState === 'unknown'}
+          <p>The device did not complete sign-in in time. Generate a new code on the device and try again.</p>
+        {:else}
+          <p>The device is completing sign-in on its screen…</p>
+        {/if}
         <a class="authorize-done-btn" href="/account">Go to my account</a>
       </div>
     {:else if expired}
@@ -164,7 +249,14 @@
         <AlertCircle size={32} />
         <h2>Unable to authorize</h2>
         <p>{error}</p>
-        <a class="authorize-done-btn" href="/discover">Back to Mavero</a>
+        {#if authRequired}
+          <!-- Manual-code / handle path (or an expired QR-path session):
+               approval requires an authenticated account. Send the
+               user to sign-in with a return path back here. -->
+          <a class="authorize-done-btn" href="/auth/sign-in?redirect=%2Fauthorize">Sign in to continue</a>
+        {:else}
+          <a class="authorize-done-btn" href="/discover">Back to Mavero</a>
+        {/if}
       </div>
     {:else}
       <div class="authorize-device-card">

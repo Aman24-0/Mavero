@@ -18,7 +18,9 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 // Phase 7 verifies the complete session handoff: after the phone
 // approves the TV pairing, the TV establishes its OWN independent
-// Supabase session via server-side exchangeCodeForSession(). The
+// Supabase session via server-side verifyOtp({ token_hash,
+// type: 'email' }) on its own SSR client (post-94ce1ef fix — the
+// previous exchangeCodeForSession misuse never worked). The
 // phone's session is NEVER copied.
 //
 // STATIC CONTRACT tests. Runtime verification (actual Supabase
@@ -33,7 +35,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   ok(api.includes('POST'), '1. exchange endpoint: POST handler exists');
   ok(api.includes('RequestHandler'), '1. exchange endpoint: RequestHandler type');
-  ok(api.includes('claimAndExchangePairing'), '1. exchange endpoint: calls claimAndExchangePairing service');
+  ok(api.includes('claimVerifyAndEstablishPairingSession'), '1. exchange endpoint: calls claimVerifyAndEstablishPairingSession service');
   ok(api.includes('readJsonBody'), '1. exchange endpoint: bounded body parsing');
   ok(api.includes('MAX_BODY_BYTES'), '1. exchange endpoint: body size limit');
 
@@ -49,40 +51,44 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Uses locals.supabase (the TV request's own SSR client).
   ok(api.includes('locals.supabase'), '2. exchange endpoint: uses locals.supabase (TV SSR client)');
   ok(api.includes('tvSupabase = locals.supabase'), '2. exchange endpoint: assigns to tvSupabase');
-  ok(api.includes('claimAndExchangePairing(admin, tvSupabase'), '2. exchange endpoint: passes TV SSR client to service');
+  ok(api.includes('claimVerifyAndEstablishPairingSession(admin, tvSupabase'), '2. exchange endpoint: passes TV SSR client to service');
 
-  // Does NOT use the admin client for exchangeCodeForSession.
+  // Does NOT use the admin client for the token verification.
+  ok(!api.includes('admin.auth.verifyOtp'), '2. exchange endpoint: does NOT use admin client for verification');
   ok(!api.includes('admin.auth.exchangeCodeForSession'), '2. exchange endpoint: does NOT use admin client for exchange');
 
   ok('2. exchange endpoint uses TV SSR client (not admin)');
 }
 
 // ============================================================
-// SECTION 3 — exchangeCodeForSession IS SERVER-SIDE
+// SECTION 3 — verifyOtp IS SERVER-SIDE (post-94ce1ef fix)
 // ============================================================
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
   const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
   const tvLogin = read('src/routes/tv-login/+page.svelte');
 
-  // The service calls exchangeCodeForSession on the TV SSR client.
-  ok(service.includes('exchangeCodeForSession'), '3. service: calls exchangeCodeForSession');
-  ok(service.includes('tvSupabase.auth.exchangeCodeForSession'), '3. service: calls on tvSupabase (TV SSR client)');
+  // The service verifies the token hash with verifyOtp on the TV
+  // SSR client — the officially supported primitive for a
+  // generateLink({type:'magiclink'}) hashed_token (installed
+  // @supabase/supabase-js 2.112.3: VerifyTokenHashParams).
+  ok(service.includes('tvSupabase.auth.verifyOtp'), '3. service: calls verifyOtp on tvSupabase (TV SSR client)');
+  ok(service.includes("token_hash: tokenHash"), '3. service: passes the stored token hash');
+  ok(service.includes("type: 'email'"), '3. service: verifyOtp type email (magiclink token hash)');
+  // The production regression MUST NOT reappear.
+  ok(!service.includes('.auth.exchangeCodeForSession('), '3. service: NEVER calls exchangeCodeForSession (PKCE-only API — the regression)');
 
-  // The TV login page does NOT call exchangeCodeForSession directly
-  // (only the server-side service does). The word may appear in
-  // comments — we check for actual function call syntax, not string
-  // presence in comments.
+  // The TV login page does NOT verify tokens client-side.
+  ok(!tvLogin.match(/\.auth\.verifyOtp\(/), '3. TV login: does NOT call .auth.verifyOtp() directly (server-side only)');
   ok(!tvLogin.match(/\.auth\.exchangeCodeForSession\(/), '3. TV login: does NOT call .auth.exchangeCodeForSession() directly (server-side only)');
 
   // The exchange endpoint delegates to the service function
-  // claimAndExchangePairing (verified in Sections 1 and 2). The
-  // actual exchangeCodeForSession() call happens inside the service,
-  // not in the endpoint handler. (The word may appear in JSDoc
-  // comments — Sections 1 and 2 already prove delegation.)
-  ok(exchangeApi.includes('claimAndExchangePairing(admin, tvSupabase'), '3. exchange endpoint: delegates to service with TV SSR client');
+  // claimVerifyAndEstablishPairingSession (verified in Sections 1
+  // and 2). The actual verifyOtp() call happens inside the service,
+  // not in the endpoint handler.
+  ok(exchangeApi.includes('claimVerifyAndEstablishPairingSession(admin, tvSupabase'), '3. exchange endpoint: delegates to service with TV SSR client');
 
-  ok('3. exchangeCodeForSession is server-side (never client-side)');
+  ok('3. token verification is server-side via verifyOtp (never client-side, never exchangeCodeForSession)');
 }
 
 // ============================================================
@@ -153,8 +159,8 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(migration.includes('v_row.exchange_code'), '6. RPC: returns OLD v_row.exchange_code');
 
   // Service reads the OLD OTP from the RPC result.
-  ok(service.includes('const otpCode = claimed.exchange_code'), '6. service: reads OLD OTP from RPC result');
-  ok(service.includes('exchangeCodeForSession(otpCode)'), '6. service: passes OLD OTP to exchangeCodeForSession');
+  ok(service.includes('const tokenHash = claimed.exchange_code'), '6. service: reads the stored token hash from the RPC result');
+  ok(service.includes('token_hash: tokenHash'), '6. service: passes the stored token hash to verifyOtp');
 
   // Service does NOT use .update().select() (which returns NEW values).
   ok(!service.match(/\.update\(\{[\s\S]*?exchange_code:\s*null[\s\S]*?\}\.select\(/m), '6. service: NO broken .update().select() pattern');
@@ -175,7 +181,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   // Service handles consumed state in diagnostic.
   ok(service.includes("current.status === 'consumed'"), '7. service: handles consumed status in diagnostic');
-  ok(service.includes('already been consumed'), '7. service: returns consumed message');
+  ok(service.includes('already been used'), '7. service: returns consumed message');
   ok(service.includes('status: 409'), '7. service: returns 409 for consumed');
 
   ok('7. consumed state (RPC sets it, service handles it)');
@@ -540,23 +546,31 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // The current design intentionally makes the pairing single-use
 // BEFORE exchangeCodeForSession(). This is correct: generateLink()
 // requires the phone user's auth context which the TV does not have.
-// If exchangeCodeForSession() fails, the user must re-pair.
+// If verifyOtp() fails TRANSIENTLY, the lease is released and the
+// same credential is retried; a dead credential marks the pairing
+// failed and the user must re-pair (§4 state machine).
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
 
-  // The RPC marks pairing as consumed BEFORE exchangeCodeForSession.
-  // The OTP is captured from the RPC's OLD value.
-  ok(service.includes('const otpCode = claimed.exchange_code'), '21. service: OTP captured from RPC OLD value');
-  ok(service.includes('exchangeCodeForSession(otpCode)'), '21. service: exchange called AFTER claim');
+  // The lease-aware RPC marks the pairing 'exchanging' BEFORE
+  // verifyOtp; consumption happens via complete_device_pairing
+  // AFTER verifyOtp succeeds and cookies are verified.
+  // The token hash is captured from the RPC's stored value.
+  ok(service.includes('const tokenHash = claimed.exchange_code'), '21. service: token hash captured from RPC result');
+  ok(service.includes("'complete_device_pairing'"), '21. service: consumption completed AFTER verifyOtp + cookie check');
 
-  // If exchangeCodeForSession fails, the pairing is already consumed.
-  // The service returns 503 — the user must re-pair.
-  ok(service.includes('exchangeError'), '21. service: checks exchange error');
-  ok(service.includes('status: 503'), '21. service: returns 503 on exchange failure');
+  // If verifyOtp fails, the §4 state machine picks the right path:
+  // terminal (otp_expired/403/400 → fail_device_pairing, 410) or
+  // recoverable (release_device_pairing_exchange, 503 retryable).
+  ok(service.includes('verifyError'), '21. service: checks verify error');
+  ok(service.includes('otp_expired'), '21. service: classifies otp_expired as terminal (token consumed at Supabase)');
+  ok(service.includes("'release_device_pairing_exchange'"), '21. service: releases the lease on recoverable failure (no permanent dead state)');
+  ok(service.includes('status: 503'), '21. service: returns 503 on recoverable verify failure');
+  ok(service.includes('status: 410'), '21. service: returns 410 on terminal verify failure');
   ok(service.includes('Unable to establish a session'), '21. service: safe error message');
 
-  // The failure is documented as intentional.
-  ok(service.includes('Failure semantics') || service.includes('failure semantics') || service.includes('intended behavior'), '21. service: documents intentional terminal-consumption');
+  // The failure semantics are documented as intentional.
+  ok(service.includes('LEASE STATE MACHINE') || service.includes('lease state machine'), '21. service: documents the lease state machine');
 
   ok('21. exchange failure semantics (pairing consumed before exchange, documented as intentional)');
 }

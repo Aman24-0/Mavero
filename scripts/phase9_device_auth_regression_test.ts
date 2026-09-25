@@ -316,25 +316,30 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 {
   const service = read('src/lib/server/auth/device-pairing.ts');
   const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
-  const rpcMigration = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
+  const rpcMigration = read('supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
 
   // Exchange uses TV SSR client.
   ok(exchangeApi.includes('locals.supabase'), 'H. exchange: uses TV SSR client');
-  ok(exchangeApi.includes('claimAndExchangePairing'), 'H. exchange: calls service');
+  ok(exchangeApi.includes('claimVerifyAndEstablishPairingSession'), 'H. exchange: calls service');
 
-  // Atomic claim RPC.
+  // Atomic lease claim RPC.
   ok(rpcMigration.includes('for update;'), 'H. RPC: SELECT FOR UPDATE');
   ok(rpcMigration.includes("status = 'approved'"), 'H. RPC: requires approved');
   ok(rpcMigration.includes('consumed_at is null'), 'H. RPC: requires unconsumed');
   ok(rpcMigration.includes('expires_at > p_now'), 'H. RPC: requires not expired');
 
-  // OLD exchange_code captured.
-  ok(rpcMigration.includes('select id, exchange_code into v_row'), 'H. RPC: captures OLD exchange_code');
-  ok(rpcMigration.includes('exchange_code = null'), 'H. RPC: clears exchange_code');
-  ok(rpcMigration.includes('return query select v_row.id'), 'H. RPC: returns OLD values');
+  // Stored token hash captured; consumption moves to complete RPC.
+  ok(rpcMigration.includes('select id, exchange_code, exchange_attempts into v_row'), 'H. RPC: captures the stored token hash');
+  ok(rpcMigration.includes("set status = 'exchanging'"), 'H. RPC: claim sets exchanging (lease — does NOT consume)');
+  ok(rpcMigration.includes("set status = 'consumed'"), 'H. RPC: complete sets consumed');
+  ok(rpcMigration.includes('exchange_code = null'), 'H. RPC: complete/fail clear the credential');
+  ok(rpcMigration.includes('return query select v_row.id'), 'H. RPC: returns the captured values');
 
-  // Service calls exchangeCodeForSession on TV SSR client.
-  ok(service.includes('tvSupabase.auth.exchangeCodeForSession'), 'H. service: exchangeCodeForSession on TV SSR client');
+  // Service verifies the token hash with verifyOtp on the TV SSR
+  // client (post-94ce1ef fix — exchangeCodeForSession was the
+  // production regression).
+  ok(service.includes('tvSupabase.auth.verifyOtp'), 'H. service: verifyOtp on TV SSR client');
+  ok(!service.includes('.auth.exchangeCodeForSession('), 'H. service: NO exchangeCodeForSession call (regression)');
 
   // No token in JSON response.
   ok(!exchangeApi.match(/json\(\s*\{[^}]*access_token/), 'H. exchange: no access_token in JSON');
@@ -516,7 +521,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // APPROVE → stores exchange_code server-side (never returned to client).
   ok(!approveApi.match(/json\(\s*\{[^}]*exchange_code/), 'K. approve: no exchange_code in response');
 
-  // EXCHANGE → server-side exchangeCodeForSession on TV SSR client.
+  // EXCHANGE → server-side verifyOtp on TV SSR client.
   ok(exchangeApi.includes('locals.supabase'), 'K. exchange: TV SSR client');
   ok(!exchangeApi.match(/json\(\s*\{[^}]*access_token/), 'K. exchange: no token in JSON');
 
@@ -611,7 +616,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 
   // Malformed/short pairing secret.
   ok(exchangeApi.includes('secret.length < 16'), 'M. exchange: rejects short secret');
-  ok(approveApi.includes('secret.length < 16'), 'M. approve: rejects short secret');
+  // Post-94ce1ef: the approve endpoint accepts EITHER a QR secret
+  // OR a manual-code handle — both must enforce the 16-char floor.
+  ok(approveApi.includes('secret.length >= 16'), 'M. approve: accepts only full-length QR secrets');
+  ok(approveApi.includes('handle.length >= 16'), 'M. approve: accepts only full-length manual handles');
+  ok(approveApi.includes('A valid pairing credential is required.'), 'M. approve: rejects missing/short credentials');
 
   // Expired pairing (RPC WHERE clause).
   const rpc = read('supabase/migrations/20260929000000_device_pairing_claim_rpc.sql');
