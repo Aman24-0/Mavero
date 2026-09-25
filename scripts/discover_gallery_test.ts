@@ -6,9 +6,11 @@ const source = await readFile(new URL('../src/lib/components/DiscoverPage.svelte
 // Single-authoritative featured-item contract.
 assert.match(source, /const MAX_FEATURED_ITEMS = 6/);
 assert.match(source, /function createFeaturedItems/);
-// In runes mode this is `$derived(createFeaturedItems(...))`; in legacy
-// mode it's `featuredItems = createFeaturedItems(...)`. Accept either.
-assert.match(source, /featuredItems = (?:\$derived\()?createFeaturedItems/);
+// The Hero lineage: `featuredItems` is still a $derived state, and
+// either the legacy `createFeaturedItems(...)` call OR the new
+// `heroItems.length > 0` server-selected path may produce it. Both
+// patterns are acceptable — the behavioral contract is preserved.
+assert.match(source, /featuredItems = \$derived/);
 assert.match(source, /activeHero = (?:.*?\$derived\()?featuredItems\[activeIndex\]/);
 assert.match(source, /activeHeroImage = (?:.*?\$derived\()?activeHero\?\.item\.backdrop/);
 assert.match(source, /uniqueItems/);

@@ -261,7 +261,10 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   // Gallery single-active hero contract (subset of discover_gallery_test).
   assert.match(discoverPage, /const MAX_FEATURED_ITEMS = 6/);
   assert.match(discoverPage, /function createFeaturedItems/);
-  assert.match(discoverPage, /featuredItems = (?:\$derived\()?createFeaturedItems/);
+  // Hero lineage: `featuredItems` is still a $derived state. Either
+  // the legacy `createFeaturedItems(...)` call OR the new server-
+  // selected `heroItems` path may produce it.
+  assert.match(discoverPage, /featuredItems = \$derived/);
   assert.match(discoverPage, /activeHero = (?:.*?\$derived\()?featuredItems\[activeIndex\]/);
   assert.match(discoverPage, /aria-roledescription="carousel"/);
   assert.match(discoverPage, /aria-label="Previous title"/);
@@ -362,4 +365,26 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   assert.match(tmdb, /key = `tmdb:anime-merged:\$\{sort\}:\$\{page\}`/, 'anime-merged cache key includes sort + page');
 }
 
-console.log('Discover V2 India-first catalog tests passed: section config (A); language options (B); all-language mixed-query (C); language mapping (D); other-language exclusion (E); theatre (F); OTT (G); page size 10 (H); show more appends (I); independent section state (J); language switch replaces (K); anime movie+series merge (L); anime Explore (M); anime navigation (N); existing behavior (O); nav regression (P); playback regression (Q); no fake data (R); dropdown UX (S); attribution (T); cache keys (U).');
+// ============================================================================
+// V. Hero daily lineage — server-selected M/S/M/S/M/S, fresh + cached.
+// ============================================================================
+{
+  // The Discover server load returns heroItems.
+  assert.match(discoverLoad, /heroItems/, 'loadDiscoverData returns heroItems');
+  assert.match(discoverLoad, /selectHeroLineup/, 'loadDiscoverData calls selectHeroLineup');
+  assert.match(discoverLoad, /heroDailyBucket/, 'daily bucket drives the cache key');
+  assert.match(discoverLoad, /tmdb:hero-lineup:\$\{bucket\}/, 'cache key is daily-bucket-scoped');
+  // The TMDB adapter exposes a streaming-id batch helper (no N+1).
+  assert.match(tmdb, /getTmdbIndiaFlatrateIds/, 'TMDB adapter exposes the streaming-id batch helper');
+  assert.match(tmdb, /tmdb:hero-flatrate-ids/, 'streaming-id cache key exists');
+  // The DiscoverPage prefers the server-selected heroItems over the
+  // legacy createFeaturedItems path.
+  assert.match(discoverPage, /heroItems = \[\]/, 'DiscoverPage accepts heroItems prop');
+  assert.match(discoverPage, /heroItems\.length > 0/, 'DiscoverPage prefers heroItems when non-empty');
+  // The 6-slot contract is enforced by the pure selector in
+  // hero-select.ts — its dedicated test discover_hero_lineup_test.ts
+  // covers the behavioral guarantees (M/S/M/S/M/S order, freshness,
+  // dedup, daily rotation, fallback).
+}
+
+console.log('Discover V2 India-first catalog tests passed: section config (A); language options (B); all-language mixed-query (C); language mapping (D); other-language exclusion (E); theatre (F); OTT (G); page size 10 (H); show more appends (I); independent section state (J); language switch replaces (K); anime movie+series merge (L); anime Explore (M); anime navigation (N); existing behavior (O); nav regression (P); playback regression (Q); no fake data (R); dropdown UX (S); attribution (T); cache keys (U); hero daily lineage (V).');

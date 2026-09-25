@@ -59,6 +59,22 @@ export type MediaItem = {
   };
   /** P3: India streaming/OTT providers (flatrate only) from TMDB watch/providers. */
   streamingProviders?: Array<{ id: number; name: string; logo: string }>;
+  /**
+   * TMDB original_language code (e.g. 'hi', 'en', 'ja'). Used by the
+   * Discover Hero selector for the controlled Indian-content boost.
+   * Pure content metadata — never authorization state.
+   */
+  originalLanguage?: string;
+  /**
+   * TMDB popularity score. Used by the Discover Hero selector for the
+   * trending signal. Optional — only populated from the TMDB adapter.
+   */
+  popularity?: number;
+  /**
+   * TMDB vote count. Used by the Discover Hero selector. Optional —
+   * only populated from the TMDB adapter.
+   */
+  voteCount?: number;
 };
 
 const image = (id: string, width = 900) =>

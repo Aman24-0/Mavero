@@ -27,6 +27,7 @@
 
   let {
     featuredItem,
+    heroItems = [],
     movies = [],
     series = [],
     anime = [],
@@ -42,6 +43,10 @@
     errorMessage = '',
   }: {
     featuredItem: MediaItem | undefined;
+    /** Server-selected Hero lineup in strict M/S/M/S/M/S order. May be empty
+     *  on failure — the component falls back to the legacy createFeaturedItems
+     *  path. May contain fewer than 6 items when candidate depth is thin. */
+    heroItems?: MediaItem[];
     movies?: MediaItem[];
     series?: MediaItem[];
     anime?: MediaItem[];
@@ -301,13 +306,50 @@
       .map((item) => ({ item, category: categoryFor(item) }));
   }
 
+  // Build the legacy fallback pool (the pre-hero-selection candidate
+  // list) so the Hero never falls below MAX_FEATURED_ITEMS when the
+  // server-selected heroItems is shorter than 6 (or empty on failure).
+  function createFallbackItems(): MediaItem[] {
+    return uniqueItems([
+      ...(featuredItem ? [featuredItem] : []),
+      ...movies, ...series, ...anime,
+      ...popularSeries, ...popularAnime
+    ]).filter((item) => item.id.trim() && item.title.trim() && hasHeroImage(item));
+  }
+
   let localContinue = $derived(localContinueLoaded ? localContinueItems : []);
   let hasCatalog = $derived(Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length));
-  let featuredItems = $derived(createFeaturedItems([
-    ...(featuredItem ? [featuredItem] : []),
-    ...movies, ...series, ...anime,
-    ...popularSeries, ...popularAnime
-  ]));
+  // Hero lineup preference: use the server-selected heroItems (already
+  // in strict M/S/M/S/M/S order, fresh-filtered, daily-rotated) when
+  // available. Fall back to the legacy client-side createFeaturedItems
+  // path when heroItems is empty (TMDB failure) OR shorter than 6
+  // (thin candidate pool) — append fallback candidates up to 6 without
+  // duplicating server-selected IDs, preserving M/S/M/S/M/S where
+  // possible (the legacy path doesn't enforce M/S/M/S/M/S, but it
+  // still produces a usable gallery).
+  let featuredItems = $derived((() => {
+    if (heroItems.length > 0) {
+      const seen = new Set<string>();
+      const heroSlides = heroItems
+        .filter((item) => item.id.trim() && item.title.trim() && hasHeroImage(item))
+        .map((item) => {
+          seen.add(item.id);
+          return { item, category: categoryFor(item) };
+        });
+      if (heroSlides.length >= MAX_FEATURED_ITEMS) return heroSlides.slice(0, MAX_FEATURED_ITEMS);
+      // Top up with legacy fallback candidates that are NOT already
+      // in the server-selected hero lineup (no duplicates).
+      const fallback = createFallbackItems()
+        .filter((item) => !seen.has(item.id))
+        .map((item) => ({ item, category: categoryFor(item) }));
+      return [...heroSlides, ...fallback].slice(0, MAX_FEATURED_ITEMS);
+    }
+    return createFeaturedItems([
+      ...(featuredItem ? [featuredItem] : []),
+      ...movies, ...series, ...anime,
+      ...popularSeries, ...popularAnime
+    ]);
+  })());
   // Reset activeIndex if it's out of bounds after featuredItems changes.
   let activeIndex = $state(0);
   let activeHero = $derived(featuredItems[activeIndex]);
@@ -643,6 +685,17 @@
 
   .hero-content { position: relative; z-index: 2; display: flex; align-items: flex-end; min-height: min(78vh, 680px); padding: 90px clamp(16px, 5vw, 56px) 76px; }
   .hero-copy { max-width: 560px; }
+  /* Phase D.A — text transition synchronized with image: when a slide
+     becomes active, the hero-copy fades up subtly. When inactive, it
+     fades down. The CSS transition is on opacity+transform so the
+     text movement syncs with the slide scroll. Reduced-motion: the
+     prefers-reduced-motion block below disables the transition. */
+  .hero-slide .hero-copy { opacity: .4; transform: translateY(8px); transition: opacity var(--motion-slow, 600ms) var(--ease-out, ease-out), transform var(--motion-slow, 600ms) var(--ease-out, ease-out); }
+  .hero-slide.active .hero-copy { opacity: 1; transform: translateY(0); }
+  /* Subtle image scale on the active slide (Ken Burns). Stays within
+     object-fit: cover so no letterboxing appears. */
+  .hero-slide .hero-image { transform: scale(1); transition: transform var(--motion-slow, 600ms) var(--ease-out, ease-out); }
+  .hero-slide.active .hero-image { transform: scale(1.03); }
   .hero-kicker { color: var(--color-primary); font-size: .62rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 0 12px rgba(0,255,156,.3); }
   .hero-copy h1 {
     margin: 8px 0 0; color: var(--color-text); font-size: clamp(2rem, 5.5vw, 3.8rem); font-weight: 900;
@@ -775,5 +828,10 @@
   @media (prefers-reduced-motion: reduce) {
     .hero-track { scroll-behavior: auto; }
     .hero-nav-btn, .hero-dot::after, .quick-chips a, .hero-play, .hero-btn { transition: none; }
+    /* Phase D.E: disable the active-slide text fade-up and image Ken
+       Burns scale when the user prefers reduced motion. The slides
+       still change, but with no animation. */
+    .hero-slide .hero-copy, .hero-slide.active .hero-copy { opacity: 1; transform: none; transition: none; }
+    .hero-slide .hero-image, .hero-slide.active .hero-image { transform: none; transition: none; }
   }
 </style>

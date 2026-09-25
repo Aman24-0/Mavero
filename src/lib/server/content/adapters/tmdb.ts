@@ -223,7 +223,8 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     externalIds,
     trailerKey: raw.videos?.results?.find((video) => video.site === 'YouTube' && video.type === 'Trailer')?.key,
     cast: extractCast(raw),
-    tmdbGenreIds: genreIds.length > 0 ? genreIds : undefined
+    tmdbGenreIds: genreIds.length > 0 ? genreIds : undefined,
+    originalLanguage: typeof raw.original_language === 'string' && raw.original_language.trim() ? raw.original_language.trim() : undefined
   };
 }
 
@@ -1264,6 +1265,63 @@ export async function getTmdbIndiaProviders(): Promise<DiscoverProvider[]> {
 
 export function providerLogoUrl(logoPath: string | null): string {
   return logoPath ? `${IMAGE_URL}/w92${logoPath}` : '';
+}
+
+// ============================================================
+// Hero "currently streaming" signal.
+//
+// The Discover Hero selector needs to know whether a candidate TMDB
+// id is currently available on a flatrate streaming service in India.
+// Per-title /watch/providers lookups would be N+1 — instead we issue
+// TWO batched discover queries (movie + TV, popularity-desc, India
+// flatrate) and collect the union of TMDB ids into a Set<string>.
+//
+// This is ONE extra batched TMDB call pair (cached via the existing
+// getOrSet path with the standard list TTL). Failed queries degrade
+// to an empty set — the selector continues with the other signals.
+// ============================================================
+
+/**
+ * Build a Set of canonical TMDB numeric IDs (as strings) for titles
+ * currently available on a flatrate streaming service in India, sorted
+ * by popularity. The set is a positive signal only — its absence
+ * never excludes a candidate from Hero selection.
+ *
+ * @param maxPages  Upstream pages to walk per type (default 2 = ~40 ids).
+ *                  Each page returns 20 items; 2 pages per type gives
+ *                  ~80 raw ids (deduped to ~60-70) — more than enough
+ *                  coverage for a Hero candidate pool of ~20-30 items.
+ */
+export async function getTmdbIndiaFlatrateIds(maxPages = 2): Promise<Set<string>> {
+  const key = `tmdb:hero-flatrate-ids:${maxPages}`;
+  const { value } = await getOrSet(key, listPolicy, async () => {
+    const fetchPage = async <T extends TmdbMedia>(path: string, page: number): Promise<T[]> => {
+      try {
+        const result = await tmdbRequest<TmdbList<T>>(path, {
+          page,
+          include_adult: false,
+          sort_by: 'popularity.desc',
+          watch_region: 'IN',
+          with_watch_monetization_types: 'flatrate'
+        });
+        return (result.results ?? []) as T[];
+      } catch {
+        return [];
+      }
+    };
+    const moviePages: TmdbMovie[][] = [];
+    const tvPages: TmdbTv[][] = [];
+    for (let p = 1; p <= maxPages; p++) {
+      moviePages.push(await fetchPage<TmdbMovie>('/discover/movie', p));
+      tvPages.push(await fetchPage<TmdbTv>('/discover/tv', p));
+    }
+    const ids = new Set<string>();
+    for (const row of [...moviePages.flat(), ...tvPages.flat()]) {
+      if (row && Number.isInteger(row.id) && (row as TmdbMovie).id > 0) ids.add(String(row.id));
+    }
+    return ids;
+  });
+  return value;
 }
 
 /**

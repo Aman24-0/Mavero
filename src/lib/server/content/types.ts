@@ -95,6 +95,14 @@ export type NormalizedMediaItem = {
   seasonsData?: Season[];
   nativeTitle?: string;
   /**
+   * TMDB original_language code (e.g. 'hi', 'en', 'ja'). Populated from
+   * `raw.original_language` in mapTmdb(). Used by the Discover Hero
+   * selector for the controlled Indian-content boost (recognized Indian
+   * language codes get a small score bump — never forced). Pure content
+   * metadata — never authorization state.
+   */
+  originalLanguage?: string;
+  /**
    * TMDB TV networks for this title (Adult Mode rebuild, Phase 2 — additive).
    * Populated from the TV detail response (`/tv/{id}` returns `networks[]`);
    * list-shaped endpoints (discover/trending/search) do not include networks,

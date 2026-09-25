@@ -30,6 +30,9 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     trailerKey: item.trailerKey,
     cast: item.cast,
     externalIds: item.externalIds,
-    streamingProviders: item.streamingProviders
+    streamingProviders: item.streamingProviders,
+    originalLanguage: item.originalLanguage,
+    popularity: item.popularity,
+    voteCount: item.voteCount
   };
 }

@@ -1,5 +1,8 @@
 import { collection, discover, popular, selectFeatured, trendingMoviesByLanguages } from './service';
 import { toMediaItem } from './presenter';
+import { getOrSet } from './cache';
+import { getTmdbIndiaFlatrateIds } from './adapters/tmdb';
+import { selectHeroLineup, heroDailyBucket } from './hero-select';
 import type { CollectionFilters, CollectionSort, ContentType, ContentList } from './types';
 import type { MediaItem } from '$data/content';
 
@@ -122,6 +125,69 @@ export async function loadCollectionData(type: ContentType, url: URL) {
 
 type GenreCollection = { title: string; items: MediaItem[]; href: string };
 
+// ============================================================
+// Discover Hero daily lineup.
+//
+// The Hero lineup is computed server-side from the trending movie +
+// series rails (already fetched above) plus the India flatrate
+// streaming-id set (one batched, cached TMDB query pair). The result
+// is cached for ~24h via the existing `getOrSet` cache with a daily
+// bucket key — the same bucket produces the same lineup, the next
+// bucket can produce a different lineup when candidate depth allows.
+//
+// The lineup is computed BEFORE the toMediaItem projection so the
+// selector sees the full NormalizedMediaItem shape (popularity,
+// voteCount, releaseDate, originalLanguage, externalIds, tags).
+// ============================================================
+
+// 24h TTL + 6h SWR — slightly longer than the standard list policy
+// because the lineup is by design stable for one rotation period.
+const HERO_LINEUP_POLICY = { ttlMs: 1000 * 60 * 60 * 24, staleWhileRevalidateMs: 1000 * 60 * 60 * 6 };
+
+async function loadHeroLineup(
+  trendingMovies: RailResult,
+  trendingSeries: RailResult,
+  trendingAnime: RailResult
+): Promise<MediaItem[]> {
+  const bucket = heroDailyBucket();
+  const key = `tmdb:hero-lineup:${bucket}`;
+  try {
+    // The trending rails return MediaItem[] which now carries the
+    // additive fields the Hero selector reads (popularity, voteCount,
+    // originalLanguage, externalIds, tags, releaseDate). The structural
+    // HeroCandidate type accepts MediaItem directly — no cast needed.
+    // Anime items have canonical type 'movie' or 'series' (per the
+    // getTmdbAnimeMerged contract), so they slot into Movie/Series
+    // pools naturally — no separate anime pool needed.
+    const moviePool: MediaItem[] = [
+      ...trendingMovies.items,
+      ...trendingAnime.items.filter((a) => a.type === 'movie')
+    ];
+    const seriesPool: MediaItem[] = [
+      ...trendingSeries.items,
+      ...trendingAnime.items.filter((a) => a.type === 'series')
+    ];
+    // The streaming-id set is fetched separately (it may be the empty
+    // set on TMDB failure — the selector still continues with the
+    // other signals). Fetched outside the lineup cache so its own
+    // list TTL applies (independent of the lineup's 24h TTL).
+    let streamingIds: Set<string>;
+    try {
+      streamingIds = await getTmdbIndiaFlatrateIds(2);
+    } catch {
+      streamingIds = new Set();
+    }
+    const { value } = await getOrSet(key, HERO_LINEUP_POLICY, async () => {
+      return selectHeroLineup(moviePool, seriesPool, streamingIds, bucket);
+    });
+    // selectHeroLineup is generic in <T> so it returns the SAME type
+    // as its input — MediaItem[] here. No projection needed.
+    return value as MediaItem[];
+  } catch {
+    return [];
+  }
+}
+
 export async function loadDiscoverData() {
   // Discover V2: the page is now data-driven — each content section
   // loads its own data client-side via /api/discover/rail. The server
@@ -138,6 +204,12 @@ export async function loadDiscoverData() {
 
   const errors = [trendingMovies, trendingSeries, trendingAnime]
     .flatMap((rail) => rail.error ? [rail.error] : []);
+
+  // Hero daily lineup — computed server-side from the trending rails +
+  // the India flatrate streaming-id set, cached for ~24h via a daily
+  // bucket key. Empty on failure (the DiscoverPage falls back to the
+  // legacy createFeaturedItems path when heroItems is empty).
+  const heroItems = await loadHeroLineup(trendingMovies, trendingSeries, trendingAnime);
 
   return {
     movies: trendingMovies.items,
@@ -156,6 +228,11 @@ export async function loadDiscoverData() {
     newMovies: [],
     genreCollections: [],
     featured: selectFeatured([...trendingMovies.items, ...trendingSeries.items, ...trendingAnime.items]),
+    // New: server-selected Hero lineup in strict M/S/M/S/M/S order.
+    // DiscoverPage.svelte prefers this over the legacy client-side
+    // createFeaturedItems path. May be empty on failure — the
+    // DiscoverPage handles the fallback.
+    heroItems,
     errorMessage: errors.length ? `${[...new Set(errors)].join(' ')} Check the server catalog configuration and try again.` : undefined
   };
 }
