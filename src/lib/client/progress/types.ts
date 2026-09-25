@@ -88,8 +88,14 @@ export function favoriteKey(contentType: LocalContentType, contentId: string) {
 }
 
 export function completionFor(currentTime: number, duration: number, explicit = false): CompletionState {
+  // BUG #8 fix: completion is ONLY from an explicit 'ended' event.
+  // The previous 0.9 (90%) threshold was too aggressive — a movie
+  // watched to 90% but paused in the credits would be marked 'completed',
+  // zeroing the resume position (via getResumeProgress). OTT apps
+  // (Netflix, Disney+, Apple TV+) use explicit 'ended' or 97-98%.
+  // We use explicit-only: no implicit percentage-based completion.
+  // The position remains resumable until the user actually finishes.
   if (explicit) return 'completed';
-  if (duration > 0 && currentTime / duration >= 0.9) return 'completed';
   return 'in_progress';
 }
 

@@ -951,7 +951,9 @@
   }
 
   function emitProgress(reason: PlayerProgressEvent['reason']) {
-    onProgress({ currentTime, duration, completed: state === 'completed' || (duration > 0 && currentTime / duration >= 0.9), reason });
+    // BUG #8 fix: completion is ONLY from the explicit 'ended' state.
+    // The previous 0.9 (90%) threshold marked titles completed too early.
+    onProgress({ currentTime, duration, completed: state === 'completed', reason });
   }
 
   function revealControls() {

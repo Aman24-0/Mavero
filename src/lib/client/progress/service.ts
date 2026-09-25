@@ -5,7 +5,11 @@ import { continueWatchingRecords, mergeProgress } from '../../shared/progress-me
 
 export { mergeProgress } from '../../shared/progress-merge';
 
-export const COMPLETION_THRESHOLD = 0.9;
+// BUG #8 fix: completion is now explicit-only (no implicit percentage).
+// This constant is kept for backward compatibility but is no longer used
+// by completionFor() — completion is ONLY from an explicit 'ended' event.
+// @deprecated use explicit completion semantics instead.
+export const COMPLETION_THRESHOLD = 1.0;
 export const DEFAULT_FLUSH_INTERVAL = 12_000;
 
 export async function saveProgress(input: SaveProgressInput): Promise<WatchProgressRecord> {

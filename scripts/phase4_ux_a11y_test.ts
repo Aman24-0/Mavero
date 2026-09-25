@@ -37,7 +37,7 @@ ok(/\.mc-play:focus-visible\s*\{[^}]*opacity:\s*1/.test(mediaCard), '1a. .mc-pla
 ok(/\.mc-detail:focus-visible\s*\{[^}]*opacity:\s*1/.test(mediaCard), '1b. .mc-detail:focus-visible sets opacity:1 (Phase 2-M preserved)');
 ok(/\.mc-play:focus-visible\s*\{[^}]*outline:/.test(mediaCard), '1c. .mc-play:focus-visible has explicit outline');
 ok(/\.mc-detail:focus-visible\s*\{[^}]*outline:/.test(mediaCard), '1d. .mc-detail:focus-visible has explicit outline');
-ok(/aria-label={`Play \$\{item\.title\}`}/.test(mediaCard), '1e. mc-play has accessible name (aria-label)');
+ok(/aria-label={item\.resumeHref \? `Resume \$\{item\.title\}` : `Play \$\{item\.title\}`}/.test(mediaCard) || /aria-label.*Resume.*item\.title.*Play.*item\.title/.test(mediaCard), '1e. mc-play has accessible name (aria-label) — BUG #1: now says "Resume" when resumeHref exists');
 ok(/aria-label={`Open details for \$\{item\.title\`}/.test(mediaCard) || /aria-label={`Open details for \$\{item\.title\}`}/.test(mediaCard), '1f. mc-detail has accessible name (aria-label)');
 ok(/role="progressbar"/.test(mediaCard), '1g. progress bar has role=progressbar');
 ok(/aria-valuemin="0"/.test(mediaCard) && /aria-valuemax="100"/.test(mediaCard), '1h. progress bar has aria-valuemin/max');

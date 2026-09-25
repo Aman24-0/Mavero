@@ -34,6 +34,7 @@
   let statusSheetOpen = $state(false);
   let saveError = $state('');
   let resumeEpisode = $state<{ season: number; episode: number } | undefined>(undefined);
+  let hasActiveProgress = $state(false);
   let overviewExpanded = $state(false);
   let trailerOpen = $state(false);
   // Phase 4-E: trailer modal focus management.
@@ -89,10 +90,18 @@
       const status = await getFavoriteStatus(type, item.id);
       const progress = await getLocalProgressRecords();
       if (!active) return;
-      const hasActiveProgress = progress.some((record) => record.contentType === type && record.contentId === item.id && record.completionState !== 'completed' && record.currentTime > 0);
+      const activeProgress = progress.some((record) => record.contentType === type && record.contentId === item.id && record.completionState !== 'completed' && record.currentTime > 0);
+      hasActiveProgress = activeProgress;
       const effectiveStatus = status ?? (hasActiveProgress ? 'watching' : null);
       watchlistStatus = effectiveStatus;
-      if (type !== 'movie' && effectiveStatus === 'watching') {
+      // BUG #2 fix: decouple resumeEpisode from effectiveStatus. The
+      // existence of valid active watch_progress (hasActiveProgress) is
+      // sufficient — the user may have status='planned' but still have
+      // active progress from a Continue Watching click.
+      // BUG #13 fix: also compute resume for MOVIES (not just series).
+      // For movies, resumeEpisode stays undefined (no season/episode),
+      // but hasActiveProgress is used by the Play button label.
+      if (type !== 'movie' && hasActiveProgress) {
         resumeEpisode = latestResumeEpisode(type, item.id, progress);
       }
     })();
@@ -549,7 +558,7 @@
             <div class="primary-actions">
               <a class="play-btn" href={watchHref}>
                 <Play size={16} fill="currentColor" strokeWidth={0} />
-                {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else}Play{/if}
+                {#if type === 'series' && resumeEpisode}Continue S{resumeEpisode.season}:E{resumeEpisode.episode}{:else if type === 'movie' && hasActiveProgress}Continue{:else}Play{/if}
               </a>
               {#if showDownloadButton}
                 <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen}>

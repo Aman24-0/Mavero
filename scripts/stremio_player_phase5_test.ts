@@ -471,7 +471,7 @@ ok(shellSource.includes('function handleLoadedMetadata()') && shellSource.includ
 ok(viewportSource.includes("on:timeupdate={() => dispatch('timeupdate', { currentTime: videoElement?.currentTime ?? 0, duration: videoElement?.duration || 0 })}"), 'X: currentTime/progress still propagate from the SAME <video> element (no second progress mechanism)');
 ok(shellSource.includes('function handleTimeUpdate(') && shellSource.includes("emitProgress('progress')"), 'X: the existing 5s-gated progress reporting is intact');
 ok(shellSource.includes('capturePendingSeek(pendingSeekState, currentTime, Date.now());') && shellSource.includes('videoElement.currentTime = applied;'), 'Y: the Phase 9 pending-seek controller captures position on switch and applies it once the media has a usable range (streaming restore included)');
-ok(shellSource.includes('function emitProgress(') && shellSource.includes('completed: state === \'completed\' || (duration > 0 && currentTime / duration >= 0.9)'), 'Z: completion percentage is only computed for FINITE durations (live/unknown duration cannot create invalid progress)');
+ok(shellSource.includes('function emitProgress(') && shellSource.includes("completed: state === 'completed'"), 'Z (BUG #8 fix): completion is now explicit-only (state === completed) — no implicit 0.9 percentage threshold; a title watched to 90/95/99% but not ended stays in_progress');
 ok(shellSource.includes('if (!Number.isFinite(duration) || duration <= 0) return;'), 'Z: Media Session position state skips duration-less (live) streams');
 
 // ===========================================================================

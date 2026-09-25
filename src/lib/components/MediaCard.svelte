@@ -53,7 +53,10 @@
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
   $: cardHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
   $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
-  $: watchHref = appendReturnTo(`/watch/${item.type}/${item.id}`, returnTo);
+  // BUG #1 + #7 fix: prefer item.resumeHref (which carries the correct
+  // ?season=X&episode=Y for series) when available. Fall back to the
+  // bare first-play watch route when no resume target exists.
+  $: watchHref = appendReturnTo(item.resumeHref ?? `/watch/${item.type}/${item.id}`, returnTo);
   $: posterSrcset = item.posterSmall ? `${item.posterSmall} 342w, ${item.poster} 500w` : undefined;
   $: posterSizes = compact ? '(max-width: 640px) calc((100vw - 38px) / 2), 150px' : '(max-width: 640px) 40vw, 178px';
   // Phase 7F+ (anime routing): dual-badge layout. Anime-flagged titles
@@ -113,7 +116,7 @@
       <span class="mc-type">{badges.primary}</span>
       {#if badges.secondary}<span class="mc-type mc-type-secondary">{badges.secondary}</span>{/if}
       {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
-      <a class="mc-play" href={watchHref} aria-label={`Play ${item.title}`} onclick={(e) => e.stopPropagation()}>
+      <a class="mc-play" href={watchHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Play ${item.title}`} onclick={(e) => e.stopPropagation()}>
         <Play size={12} fill="currentColor" strokeWidth={0} />
       </a>
       {#if item.progress}

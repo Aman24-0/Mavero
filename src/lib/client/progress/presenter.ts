@@ -44,7 +44,15 @@ export function favoriteToMedia(record: FavoriteRecord, progressRecords: WatchPr
   const resumeHref = status === 'watching'
     ? watchPath(record.contentType, record.contentId, resume?.season ?? defaultEpisode?.season, resume?.episode ?? defaultEpisode?.episode)
     : undefined;
-  return { ...item, resumeHref, tags: [status.charAt(0).toUpperCase() + status.slice(1)] };
+  // BUG #6 fix: expose progress + progressLabel for My List cards.
+  // Continue Watching (progressToMedia) already exposes these; My List
+  // (favoriteToMedia) was missing them — cards showed no progress bar
+  // or remaining-time label even for titles the user is actively watching.
+  // Only expose progress when a valid active resume record exists
+  // (status='watching' + resume found). Don't fabricate progress.
+  const progressPct = resume ? progressPercent(resume) : undefined;
+  const progressLbl = resume ? progressLabel(resume) : undefined;
+  return { ...item, resumeHref, progress: progressPct, progressLabel: progressLbl, tags: [status.charAt(0).toUpperCase() + status.slice(1)] };
 }
 
 export function latestResumeEpisode(contentType: WatchProgressRecord['contentType'], contentId: string, progressRecords: WatchProgressRecord[]) {

@@ -179,13 +179,30 @@
       currentPlaybackTime = ct;
       const currentDuration = event.type === 'timeupdate' && typeof event.duration === 'number' ? event.duration : duration;
       if (currentDuration && currentDuration !== duration) duration = currentDuration;
-      const completed = currentDuration > 0 && ct / currentDuration >= 0.9;
-      writer?.update(ct, currentDuration, completed);
+      // BUG #8 fix: no implicit 90% completion — only the explicit 'ended'
+      // event (handled below) marks a record as completed. A movie watched
+      // to 90/95/99% but not finished must remain resumable.
+      writer?.update(ct, currentDuration, false);
     } else if (event.type === 'pause') {
       void writer?.pause();
     } else if (event.type === 'ended') {
       const ct = manager.getState().currentTime || currentPlaybackTime;
       void writer?.complete(ct, duration);
+    }
+    // BUG #9 fix: handle 'duration' and 'ready' events to persist the
+    // provider's reported duration EVEN IF no timeupdate has fired yet.
+    // Without this, a user who pauses/closes within the first 5 seconds
+    // (before the first throttled timeupdate) would persist duration=0,
+    // losing the progress bar and remaining-time label.
+    // The writer.updateRuntime() method already exists (service.ts ~line 500)
+    // and correctly updates lastKnownDuration + sourceRuntimes + schedules a flush.
+    if (event.type === 'duration' || event.type === 'ready') {
+      const dur = event.type === 'duration' ? event.duration : (event.type === 'ready' && 'duration' in event ? (event as { duration?: number }).duration : undefined);
+      if (typeof dur === 'number' && Number.isFinite(dur) && dur > 0 && dur !== duration) {
+        duration = dur;
+        const sourceId = manager.getSource()?.sourceId ?? selectedSourceId;
+        writer?.updateRuntime(sourceId, dur);
+      }
     }
     // Phase 6 audit fix: forward normalized embed playback events (play/pause/ended)
     // to PlayerShell via the embedPlaybackEvent prop. PlayerShell uses these to
@@ -279,9 +296,12 @@
 
   onMount(() => {
     active = true;
-    const flushWhenHidden = () => {
+    // BUG #4 + #5 fix: await writer.pause() (which flushes to IndexedDB)
+    // BEFORE calling syncAuthenticatedState() — otherwise the sync reads
+    // stale local state and writes it over the newer cloud record.
+    const flushWhenHidden = async () => {
       if (!document.hidden) return;
-      void writer?.pause();
+      try { await writer?.pause(); } catch { /* writer may be disposed */ }
       if (page.data.user) void syncAuthenticatedState();
     };
     const flushBeforeUnload = () => { void writer?.flush(); };
@@ -458,7 +478,20 @@
       maveroSession = null;
       maveroAddonStatuses = [];
       const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
-      if (allowFallback && defaultSourceId) request.defaultSourceId = defaultSourceId;
+      // BUG #3 fix: only forward defaultSourceId when allowFallback is true
+      // AND the requested sourceId is NOT a saved-source resume (i.e., the
+      // user explicitly selected this source OR it's the admin default for
+      // first play). When the user has a savedSourceId that differs from
+      // defaultSourceId, forwarding defaultSourceId causes the resolver's
+      // default-first policy to try the admin default BEFORE the user's
+      // saved source — silently overriding the resume preference.
+      // Fix: when sourceId === savedSourceId AND sourceId !== defaultSourceId,
+      // omit defaultSourceId from the request so the resolver tries the
+      // saved source first (with fallback still enabled).
+      const isResumeWithSavedSource = sourceId === savedSourceId && savedSourceId !== defaultSourceId;
+      if (allowFallback && defaultSourceId && !isResumeWithSavedSource) {
+        request.defaultSourceId = defaultSourceId;
+      }
       await manager.loadSource(
         request,
         startPosition,

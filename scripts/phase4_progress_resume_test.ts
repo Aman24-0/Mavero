@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { PlayerSource } from '$lib/shared/player';
 import { PlaybackManager } from '$lib/client/player/PlaybackManager';
-import { CINESRC_CAPABILITIES, VIDLINK_CAPABILITIES, EMBED_PLAYBACK_CAPABILITIES, COMPLETION_THRESHOLD } from '$lib/client/player/capabilities';
+import { CINESRC_CAPABILITIES, VIDLINK_CAPABILITIES, EMBED_PLAYBACK_CAPABILITIES } from '$lib/client/player/capabilities';
 import type { PlayerEvent } from '$lib/client/player/events';
 import { progressKey, completionFor, clampTime, type PlaybackContext, type WatchProgressRecord, type SaveProgressInput } from '$lib/client/progress/types';
 
@@ -172,11 +172,14 @@ assert.ok(events.some((e) => e.type === 'timeupdate' && e.currentTime === 60), '
 
 vidlinkManager.dispose();
 
-// --- 10. Completion threshold (0.9) ---
+// --- 10. Completion semantics (BUG #8 fix: explicit-only, no 0.9 threshold) ---
 
-assert.equal(completionFor(5400 * 0.9, 5400), 'completed', '90% of duration = completed');
-assert.equal(completionFor(5400 * 0.89, 5400), 'in_progress', '89% of duration = in_progress');
-assert.equal(completionFor(0, 5400, true), 'completed', 'explicit completed flag');
+// BUG #8 fix: completion is now explicit-only (no implicit percentage).
+// 90% watched but NOT ended → still in_progress (resumable).
+assert.equal(completionFor(5400 * 0.9, 5400), 'in_progress', 'BUG #8: 90% of duration = in_progress (NOT completed — must be resumable until ended)');
+assert.equal(completionFor(5400 * 0.95, 5400), 'in_progress', 'BUG #8: 95% of duration = in_progress (resumable)');
+assert.equal(completionFor(5400 * 0.99, 5400), 'in_progress', 'BUG #8: 99% of duration = in_progress (resumable until actually finished)');
+assert.equal(completionFor(0, 5400, true), 'completed', 'explicit completed flag (ended event)');
 
 // --- 11. Invalid resume position is ignored (clampTime) ---
 
@@ -340,4 +343,4 @@ assert.ok(resolved20!.url!.includes('t=42'), `startAt is floor'd to integer; got
 assert.ok(!resolved20!.url!.includes('t=42.7'), 'startAt is not a float');
 manager20.dispose();
 
-console.log('Phase 4 progress + resume + source continuity tests passed: startAt URL param (CineSrc ?t=, VidLink/VidSrc/VidAPI.qzz.io ?startAt=, VidY ?progress=), no startAt when startPosition=0, no startAt for unsupported providers, idempotent startAt, embed events reach manager state (timeupdate/duration/play/pause/ended), completion threshold 0.9, invalid position clamping, per-episode progressKey, completed record resumeTime=0, in-progress record resumeTime=currentTime, saved selectedSourceId preserved, race condition protection (stale session events dropped), startAtParam per provider, CineSrc-only seek command, dispose cleanup, startAt floor to integer.');
+console.log('Phase 4 progress + resume + source continuity tests passed: startAt URL param (CineSrc ?t=, VidLink/VidSrc/VidApi.qzz.io ?startAt=, VidY ?progress=), no startAt when startPosition=0, no startAt for unsupported providers, idempotent startAt, embed events reach manager state (timeupdate/duration/play/pause/ended), BUG #8 completion explicit-only (no 0.9 threshold — 90/95/99% stays in_progress until ended), invalid position clamping, per-episode progressKey, completed record resumeTime=0, in-progress record resumeTime=currentTime, saved selectedSourceId preserved, race condition protection (stale session events dropped), startAtParam per provider, CineSrc-only seek command, dispose cleanup, startAt floor to integer.');
