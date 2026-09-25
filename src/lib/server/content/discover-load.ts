@@ -1,8 +1,8 @@
 import { collection, discover, popular, selectFeatured, trendingMoviesByLanguages } from './service';
 import { toMediaItem } from './presenter';
-import { getOrSet } from './cache';
+import { getOrSet, getOrSetValidated } from './cache';
 import { getTmdbIndiaFlatrateIds, getTmdbHeroMoviePool, getTmdbHeroSeriesPool } from './adapters/tmdb';
-import { selectHeroLineup, heroDailyBucket, type HeroCandidate, type HeroDiagnostics } from './hero-select';
+import { selectHeroLineup, heroDailyBucket, isHeroLineupCacheable, type HeroCandidate, type HeroDiagnostics, type HeroLineupResult } from './hero-select';
 import type { CollectionFilters, CollectionSort, ContentType, ContentList, NormalizedMediaItem } from './types';
 import type { MediaItem } from '$data/content';
 
@@ -143,29 +143,57 @@ type GenreCollection = { title: string; items: MediaItem[]; href: string };
 // 24h TTL + 6h SWR — the lineup is by design stable for one rotation period.
 const HERO_LINEUP_POLICY = { ttlMs: 1000 * 60 * 60 * 24, staleWhileRevalidateMs: 1000 * 60 * 60 * 6 };
 
+// Cache version. Bumped to v3 to invalidate any poisoned v2 cache entries
+// (the v2 cache key was `tmdb:hero-lineup:${bucket}` with NO version —
+// an empty lineup cached by the v2 implementation can survive until the
+// next UTC midnight boundary OR a manual cache clear). The versioned
+// v3 key guarantees a fresh namespace; poisoned v2 entries become
+// unreachable and expire naturally.
+//
+// Bump this when:
+//   - the selector algorithm changes in a way that invalidates the
+//     existing cached lineup shape;
+//   - a production bug requires a forced cache flush.
+const HERO_CACHE_VERSION = 'v3';
+
 /**
  * Load the canonical Hero lineup — the SOLE source of Hero slides
  * for DiscoverPage. Contract:
  *
  *   - Up to 6 candidates in strict M/S/M/S/M/S order.
  *   - All candidates pass HARD eligibility gates (movies: 30-day
- *     release window; series: current activity OR 30-day premiere).
- *   - No legacy fallback, no stale content, no cross-pool fill.
- *   - Cached for ~24h via the daily bucket key.
+ *     release window with 7-day future allowance; series: current
+ *     activity OR 30-day premiere).
+ *   - NO legacy fallback, NO stale content, NO cross-pool fill.
+ *   - Cached for ~24h via the versioned daily-bucket key.
  *
- * Production bug fix (v1 → v2): the v1 implementation derived the
- * Hero pool from ONLY the trending movie/series/anime rails. At the
- * test date 2026-09-25, all trending movies were released earlier
- * in 2026 (60-90 days ago) — none passed the 30-day movie gate →
- * the selector returned [] → DiscoverPage fell back to the legacy
- * createFeaturedItems path → selectFeatured picked Reacher (high
- * popularity, no freshness filter) → S/M/M/M/M/M observed.
+ * CRITICAL CACHE-POISONING FIX (v2 → v3):
+ *   The v2 implementation used `getOrSet` directly on the selector
+ *   result. `getOrSet`'s `refresh` writes the loader's return value
+ *   UNCONDITIONALLY — so if `selectHeroLineup` returned `{lineup: []}`
+ *   (due to a transient TMDB failure, cold detail-classifier cache,
+ *   rate-limit, etc.) the empty result was cached for the full 24h
+ *   HERO_LINEUP_POLICY TTL. Every subsequent request within the
+ *   same daily bucket got `[]` back → "Featured title unavailable"
+ *   for the entire rotation period.
  *
- * v2 expands the pool with now_playing (movies) + airing_today +
- * on_the_air (series), giving genuinely fresh candidates that pass
- * the gates. Reacher (no current activity) is correctly excluded
- * by the new series eligibility gate (activeSeriesIds set OR
- * 30-day premiere window — the 180-day heuristic is gone).
+ *   v3 uses `getOrSetValidated` with `isHeroLineupCacheable` (lineup
+ *   length >= 1) as the validity predicate. An empty result is
+ *   RETURNED to the caller (so the current request sees it) but is
+ *   NOT written to cache. The next request recomputes from scratch,
+ *   allowing TMDB recovery to surface a valid lineup immediately
+ *   instead of waiting 24h.
+ *
+ *   SWR is preserved: a stale valid cached lineup is served while a
+ *   background refresh runs. If the refresh produces an invalid
+ *   (empty) result, the existing valid stale entry is PRESERVED
+ *   (not overwritten) — so a transient TMDB failure during refresh
+ *   doesn't lose the previously-good lineup.
+ *
+ * Production diagnostics: when the lineup is shorter than 6, a
+ * console.warn is emitted with the per-stage counts and the
+ * `reason` field — letting ops distinguish source failure,
+ * freshness-rejected, backdrop-rejected, and pool-thin cases.
  *
  * @param trendingMovies  Trending movie rail (legacy + extra depth).
  * @param trendingSeries  Trending series rail (legacy + extra depth).
@@ -177,15 +205,27 @@ async function loadHeroLineup(
   trendingAnime: RailResult
 ): Promise<MediaItem[]> {
   const bucket = heroDailyBucket();
-  const key = `tmdb:hero-lineup:${bucket}`;
+  // Versioned key — guarantees a fresh namespace, immune to any
+  // poisoned cache entries from earlier implementations.
+  const key = `tmdb:hero-lineup:${HERO_CACHE_VERSION}:${bucket}`;
   try {
     // Fetch the expanded fresh pools + the streaming-id set + the
     // active-series id set in parallel (all cached via the existing
-    // getOrSet path with the standard list TTL).
+    // getOrSet path with the standard list TTL — these have SHORT
+    // TTLs so a transient failure self-heals in minutes).
     const [moviePoolRes, seriesPoolRes, streamingIds] = await Promise.all([
-      getTmdbHeroMoviePool().catch(() => ({ items: [] as NormalizedMediaItem[] })),
-      getTmdbHeroSeriesPool().catch(() => ({ items: [] as NormalizedMediaItem[], activeSeriesIds: new Set<string>() })),
-      getTmdbIndiaFlatrateIds(2).catch(() => new Set<string>())
+      getTmdbHeroMoviePool().catch((error) => {
+        console.warn('[Hero] getTmdbHeroMoviePool failed — using empty pool', error);
+        return { items: [] as NormalizedMediaItem[] };
+      }),
+      getTmdbHeroSeriesPool().catch((error) => {
+        console.warn('[Hero] getTmdbHeroSeriesPool failed — using empty pool', error);
+        return { items: [] as NormalizedMediaItem[], activeSeriesIds: new Set<string>() };
+      }),
+      getTmdbIndiaFlatrateIds(2).catch((error) => {
+        console.warn('[Hero] getTmdbIndiaFlatrateIds failed — using empty set', error);
+        return new Set<string>();
+      })
     ]);
 
     // Merge the expanded fresh pools with the trending rails so we
@@ -204,34 +244,62 @@ async function loadHeroLineup(
       ...trendingSeries.items as unknown as NormalizedMediaItem[],
       ...animeItems.filter((a) => a.type === 'series')
     ];
-    const activeSeriesIds = seriesPoolRes.activeSeriesIds;
+    const activeSeriesIds = seriesPoolRes.activeSeriesIds ?? new Set<string>();
 
-    const { value } = await getOrSet(key, HERO_LINEUP_POLICY, async () => {
-      const result = selectHeroLineup<NormalizedMediaItem>(
-        moviePool,
-        seriesPool,
-        streamingIds,
-        activeSeriesIds,
-        bucket
-      );
-      // Server-side diagnostic log when pools are thin — proves
-      // whether the problem is insufficient source candidates or
-      // incorrect selection/fallback. Not exposed to the UI.
-      const d = result.diagnostics;
-      if (d.lineupLength < 6) {
-        console.warn(
-          `[Hero] thin lineup — bucket=${d.bucket} ` +
-          `rawMovies=${d.rawMovies} eligibleMovies=${d.eligibleMovies} finalMovies=${d.finalMovies} ` +
-          `rawSeries=${d.rawSeries} eligibleSeries=${d.eligibleSeries} finalSeries=${d.finalSeries} ` +
-          `lineupLength=${d.lineupLength}`
+    // CRITICAL — use getOrSetValidated, NOT getOrSet. The validity
+    // predicate (`isHeroLineupCacheable` = lineup.length >= 1)
+    // guarantees an empty result is NEVER cached for the 24h Hero
+    // TTL. A transient TMDB failure on the first request after
+    // deploy can no longer freeze the Hero for 24h — the next
+    // request recomputes.
+    const { value, fromCache } = await getOrSetValidated<HeroLineupResult<NormalizedMediaItem>>(
+      key,
+      HERO_LINEUP_POLICY,
+      (result) => isHeroLineupCacheable(result),
+      async () => {
+        const result = selectHeroLineup<NormalizedMediaItem>(
+          moviePool,
+          seriesPool,
+          streamingIds,
+          activeSeriesIds,
+          bucket
         );
+        // Server-side diagnostic log — covers BOTH thin (< 6) AND
+        // empty (=== 0) lineups so production ops can identify the
+        // root cause. Not exposed to the UI.
+        const d = result.diagnostics;
+        if (d.lineupLength < 6) {
+          console.warn(
+            `[Hero] thin/empty lineup — reason=${d.reason} fromCache=false ` +
+            `bucket=${d.bucket} ` +
+            `rawMovies=${d.rawMovies} postBackdropMovies=${d.postBackdropMovies} postFreshnessMovies=${d.postFreshnessMovies} eligibleMovies=${d.eligibleMovies} finalMovies=${d.finalMovies} ` +
+            `rawSeries=${d.rawSeries} postBackdropSeries=${d.postBackdropSeries} postFreshnessSeries=${d.postFreshnessSeries} eligibleSeries=${d.eligibleSeries} finalSeries=${d.finalSeries} ` +
+            `lineupLength=${d.lineupLength} ` +
+            `activeSeriesIds=${activeSeriesIds.size} streamingIds=${streamingIds.size} ` +
+            `moviePoolSourceItems=${moviePoolRes.items.length} seriesPoolSourceItems=${seriesPoolRes.items.length} ` +
+            `trendingMovies=${trendingMovies.items.length} trendingSeries=${trendingSeries.items.length} trendingAnime=${trendingAnime.items.length}`
+          );
+        }
+        return result;
       }
-      return result;
-    });
-    // The cached value is the full HeroLineupResult; we project the
-    // lineup to MediaItem[] for the page data.
-    const lineup = (value as { lineup: NormalizedMediaItem[] }).lineup;
-    return lineup.map(toMediaItem);
+    );
+
+    // If we served a stale-while-revalidate entry, the cache returned
+    // a previously-computed result (which is valid by construction
+    // because we never cache invalid). Log this for ops visibility
+    // — it confirms the cache is healthy.
+    if (fromCache && value.diagnostics.lineupLength < 6) {
+      // Should not happen (we don't cache invalid), but log if it
+      // does — indicates a bug in the validity predicate.
+      console.warn(
+        `[Hero] cache returned a thin lineup — reason=${value.diagnostics.reason} ` +
+        `bucket=${value.diagnostics.bucket} lineupLength=${value.diagnostics.lineupLength} ` +
+        `(this indicates the validity predicate is too permissive — investigate)`
+      );
+    }
+
+    // Project the lineup to MediaItem[] for the page data.
+    return value.lineup.map(toMediaItem);
   } catch (error) {
     console.warn('[Hero] loadHeroLineup failed — returning empty lineup', error);
     return [];

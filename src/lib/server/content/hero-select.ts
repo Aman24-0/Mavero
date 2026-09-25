@@ -47,6 +47,12 @@ import type { NormalizedMediaItem } from './types';
 const DAY_MS = 86_400_000;
 export const HERO_BUCKET_MS = 86_400_000; // 24 hours
 export const MOVIE_FRESH_WINDOW_DAYS = 30;
+// Allow upcoming releases up to this many days in the FUTURE to count
+// as fresh. TMDB's /movie/now_playing includes titles releasing in
+// the next few days — they are "newly available" by the spec. We
+// don't allow arbitrary far-future releases (a movie coming in 6
+// months is not "fresh today").
+export const MOVIE_FRESH_FUTURE_DAYS = 7;
 // Series NEW-PREMIERE window — a series whose first_air_date is within
 // this many days is eligible (covers a brand-new show that hasn't
 // appeared in airing_today/on_the_air yet because the first episode
@@ -61,6 +67,15 @@ export const HERO_SLOTS_PER_TYPE = 3;
 // we have 10 different daily offsets — enough for ~10 days of
 // visible rotation when the pool has depth.
 export const RELEVANCE_WINDOW_SIZE = 12;
+// Minimum lineup length that MAY be cached for the long Hero TTL
+// (24h). An empty lineup (length === 0) must NEVER be cached for
+// 24h — that would freeze the Hero as "Featured title unavailable"
+// for the entire rotation period. The caller uses this constant
+// (or a stricter check) with getOrSetValidated to enforce the rule.
+// A length of 1+ is cacheable: it's a real (if thin) lineup that
+// reflects genuine candidate scarcity. The diagnostic log surfaces
+// thin lineups so the underlying pool/source issue can be investigated.
+export const MIN_LINEUP_TO_CACHE = 1;
 
 // Recognized Indian TMDB original_language codes. Used ONLY for the
 // controlled Indian boost — never for filtering.
@@ -98,16 +113,59 @@ export type HeroCandidate = {
 /**
  * Diagnostic counts returned alongside the lineup so the caller can
  * log when pools are thin. NOT exposed to the UI.
+ *
+ * The stage-by-stage counts let production diagnostics distinguish:
+ *   - source failure (rawMovies === 0 → TMDB returned nothing)
+ *   - adult classifier emptied the pool (rawMovies > 0, eligibleMovies === 0
+ *     AND the drop happened before the selector ran — the adult
+ *     classification is done by getTmdbHeroMoviePool / getTmdbHeroSeriesPool
+ *     in tmdb.ts)
+ *   - freshness gate removed everything (rawMovies > 0, but eligibleMovies
+ *     === 0 AND postFreshness === 0)
+ *   - backdrop gate removed everything (postFreshness > 0, but
+ *     postBackdrop === 0 — happens when TMDB rows have null backdrop_path
+ *     AND null poster_path, which is rare)
+ *
+ * The selector sees the AFTER-classifier items as its `raw` input, so
+ * the raw → eligible delta is the freshness + backdrop + adult-tag
+ * filtering done BY THE SELECTOR. The classifier filtering done by
+ * the TMDB pool helpers is NOT visible here — log that separately
+ * inside getTmdbHeroMoviePool / getTmdbHeroSeriesPool.
  */
 export type HeroDiagnostics = {
   rawMovies: number;
   rawSeries: number;
+  // Per-stage counts inside the selector (after the TMDB pool helpers
+  // already applied the adult classifier). These let us identify which
+  // selector-side gate removed candidates.
+  postFreshnessMovies: number;
+  postFreshnessSeries: number;
+  postBackdropMovies: number;
+  postBackdropSeries: number;
   eligibleMovies: number;
   eligibleSeries: number;
   finalMovies: number;
   finalSeries: number;
   lineupLength: number;
   bucket: number;
+  /**
+   * Whether the lineup came from a fresh cache hit (no recomputation).
+   * Lets the caller detect "cache returned an already-cached empty
+   * result" — when fromCache is true and lineupLength is 0, the cache
+   * was poisoned by a previous request.
+   */
+  fromCache?: boolean;
+  /**
+   * Human-readable reason the lineup is short/empty, when applicable.
+   * One of:
+   *   - 'ok'                  — full 6-slot lineup
+   *   - 'source-empty'        — raw pools were empty (TMDB failure)
+   *   - 'freshness-rejected'   — all candidates failed the freshness gate
+   *   - 'backdrop-rejected'    — all candidates failed the backdrop gate
+   *   - 'pool-thin'            — enough eligible candidates but < 6 total
+   *                              (e.g. 3 movies + 2 series = 5)
+   */
+  reason: 'ok' | 'source-empty' | 'freshness-rejected' | 'backdrop-rejected' | 'pool-thin';
 };
 
 /**
@@ -160,7 +218,12 @@ function releaseDateMs(item: HeroCandidate): number | undefined {
 export function isMovieFreshForHero(item: HeroCandidate, now: number = Date.now()): boolean {
   const ms = releaseDateMs(item);
   if (ms === undefined) return false;
-  return now - ms <= MOVIE_FRESH_WINDOW_DAYS * DAY_MS;
+  const age = now - ms;
+  // Allow upcoming releases up to MOVIE_FRESH_FUTURE_DAYS in the
+  // future (TMDB /movie/now_playing includes them). Do NOT allow
+  // arbitrary far-future releases — a movie scheduled in 6 months is
+  // not "fresh today".
+  return age >= -MOVIE_FRESH_FUTURE_DAYS * DAY_MS && age <= MOVIE_FRESH_WINDOW_DAYS * DAY_MS;
 }
 
 /**
@@ -280,11 +343,34 @@ export function scoreHeroCandidate(
 
 type ScoredCandidate = { item: HeroCandidate; score: number; rankKey: number };
 
+type PoolStats = {
+  raw: number;
+  postFreshness: number;
+  postBackdrop: number;
+  eligible: number;
+  pool: ScoredCandidate[];
+};
+
 /**
  * Build the scored + sorted eligible pool for one content type.
  * Eligibility filters (freshness, backdrop, adult, dedupe) are
- * applied HERE — the returned pool contains ONLY eligible candidates
- * sorted by score DESC, then deterministic FNV-1a hash ASC.
+ * applied HERE — the returned `pool` contains ONLY eligible
+ * candidates sorted by score DESC, then deterministic FNV-1a hash
+ * ASC. The `stats` object tracks per-stage counts so diagnostics
+ * can identify which gate removed candidates.
+ *
+ * Stage order (all applied per item, in this order):
+ *   1. raw count (input size)
+ *   2. NOT adult-tagged (defense-in-depth on the `tags` field)
+ *   3. has usable backdrop (hasHeroBackdrop)
+ *   4. passes the freshness gate (isFreshForHero)
+ *   5. deduped by `type:id`
+ *
+ * Note: the adult classifier at the TMDB pool helper level
+ * (filterAdultFromListPage in tmdb.ts) runs BEFORE this selector —
+ * so `raw` here is already post-classifier. To diagnose a
+ * classifier-empty pool, log inside getTmdbHeroMoviePool /
+ * getTmdbHeroSeriesPool.
  */
 function buildEligiblePool<T extends HeroCandidate>(
   items: T[],
@@ -292,13 +378,17 @@ function buildEligiblePool<T extends HeroCandidate>(
   activeSeriesIds: Set<string>,
   bucket: number,
   now: number
-): ScoredCandidate[] {
+): PoolStats {
   const seen = new Set<string>();
   const out: ScoredCandidate[] = [];
+  let postFreshness = 0;
+  let postBackdrop = 0;
   for (const item of items) {
     if (isAdultTagged(item)) continue;
-    if (!hasHeroBackdrop(item)) continue;
-    if (!isFreshForHero(item, activeSeriesIds, now)) continue;
+    if (hasHeroBackdrop(item)) postBackdrop += 1;
+    else continue;
+    if (isFreshForHero(item, activeSeriesIds, now)) postFreshness += 1;
+    else continue;
     const key = `${item.type}:${item.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -310,7 +400,13 @@ function buildEligiblePool<T extends HeroCandidate>(
   }
   // Sort: score DESC (best first), then deterministic hash ASC.
   out.sort((a, b) => (b.score - a.score) || (a.rankKey - b.rankKey));
-  return out;
+  return {
+    raw: items.length,
+    postFreshness,
+    postBackdrop,
+    eligible: out.length,
+    pool: out
+  };
 }
 
 /**
@@ -354,6 +450,48 @@ function pickWithTypeRotation<T extends HeroCandidate>(
 }
 
 /**
+ * Compute the human-readable `reason` for a thin/empty lineup, from
+ * the per-stage pool stats. Lets production logs distinguish:
+ *   - 'source-empty'         — raw pools were empty (TMDB failure)
+ *   - 'freshness-rejected'   — all candidates failed the freshness gate
+ *   - 'backdrop-rejected'    — all candidates failed the backdrop gate
+ *   - 'pool-thin'            — enough eligible candidates but < 6 total
+ *   - 'ok'                   — full 6-slot lineup
+ */
+function diagnoseReason(
+  movieStats: PoolStats,
+  seriesStats: PoolStats,
+  lineupLength: number
+): HeroDiagnostics['reason'] {
+  if (lineupLength >= HERO_LINEUP_SIZE) return 'ok';
+  const rawTotal = movieStats.raw + seriesStats.raw;
+  if (rawTotal === 0) return 'source-empty';
+  // If we have eligible candidates but the lineup is still short,
+  // it's because the eligible counts in one or both pools are below
+  // HERO_SLOTS_PER_TYPE — call that 'pool-thin'.
+  if (movieStats.eligible > 0 || seriesStats.eligible > 0) {
+    // Eligible exists but lineup is short → at least one type is
+    // below HERO_SLOTS_PER_TYPE.
+    if (movieStats.eligible < HERO_SLOTS_PER_TYPE || seriesStats.eligible < HERO_SLOTS_PER_TYPE) {
+      return 'pool-thin';
+    }
+    // Both pools have >= 3 eligible but lineup is short — shouldn't
+    // happen, classify as pool-thin for safety.
+    return 'pool-thin';
+  }
+  // No eligible candidates at all → either freshness or backdrop
+  // rejected everything.
+  // If postBackdrop > 0 but postFreshness === 0 → freshness gate.
+  if (movieStats.postBackdrop > 0 || seriesStats.postBackdrop > 0) {
+    if (movieStats.postFreshness === 0 && seriesStats.postFreshness === 0) {
+      return 'freshness-rejected';
+    }
+  }
+  // Otherwise backdrop rejected everything.
+  return 'backdrop-rejected';
+}
+
+/**
  * The canonical Hero lineup selector. Contract:
  *
  *   - Returns up to 6 candidates in STRICT M/S/M/S/M/S order.
@@ -362,7 +500,7 @@ function pickWithTypeRotation<T extends HeroCandidate>(
  *   - When one type is thin, the lineup is shorter (NO stale
  *     fallback, NO cross-pool fill — the contract forbids it).
  *   - All candidates pass HARD eligibility gates:
- *       movies: release_date within 30 days
+ *       movies: release_date within [now-30d, now+7d]
  *       series: in activeSeriesIds (airing_today/on_the_air) OR
  *               first_air_date within 30 days
  *     Popularity is a ranking signal AFTER eligibility, NOT a
@@ -389,13 +527,13 @@ export function selectHeroLineup<T extends HeroCandidate = HeroCandidate>(
   bucket: number,
   now: number = Date.now()
 ): HeroLineupResult<T> {
-  const moviePool = buildEligiblePool(movies, streamingIds, activeSeriesIds, bucket, now);
-  const seriesPool = buildEligiblePool(series, streamingIds, activeSeriesIds, bucket, now);
+  const movieStats = buildEligiblePool(movies, streamingIds, activeSeriesIds, bucket, now);
+  const seriesStats = buildEligiblePool(series, streamingIds, activeSeriesIds, bucket, now);
 
   // Controlled rotation — pick the slots-per-type candidates from
   // the top RELEVANCE_WINDOW_SIZE within each pool.
-  const movieSlots = pickWithTypeRotation<T>(moviePool, bucket, HERO_SLOTS_PER_TYPE);
-  const seriesSlots = pickWithTypeRotation<T>(seriesPool, bucket, HERO_SLOTS_PER_TYPE);
+  const movieSlots = pickWithTypeRotation<T>(movieStats.pool, bucket, HERO_SLOTS_PER_TYPE);
+  const seriesSlots = pickWithTypeRotation<T>(seriesStats.pool, bucket, HERO_SLOTS_PER_TYPE);
 
   // Interleave in strict M/S/M/S/M/S order. If one type has fewer
   // than HERO_SLOTS_PER_TYPE candidates, we just produce a shorter
@@ -406,18 +544,39 @@ export function selectHeroLineup<T extends HeroCandidate = HeroCandidate>(
     if (i < seriesSlots.length) lineup.push(seriesSlots[i]);
   }
 
+  const reason = diagnoseReason(movieStats, seriesStats, lineup.length);
+
   const diagnostics: HeroDiagnostics = {
     rawMovies: movies.length,
     rawSeries: series.length,
-    eligibleMovies: moviePool.length,
-    eligibleSeries: seriesPool.length,
+    postFreshnessMovies: movieStats.postFreshness,
+    postFreshnessSeries: seriesStats.postFreshness,
+    postBackdropMovies: movieStats.postBackdrop,
+    postBackdropSeries: seriesStats.postBackdrop,
+    eligibleMovies: movieStats.eligible,
+    eligibleSeries: seriesStats.eligible,
     finalMovies: lineup.filter(i => i.type === 'movie').length,
     finalSeries: lineup.filter(i => i.type === 'series').length,
     lineupLength: lineup.length,
-    bucket
+    bucket,
+    reason
   };
 
   return { lineup, diagnostics };
+}
+
+/**
+ * Validity check for the long-lived Hero cache. The caller passes
+ * this to getOrSetValidated to enforce: an empty lineup must NEVER
+ * be cached for the 24h Hero TTL — the next request must recompute.
+ *
+ * A lineup of length >= 1 is considered valid (cacheable): it's a
+ * real (if thin) lineup. The diagnostic `reason` field surfaces thin
+ * pools via console.warn so the underlying issue can be investigated
+ * without freezing the Hero as "Featured title unavailable" for 24h.
+ */
+export function isHeroLineupCacheable<T extends HeroCandidate>(result: HeroLineupResult<T>): boolean {
+  return result.lineup.length >= MIN_LINEUP_TO_CACHE;
 }
 
 // ============================================================

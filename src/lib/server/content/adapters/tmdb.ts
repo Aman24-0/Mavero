@@ -1364,7 +1364,7 @@ export async function getTmdbIndiaFlatrateIds(maxPages = 2): Promise<Set<string>
  * genuinely fresh theatrical releases that pass the 30-day gate.
  */
 export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaItem[]; stale?: boolean }> {
-  const key = 'tmdb:hero-pool:movie';
+  const key = 'tmdb:hero-pool:movie:v3';
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const [trendingRes, nowPlayingRes] = await Promise.allSettled([
       (async () => {
@@ -1378,6 +1378,12 @@ export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaIt
     ]);
     const trending = trendingRes.status === 'fulfilled' ? trendingRes.value : [];
     const nowPlaying = nowPlayingRes.status === 'fulfilled' ? nowPlayingRes.value : [];
+    if (trendingRes.status === 'rejected') {
+      console.warn('[Hero pool:movie] /trending/movie/week failed', trendingRes.reason);
+    }
+    if (nowPlayingRes.status === 'rejected') {
+      console.warn('[Hero pool:movie] /movie/now_playing failed', nowPlayingRes.reason);
+    }
     // Merge + dedupe by raw TMDB id.
     const seenIds = new Set<number>();
     const merged: TmdbMedia[] = [];
@@ -1388,6 +1394,7 @@ export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaIt
         merged.push(item);
       }
     }
+    const preClassifierCount = merged.length;
     // Build candidate rows for the central classifier.
     const rows: RailCandidateRow<NormalizedMediaItem>[] = merged.map((item) => ({
       item: mapTmdb(item, 'movie', 'Trending'),
@@ -1395,6 +1402,16 @@ export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaIt
       rawAdult: (item as TmdbMovie).adult
     }));
     const items = await filterAdultFromListPage(rows);
+    // Log when the adult classifier removes a significant fraction
+    // — production diagnostic to identify cold-detail-cache scenarios.
+    if (preClassifierCount > 0 && items.length === 0) {
+      console.warn(
+        `[Hero pool:movie] adult classifier emptied the pool — ` +
+        `preClassifier=${preClassifierCount} postClassifier=${items.length} ` +
+        `(the classifier uses the cheap flag path for movies; an empty result ` +
+        `here is unusual — investigate TMDB adult=true flags or classifier bugs)`
+      );
+    }
     return { items };
   });
   return { items: value.items, stale };
@@ -1412,7 +1429,7 @@ export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaIt
  * series" — see hero-select.ts.
  */
 export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaItem[]; activeSeriesIds: Set<string>; stale?: boolean }> {
-  const key = 'tmdb:hero-pool:series';
+  const key = 'tmdb:hero-pool:series:v3';
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const [trendingRes, airingTodayRes, onAirRes] = await Promise.allSettled([
       (async () => {
@@ -1431,6 +1448,15 @@ export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaI
     const trending = trendingRes.status === 'fulfilled' ? trendingRes.value : [];
     const airingToday = airingTodayRes.status === 'fulfilled' ? airingTodayRes.value : [];
     const onAir = onAirRes.status === 'fulfilled' ? onAirRes.value : [];
+    if (trendingRes.status === 'rejected') {
+      console.warn('[Hero pool:series] /trending/tv/week failed', trendingRes.reason);
+    }
+    if (airingTodayRes.status === 'rejected') {
+      console.warn('[Hero pool:series] /tv/airing_today failed', airingTodayRes.reason);
+    }
+    if (onAirRes.status === 'rejected') {
+      console.warn('[Hero pool:series] /tv/on_the_air failed', onAirRes.reason);
+    }
     // Build the "currently active series" id set — this is the
     // eligibility signal the Hero selector uses (any series in this
     // set is by definition currently airing).
@@ -1450,6 +1476,7 @@ export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaI
         merged.push(item);
       }
     }
+    const preClassifierCount = merged.length;
     // Build candidate rows for the central classifier (TV rows need
     // the cached-detail path for the authoritative network signal —
     // see RAIL_CLASSIFY_CONCURRENCY contract in the file header).
@@ -1459,6 +1486,27 @@ export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaI
       rawAdult: (item as TmdbMovie).adult
     }));
     const items = await filterAdultFromListPage(rows);
+    // Log when the adult classifier empties the TV pool — this is
+    // the most likely production cause of an empty series pool, since
+    // TV rows go through the cached-detail path and a cold/rate-
+    // limited detail cache produces 'uncertain' verdicts which are
+    // excluded fail-closed.
+    if (preClassifierCount > 0 && items.length === 0) {
+      console.warn(
+        `[Hero pool:series] adult classifier emptied the pool — ` +
+        `preClassifier=${preClassifierCount} postClassifier=${items.length} ` +
+        `activeSeriesIds=${activeSeriesIds.size} ` +
+        `(TV rows use the cached-detail path; if the detail endpoint is ` +
+        `rate-limited or cold, every candidate becomes 'uncertain' and is ` +
+        `excluded fail-closed. The detail cache will warm on subsequent requests.)`
+      );
+    } else if (preClassifierCount > 0 && items.length < preClassifierCount / 2) {
+      console.warn(
+        `[Hero pool:series] adult classifier removed >50% of candidates — ` +
+        `preClassifier=${preClassifierCount} postClassifier=${items.length} ` +
+        `(partial detail-cache warming may be in progress)`
+      );
+    }
     return { items, activeSeriesIds };
   });
   return { items: value.items, activeSeriesIds: value.activeSeriesIds, stale };

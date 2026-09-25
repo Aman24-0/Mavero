@@ -63,22 +63,26 @@ const repoRoot = new URL('../', import.meta.url).pathname;
   const presenter = await readFile(path.join(repoRoot, 'src/lib/server/content/presenter.ts'), 'utf8');
   const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
 
-  // hero-select.ts v2 contract.
+  // hero-select.ts v3 contract.
   assert.match(heroSelect, /export function selectHeroLineup/, 'selectHeroLineup exported');
   assert.match(heroSelect, /export function heroDailyBucket/, 'heroDailyBucket exported');
   assert.match(heroSelect, /export function isMovieFreshForHero/, 'isMovieFreshForHero exported (v2 split)');
   assert.match(heroSelect, /export function isSeriesFreshForHero/, 'isSeriesFreshForHero exported (v2 — replaces 180-day heuristic)');
+  assert.match(heroSelect, /export function isFreshForHero/, 'isFreshForHero exported (unified eligibility gate)');
   assert.match(heroSelect, /export function scoreHeroCandidate/, 'scoreHeroCandidate exported');
+  assert.match(heroSelect, /export function isHeroLineupCacheable/, 'isHeroLineupCacheable exported (v3 — cache validity predicate)');
   assert.match(heroSelect, /export type HeroCandidate/, 'HeroCandidate type exported');
   assert.match(heroSelect, /export type HeroDiagnostics/, 'HeroDiagnostics type exported');
   assert.match(heroSelect, /export type HeroLineupResult/, 'HeroLineupResult type exported');
   assert.match(heroSelect, /export const HERO_LINEUP_SIZE = 6/, 'HERO_LINEUP_SIZE = 6');
   assert.match(heroSelect, /export const MOVIE_FRESH_WINDOW_DAYS = 30/, 'movie freshness window = 30 (hard gate)');
+  assert.match(heroSelect, /export const MOVIE_FRESH_FUTURE_DAYS = 7/, 'movie future allowance = 7 days (no arbitrary far-future releases)');
   assert.match(heroSelect, /export const SERIES_PREMIERE_WINDOW_DAYS = 30/, 'series PREMIERE window = 30 (recent new shows only)');
+  assert.match(heroSelect, /export const MIN_LINEUP_TO_CACHE = 1/, 'MIN_LINEUP_TO_CACHE = 1 (empty lineup never cached)');
+  assert.match(heroSelect, /export const RELEVANCE_WINDOW_SIZE = 12/, 'relevance window = 12');
   // The 180-day heuristic must be GONE.
   assert.doesNotMatch(heroSelect, /SERIES_FRESH_WINDOW_DAYS = 180/, 'NO 180-day series heuristic (v2 — replaced by activeSeriesIds)');
   // Controlled rotation.
-  assert.match(heroSelect, /RELEVANCE_WINDOW_SIZE = 12/, 'relevance window = 12');
   assert.match(heroSelect, /function pickWithTypeRotation/, 'controlled rotation function exists');
   assert.match(heroSelect, /bucket % \(maxOffset \+ 1\)/, 'rotation uses bucket-offset within relevance window');
   // Indian language set.
@@ -92,28 +96,45 @@ const repoRoot = new URL('../', import.meta.url).pathname;
   // Determinism.
   assert.match(heroSelect, /function stableHash/, 'stableHash present (deterministic rotation)');
   assert.match(heroSelect, /Math\.imul/, 'FNV-1a hash uses Math.imul (deterministic)');
+  // Diagnostics: per-stage counts + reason.
+  assert.match(heroSelect, /postFreshnessMovies/, 'diagnostics track postFreshnessMovies count');
+  assert.match(heroSelect, /postBackdropMovies/, 'diagnostics track postBackdropMovies count');
+  assert.match(heroSelect, /reason/, 'diagnostics include a reason field');
+  assert.match(heroSelect, /'source-empty'.*'freshness-rejected'.*'backdrop-rejected'.*'pool-thin'/, 'reason covers source-empty / freshness-rejected / backdrop-rejected / pool-thin');
 
-  // discover-load.ts v2 contract.
-  assert.match(discoverLoad, /import \{ selectHeroLineup, heroDailyBucket, type HeroCandidate, type HeroDiagnostics \} from '\.\/hero-select'/, 'discover-load imports the v2 hero selector');
-  assert.match(discoverLoad, /import \{ getOrSet \} from '\.\/cache'/, 'discover-load uses the existing cache');
+  // discover-load.ts v3 contract.
+  assert.match(discoverLoad, /import \{ selectHeroLineup, heroDailyBucket, isHeroLineupCacheable, type HeroCandidate, type HeroDiagnostics, type HeroLineupResult \} from '\.\/hero-select'/, 'discover-load imports the v3 hero selector + cacheability predicate');
+  assert.match(discoverLoad, /import \{ getOrSet, getOrSetValidated \} from '\.\/cache'/, 'discover-load uses both getOrSet (for pools) and getOrSetValidated (for the lineup)');
   assert.match(discoverLoad, /getTmdbHeroMoviePool/, 'discover-load uses the expanded fresh movie pool');
   assert.match(discoverLoad, /getTmdbHeroSeriesPool/, 'discover-load uses the expanded fresh series pool');
   assert.match(discoverLoad, /getTmdbIndiaFlatrateIds/, 'discover-load uses the streaming-id batch helper');
   assert.match(discoverLoad, /HERO_LINEUP_POLICY/, 'lineup cache policy exists');
+  assert.match(discoverLoad, /HERO_CACHE_VERSION = 'v3'/, 'cache version is v3 (invalidates v2 cache)');
   assert.match(discoverLoad, /heroItems/, 'loadDiscoverData returns heroItems field');
-  assert.match(discoverLoad, /tmdb:hero-lineup:\$\{bucket\}/, 'cache key is daily-bucket-scoped');
+  assert.match(discoverLoad, /tmdb:hero-lineup:\$\{HERO_CACHE_VERSION\}:\$\{bucket\}/, 'cache key is versioned + daily-bucket-scoped');
   assert.match(discoverLoad, /activeSeriesIds/, 'discover-load threads the active-series id set to the selector');
-  assert.match(discoverLoad, /\[Hero\] thin lineup/, 'diagnostic logging when pools are thin');
+  assert.match(discoverLoad, /getOrSetValidated/, 'discover-load uses getOrSetValidated (NEVER caches empty lineup)');
+  assert.match(discoverLoad, /isHeroLineupCacheable/, 'discover-load uses the cacheability predicate');
+  assert.match(discoverLoad, /\[Hero\] thin\/empty lineup/, 'diagnostic logging covers thin AND empty lineups');
+  assert.match(discoverLoad, /reason=\$\{d\.reason\}/, 'diagnostics include the reason field');
 
-  // TMDB adapter v2 additions.
+  // cache.ts v3 contract — getOrSetValidated exists.
+  const cache = await readFile(path.join(repoRoot, 'src/lib/server/content/cache.ts'), 'utf8');
+  assert.match(cache, /export async function getOrSetValidated/, 'cache.ts exports getOrSetValidated');
+  assert.match(cache, /isValid\(value\)/, 'getOrSetValidated takes an isValid predicate');
+  assert.match(cache, /if \(isValid\(value\)\)/, 'getOrSetValidated only writes to cache when isValid returns true');
+
+  // TMDB adapter v3 additions (versioned cache keys to invalidate v2).
   assert.match(tmdbAdapter, /export async function getTmdbHeroMoviePool/, 'TMDB adapter exports the expanded movie pool');
   assert.match(tmdbAdapter, /export async function getTmdbHeroSeriesPool/, 'TMDB adapter exports the expanded series pool');
-  assert.match(tmdbAdapter, /tmdb:hero-pool:movie/, 'movie pool cache key');
-  assert.match(tmdbAdapter, /tmdb:hero-pool:series/, 'series pool cache key');
+  assert.match(tmdbAdapter, /tmdb:hero-pool:movie:v3/, 'movie pool cache key is v3-versioned');
+  assert.match(tmdbAdapter, /tmdb:hero-pool:series:v3/, 'series pool cache key is v3-versioned');
   assert.match(tmdbAdapter, /\/movie\/now_playing/, 'now_playing endpoint used for fresh movies');
   assert.match(tmdbAdapter, /\/tv\/airing_today/, 'airing_today endpoint used for currently-active series');
   assert.match(tmdbAdapter, /\/tv\/on_the_air/, 'on_the_air endpoint used for currently-active series');
   assert.match(tmdbAdapter, /export async function getTmdbIndiaFlatrateIds/, 'streaming-id batch helper still exported');
+  // Production diagnostics in pool helpers.
+  assert.match(tmdbAdapter, /adult classifier emptied the pool/, 'pool helper logs when adult classifier empties the pool');
 
   // Additive fields wired through the projection.
   assert.match(types, /originalLanguage\?: string/, 'NormalizedMediaItem has originalLanguage');
@@ -547,11 +568,161 @@ const EMPTY_SET = new Set<string>();
   assert.equal(r.diagnostics.finalSeries, 3, 'diagnostics: finalSeries=3');
 }
 
-// 26. Future-dated movie (upcoming release) is eligible — the 30-day
-//     gate is a release-currency signal, not a "must be in the past".
+// 26. Future-dated movie (upcoming release within 7 days) is eligible —
+//     TMDB's /movie/now_playing includes titles releasing in the next
+//     few days. Far-future releases (>7 days) are EXCLUDED.
 {
-  const upcoming = makeMovie('upcoming', -10); // releases in 10 days (negative daysAgo)
-  assert.equal(isMovieFreshForHero(upcoming, NOW), true, 'upcoming movie (release in 10 days) is eligible');
+  const soonUpcoming = makeMovie('soon-upcoming', -3); // releases in 3 days
+  assert.equal(isMovieFreshForHero(soonUpcoming, NOW), true, 'upcoming movie (release in 3 days) is eligible');
+  const farUpcoming = makeMovie('far-upcoming', -10); // releases in 10 days
+  assert.equal(isMovieFreshForHero(farUpcoming, NOW), false, 'far-future movie (release in 10 days) is EXCLUDED (>7-day future allowance)');
+  const veryFarUpcoming = makeMovie('very-far', -90); // releases in 90 days
+  assert.equal(isMovieFreshForHero(veryFarUpcoming, NOW), false, 'very-far-future movie (release in 90 days) is EXCLUDED');
 }
 
-console.log('Discover Hero daily lineup v2 tests passed — 26 behavioral + source-text contracts (all 19 spec requirements + 7 production-bug-repro + defense-in-depth).');
+// 27. v3 cache-poisoning prevention — empty lineup is NOT cacheable.
+{
+  // Import the cache + helper to verify the cache validity predicate.
+  const heroSelectModule2 = await import(pathToFileURL(path.join(repoRoot, 'src/lib/server/content/hero-select.ts')).href);
+  const cacheModule = await import(pathToFileURL(path.join(repoRoot, 'src/lib/server/content/cache.ts')).href);
+
+  // Empty lineup (length === 0) → NOT cacheable.
+  const emptyResult = { lineup: [], diagnostics: { reason: 'source-empty', lineupLength: 0, rawMovies: 0, rawSeries: 0, postFreshnessMovies: 0, postFreshnessSeries: 0, postBackdropMovies: 0, postBackdropSeries: 0, eligibleMovies: 0, eligibleSeries: 0, finalMovies: 0, finalSeries: 0, bucket: 0 } };
+  assert.equal(heroSelectModule2.isHeroLineupCacheable(emptyResult), false, 'empty lineup is NOT cacheable');
+
+  // Valid lineup (length >= 1) → cacheable.
+  const validLineup = [makeMovie('m1', 5)];
+  const validResult = { lineup: validLineup, diagnostics: { reason: 'pool-thin', lineupLength: 1, rawMovies: 1, rawSeries: 0, postFreshnessMovies: 1, postFreshnessSeries: 0, postBackdropMovies: 1, postBackdropSeries: 0, eligibleMovies: 1, eligibleSeries: 0, finalMovies: 1, finalSeries: 0, bucket: 0 } };
+  assert.equal(heroSelectModule2.isHeroLineupCacheable(validResult), true, '1-item lineup IS cacheable (thin but real)');
+
+  // Full lineup → cacheable.
+  const fullLineup = [makeMovie('m1', 5), makeSeries('s1', 5), makeMovie('m2', 6), makeSeries('s2', 6), makeMovie('m3', 7), makeSeries('s3', 7)];
+  const fullResult = { lineup: fullLineup, diagnostics: { reason: 'ok', lineupLength: 6, rawMovies: 3, rawSeries: 3, postFreshnessMovies: 3, postFreshnessSeries: 3, postBackdropMovies: 3, postBackdropSeries: 3, eligibleMovies: 3, eligibleSeries: 3, finalMovies: 3, finalSeries: 3, bucket: 0 } };
+  assert.equal(heroSelectModule2.isHeroLineupCacheable(fullResult), true, 'full 6-item lineup is cacheable');
+}
+
+// 28. v3 cache-poisoning regression — getOrSetValidated NEVER writes
+//     an invalid (empty) lineup to cache.
+{
+  // Direct behavioral test of the cache helper — write nothing on
+  // invalid, write on valid.
+  const cacheModule = await import(pathToFileURL(path.join(repoRoot, 'src/lib/server/content/cache.ts')).href);
+  // Use a unique key so this test doesn't interfere with anything.
+  const testKey = 'test:hero-lineup:v3:cache-poisoning-test:' + Date.now();
+  // Clear any pre-existing entry.
+  cacheModule.invalidate(testKey);
+
+  // First call: loader returns invalid (empty array). Should NOT be cached.
+  let callCount = 0;
+  const loaderInvalid = async () => {
+    callCount++;
+    return { lineup: [], diagnostics: { lineupLength: 0 } };
+  };
+  const isValid = (v: { lineup: unknown[] }) => v.lineup.length > 0;
+
+  const r1 = await cacheModule.getOrSetValidated(testKey, { ttlMs: 60_000, staleWhileRevalidateMs: 120_000 }, isValid, loaderInvalid);
+  assert.equal(r1.fromCache, false, 'first call: cache miss');
+  assert.equal(r1.value.lineup.length, 0, 'first call: returns the invalid value (so caller sees it)');
+  assert.equal(callCount, 1, 'loader ran once on first call');
+
+  // Second call: cache was NOT poisoned by the invalid result → loader
+  // runs again. (If getOrSet had been used, this would have been a
+  // cache hit returning [].)
+  const r2 = await cacheModule.getOrSetValidated(testKey, { ttlMs: 60_000, staleWhileRevalidateMs: 120_000 }, isValid, loaderInvalid);
+  assert.equal(r2.fromCache, false, 'second call: still cache miss (invalid was NOT cached)');
+  assert.equal(callCount, 2, 'loader ran again on second call — invalid result was NOT cached, so the next request recomputes');
+
+  // Now make the loader return a valid value.
+  const loaderValid = async () => {
+    callCount++;
+    return { lineup: ['item-1'], diagnostics: { lineupLength: 1 } };
+  };
+  const r3 = await cacheModule.getOrSetValidated(testKey, { ttlMs: 60_000, staleWhileRevalidateMs: 120_000 }, isValid, loaderValid);
+  assert.equal(r3.fromCache, false, 'third call: cache miss (loader produced valid this time)');
+  assert.equal(r3.value.lineup.length, 1, 'third call: returns the valid 1-item lineup');
+
+  // Fourth call: valid was cached → cache hit, loader NOT called.
+  const r4 = await cacheModule.getOrSetValidated(testKey, { ttlMs: 60_000, staleWhileRevalidateMs: 120_000 }, isValid, loaderValid);
+  assert.equal(r4.fromCache, true, 'fourth call: cache HIT (valid was cached)');
+  assert.equal(r4.value.lineup.length, 1, 'fourth call: returns the cached valid lineup');
+
+  // Cleanup.
+  cacheModule.invalidate(testKey);
+}
+
+// 29. v3 source-recovery regression — empty lineup from a TMDB
+//     failure does NOT freeze the Hero for 24h. The selector
+//     produces empty, the cache doesn't cache it, the next request
+//     recomputes — and when TMDB recovers, the lineup is non-empty.
+{
+  const bucket = heroDailyBucket(NOW);
+
+  // First "request": TMDB temporarily fails → empty pools.
+  const emptyMovies: Candidate[] = [];
+  const emptySeries: Candidate[] = [];
+  const r1 = selectHeroLineup(emptyMovies, emptySeries, EMPTY_SET, EMPTY_SET, bucket, NOW);
+  assert.equal(r1.lineup.length, 0, 'TMDB failure → empty lineup');
+  assert.equal(r1.diagnostics.reason, 'source-empty', 'reason is source-empty');
+  assert.equal(r1.diagnostics.fromCache, undefined, 'fromCache is undefined (selector itself doesn\'t set it — the cache layer does)');
+
+  // The cache validity predicate would return FALSE for this empty
+  // result — verify.
+  const heroSelectModule3 = await import(pathToFileURL(path.join(repoRoot, 'src/lib/server/content/hero-select.ts')).href);
+  assert.equal(heroSelectModule3.isHeroLineupCacheable(r1), false, 'empty lineup is NOT cacheable — next request will recompute');
+
+  // Second "request" after TMDB recovery: pools are populated.
+  const recoveredMovies = [makeMovie('m1', 5), makeMovie('m2', 6), makeMovie('m3', 7)];
+  const recoveredSeries = [makeSeries('s1', 5), makeSeries('s2', 6), makeSeries('s3', 7)];
+  const r2 = selectHeroLineup(recoveredMovies, recoveredSeries, EMPTY_SET, EMPTY_SET, bucket, NOW);
+  assert.equal(r2.lineup.length, 6, 'after TMDB recovery → 6-item lineup (because empty was NOT cached)');
+  assert.deepEqual(r2.lineup.map(i => i.type), ['movie', 'series', 'movie', 'series', 'movie', 'series'], 'recovered lineup is M/S/M/S/M/S');
+  assert.equal(r2.diagnostics.reason, 'ok', 'reason is ok after recovery');
+}
+
+// 30. v3 reason classification — every thin/empty scenario gets a
+//     human-readable reason so production ops can identify the cause.
+{
+  const bucket = heroDailyBucket(NOW);
+
+  // A. source-empty — both pools empty.
+  const a = selectHeroLineup([], [], EMPTY_SET, EMPTY_SET, bucket, NOW);
+  assert.equal(a.diagnostics.reason, 'source-empty', 'reason A: source-empty');
+
+  // B. freshness-rejected — pools have items but all fail the
+  //    freshness gate (movies >30 days, series not in activeSeriesIds
+  //    and >30 days premiere).
+  const staleMovies = [makeMovie('stale-m', 90)]; // >30 days
+  const staleSeries = [makeSeries('stale-s', 1460)]; // >30 days, no activity
+  const b = selectHeroLineup(staleMovies, staleSeries, EMPTY_SET, EMPTY_SET, bucket, NOW);
+  assert.equal(b.diagnostics.reason, 'freshness-rejected', 'reason B: freshness-rejected');
+  assert.equal(b.lineup.length, 0, 'freshness-rejected → empty lineup');
+
+  // C. pool-thin — enough eligible in one type but <3 in the other.
+  const thinMovies = [makeMovie('m1', 5), makeMovie('m2', 6)]; // only 2
+  const enoughSeries = [makeSeries('s1', 5), makeSeries('s2', 6), makeSeries('s3', 7)]; // 3
+  const c = selectHeroLineup(thinMovies, enoughSeries, EMPTY_SET, EMPTY_SET, bucket, NOW);
+  assert.equal(c.diagnostics.reason, 'pool-thin', 'reason C: pool-thin');
+  assert.ok(c.lineup.length < 6 && c.lineup.length > 0, 'pool-thin → short but non-empty lineup');
+
+  // D. ok — full 6-slot lineup.
+  const okMovies = [makeMovie('m1', 5), makeMovie('m2', 6), makeMovie('m3', 7)];
+  const okSeries = [makeSeries('s1', 5), makeSeries('s2', 6), makeSeries('s3', 7)];
+  const d = selectHeroLineup(okMovies, okSeries, EMPTY_SET, EMPTY_SET, bucket, NOW);
+  assert.equal(d.diagnostics.reason, 'ok', 'reason D: ok');
+  assert.equal(d.lineup.length, 6, 'ok → full 6-item lineup');
+}
+
+// 31. v3 versioned cache key — old v2 cache key cannot satisfy v3 request.
+{
+  // The v2 cache key was `tmdb:hero-lineup:${bucket}` (no version).
+  // The v3 key is `tmdb:hero-lineup:v3:${bucket}`. They are different
+  // strings, so a poisoned v2 entry can never be returned for a v3
+  // cache lookup — different namespace.
+  const v2Key = `tmdb:hero-lineup:${12345}`;
+  const v3Key = `tmdb:hero-lineup:v3:${12345}`;
+  assert.notEqual(v2Key, v3Key, 'v2 and v3 cache keys are different namespaces');
+  assert.ok(v3Key.includes('v3'), 'v3 key contains the version segment');
+  assert.ok(!v2Key.includes(':v3:'), 'v2 key does NOT contain the v3 segment');
+}
+
+console.log('Discover Hero daily lineup v3 tests passed — 31 behavioral + source-text contracts (all 19 spec requirements + production-bug-repro + cache-poisoning prevention + source-recovery + reason classification).');

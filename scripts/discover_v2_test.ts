@@ -366,32 +366,44 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 }
 
 // ============================================================================
-// V. Hero daily lineage — server-selected M/S/M/S/M/S, fresh + cached.
+// V. Hero daily lineage v3 — server-selected M/S/M/S/M/S, fresh + cached
+//    with cache-poisoning prevention (empty lineup NEVER cached for 24h).
 // ============================================================================
 {
   // The Discover server load returns heroItems.
   assert.match(discoverLoad, /heroItems/, 'loadDiscoverData returns heroItems');
   assert.match(discoverLoad, /selectHeroLineup/, 'loadDiscoverData calls selectHeroLineup');
   assert.match(discoverLoad, /heroDailyBucket/, 'daily bucket drives the cache key');
-  assert.match(discoverLoad, /tmdb:hero-lineup:\$\{bucket\}/, 'cache key is daily-bucket-scoped');
+  assert.match(discoverLoad, /HERO_CACHE_VERSION = 'v3'/, 'cache version v3 (invalidates v2 cache namespace)');
+  assert.match(discoverLoad, /tmdb:hero-lineup:\$\{HERO_CACHE_VERSION\}:\$\{bucket\}/, 'cache key is versioned + daily-bucket-scoped');
   // The TMDB adapter exposes a streaming-id batch helper (no N+1).
   assert.match(tmdb, /getTmdbIndiaFlatrateIds/, 'TMDB adapter exposes the streaming-id batch helper');
   assert.match(tmdb, /tmdb:hero-flatrate-ids/, 'streaming-id cache key exists');
-  // v2 expanded candidate pool (now_playing + airing_today + on_the_air).
+  // v3 expanded candidate pool (now_playing + airing_today + on_the_air)
+  // with versioned pool cache keys.
   assert.match(tmdb, /export async function getTmdbHeroMoviePool/, 'TMDB adapter exports the expanded movie pool');
   assert.match(tmdb, /export async function getTmdbHeroSeriesPool/, 'TMDB adapter exports the expanded series pool');
-  assert.match(tmdb, /tmdb:hero-pool:movie/, 'movie pool cache key');
-  assert.match(tmdb, /tmdb:hero-pool:series/, 'series pool cache key');
-  // The DiscoverPage v2 contract: heroItems is the SOLE canonical
+  assert.match(tmdb, /tmdb:hero-pool:movie:v3/, 'movie pool cache key is v3-versioned');
+  assert.match(tmdb, /tmdb:hero-pool:series:v3/, 'series pool cache key is v3-versioned');
+  // v3 cache-poisoning prevention — uses getOrSetValidated, NOT getOrSet.
+  assert.match(discoverLoad, /getOrSetValidated/, 'discover-load uses getOrSetValidated (empty lineup NEVER cached)');
+  assert.match(discoverLoad, /isHeroLineupCacheable/, 'discover-load uses the cacheability predicate (lineup.length >= 1)');
+  // Production diagnostics — per-stage counts + reason field.
+  assert.match(discoverLoad, /\[Hero\] thin\/empty lineup/, 'discover-load logs when lineup is thin OR empty');
+  assert.match(discoverLoad, /reason=\$\{d\.reason\}/, 'diagnostics include the reason field');
+  assert.match(discoverLoad, /postBackdropMovies=\$\{d\.postBackdropMovies\}/, 'diagnostics track per-stage counts');
+  // The DiscoverPage v3 contract: heroItems is the SOLE canonical
   // source for the Hero. NO legacy fallback, NO createFallbackItems.
   assert.match(discoverPage, /heroItems = \[\]/, 'DiscoverPage accepts heroItems prop');
   assert.match(discoverPage, /let featuredItems = \$derived\(/, 'featuredItems is $derived');
   assert.match(discoverPage, /heroItems\s*\.filter\(\(item\) => item\.id\.trim/, 'featuredItems derived DIRECTLY from heroItems (no legacy fallback)');
-  assert.doesNotMatch(discoverPage, /function createFallbackItems/, 'NO createFallbackItems function (v2 — removes legacy fallback)');
-  // The 6-slot contract is enforced by the pure selector in
-  // hero-select.ts — its dedicated test discover_hero_lineup_test.ts
-  // covers the behavioral guarantees (M/S/M/S/M/S order, freshness,
-  // dedup, daily rotation, NO legacy fallback, Reacher exclusion).
+  assert.doesNotMatch(discoverPage, /function createFallbackItems/, 'NO createFallbackItems function (v3 — removes legacy fallback)');
+  // The 6-slot contract + cache-poisoning prevention is enforced by
+  // the pure selector in hero-select.ts — its dedicated test
+  // discover_hero_lineup_test.ts covers the behavioral guarantees
+  // (M/S/M/S/M/S order, freshness, dedup, daily rotation, NO legacy
+  // fallback, Reacher exclusion, cache-poisoning prevention, source
+  // recovery, reason classification).
 }
 
 console.log('Discover V2 India-first catalog tests passed: section config (A); language options (B); all-language mixed-query (C); language mapping (D); other-language exclusion (E); theatre (F); OTT (G); page size 10 (H); show more appends (I); independent section state (J); language switch replaces (K); anime movie+series merge (L); anime Explore (M); anime navigation (N); existing behavior (O); nav regression (P); playback regression (Q); no fake data (R); dropdown UX (S); attribution (T); cache keys (U); hero daily lineage (V).');

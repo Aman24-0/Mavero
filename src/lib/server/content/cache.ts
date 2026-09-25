@@ -144,6 +144,61 @@ export async function getOrSet<T>(key: string, policy: CachePolicy, loader: () =
   return { value: await refresh(key, policy, loader), stale: false };
 }
 
+/**
+ * Validated variant of getOrSet — the loader's result is run through
+ * `isValid` BEFORE being written to cache. An invalid result is
+ * RETURNED to the caller (so the current request sees it) but is NOT
+ * written to cache — the next request will recompute.
+ *
+ * Critical for the Hero: an empty lineup (`lineup.length === 0`)
+ * must NEVER poison the 24h Hero cache. A transient TMDB failure on
+ * the first request after deploy must not freeze the Hero as
+ * "Featured title unavailable" for 24h.
+ *
+ * SWR semantics are preserved:
+ *   - Fresh cache hit (valid by construction — we never write
+ *     invalid): return immediately.
+ *   - Stale cache hit: return stale + background-refresh. The
+ *     background refresh uses `isValid` too — if it produces an
+ *     invalid result, the existing valid stale entry is PRESERVED
+ *     (not overwritten).
+ *   - Miss: compute via loader. If valid → cache + return. If
+ *     invalid → return without caching (next request retries).
+ *
+ * In-flight dedup is preserved (same key, same loader promise).
+ */
+export async function getOrSetValidated<T>(
+  key: string,
+  policy: CachePolicy,
+  isValid: (value: T) => boolean,
+  loader: () => Promise<T>
+): Promise<{ value: T; stale: boolean; fromCache: boolean }> {
+  const now = Date.now();
+  maybeSweep(now);
+
+  const cached = readEntry<T>(key, now);
+
+  if (cached && cached.expiresAt > now) {
+    // Fresh hit — by construction, we only write valid values, so
+    // this is always valid.
+    return { value: cached.value, stale: false, fromCache: true };
+  }
+
+  if (cached && cached.staleUntil > now) {
+    // Stale hit — return the cached value, refresh in background.
+    // The background refresh uses `isValid` — if it produces invalid,
+    // the existing (valid) stale entry is PRESERVED (not overwritten
+    // by the invalid result).
+    void refreshValidated(key, policy, isValid, loader);
+    return { value: cached.value, stale: true, fromCache: true };
+  }
+
+  // Miss — compute via loader. The refresh only writes to cache if
+  // isValid returns true.
+  const value = await refreshValidated(key, policy, isValid, loader);
+  return { value, stale: false, fromCache: false };
+}
+
 async function refresh<T>(key: string, policy: CachePolicy, loader: () => Promise<T>): Promise<T> {
   const existing = inFlight.get(key) as Promise<T> | undefined;
   if (existing) return existing;
@@ -152,6 +207,33 @@ async function refresh<T>(key: string, policy: CachePolicy, loader: () => Promis
     .then((value) => {
       const now = Date.now();
       writeEntry(key, value, policy, now);
+      return value;
+    })
+    .finally(() => inFlight.delete(key));
+
+  inFlight.set(key, request);
+  return request;
+}
+
+async function refreshValidated<T>(
+  key: string,
+  policy: CachePolicy,
+  isValid: (value: T) => boolean,
+  loader: () => Promise<T>
+): Promise<T> {
+  const existing = inFlight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const request = loader()
+    .then((value) => {
+      // Only write to cache if the value passes the validity check.
+      // An invalid value is returned to the caller (so the current
+      // request sees it) but NOT cached — the next request will
+      // recompute via the loader.
+      if (isValid(value)) {
+        const now = Date.now();
+        writeEntry(key, value, policy, now);
+      }
       return value;
     })
     .finally(() => inFlight.delete(key));

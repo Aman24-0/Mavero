@@ -44,8 +44,10 @@
   }: {
     featuredItem: MediaItem | undefined;
     /** Server-selected Hero lineup in strict M/S/M/S/M/S order. May be empty
-     *  on failure — the component falls back to the legacy createFeaturedItems
-     *  path. May contain fewer than 6 items when candidate depth is thin. */
+     *  on TMDB failure (the existing `.hero-fallback` "Featured title
+     *  unavailable" section renders — no legacy fallback). May contain
+     *  fewer than 6 items when candidate depth is thin (the carousel
+     *  renders fewer slides — never appends stale content to fill). */
     heroItems?: MediaItem[];
     movies?: MediaItem[];
     series?: MediaItem[];
