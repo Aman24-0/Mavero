@@ -1324,6 +1324,146 @@ export async function getTmdbIndiaFlatrateIds(maxPages = 2): Promise<Set<string>
   return value;
 }
 
+// ============================================================
+// Hero candidate-pool batch helpers.
+//
+// The Hero selector needs a deep, FRESH candidate pool. TMDB's
+// /trending/{movie,tv}/week rail alone is too narrow — it surfaces
+// popularity-driven content that may be months old (e.g., a movie
+// released in July that's still trending in September). The
+// 30-day movie freshness gate then rejects most of them, leaving
+// the Hero with no eligible movies → the legacy fallback injects
+// stale content (the observed S/M/M/M/M/M production bug).
+//
+// To fix this we expand the candidate pool with three additional
+// bounded, cached TMDB query pairs (no N+1):
+//
+//   1. /movie/now_playing           — movies currently in theatres
+//                                     (released in the last ~2 months;
+//                                     many pass the 30-day gate).
+//   2. /tv/airing_today             — TV shows with an episode airing
+//                                     TODAY (the strongest possible
+//                                     "currently active" signal).
+//   3. /tv/on_the_air               — TV shows with an episode airing
+//                                     in the next 7 days.
+//
+// All three are cached via the existing getOrSet path with the
+// standard list TTL. Each returns the merged + deduped result as
+// NormalizedMediaItem[]. The Hero selector consumes them directly.
+//
+// Adult exclusion: the movie half uses the transitional watch-
+// provider exclusion (no network filter); the TV half excludes
+// verified adult networks (Phase 3 contract). Both halves also
+// go through the central classifier (filterAdultFromListPage) for
+// defense-in-depth — same contract as every other normal rail.
+// ============================================================
+
+/**
+ * Hero movie pool — trending + now-playing movies + anime movies.
+ * The trending rail gives popularity depth; now_playing gives
+ * genuinely fresh theatrical releases that pass the 30-day gate.
+ */
+export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaItem[]; stale?: boolean }> {
+  const key = 'tmdb:hero-pool:movie';
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const [trendingRes, nowPlayingRes] = await Promise.allSettled([
+      (async () => {
+        const result = await tmdbRequest<TmdbList<TmdbMedia>>('/trending/movie/week', { page: 1 });
+        return (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      })(),
+      (async () => {
+        const result = await tmdbRequest<TmdbList<TmdbMovie>>('/movie/now_playing', { page: 1, region: 'IN' });
+        return (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      })()
+    ]);
+    const trending = trendingRes.status === 'fulfilled' ? trendingRes.value : [];
+    const nowPlaying = nowPlayingRes.status === 'fulfilled' ? nowPlayingRes.value : [];
+    // Merge + dedupe by raw TMDB id.
+    const seenIds = new Set<number>();
+    const merged: TmdbMedia[] = [];
+    for (const item of [...nowPlaying, ...trending]) {
+      const id = (item as TmdbMovie).id;
+      if (Number.isInteger(id) && id > 0 && !seenIds.has(id)) {
+        seenIds.add(id);
+        merged.push(item);
+      }
+    }
+    // Build candidate rows for the central classifier.
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = merged.map((item) => ({
+      item: mapTmdb(item, 'movie', 'Trending'),
+      mediaType: 'movie' as const,
+      rawAdult: (item as TmdbMovie).adult
+    }));
+    const items = await filterAdultFromListPage(rows);
+    return { items };
+  });
+  return { items: value.items, stale };
+}
+
+/**
+ * Hero series pool — trending TV + airing_today + on_the_air + anime
+ * series. The airing_today/on_the_air endpoints give us TV shows with
+ * current episode activity — the strongest "currently active" signal
+ * available without N+1 detail lookups (TMDB list rows do NOT carry
+ * `last_episode_to_air`).
+ *
+ * The set of TMDB ids appearing in airing_today+on_the_air is the
+ * eligibility signal the Hero selector uses for "currently airing
+ * series" — see hero-select.ts.
+ */
+export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaItem[]; activeSeriesIds: Set<string>; stale?: boolean }> {
+  const key = 'tmdb:hero-pool:series';
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const [trendingRes, airingTodayRes, onAirRes] = await Promise.allSettled([
+      (async () => {
+        const result = await tmdbRequest<TmdbList<TmdbMedia>>('/trending/tv/week', { page: 1 });
+        return (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+      })(),
+      (async () => {
+        const result = await tmdbRequest<TmdbList<TmdbTv>>('/tv/airing_today', { page: 1 });
+        return (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+      })(),
+      (async () => {
+        const result = await tmdbRequest<TmdbList<TmdbTv>>('/tv/on_the_air', { page: 1 });
+        return (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+      })()
+    ]);
+    const trending = trendingRes.status === 'fulfilled' ? trendingRes.value : [];
+    const airingToday = airingTodayRes.status === 'fulfilled' ? airingTodayRes.value : [];
+    const onAir = onAirRes.status === 'fulfilled' ? onAirRes.value : [];
+    // Build the "currently active series" id set — this is the
+    // eligibility signal the Hero selector uses (any series in this
+    // set is by definition currently airing).
+    const activeSeriesIds = new Set<string>();
+    for (const item of [...airingToday, ...onAir]) {
+      const id = (item as TmdbTv).id;
+      if (Number.isInteger(id) && id > 0) activeSeriesIds.add(String(id));
+    }
+    // Merge + dedupe by raw TMDB id. Order: airing_today (highest
+    // current activity) → on_the_air → trending (popularity depth).
+    const seenIds = new Set<number>();
+    const merged: TmdbMedia[] = [];
+    for (const item of [...airingToday, ...onAir, ...trending]) {
+      const id = (item as TmdbTv).id;
+      if (Number.isInteger(id) && id > 0 && !seenIds.has(id)) {
+        seenIds.add(id);
+        merged.push(item);
+      }
+    }
+    // Build candidate rows for the central classifier (TV rows need
+    // the cached-detail path for the authoritative network signal —
+    // see RAIL_CLASSIFY_CONCURRENCY contract in the file header).
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = merged.map((item) => ({
+      item: mapTmdb(item, 'series', 'Trending'),
+      mediaType: 'series' as const,
+      rawAdult: (item as TmdbMovie).adult
+    }));
+    const items = await filterAdultFromListPage(rows);
+    return { items, activeSeriesIds };
+  });
+  return { items: value.items, activeSeriesIds: value.activeSeriesIds, stale };
+}
+
 /**
  * Resolve a provider key (e.g. "netflix") back to its TMDB provider_id.
  * Looks up the cached India provider list. Returns undefined if the

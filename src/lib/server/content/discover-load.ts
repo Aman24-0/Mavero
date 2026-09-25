@@ -1,9 +1,9 @@
 import { collection, discover, popular, selectFeatured, trendingMoviesByLanguages } from './service';
 import { toMediaItem } from './presenter';
 import { getOrSet } from './cache';
-import { getTmdbIndiaFlatrateIds } from './adapters/tmdb';
-import { selectHeroLineup, heroDailyBucket } from './hero-select';
-import type { CollectionFilters, CollectionSort, ContentType, ContentList } from './types';
+import { getTmdbIndiaFlatrateIds, getTmdbHeroMoviePool, getTmdbHeroSeriesPool } from './adapters/tmdb';
+import { selectHeroLineup, heroDailyBucket, type HeroCandidate, type HeroDiagnostics } from './hero-select';
+import type { CollectionFilters, CollectionSort, ContentType, ContentList, NormalizedMediaItem } from './types';
 import type { MediaItem } from '$data/content';
 
 type RailResult = { items: MediaItem[]; error?: string };
@@ -140,10 +140,37 @@ type GenreCollection = { title: string; items: MediaItem[]; href: string };
 // voteCount, releaseDate, originalLanguage, externalIds, tags).
 // ============================================================
 
-// 24h TTL + 6h SWR — slightly longer than the standard list policy
-// because the lineup is by design stable for one rotation period.
+// 24h TTL + 6h SWR — the lineup is by design stable for one rotation period.
 const HERO_LINEUP_POLICY = { ttlMs: 1000 * 60 * 60 * 24, staleWhileRevalidateMs: 1000 * 60 * 60 * 6 };
 
+/**
+ * Load the canonical Hero lineup — the SOLE source of Hero slides
+ * for DiscoverPage. Contract:
+ *
+ *   - Up to 6 candidates in strict M/S/M/S/M/S order.
+ *   - All candidates pass HARD eligibility gates (movies: 30-day
+ *     release window; series: current activity OR 30-day premiere).
+ *   - No legacy fallback, no stale content, no cross-pool fill.
+ *   - Cached for ~24h via the daily bucket key.
+ *
+ * Production bug fix (v1 → v2): the v1 implementation derived the
+ * Hero pool from ONLY the trending movie/series/anime rails. At the
+ * test date 2026-09-25, all trending movies were released earlier
+ * in 2026 (60-90 days ago) — none passed the 30-day movie gate →
+ * the selector returned [] → DiscoverPage fell back to the legacy
+ * createFeaturedItems path → selectFeatured picked Reacher (high
+ * popularity, no freshness filter) → S/M/M/M/M/M observed.
+ *
+ * v2 expands the pool with now_playing (movies) + airing_today +
+ * on_the_air (series), giving genuinely fresh candidates that pass
+ * the gates. Reacher (no current activity) is correctly excluded
+ * by the new series eligibility gate (activeSeriesIds set OR
+ * 30-day premiere window — the 180-day heuristic is gone).
+ *
+ * @param trendingMovies  Trending movie rail (legacy + extra depth).
+ * @param trendingSeries  Trending series rail (legacy + extra depth).
+ * @param trendingAnime   Trending anime rail (anime movies + series).
+ */
 async function loadHeroLineup(
   trendingMovies: RailResult,
   trendingSeries: RailResult,
@@ -152,38 +179,61 @@ async function loadHeroLineup(
   const bucket = heroDailyBucket();
   const key = `tmdb:hero-lineup:${bucket}`;
   try {
-    // The trending rails return MediaItem[] which now carries the
-    // additive fields the Hero selector reads (popularity, voteCount,
-    // originalLanguage, externalIds, tags, releaseDate). The structural
-    // HeroCandidate type accepts MediaItem directly — no cast needed.
-    // Anime items have canonical type 'movie' or 'series' (per the
-    // getTmdbAnimeMerged contract), so they slot into Movie/Series
-    // pools naturally — no separate anime pool needed.
-    const moviePool: MediaItem[] = [
-      ...trendingMovies.items,
-      ...trendingAnime.items.filter((a) => a.type === 'movie')
+    // Fetch the expanded fresh pools + the streaming-id set + the
+    // active-series id set in parallel (all cached via the existing
+    // getOrSet path with the standard list TTL).
+    const [moviePoolRes, seriesPoolRes, streamingIds] = await Promise.all([
+      getTmdbHeroMoviePool().catch(() => ({ items: [] as NormalizedMediaItem[] })),
+      getTmdbHeroSeriesPool().catch(() => ({ items: [] as NormalizedMediaItem[], activeSeriesIds: new Set<string>() })),
+      getTmdbIndiaFlatrateIds(2).catch(() => new Set<string>())
+    ]);
+
+    // Merge the expanded fresh pools with the trending rails so we
+    // have both depth (trending) AND freshness (now_playing /
+    // airing_today / on_the_air). Anime items contribute to their
+    // canonical type's pool (anime movies → movie pool, anime series
+    // → series pool) — same as the existing Mavero architecture.
+    const animeItems = trendingAnime.items as unknown as NormalizedMediaItem[];
+    const moviePool: NormalizedMediaItem[] = [
+      ...moviePoolRes.items,
+      ...trendingMovies.items as unknown as NormalizedMediaItem[],
+      ...animeItems.filter((a) => a.type === 'movie')
     ];
-    const seriesPool: MediaItem[] = [
-      ...trendingSeries.items,
-      ...trendingAnime.items.filter((a) => a.type === 'series')
+    const seriesPool: NormalizedMediaItem[] = [
+      ...seriesPoolRes.items,
+      ...trendingSeries.items as unknown as NormalizedMediaItem[],
+      ...animeItems.filter((a) => a.type === 'series')
     ];
-    // The streaming-id set is fetched separately (it may be the empty
-    // set on TMDB failure — the selector still continues with the
-    // other signals). Fetched outside the lineup cache so its own
-    // list TTL applies (independent of the lineup's 24h TTL).
-    let streamingIds: Set<string>;
-    try {
-      streamingIds = await getTmdbIndiaFlatrateIds(2);
-    } catch {
-      streamingIds = new Set();
-    }
+    const activeSeriesIds = seriesPoolRes.activeSeriesIds;
+
     const { value } = await getOrSet(key, HERO_LINEUP_POLICY, async () => {
-      return selectHeroLineup(moviePool, seriesPool, streamingIds, bucket);
+      const result = selectHeroLineup<NormalizedMediaItem>(
+        moviePool,
+        seriesPool,
+        streamingIds,
+        activeSeriesIds,
+        bucket
+      );
+      // Server-side diagnostic log when pools are thin — proves
+      // whether the problem is insufficient source candidates or
+      // incorrect selection/fallback. Not exposed to the UI.
+      const d = result.diagnostics;
+      if (d.lineupLength < 6) {
+        console.warn(
+          `[Hero] thin lineup — bucket=${d.bucket} ` +
+          `rawMovies=${d.rawMovies} eligibleMovies=${d.eligibleMovies} finalMovies=${d.finalMovies} ` +
+          `rawSeries=${d.rawSeries} eligibleSeries=${d.eligibleSeries} finalSeries=${d.finalSeries} ` +
+          `lineupLength=${d.lineupLength}`
+        );
+      }
+      return result;
     });
-    // selectHeroLineup is generic in <T> so it returns the SAME type
-    // as its input — MediaItem[] here. No projection needed.
-    return value as MediaItem[];
-  } catch {
+    // The cached value is the full HeroLineupResult; we project the
+    // lineup to MediaItem[] for the page data.
+    const lineup = (value as { lineup: NormalizedMediaItem[] }).lineup;
+    return lineup.map(toMediaItem);
+  } catch (error) {
+    console.warn('[Hero] loadHeroLineup failed — returning empty lineup', error);
     return [];
   }
 }

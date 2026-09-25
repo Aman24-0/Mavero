@@ -306,50 +306,38 @@
       .map((item) => ({ item, category: categoryFor(item) }));
   }
 
-  // Build the legacy fallback pool (the pre-hero-selection candidate
-  // list) so the Hero never falls below MAX_FEATURED_ITEMS when the
-  // server-selected heroItems is shorter than 6 (or empty on failure).
-  function createFallbackItems(): MediaItem[] {
-    return uniqueItems([
-      ...(featuredItem ? [featuredItem] : []),
-      ...movies, ...series, ...anime,
-      ...popularSeries, ...popularAnime
-    ]).filter((item) => item.id.trim() && item.title.trim() && hasHeroImage(item));
-  }
-
   let localContinue = $derived(localContinueLoaded ? localContinueItems : []);
   let hasCatalog = $derived(Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length));
-  // Hero lineup preference: use the server-selected heroItems (already
-  // in strict M/S/M/S/M/S order, fresh-filtered, daily-rotated) when
-  // available. Fall back to the legacy client-side createFeaturedItems
-  // path when heroItems is empty (TMDB failure) OR shorter than 6
-  // (thin candidate pool) — append fallback candidates up to 6 without
-  // duplicating server-selected IDs, preserving M/S/M/S/M/S where
-  // possible (the legacy path doesn't enforce M/S/M/S/M/S, but it
-  // still produces a usable gallery).
-  let featuredItems = $derived((() => {
-    if (heroItems.length > 0) {
-      const seen = new Set<string>();
-      const heroSlides = heroItems
-        .filter((item) => item.id.trim() && item.title.trim() && hasHeroImage(item))
-        .map((item) => {
-          seen.add(item.id);
-          return { item, category: categoryFor(item) };
-        });
-      if (heroSlides.length >= MAX_FEATURED_ITEMS) return heroSlides.slice(0, MAX_FEATURED_ITEMS);
-      // Top up with legacy fallback candidates that are NOT already
-      // in the server-selected hero lineup (no duplicates).
-      const fallback = createFallbackItems()
-        .filter((item) => !seen.has(item.id))
-        .map((item) => ({ item, category: categoryFor(item) }));
-      return [...heroSlides, ...fallback].slice(0, MAX_FEATURED_ITEMS);
-    }
-    return createFeaturedItems([
-      ...(featuredItem ? [featuredItem] : []),
-      ...movies, ...series, ...anime,
-      ...popularSeries, ...popularAnime
-    ]);
-  })());
+  // ===========================================================================
+  // Hero lineage contract (production bug fix — commit after 89bb711).
+  //
+  // The previous implementation had a legacy fallback that took the
+  // server-selected `heroItems` and topped it up with items from the
+  // raw trending rails (via `createFallbackItems()`). The fallback
+  // had NO freshness filter and NO M/S/M/S/M/S enforcement. When the
+  // server-side selector returned [] (because all trending movies
+  // were >30 days old at the test date), the fallback picked
+  // `featuredItem` (computed by selectFeatured — no freshness) which
+  // was Reacher, then 5 movies from trending → S/M/M/M/M/M.
+  //
+  // The contract now is:
+  //   1. The server is the SOLE canonical source of Hero slides via
+  //      `heroItems` (returned by loadDiscoverData → loadHeroLineup →
+  //      selectHeroLineup).
+  //   2. `featuredItems` is derived DIRECTLY from `heroItems` — no
+  //      legacy fallback, no createFeaturedItems, no createFallbackItems.
+  //   3. When `heroItems` is shorter than 6, the carousel renders
+  //      fewer slides — NEVER appends stale content to fill the UI.
+  //   4. When `heroItems` is empty (TMDB failure), the existing
+  //      `.hero-fallback` "Featured title unavailable" section renders
+  //      below — no fake content.
+  // ===========================================================================
+  let featuredItems = $derived(
+    heroItems
+      .filter((item) => item.id.trim() && item.title.trim() && hasHeroImage(item))
+      .slice(0, MAX_FEATURED_ITEMS)
+      .map((item) => ({ item, category: categoryFor(item) }))
+  );
   // Reset activeIndex if it's out of bounds after featuredItems changes.
   let activeIndex = $state(0);
   let activeHero = $derived(featuredItems[activeIndex]);

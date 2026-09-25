@@ -377,14 +377,21 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   // The TMDB adapter exposes a streaming-id batch helper (no N+1).
   assert.match(tmdb, /getTmdbIndiaFlatrateIds/, 'TMDB adapter exposes the streaming-id batch helper');
   assert.match(tmdb, /tmdb:hero-flatrate-ids/, 'streaming-id cache key exists');
-  // The DiscoverPage prefers the server-selected heroItems over the
-  // legacy createFeaturedItems path.
+  // v2 expanded candidate pool (now_playing + airing_today + on_the_air).
+  assert.match(tmdb, /export async function getTmdbHeroMoviePool/, 'TMDB adapter exports the expanded movie pool');
+  assert.match(tmdb, /export async function getTmdbHeroSeriesPool/, 'TMDB adapter exports the expanded series pool');
+  assert.match(tmdb, /tmdb:hero-pool:movie/, 'movie pool cache key');
+  assert.match(tmdb, /tmdb:hero-pool:series/, 'series pool cache key');
+  // The DiscoverPage v2 contract: heroItems is the SOLE canonical
+  // source for the Hero. NO legacy fallback, NO createFallbackItems.
   assert.match(discoverPage, /heroItems = \[\]/, 'DiscoverPage accepts heroItems prop');
-  assert.match(discoverPage, /heroItems\.length > 0/, 'DiscoverPage prefers heroItems when non-empty');
+  assert.match(discoverPage, /let featuredItems = \$derived\(/, 'featuredItems is $derived');
+  assert.match(discoverPage, /heroItems\s*\.filter\(\(item\) => item\.id\.trim/, 'featuredItems derived DIRECTLY from heroItems (no legacy fallback)');
+  assert.doesNotMatch(discoverPage, /function createFallbackItems/, 'NO createFallbackItems function (v2 — removes legacy fallback)');
   // The 6-slot contract is enforced by the pure selector in
   // hero-select.ts — its dedicated test discover_hero_lineup_test.ts
   // covers the behavioral guarantees (M/S/M/S/M/S order, freshness,
-  // dedup, daily rotation, fallback).
+  // dedup, daily rotation, NO legacy fallback, Reacher exclusion).
 }
 
 console.log('Discover V2 India-first catalog tests passed: section config (A); language options (B); all-language mixed-query (C); language mapping (D); other-language exclusion (E); theatre (F); OTT (G); page size 10 (H); show more appends (I); independent section state (J); language switch replaces (K); anime movie+series merge (L); anime Explore (M); anime navigation (N); existing behavior (O); nav regression (P); playback regression (Q); no fake data (R); dropdown UX (S); attribution (T); cache keys (U); hero daily lineage (V).');
