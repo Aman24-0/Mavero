@@ -1,0 +1,1656 @@
+MAVERO — COMPLETE DEVICE SESSION + BIG-SCREEN QR LOGIN REPAIR
+==============================================================
+
+You are working on the Mavero production repository:
+
+GitHub:
+https://github.com/Aman24-0/Mavero
+
+Current branch: main
+
+IMPORTANT:
+This is NOT a request for a superficial UI patch.
+
+Perform a complete production-grade audit and repair of the existing:
+- Supabase authentication
+- device session registry
+- session revocation
+- QR / TV login
+- QR session handoff
+- account Devices & Sessions UI
+- device metadata detection
+- sign-out behaviour
+- big-screen login UX
+
+The existing QR authentication/security architecture is already implemented.
+DO NOT throw it away or replace it with a simpler insecure implementation.
+
+Preserve all existing security hardening and make the current architecture actually work end-to-end.
+
+==============================================================
+1. CURRENT PRODUCTION PROBLEMS
+==============================================================
+
+Observed behaviour:
+
+A) Phone Chrome login works with email/password.
+
+B) Phone Brave login also works.
+
+C) Laptop/desktop Brave login with the same account also works.
+
+D) However Account → Devices & Sessions shows only one device/session.
+
+E) The displayed session remains:
+
+    Android • Chrome
+    Chrome • Android
+    23/09/2026
+
+even after logging out and logging in again.
+
+F) Logging out and logging back in does not create/update the visible device session.
+
+G) The current registry therefore behaves like a one-time device injection rather than a real session registry.
+
+H) Desktop login page does NOT show "Login with QR".
+
+I) TV/desktop users have difficulty logging in because they have to type email/password.
+
+J) Account page currently shows "Login on TV" regardless of device type.
+
+K) QR login is only useful when initiated from a big screen.
+
+L) Phone/tablet should be the QR-scanning/authorization device.
+
+M) Desktop/TV should display the QR.
+
+N) Normal local sign-out must NOT unexpectedly terminate other devices.
+
+O) Account session list must reflect actual active Mavero sessions.
+
+P) Session data must update after login/logout/revoke without requiring a full stale page load.
+
+==============================================================
+2. FIRST TASK — FULL AUDIT BEFORE MODIFYING
+==============================================================
+
+Before making changes, inspect the ENTIRE relevant implementation.
+
+Search the whole repository for:
+
+- signInWithPassword
+- signOut
+- auth.getSession
+- auth.getUser
+- onAuthStateChange
+- device_sessions
+- registerCurrentSession
+- register_device_session
+- revokeSession
+- revokeAll
+- session revocation
+- session-revocation-cache
+- extractSessionId
+- parseDeviceMetadata
+- device-pairing
+- pairing_requests
+- tv-login
+- QRCode
+- jsQR
+- QR scanner
+- claim_device_pairing
+- approve_device_pairing
+- exchangeCodeForSession
+- generateLink
+- Login on TV
+- Login with QR
+- Devices & Sessions
+
+Inspect:
+
+src/hooks.server.ts
+src/routes/auth/sign-in/*
+src/routes/auth/sign-out/*
+src/routes/account/*
+src/routes/tv-login/*
+src/lib/server/auth/*
+src/lib/client/*
+Supabase migrations
+database.types.ts
+all existing QR/device-auth tests
+all session/revocation tests
+
+Do NOT assume the existing implementation is correct just because tests currently pass.
+
+Trace the complete lifecycle:
+
+PASSWORD LOGIN
+→ Supabase session
+→ access token
+→ JWT session_id
+→ device ID
+→ device metadata
+→ device_sessions
+→ Account session API
+→ Account UI
+
+QR LOGIN
+→ big-screen pairing request
+→ QR
+→ phone scanner
+→ authenticated approval
+→ pairing claim
+→ independent Supabase session
+→ device_sessions
+→ big-screen authenticated state
+
+LOGOUT
+→ local Supabase session
+→ registry revocation
+→ cache invalidation
+→ subsequent request enforcement
+
+REVOKE
+→ registry revocation
+→ subsequent request rejected
+→ session disappears from UI
+
+SIGN OUT ALL
+→ correct sessions revoked
+→ all affected sessions rejected
+
+==============================================================
+3. CRITICAL ROOT-CAUSE FIX — SESSION REGISTRATION
+==============================================================
+
+Current implementation uses a fire-and-forget pattern similar to:
+
+    void registerCurrentSession(...).catch(...)
+
+inside hooks.server.ts.
+
+This is NOT acceptable for production session registration.
+
+A session must not depend on an un-awaited background promise to become visible in the device registry.
+
+Fix this.
+
+The authenticated request must reliably register/heartbeat its session before the request lifecycle can finish, BUT:
+
+- do not add significant latency to every request
+- do not perform unnecessary DB writes
+- do not break serverless execution
+- do not block authentication indefinitely
+- use a short timeout where appropriate
+- use the existing heartbeat throttling/RPC design
+- preserve failure-safe behaviour
+
+The correct architecture should be:
+
+Authenticated request
+    ↓
+derive user.id from Supabase auth
+    ↓
+derive session_id from JWT
+    ↓
+derive stable device_id from cookie
+    ↓
+parse device metadata
+    ↓
+register/heartbeat current session
+    ↓
+continue request
+
+Use the existing register_device_session RPC where appropriate.
+
+DO NOT resurrect revoked sessions.
+
+If a registry row exists and is revoked:
+    never reactivate it.
+
+If the current Supabase session_id is new:
+    create a new registry row.
+
+If the same session_id already exists:
+    update last_seen_at according to heartbeat policy.
+
+If the same physical browser/device has a NEW Supabase session_id:
+    this is a NEW session and must be represented correctly.
+
+==============================================================
+4. SESSION ID MUST BE THE PRIMARY SESSION IDENTITY
+==============================================================
+
+Do NOT identify a login session solely by:
+
+- device_id
+- browser
+- OS
+- device name
+
+Those describe the device.
+
+The actual authenticated session identity must be:
+
+    Supabase JWT session_id
+
+Use:
+
+    supabase_session_id
+
+as the unique session identity in device_sessions.
+
+Conceptually:
+
+device_id
+    = stable browser/device identity
+
+supabase_session_id
+    = individual login session identity
+
+device_sessions row
+    = one authenticated session
+
+This distinction is critical.
+
+Example:
+
+Phone Chrome:
+    device_id = A
+    session_id = S1
+
+Phone Chrome after logout/login:
+    device_id = A
+    session_id = S2
+
+These are NOT the same session.
+
+The registry must therefore show/update according to the actual session lifecycle.
+
+==============================================================
+5. DEVICE ID COOKIE
+==============================================================
+
+Keep the existing stable device ID cookie architecture.
+
+Verify:
+
+- cookie is created only when absent/invalid
+- secure flag is correct
+- sameSite is appropriate
+- path is /
+- reasonable max-age
+- no session token is stored in device_id cookie
+- device ID is not treated as authentication
+- server derives authenticated user/session separately
+
+Do NOT put Supabase access/refresh tokens into the device-id cookie.
+
+==============================================================
+6. DEVICE METADATA
+==============================================================
+
+Use the existing parseDeviceMetadata implementation if correct.
+
+The registry should contain useful metadata such as:
+
+device type:
+    mobile
+    tablet
+    desktop
+    tv
+    unknown
+
+browser:
+    Chrome
+    Brave
+    Firefox
+    Safari
+    Edge
+    etc.
+
+OS:
+    Android
+    iOS/iPadOS
+    Windows
+    macOS
+    Linux
+    etc.
+
+Display name examples:
+
+    Android • Chrome
+    Windows • Brave
+    macOS • Safari
+    Android Tablet • Chrome
+    Windows • Chrome
+
+Do not use a hardcoded "Android • Chrome" fallback for every session.
+
+Verify the actual User-Agent passed to parseDeviceMetadata.
+
+Add regression tests for:
+- Android Chrome
+- Android Brave
+- iPhone Safari
+- iPad Safari
+- Windows Chrome
+- Windows Brave
+- macOS Safari
+- desktop Firefox
+- unknown UA
+
+==============================================================
+7. BIG-SCREEN DETECTION
+==============================================================
+
+Use the existing server-side device metadata classification.
+
+Define:
+
+BIG_SCREEN:
+    desktop
+    tv
+
+QR_SCANNER:
+    mobile
+    tablet
+
+UNKNOWN:
+    unknown
+
+Do NOT rely only on CSS/media queries for this logic.
+
+The UI behaviour must be server/client consistent.
+
+==============================================================
+8. SIGN-IN PAGE — BIG SCREEN QR LOGIN
+==============================================================
+
+Modify:
+
+src/routes/auth/sign-in/+page.svelte
+and its server load/data if required.
+
+On:
+
+    desktop
+    tv
+
+show:
+
+    Login with QR
+
+near the normal password sign-in action.
+
+Desired structure:
+
+    Email
+    Password
+
+    [ Sign in ]
+
+    [ QR icon  Login with QR ]
+
+    Forgot your password?
+
+    OR
+
+    Create an account
+
+The QR button should navigate to the existing secure TV/big-screen QR login route.
+
+Do NOT duplicate QR pairing logic inside the sign-in page.
+
+Reuse:
+
+    /tv-login
+
+or the existing canonical big-screen QR route.
+
+On:
+
+    mobile
+    tablet
+
+do NOT show the QR-display/login-with-QR button on the sign-in page.
+
+Phones/tablets are the QR authorization/scanning devices.
+
+==============================================================
+9. RENAME "LOGIN ON TV"
+==============================================================
+
+The current Account page button:
+
+    Login on TV
+
+must become:
+
+    Login on Big Screen
+
+because the feature is intentionally useful for:
+
+- Smart TV
+- desktop
+- laptop
+- other large-screen browser
+
+Do not use TV-specific wording in the general account UI.
+
+Use wording consistently:
+
+    Login on Big Screen
+
+==============================================================
+10. ACCOUNT PAGE — DEVICE-SPECIFIC UI
+==============================================================
+
+The Account → Devices & Sessions section must be device-aware.
+
+MOBILE:
+    show:
+        [ Login on Big Screen ]
+
+TABLET:
+    show:
+        [ Login on Big Screen ]
+
+DESKTOP:
+    hide the button
+
+TV:
+    hide the button
+
+UNKNOWN:
+    safest behaviour:
+        hide the button unless the existing product architecture has
+        a well-defined fallback.
+
+Reason:
+
+A desktop/TV user should not be expected to use its camera to authorize another desktop/TV.
+
+The normal flow is:
+
+Phone/tablet
+    → scan big-screen QR
+    → authorize big-screen login
+
+==============================================================
+11. QR FLOW MUST REMAIN SECURE
+==============================================================
+
+Do NOT weaken existing QR security.
+
+Preserve:
+
+- short-lived pairing request
+- cryptographically random challenge/state
+- expiration
+- one-time claim
+- server-side authorization
+- authenticated approving user
+- session handoff
+- replay protection
+- consumed state
+- expired state
+- race protection
+- no password transfer
+- no access token in QR
+- no refresh token in QR
+- no user credentials in QR
+- no long-lived authentication secret embedded directly in the QR
+
+QR should contain only the appropriate short-lived pairing/authorization reference.
+
+The phone scanner should authenticate the user through the existing authenticated session.
+
+The big screen must receive its OWN Supabase session.
+
+Never copy the phone's access/refresh token into the TV/desktop browser.
+
+==============================================================
+12. INDEPENDENT SUPABASE SESSION FOR BIG SCREEN
+==============================================================
+
+Verify the existing QR handoff implementation.
+
+The final result must be:
+
+PHONE:
+    Supabase session S_PHONE
+
+BIG SCREEN:
+    Supabase session S_BIG_SCREEN
+
+They must be independently revocable.
+
+If phone logs out:
+
+    S_PHONE revoked/local logout
+
+BIG SCREEN:
+    remains authenticated
+
+unless the user explicitly chose "Sign out all devices" or revoked that big-screen session.
+
+If big screen is revoked:
+
+    S_BIG_SCREEN rejected
+
+PHONE:
+    remains authenticated
+
+==============================================================
+13. NORMAL SIGN-OUT MUST BE LOCAL
+==============================================================
+
+Audit:
+
+src/routes/auth/sign-out/+server.ts
+
+The current implementation calls:
+
+    locals.supabase.auth.signOut()
+
+Verify the actual Supabase scope semantics.
+
+Normal "Sign out" must terminate only the current browser/device session.
+
+Use the correct local scope:
+
+    signOut({ scope: 'local' })
+
+unless there is a documented architectural reason not to.
+
+Before/around sign-out:
+
+1. derive current session_id
+2. mark current device_sessions row revoked
+3. invalidate revocation cache
+4. perform local Supabase sign-out
+5. clear session cookies
+6. redirect
+
+Do not accidentally revoke all sessions.
+
+==============================================================
+14. REVOKE ONE DEVICE
+==============================================================
+
+When user clicks:
+
+    Revoke
+
+on one session:
+
+- revoke only that supabase_session_id
+- set revoked_at
+- do not revoke other sessions
+- invalidate appropriate cache
+- UI should immediately remove/mark the row
+- next request using that session must be rejected by Mavero
+- do not allow the revoked session to re-register itself
+
+The existing hook-level revocation enforcement must remain.
+
+==============================================================
+15. SIGN OUT ALL DEVICES
+==============================================================
+
+Audit the current implementation.
+
+It must:
+
+- revoke all other active sessions
+- preserve current session if the UI semantics say "all other devices"
+- or revoke current too if the button explicitly means every session including current
+
+The UI wording must accurately describe the actual behaviour.
+
+DO NOT create a mismatch where the button says:
+
+    Sign out all devices
+
+but current device stays authenticated without explaining why.
+
+Prefer:
+
+    Sign out all other devices
+
+if current session is intentionally preserved.
+
+OR:
+
+    Sign out everywhere
+
+if current session is also terminated.
+
+Choose one behaviour and make the wording and backend semantics consistent.
+
+Do not silently mix semantics.
+
+==============================================================
+16. SESSION REGISTRY — REAL DATA
+==============================================================
+
+The Account page must show actual active registry data.
+
+Do not derive the session list from:
+
+- localStorage
+- browser-only state
+- hardcoded device information
+- first-login bootstrap data
+- stale page props
+
+Server should query:
+
+    device_sessions
+
+for the authenticated user.
+
+Return only safe fields.
+
+Never expose:
+
+- access_token
+- refresh_token
+- JWT
+- pairing secret
+- internal credentials
+- service-role data
+
+Recommended session DTO:
+
+    {
+      id,
+      device_id,
+      device_name,
+      device_type,
+      browser,
+      os,
+      created_at,
+      last_seen_at,
+      is_current
+    }
+
+Do not expose raw Supabase auth session objects to the client.
+
+==============================================================
+17. CURRENT SESSION IDENTIFICATION
+==============================================================
+
+Account API must identify the current session using:
+
+    JWT session_id
+
+NOT:
+
+    device_id
+
+NOT:
+
+    browser name
+
+NOT:
+
+    device name
+
+Example:
+
+Phone Chrome:
+
+    session_id = abc
+
+Phone Brave:
+
+    session_id = def
+
+Laptop Brave:
+
+    session_id = ghi
+
+All three must be independently representable.
+
+==============================================================
+18. ACCOUNT PAGE MUST REFRESH SESSION DATA
+==============================================================
+
+Current UI appears to load sessions only once.
+
+Fix this.
+
+Use a lightweight reliable strategy.
+
+At minimum:
+
+- load on initial page load
+- refresh on window focus
+- refresh when document becomes visible
+- refresh after login-related navigation
+- refresh after revoke
+- refresh after sign-out-all
+
+Optional periodic refresh:
+
+    15–30 seconds
+
+Do not create aggressive polling.
+
+Do not reset the entire UI during refresh.
+
+Existing session cards should remain visible while new data is loading.
+
+Use:
+
+    AbortController
+
+or an equivalent guard to avoid stale concurrent requests.
+
+Prevent race conditions:
+
+Request A starts
+Request B starts later
+B finishes first
+A finishes later
+
+A must NOT overwrite newer B data.
+
+==============================================================
+19. REAL-TIME UPDATE EXPECTATION
+==============================================================
+
+"Real-time" here means practical session freshness.
+
+Do NOT add Supabase Realtime unless it is actually necessary.
+
+Prefer:
+
+- server fetch
+- focus/visibility refresh
+- post-action refresh
+- lightweight interval
+
+This is more reliable for the current architecture.
+
+If Supabase Realtime is already used elsewhere, evaluate it, but do not add unnecessary complexity.
+
+==============================================================
+20. STALE SESSION CLEANUP
+==============================================================
+
+The current production registry contains stale rows.
+
+Add a safe reconciliation strategy.
+
+A device_sessions row should be considered stale if:
+
+- revoked_at is set
+OR
+- its Supabase session no longer exists
+OR
+- it has exceeded a documented retention threshold
+
+Do NOT perform expensive:
+
+    SELECT auth.sessions
+
+for every normal request.
+
+Use the existing architecture and keep runtime efficient.
+
+For Account session listing, if practical, reconcile stale entries.
+
+Never show an obviously revoked/nonexistent session as active.
+
+Do not blindly delete historical rows if they are useful for audit.
+
+Prefer:
+
+    revoked_at
+
+for logical revocation.
+
+==============================================================
+21. SESSION HEARTBEAT
+==============================================================
+
+Current registry has:
+
+    last_seen_at
+
+Make sure it actually changes.
+
+Do not update DB on every request.
+
+Use the existing heartbeat interval/RPC design.
+
+Example:
+
+if last_seen_at < now - HEARTBEAT_INTERVAL:
+
+    update heartbeat
+
+otherwise:
+
+    no write
+
+The heartbeat must be based on:
+
+    supabase_session_id
+
+and must not resurrect revoked sessions.
+
+Add tests:
+
+1. first request creates row
+2. second request inside heartbeat interval does not create duplicate
+3. after heartbeat interval last_seen_at updates
+4. revoked session does not reappear
+5. new Supabase session creates new row
+6. two sessions on same device are independent
+
+==============================================================
+22. IMPORTANT SERVERLESS RELIABILITY
+==============================================================
+
+Mavero is deployed on Netlify.
+
+Do not rely on arbitrary fire-and-forget promises for critical session registry writes.
+
+If a background operation is intentionally non-critical, document why.
+
+For session registration, prefer awaited completion with a bounded timeout.
+
+Do not make authentication fail just because the auxiliary registry is temporarily unavailable.
+
+Desired failure model:
+
+Supabase authentication failure:
+    user is unauthenticated
+
+Mavero registry failure:
+    authentication may continue
+    registry is temporarily stale
+    error is safely logged
+
+But successful registry writes must actually be awaited/reliably completed.
+
+==============================================================
+23. REVOCATION CACHE
+==============================================================
+
+Audit:
+
+    session-revocation-cache.ts
+
+Ensure:
+
+- revoked sessions are rejected quickly
+- cache invalidates on revoke
+- cache invalidates on local sign-out
+- cache does not accidentally mark unrelated sessions revoked
+- revoked session cannot register again
+- DB lookup remains authoritative when cache expires
+
+Preserve the existing bounded cache design.
+
+Do not introduce an unbounded cache.
+
+==============================================================
+24. SUPABASE AUTH SESSION SEMANTICS
+==============================================================
+
+Do not confuse:
+
+    auth.users
+    auth.sessions
+    Mavero device_sessions
+
+They have different purposes.
+
+Supabase:
+
+    auth.sessions
+        = actual Supabase authentication sessions
+
+Mavero:
+
+    device_sessions
+        = application-level device/session registry and revocation metadata
+
+They must correlate through:
+
+    user_id
+    supabase_session_id
+
+Do not treat device_sessions as the authentication source.
+
+Supabase remains the authentication authority.
+
+Mavero registry is an application-level session management layer.
+
+==============================================================
+25. QR BIG-SCREEN LOGIN STATE
+==============================================================
+
+Audit /tv-login completely.
+
+Verify:
+
+- QR generation succeeds
+- QR has correct dimensions
+- pairing request is created server-side
+- expiry is displayed
+- polling stops after success
+- polling stops after expiry
+- polling stops after cancellation/navigation
+- polling does not leak timers
+- consumed pairing cannot be reused
+- approval creates independent session
+- browser transitions into authenticated state
+- Account/Discover state refreshes correctly
+- no stale "waiting" UI after successful login
+
+Add clear states:
+
+    Waiting for scan
+
+    Scan with your phone/tablet
+
+    Approve login on your phone
+
+    Signing you in…
+
+    Logged in
+
+    QR expired
+
+    Retry
+
+Do not expose internal errors or secrets.
+
+==============================================================
+26. QR SCANNER DEVICE
+==============================================================
+
+Phone/tablet QR scanner should:
+
+- require authenticated user
+- request camera permission appropriately
+- scan pairing QR
+- validate the QR payload format
+- call the existing secure approval endpoint
+- show confirmation before approving if the existing UX supports it
+- prevent duplicate scans
+- stop camera after successful scan
+- stop camera on page destroy
+- handle permission denial gracefully
+
+Desktop/TV should not need the scanner.
+
+==============================================================
+27. LOGIN PAGE DEVICE-AWARE UX
+==============================================================
+
+Expected final behaviour:
+
+PHONE:
+    Email/password login
+    No "Login with QR" display button
+
+TABLET:
+    Email/password login
+    No "Login with QR" display button
+
+DESKTOP:
+    Email/password login
+    Login with QR
+
+TV:
+    Email/password login
+    Login with QR
+
+This does NOT mean desktop/TV cannot use password login.
+Both methods remain available.
+
+==============================================================
+28. ACCOUNT PAGE DEVICE-AWARE UX
+==============================================================
+
+Expected:
+
+PHONE:
+    Devices & Sessions
+    Login on Big Screen
+    session list
+
+TABLET:
+    Devices & Sessions
+    Login on Big Screen
+    session list
+
+DESKTOP:
+    Devices & Sessions
+    NO Login on Big Screen button
+    session list
+
+TV:
+    Devices & Sessions
+    NO Login on Big Screen button
+    session list
+
+==============================================================
+29. DATE/TIME DISPLAY
+==============================================================
+
+Current UI shows:
+
+    23/09/2026
+
+even after new logins.
+
+Fix the underlying timestamps first.
+
+Then format timestamps consistently.
+
+Show useful information such as:
+
+    Active now
+
+    Last active 2 min ago
+
+or:
+
+    25 Sep 2026, 7:32 PM
+
+Use a consistent timezone strategy.
+
+Do not change timestamps client-side in a way that hides the actual stored UTC value.
+
+==============================================================
+30. DEVICE SESSION LABELS
+==============================================================
+
+Do not hardcode:
+
+    Android • Chrome
+
+for all sessions.
+
+Use actual parsed metadata.
+
+Examples:
+
+    Android • Chrome
+    Android • Brave
+    Windows • Brave
+    Windows • Chrome
+    macOS • Safari
+
+If the current session is identified:
+
+    This device
+
+can be shown as a secondary label.
+
+Example:
+
+    Windows • Brave
+    This device
+    Active now
+
+==============================================================
+31. DUPLICATE ROW POLICY
+==============================================================
+
+Do not deduplicate sessions merely because:
+
+    same device_id
+
+or:
+
+    same browser
+
+or:
+
+    same device name
+
+Two independent Supabase session IDs must remain distinct.
+
+Only deduplicate an identical session_id.
+
+The DB should ideally enforce uniqueness:
+
+    (user_id, supabase_session_id)
+
+Verify the existing migration/schema.
+
+==============================================================
+32. SECURITY REQUIREMENTS
+==============================================================
+
+Preserve all existing:
+
+- RLS
+- service-role isolation
+- server-only admin operations
+- auth checks
+- pairing expiry
+- one-time claims
+- session revocation
+- no-token-in-QR design
+- no credential leakage
+- no access token logging
+- no refresh token logging
+
+Never log:
+
+- access token
+- refresh token
+- JWT
+- password
+- QR secret
+- pairing token
+- session cookies
+
+Safe logs may include:
+
+    requestId
+    user ID only if existing safe logging policy permits
+    session ID hash/truncated identifier if necessary
+    device type
+    operation name
+    error class
+
+Prefer not logging raw session IDs.
+
+==============================================================
+33. DATABASE AUDIT
+==============================================================
+
+Inspect all relevant migrations.
+
+Verify:
+
+device_sessions columns
+constraints
+indexes
+RLS
+RPCs
+revocation logic
+pairing_requests
+expiration
+consumed state
+unique constraints
+
+Verify:
+
+register_device_session()
+
+cannot resurrect revoked sessions.
+
+Verify:
+
+claim_device_pairing()
+
+cannot:
+
+- reuse consumed pairing
+- use expired pairing
+- authorize unauthenticated user
+- create multiple big-screen sessions from one consumed pairing
+
+Do not modify migrations blindly.
+
+If a migration is required, create a new forward migration.
+
+Never edit an already-applied production migration.
+
+==============================================================
+34. TEST PLAN
+==============================================================
+
+Add/update tests for ALL of the following.
+
+A. Device registration
+
+1. First password login creates session row.
+2. Second login in another browser creates another row.
+3. Phone Chrome and phone Brave create separate sessions.
+4. Laptop Brave creates separate session.
+5. Same browser logout/login creates a new session_id row.
+6. Old revoked session never resurrects.
+7. last_seen_at updates after heartbeat.
+8. no duplicate rows for same session_id.
+
+B. Metadata
+
+9. Android Chrome.
+10. Android Brave.
+11. iPhone Safari.
+12. iPad Safari.
+13. Windows Chrome.
+14. Windows Brave.
+15. macOS Safari.
+16. unknown UA.
+
+C. Logout
+
+17. local sign-out revokes current session only.
+18. other sessions remain authenticated.
+19. local sign-out clears current auth cookies.
+20. registry row is revoked.
+21. revocation cache invalidates.
+
+D. Revoke
+
+22. selected session revoked.
+23. other sessions unaffected.
+24. revoked session rejected by hooks.
+25. revoked session cannot re-register.
+
+E. Sign out all
+
+26. exact intended semantics tested.
+27. affected sessions revoked.
+28. unaffected session behaviour matches UI wording.
+
+F. Account UI
+
+29. sessions render from server data.
+30. current session is correctly identified.
+31. newly logged-in browser appears.
+32. logout removes session.
+33. revoke removes/updates session.
+34. focus refresh works.
+35. visibility refresh works.
+36. no stale response overwrites newer response.
+
+G. Big-screen QR
+
+37. desktop sees Login with QR.
+38. TV sees Login with QR.
+39. phone does not see QR-display CTA.
+40. tablet does not see QR-display CTA.
+41. phone account shows Login on Big Screen.
+42. tablet account shows Login on Big Screen.
+43. desktop account hides Login on Big Screen.
+44. TV account hides Login on Big Screen.
+45. QR expires correctly.
+46. consumed QR cannot be reused.
+47. successful QR login creates independent Supabase session.
+48. phone remains authenticated.
+49. big screen remains authenticated after phone local logout.
+50. revoking big screen does not revoke phone.
+
+==============================================================
+35. REGRESSION TESTS
+==============================================================
+
+Do not break existing:
+
+- password login
+- signup
+- forgot password
+- auth callback
+- guest browsing
+- Discover
+- playback
+- resume
+- My List
+- Continue Watching
+- Account
+- account deletion
+- adult safety
+- downloader
+- device pairing
+- TV login
+- QR security
+- session revocation
+
+Run:
+
+    pnpm check
+
+    pnpm test
+
+    pnpm build
+
+Also specifically run all device-auth/session/QR tests.
+
+==============================================================
+36. DO NOT MASK FAILURES
+==============================================================
+
+Do NOT make tests pass by:
+
+- changing expected behaviour to match broken implementation
+- disabling tests
+- weakening assertions
+- removing tests
+- mocking away actual session creation
+- hardcoding device rows
+- inserting fake session records
+- using localStorage as the source of truth
+- hiding session cards
+
+Tests must verify actual behaviour.
+
+==============================================================
+37. IMPORTANT — NO HARDCODED SESSION DATA
+==============================================================
+
+Absolutely no implementation like:
+
+    deviceName = "Android • Chrome"
+
+unless it is genuinely derived from the User-Agent.
+
+No:
+
+    created_at = current date
+
+No:
+
+    last_seen_at = current date
+
+No:
+
+    fake device if registry missing
+
+No:
+
+    fallback to previous session row
+
+If registration fails, show no fake session.
+Log the failure safely and allow authentication to continue.
+
+==============================================================
+38. IMPLEMENTATION STYLE
+==============================================================
+
+Prefer small reusable helpers.
+
+Avoid duplicating session logic across:
+
+- hooks
+- sign-in
+- account
+- sign-out
+- QR routes
+
+Centralize where appropriate:
+
+    getCurrentAuthenticatedSession()
+    getCurrentSessionId()
+    ensureDeviceId()
+    register/heartbeat session
+    revoke session
+    list sessions
+
+Do not create circular imports.
+
+Keep server-only modules server-only.
+
+Do not import service-role logic into client bundles.
+
+==============================================================
+39. PERFORMANCE
+==============================================================
+
+Do not make every request expensive.
+
+Session registry must use:
+
+- heartbeat interval
+- bounded cache
+- existing RPC
+- indexed queries
+
+Account session listing should be one efficient query.
+
+Do not query all auth.sessions on every request.
+
+Do not introduce N+1 queries.
+
+==============================================================
+40. OBSERVABILITY
+==============================================================
+
+Add safe diagnostics around:
+
+session registration
+session heartbeat
+session revocation
+QR pairing creation
+QR approval
+QR claim
+session listing failures
+
+Example:
+
+    [DeviceSessions] register success
+    [DeviceSessions] heartbeat skipped
+    [DeviceSessions] revoke success
+    [QRAuth] pairing created
+    [QRAuth] pairing approved
+
+Never log secrets.
+
+Use existing requestId conventions.
+
+==============================================================
+41. FINAL MANUAL TEST MATRIX
+==============================================================
+
+After implementation, manually verify this exact scenario.
+
+START:
+
+No active Mavero device sessions.
+
+TEST 1:
+Phone Chrome → password login.
+
+Expected:
+    device_sessions = 1
+    Android • Chrome
+    current session correct
+
+TEST 2:
+Phone Brave → password login.
+
+Expected:
+    device_sessions = 2
+    Android • Chrome
+    Android • Brave
+
+TEST 3:
+Laptop Brave → password login.
+
+Expected:
+    device_sessions = 3
+    laptop appears with Windows/macOS + Brave
+
+TEST 4:
+Phone Chrome → logout.
+
+Expected:
+    Chrome session revoked
+    Brave phone remains
+    laptop remains
+
+TEST 5:
+Phone Chrome → login again.
+
+Expected:
+    new Supabase session_id
+    new/updated registry row
+    fresh timestamp
+    no resurrection of revoked session
+
+TEST 6:
+Laptop → Account.
+
+Expected:
+    NO "Login on Big Screen" button.
+
+TEST 7:
+Phone → Account.
+
+Expected:
+    "Login on Big Screen"
+
+TEST 8:
+Laptop → Sign-in page while logged out.
+
+Expected:
+    "Login with QR" visible.
+
+TEST 9:
+TV → Sign-in page.
+
+Expected:
+    "Login with QR" visible.
+
+TEST 10:
+Phone → Login on Big Screen.
+
+Expected:
+    scanner opens.
+
+TEST 11:
+TV/laptop → Login with QR.
+
+Expected:
+    QR displayed.
+
+TEST 12:
+Phone scans TV QR.
+
+Expected:
+    secure approval flow.
+
+TEST 13:
+TV completes login.
+
+Expected:
+    TV gets independent Supabase session.
+
+TEST 14:
+Phone logs out.
+
+Expected:
+    TV remains logged in.
+
+TEST 15:
+Phone Account → Revoke TV session.
+
+Expected:
+    TV becomes unauthenticated on its next protected request.
+    Phone remains authenticated.
+
+TEST 16:
+Phone → Sign out all other devices.
+
+Expected:
+    all other sessions revoked.
+    behaviour exactly matches button wording.
+
+==============================================================
+42. FINAL ACCEPTANCE CRITERIA
+==============================================================
+
+The task is NOT complete until all are true:
+
+[ ] Every successful Supabase login reliably appears in device_sessions.
+
+[ ] Different browsers/devices produce separate session rows.
+
+[ ] Same browser logout/login produces a new session identity.
+
+[ ] Revoked sessions never resurrect.
+
+[ ] last_seen_at actually updates.
+
+[ ] Device metadata is real, not hardcoded.
+
+[ ] Desktop sign-in has Login with QR.
+
+[ ] TV sign-in has Login with QR.
+
+[ ] Phone/tablet sign-in does not show QR-display CTA.
+
+[ ] Phone/tablet Account has Login on Big Screen.
+
+[ ] Desktop/TV Account does not have Login on Big Screen.
+
+[ ] QR login creates an independent Supabase session.
+
+[ ] Phone logout does not kill the big-screen session.
+
+[ ] Big-screen revoke does not kill phone session.
+
+[ ] Normal logout is local to the current session.
+
+[ ] Sign-out-all semantics match UI wording.
+
+[ ] Account session list refreshes correctly.
+
+[ ] No stale 23/09/2026-style registry entry remains active when
+    the corresponding session no longer exists.
+
+[ ] No fake/hardcoded session rows.
+
+[ ] No auth tokens/secrets are exposed to client.
+
+[ ] No auth tokens/secrets are logged.
+
+[ ] Existing QR security hardening remains intact.
+
+[ ] pnpm check passes.
+
+[ ] pnpm test passes.
+
+[ ] pnpm build passes.
+
+[ ] All relevant device/session/QR tests pass.
+
+==============================================================
+43. FINAL REPORT REQUIRED
+==============================================================
+
+After implementation, provide a concise but technically detailed report containing:
+
+1. Root causes found.
+2. Files changed.
+3. Database/migration changes.
+4. Session lifecycle changes.
+5. QR flow changes.
+6. Device-specific UI changes.
+7. Logout/revoke semantics.
+8. Tests added/updated.
+9. Exact verification commands and results.
+10. Commit SHA.
+11. Any remaining known limitation.
+
+IMPORTANT:
+
+Do NOT claim completion unless:
+    pnpm check
+    pnpm test
+    pnpm build
+
+actually pass.
+
+Do NOT merely say "looks good".
+
+Provide actual command results.
+
+==============================================================
+END OF TASK
+==============================================================
