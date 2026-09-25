@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import { AlertTriangle, ChevronRight, Download, LoaderCircle, Play } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
+  import { markEpisodeAsResumeTarget } from '$lib/client/progress/service';
 
   type Episode = { id: string; number: number; season: number; title: string; overview?: string; airDate?: string; runtime?: string; still?: string };
   type Season = { number: number; title: string; episodeCount: number; episodes?: Episode[] };
@@ -22,6 +24,10 @@
   // The callback is optional so existing callers that don't supply it
   // (e.g. tests) keep working unchanged.
   export let onDownload: ((season: number, episode: number) => void) | undefined = undefined;
+  // P3+P4: optional content snapshot for the parent's content item,
+  // used by markEpisodeAsResumeTarget to create a zero-progress stub
+  // when the episode has no existing progress record.
+  export let contentSnapshot: { title: string; poster: string; backdrop?: string; year?: number; runtime?: string; rating?: number; genres?: string[]; description?: string } | undefined = undefined;
   let selectedSeason = 1;
   let season: Season | undefined;
   let loading = true;
@@ -100,9 +106,31 @@
             <p>{episode.overview || 'Episode details are not available yet.'}</p>
           </div>
           <div class="ep-actions">
-            <a class="ep-play" href={appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo)} aria-label={`Watch ${episode.title}`}>
+            <button
+              type="button"
+              class="ep-play"
+              aria-label={`Watch ${episode.title}`}
+              onclick={async (e) => {
+                // P3+P4: persist the episode as the latest resume target
+                // BEFORE navigation. This prevents the episode selection
+                // from being lost if the component is destroyed during
+                // navigation. Local IndexedDB write first; cloud sync
+                // happens asynchronously after.
+                e.preventDefault();
+                e.stopPropagation();
+                if (contentSnapshot) {
+                  try {
+                    await markEpisodeAsResumeTarget(
+                      { contentType: watchType, contentId: id, season: selectedSeason, episode: episode.number },
+                      contentSnapshot,
+                    );
+                  } catch { /* local persistence failure is non-fatal — navigation still proceeds */ }
+                }
+                void goto(appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo));
+              }}
+            >
               <Play size={13} fill="currentColor" strokeWidth={0} />
-            </a>
+            </button>
             {#if onDownload}
               <button
                 type="button"

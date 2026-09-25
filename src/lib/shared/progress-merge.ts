@@ -1,4 +1,5 @@
 import { favoriteKey, normalizeWatchlistStatus, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord, type SourceRuntimeEntry } from '$lib/client/progress/types';
+import { getLatestResumeTarget } from '$lib/client/progress/presenter';
 
 // Phase 9: merge sourceRuntimes from both sides. For each source ID, prefer
 // the entry with the newer updatedAt. This preserves runtimes from both
@@ -65,7 +66,16 @@ export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[],
 export function mergeFavoritesWithProgress(favorites: FavoriteRecord[], progress: WatchProgressRecord[], deletions: FavoriteDeletionRecord[] = []) {
   const merged = new Map(mergeFavorites(favorites, [], deletions).map((record) => [record.key, { ...record, status: normalizeWatchlistStatus(record.status) }]));
   for (const record of progress) {
-    if (record.completionState === 'completed' || record.currentTime <= 0) continue;
+    if (record.completionState === 'completed') continue;
+    // P16 fix: do NOT skip zero-progress series records — a user can
+    // manually select an episode (creating a progress record with
+    // currentTime=0) and that should still promote the favorite to
+    // "watching" status. For movies, currentTime=0 means nothing
+    // was actually watched — skip those.
+    const isSeriesLike = record.contentType === 'series' || record.contentType === 'anime';
+    if (!isSeriesLike && record.currentTime <= 0) continue;
+    // For series: require valid season+episode OR currentTime > 0
+    if (isSeriesLike && record.currentTime <= 0 && (record.season === undefined || record.episode === undefined)) continue;
     const key = favoriteKey(record.contentType, record.contentId);
     if (deletions.some((deletion) => deletion.key === key)) continue;
     const existing = merged.get(key);
@@ -87,20 +97,68 @@ export function mergeFavoritesWithProgress(favorites: FavoriteRecord[], progress
 }
 
 export function continueWatchingRecords(progress: WatchProgressRecord[], favorites: FavoriteRecord[]) {
-  const activeProgress = progress.filter((record) => record.completionState !== 'completed' && record.currentTime > 0);
-  const progressKeys = new Set(activeProgress.map((record) => favoriteKey(record.contentType, record.contentId)));
-  const manualWatching = favorites
-    .filter((record) => normalizeWatchlistStatus(record.status) === 'watching' && !progressKeys.has(record.key))
-    .map((record) => ({
-      key: `${record.key}:watching`,
-      contentType: record.contentType,
-      contentId: record.contentId,
+  // P6+P7: ONE Continue Watching entry per title.
+  // For series/anime: use getLatestResumeTarget() to find the latest
+  // episode (even with currentTime=0). For movies: require currentTime > 0.
+  // The old code filtered currentTime > 0 and created synthetic
+  // manualWatching records WITHOUT season/episode — losing episode context.
+  const byTitle = new Map<string, WatchProgressRecord>();
+  // Group all progress records by content title and pick the latest resume target.
+  const titlesInProgress = new Set<string>();
+  for (const record of progress) {
+    if (record.completionState === 'completed') continue;
+    const titleKey = favoriteKey(record.contentType, record.contentId);
+    titlesInProgress.add(titleKey);
+    const existing = byTitle.get(titleKey);
+    if (!existing) {
+      byTitle.set(titleKey, record);
+    } else {
+      // Pick the newer one (or the one with higher currentTime on tie).
+      const existingTime = Math.max(existing.updatedAt, existing.lastWatchedAt);
+      const recordTime = Math.max(record.updatedAt, record.lastWatchedAt);
+      if (recordTime > existingTime || (recordTime === existingTime && record.currentTime > existing.currentTime)) {
+        byTitle.set(titleKey, record);
+      }
+    }
+  }
+  // For each title, use getLatestResumeTarget to ensure the correct episode.
+  const result: WatchProgressRecord[] = [];
+  for (const [titleKey, _] of byTitle) {
+    // Parse contentType + contentId from the title key.
+    const [contentType, contentId] = titleKey.split(':');
+    if (!contentType || !contentId) continue;
+    const target = getLatestResumeTarget(contentType as WatchProgressRecord['contentType'], contentId, progress);
+    if (target) {
+      result.push(target);
+    } else {
+      // Fallback: use the record from byTitle (could be a movie with currentTime>0
+      // or a series record that didn't match getLatestResumeTarget's filter).
+      const fallback = byTitle.get(titleKey);
+      if (fallback && fallback.currentTime > 0) result.push(fallback);
+    }
+  }
+  // Also include manual "watching" favorites that have NO progress records at all
+  // (series the user added to My List as "watching" but never started).
+  const progressKeys = new Set(result.map((r) => favoriteKey(r.contentType, r.contentId)));
+  for (const fav of favorites) {
+    if (normalizeWatchlistStatus(fav.status) !== 'watching') continue;
+    const key = favoriteKey(fav.contentType, fav.contentId);
+    if (progressKeys.has(key)) continue;
+    // Synthetic record for "watching" with no progress — S1E1 for series.
+    result.push({
+      key: `${key}:watching`,
+      contentType: fav.contentType,
+      contentId: fav.contentId,
+      season: fav.contentType !== 'movie' ? 1 : undefined,
+      episode: fav.contentType !== 'movie' ? 1 : undefined,
       currentTime: 0,
       duration: 0,
       completionState: 'in_progress' as const,
-      snapshot: record.snapshot,
-      lastWatchedAt: record.updatedAt,
-      updatedAt: record.updatedAt,
-    }));
-  return [...activeProgress, ...manualWatching].sort((a, b) => b.lastWatchedAt - a.lastWatchedAt);
+      snapshot: fav.snapshot,
+      lastWatchedAt: fav.updatedAt,
+      updatedAt: fav.updatedAt,
+    });
+    progressKeys.add(key);
+  }
+  return result.sort((a, b) => Math.max(b.updatedAt, b.lastWatchedAt) - Math.max(a.updatedAt, a.lastWatchedAt));
 }

@@ -11,7 +11,7 @@
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
   import { getFavoriteStatus, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
   import type { WatchlistStatus } from '$lib/client/progress/types';
-  import { latestResumeEpisode } from '$lib/client/progress/presenter';
+  import { latestResumeEpisode, getLatestResumeTarget } from '$lib/client/progress/presenter';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { appendReturnTo } from '$lib/shared/navigation';
   import { haptic } from '$lib/client/haptics';
@@ -90,13 +90,22 @@
       const status = await getFavoriteStatus(type, item.id);
       const progress = await getLocalProgressRecords();
       if (!active) return;
-      const activeProgress = progress.some((record) => record.contentType === type && record.contentId === item.id && record.completionState !== 'completed' && record.currentTime > 0);
-      hasActiveProgress = activeProgress;
+      // P5: For series, the resume target doesn't require currentTime > 0.
+      // A user can click S2E3 and leave immediately — S2E3 is still the
+      // resume target. For movies, we still require currentTime > 0
+      // (a zero-progress movie record means nothing was actually watched).
+      const isSeriesLike = type === 'series' || (item.isAnime && item.animeFormat !== 'movie');
+      if (isSeriesLike) {
+        const target = getLatestResumeTarget(type, item.id, progress);
+        hasActiveProgress = !!target;
+        resumeEpisode = target ? { season: target.season!, episode: target.episode! } : undefined;
+      } else {
+        // Movie: require actual playback time > 0
+        hasActiveProgress = progress.some((record) => record.contentType === type && record.contentId === item.id && record.completionState !== 'completed' && record.currentTime > 0);
+        resumeEpisode = undefined;
+      }
       const effectiveStatus = status ?? (hasActiveProgress ? 'watching' : null);
       watchlistStatus = effectiveStatus;
-      if (type !== 'movie' && hasActiveProgress) {
-        resumeEpisode = latestResumeEpisode(type, item.id, progress);
-      }
     };
     void loadProgressState();
     // P0: Cloud convergence — for authenticated users, cloud sync may
@@ -638,6 +647,7 @@
         seasonCount={item.seasons ?? 1}
         watchType={type === 'anime' ? 'anime' : 'series'}
         onDownload={openEpisodeDownloadSheet}
+        contentSnapshot={{ title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: typeof item.runtime === 'string' ? item.runtime : String(item.runtime), rating: item.rating, genres: item.genres, description: item.description }}
       />
     {/if}
 
@@ -1147,7 +1157,7 @@
       padding-top: clamp(56px, 12vh, 100px);
     }
     .hero-composition { gap: 18px; }
-    .poster-wrap { margin-top: clamp(-78px, -22vw, -50px); }
+    .poster-wrap { margin-top: 150px; }
     .poster-img { width: clamp(120px, 36vw, 142px); border-radius: 10px; }
     .detail-title { font-size: clamp(1.5rem, 6.4vw, 2rem); }
     .meta-row { font-size: .7rem; gap: 6px; }

@@ -292,9 +292,21 @@
   // sourceOptions[0] to be selected instead of the admin default or saved source.
   // Now we gate on progressReady so the saved/default source is known first.
   $: if (browser && progressReady && !selectedSourceId && sourceOptions.length) {
-    const savedValid = savedSourceId && sourceOptions.some((s) => s.id === savedSourceId);
-    const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
-    selectedSourceId = savedValid ? savedSourceId! : (defaultValid ? defaultSourceId! : sourceOptions[0].id);
+    // P9+P10: For SERIES/ANIME, ALWAYS use the content-type default source
+    // (e.g. VidZee for series). Do NOT use savedSourceId for series —
+    // the series default provider must always win on resume.
+    // For MOVIES, preserve the saved-source resume behavior (saved → default → fallback).
+    const isSeriesLike = contentType === 'series' || contentType === 'anime';
+    if (isSeriesLike) {
+      // Series: always use the configured series default (VidZee/etc.)
+      const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
+      selectedSourceId = defaultValid ? defaultSourceId! : sourceOptions[0].id;
+    } else {
+      // Movie: saved source → admin default → fallback
+      const savedValid = savedSourceId && sourceOptions.some((s) => s.id === savedSourceId);
+      const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
+      selectedSourceId = savedValid ? savedSourceId! : (defaultValid ? defaultSourceId! : sourceOptions[0].id);
+    }
   }
   $: if (browser && progressReady && selectedSourceId && resolutionState === 'idle') void prepareSource();
 
@@ -482,17 +494,11 @@
       maveroSession = null;
       maveroAddonStatuses = [];
       const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
-      // BUG #3 fix: only forward defaultSourceId when allowFallback is true
-      // AND the requested sourceId is NOT a saved-source resume (i.e., the
-      // user explicitly selected this source OR it's the admin default for
-      // first play). When the user has a savedSourceId that differs from
-      // defaultSourceId, forwarding defaultSourceId causes the resolver's
-      // default-first policy to try the admin default BEFORE the user's
-      // saved source — silently overriding the resume preference.
-      // Fix: when sourceId === savedSourceId AND sourceId !== defaultSourceId,
-      // omit defaultSourceId from the request so the resolver tries the
-      // saved source first (with fallback still enabled).
-      const isResumeWithSavedSource = sourceId === savedSourceId && savedSourceId !== defaultSourceId;
+      // P9: For SERIES/ANIME, ALWAYS forward the content-type default
+      // source (e.g. VidZee) — the series default must always win.
+      // For MOVIES, preserve the saved-source resume protection from BUG #3.
+      const isSeriesLike = contentType === 'series' || contentType === 'anime';
+      const isResumeWithSavedSource = !isSeriesLike && sourceId === savedSourceId && savedSourceId !== defaultSourceId;
       if (allowFallback && defaultSourceId && !isResumeWithSavedSource) {
         request.defaultSourceId = defaultSourceId;
       }
@@ -711,6 +717,20 @@
   async function handleEpisodeChange(target: PlayerEpisodeTarget) {
     season = target.season;
     episode = target.episode;
+    // P11: reset selectedSourceId, savedSourceId, and resume state on
+    // episode change. The previous episode's selected source must NOT
+    // silently carry into the new episode. For series, the content-type
+    // default (e.g. VidZee) will be re-selected by the reactive block
+    // above. For movies, the existing source rules remain unchanged
+    // (movies don't have episode changes).
+    selectedSourceId = '';
+    savedSourceId = '';
+    resumeApplied = false;
+    currentPlaybackTime = 0;
+    resumeTime = 0;
+    duration = 0;
+    resolutionState = 'idle';
+    resolvedSource = null;
     const params = new URLSearchParams(page.url.searchParams);
     params.set('season', String(target.season));
     params.set('episode', String(target.episode));

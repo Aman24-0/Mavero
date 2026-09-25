@@ -34,6 +34,57 @@ export async function saveProgress(input: SaveProgressInput): Promise<WatchProgr
   return putProgress(record);
 }
 
+/**
+ * P3: Marks an episode as the latest resume target by upserting a
+ * progress record with the correct season/episode + updatedAt=now.
+ *
+ * If the episode already has a progress record: preserves currentTime,
+ * duration, sourceRuntimes, completionState, snapshot — only updates
+ * updatedAt/lastWatchedAt to make it the latest.
+ *
+ * If the episode has NO progress record: creates a new in_progress
+ * record with currentTime=0, duration=0.
+ *
+ * Does NOT delete the old episode's progress record. The old episode
+ * remains stored for future manual resume.
+ *
+ * Used by SeasonEpisodes before navigating to the watch route, so the
+ * episode selection is persisted BEFORE the component is destroyed.
+ */
+export async function markEpisodeAsResumeTarget(
+  context: PlaybackContext,
+  snapshot: ContentSnapshot,
+  now: number = Date.now(),
+): Promise<void> {
+  const existing = await getProgress(context);
+  if (existing) {
+    // Episode already has a record — just bump updatedAt/lastWatchedAt
+    // to make it the latest resume target. Preserve all other fields.
+    const updated: WatchProgressRecord = {
+      ...existing,
+      lastWatchedAt: now,
+      updatedAt: now,
+    };
+    await putProgress(updated);
+  } else {
+    // No record for this episode — create a zero-progress stub.
+    const record: WatchProgressRecord = {
+      key: progressKey(context),
+      contentType: context.contentType,
+      contentId: context.contentId,
+      season: context.season,
+      episode: context.episode,
+      currentTime: 0,
+      duration: 0,
+      completionState: 'in_progress',
+      snapshot,
+      lastWatchedAt: now,
+      updatedAt: now,
+    };
+    await putProgress(record);
+  }
+}
+
 export async function getResumeProgress(context: PlaybackContext) {
   const record = await getProgress(context);
   if (!record) return { record: undefined, resumeTime: 0 };
