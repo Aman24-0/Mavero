@@ -193,11 +193,20 @@ async function main() {
     ok(claimA.ok && claimA.rows[0].exchange_attempts === 1, 'claim reports exchange_attempts = 1');
     const aid = claimA.ok ? String(claimA.rows[0].id) : '';
 
-    const st = rows(await tryQ(`select status, exchange_attempts, exchange_code,
-      (exchange_lease_until > now()) as lease_active,
-      (exchange_lease_until < now() + interval '60 seconds') as lease_bounded,
-      (exchange_claimed_at is not null) as claimed
-      from public.device_pairing_requests where secret_hash = '${A64}'`));
+    const st = rows(await tryQ(`select
+  status,
+  exchange_attempts,
+  exchange_code,
+  exchange_lease_until,
+  now() as current_now,
+  extract(epoch from (exchange_lease_until - now())) as lease_delta_seconds,
+  (exchange_lease_until > now()) as lease_active,
+  (exchange_lease_until < now() + interval '60 seconds') as lease_bounded,
+  (exchange_claimed_at is not null) as claimed
+  from public.device_pairing_requests
+  where secret_hash = '${A64}'`));
+
+console.log('LEASE DEBUG:', st[0]);
     ok(st[0].status === 'exchanging' && st[0].exchange_attempts === 1 && st[0].exchange_code === 'cred-A',
       'row: approved → exchanging, attempts 1, credential KEPT');
     ok(st[0].lease_active === true && st[0].lease_bounded === true, 'lease is active and bounded (≈30s)');
