@@ -108,7 +108,7 @@ create or replace function public.claim_device_pairing(
   p_secret_hash text,
   p_lease_ms int default 30000,
   p_max_attempts int default 5,
-  p_now timestamptz default timezone('utc', now())
+  p_now timestamptz default now()
 )
 returns table(
   id uuid,
