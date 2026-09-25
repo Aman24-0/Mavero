@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
 
 /**
  * Mavero Embed Gateway — stateless encrypted token.
@@ -8,13 +8,33 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash, timingSafeEq
  *
  *   <iframe src="/api/embed/session/<encrypted-token>">
  *
- * The browser CANNOT decrypt the token — it requires the server-side
- * secret. The gateway endpoint decrypts it server-side, extracts the
- * provider URL, and returns an HTML page with a JavaScript redirect.
+ * SECURITY GUARANTEE (accurate):
+ *   - The iframe's INITIAL `src` attribute in the DOM is the Mavero
+ *     gateway URL — NOT the provider URL.
+ *   - The provider URL is encrypted in the token — the browser cannot
+ *     decrypt it without the server-side secret.
+ *   - The provider URL does NOT appear in the initial PlayerSource
+ *     payload sent to the client.
+ *   - The provider origin remains the real iframe origin after the
+ *     JavaScript redirect (the gateway returns an HTML page with
+ *     `<script>window.location.replace(providerUrl)</script>`).
+ *   - The provider URL MAY still be observable through browser
+ *     Network/Frames/runtime inspection after the JavaScript
+ *     navigation. This is a compatibility compromise.
  *
  * STATELESS — no in-memory store, no database writes. Works across
  * Netlify serverless function instances (each instance can decrypt
  * the token independently using the shared secret).
+ *
+ * TOKEN BINDING LIMITATION:
+ *   The payload includes content-binding fields (sourceId, providerId,
+ *   contentId, mediaType, season/episode) authenticated by AES-GCM.
+ *   These serve as authenticated metadata. The stateless gateway does
+ *   NOT actively verify these fields against the current request
+ *   (it has no way to know what content the user is watching). Active
+ *   user/session binding would require a server-side session store or
+ *   database, which conflicts with the stateless/serverless
+ *   requirement. The token is short-lived (4h TTL) and encrypted.
  *
  * SECURITY:
  *   * AES-256-GCM (authenticated encryption) — the ciphertext cannot
@@ -23,9 +43,10 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash, timingSafeEq
  *     (`mavero:embed-gateway:v1:...`) so the two token systems are
  *     cryptographically independent.
  *   * Short-lived: 4-hour TTL (covers a long movie + source switches).
- *   * The token payload includes content-binding fields (sourceId,
- *     providerId, contentId, mediaType, season/episode) so the gateway
- *     can verify the token is being used for the correct content.
+ *   * The gateway verifies HTTPS + origin match after decryption
+ *     (defense in depth).
+ *   * Only an allowlist of resume query parameters (startAt, t,
+ *     progress) may be forwarded — arbitrary parameters are dropped.
  *
  * ENV WIRING (repo convention — see adult-cookie.ts, session-tokens.ts):
  * this module NEVER imports `$env/dynamic/private`. The secret is an
@@ -34,7 +55,7 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash, timingSafeEq
  *
  * OPAQUE — the browser sees a base64url string. Even if someone
  * base64url-decodes it, they get raw ciphertext bytes (not JSON).
- * The provider URL is NOT client-readable.
+ * The provider URL is NOT client-readable from the token alone.
  */
 
 const ALGO = 'aes-256-gcm';
