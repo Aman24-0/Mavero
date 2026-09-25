@@ -29,7 +29,10 @@
  *      column yields a 400/PGRST204 error).
  *   2. `claim_device_pairing(text, int, int, timestamptz)` exists
  *      and executes as service_role — dry-call with an impossible
- *      secret hash; the expected result is an EMPTY array.
+ *      secret hash; the expected result is an EMPTY array. A 42702
+ *      (ambiguous column) error means the PL/pgSQL bodies still have
+ *      unqualified column references — apply
+ *      `20261004000000_device_rpc_ambiguous_column_fix.sql`.
  *   3. `complete_device_pairing(text, uuid, timestamptz)`,
  *      `release_device_pairing_exchange(text, uuid)` and
  *      `fail_device_pairing(text, uuid, timestamptz)` exist and
@@ -155,6 +158,15 @@ async function main(): Promise<number> {
       console.error('\n  ⚠ MIGRATION MISSING: apply supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
       console.error('    (it drops the old 2-arg claim_device_pairing and creates the lease-aware version + complete/release/fail RPCs)\n');
     }
+    if (claim.error?.code === '42702' || /ambiguous/i.test(claim.error?.message ?? '')) {
+      console.error('\n  ⚠ SQLSTATE 42702 (ambiguous column reference): the deployed PL/pgSQL bodies still');
+      console.error('    reference `id` / `exchange_code` / `exchange_attempts` unqualified — these collide');
+      console.error('    with the functions\' RETURNS TABLE OUT-parameter names and EVERY exchange attempt fails');
+      console.error('    with claim-rpc-failed (retryable). Apply:');
+      console.error('    supabase/migrations/20261004000000_device_rpc_ambiguous_column_fix.sql');
+      console.error('    (CREATE OR REPLACE with alias-qualified columns; also fixes the same defect in');
+      console.error('     complete/release/fail/register_device_session and the make_interval(ms=>) 42883 trap)\n');
+    }
 
     const complete = await rest<unknown[]>(
       `${base}/rest/v1/rpc/complete_device_pairing`,
@@ -205,9 +217,10 @@ async function main(): Promise<number> {
 
   console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'}: ${passed} passed, ${failed} failed`);
   if (failed > 0) {
-    console.error('\nProduction does NOT satisfy the application contract. Apply the missing migration(s):');
-    console.error('  - supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
-    console.error('  (and, if the table query failed, the earlier 20260927000000/20260928000000/20260929000000 device migrations)');
+    console.error('\nProduction does NOT satisfy the application contract. Apply the missing migration(s) in order:');
+    console.error('  - supabase/migrations/20261003000000_device_pairing_exchange_lease.sql  (lease state machine + the four RPCs)');
+    console.error('  - supabase/migrations/20261004000000_device_rpc_ambiguous_column_fix.sql  (42702 ambiguous-column fix — REQUIRED, the 20261003 bodies are non-executable)');
+    console.error('  (and, if the table query failed, the earlier 20260927000000/20260928000000/20260929000000/20260930000000 device migrations)');
     console.error('Procedure: docs/supabase-migration-runbook.md → "Device pairing migrations".');
   }
   return failed === 0 ? 0 : 1;

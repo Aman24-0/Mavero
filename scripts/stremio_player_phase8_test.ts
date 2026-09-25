@@ -184,7 +184,10 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // Phase 10 appended stremio_player_phase10_test.ts. The post-94ce1ef
   // production-regression repair (Big Screen QR) extended the tail of the
   // chain: registry v2 → big-screen QR UX → big_screen_qr_regression_test
-  // (the verifyOtp + lease-state-machine + manual-code suite).
+  // (the verifyOtp + lease-state-machine + manual-code suite). The
+  // 20261004 SQLSTATE-42702 hotfix appended the device-RPC database
+  // regression suites: ambiguity guard (static) → live embedded-PostgreSQL
+  // execution of the real migration chain.
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
@@ -192,7 +195,9 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
       testScript.indexOf('phase9_device_auth_regression_test.ts') < testScript.indexOf('device_session_registry_v2_test.ts') &&
       testScript.indexOf('device_session_registry_v2_test.ts') < testScript.indexOf('big_screen_qr_ux_test.ts') &&
       testScript.indexOf('big_screen_qr_ux_test.ts') < testScript.indexOf('big_screen_qr_regression_test.ts') &&
-      testScript.trimEnd().endsWith('big_screen_qr_regression_test.ts'),
+      testScript.indexOf('big_screen_qr_regression_test.ts') < testScript.indexOf('device_rpc_ambiguity_guard_test.ts') &&
+      testScript.indexOf('device_rpc_ambiguity_guard_test.ts') < testScript.indexOf('device_pairing_rpc_live_test.ts') &&
+      testScript.trimEnd().endsWith('device_pairing_rpc_live_test.ts'),
     'A: test chain runs phase 8 after phase 7 and ends with the device-auth repair suites (registry v2 → QR UX → QR regression)',
   );
 

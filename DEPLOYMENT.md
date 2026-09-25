@@ -120,6 +120,8 @@ The application exposes a health endpoint at `/api/health`:
 
 The big-screen QR login's session-establishment path requires the `claim_device_pairing` / `complete_device_pairing` / `release_device_pairing_exchange` / `fail_device_pairing` RPCs (migration `20261003000000_device_pairing_exchange_lease.sql`). A deployment that ships pairing code without the migration will fail QR login at the final step with 503 "Unable to establish a session." (server log: `[Pairing] claim-rpc-missing`).
 
+**REQUIRED on top of it: `20261004000000_device_rpc_ambiguous_column_fix.sql`.** The 20261003/20260930 PL/pgSQL bodies referenced `id` / `exchange_code` / `exchange_attempts` (and `user_id` / `supabase_session_id` / `revoked_at` in `register_device_session`) UNQUALIFIED — colliding with each function's `RETURNS TABLE` OUT-parameter names, so every call raised SQLSTATE `42702: column reference "id" is ambiguous` (the production `claim-rpc-failed`, retryable, 4/4-attempts incident). The hotfix replaces all five device RPCs via `CREATE OR REPLACE` with alias-qualified columns and identical signatures/defaults/security/grants. Without it, QR login fails at the same step with server log `[Pairing] claim-rpc-failed` (errorCode 42702).
+
 CI does not have production database access, so verification is a **documented post-deployment check**:
 
 ```bash

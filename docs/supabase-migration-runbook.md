@@ -17,8 +17,9 @@ Apply in this exact order (all idempotent):
 | 3 | `20260929000000_device_pairing_claim_rpc.sql` | Original `claim_device_pairing` RPC (superseded by #4, kept for migration history integrity — #4 drops and replaces its function). |
 | 4 | `20260930000000_register_device_session_rpc.sql` | `register_device_session` atomic RPC. |
 | 5 | `20261003000000_device_pairing_exchange_lease.sql` | **Exchange lease state machine**: extends the status set (`exchanging`, `failed`), adds lease + manual-handle columns, replaces `claim_device_pairing` with the lease-aware 4-arg version, and adds `complete_device_pairing`, `release_device_pairing_exchange`, `fail_device_pairing`. |
+| 6 | `20261004000000_device_rpc_ambiguous_column_fix.sql` | **SQLSTATE 42702 hotfix (REQUIRED)**: the 20261003/20260930 PL/pgSQL bodies referenced `id` / `exchange_code` / `exchange_attempts` / `user_id` / `supabase_session_id` / `revoked_at` UNQUALIFIED — these collide with the functions' `RETURNS TABLE` OUT-parameter names, so **every** RPC call raised `42702: column reference "id" is ambiguous` (the production `claim-rpc-failed` incident). Replaces all five device RPCs (`claim` / `complete` / `release` / `fail` / `register_device_session`) via `CREATE OR REPLACE` with alias-qualified columns (`dpr.` / `ds.`), and fixes the masked `make_interval(ms => …)` → 42883 trap in the claim lease UPDATE. Function-only: identical signatures, defaults, `SECURITY DEFINER`, `search_path`, state machine, lease semantics, attempt caps, one-time credentials, race-safety and grants. |
 
-**NEVER edit an already-applied migration.** #5 explicitly `DROP`s the 2-argument `claim_device_pairing(text, timestamptz)` from #3 and recreates it with a different signature — that is the sanctioned forward-migration path (the alternative, `CREATE OR REPLACE` with different args, would silently create a function overload and make PostgREST calls ambiguous).
+**NEVER edit an already-applied migration.** Forward-fixing a deployed function goes through a NEW migration: use `DROP` + recreate when the signature CHANGES (#5 drops the 2-argument `claim_device_pairing(text, timestamptz)` from #3 — `CREATE OR REPLACE` with different args would silently create an overload and make PostgREST calls ambiguous), and `CREATE OR REPLACE` when the signature is IDENTICAL (#6 replaces the five device RPC bodies in place — same pg_proc entry, ACLs preserved, grants re-asserted).
 
 ### Post-deployment verification (REQUIRED)
 
@@ -32,8 +33,21 @@ PUBLIC_SUPABASE_URL=<url> PRIVATE_SUPABASE_SERVICE_ROLE_KEY=<key> \
 The script performs **side-effect-free** dry-calls (impossible secret hashes / zero UUIDs) and verifies:
 
 1. `device_pairing_requests` has the `exchange_lease_until`, `exchange_claimed_at`, `exchange_attempts`, `manual_handle_hash`, `manual_handle_user_id`, `manual_handle_expires_at` columns.
-2. `claim_device_pairing`, `complete_device_pairing`, `release_device_pairing_exchange`, `fail_device_pairing` all exist, execute as `service_role`, and return the expected shape.
+2. `claim_device_pairing`, `complete_device_pairing`, `release_device_pairing_exchange`, `fail_device_pairing` all exist, execute as `service_role`, and return the expected shape (0 rows for impossible inputs — NOT a SQLSTATE 42702 ambiguous-column error, which names migration #6 as the fix).
 3. The old 2-arg `claim_device_pairing` overload is gone.
+
+`register_device_session` is NOT dry-called by the script (a missing row triggers a real INSERT). Verify it with a rolled-back transaction in the SQL Editor instead — expect 1 row with `registered = true` and **no 42702**:
+
+```sql
+begin;
+select * from public.register_device_session(
+  '00000000-0000-0000-0000-0000000000aa'::uuid,
+  '00000000-0000-0000-0000-0000000000bb'::uuid,
+  'verify', 'verify', 'verify-script', null, null, null, null);
+rollback;
+```
+
+The whole migration chain + RPC behavior is also verified automatically in CI by `pnpm test` (`scripts/device_rpc_ambiguity_guard_test.ts` + `scripts/device_pairing_rpc_live_test.ts` — the latter applies the real migration files to an embedded PostgreSQL and asserts the exact production 42702 is reproduced pre-fix and absent post-fix).
 
 Exit code 0 = production satisfies the application contract. Exit 1 names the exact migration to apply. The runtime safety net: even if this check is skipped, the exchange endpoint detects the missing RPC (PostgREST `PGRST202`) and logs `claim-rpc-missing` with the request ID — grep Netlify function logs for `[Pairing] claim-rpc-missing` if QR login ever fails this way.
 
@@ -50,6 +64,17 @@ where n.nspname = 'public'
 ```
 
 Expected: `claim_device_pairing(p_secret_hash text, p_lease_ms integer, p_max_attempts integer, p_now timestamp with time zone)`, `complete_device_pairing(p_secret_hash text, p_pairing_id uuid, p_now timestamp with time zone)`, `release_device_pairing_exchange(p_secret_hash text, p_pairing_id uuid)`, `fail_device_pairing(p_secret_hash text, p_pairing_id uuid, p_now timestamp with time zone)` — and NO `claim_device_pairing(text, timestamptz)` row.
+
+Post-fix smoke probe (after migration #6 — side-effect-free, expect **0 rows and no error**):
+
+```sql
+select * from public.claim_device_pairing(repeat('0', 64), 30000, 5);
+select * from public.complete_device_pairing(repeat('0', 64), '00000000-0000-0000-0000-000000000000');
+select * from public.release_device_pairing_exchange(repeat('0', 64), '00000000-0000-0000-0000-000000000000');
+select * from public.fail_device_pairing(repeat('0', 64), '00000000-0000-0000-0000-000000000000');
+```
+
+A `42702: column reference "id" is ambiguous` from any of these means migration #6 is not applied yet.
 
 ---
 
