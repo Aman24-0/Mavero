@@ -26,6 +26,7 @@
   } from '$lib/shared/stream-actions';
   import { linkTypeLabel, linkTypeCategory, type DownloadLinkType } from '$lib/shared/download-link-types';
   import { selectPresentationWindow, showMoreBatch, type PresentableStream } from '$lib/shared/presentation-window';
+  import { isPixeldrainUrl } from '$lib/shared/external-player';
   import type { AudioClass } from '$lib/shared/stream-selection';
 
   /**
@@ -142,7 +143,9 @@
   $: activeChips = activeFilterChips(filters);
   $: anyFiltersActive = hasActiveFilters(filters);
 
-  // Phase E V2: Info sheet + Filters sheet (stream-first IA).
+  // Phase F #3: Pixeldrain Download info state — tracks which stream's
+  // Info button was clicked, so the inline message can be shown/hidden.
+  let pixeldrainInfoKey = '';
   // The previous Size SelectionSheet was REMOVED in Phase E final — the
   // grouped DownloaderFilterSheet (TYPE/QUALITY/AUDIO/SIZE) handles ALL
   // four dimensions in one sheet. The dead size-sheet state + handlers
@@ -690,7 +693,22 @@
                    Chrome with browser_fallback_url; direct link elsewhere). -->
               <div class="mad-row-actions">
                 {#if dlAction}
-                  {#if dlAction.flow === 'direct-download'}
+                  {#if isPixeldrainUrl(stream.url)}
+                    <!-- Phase F #3: Pixeldrain Download — show an Info button instead
+                         of the Download button. Pixeldrain enforces Referer-based
+                         hotlink protection on ALL download endpoints; the direct
+                         browser download doesn't work. The user can use an external
+                         downloader (like 1DM) to download Pixeldrain files. -->
+                    <button
+                      class="mad-action mad-action-info"
+                      type="button"
+                      aria-label="Download info"
+                      title="Download can be done via external downloader only for this link."
+                      onclick={(event) => { event.stopPropagation(); pixeldrainInfoKey = pixeldrainInfoKey === key ? '' : key; }}
+                    >
+                      <Info size={13} />
+                    </button>
+                  {:else if dlAction.flow === 'direct-download'}
                     <!-- Direct media file — browser native <a href download> anchor.
                          If the URL is actually a provider page, the browser opens it
                          in a new tab (the download attr is advisory cross-origin). -->
@@ -778,6 +796,11 @@
                   {:else}<Share2 size={13} />{/if}
                 </button>
               </div>
+              {#if isPixeldrainUrl(stream.url) && pixeldrainInfoKey === key}
+                <div class="mad-pixeldrain-info" role="status">
+                  Download can be done via external downloader only for this link.
+                </div>
+              {/if}
             </article>
           {/each}
         </div>
@@ -961,7 +984,13 @@
   .mad-action-share { color: var(--ink); }
   .mad-action-download { color: var(--ink-soft); }
   .mad-action-play { color: var(--ink-soft); }
+  .mad-action-info { color: var(--ink-soft); }
   .mad-row-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+
+  /* Phase F #3: Pixeldrain Download info message — shown inline when the
+     Info button is clicked. Uses the same Mavero surface + accent border
+     as the instructions banner for visual consistency. */
+  .mad-pixeldrain-info { padding: 6px 10px; margin-top: 4px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--muted); font-size: 0.56rem; line-height: 1.4; }
 
   @keyframes mad-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .mad-spin, .mad-tab-spin { animation: none; } .mad-action, .mad-row, .mad-tab { transition: none; } .mad-skeleton-kind, .mad-skeleton-line, .mad-skeleton-badge, .mad-skeleton-action { animation: none; opacity: 0.5; } }
