@@ -109,26 +109,12 @@ export abstract class PostMessageAdapterBase {
   private messageListener: ((event: MessageEvent) => void) | undefined;
 
   /**
-   * Check if a source belongs to this provider by comparing the origin.
+   * Check if a source URL belongs to this provider by comparing the origin.
    * Pure predicate — does not mutate state.
-   *
-   * Embed Gateway: when the source URL is a Mavero gateway URL
-   * (`/api/embed/session/<token>` — a relative path, not an absolute
-   * HTTPS URL), the `new URL()` call would fail. In this case, the
-   * resolver sets `metadata.providerOrigin` on the source — we use
-   * that field instead. The provider origin is NOT the full provider
-   * URL — just the origin (e.g. `https://vidlink.pro`), which is
-   * already hardcoded in this adapter. No new information is leaked.
    */
-  protected canHandleByOrigin(source: { url: string | null; type: string; metadata?: { providerOrigin?: string } }, origin: string): boolean {
+  protected canHandleByOrigin(source: { url: string | null; type: string }, origin: string): boolean {
     if (source.type !== 'embed') return false;
     if (typeof source.url !== 'string' || !source.url) return false;
-    // Embed Gateway: if the source has a providerOrigin in metadata,
-    // use it for adapter selection (the gateway URL's origin is Mavero,
-    // not the provider — we need the actual provider origin here).
-    if (source.metadata?.providerOrigin) {
-      return source.metadata.providerOrigin.toLowerCase() === origin.toLowerCase();
-    }
     try {
       const url = new URL(source.url);
       return url.origin.toLowerCase() === origin.toLowerCase();

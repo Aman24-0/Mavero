@@ -377,28 +377,11 @@ export class PlaybackManager {
           const clampedPosition = Math.floor(startPosition);
           if (clampedPosition > 0 && Number.isFinite(clampedPosition)) {
             try {
-              // Embed Gateway: relative URLs (e.g.
-              // /api/embed/session/<token>) can't be parsed with
-              // new URL() without a base. In the browser, use
-              // window.location.origin as the base. The final URL
-              // is kept relative (pathname + search + hash) so the
-              // iframe src stays Mavero-owned.
-              let baseUrl: string | undefined;
-              try {
-                baseUrl = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : undefined;
-              } catch {
-                // window.location may be undefined in test mocks.
-                baseUrl = undefined;
-              }
-              const url = baseUrl ? new URL(safeSource.url!, baseUrl) : new URL(safeSource.url!);
+              const url = new URL(safeSource.url!);
               // Don't append if the URL already has the param (idempotency).
               if (!url.searchParams.has(param)) {
                 url.searchParams.set(param, String(clampedPosition));
-                // Keep the URL relative for same-origin gateway URLs
-                // (pathname + search + hash) — shorter, and doesn't
-                // expose the Mavero origin in the iframe src.
-                const finalUrl = url.pathname + url.search + url.hash;
-                resolvedSource = { ...safeSource, url: finalUrl };
+                resolvedSource = { ...safeSource, url: url.toString() };
               }
             } catch {
               // URL parsing failed — use the original URL without startAt.

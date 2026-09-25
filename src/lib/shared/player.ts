@@ -109,15 +109,6 @@ export type PlayerSource = {
     protocol?: PlayerProtocol;
     note?: string;
     /**
-     * Embed Gateway: the upstream provider's HTTPS origin. Set by the
-     * resolver when `url` is wrapped into a Mavero gateway URL.
-     * Provider adapters use this field to select the correct postMessage
-     * adapter (the gateway URL's origin is Mavero, not the provider).
-     * NOT the full provider URL — just the origin (already hardcoded
-     * in each adapter). No new information leaked.
-     */
-    providerOrigin?: string;
-    /**
      * Phase 7F (MegaPlay): the variants this source exposes at runtime
      * (e.g. ['sub','dub']). Populated by adapters that support
      * multiple audio tracks behind one source row.
