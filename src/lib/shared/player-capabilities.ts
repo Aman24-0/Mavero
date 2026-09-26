@@ -362,6 +362,86 @@ export const VIDPHANTOM_CAPABILITIES: ProviderPlaybackCapabilities = {
   nextEpisode: false,
 };
 
+/**
+ * MoviesNexus — moviesnexus.fun homepage "API & Embed Documentation" +
+ * live/code verification (2026-09-26).
+ *
+ * VERIFIED (live postMessage capture, https://www.moviesnexus.fun origin):
+ *   MOVIE_NEXUS_SERVERS {servers:[{id,name}]} and
+ *   MOVIE_NEXUS_SERVER_FAILED {failedServerId} (undocumented, discovered
+ *   live; the player auto-falls-back to the next server after emitting it).
+ * VERIFIED (provider player bundle code): PLAYER_FULLSCREEN_CHANGE
+ *   {isFullscreen:boolean} posted to window.parent.
+ * VERIFIED (provider documentation, per integration spec):
+ *   PLAYER_PROGRESS {currentTime,duration}. Live capture was not possible
+ *   from the verification environment (upstream servers failed there), so
+ *   the adapter validates the payload shape defensively.
+ * VERIFIED: ?sv= server selection (4k, upcloud, nova, hydra, multiaudio,
+ *   multiaudio2 — Mavero exposes ONLY 4k and multiaudio2 as sources).
+ * VERIFIED: ?startAt= URL param (resume, seconds) — the documented resume
+ *   parameter; no `t` alias appears in the current documentation.
+ * VERIFIED: ?sub= (pre-select subtitle language), ?autoNext= (TV, default 1),
+ *   allowfullscreen in the documented iframe snippet.
+ * NOT VERIFIED: play/pause/seek/volume/quality/PiP as parent commands.
+ */
+export const MOVIESNEXUS_CAPABILITIES: ProviderPlaybackCapabilities = {
+  progressEvents: true,
+  currentTime: true,
+  duration: true,
+  seek: false,
+  startAt: true,
+  play: false,
+  pause: false,
+  volume: false,
+  subtitles: true,
+  quality: false,
+  fullscreen: true,
+  pictureInPicture: false,
+  postMessage: true,
+  nextEpisode: true,
+};
+
+/**
+ * VidStuck — embed.vidstuck.xyz/documentation + live/code verification
+ * (2026-09-26).
+ *
+ * VERIFIED (live postMessage capture AND provider player bundle code):
+ *   VIDEO_PROGRESS — posted as an OBJECT (the provider's own docs describe
+ *   an outdated JSON-string form; the live/bundle contract is
+ *   {type:"VIDEO_PROGRESS", payload:{currentTime,duration,tmdbId,
+ *   media_type,season,episode}}). The adapter accepts both shapes.
+ *   Message origin: https://embed.vidstuck.xyz (the documented
+ *   https://vidstuck.xyz/embed/... URL 302-redirects there; messages arrive
+ *   from the post-redirect origin).
+ * VERIFIED (live): ?progress= seeds playback position (currentTime started
+ *   at exactly 120 with progress=120) — the resume parameter.
+ * VERIFIED (documentation): ?branding= (loading-screen text),
+ *   ?server= (internal server by name — centaurus verified in the player
+ *   bundle as "Centaurus · Multi Audio Support"; internal selector stays
+ *   enabled), ?color= (accent color, hex WITHOUT '#'),
+ *   ?subtitle=, ?nextEpisode=, ?episodeSelector=, ?autoplayNextEpisode=,
+ *   ?overlay=, allowfullscreen in the documented iframe snippet.
+ * NOT VERIFIED: play/pause/ended/seek events or commands (no such events
+ *   documented or observed — completion therefore stays Mavero's explicit
+ *   ended-event semantics; no heuristic), quality, PiP.
+ */
+export const VIDSTUCK_CAPABILITIES: ProviderPlaybackCapabilities = {
+  progressEvents: true,
+  currentTime: true,
+  duration: true,
+  seek: false,
+  startAt: true,
+  play: false,
+  pause: false,
+  volume: false,
+  subtitles: true,
+  quality: false,
+  fullscreen: true,
+  pictureInPicture: false,
+  postMessage: true,
+  nextEpisode: true,
+};
+
 // ----- Phase 7: adapter_id → capabilities lookup -----
 //
 // The admin capability matrix uses this map to display per-adapter
@@ -395,6 +475,8 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderPlaybackCapabilitie
   'cinesrc': CINESRC_CAPABILITIES,
   'vidapi-qzz': VIDAPI_QZZ_CAPABILITIES,
   'vidphantom': VIDPHANTOM_CAPABILITIES,
+  'moviesnexus': MOVIESNEXUS_CAPABILITIES,
+  'vidstuck': VIDSTUCK_CAPABILITIES,
 };
 
 /**

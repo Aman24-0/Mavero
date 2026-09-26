@@ -178,9 +178,28 @@ export interface PlayerProviderAdapter {
   /**
    * Phase 4: the URL query parameter name this provider uses for startAt
    * (e.g. 'startAt' for VidSrc/VidLink/VidAPI.qzz.io, 't' for CineSrc,
-   * 'progress' for VidY). Returns `null` if the provider does not support
-   * startAt. The manager uses this to append `?param=N` to the resolved
+   * 'progress' for VidY/VidStuck). Returns `null` if the provider does not
+   * support startAt. The manager uses this to append `?param=N` to the resolved
    * embed URL when a resume position exists and the adapter supports it.
    */
   startAtParam?(): string | null;
+
+  /**
+   * Optional final URL hook (applied AFTER the startAt param is appended).
+   *
+   * Lets an adapter inject DYNAMIC, runtime-derived query parameters that the
+   * static DB source template cannot express — e.g. VidStuck's `color=`
+   * accent parameter, which must be read from the live Mavero theme token at
+   * load time rather than hardcoded into the template.
+   *
+   * Contract:
+   *   - Pure function of the input URL — MUST NOT mutate adapter state.
+   *   - MUST return a valid absolute http(s) URL or `null` (null = keep the
+   *     input URL unchanged). The manager re-validates the result and falls
+   *     back to the input URL on anything invalid.
+   *   - MUST NOT throw; the manager also guards with try/catch.
+   *   - Never invents provider parameters — only values verified in the
+   *     provider's contract (same rule as every other adapter capability).
+   */
+  finalizeEmbedUrl?(url: string): string | null;
 }

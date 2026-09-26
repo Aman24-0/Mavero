@@ -390,6 +390,25 @@ export class PlaybackManager {
         }
       }
 
+      // Provider final-URL hook (applied AFTER startAt): lets the adapter
+      // inject runtime-dynamic query parameters the static DB template
+      // cannot express (e.g. VidStuck's `color=` accent parameter, read
+      // from the live Mavero theme token). The result is re-validated as an
+      // absolute http(s) URL; anything invalid falls back to the input URL.
+      if (adapter.finalizeEmbedUrl && resolvedSource.type === 'embed' && resolvedSource.url) {
+        try {
+          const finalized = adapter.finalizeEmbedUrl(resolvedSource.url);
+          if (typeof finalized === 'string') {
+            const check = new URL(finalized);
+            if (check.protocol === 'https:' || check.protocol === 'http:') {
+              resolvedSource = { ...resolvedSource, url: check.toString() };
+            }
+          }
+        } catch {
+          // Finalization failed — keep the pre-finalization URL.
+        }
+      }
+
       this.patch(sessionId, {
         source: resolvedSource,
         resolving: false,

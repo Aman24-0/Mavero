@@ -10,6 +10,8 @@ import { CineSrcPlayerAdapter } from './providers/cinesrc-adapter';
 import { VidApiQzzPlayerAdapter } from './providers/vidapi-qzz-adapter';
 import { CinemaOSPlayerAdapter } from './providers/cinemaos-adapter';
 import { VidPhantomPlayerAdapter } from './providers/vidphantom-adapter';
+import { MoviesNexusPlayerAdapter } from './providers/moviesnexus-adapter';
+import { VidStuckPlayerAdapter } from './providers/vidstuck-adapter';
 
 /**
  * Adapter registry — Phase 1 + Phase 3.
@@ -28,7 +30,12 @@ import { VidPhantomPlayerAdapter } from './providers/vidphantom-adapter';
  *   7. VidApiQzzPlayerAdapter — handles `https://vidapi.qzz.io`.
  *   8. CinemaOSPlayerAdapter — handles `https://cinemaos.tech` (skeleton).
  *   9. VidPhantomPlayerAdapter — handles `https://vidphantom.com` (skeleton).
- *  10. EmbedPlayerAdapter — generic fallback for all other embed sources.
+ *  10. MoviesNexusPlayerAdapter — handles `https://www.moviesnexus.fun`
+ *      (the sv=4k and sv=multiaudio2 sources share one origin/adapter).
+ *  11. VidStuckPlayerAdapter — handles `https://vidstuck.xyz` /
+ *      `https://embed.vidstuck.xyz` (single source; internal server
+ *      selection stays inside the iframe).
+ *  12. EmbedPlayerAdapter — generic fallback for all other embed sources.
  *
  * Provider-specific adapters are registered BEFORE the generic EmbedPlayerAdapter
  * so that `pickAdapter(source)` matches the provider-specific adapter first
@@ -99,6 +106,9 @@ export function createDefaultAdapterRegistry(): PlayerAdapterRegistry {
     // Skeleton adapters (exist but conservative — pending docs verification).
     new CinemaOSPlayerAdapter(),
     new VidPhantomPlayerAdapter(),
+    // Verified event-emitting adapters (2026-09-26 integration).
+    new MoviesNexusPlayerAdapter(),
+    new VidStuckPlayerAdapter(),
     // Generic fallback for all other embed sources (black-box).
     new EmbedPlayerAdapter(),
   ]);
