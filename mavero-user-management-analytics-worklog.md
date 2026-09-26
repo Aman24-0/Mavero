@@ -641,7 +641,7 @@ been removed from this worklog.
 
 ### Phase 1 post-audit corrective commit (documentation only)
 
-Commit hash: `<filled in after the corrective commit is created and pushed>`
+Commit hash: `ed7d9978d8400977632fb552ea06d4e48fb81392` (short: `ed7d997`)
 
 Commit message: `docs(analytics): correct Phase 1 worklog commit hash and record migration deployment-pending state`
 
@@ -678,8 +678,12 @@ Push result: success. Verified via:
   `git ls-remote origin main` = `4665aa86ec2288a31934cf554fe194358fc8d603`.
 
 ### Phase 1 post-audit corrective push
-Pushed to: `origin/main` (corrective commit)
-Push result: `<filled in after the corrective push completes>`
+Pushed to: `origin/main` (commit `ed7d997`)
+Push result: success. Verified via:
+- `git push` exit code 0.
+- `git log --oneline origin/main -1` shows `ed7d997` at HEAD.
+- `git rev-parse origin/main` = `git rev-parse HEAD` =
+  `git ls-remote origin main` = `ed7d9978d8400977632fb552ea06d4e48fb81392`.
 
 ## Next Phase
 
