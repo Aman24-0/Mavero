@@ -13,7 +13,7 @@ Last Updated: 2026-09-27 (Phase 4 implementation committed + pushed; see "Commit
 | Phase 1 | Complete (migration manually applied by operator). | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
 | Phase 2 | Complete (migration applied). | `910fa5c` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified) |
 | Phase 3 | Complete (migration applied). | `e945236` `feat(analytics): add user management` | Pushed to `origin/main` (verified) |
-| Phase 4 | Repository implementation complete & pushed. | `__PHASE4_COMMIT_HASH__` `feat(analytics): add viewing and discovery analytics` | Pushed to `origin/main` (verified — hash filled in below) |
+| Phase 4 | Repository implementation complete & pushed. | `b6729f7` `feat(analytics): add viewing and discovery analytics` | Pushed to `origin/main` (verified) |
 | Phase 5 | Pending | — | — |
 | Phase 6 | Pending | — | — |
 | Phase 7 | Pending | — | — |
@@ -1692,17 +1692,31 @@ modules testable.
 
 ## Phase 4 Commit
 
-Commit hash: `__PHASE4_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+Commit hash: `b6729f7ec01d39799e7e4de57b64f25cbd0a7713` (short: `b6729f7`)
 
 Commit message: `feat(analytics): add viewing and discovery analytics`
 
 The commit is a single commit containing the complete Phase 4
 implementation (server module + route + admin nav entry + tests).
 
+Branch: `main` → `origin/main` (verified via `git rev-parse origin/main`
+matching `git rev-parse HEAD` matching `git ls-remote origin main` —
+all three return `b6729f7ec01d39799e7e4de57b64f25cbd0a7713`).
+
 ## Phase 4 Push
 
-Pushed to: `origin/main`
-Push result: `__PHASE4_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+Pushed to: `origin/main` (commit `b6729f7`)
+Push result: success. Verified via:
+- `git push` exit code 0.
+- `git log --oneline origin/main -1` shows `b6729f7` at HEAD.
+- `git rev-parse origin/main` = `git rev-parse HEAD` =
+  `git ls-remote origin main` = `b6729f7ec01d39799e7e4de57b64f25cbd0a7713`.
+
+### Phase 4 post-push documentation follow-up
+A small documentation-only follow-up commit fills in the actual pushed
+hash in this worklog (the self-referential artifact documented in the
+Phase 1/2/3 audits). This follow-up does NOT modify the Phase 4
+implementation commit (`b6729f7`) — that commit is untouched.
 
 ## Commit
 
