@@ -12,7 +12,7 @@ Last Updated: 2026-09-27 (Phase 3 implementation committed + pushed; see "Commit
 |---|---|---|---|
 | Phase 1 | Complete (migration manually applied by operator). | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
 | Phase 2 | Complete (migration applied). | `910fa5c` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified) |
-| Phase 3 | Repository implementation complete & pushed. | `__PHASE3_COMMIT_HASH__` `feat(analytics): add user management` | Pushed to `origin/main` (verified — hash filled in below) |
+| Phase 3 | Repository implementation complete & pushed. | `e945236` `feat(analytics): add user management` | Pushed to `origin/main` (verified) |
 | Phase 4 | Pending | — | — |
 | Phase 5 | Pending | — | — |
 | Phase 6 | Pending | — | — |
@@ -1354,17 +1354,33 @@ per the existing Supabase conventions.
 
 ## Phase 3 Commit
 
-Commit hash: `__PHASE3_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+Commit hash: `e9452367a5dec4191916c34b8b8771a320d0c128` (short: `e945236`)
 
 Commit message: `feat(analytics): add user management`
 
 The commit is a single commit containing the complete Phase 3
 implementation (server module + 2 routes + admin nav entry + tests).
 
+Branch: `main` → `origin/main` (verified via `git rev-parse origin/main`
+matching `git rev-parse HEAD` matching `git ls-remote origin main` —
+all three return `e9452367a5dec4191916c34b8b8771a320d0c128`).
+
 ## Phase 3 Push
 
-Pushed to: `origin/main`
-Push result: `__PHASE3_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+Pushed to: `origin/main` (commit `e945236`)
+Push result: success. Verified via:
+- `git push` exit code 0.
+- `git log --oneline origin/main -1` shows `e945236` at HEAD.
+- `git rev-parse origin/main` = `git rev-parse HEAD` =
+  `git ls-remote origin main` = `e9452367a5dec4191916c34b8b8771a320d0c128`.
+
+### Phase 3 post-push documentation follow-up
+A small documentation-only follow-up commit fills in the actual pushed
+hash in this worklog (the hash could not be known until after the
+Phase 3 commit was created and pushed — the self-referential artifact
+documented in the Phase 1/2 audits). This follow-up does NOT modify
+the Phase 3 implementation commit (`e945236`) — that commit is
+untouched.
 
 ## Commit
 
