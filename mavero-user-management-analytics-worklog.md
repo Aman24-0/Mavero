@@ -3,15 +3,15 @@
 ## Current Status
 
 Phase: 1 — Analytics Foundation
-Status: Complete (verified, committed, pushed)
-Last Updated: 2026-09-27
+Status: Repository implementation complete and pushed. Database deployment PENDING (migration committed but not yet applied to the target Supabase database — see "Database / Migrations" and "Migration application" below).
+Last Updated: 2026-09-27 (post-audit corrective commit; see "Commit" section for hashes)
 
 ## Phase Status
 
 | Phase | Status | Commit | Push |
 |---|---|---|---|
-| Phase 1 | Complete | `feat(analytics): implement user analytics foundation` (hash recorded below) | Pushed to `origin/main` |
-| Phase 2 | Pending | — | — |
+| Phase 1 | Repository implementation complete & pushed. DB deployment PENDING. | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
+| Phase 2 | Pending — NOT safe to begin until Phase 1 migration is applied to the target Supabase database | — | — |
 | Phase 3 | Pending | — | — |
 | Phase 4 | Pending | — | — |
 | Phase 5 | Pending | — | — |
@@ -154,7 +154,93 @@ ingestion layer that every later phase consumes. Specifically:
 
 | Migration | Status |
 |---|---|
-| `supabase/migrations/20261008000000_analytics_foundation.sql` | Created (NOT applied to a live DB from this session — the repo's convention is that migrations are applied by the operator via the Supabase migration runbook; see `docs/supabase-migration-runbook.md`). The migration is idempotent (every `create` uses `IF NOT EXISTS`, every policy uses `DROP IF EXISTS` first). |
+| `supabase/migrations/20261008000000_analytics_foundation.sql` | **Committed & pushed. NOT applied to the target Supabase database.** Operator must apply it via the Supabase SQL Editor per `docs/supabase-migration-runbook.md`. The migration is idempotent (every `create` uses `IF NOT EXISTS`, every policy uses `DROP IF EXISTS` first), so re-running is safe. |
+
+### Migration timestamp finding (audited 2026-09-27)
+
+The migration timestamp `20261008000000` follows the repository's
+`YYYYMMDDHHMMSS` convention exactly. The previous migration in the
+chain is `20261007000000_download_provider_type.sql`, so
+`20261008000000` is the next-day increment in the established
+sequence — **intentional and consistent with the repo's migration
+convention**. It does NOT collide with or skip any existing
+timestamp, and it preserves chronological order. It is also
+forward-dated ~12 days relative to the system wall clock
+(2026-09-26), but this is the SAME forward-dating pattern the entire
+recent migration stream uses (every migration from `20261005000000`
+onward is forward-dated by 1–11 days), so renaming it to a "current"
+timestamp would BREAK the convention by creating a gap with
+`20261007000000`. **Do NOT rename this migration.** Per the runbook
+("NEVER edit an already-applied migration") and the project's
+migration safety rules, forward-fixing goes through a NEW migration,
+not by rewriting timestamps.
+
+### Applied-state verification (audited 2026-09-27)
+
+I cannot verify the applied state from this environment. The repo
+ships no `.env` (only `.env.example`), no Supabase CLI linkage
+(`config.toml` absent — confirmed in `docs/supabase-migration-runbook.md`
+§"Safe procedure"), and CI has no production database access (per
+`scripts/verify_claim_rpc.ts` header comment). The only mechanism
+the repo provides for live-DB verification is a deployment-time
+script analogous to `pnpm run verify:pairing-rpc`, which requires
+`PUBLIC_SUPABASE_URL` + `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` to be
+set in the operator's environment. No such `verify:analytics` script
+exists yet.
+
+**Operator action required** to transition Phase 1 from "repository
+implementation complete" to "operationally complete":
+
+1. Apply `supabase/migrations/20261008000000_analytics_foundation.sql`
+   via the Supabase Dashboard SQL Editor (per the runbook).
+2. Verify the schema is present (run the SQL below in the SQL Editor):
+   ```sql
+   -- Tables
+   select table_name from information_schema.tables
+   where table_schema='public'
+     and table_name in ('analytics_events','analytics_sessions')
+   order by table_name;
+   -- Expected: 2 rows.
+
+   -- Indexes (7 on analytics_events + 3 on analytics_sessions)
+   select indexname from pg_indexes
+   where schemaname='public'
+     and tablename in ('analytics_events','analytics_sessions')
+   order by tablename, indexname;
+   -- Expected: 10 indexes total (see migration for names).
+
+   -- Constraints (PK + 2 CHECK on analytics_events; PK on analytics_sessions)
+   select conname, contype from pg_constraint
+   where conrelid in (
+     'public.analytics_events'::regclass,
+     'public.analytics_sessions'::regclass
+   ) order by conname;
+   -- Expected: 4 constraints (analytics_events_event_id_pkey,
+   --   analytics_events_identity_check, analytics_events_event_name_check,
+   --   analytics_sessions_session_id_pkey).
+
+   -- RLS policies (admin-only SELECT on each table; no write policies)
+   select tablename, policyname, cmd from pg_policies
+   where schemaname='public'
+     and tablename in ('analytics_events','analytics_sessions')
+   order by tablename, policyname;
+   -- Expected: analytics_events_admin_select (SELECT),
+   --   analytics_sessions_admin_select (SELECT).
+
+   -- RLS enabled?
+   select relname, relrowsecurity from pg_class
+   where relname in ('analytics_events','analytics_sessions');
+   -- Expected: both rows relrowsecurity = true.
+   ```
+3. After verification, update this worklog's "Database / Migrations"
+   table to read "Applied & verified" with the verification date, and
+   flip the Phase 2 row in "Phase Status" to "Safe to begin".
+
+**Until step 3 is complete, Phase 1 is NOT operationally complete
+and Phase 2 must NOT begin** — Phase 2 reads from `analytics_events`
+and `analytics_sessions`; without the migration applied, every
+dashboard query will fail with `relation "public.analytics_events"
+does not exist`.
 
 The migration creates:
 - `public.analytics_events` (raw event table; closed-taxonomy CHECK;
@@ -487,12 +573,12 @@ signals for them. They will be wired in later phases:
 
 ### Migration application
 The migration `20261008000000_analytics_foundation.sql` is committed
-but NOT applied to a live Supabase database from this session. The
-repo's convention (per `docs/supabase-migration-runbook.md`) is that
-migrations are applied by the operator via the Supabase migration
-runbook. The migration is idempotent (every `create` uses `IF NOT
-EXISTS`, every policy uses `DROP IF EXISTS` first) so re-running is
-safe.
+and pushed but NOT applied to the target Supabase database. See the
+top-level "Database / Migrations" section above for the full
+applied-state verification record, the migration-timestamp finding,
+the operator-action checklist, and the SQL verification queries.
+Phase 1 is NOT operationally complete until the operator applies
+the migration and updates this worklog accordingly.
 
 ### `ip_hash` is best-effort
 The `ip_hash` is computed from the `x-forwarded-for` or
@@ -531,23 +617,81 @@ consistency.
 
 ## Commit
 
-Commit hash: `e14f96ecfc74b21b050056da8ec0f0a3d9e65bc5`
+### Phase 1 implementation commit (the actual pushed commit)
+
+Commit hash: `4665aa86ec2288a31934cf554fe194358fc8d603` (short: `4665aa8`)
 
 Commit message: `feat(analytics): implement user analytics foundation`
+
+Branch: `main` → `origin/main` (verified via `git rev-parse origin/main`
+matching `git rev-parse HEAD` matching `git ls-remote origin main` —
+all three return `4665aa86ec2288a31934cf554fe194358fc8d603`).
 
 The commit is a single commit containing the complete Phase 1
 implementation (migration + schema + server module + endpoint +
 client dispatcher + wiring + tests + worklog).
 
+**Audit note (2026-09-27):** An earlier draft of this worklog
+recorded the hash `e14f96ecfc74b21b050056da8ec0f0a3d9e65bc5`. That
+was an intermediate amended hash that was OVERWRITTEN by a final
+`git commit --amend` before push and was NEVER pushed to the remote.
+The actual pushed and remotely-verifiable Phase 1 commit hash is
+`4665aa86ec2288a31934cf554fe194358fc8d603`. The erroneous hash has
+been removed from this worklog.
+
+### Phase 1 post-audit corrective commit (documentation only)
+
+Commit hash: `<filled in after the corrective commit is created and pushed>`
+
+Commit message: `docs(analytics): correct Phase 1 worklog commit hash and record migration deployment-pending state`
+
+Purpose: This is a documentation-only corrective commit. It does NOT
+modify any application code, migration, or test. It corrects two
+state/documentation issues found by the post-completion audit:
+
+1. The worklog's "Commit" section recorded an intermediate amended
+   hash (`e14f96ec...`) instead of the actual pushed hash
+   (`4665aa8...`). Fixed.
+2. The worklog's top-level "Status" and "Phase Status" lines
+   described Phase 1 as "Complete (verified, committed, pushed)"
+   without distinguishing that the database migration is committed
+   but NOT yet applied to the target Supabase database. The status
+   is now correctly recorded as "Repository implementation complete
+   and pushed. Database deployment PENDING." with the full
+   applied-state verification record, migration-timestamp finding,
+   and operator-action checklist in the "Database / Migrations"
+   section.
+
+This corrective commit does NOT change the Phase 1 implementation
+commit (`4665aa8`) — that commit is untouched and remains the
+authoritative Phase 1 implementation. Per the audit instructions,
+the already-pushed Phase 1 commit was NOT rewritten or amended.
+
 ## Push
 
-Pushed to: `origin/main`
-Push result: success (verified via `git push` exit code and
-`git log --oneline origin/main` showing the new commit at HEAD).
+### Phase 1 implementation push
+Pushed to: `origin/main` (commit `4665aa8`)
+Push result: success. Verified via:
+- `git push` exit code 0.
+- `git log --oneline origin/main -1` shows `4665aa8` at HEAD.
+- `git rev-parse origin/main` = `git rev-parse HEAD` =
+  `git ls-remote origin main` = `4665aa86ec2288a31934cf554fe194358fc8d603`.
+
+### Phase 1 post-audit corrective push
+Pushed to: `origin/main` (corrective commit)
+Push result: `<filled in after the corrective push completes>`
 
 ## Next Phase
 
 Phase 2 — Overview Dashboard.
+
+**GATE:** Phase 2 is NOT safe to begin until the operator applies
+`supabase/migrations/20261008000000_analytics_foundation.sql` to the
+target Supabase database and updates the "Database / Migrations"
+section above to "Applied & verified". Phase 2 reads from
+`analytics_events` and `analytics_sessions`; without the migration
+applied, every dashboard query will fail with
+`relation "public.analytics_events" does not exist`.
 
 Goal: build the main reach and engagement dashboard in the Admin
 Panel. This phase will consume the `analytics_events` and
