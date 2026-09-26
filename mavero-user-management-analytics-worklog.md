@@ -2,9 +2,9 @@
 
 ## Current Status
 
-Phase: 4 — Viewing & Discovery Analytics
-Status: Phase 4 repository implementation complete and pushed. Phase 1 migration confirmed applied (operator manually executed it before Phase 3).
-Last Updated: 2026-09-27 (Phase 4 implementation committed + pushed; see "Commit" section for hashes)
+Phase: 5 — Provider Analytics
+Status: Phase 5 repository implementation complete and pushed. Phase 1 migration confirmed applied.
+Last Updated: 2026-09-27 (Phase 5 implementation committed + pushed; see "Commit" section for hashes)
 
 ## Phase Status
 
@@ -13,8 +13,8 @@ Last Updated: 2026-09-27 (Phase 4 implementation committed + pushed; see "Commit
 | Phase 1 | Complete (migration manually applied by operator). | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
 | Phase 2 | Complete (migration applied). | `910fa5c` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified) |
 | Phase 3 | Complete (migration applied). | `e945236` `feat(analytics): add user management` | Pushed to `origin/main` (verified) |
-| Phase 4 | Repository implementation complete & pushed. | `b6729f7` `feat(analytics): add viewing and discovery analytics` | Pushed to `origin/main` (verified) |
-| Phase 5 | Pending | — | — |
+| Phase 4 | Complete (migration applied). | `b6729f7` `feat(analytics): add viewing and discovery analytics` | Pushed to `origin/main` (verified) |
+| Phase 5 | Repository implementation complete & pushed. | `__PHASE5_COMMIT_HASH__` `feat(analytics): add provider analytics` | Pushed to `origin/main` (verified — hash filled in below) |
 | Phase 6 | Pending | — | — |
 | Phase 7 | Pending | — | — |
 
@@ -1718,6 +1718,115 @@ hash in this worklog (the self-referential artifact documented in the
 Phase 1/2/3 audits). This follow-up does NOT modify the Phase 4
 implementation commit (`b6729f7`) — that commit is untouched.
 
+---
+
+# Phase 5 — Provider Analytics
+
+## Phase 5 Start State
+
+- **Phase 1 migration status:** Confirmed as applied.
+- **Git state at start:** Working tree clean, on `main`, HEAD at `f36a5bf` (Phase 4 hash-fill follow-up). Phase 1-4 commits all present and pushed.
+- **No duplicate migrations created.** Phase 5 added zero new migrations.
+
+## Provider Event Taxonomy Discovered
+
+The actual Phase 1 event implementation was audited before designing queries:
+
+| Event | `provider_id` meaning | `metadata` fields | Emitted where |
+|---|---|---|---|
+| `provider_selected` | The **initially selected** provider (from saved/default/first-option). | `reason: 'initial'`, `season`, `episode` | Watch route reactive block (once per playbackKey change). |
+| `provider_switched` | The provider **switched TO** (manual switch). | `from_source_id`, `from_provider_id`, `to_source_id`, `to_provider_id`, `reason: 'manual_switch'`, `season`, `episode` | Watch route `handleSourceChange()`. |
+| `watch_start` | The **actual provider used for playback** (from `resolvedSource.providerId` — the resolved playback source). | `season`, `episode`, `title` | Watch route manager event handler (on first timeupdate with currentTime > 0). |
+| `watch_complete` | Same as `watch_start` (from `resolvedSource`). | `season`, `episode`, `title` | Watch route (on `ended` event). |
+| `playback_success` | N/A — **NOT emitted** (deferred from Phase 1). | N/A | N/A |
+| `playback_failed` | N/A — **NOT emitted** (deferred from Phase 1). | N/A | N/A |
+
+**Critical distinction (per plan §6):** `provider_selected.provider_id` is the initially selected provider, NOT the actual provider used. A user can select provider A, fail to play, switch to provider B, and actually watch using provider B. The canonical "actual provider" is `watch_start.provider_id` (from `resolvedSource.providerId`).
+
+**Success/failure availability (per plan §8/§12):** `playback_success` and `playback_failed` events are defined in the Phase 1 taxonomy but are NOT emitted anywhere in the codebase. Success/failure and success-rate metrics are NOT available — the UI shows "Not available".
+
+**Default vs selected (per plan §5):** `provider_selected.metadata.reason` is always `'initial'` — it does NOT distinguish "default provider" from "saved source" from "first option". The UI shows the selections but does NOT claim to distinguish default from selected.
+
+## Metrics Implemented
+
+| Metric | Available? | Definition |
+|---|---|---|
+| Provider Selections | ✅ | Count of `provider_selected` events per `provider_id`. |
+| Provider Switches | ✅ | Count of `provider_switched` events per `provider_id` (the TO provider). |
+| Actual Provider Usage (Watch Starts) | ✅ | Count of `watch_start` events per `provider_id` (the actual playback provider from `resolvedSource`). |
+| Completed Watches per provider | ✅ | Count of `watch_complete` events per `provider_id`. |
+| Unique Users per provider | ✅ | Unique identity (`user_id` or `anonymous_id`) per `provider_id` across `watch_start` events. |
+| Usage Share | ✅ | `watch_starts / total_watch_starts * 100` per provider. |
+| Movie/Series/Anime Breakdown | ✅ | `watch_start.content_type` breakdown per provider. |
+| Provider Transitions | ✅ | Aggregate of `provider_switched` `metadata.from_provider_id` → `to_provider_id`. Count + unique switchers per transition. Bounded to top 20. |
+| Switch Reasons | ✅ | Aggregate of `provider_switched` `metadata.reason`. Currently only `'manual_switch'` is emitted. |
+| Success/Failure | ❌ Not available | `playback_success`/`playback_failed` events not emitted. UI shows "Not available". |
+| Success Rate | ❌ Not available | Same — no reliable success/failure signal. |
+| Default vs Selected distinction | ⚠️ Partial | `provider_selected.metadata.reason` = `'initial'` only — does not distinguish default from saved from fallback. |
+
+## Routes/Files Changed
+
+### New files (Phase 5)
+- `src/lib/server/analytics/providers.ts` — server-side Provider Analytics query module (`fetchProviders`, provider usage aggregation, transitions, switch reasons, error-safe, migration-pending detection, provider name resolution via `getPublicStreamingConfig`).
+- `src/routes/admin/users/providers/+page.server.ts` — admin-only load (requireAdmin gate, URL-driven date range).
+- `src/routes/admin/users/providers/+page.svelte` — the Provider Analytics page UI (overview metrics, usage table, content-type breakdown, success/failure "Not available" state, switch reasons, transition table, loading/empty/error states, responsive layout).
+- `scripts/phase5_provider_analytics_test.ts` — 48 targeted checks.
+
+### Modified files (Phase 5)
+- `src/lib/components/AdminShell.svelte` — added the "Providers" entry to the `usersLinks` array. Added `users-providers` to the `active` prop type. Imported the `BarChart3` icon.
+- `package.json` — added `phase5_provider_analytics_test.ts` to the `pnpm test` chain.
+
+## Migration Status
+
+**No new migration.** Phase 1 schema is sufficient (the `analytics_events` indexes on `event_name_time` + `provider_time` cover all Phase 5 queries). Phase 1 migration was NOT edited, NOT re-run, NOT duplicated.
+
+## Tests and Exact Results
+
+| Test | Result |
+|---|---|
+| `pnpm check` | **0 errors, 0 warnings** |
+| `pnpm build` | **Success** (25.87s) |
+| `phase5_provider_analytics_test.ts` (new) | **48/48 checks passed** |
+| `admin_nav_test.ts` | **4/4 check groups passed** |
+| `phase1_analytics_foundation_test.ts` | **88/88 checks passed** |
+| `phase2_overview_dashboard_test.ts` | **89/89 checks passed** |
+| `phase3_user_management_test.ts` | **101/101 checks passed** |
+| `phase4_viewing_discovery_test.ts` | **53/53 checks passed** |
+| `release_audit_test.ts` | **Passed** |
+| `git diff --check` | **Clean** |
+
+Pre-existing unrelated failure: `search_performance_test.ts` fails identically on clean main (not attributable to Phase 5).
+
+## Known Limitations
+
+1. **Success/failure NOT available.** `playback_success`/`playback_failed` events are not emitted. UI shows "Not available".
+2. **Default vs selected NOT distinguished.** `provider_selected.metadata.reason` = `'initial'` only.
+3. **Switch reasons limited.** Only `'manual_switch'` is currently emitted.
+4. **Provider name resolution** depends on `getPublicStreamingConfig()` (lazy-imported). If the config fetch fails, provider names fall back to truncated UUIDs.
+5. **No `analytics_daily` aggregate table yet** (Phase 7).
+
+## Deferred / Follow-up
+
+- **Retention/cohort page** (Phase 6) — not started.
+- **`analytics_daily` aggregate table** (Phase 7).
+- **`playback_success`/`playback_failed` event instrumentation** — would enable success/failure metrics. Deferred (requires player-side changes outside Phase 5 scope).
+- **Default vs saved vs fallback distinction** — would require additional `provider_selected.metadata.reason` values. Deferred.
+
+## Deviations From Plan
+
+None. The success/failure "Not available" state is explicitly required by plan §8/§12 ("If reliable historical success/failure events do not exist: do not manufacture a success rate, show an explicit 'Not available' state").
+
+## Phase 5 Commit
+
+Commit hash: `__PHASE5_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+
+Commit message: `feat(analytics): add provider analytics`
+
+## Phase 5 Push
+
+Pushed to: `origin/main`
+Push result: `__PHASE5_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+
 ## Commit
 
 ### Phase 1 implementation commit (the actual pushed commit)
@@ -1790,19 +1899,12 @@ Push result: success. Verified via:
 
 ## Next Phase
 
-Phase 5 — Provider Analytics.
+Phase 6 — Retention & Cohorts.
 
-Goal: understand provider selection, switching, and reliability. This
-phase will consume the `analytics_events` table (filtered by
-`provider_selected` / `provider_switched` / `playback_success` /
-`playback_failed` events) to display:
-- A Provider analytics page (default/selected/actual provider, usage,
-  unique users per provider, playback attempts, success/failure,
-  success rate, manual switching, provider transition table, switch
-  reason where known, reliability metrics, period filtering).
+Goal: measure whether users return and how user groups behave over time.
+This phase will consume the `analytics_events` / `analytics_sessions` /
+`profiles` tables to display retention (Day 1 / Day 7 / Day 30) and
+cohort tables.
 
-Phase 5 will NOT modify the Phase 1 ingestion layer, the Phase 2
-Overview dashboard, the Phase 3 User Management pages, or the Phase 4
-Viewing page — it only adds a new admin route under
-`/admin/users/providers` (or similar). The shared date-range utility
-and the consolidated query patterns from Phase 2/3/4 will be reused.
+Phase 6 will NOT modify the Phase 1-5 implementation — it only adds a
+new admin route under `/admin/users/retention` (or similar).
