@@ -45,6 +45,17 @@ declare global {
       // as ClientDeviceType in $lib/shared/device-class.ts (kept as a
       // literal here so app.d.ts stays import-free).
       deviceType: 'mobile' | 'tablet' | 'desktop' | 'tv' | 'unknown';
+      // DevTools-protection capability (disable-devtool integration).
+      // Server-resolved per request from the TRUSTED session
+      // (locals.user) via the canonical profiles.role check
+      // (isAdminUser in src/lib/server/streaming/admin-auth.ts).
+      // TRUE only for authenticated administrators — the client-side
+      // DevTools detector is never initialized for that document.
+      // FALSE for guests and normal users — detector enabled.
+      // UI-deterrence capability ONLY: never an authorization signal
+      // (requireAdmin()/RLS remain the sole security boundaries), and
+      // no other profile data is exposed alongside it.
+      devtoolExempt: boolean;
     }
 
   }

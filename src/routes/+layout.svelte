@@ -9,6 +9,7 @@
   import type { Snippet } from 'svelte';
   import type { LayoutData } from './$types';
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
+  import { syncDevtoolProtection } from '$lib/client/devtool-protection';
   import { isLibraryAwareRoute } from '$lib/shared/route-policy';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
@@ -46,6 +47,31 @@
     };
     window.addEventListener('online', retry);
     return () => window.removeEventListener('online', retry);
+  });
+
+  // DevTools protection (disable-devtool integration) — client-only.
+  //
+  // $effect never runs during SSR, and the protection module has no
+  // top-level browser access, so this is hydration-safe and
+  // SSR-safe. The root layout mounts exactly once per document and
+  // never unmounts during SPA navigation, so the detector's lifecycle
+  // matches the document: initialized at most once (the module
+  // singleton + the library's own isRunning guard make duplicate
+  // initialization impossible) and never torn down on route changes —
+  // SPA navigation cannot disable the protection.
+  //
+  // The effect re-runs when the server layout data refreshes. Sign-in
+  // and sign-out are full-page navigations (fresh data); the QR
+  // big-screen login calls invalidateAll(). A detector that is already
+  // active in a document that becomes admin-owned is suspended, and
+  // resumed when the exemption disappears — no stale state on either
+  // side of a login/logout transition.
+  //
+  // `exempt` is the server-resolved devtoolExempt capability
+  // (authenticated admin -> true; guest/normal user -> false) — the
+  // ONLY input. There is no client-side bypass by construction.
+  $effect(() => {
+    syncDevtoolProtection(data.devtoolExempt === true);
   });
 
   // Root layout snapshot — captures the window scroll position whenever

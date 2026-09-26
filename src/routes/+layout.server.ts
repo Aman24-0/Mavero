@@ -1,5 +1,6 @@
 import type { LayoutServerLoad } from './$types';
 import { parseDeviceMetadata, readDeviceHintCookie, DEVICE_HINT_COOKIE } from '$lib/server/auth/device-metadata';
+import { isAdminUser } from '$lib/server/streaming/admin-auth';
 import type { ClientDeviceType } from '$lib/shared/device-class';
 
 // Phase 2-A (audit PERF-001) — Session resolution optimization.
@@ -58,15 +59,30 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
 
   const user = locals.user;
   if (!user) {
-    return { user: null, isAuthenticated: false, deviceType };
+    // Guests are NOT exempt — DevTools protection is enabled for them,
+    // and no profiles lookup is needed (zero extra DB cost for the
+    // unauthenticated majority).
+    return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false };
   }
   const userMeta = user.user_metadata;
   const displayName = typeof userMeta?.display_name === 'string' && userMeta.display_name.trim()
     ? userMeta.display_name.trim()
     : null;
+  // DevTools-protection capability — server-resolved per request from
+  // the TRUSTED session (locals.user, resolved by hooks.server.ts) via
+  // the canonical profiles.role check. Non-throwing and fail-closed:
+  // any lookup error resolves to false (protection ON). This boolean is
+  // a UI-deterrence capability ONLY — it decides whether the client
+  // initializes the DevTools detector; it is never an authorization
+  // signal (requireAdmin()/RLS remain the sole security boundaries) and
+  // no other profile data is exposed with it. One indexed PK read per
+  // authenticated full page load — comparable to the session
+  // registration the hook already performs.
+  const devtoolExempt = await isAdminUser(locals.supabase, user.id);
   return {
     user: { id: user.id, email: user.email, displayName },
     isAuthenticated: true,
-    deviceType
+    deviceType,
+    devtoolExempt
   };
 };

@@ -187,7 +187,10 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // (the verifyOtp + lease-state-machine + manual-code suite). The
   // 20261004 SQLSTATE-42702 hotfix appended the device-RPC database
   // regression suites: ambiguity guard (static) → live embedded-PostgreSQL
-  // execution of the real migration chain.
+  // execution of the real migration chain. The disable-devtool security
+  // integration then appended the final suite (devtool protection
+  // contract: dependency pin, admin exemption, replacement behavior,
+  // player/PWA isolation).
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
@@ -197,8 +200,9 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
       testScript.indexOf('big_screen_qr_ux_test.ts') < testScript.indexOf('big_screen_qr_regression_test.ts') &&
       testScript.indexOf('big_screen_qr_regression_test.ts') < testScript.indexOf('device_rpc_ambiguity_guard_test.ts') &&
       testScript.indexOf('device_rpc_ambiguity_guard_test.ts') < testScript.indexOf('device_pairing_rpc_live_test.ts') &&
-      testScript.trimEnd().endsWith('device_pairing_rpc_live_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the device-auth repair suites (registry v2 → QR UX → QR regression)',
+      testScript.indexOf('device_pairing_rpc_live_test.ts') < testScript.indexOf('devtool_protection_test.ts') &&
+      testScript.trimEnd().endsWith('devtool_protection_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the device-auth repair suites then the devtool protection suite',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');

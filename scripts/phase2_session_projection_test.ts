@@ -110,7 +110,12 @@ const layout = read('src/routes/+layout.server.ts');
 // The layout returns ONLY { user, isAuthenticated, deviceType } —
 // deviceType was added by the Newtask §7 device-aware UI work (purely
 // descriptive server-derived class; NOT identity, NOT auth).
-ok(/return\s*\{\s*user:\s*null,\s*isAuthenticated:\s*false,\s*deviceType\s*\}/.test(layout), '4a. guest payload is { user: null, isAuthenticated: false, deviceType }');
+// devtoolExempt was added by the disable-devtool integration: a
+// server-resolved boolean capability (admin -> true, guest/normal
+// user -> false) that only decides whether the CLIENT-side DevTools
+// detector initializes. It is a UI-deterrence capability, never an
+// authorization signal, and carries no other profile data.
+ok(/return\s*\{\s*user:\s*null,\s*isAuthenticated:\s*false,\s*deviceType,\s*devtoolExempt:\s*false\s*\}/.test(layout), '4a. guest payload is { user: null, isAuthenticated: false, deviceType, devtoolExempt: false }');
 ok(/isAuthenticated:\s*true/.test(layout), '4b. authenticated payload sets isAuthenticated: true');
 // Projected user shape: { id, email, displayName }.
 ok(/user:\s*\{\s*id:\s*user\.id,\s*email:\s*user\.email,\s*displayName\s*\}/.test(layout), '4c. authenticated user payload is the minimal projection { id, email, displayName }');
