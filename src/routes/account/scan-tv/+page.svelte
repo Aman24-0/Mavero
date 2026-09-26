@@ -723,7 +723,16 @@
     color: #f5f5f5; font-size: .78rem; font-weight: 800;
   }
   .manual-label :global(svg) { color: var(--color-primary, #00e676); }
-  .manual-controls { display: flex; gap: 9px; }
+  /* min-width: 0 — .manual-controls is a GRID ITEM of .manual-form
+     (display: grid). Grid items default to min-width: auto (automatic
+     minimum = min-content), and the input's intrinsic width (default
+     size=20 chars at 1.15rem mono + .18em tracking ≈ 263px) locks the
+     implicit track at ~366px — pushing the Continue button off-screen
+     on phones narrower than ~430px (.scan-page overflow: hidden then
+     CLIPS it). The input's own min-width: 0 cannot fix this: it only
+     allows shrinking inside a definite-width flex row, not the
+     intrinsic contribution the grid track sizes from. Verified fix. */
+  .manual-controls { display: flex; gap: 9px; min-width: 0; }
   .manual-input {
     flex: 1; min-width: 0;
     min-height: 48px;
