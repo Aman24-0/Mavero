@@ -829,6 +829,8 @@ export type Database = {
           supports_tv: boolean
           movie_url_template: string | null
           tv_url_template: string | null
+          // Added by 20261007000000_download_provider_type.sql.
+          type: string
           created_at: string
           updated_at: string
         }
@@ -845,6 +847,7 @@ export type Database = {
           supports_tv?: boolean
           movie_url_template?: string | null
           tv_url_template?: string | null
+          type?: string
           created_at?: string
           updated_at?: string
         }
@@ -861,6 +864,7 @@ export type Database = {
           supports_tv?: boolean
           movie_url_template?: string | null
           tv_url_template?: string | null
+          type?: string
           created_at?: string
           updated_at?: string
         }
@@ -1019,6 +1023,8 @@ export type Database = {
           supports_tv: boolean
           movie_url_template: string | null
           tv_url_template: string | null
+          // Added by 20261007000000_download_provider_type.sql.
+          type: string
         }
         Insert: {
           id: string
@@ -1033,6 +1039,7 @@ export type Database = {
           supports_tv: boolean
           movie_url_template?: string | null
           tv_url_template?: string | null
+          type: string
         }
         Update: {
           id?: string
@@ -1047,6 +1054,7 @@ export type Database = {
           supports_tv?: boolean
           movie_url_template?: string | null
           tv_url_template?: string | null
+          type?: string
         }
         Relationships: []
       }

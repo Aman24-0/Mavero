@@ -52,9 +52,24 @@ export const MAVERO_DOWNLOADER_PROVIDER_ID = 'mavero-downloader';
 export const FOURK_DOWNLOADER_PROVIDER_ID = '4k-downloader';
 
 /**
- * Public downloader provider shape — exactly the fields the browser iframe
- * feature needs to render + build a URL. No admin-only metadata (notes,
- * status flags, raw admin row data) is ever included.
+ * Downloader capability type (20261007000000_download_provider_type.sql).
+ *
+ *   'embed' — the provider's resolved URL is an HTML page rendered inside a
+ *             cross-origin iframe (the ORIGINAL downloader behavior).
+ *   'json'  — the provider's resolved URL is a JSON API endpoint. Mavero
+ *             fetches it SERVER-SIDE through /api/downloader/json (never
+ *             iframed) and renders a generic inline download-link list.
+ *
+ * The two slug-special-cased providers (mavero-downloader → addon panel,
+ * 4k-downloader → FourKDownload panel) are checked BEFORE this type in the
+ * DownloadSheet, so their rendering is unaffected by the column value.
+ */
+export type DownloadProviderType = 'embed' | 'json';
+
+/**
+ * Public downloader provider shape — exactly the fields the browser
+ * downloader feature needs to render + build a URL. No admin-only metadata
+ * (notes, status flags, raw admin row data) is ever included.
  */
 export type PublicDownloadProvider = {
   id: string;
@@ -69,6 +84,8 @@ export type PublicDownloadProvider = {
   supportsTv: boolean;
   movieUrlTemplate: string | null;
   tvUrlTemplate: string | null;
+  /** Capability discriminator: embed = iframe flow, json = generic link list. */
+  type: DownloadProviderType;
 };
 
 /**

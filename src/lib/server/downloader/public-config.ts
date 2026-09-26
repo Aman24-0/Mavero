@@ -56,6 +56,10 @@ export function invalidatePublicDownloadConfig(): void {
 /**
  * Convert a DB row to the sanitized public shape (camelCase fields, no
  * admin-only metadata, no created_at/updated_at).
+ *
+ * The `type` column is normalized defensively: the DB CHECK guarantees
+ * 'embed' | 'json', but the generated Row type is a plain string — anything
+ * unexpected degrades to 'embed' (the original, safest behavior).
  */
 function toPublic(row: Database['public']['Tables']['download_providers']['Row']): PublicDownloadProvider {
   return {
@@ -71,6 +75,7 @@ function toPublic(row: Database['public']['Tables']['download_providers']['Row']
     supportsTv: row.supports_tv,
     movieUrlTemplate: row.movie_url_template,
     tvUrlTemplate: row.tv_url_template,
+    type: row.type === 'json' ? 'json' : 'embed',
   };
 }
 
@@ -101,7 +106,7 @@ export async function getPublicDownloadConfig(client: DownloadClient): Promise<P
 
   const providersResult = await client
     .from('download_providers_public')
-    .select('id,name,slug,description,icon,enabled,is_default,ordering,supports_movie,supports_tv,movie_url_template,tv_url_template')
+    .select('id,name,slug,description,icon,enabled,is_default,ordering,supports_movie,supports_tv,movie_url_template,tv_url_template,type')
     .eq('enabled', true);
 
   if (providersResult.error) throw new Error(`Public downloader config lookup failed: ${providersResult.error.message}`);
@@ -211,6 +216,7 @@ export function builtinMaveroDownloaderProvider(origin: string): PublicDownloadP
     supportsTv: true,
     movieUrlTemplate: `${origin}/watch/mavero-downloader/movie/{tmdbId}`,
     tvUrlTemplate: `${origin}/watch/mavero-downloader/tv/{tmdbId}/{season}/{episode}`,
+    type: 'embed',
   };
 }
 

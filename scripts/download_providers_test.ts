@@ -58,6 +58,7 @@ const fixtures: PublicDownloadProvider[] = [
     supportsTv: true,
     movieUrlTemplate: 'https://02moviedownloader.site/api/download/movie/{tmdbId}',
     tvUrlTemplate: 'https://02moviedownloader.site/api/download/tv/{tmdbId}/{season}/{episode}',
+    type: 'embed',
   },
   {
     id: 'p-vidvault',
@@ -72,6 +73,7 @@ const fixtures: PublicDownloadProvider[] = [
     supportsTv: true,
     movieUrlTemplate: 'https://vidvault.ru/movie/{tmdbId}',
     tvUrlTemplate: 'https://vidvault.ru/tv/{tmdbId}/{season}/{episode}',
+    type: 'embed',
   },
   {
     id: 'p-nxsha',
@@ -86,6 +88,7 @@ const fixtures: PublicDownloadProvider[] = [
     supportsTv: true,
     movieUrlTemplate: 'https://nxsha.space/dl/movie/{tmdbId}',
     tvUrlTemplate: 'https://nxsha.space/dl/tv/{tmdbId}/{season}/{episode}',
+    type: 'embed',
   },
   {
     id: 'p-nhd',
@@ -100,6 +103,7 @@ const fixtures: PublicDownloadProvider[] = [
     supportsTv: true,
     movieUrlTemplate: 'https://nhdapi.com/dl/movie/{tmdbId}',
     tvUrlTemplate: 'https://nhdapi.com/dl/tv/{tmdbId}/{season}/{episode}',
+    type: 'embed',
   },
   {
     id: 'p-cineverse',
@@ -114,6 +118,7 @@ const fixtures: PublicDownloadProvider[] = [
     supportsTv: true,
     movieUrlTemplate: 'https://cineverse.modiplay.xyz/download/{titleSlug}',
     tvUrlTemplate: 'https://cineverse.modiplay.xyz/download/{titleSlug}-s{season2}e{episode2}',
+    type: 'embed',
   },
 ];
 

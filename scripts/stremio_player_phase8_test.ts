@@ -188,9 +188,11 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // 20261004 SQLSTATE-42702 hotfix appended the device-RPC database
   // regression suites: ambiguity guard (static) → live embedded-PostgreSQL
   // execution of the real migration chain. The disable-devtool security
-  // integration then appended the final suite (devtool protection
-  // contract: dependency pin, admin exemption, replacement behavior,
-  // player/PWA isolation).
+  // integration then appended the devtool protection suite (dependency pin,
+  // admin exemption, replacement behavior, player/PWA isolation). The
+  // generic downloader type (embed|json) task appended the FINAL suite
+  // (generic_json_downloader_test.ts: migration, projection, admin form,
+  // normalizer, endpoint security, sheet dispatch, Pantyflix fixtures).
   ok(
     testScript.indexOf('stremio_player_phase7_test.ts') !== -1 &&
       testScript.indexOf('stremio_player_phase7_test.ts') < testScript.indexOf('stremio_player_phase8_test.ts') &&
@@ -201,8 +203,9 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
       testScript.indexOf('big_screen_qr_regression_test.ts') < testScript.indexOf('device_rpc_ambiguity_guard_test.ts') &&
       testScript.indexOf('device_rpc_ambiguity_guard_test.ts') < testScript.indexOf('device_pairing_rpc_live_test.ts') &&
       testScript.indexOf('device_pairing_rpc_live_test.ts') < testScript.indexOf('devtool_protection_test.ts') &&
-      testScript.trimEnd().endsWith('devtool_protection_test.ts'),
-    'A: test chain runs phase 8 after phase 7 and ends with the device-auth repair suites then the devtool protection suite',
+      testScript.indexOf('devtool_protection_test.ts') < testScript.indexOf('generic_json_downloader_test.ts') &&
+      testScript.trimEnd().endsWith('generic_json_downloader_test.ts'),
+    'A: test chain runs phase 8 after phase 7 and ends with the device-auth repair suites, the devtool protection suite, then the generic json downloader suite',
   );
 
   const netlifyToml = readRepoFile('netlify.toml');

@@ -19,6 +19,7 @@
   } from '$lib/shared/downloader';
   import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
   import FourKDownload from '$components/FourKDownload.svelte';
+  import JsonDownload from '$components/JsonDownload.svelte';
 
   // ----- Props -----
   // Props are explicit per the spec. The parent (DetailPage) supplies the
@@ -136,7 +137,12 @@
   // addon-links panel INLINE (no iframe, no URL template) — candidate
   // building is skipped for it entirely.
   $: if (activeProvider && open) {
-    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID) {
+    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID || activeProvider.type === 'json') {
+      // Mavero Downloader + 4K Downloader render their own inline panels
+      // (no iframe, no URL template). Generic type='json' providers also
+      // NEVER build a client-side iframe URL — their API is resolved
+      // server-side by /api/downloader/json and rendered inline by
+      // JsonDownload. The iframe URL state stays null for all three.
       urlCandidates = [];
       alternateUrl = null;
       useAlternate = false;
@@ -355,6 +361,10 @@
   $: isMaveroDownloader = activeProvider?.slug === MAVERO_DOWNLOADER_PROVIDER_ID;
   // Phase 19: the 4K Downloader renders its panel INLINE (no iframe — JSON API).
   $: is4kDownloader = activeProvider?.slug === FOURK_DOWNLOADER_PROVIDER_ID;
+  // Generic JSON downloader (type='json'): renders the JsonDownload inline
+  // link list — the provider page is NEVER iframed. The two slug special
+  // cases above are checked FIRST, so their rendering is unaffected.
+  $: isJsonDownloader = activeProvider?.type === 'json';
   // The addon API is content-type-shaped ('movie' | 'series' | 'anime'); the
   // sheet's registry is downloader-shaped ('movie' | 'tv'). The ORIGINAL
   // content type wins when the parent supplied it (preserves 'anime');
@@ -486,6 +496,23 @@
             <AlertTriangle size={26} />
             <h3>No downloaders available</h3>
             <p>Downloading is not configured for this content type right now. Please try again later.</p>
+          </div>
+        {:else if isJsonDownloader}
+          <!-- Generic JSON downloader (type='json'): the provider's URL
+               template is resolved SERVER-SIDE by /api/downloader/json and
+               the normalized links render as a compact inline list. The
+               provider page itself is NEVER iframed on this branch. -->
+          <div class="dl-mavero-panel">
+            <JsonDownload
+              providerId={activeProvider?.id ?? ''}
+              providerName={activeProvider?.name ?? ''}
+              mediaType={mediaType}
+              contentType={contentType}
+              {tmdbId}
+              {season}
+              {episode}
+              {title}
+            />
           </div>
         {:else if iframeUrl === null}
           <!-- getDownloadUrlCandidates() returned no candidates: the active

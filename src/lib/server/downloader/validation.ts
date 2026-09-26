@@ -12,6 +12,7 @@
 //   - enabled, is_default: booleans
 //   - ordering: non-negative integer
 //   - supports_movie, supports_tv: booleans
+//   - type: 'embed' | 'json' (default 'embed'; anything else rejected)
 //   - movie_url_template, tv_url_template: optional, HTTPS-only, single-line,
 //     only the known placeholders from DOWNLOAD_PLACEHOLDERS
 //
@@ -20,7 +21,7 @@
 // (which would otherwise return a generic 23514 violation). The DB CHECKs
 // remain as defense-in-depth.
 
-import { DOWNLOAD_PLACEHOLDERS } from '$lib/shared/downloader';
+import { DOWNLOAD_PLACEHOLDERS, type DownloadProviderType } from '$lib/shared/downloader';
 
 export class DownloaderValidationError extends Error {
   constructor(message: string) {
@@ -105,6 +106,26 @@ function urlTemplate(value: FormDataEntryValue | null, label: string): string | 
 }
 
 /**
+ * Parse the downloader capability `type` from the admin form.
+ *
+ * Rules (task contract):
+ *   - 'embed' and 'json' are the ONLY accepted values.
+ *   - Missing/empty defaults to 'embed' (backward-compatible with any
+ *     pre-type form post).
+ *   - Anything else is REJECTED with a friendly validation error BEFORE
+ *     hitting Postgres (the DB CHECK remains defense-in-depth).
+ */
+function providerType(value: FormDataEntryValue | null): DownloadProviderType {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 'embed';
+  // STRICT exact match — the DB CHECK is `type in ('embed', 'json')`, so any
+  // case-variant would only fail later at the database boundary with a
+  // generic 23514 error. Reject it here with a friendly message instead.
+  if (raw === 'embed' || raw === 'json') return raw;
+  throw new DownloaderValidationError('Type must be either Embed or JSON.');
+}
+
+/**
  * Parse the create/update form for a download provider.
  *
  * Returns a normalized object suitable for insert/update — the caller decides
@@ -137,6 +158,7 @@ export function parseDownloadProviderForm(form: FormData) {
     supports_tv: supportsTv,
     movie_url_template: movieUrlTemplate,
     tv_url_template: tvUrlTemplate,
+    type: providerType(form.get('type')),
   };
 }
 

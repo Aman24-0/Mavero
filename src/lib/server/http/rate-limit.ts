@@ -58,6 +58,8 @@ export const RATE_LIMITED_MESSAGE = 'Too many requests. Please slow down and try
  *   * downloader addon/tabs: the progressive UI fires one request per tab
  *     (≤20) → 30/min protects without breaking the flow.
  *   * 4k: one upstream fetch per call → 20/min.
+ *   * json downloaders: one server-side API fetch per call → 20/min
+ *     (mirrors the 4K ceiling; each call drives one upstream fetch).
  *   * search: TMDB classification per query → 30/min.
  *   * stremio session: token minting per play → 20/min.
  *   * pairing create: unauthenticated TV challenge creation → 10/min per IP
@@ -86,6 +88,7 @@ export const RATE_LIMIT_RULES = {
   downloaderAddon: { limit: 30, windowMs: 60_000 },
   downloaderTabs: { limit: 30, windowMs: 60_000 },
   downloader4k: { limit: 20, windowMs: 60_000 },
+  downloaderJson: { limit: 20, windowMs: 60_000 },
   search: { limit: 30, windowMs: 60_000 },
   stremioSession: { limit: 20, windowMs: 60_000 },
   pairingCreate: { limit: 10, windowMs: 60_000 },

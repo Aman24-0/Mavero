@@ -21,6 +21,9 @@
     if (provider.supports_tv) types.push('TV');
     return types.length === 0 ? 'None' : types.join(' · ');
   }
+  function typeLabel(provider: PageData['providers'][number]): string {
+    return provider.type === 'json' ? 'JSON' : 'Embed';
+  }
 
   // Create/Edit modal state.
   let sheetOpen = $state(false);
@@ -73,7 +76,7 @@
             <span class="provider-icon">{provider.icon || 'DL'}</span>
             <div class="record-copy">
               <strong class="record-name">{provider.name}{#if provider.is_default}<span class="default-badge"><Star size={11} fill="currentColor" strokeWidth={0} /> Default</span>{/if}</strong>
-              <span class="record-sub">{provider.slug} · {supportsMovieLabel(provider)} · order {provider.ordering}</span>
+              <span class="record-sub">{provider.slug} · {typeLabel(provider)} · {supportsMovieLabel(provider)} · order {provider.ordering}</span>
             </div>
             <span class="record-chevron"><ChevronRight size={18} /></span>
           </div>
@@ -129,6 +132,15 @@
     <div class="form-grid two">
       <label class="check"><input type="checkbox" name="supports_movie" checked={editingProvider?.supports_movie ?? true} /> Supports movie</label>
       <label class="check"><input type="checkbox" name="supports_tv" checked={editingProvider?.supports_tv ?? true} /> Supports TV</label>
+    </div>
+    <div>
+      <label>Type
+        <select name="type" value={editingProvider?.type ?? 'embed'}>
+          <option value="embed">Embed</option>
+          <option value="json">JSON</option>
+        </select>
+      </label>
+      <small class="hint">Embed loads the provider page in an iframe. JSON fetches the provider API server-side and lists its download links inline (no iframe).</small>
     </div>
     <label class="check"><input type="checkbox" name="is_default" checked={editingProvider?.is_default ?? false} /> Set as default downloader</label>
     <label>Description<textarea name="description" maxlength="500" rows="2" placeholder="Safe display description shown to users.">{editingProvider?.description ?? ''}</textarea></label>
@@ -257,7 +269,7 @@
   .form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   label { display: grid; gap: 6px; color: var(--color-text-muted); font-size: .58rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-  input, textarea {
+  input, textarea, select {
     width: 100%; box-sizing: border-box;
     min-height: 44px;
     border: 1px solid var(--color-border-strong);
@@ -271,7 +283,7 @@
     outline: none;
     transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
   }
-  input:focus, textarea:focus {
+  input:focus, textarea:focus, select:focus {
     border-color: var(--color-primary);
     background: var(--color-surface-raised);
     box-shadow: var(--glow-primary);

@@ -47,4 +47,5 @@ export const PUBLIC_PROVIDER_FIELDS = [
   'supports_tv',
   'movie_url_template',
   'tv_url_template',
+  'type',
 ] as const;
