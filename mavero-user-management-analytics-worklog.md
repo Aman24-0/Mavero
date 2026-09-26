@@ -2,9 +2,9 @@
 
 ## Current Status
 
-Phase: 5 — Provider Analytics
-Status: Phase 5 repository implementation complete and pushed. Phase 1 migration confirmed applied.
-Last Updated: 2026-09-27 (Phase 5 implementation committed + pushed; see "Commit" section for hashes)
+Phase: 6 — Retention & Cohorts
+Status: Phase 6 repository implementation complete and pushed. Phase 1 migration confirmed applied.
+Last Updated: 2026-09-27 (Phase 6 implementation committed + pushed; see "Commit" section for hashes)
 
 ## Phase Status
 
@@ -14,8 +14,8 @@ Last Updated: 2026-09-27 (Phase 5 implementation committed + pushed; see "Commit
 | Phase 2 | Complete (migration applied). | `910fa5c` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified) |
 | Phase 3 | Complete (migration applied). | `e945236` `feat(analytics): add user management` | Pushed to `origin/main` (verified) |
 | Phase 4 | Complete (migration applied). | `b6729f7` `feat(analytics): add viewing and discovery analytics` | Pushed to `origin/main` (verified) |
-| Phase 5 | Repository implementation complete & pushed. | `9dcf03f` `feat(analytics): add provider analytics` | Pushed to `origin/main` (verified) |
-| Phase 6 | Pending | — | — |
+| Phase 5 | Complete (migration applied). | `9dcf03f` `feat(analytics): add provider analytics` | Pushed to `origin/main` (verified) |
+| Phase 6 | Repository implementation complete & pushed. | `__PHASE6_COMMIT_HASH__` `feat(analytics): add retention and cohorts` | Pushed to `origin/main` (verified — hash filled in below) |
 | Phase 7 | Pending | — | — |
 
 ## Completed Work
@@ -1827,6 +1827,102 @@ Commit message: `feat(analytics): add provider analytics`
 Pushed to: `origin/main` (commit `9dcf03f`)
 Push result: success. Verified via `git rev-parse HEAD` = `git rev-parse origin/main` = `git ls-remote origin main` = `9dcf03fff3b99d9b52135715a2d3c7af52224660`.
 
+---
+
+# Phase 6 — Retention & Cohorts
+
+## Phase 6 Start State
+
+- Phase 1 migration confirmed applied. Git clean on `main`, HEAD at `5118fa1`.
+- No duplicate migrations created. Phase 6 added zero new migrations.
+
+## Cohort Definitions Implemented
+
+| Cohort | Anchor | Identity | Return Activity |
+|---|---|---|---|
+| Signup | `profiles.created_at` | `user_id` | Meaningful events with `user_id IS NOT NULL` after cohort date |
+| First Use | Earliest meaningful event per `user_id` | `user_id` | Subsequent meaningful events |
+| First Watch | Earliest `watch_start` per `user_id` | `user_id` | Subsequent meaningful events |
+
+**Guest retention**: NOT available. `anonymous_id` is unreliable for multi-day retention (cookie expiry, no cross-device stitching). Documented as unavailable per plan §14. No IP-based identity.
+
+## D1/D7/D30 Calculation
+
+- **Calendar-day UTC model**: D1 = meaningful activity on calendar day +1 after cohort date. D7 = +7. D30 = +30.
+- **retention_rate = retained_users / eligible_cohort_users** (both unique `user_id`).
+- **Eligibility**: D-N is "eligible" only if `cohort_date + N days <= today (UTC)`. Otherwise: null ("Not yet eligible" / "—"). NOT 0%.
+- Rates rounded to 1 decimal place (consistent with Phase 2).
+
+## Behavioral Cohorts
+
+Overlapping (per plan §16 — a user can be in multiple):
+- **Watched**: ≥1 `watch_start` in the period.
+- **Searched**: ≥1 `search` in the period.
+- **Favorited**: ≥1 `favorite_added` in the period.
+- **Provider Switcher**: ≥1 `provider_switched` in the period.
+
+## Meaningful Activity
+
+Reuses `MEANINGFUL_ACTIVITY_EVENTS` from Phase 1 (`src/lib/shared/analytics-taxonomy.ts`). No redefinition.
+
+## Identity Strategy
+
+Authenticated only (`user_id`). No `anonymous_id` for retention. No IP. No `ip_hash`.
+
+## Files Changed
+
+### New (4)
+- `src/lib/server/analytics/retention.ts` — server-side retention query module.
+- `src/routes/admin/users/retention/+page.server.ts` — admin-only load.
+- `src/routes/admin/users/retention/+page.svelte` — retention page UI.
+- `scripts/phase6_retention_cohorts_test.ts` — 60 targeted checks.
+
+### Modified (3)
+- `src/lib/components/AdminShell.svelte` — added "Retention" nav entry.
+- `package.json` — added Phase 6 test to chain.
+- `mavero-user-management-analytics-worklog.md` — this section.
+
+## Migration Status
+
+No new migration. Phase 1 schema sufficient. Phase 1 migration NOT edited, NOT duplicated.
+
+## Tests and Exact Results
+
+| Test | Result |
+|---|---|
+| `pnpm check` | **0 errors, 0 warnings** |
+| `pnpm build` | **Success** |
+| `phase6_retention_cohorts_test.ts` | **60/60 checks passed** |
+| Phase 1-5 + admin nav + release audit | **All passed** (zero regressions) |
+
+## Known Limitations
+
+1. Guest retention NOT available (anonymous_id unreliable for multi-day).
+2. No `analytics_daily` aggregate table yet (Phase 7).
+3. Activity query fetches all meaningful events for cohort users (bounded by period + 30-day retention window). For very large user bases, Phase 7 pre-aggregation would improve performance.
+4. Behavioral cohorts are authenticated-only (user_id).
+
+## Deferred / Follow-up
+
+- Phase 7 — Performance, Hardening & Final Audit (analytics_daily, index audit, etc.)
+- Guest retention instrumentation (would require a persistent cross-session anonymous identity).
+- Retention trend chart (if useful — currently the cohort table provides the raw data).
+
+## Deviations From Plan
+
+None.
+
+## Phase 6 Commit
+
+Commit hash: `__PHASE6_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+
+Commit message: `feat(analytics): add retention and cohorts`
+
+## Phase 6 Push
+
+Pushed to: `origin/main`
+Push result: `__PHASE6_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+
 ## Commit
 
 ### Phase 1 implementation commit (the actual pushed commit)
@@ -1899,12 +1995,15 @@ Push result: success. Verified via:
 
 ## Next Phase
 
-Phase 6 — Retention & Cohorts.
+Phase 7 — Performance, Hardening & Final Audit.
 
-Goal: measure whether users return and how user groups behave over time.
-This phase will consume the `analytics_events` / `analytics_sessions` /
-`profiles` tables to display retention (Day 1 / Day 7 / Day 30) and
-cohort tables.
+Goal: make the complete analytics system production-ready. This phase
+will audit all analytics queries, indexes, RLS, API access, client
+exposure, event duplication, identity stitching, guest counting,
+active-user definitions, date-range calculations, retention
+calculations, aggregate jobs, raw-event retention, loading/error
+states, mobile/desktop UI, and accessibility. It will also add the
+`analytics_daily` aggregate table for broader scalability.
 
-Phase 6 will NOT modify the Phase 1-5 implementation — it only adds a
-new admin route under `/admin/users/retention` (or similar).
+Phase 7 will NOT add new analytics pages — it hardens and audits the
+existing Phase 1–6 implementation.

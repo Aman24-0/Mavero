@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { page } from '$app/state';
-  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download, Puzzle, PanelLeftClose, PanelLeft, Menu, X, ToggleRight, Users, Play, BarChart3 } from 'lucide-svelte';
+  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download, Puzzle, PanelLeftClose, PanelLeft, Menu, X, ToggleRight, Users, Play, BarChart3, Repeat } from 'lucide-svelte';
   import type { Snippet } from 'svelte';
 
   // ============================================================
@@ -28,10 +28,10 @@
   //   - `<a class="admin-back" href="/discover">` Back to app link.
   // ============================================================
   let {
-    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview' | 'users-list' | 'users-detail' | 'users-viewing' | 'users-providers',
+    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview' | 'users-list' | 'users-detail' | 'users-viewing' | 'users-providers' | 'users-retention',
     children
   }: {
-    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview' | 'users-list' | 'users-detail' | 'users-viewing' | 'users-providers';
+    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview' | 'users-list' | 'users-detail' | 'users-viewing' | 'users-providers' | 'users-retention';
     children: Snippet;
   } = $props();
 
@@ -50,12 +50,13 @@
   // array under its own "USERS & ANALYTICS" label so the existing
   // Workspace section + its test-locked nav entries are untouched.
   // Phase 3 adds "Users". Phase 4 adds "Viewing". Phase 5 adds "Providers".
-  // Later phases (Retention) will add their own entries here.
+  // Phase 6 adds "Retention".
   const usersLinks = [
     { id: 'users-overview', label: 'Overview', href: '/admin/users/overview', icon: Activity },
     { id: 'users-list', label: 'Users', href: '/admin/users', icon: Users },
     { id: 'users-viewing', label: 'Viewing', href: '/admin/users/viewing', icon: Play },
     { id: 'users-providers', label: 'Providers', href: '/admin/users/providers', icon: BarChart3 },
+    { id: 'users-retention', label: 'Retention', href: '/admin/users/retention', icon: Repeat },
   ] as const;
 
   const STORAGE_KEY = 'mavero:admin-sidebar-collapsed';
