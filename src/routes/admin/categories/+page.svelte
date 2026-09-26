@@ -8,6 +8,9 @@
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
   import SourceIcon from '$lib/components/source/SourceIcon.svelte';
   import { sourceBadgeLabelFor } from '$lib/shared/source-presentation';
+  // Task 13 follow-up: membership map for the assignment picker — derived
+  // once from the page's already-loaded rows (no extra Supabase queries).
+  import { categoryMembershipsBySource, orderMembershipsForPicker } from '$lib/shared/source-assignment';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -38,8 +41,14 @@
   let assignSheetOpen = $state(false);
   let assignCategory = $state<PageData['categories'][number] | null>(null);
 
+  // Task 13 follow-up: Mavero-themed source picker (replaces the native
+  // <select>). The picked source id is the radio group's value — real form
+  // semantics, native keyboard navigation, native disabled state.
+  let pickedSourceId = $state<string | null>(null);
+
   function openAssignPanel(category: PageData['categories'][number]) {
     assignCategory = category;
+    pickedSourceId = null;
     reorderActive = false;
     reorderError = '';
     assignSheetOpen = true;
@@ -47,9 +56,19 @@
   function closeAssignSheet() {
     assignSheetOpen = false;
     assignCategory = null;
+    pickedSourceId = null;
     reorderActive = false;
     reorderError = '';
   }
+
+  // Membership map derived ONCE from the already-loaded page data:
+  // sourceId → the categories that source is assigned to. Rendering the
+  // picker never queries Supabase per source (no N+1).
+  const membershipsBySourceId = $derived(categoryMembershipsBySource(data.sourceCategories, data.categories));
+  // Sources already assigned to the category being edited — their picker
+  // rows are visibly marked and their radios are disabled (no duplicate
+  // assignment). Sources assigned ELSEWHERE stay fully assignable.
+  const currentSourceIds = $derived(new Set(assignCategory ? assignedFor(assignCategory.id).map((mapping) => mapping.source_id) : []));
 
   // Task 13: reorder mode — each assigned source gets a 1-based position
   // input. Saving submits the position targets; the server derives the new
@@ -188,18 +207,59 @@
   {#if assignCategory}
     <div class="assign-panel">
       {#if !reorderActive}
+        <!-- Task 13 follow-up: Mavero-themed source picker. Real radio
+             semantics (native keyboard navigation, native disabled state)
+             with fully custom Mavero styling — no browser-native <select>.
+             Every row shows the source icon, badge and WHERE the source is
+             already assigned; sources already in THIS category are visibly
+             marked and not assignable (duplicate assignment prevented). -->
         <form method="POST" action="?/assignSource" class="assign-form">
           <input type="hidden" name="category_id" value={assignCategory.id} />
-          <select name="source_id" required aria-label="Select a source">
-            <option value="" disabled selected>Select a source</option>
-            {#each data.sources as source}
-              <!-- Task 13: badge shown as compact option text (native select
-                   options cannot render components); icon + badge render in
-                   the assignment rows below. -->
-              <option value={source.id}>{sourceBadgeLabelFor(source.badge) ? `${source.name} · ${sourceBadgeLabelFor(source.badge)}` : source.name}</option>
-            {/each}
-          </select>
-          <button class="btn btn-primary" type="submit"><Plus size={13} /> Assign</button>
+          {#if data.sources.length === 0}
+            <p class="assignment-empty">No sources are registered yet. Add sources first, then assign them here.</p>
+          {:else}
+            <span class="picker-heading" id="source-picker-heading">Select a source</span>
+            <div class="picker-list" role="radiogroup" aria-labelledby="source-picker-heading">
+              {#each data.sources as source (source.id)}
+                {@const badge = sourceBadgeLabelFor(source.badge)}
+                {@const memberships = orderMembershipsForPicker(membershipsBySourceId.get(source.id) ?? [], assignCategory.id)}
+                {@const assignedHere = currentSourceIds.has(source.id)}
+                <label class="picker-row" class:picked={pickedSourceId === source.id} class:assigned-current={assignedHere}>
+                  <input
+                    class="picker-radio"
+                    type="radio"
+                    name="source_id"
+                    value={source.id}
+                    bind:group={pickedSourceId}
+                    disabled={assignedHere}
+                  />
+                  <span class="picker-icon" aria-hidden="true"><SourceIcon icon={source.icon} size={16} /></span>
+                  <span class="picker-copy">
+                    <span class="picker-title">
+                      <strong class="picker-name">{source.name}</strong>
+                      {#if badge}<span class="row-badge" data-badge={source.badge}>{badge}</span>{/if}
+                    </span>
+                    <span class="picker-cats">
+                      {#if memberships.length === 0}
+                        <span class="picker-unassigned">Not assigned</span>
+                      {:else}
+                        {#each memberships as category (category.id)}
+                          {#if category.id === assignCategory.id}
+                            <span class="cat-chip cat-chip-current">{category.name} · Current</span>
+                          {:else}
+                            <span class="cat-chip">{category.name}</span>
+                          {/if}
+                        {/each}
+                      {/if}
+                    </span>
+                  </span>
+                </label>
+              {/each}
+            </div>
+            <div class="assign-actions">
+              <button class="btn btn-primary" type="submit" disabled={!pickedSourceId}><Plus size={13} /> Assign</button>
+            </div>
+          {/if}
         </form>
       {/if}
       {#if assignedFor(assignCategory.id).length === 0}
@@ -376,7 +436,7 @@
   .form-grid { display: grid; gap: 10px; }
   .form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   label { display: grid; gap: 6px; color: var(--color-text-muted); font-size: .58rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-  input, select, textarea {
+  input, textarea {
     width: 100%; box-sizing: border-box;
     min-height: 44px;
     border: 1px solid var(--color-border-strong);
@@ -390,7 +450,7 @@
     outline: none;
     transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
   }
-  input:focus, select:focus, textarea:focus {
+  input:focus, textarea:focus {
     border-color: var(--color-primary);
     background: var(--color-surface-raised);
     box-shadow: var(--glow-primary);
@@ -409,8 +469,78 @@
 
   /* Assign sources panel (inside its own modal) */
   .assign-panel { display: grid; gap: 14px; }
-  .assign-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-  .assign-form select, .assign-form input { min-height: 40px; }
+  /* Task 13 follow-up: the assign form is now a vertical stack — Mavero
+     picker list + Assign action (the old native <select> is gone). */
+  .assign-form { display: grid; gap: 10px; }
+  .assign-actions { display: flex; justify-content: flex-end; }
+
+  /* Mavero-themed source picker */
+  .picker-heading { color: var(--color-text-muted); font-size: .58rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .picker-list { display: grid; gap: 6px; max-height: min(46dvh, 360px); overflow-y: auto; padding: 2px; }
+  .picker-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-elevated);
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  }
+  .picker-row:hover { border-color: var(--color-primary-border); background: var(--color-surface-raised); }
+  .picker-row.picked { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: var(--glow-primary); }
+  .picker-row.assigned-current { cursor: default; }
+  .picker-row.assigned-current:hover { border-color: var(--color-border); background: var(--color-surface-elevated); }
+  .picker-radio {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    min-height: 0;
+    margin: 3px 0 0;
+    padding: 0;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 50%;
+    background: var(--color-surface);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  }
+  .picker-radio::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: transparent;
+    transform: scale(.5);
+    transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
+  }
+  .picker-radio:checked { border-color: var(--color-primary); background: var(--color-surface); }
+  .picker-radio:checked::before { background: var(--color-primary); transform: scale(1); }
+  .picker-radio:disabled { opacity: .4; cursor: default; }
+  .picker-radio:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .picker-icon {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    color: var(--color-primary);
+    background: var(--color-primary-soft);
+    border: 1px solid var(--color-primary-border);
+    flex: 0 0 auto;
+  }
+  .picker-copy { flex: 1; min-width: 0; display: grid; gap: 6px; }
+  .picker-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .picker-name { color: var(--color-text); font-size: .78rem; font-weight: 700; overflow-wrap: anywhere; }
+  .picker-cats { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .cat-chip { padding: 1px 7px; border: 1px solid var(--color-border-strong); border-radius: 999px; color: var(--color-text-muted); font-size: .54rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .cat-chip-current { color: var(--color-primary); border-color: var(--color-primary-border); background: rgba(0, 255, 156, .07); }
+  .picker-unassigned { color: var(--color-text-deep); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .54rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
   .assign-toolbar { display: flex; justify-content: flex-end; }
   .assignment-list { display: grid; gap: 6px; }
   .assignment-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-muted); font-size: .72rem; background: var(--color-surface-elevated); }
@@ -431,9 +561,13 @@
   .assignment-empty { margin: 0; color: var(--color-text-deep); font-size: .68rem; }
 
   @media (max-width: 640px) {
-    .form-grid.three, .assign-form { grid-template-columns: 1fr; }
+    .form-grid.three { grid-template-columns: 1fr; }
     .record-badges { gap: 4px; }
     .assignment-row { flex-wrap: wrap; }
     .position-label { margin-left: auto; }
+    /* Task 13 follow-up: the picker rows stay a single responsive flex line
+       (icon + copy column); names, badges and category chips wrap inside
+       the copy column instead of stretching the row. */
+    .picker-list { max-height: 52dvh; }
   }
 </style>

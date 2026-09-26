@@ -89,14 +89,15 @@ export const actions: Actions = {
   removeSource: async ({ request, locals }) => {
     await requireAdmin(locals, { redirectTo: '/admin/categories' });
     try {
-      const form = await request.formData();
-      const sourceId = parseId(form, 'Source');
-      const categoryId = (() => {
-        const category = new FormData();
-        category.set('id', String(form.get('category_id') ?? ''));
-        return parseId(category, 'Category');
-      })();
-      await deleteSourceCategory(locals.supabase, sourceId, categoryId);
+      // Task 13 follow-up: the delete form posts `source_id` + `category_id`
+      // (the same field names as the assign form). Parsing the source with
+      // parseId() read the WRONG field (`id`) and always failed with
+      // "Source is required." before the service was reached. Both ids now
+      // go through the shared assignment parser — identical validation to
+      // assignSource, and the action still only removes the category
+      // ASSIGNMENT (deleteSourceCategory never deletes the global source).
+      const assignment = parseSourceAssignmentForm(await request.formData());
+      await deleteSourceCategory(locals.supabase, assignment.source_id, assignment.category_id);
       throw redirect(303, '/admin/categories?notice=Source%20assignment%20removed.');
     } catch (error) {
       if (isRedirect(error)) throw error;

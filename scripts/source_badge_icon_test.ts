@@ -297,7 +297,15 @@ const categoriesPage = read('src/routes/admin/categories/+page.svelte');
 {
   assert.match(categoriesPage, /<SourceIcon icon=\{rowSource\?\.icon\} size=\{14\} \/>/, 'assignment rows render the source icon');
   assert.match(categoriesPage, /sourceBadgeLabelFor\(rowSource\?\.badge\)/, 'assignment rows use the guarded badge label');
-  assert.match(categoriesPage, /sourceBadgeLabelFor\(source\.badge\) \? `\$\{source\.name\} · \$\{sourceBadgeLabelFor\(source\.badge\)\}` : source\.name/, 'assignment dropdown shows the badge as compact option text');
+  // Task 13 follow-up: the native <select> picker was replaced by the
+  // Mavero-themed radio picker — the badge now renders as a real chip in
+  // the picker row (guarded label), and no browser-native select remains
+  // in the assignment form.
+  assert.match(categoriesPage, /\{#if badge\}<span class="row-badge" data-badge=\{source\.badge\}>\{badge\}<\/span>\{\/if\}/, 'assignment picker shows the badge as a chip');
+  assert.match(categoriesPage, /const badge = sourceBadgeLabelFor\(source\.badge\)/, 'assignment picker uses the guarded badge label');
+  const assignForm = categoriesPage.match(/class="assign-form"[\s\S]*?<\/form>/);
+  assert.ok(assignForm, 'assign form found');
+  assert.ok(!assignForm[0].includes('<select'), 'assignment picker no longer uses a browser-native select');
 }
 
 console.log('Task 13 source badge + icon tests passed');

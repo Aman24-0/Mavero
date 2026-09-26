@@ -653,8 +653,14 @@ function fakeDb(initialRows: FakeRow[] = []) {
   ok(page.includes('?/deleteAddon'), 'I: deletion posts to the server action');
 
   // Ordering controls accessible (spec §13/§27).
-  ok(page.includes('aria-label={`Move ${addon.name} up`}') && page.includes('aria-label={`Move ${addon.name} down`}'), 'I: icon-only ordering buttons are labeled');
-  ok(page.includes('?/moveAddon') && page.includes('direction'), 'I: ordering goes through the server action');
+  // Task 13 follow-up: the redundant per-card Up/Down buttons were REMOVED —
+  // the Reorder sheet (absolute position via setAddonPosition) is the single
+  // ordering UI. The moveAddon server action + service remain available as
+  // the service-level API (pinned in section A/L + admin_reorder_test).
+  ok(!page.includes('?/moveAddon'), 'I: per-card Up/Down move forms are gone (Reorder is the single ordering UI)');
+  ok(!page.includes('aria-label={`Move '), 'I: icon-only up/down buttons are gone');
+  ok(page.includes('openPositionSheet(addon)') && page.includes('aria-label={`Reorder ${addon.name}`}'), 'I: Reorder control is labeled and reachable per addon');
+  ok(page.includes('?/setAddonPosition'), 'I: ordering goes through the absolute-position server action');
 
   // Status model (spec §7): existing server statuses surfaced.
   for (const status of ['Active', 'Disabled', 'Maintenance', 'Experimental', 'Unavailable']) {

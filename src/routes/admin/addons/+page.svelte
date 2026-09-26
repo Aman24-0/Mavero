@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronRight, Puzzle, RefreshCw, Trash2, X } from 'lucide-svelte';
+  import { ArrowUpDown, Check, ChevronRight, Puzzle, RefreshCw, Trash2, X } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
   import AdminEmptyState from '$lib/components/admin/AdminEmptyState.svelte';
@@ -169,18 +169,12 @@
                 <input type="hidden" name="id" value={addon.id} />
                 <button class="mini-btn" type="submit" disabled={pending !== ''} aria-busy={pending === 'refreshAddon'}><RefreshCw size={12} /> {pending === 'refreshAddon' ? 'Refreshing…' : 'Refresh'}</button>
               </form>
-              <form method="POST" action="?/moveAddon" class="inline-form" onsubmit={guard('moveAddon')}>
-                <input type="hidden" name="id" value={addon.id} />
-                <input type="hidden" name="direction" value="up" />
-                <button class="mini-btn mini-btn-icon" type="submit" disabled={pending !== ''} aria-label={`Move ${addon.name} up`}><ArrowUp size={13} /></button>
-              </form>
-              <form method="POST" action="?/moveAddon" class="inline-form" onsubmit={guard('moveAddon')}>
-                <input type="hidden" name="id" value={addon.id} />
-                <input type="hidden" name="direction" value="down" />
-                <button class="mini-btn mini-btn-icon" type="submit" disabled={pending !== ''} aria-label={`Move ${addon.name} down`}><ArrowDown size={13} /></button>
-              </form>
+              <!-- Task 13 follow-up: the per-card Up/Down quick-move buttons
+                   are gone — the Reorder sheet (absolute position) is the
+                   single ordering UI. The moveAddon server action stays
+                   available as the service-level API. -->
               <button class="mini-btn" type="button" disabled={pending !== ''} onclick={() => openPositionSheet(addon)} aria-label={`Reorder ${addon.name}`}><ArrowUpDown size={13} /> Reorder</button>
-              <form method="POST" action="?/deleteAddon" class="inline-form" onsubmit={guard('deleteAddon', DELETE_CONFIRM)}>
+              <form method="POST" action="?/deleteAddon" class="inline-form action-remove" onsubmit={guard('deleteAddon', DELETE_CONFIRM)}>
                 <input type="hidden" name="id" value={addon.id} />
                 <button class="mini-btn mini-btn-danger" type="submit" disabled={pending !== ''} aria-busy={pending === 'deleteAddon'} aria-label={`Remove ${addon.name}`}><Trash2 size={13} /> {pending === 'deleteAddon' ? 'Removing…' : 'Remove'}</button>
               </form>
@@ -394,6 +388,11 @@
     padding-top: 10px;
     margin-top: 2px;
   }
+  /* Task 13 follow-up: with the redundant Up/Down buttons gone, the four
+     remaining actions fit a clean single row on desktop (flex-wrap stays
+     as the narrow-viewport safety net). All buttons share the same
+     mini-btn height/baseline; Remove keeps its destructive styling and a
+     small extra gap so it reads as its own group. */
   .record-actions {
     display: inline-flex;
     align-items: center;
@@ -402,6 +401,7 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+  .action-remove { margin-left: 4px; }
   .mini-btn {
     display: inline-flex;
     align-items: center;
@@ -422,7 +422,6 @@
   .mini-btn:disabled { opacity: .55; cursor: default; }
   .mini-btn:not(:disabled):hover { color: var(--color-text); border-color: var(--color-primary-border); background: var(--color-primary-soft); }
   .mini-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  .mini-btn-icon { padding: 0 9px; min-width: 32px; }
   .mini-btn-danger { color: var(--color-danger); border-color: rgba(255, 77, 109, .3); }
   .mini-btn-danger:not(:disabled):hover { color: var(--color-danger); border-color: rgba(255, 77, 109, .5); background: rgba(255, 77, 109, .08); }
   .inline-form { display: inline-flex; padding: 0; }
@@ -480,6 +479,11 @@
   @media (max-width: 640px) {
     .record-badges { gap: 4px; }
     .record-actions { gap: 4px; }
+    /* Task 13 follow-up: on mobile the action row takes its own full line,
+       left-aligned, so the four buttons wrap predictably instead of
+       squeezing beside the status badges. */
+    .record-actions { flex: 1 1 100%; justify-content: flex-start; margin-left: 0; }
+    .action-remove { margin-left: 0; }
     .preview-grid, .meta-grid { grid-template-columns: 1fr; }
   }
 

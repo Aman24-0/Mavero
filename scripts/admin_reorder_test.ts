@@ -588,11 +588,16 @@ const abcdMappings = () => [mapping(A, CAT1, 0), mapping(B, CAT1, 1), mapping(C,
   assert.ok(addonsServer.includes("/^\\d+$/.test(rawPosition)"), 'setAddonPosition validates the position format');
   assert.match(addonsServer, /await setAddonPosition\(locals\.supabase, form\.get\('id'\), position\)/, 'setAddonPosition delegates to the service');
 
-  // Addons page: Reorder entry point + position form; Up/Down kept; no fetch.
+  // Addons page: Reorder entry point + position form; Up/Down removed;
+  // no fetch.
   assert.match(addonsPage, /openPositionSheet\(addon\)[\s\S]*?Reorder/, 'Reorder button per addon');
   assert.match(addonsPage, /action="\?\/setAddonPosition"/, 'position form posts to the new action');
   assert.match(addonsPage, /name="position"[\s\S]*?min="1"/, 'position input is constrained client-side');
-  assert.match(addonsPage, /action="\?\/moveAddon"[\s\S]*?value="up"/, 'Up/Down quick moves kept');
+  // Task 13 follow-up: the redundant per-card Up/Down quick-move forms are
+  // gone from the page (Reorder is the single ordering UI). The moveAddon
+  // server action + service remain pinned above/in phase7 as the API.
+  assert.ok(!addonsPage.includes('?/moveAddon'), 'Up/Down quick-move forms removed from the addon card');
+  assert.ok(!addonsPage.includes('aria-label={`Move '), 'icon-only Up/Down buttons removed from the addon card');
   assert.ok(!addonsPage.includes('fetch('), 'no client-side fetches');
   assert.ok(!addonsPage.includes('.sort(') && !addonsPage.includes('.order('), 'no client-side ordering logic');
 
