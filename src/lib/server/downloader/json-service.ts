@@ -16,6 +16,10 @@ import { normalizeJsonDownloadPayload, type NormalizedJsonDownloadLink } from '.
  *      type.
  *   3. Build the API URL with the EXISTING shared template builder
  *      (buildDownloadUrl — the same code path every embed provider uses).
+ *      The request may carry the media TITLE (bounded by the endpoint) so
+ *      templates using the {titleSlug} placeholder resolve exactly like
+ *      they do in the embed flow; the slug is computed SERVER-SIDE by the
+ *      shared slugifier (never trusted from the client).
  *   4. Fetch the configured API endpoint server-side through Mavero's
  *      EXISTING SSRF-safe infrastructure (fetchStremioManifest): HTTPS-only,
  *      credentials rejected, localhost/private/metadata destinations blocked
@@ -44,6 +48,13 @@ export const JSON_DOWNLOADER_TIMEOUT_MS = 15_000;
 export const JSON_DOWNLOADER_MAX_BYTES = 1_048_576;
 /** Bounded redirect hops, each re-validated by the shared fetcher. */
 export const JSON_DOWNLOADER_MAX_REDIRECTS = 3;
+/**
+ * Maximum accepted length of the optional client-supplied media title. The
+ * endpoint REJECTS longer values (400) before any work; the bound keeps a
+ * hostile request from inflating the built URL. Generous vs. real TMDB
+ * titles (< 200 chars) so no legitimate title is ever refused.
+ */
+export const JSON_DOWNLOADER_TITLE_MAX_CHARS = 300;
 
 /** The registry fields the JSON resolution needs (subset of the public row). */
 export type JsonDownloaderProvider = {
@@ -58,10 +69,18 @@ export type JsonDownloaderProvider = {
   tvUrlTemplate: string | null;
 };
 
-/** The client-supplied media context (NO raw URLs — never accepted). */
+/**
+ * The client-supplied media context (NO raw URLs — never accepted).
+ *
+ * `title` is the OPTIONAL media title (length-bounded by the endpoint). It
+ * is required only when the provider's template contains {titleSlug}; it is
+ * slugified SERVER-SIDE by the shared builder — the client never supplies a
+ * pre-computed slug, a URL, or any value that reaches the wire un-sanitized.
+ */
 export type JsonDownloadRequest = {
   mediaType: DownloadMediaType;
   tmdbId: string;
+  title?: string;
   season?: number;
   episode?: number;
 };
@@ -146,10 +165,15 @@ export async function resolveJsonDownloadLinks(
   }
 
   // 4. Build the URL with the EXISTING shared template builder (same code
-  //    path as the embed flow — placeholder substitution + HTTPS check).
+  //    path as the embed flow — placeholder substitution + HTTPS check). The
+  //    title (when the request carries one) flows straight through, so a
+  //    {titleSlug} template resolves here exactly as it does for embed
+  //    providers; a template needing the slug with no usable title still
+  //    fails gracefully as url-not-buildable.
   const apiUrl = buildDownloadUrl(provider, {
     mediaType: request.mediaType,
     tmdbId: request.tmdbId,
+    title: request.title,
     season: request.season,
     episode: request.episode,
   });

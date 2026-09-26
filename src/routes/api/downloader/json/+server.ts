@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { loadJsonDownloadProvider, resolveJsonDownloadLinks } from '$lib/server/downloader/json-service';
+import { loadJsonDownloadProvider, resolveJsonDownloadLinks, JSON_DOWNLOADER_TITLE_MAX_CHARS } from '$lib/server/downloader/json-service';
 import { assertAdultDownloadAllowed, downloaderContentId } from '$lib/server/content/adult-guard';
 import type { ContentType } from '$lib/server/content/types';
 import { isContentType } from '$lib/server/content/types';
@@ -12,6 +12,7 @@ import { errorResponse } from '$lib/server/http/error-response';
  *
  *   GET /api/downloader/json?providerId=<uuid>&mediaType=movie&tmdbId=123456
  *   GET /api/downloader/json?providerId=<uuid>&mediaType=tv&tmdbId=94605&season=1&episode=2
+ *   GET /api/downloader/json?providerId=<uuid>&mediaType=movie&tmdbId=123456&title=<media title>
  *
  * Resolves the ADMIN-CONFIGURED URL template server-side, fetches the JSON
  * API through Mavero's SSRF-safe infrastructure, and returns ONLY the
@@ -22,6 +23,12 @@ import { errorResponse } from '$lib/server/http/error-response';
  * SECURITY:
  *   * The client NEVER supplies a URL — only providerId + media context.
  *     The URL always comes from the enabled registry row's template.
+ *   * The optional `title` (bounded to JSON_DOWNLOADER_TITLE_MAX_CHARS)
+ *     exists so templates using {titleSlug} can resolve. It is slugified
+ *     SERVER-SIDE by the shared builder (slugifyTitle + encodeURIComponent
+ *     — the value can only ever affect the placeholder's position inside
+ *     the admin-configured HTTPS URL, never the scheme or host); a template
+ *     needing a slug with no usable title fails as url-not-buildable.
  *   * The provider must be enabled AND type='json' AND support the requested
  *     media type — every violation is the SAME generic 404 (non-disclosing).
  *   * Bounded per-identity rate limit (downloaderJson, 20/min) BEFORE any
@@ -57,6 +64,10 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
   const episodeRaw = url.searchParams.get('episode');
   const season = seasonRaw === null ? undefined : Number(seasonRaw);
   const episode = episodeRaw === null ? undefined : Number(episodeRaw);
+  // Optional media title — required only when the provider's template uses
+  // {titleSlug}. Bounded so a request cannot inflate the built URL; the
+  // shared builder slugifies it server-side (never trusted verbatim).
+  const titleParam = url.searchParams.get('title');
 
   // 1. Request validation. `contentType` (original app content type) is
   //    optional and used ONLY for the adult guard — it preserves the
@@ -67,7 +78,8 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
     !tmdbId || !/^\d{1,12}$/.test(tmdbId) ||
     (contentTypeParam !== null && !isContentType(contentTypeParam)) ||
     !validEpisodeContext(season) ||
-    !validEpisodeContext(episode)
+    !validEpisodeContext(episode) ||
+    (titleParam !== null && titleParam.length > JSON_DOWNLOADER_TITLE_MAX_CHARS)
   ) {
     return errorResponse('INVALID_REQUEST', 'The downloader request is invalid.', { status: 400 });
   }
@@ -106,6 +118,7 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
     const outcome = await resolveJsonDownloadLinks(provider, {
       mediaType,
       tmdbId,
+      ...(titleParam ? { title: titleParam } : {}),
       ...(season !== undefined ? { season } : {}),
       ...(episode !== undefined ? { episode } : {}),
     });

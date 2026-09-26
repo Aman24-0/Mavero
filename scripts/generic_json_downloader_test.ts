@@ -14,6 +14,7 @@ import {
 import {
   resolveJsonDownloadLinks,
   loadJsonDownloadProvider,
+  JSON_DOWNLOADER_TITLE_MAX_CHARS,
   type JsonDownloaderProvider,
 } from '$lib/server/downloader/json-service';
 import { RATE_LIMIT_RULES } from '$lib/server/http/rate-limit';
@@ -25,7 +26,8 @@ import { RATE_LIMIT_RULES } from '$lib/server/http/rate-limit';
 //   §2  DB migration + database.types.ts type column
 //   §3  public config includes type (projection + select + shared type)
 //   §4  admin form persists type through the existing action path
-//   §5  JSON URL construction (shared template builder + exact fetch URL)
+//   §5  JSON URL construction (shared template builder + exact fetch URL;
+//       every allowed placeholder incl. {titleSlug} + {season2}/{episode2})
 //   §6  JSON normalizer (containers, URL fields, metadata, dedupe, bounds)
 //   §7  JSON endpoint/service security (provider load, type/capability,
 //       rate limit wiring, adult guard wiring, timeout, oversized response,
@@ -296,6 +298,102 @@ console.log('\n5. JSON URL construction');
   assert.equal(missingSeason.status === 'failed' && missingSeason.reason, 'url-not-buildable', 'reason url-not-buildable');
   assert.equal(calls.length, 0, 'no upstream fetch happened');
   ok(true, '5c. unbuildable URL (missing season) → typed failure with zero fetches');
+}
+{
+  // 5d. {titleSlug} JSON templates — the audited gap: the title must flow
+  // client → endpoint → service → the SHARED builder, which slugifies it
+  // SERVER-SIDE. A JSON provider using
+  // https://example.test/download/{titleSlug} must fetch the slugified URL.
+  const TITLESLUG_MOVIE = 'https://example.test/download/{titleSlug}';
+  const provider = jsonProvider({ movieUrlTemplate: TITLESLUG_MOVIE });
+
+  // Shared builder, direct: the deterministic slug algorithm (same one the
+  // embed/Cineverse flow uses — single source of truth, no second slugifier).
+  assert.equal(
+    buildDownloadUrl(provider, { mediaType: 'movie', tmdbId: '6263850', title: 'Deadpool & Wolverine' }),
+    'https://example.test/download/deadpool-wolverine',
+    'builder slugifies "Deadpool & Wolverine"',
+  );
+  assert.equal(
+    buildDownloadUrl(provider, { mediaType: 'movie', tmdbId: '6263850', title: 'Dune: Part Two' }),
+    'https://example.test/download/dune-part-two',
+    'builder slugifies "Dune: Part Two" (punctuation stripped)',
+  );
+  assert.equal(
+    buildDownloadUrl(provider, { mediaType: 'movie', tmdbId: '6263850', title: 'Amélie' }),
+    'https://example.test/download/amelie',
+    'builder slugifies "Amélie" (NFKD diacritics folded)',
+  );
+
+  // Service, end-to-end: the request's title reaches buildDownloadUrl and
+  // the fetcher is called with the EXACT slugified URL.
+  const { fetcher, calls } = fetchRecorder(() => jsonResponse({ ok: true, downloads: [{ url: 'https://cdn.example/dw.mkv', quality: 1080 }] }));
+  const outcome = await resolveJsonDownloadLinks(
+    provider,
+    { mediaType: 'movie', tmdbId: '6263850', title: 'Deadpool & Wolverine' },
+    baseDeps(fetcher),
+  );
+  assert.equal(outcome.status, 'ok', 'resolution ok');
+  assert.equal(calls.length, 1, 'exactly one fetch');
+  assert.equal(calls[0], 'https://example.test/download/deadpool-wolverine', 'fetched the slugified URL (server-side slug)');
+  assert.equal(outcome.status === 'ok' && outcome.links.length, 1, 'links resolved through the titleSlug URL');
+  ok(true, '5d. {titleSlug} movie template: title flows through the service and the fetched URL is correctly slugified');
+}
+{
+  // 5e. {titleSlug} + {season2}/{episode2} TV template — completes the
+  // placeholder audit: ALL SIX allowed placeholders resolve through the
+  // JSON path ({tmdbId}/{season}/{episode} via 5a/9b, {titleSlug} via 5d,
+  // {season2}/{episode2} here — the zero-padded forms are derived from the
+  // same season/episode request fields by the shared builder).
+  const TITLESLUG_TV = 'https://example.test/tv/{titleSlug}/s{season2}e{episode2}';
+  const provider = jsonProvider({
+    movieUrlTemplate: 'https://example.test/download/{titleSlug}',
+    tvUrlTemplate: TITLESLUG_TV,
+  });
+  assert.equal(
+    buildDownloadUrl(provider, { mediaType: 'tv', tmdbId: '94605', title: 'Breaking Bad', season: 2, episode: 5 }),
+    'https://example.test/tv/breaking-bad/s02e05',
+    'tv URL: slug + zero-padded s02e05',
+  );
+  const { fetcher, calls } = fetchRecorder(() => jsonResponse({ ok: true, downloads: [{ url: 'https://cdn.example/bb-s02e05.mkv' }] }));
+  const outcome = await resolveJsonDownloadLinks(
+    provider,
+    { mediaType: 'tv', tmdbId: '94605', title: 'Breaking Bad', season: 2, episode: 5 },
+    baseDeps(fetcher),
+  );
+  assert.equal(outcome.status, 'ok');
+  assert.equal(calls[0], 'https://example.test/tv/breaking-bad/s02e05', 'fetched the exact tv URL (slug + season2/episode2)');
+  ok(true, '5e. {titleSlug}+{season2}/{episode2} tv template: every allowed placeholder resolves through the JSON path');
+}
+{
+  // 5f. {titleSlug} template with NO usable title → url-not-buildable, zero
+  // fetches (graceful failure — never a partial/unslugified URL, never a
+  // client-side slug, never an iframe fallback).
+  const provider = jsonProvider({ movieUrlTemplate: 'https://example.test/download/{titleSlug}' });
+  for (const request of [
+    { mediaType: 'movie' as const, tmdbId: '6263850' }, // title absent
+    { mediaType: 'movie' as const, tmdbId: '6263850', title: '' }, // empty
+    { mediaType: 'movie' as const, tmdbId: '6263850', title: '   ' }, // whitespace-only
+    { mediaType: 'movie' as const, tmdbId: '6263850', title: '?!:' }, // slug-strips to empty
+  ]) {
+    const { fetcher, calls } = fetchRecorder(() => jsonResponse({ downloads: [] }));
+    const outcome = await resolveJsonDownloadLinks(provider, request, baseDeps(fetcher));
+    assert.equal(outcome.status, 'failed', `typed failure for title=${JSON.stringify(request.title)}`);
+    assert.equal(outcome.status === 'failed' && outcome.reason, 'url-not-buildable', 'reason url-not-buildable');
+    assert.equal(calls.length, 0, 'no upstream fetch happened');
+  }
+  // A title on an id-based (no {titleSlug}) template stays inert — the
+  // Pantyflix fixtures in §9 already prove the no-title path; here the
+  // title is simply ignored, never appended or echoed.
+  const inert = fetchRecorder(() => jsonResponse({ downloads: [] }));
+  const inertOutcome = await resolveJsonDownloadLinks(
+    jsonProvider(),
+    { mediaType: 'movie', tmdbId: '6263850', title: 'Deadpool & Wolverine' },
+    baseDeps(inert.fetcher),
+  );
+  assert.equal(inertOutcome.status, 'ok');
+  assert.equal(inert.calls[0], 'https://pantyflix.org/api/streamrip/download?type=movie&id=6263850', 'title ignored by id-based template');
+  ok(true, '5f. missing/unusable title → url-not-buildable with zero fetches; title inert on id-based templates');
 }
 
 // ============================================================
@@ -717,17 +815,23 @@ console.log('\n7. JSON endpoint / service security');
 }
 {
   // 7o. the endpoint never accepts a raw URL from the client — only
-  // providerId + media context identifiers.
+  // providerId + media context identifiers + the bounded media title.
   const endpoint = read('src/routes/api/downloader/json/+server.ts');
   for (const param of ['url', 'target', 'endpoint', 'api', 'fetch', 'proxy']) {
     assert.doesNotMatch(endpoint, new RegExp(`searchParams\\.get\\('${param}'`), `no ${param} param accepted`);
   }
-  for (const param of ['providerId', 'mediaType', 'tmdbId', 'season', 'episode', 'contentType']) {
+  for (const param of ['providerId', 'mediaType', 'tmdbId', 'title', 'season', 'episode', 'contentType']) {
     assert.match(endpoint, new RegExp(`searchParams\\.get\\('${param}'`), `${param} param read`);
   }
+  // The title is the ONLY new free-text field, so it must be strictly
+  // bounded (400 before any work) and handed to the resolver verbatim —
+  // the shared builder slugifies it server-side.
+  assert.equal(JSON_DOWNLOADER_TITLE_MAX_CHARS, 300, 'title bound is 300 chars');
+  assert.match(endpoint, /titleParam !== null && titleParam\.length > JSON_DOWNLOADER_TITLE_MAX_CHARS/, 'oversized title rejected in the validation gate');
+  assert.match(endpoint, /\.\.\.\(titleParam \? \{ title: titleParam \} : \{\}\),/, 'bounded title forwarded to the resolver');
   // And it never fetches the returned media URLs — only the configured API.
   assert.doesNotMatch(endpoint, /fetch\(\s*(outcome|link|links)\.?(url|links)?/i, 'never fetches returned media URLs');
-  ok(true, '7o. endpoint accepts only identifiers (providerId/mediaType/tmdbId/season/episode) — never a raw URL');
+  ok(true, '7o. endpoint accepts only identifiers + the bounded title — never a raw URL; title rejected at 300 chars');
 }
 {
   // 7p. upstream explicit error → generic upstream-error outcome.
@@ -809,13 +913,18 @@ console.log('\n8. DownloadSheet dispatch');
   assert.match(component, /export let providerId = '';/, 'providerId prop');
   assert.match(component, /export let mediaType: DownloadMediaType = 'movie';/, 'mediaType prop');
   assert.match(component, /export let tmdbId = '';/, 'tmdbId prop');
+  assert.match(component, /export let title = '';/, 'title prop');
+  assert.match(component, /\/{2} The title lets the server resolve \{titleSlug\} templates/, 'title documented as {titleSlug} context');
+  assert.match(component, /params\.set\('title', title\)/, 'title forwarded to the server endpoint');
+  assert.match(component, /\$\{providerId\}\|\$\{mediaType\}\|\$\{tmdbId\}\|\$\{title\}\|/, 'title participates in the reactive request key');
   assert.match(component, /\/api\/downloader\/json\?/, 'fetches the generic server endpoint');
   assert.doesNotMatch(component, /movieUrlTemplate|tvUrlTemplate/, 'never builds a provider URL client-side');
   assert.doesNotMatch(component, /<iframe/, 'renders no iframe');
+  assert.doesNotMatch(component, /slugifyTitle/, 'never slugifies client-side — the server owns the slug');
   assert.match(component, /downloadAttributesFor/, 'Download uses the shared anchor helper (exact URL)');
   assert.match(component, /Retry/, 'error state offers Retry');
   assert.match(component, /links\.length === 0/, 'empty state present');
-  ok(true, '8e. JsonDownload: identity + media context props, no client URL building, no iframe');
+  ok(true, '8e. JsonDownload: identity + media context props (incl. title for {titleSlug}), no client URL building or slugifying, no iframe');
 }
 
 // ============================================================
@@ -904,4 +1013,4 @@ console.log('\n9. Pantyflix fixture normalization');
   ok(true, '9d. empty downloads[] → ok with zero links (clean empty, never an exception)');
 }
 
-console.log(`\ngeneric_json_downloader_test: ${passed} checks passed (generic downloader type: migration, projection, admin form, normalizer, endpoint security, sheet dispatch, Pantyflix fixtures)`);
+console.log(`\ngeneric_json_downloader_test: ${passed} checks passed (generic downloader type: migration, projection, admin form, all-placeholder URL construction incl. {titleSlug}, normalizer, endpoint security, sheet dispatch, Pantyflix fixtures)`);

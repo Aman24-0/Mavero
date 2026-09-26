@@ -12,7 +12,9 @@
    * identifies the provider (id) + media context to the server endpoint
    * /api/downloader/json, which resolves the ADMIN-CONFIGURED template,
    * fetches the JSON API server-side (SSRF-safe), and returns ONLY the
-   * normalized link list.
+   * normalized link list. The media TITLE is forwarded as part of that
+   * context so the server can resolve {titleSlug} templates — it is
+   * slugified server-side by the shared builder, never client-side.
    *
    * States: loading / error + retry / empty (no compatible links) / list.
    *
@@ -67,6 +69,9 @@
   function buildParams(): URLSearchParams {
     const params = new URLSearchParams({ providerId, mediaType, tmdbId });
     if (contentType) params.set('contentType', contentType);
+    // The title lets the server resolve {titleSlug} templates (bounded +
+    // slugified server-side); it is inert for id-based templates.
+    if (title) params.set('title', title);
     if (season !== undefined) params.set('season', String(season));
     if (episode !== undefined) params.set('episode', String(episode));
     return params;
@@ -99,7 +104,7 @@
   // while the user switches between json providers or episodes — the
   // component must follow the new context, not keep stale links).
   let requestToken = '';
-  $: requestKey = `${providerId}|${mediaType}|${tmdbId}|${season ?? ''}|${episode ?? ''}`;
+  $: requestKey = `${providerId}|${mediaType}|${tmdbId}|${title}|${season ?? ''}|${episode ?? ''}`;
   $: if (requestKey && requestKey !== requestToken) {
     requestToken = requestKey;
     void load();
