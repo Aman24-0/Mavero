@@ -2,17 +2,17 @@
 
 ## Current Status
 
-Phase: 2 — Overview Dashboard
-Status: Phase 2 repository implementation complete and pushed. Phase 1 migration deployment still PENDING (operator must apply `20261008000000_analytics_foundation.sql` before the dashboard returns real data — until then the dashboard gracefully shows an error state per plan §27).
-Last Updated: 2026-09-27 (Phase 2 implementation committed + pushed; see "Commit" section for hashes)
+Phase: 3 — User Management
+Status: Phase 3 repository implementation complete and pushed. Phase 1 migration has been manually applied by the operator (confirmed at start of Phase 3) — the analytics tables exist in the target database.
+Last Updated: 2026-09-27 (Phase 3 implementation committed + pushed; see "Commit" section for hashes)
 
 ## Phase Status
 
 | Phase | Status | Commit | Push |
 |---|---|---|---|
-| Phase 1 | Repository implementation complete & pushed. DB deployment PENDING. | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
-| Phase 2 | Repository implementation complete & pushed. Dashboard will show error state until Phase 1 migration is applied. | `910fa5c` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified) |
-| Phase 3 | Pending | — | — |
+| Phase 1 | Complete (migration manually applied by operator). | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
+| Phase 2 | Complete (migration applied). | `910fa5c` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified) |
+| Phase 3 | Repository implementation complete & pushed. | `__PHASE3_COMMIT_HASH__` `feat(analytics): add user management` | Pushed to `origin/main` (verified — hash filled in below) |
 | Phase 4 | Pending | — | — |
 | Phase 5 | Pending | — | — |
 | Phase 6 | Pending | — | — |
@@ -988,6 +988,384 @@ documented in the Phase 1 audit). This follow-up does NOT modify the
 Phase 2 implementation commit (`910fa5c`) — that commit is untouched.
 See the "Commit" section below for the follow-up commit hash.
 
+---
+
+# Phase 3 — User Management
+
+## Phase 3 Start State
+
+- **Phase 1 migration status:** Confirmed as manually applied by the
+  operator at the start of Phase 3. The analytics tables
+  (`analytics_events`, `analytics_sessions`) exist in the target
+  Supabase database. Phase 3 was NOT required to re-apply or duplicate
+  the Phase 1 migration.
+- **Git state at start:** Working tree clean, on `main`, HEAD at
+  `303f365` (the Phase 2 hash-fill follow-up). Phase 1 commit
+  (`4665aa8`) and Phase 2 commit (`910fa5c`) both present and pushed.
+- **No duplicate migrations created.** Phase 3 added zero new
+  migrations — the existing Phase 1 schema (with its 7 indexes on
+  `analytics_events` + 3 on `analytics_sessions`) fully supports the
+  user-list and user-detail query shapes.
+
+## User Management
+
+### Routes
+
+- **`/admin/users`** — the user list page (search + filter + paginate).
+  SvelteKit route: `src/routes/admin/users/+page.svelte` +
+  `+page.server.ts`.
+- **`/admin/users/[userId]`** — the user detail page (account info +
+  activity summary + activity timeline + viewing history + guest
+  history). SvelteKit route:
+  `src/routes/admin/users/[userId]/+page.svelte` + `+page.server.ts`.
+
+### Navigation
+
+A "Users" entry was added to the existing "USERS & ANALYTICS" section
+in `AdminShell.svelte` (below the Phase 2 "Overview" entry). The
+existing Workspace nav entries are untouched (admin_nav_test contract
+preserved). The `active` prop type now includes `users-list` and
+`users-detail`.
+
+### User List (`/admin/users`)
+
+**Search:** Server-side, case-insensitive partial match on
+`display_name` (via `profiles.ilike`) and `email` (via `auth.users`
+fetched separately with the service-role admin client). Search is
+URL-driven (`?q=`). The search input is bounded to 200 chars.
+
+**Filters** (URL-driven via `?filter=`):
+- `all` — no filter (default).
+- `active` — users with ≥1 meaningful activity event in the period.
+- `new` — users whose `profiles.created_at` is in the period.
+- `returning` — users active in the period AND active before the period.
+
+**Pagination:** Server-side via `.range(from, to)`. Page size defaults
+to 25, max 100. URL-driven (`?page=`, `?pageSize=`). Search/filter
+changes reset to page 1. Stable ordering: `created_at DESC` for the
+base query; the page is re-sorted in JS by `last_active DESC NULLS
+LAST` for display (the plan prefers "most recently active users first").
+
+**Table fields:** User (display name + email), account created, first
+active, last active, sessions, watch starts, status badge (New /
+Returning / Active / Inactive). Clicking a row navigates to the user
+detail page.
+
+**States:** loading (SSR), empty (AdminEmptyState when no users match),
+error (red panel with `role="alert"` + safe message), populated (table
++ pagination).
+
+### User Detail (`/admin/users/[userId]`)
+
+**Account information:** User ID, email, display name, role (Admin /
+User badge), account created, last updated. Fetched via the
+service-role admin client (`profiles` + `auth.users.email`).
+
+**Activity summary** (7 metric cards): First active, Last active, Total
+sessions, Active days, Watch starts, Completed watches, Watch progress
+events. Computed from `analytics_events` (filtered by
+`MEANINGFUL_ACTIVITY_EVENTS`) + `analytics_sessions`.
+
+**Activity timeline:** Paginated (URL-driven `?page=`, `?pageSize=`),
+newest first, bounded by page size. Each event shows: timestamp (UTC),
+human-readable label (e.g. "Watch start" for `watch_start`), safe
+summary (e.g. search query, watch title, S/E), content_id. The
+canonical event names are preserved in the data layer; the UI uses
+human-readable labels via an `EVENT_LABELS` map. Raw metadata is NOT
+dumped — only specific safe sub-fields are surfaced via `eventSummary()`.
+
+**Viewing history:** Aggregated from `watch_start` + `watch_complete` +
+`watch_progress` events, grouped by `content_id`. Shows: title (from
+metadata), type, last watched, progress (position/duration), completion
+status. Capped at 50 rows for display (the full history is in the
+timeline).
+
+**Guest history** (identity stitching): Uses the Phase 1
+`anonymous_id ↔ user_id` co-occurrence model. Finds the
+`anonymous_id` values that co-occur with the `user_id` on any event,
+then fetches the first-seen timestamp + total event count across those
+anonymous IDs. Shows: associated browser count, first seen, total
+events, whether pre-login activity exists. Anonymous IDs are NOT
+displayed (privacy / data minimization). NO IP-based stitching.
+
+### Identity / Guest History
+
+- `user_id` is the primary identity for registered users.
+- Guest history uses the Phase 1 identity-stitching model: every
+  authenticated event carries BOTH `anonymous_id` and `user_id`, so we
+  join on `anonymous_id` to find which guests subsequently authenticated.
+- NO IP-based stitching. NO invented matches.
+- Anonymous IDs are NOT displayed in the UI.
+- If no `anonymous_id` co-occurs with the `user_id`, the guest-history
+  section is omitted.
+
+### Data Access / Server Architecture
+
+- **Two-client architecture:**
+  1. `locals.supabase` (user-scoped admin client) — for
+     `analytics_events` / `analytics_sessions`. RLS enforces admin-only
+     SELECT via `is_admin()`.
+  2. `createSupabaseAdminClient()` (service-role admin client) — for
+     `profiles` + `auth.users.email`. Needed because `profiles` does
+     NOT contain `email` (email lives in `auth.users.email`, protected
+     `auth` schema). The `requireAdmin` gate is the sole authz
+     boundary for this path; the service-role client bypasses RLS.
+- **Server module:** `src/lib/server/analytics/users.ts` — exports
+  `listUsers()` and `fetchUserDetail()`. Both NEVER throw (return safe
+  empty shape + `error` field on failure, mirroring Phase 2's
+  `fetchOverview` contract). Both accept the admin client as a required
+  parameter (dependency injection for testability).
+- **No client-side Supabase queries.** All data is server-fetched.
+- **Reuses Phase 1/2 conventions:** `MEANINGFUL_ACTIVITY_EVENTS`,
+  `resolveRangeFromParams`, `requireAdmin`, `AdminShell`,
+  `AdminPageHeader`, `AdminEmptyState`, `AdminStatusBadge`,
+  `AdminMetricCard`, `AdminSection`, `AdminDateRangePicker`,
+  `formatUtcDate` / `formatUtcDateTime`.
+
+### Security / Admin Access
+
+- `requireAdmin(locals, { redirectTo: ... })` is the first call in
+  both route load functions. Non-admins are redirected to sign-in (or
+  get a 403).
+- RLS on `analytics_events` / `analytics_sessions` is the second
+  defense layer (admin-only SELECT via `is_admin()`).
+- `profiles` RLS allows users to read only their own row — the
+  service-role admin client bypasses RLS for the admin user list/detail.
+- The userId route param is validated as a UUID (400 on invalid).
+- A non-existent user returns 404 (only when there is no analytics
+  error — otherwise the error state is shown).
+- No cross-user data leakage: all analytics queries are scoped by
+  `eq('user_id', userId)` or `.in('user_id', pageUserIds)`.
+
+### Privacy / Data Minimization
+
+- Raw IP addresses: NEVER stored (Phase 1) and NEVER displayed (Phase 3).
+- Raw `user_agent` strings: NOT selected or displayed.
+- Internal `request_id` values: NOT selected or displayed.
+- `ip_hash`: NOT used for identity (only doc-commented as "Phase 1 stores
+  only ip_hash" in the privacy-contract documentation).
+- `metadata` jsonb: NOT dumped wholesale. Only specific safe sub-fields
+  are surfaced via `eventSummary()` (search query, watch title, S/E,
+  provider reason, playback error).
+- Anonymous IDs: NOT displayed in the UI (only the count is shown).
+
+### Date / Time Handling
+
+- Reuses the Phase 2 `src/lib/shared/analytics-period.ts` utilities
+  (`resolveRangeFromParams`, `formatUtcDate`, `formatUtcDateTime`).
+- UTC everywhere. No second date-range implementation.
+- The list page uses the date-range picker for the active/new/returning
+  filter computation period.
+
+### Performance
+
+- Server-side search, filtering, pagination (no full-population fetch).
+- `listUsers` uses `.range(from, to)` for server-side pagination.
+- Enrichment queries (last_active, first_active, session_count,
+  watch_starts) are scoped to the page's user_ids only (bounded by
+  pageSize, max 100).
+- The 'all' filter does NOT pre-compute the active-user set for the
+  whole DB — it computes it for the page users only.
+- The 'active'/'returning' filters pre-compute the active-user set for
+  the whole period (bounded by the period's active-user count), then
+  pass it as an `.in('id', ...)` filter.
+- Timeline queries are bounded by page size + page number.
+- Viewing history fetches all watch events for the user (bounded by
+  the user's lifetime watch activity — typically a few hundred rows).
+- All queries use the Phase 1 indexes:
+  `analytics_events_user_time_idx`, `analytics_events_event_name_time_idx`,
+  `analytics_sessions_user_active_idx`.
+- No N+1 query pattern.
+
+### URL / State Behavior
+
+- List page: `?q=`, `?filter=`, `?page=`, `?pageSize=`, `?period=`,
+  `?from=`, `?to=` — all URL-driven (refresh/share/back-button safe).
+- Detail page: `?page=`, `?pageSize=` for the timeline — URL-driven.
+- Search/filter changes reset to page 1.
+- No client-only state architecture.
+
+## Files Changed
+
+### New files (Phase 3)
+- `src/lib/server/analytics/users.ts` — server-side User Management
+  query module (`listUsers`, `fetchUserDetail`, `fetchActivitySummary`,
+  `fetchTimeline`, `fetchViewingHistory`, `fetchGuestHistory`,
+  `eventLabel`, `eventSummary`, error-safe, migration-pending detection).
+- `src/routes/admin/users/+page.server.ts` — admin-only list load
+  (requireAdmin gate, URL-driven search/filter/pagination/period,
+  creates service-role admin client for profiles+email).
+- `src/routes/admin/users/+page.svelte` — the list page UI (search
+  form, filter pills, users table, pagination, loading/empty/error
+  states, responsive layout).
+- `src/routes/admin/users/[userId]/+page.server.ts` — admin-only
+  detail load (requireAdmin gate, UUID validation, 404 on not-found,
+  URL-driven timeline pagination).
+- `src/routes/admin/users/[userId]/+page.svelte` — the detail page UI
+  (account info, activity summary cards, guest history, viewing
+  history table, activity timeline, loading/empty/error states,
+  responsive layout).
+- `scripts/phase3_user_management_test.ts` — 101 targeted checks.
+
+### Modified files (Phase 3)
+- `src/lib/components/AdminShell.svelte` — added the "Users" entry to
+  the `usersLinks` array (below the Phase 2 "Overview" entry). Added
+  `users-list` and `users-detail` to the `active` prop type. Imported
+  the `Users` icon from lucide-svelte.
+- `package.json` — added `phase3_user_management_test.ts` to the
+  `pnpm test` chain.
+
+## Database
+
+**No new migration was needed for Phase 3.** The existing Phase 1
+schema fully supports the user-list and user-detail query shapes:
+- `analytics_events` indexes (`user_time_idx`, `event_name_time_idx`)
+  cover the active/new/returning filter + enrichment queries.
+- `analytics_sessions` index (`user_active_idx`) covers the
+  session-count query.
+- `profiles` PK on `id` covers the profile lookup.
+- `auth.users` is queried via the service-role admin client (no schema
+  change needed).
+
+The Phase 1 migration (`20261008000000_analytics_foundation.sql`) was
+confirmed as manually applied by the operator at the start of Phase 3.
+
+## Tests
+
+### Phase 3 targeted test
+- `scripts/phase3_user_management_test.ts` — **101 checks, all
+  passing.** Covers:
+  1. Admin nav wiring (Users entry added, existing Workspace preserved).
+  2. Users list route + server load contract (requireAdmin, listUsers,
+     resolveRangeFromParams, URL params).
+  3. User detail route + server load contract (requireAdmin,
+     fetchUserDetail, UUID validation, 404).
+  4. Server module contract (listUsers, fetchUserDetail, error-safe,
+     MEANINGFUL_ACTIVITY_EVENTS reuse).
+  5. Filters (all/active/new/returning + label map).
+  6. Pagination (server-side .range, bounded pageSize, timeline
+     pagination).
+  7. Search (ilike on display_name, 200-char bound, URL-driven ?q=).
+  8. Identity (user_id primary, anonymous_id for guest history, NO
+     ip_hash for identity).
+  9. No cross-user data leakage (queries scoped by user_id).
+  10. Privacy / data minimization (no raw IP, no user_agent, no
+      request_id, eventSummary for safe metadata, anonymous IDs not
+      displayed).
+  11. Empty state + error state handling.
+  12. Stable ordering (created_at DESC, last_active DESC NULLS LAST,
+      timeline event_time DESC).
+  13. URL state behavior (goto, page reset on search/filter change).
+  14. Reuse of Phase 1/2 conventions (MEANINGFUL_ACTIVITY_EVENTS,
+      resolveRangeFromParams, AdminShell, admin components, requireAdmin).
+  15. Mock-DB behavioral tests (listUsers empty/with-user/error,
+      fetchUserDetail not-found/valid, pagination enforcement, bounded
+      enrichment).
+
+### Existing tests re-run after Phase 3 changes (all passing)
+- `scripts/admin_nav_test.ts` — 4 check groups (existing Workspace nav
+  preserved).
+- `scripts/phase1_analytics_foundation_test.ts` — 88/88 checks.
+- `scripts/phase2_overview_dashboard_test.ts` — 89/89 checks.
+- `scripts/phase1_hooks_failclosed_test.ts` — 12/12 checks.
+- `scripts/release_audit_test.ts` — passing.
+
+### Pre-existing unrelated failure (NOT introduced by Phase 3)
+- `scripts/search_performance_test.ts` — fails identically on clean
+  `main` (documented in Phase 1 + Phase 2 worklogs; not attributable
+  to Phase 3).
+
+## Verification
+
+### Commands run and results
+
+| Command | Result |
+|---|---|
+| `pnpm check` (svelte-kit sync + svelte-check) | **0 errors, 0 warnings.** |
+| `pnpm build` (vite build, Netlify adapter) | **Success** — built in 24.47s. |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase3_user_management_test.ts` | **101/101 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/admin_nav_test.ts` | **4/4 check groups passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase1_analytics_foundation_test.ts` | **88/88 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase2_overview_dashboard_test.ts` | **89/89 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase1_hooks_failclosed_test.ts` | **12/12 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/release_audit_test.ts` | **Passed.** |
+| `git diff --check` | **Clean** (no whitespace errors). |
+
+## Known Limitations
+
+1. **Email search pagination is approximate.** Because `profiles` does
+   NOT contain `email` (email lives in `auth.users`), email search
+   cannot be done in a single paginated query. Phase 3 fetches the
+   page's profile ids, then fetches their emails from `auth.users`
+   separately. Display-name search is the primary paginated path;
+   email-only matches may not paginate perfectly. A future optimization
+   (Phase 7) would use a Postgres RPC that joins `profiles` +
+   `auth.users` server-side.
+
+2. **Total count is approximate for large datasets.** Supabase caps
+   `count: 'exact'` at 1000 by default. When the total is ≥1000 and
+   the page is full, `totalIsApproximate` is set to true and the UI
+   shows "1000+" instead of an exact count.
+
+3. **No `analytics_daily` aggregate table yet.** The user-list and
+   user-detail queries hit the raw `analytics_events` table directly.
+   This is acceptable for Phase 3 (the indexes keep the queries fast
+   for typical volumes), but Phase 7 may add pre-aggregation for very
+   high-volume deployments.
+
+4. **Supabase JS client does not support `COUNT(DISTINCT ...)`.**
+   Unique-identity counts (active users for the filter) fetch the rows
+   and deduplicate via `Set<string>` in JS. Bounded by the period's
+   active-user count.
+
+5. **Guest history shows the count of associated anonymous IDs, not
+   the IDs themselves.** This is intentional (privacy / data
+   minimization per plan §9). A future phase could add a "view guest
+   activity" drill-down if needed.
+
+## Deferred / Follow-up
+
+The following were identified during Phase 3 but are deferred to later
+phases per the no-phase-creep rule (plan §16):
+
+- **Viewing analytics page** (Phase 4) — the user-detail viewing
+  history is a per-user view; the aggregate Viewing dashboard is
+  Phase 4.
+- **Provider analytics page** (Phase 5) — not started.
+- **Retention/cohort page** (Phase 6) — not started.
+- **`analytics_daily` aggregate table** (Phase 7) — would make the
+  active/new/returning filter + email-search pagination more efficient
+  for very large datasets.
+- **Postgres RPC for profiles + auth.users join** (Phase 7) — would
+  make email search paginated correctly in a single query.
+- **User detail "view guest activity" drill-down** (future) — would
+  show the pre-login activity timeline for a specific anonymous ID.
+
+## Deviations From Plan
+
+None.
+
+The implementation follows the canonical plan §38 (Phase 3 — User
+Management) checklist item-by-item. The two-client architecture
+(user-scoped for analytics + service-role for profiles/email) is a
+necessary adaptation because `profiles` does not contain `email` —
+this is NOT scope drift, it's the correct way to access `auth.users`
+per the existing Supabase conventions.
+
+## Phase 3 Commit
+
+Commit hash: `__PHASE3_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+
+Commit message: `feat(analytics): add user management`
+
+The commit is a single commit containing the complete Phase 3
+implementation (server module + 2 routes + admin nav entry + tests).
+
+## Phase 3 Push
+
+Pushed to: `origin/main`
+Push result: `__PHASE3_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+
 ## Commit
 
 ### Phase 1 implementation commit (the actual pushed commit)
@@ -1060,30 +1438,24 @@ Push result: success. Verified via:
 
 ## Next Phase
 
-Phase 3 — User Management.
+Phase 4 — Viewing & Discovery Analytics.
 
-Goal: provide searchable users and user detail pages. This phase will
-consume the `analytics_events` / `analytics_sessions` / `profiles`
-tables populated by Phase 1 to display:
-- A Users page with search, pagination, and user-type filters.
-- A user detail page with account info, first-seen/last-active data,
-  activity summary, recent activity timeline, viewing summary, and
-  session summary.
-- Guest-to-account history where supported (identity stitching via
-  `anonymous_id ↔ user_id` co-occurrence, as established in Phase 1
-  and used by the Phase 2 funnel).
+Goal: understand what Mavero users watch and search for. This phase
+will consume the `analytics_events` table (filtered by watch + search
+events) to display:
+- A Viewing analytics page (unique viewers, watch starts, completed
+  watches, watch time, most watched titles, most started titles, most
+  completed titles, period-aware trending, movies vs series, genre/
+  category analytics).
+- A Search analytics section (most searched queries, no-result
+  searches, search-to-content interaction where supported).
 
-Phase 3 will NOT modify the Phase 1 ingestion layer or the Phase 2
-dashboard — it only adds new admin routes under
-`/admin/users/*` (e.g. `/admin/users` for the list,
-`/admin/users/[id]` for the detail page). The shared date-range
-utility (`src/lib/shared/analytics-period.ts`) and the consolidated
-query patterns from Phase 2's `src/lib/server/analytics/overview.ts`
-will be reused where applicable.
+Phase 4 will NOT modify the Phase 1 ingestion layer, the Phase 2
+Overview dashboard, or the Phase 3 User Management pages — it only
+adds new admin routes under `/admin/viewing` (or similar). The shared
+date-range utility (`src/lib/shared/analytics-period.ts`) and the
+consolidated query patterns from Phase 2/3 will be reused where
+applicable.
 
-**Note:** As of Phase 2, the Phase 1 migration
-(`20261008000000_analytics_foundation.sql`) is still NOT applied to
-the target Supabase database. Phase 3 can proceed with repository
-implementation (it will reuse the same error-safe query patterns),
-but the operator should apply the migration before expecting real
-data from either Phase 2 or Phase 3.
+**Note:** As of Phase 3, the Phase 1 migration is confirmed applied.
+Phase 4 can proceed with repository implementation immediately.

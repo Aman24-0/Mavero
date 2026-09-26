@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { page } from '$app/state';
-  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download, Puzzle, PanelLeftClose, PanelLeft, Menu, X, ToggleRight } from 'lucide-svelte';
+  import { Database, Layers3, ShieldCheck, SlidersHorizontal, ArrowLeft, Activity, Star, Download, Puzzle, PanelLeftClose, PanelLeft, Menu, X, ToggleRight, Users } from 'lucide-svelte';
   import type { Snippet } from 'svelte';
 
   // ============================================================
@@ -28,10 +28,10 @@
   //   - `<a class="admin-back" href="/discover">` Back to app link.
   // ============================================================
   let {
-    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview',
+    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview' | 'users-list' | 'users-detail',
     children
   }: {
-    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview';
+    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview' | 'users-list' | 'users-detail';
     children: Snippet;
   } = $props();
 
@@ -49,10 +49,12 @@
   // Phase 2 — User Management & Analytics section. Separate `usersLinks`
   // array under its own "USERS & ANALYTICS" label so the existing
   // Workspace section + its test-locked nav entries are untouched.
-  // Later phases (Users / Viewing / Providers / Retention) will add
-  // entries here. Phase 2 ships only the Overview entry.
+  // Phase 3 adds the "Users" entry (the user list + detail page).
+  // Later phases (Viewing / Providers / Retention) will add their own
+  // entries here.
   const usersLinks = [
     { id: 'users-overview', label: 'Overview', href: '/admin/users/overview', icon: Activity },
+    { id: 'users-list', label: 'Users', href: '/admin/users', icon: Users },
   ] as const;
 
   const STORAGE_KEY = 'mavero:admin-sidebar-collapsed';
