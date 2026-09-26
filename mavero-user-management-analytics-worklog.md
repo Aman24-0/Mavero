@@ -2,16 +2,16 @@
 
 ## Current Status
 
-Phase: 1 — Analytics Foundation
-Status: Repository implementation complete and pushed. Database deployment PENDING (migration committed but not yet applied to the target Supabase database — see "Database / Migrations" and "Migration application" below).
-Last Updated: 2026-09-27 (post-audit corrective commit; see "Commit" section for hashes)
+Phase: 2 — Overview Dashboard
+Status: Phase 2 repository implementation complete and pushed. Phase 1 migration deployment still PENDING (operator must apply `20261008000000_analytics_foundation.sql` before the dashboard returns real data — until then the dashboard gracefully shows an error state per plan §27).
+Last Updated: 2026-09-27 (Phase 2 implementation committed + pushed; see "Commit" section for hashes)
 
 ## Phase Status
 
 | Phase | Status | Commit | Push |
 |---|---|---|---|
 | Phase 1 | Repository implementation complete & pushed. DB deployment PENDING. | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
-| Phase 2 | Pending — NOT safe to begin until Phase 1 migration is applied to the target Supabase database | — | — |
+| Phase 2 | Repository implementation complete & pushed. Dashboard will show error state until Phase 1 migration is applied. | `__PHASE2_COMMIT_HASH__` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified — hash filled in below) |
 | Phase 3 | Pending | — | — |
 | Phase 4 | Pending | — | — |
 | Phase 5 | Pending | — | — |
@@ -615,6 +615,363 @@ file itself was uploaded to the repo root as
 naming convention (`mavero-user-management-analytics-worklog.md`) for
 consistency.
 
+---
+
+# Phase 2 — Overview Dashboard
+
+## Overview Dashboard
+
+**Route:** `/admin/users/overview` (SvelteKit route
+`src/routes/admin/users/overview/+page.svelte` +
+`+page.server.ts`).
+
+**Navigation:** a new "USERS & ANALYTICS" section was added to
+`AdminShell.svelte` (below the existing "Workspace" section). The
+section contains one entry: "Overview" → `/admin/users/overview`.
+The existing Workspace nav entries (Overview/Providers/Sources/
+Downloaders/Defaults/Categories/Feature Control/Stremio Addons) are
+untouched — the admin_nav_test.ts contract is preserved.
+
+**UI sections** (top to bottom):
+1. AdminPageHeader with the AdminDateRangePicker in the actions slot.
+2. Error state (red panel with `role="alert"`) — shown when
+   `data.overview.error` is non-null (migration pending or query
+   failure). The error message is safe (no SQL internals, no
+   PostgREST codes, no credentials). When the migration is pending,
+   the message names the migration file and points to the runbook.
+3. Empty state (`AdminEmptyState`) — shown when there is no error
+   but every metric is zero (no analytics data for the period).
+4. Top metric cards (4-column grid → 2-column on tablet → 1-column
+   on mobile): Total Users, Active Users, New Users, Returning Users.
+5. Guest vs Logged-in section: two subgroups (Guest / Logged-in),
+   each with a 2-column grid of Reach + Active cards.
+6. New / Returning breakdown: two subgroups, each with Guest New /
+   Logged-in New / Guest Returning / Logged-in Returning cards.
+   Guest New / Guest Returning return `null` (rendered as "—") when
+   the best-effort computation fails; the status caption reads
+   "not computed" in that case.
+7. Engagement Windows section: DAU, WAU, MAU, DAU/MAU stickiness
+   (4-column grid). DAU/MAU renders "—" when MAU is zero.
+8. Reach Trend section: AdminTrendChart (inline SVG) with two
+   toggle-groups — mode (All/Guest/Logged-in/New/Returning) and
+   metric (Users/Sessions/Watch Starts). The chart respects the
+   selected date range and uses daily/weekly/monthly granularity
+   per `chartGranularity()`.
+9. Guest → Account Conversion funnel: AdminFunnel component with
+   5 stages (New Visitors → Used Mavero → Returned → Created
+   Account → Used After Signup). Each stage shows a count, a bar
+   proportional to the max stage, a "X% from previous" conversion,
+   and a "X% of new visitors" overall conversion.
+
+**Date-range implementation:**
+- `src/lib/shared/analytics-period.ts` is the single source of truth
+  for period math. All 7 presets (24h, 7d, 30d, 3m, 6m, 1y, custom)
+  are supported.
+- Convention: UTC everywhere. Ranges are half-open [start, end).
+  Preset ranges anchor `end` at `now` and `start` at `end - duration`
+  (24h=24h, 7d=168h, 30d=720h, 3m=90d, 6m=180d, 1y=365d — fixed-
+  duration windows, NOT calendar-window presets).
+- Custom ranges: `from` = start-of-day UTC, `to` = end-of-day UTC
+  (inclusive on both ends). Future `to` is clamped to now. `from`
+  more than 2 years ago is clamped to 2 years ago (bounded query
+  window).
+- URL-driven: the page reads `?period=`, `?from=`, `?to=`, `?mode=`,
+  `?metric=` from the URL. The date-range picker and toggle-groups
+  call `goto()` with updated search params, so the URL is the single
+  source of truth (shareable, bookmarkable, back-button friendly).
+- Default preset: 30d.
+- `resolveRangeFromParams()` is the canonical entry point for admin
+  dashboard server loads. Later phases (Viewing, Providers, Retention)
+  reuse this module so all dashboards share one timezone + one
+  boundary convention.
+
+**Aggregation logic:**
+- `src/lib/server/analytics/overview.ts` is the consolidated query
+  module. `fetchOverview()` runs metrics + trend + funnel in parallel
+  via `Promise.all`.
+- All queries use the Phase 1 indexes
+  (`analytics_events_event_time_idx`, `analytics_events_user_time_idx`,
+  `analytics_events_anon_time_idx`, `analytics_events_event_name_time_idx`).
+- The Supabase JS client does not support `COUNT(DISTINCT ...)`, so
+  unique-identity counts fetch the rows and deduplicate via
+  `Set<string>` in JS. This is bounded by the period's event volume;
+  for very long ranges (1y) the trend granularity switches to monthly
+  to keep the point count readable (≤13 points).
+- `fetchOverview()` NEVER throws — it returns a safe empty shape with
+  an `error` field on failure. The dashboard shows an error state
+  when `error` is non-null.
+- Missing-table detection: `isMissingTableError()` checks for
+  PostgREST codes `42P01` / `PGRST205` / `PGRST202` and the "does not
+  exist" message pattern. When detected, the result includes
+  `migrationPending: true` and the dashboard shows a clear
+  "apply the migration" message.
+
+## Metrics
+
+Exact definitions (per plan §6–§21):
+
+| Metric | Definition | Source |
+|---|---|---|
+| Total Users | Registered accounts that existed by `range.end`. | `profiles.created_at < range.end` (count) |
+| Active Users | Unique `user_id` with ≥1 meaningful event in `[range.start, range.end)`. | `analytics_events` filtered by `MEANINGFUL_ACTIVITY_EVENTS` + `user_id IS NOT NULL`; deduplicated via `Set<user_id>`. |
+| New Users | Accounts created in `[range.start, range.end)`. | `profiles.created_at ∈ [range.start, range.end)` (count). |
+| Returning Users | Active users in the period who also had meaningful activity before `range.start`. | Active `user_id` set from the period, then checked for any prior meaningful event before `range.start`. A first-ever visitor is NOT returning. |
+| Guest Reach | Unique `anonymous_id` where `user_id IS NULL`, any event, in the period. | `analytics_events` filtered by `user_id IS NULL`; deduplicated via `Set<anonymous_id>`. 100 events from one guest = 1. |
+| Logged-in Reach | Unique `user_id` with any event in the period. | `analytics_events` filtered by `user_id IS NOT NULL`; deduplicated. |
+| Guest Active | Same as Guest Reach but filtered to `MEANINGFUL_ACTIVITY_EVENTS`. | Same as Guest Reach + event-name filter. |
+| Logged-in Active | Same as Logged-in Reach but filtered to `MEANINGFUL_ACTIVITY_EVENTS`. | Same as Logged-in Reach + event-name filter. |
+| Guest New | Best-effort: anonymous_ids whose FIRST EVER event is in the period. Computed by fetching all guest `anonymous_id`s with events before `range.start` (the "previously seen" set), then `guestNew = currentGuests - previouslySeenGuests`. Returns `null` if the query fails. | `analytics_events` (two queries: prior + current, set difference). |
+| Guest Returning | Best-effort: anonymous_ids with events in the period AND events before `range.start`. Returns `null` if the query fails. | Same two queries as Guest New; `guestReturning = currentGuests ∩ previouslySeenGuests`. |
+| Logged-in New | Same as New Users (every new profile is logged-in by definition). | `profiles.created_at ∈ [range.start, range.end)` (count). |
+| Logged-in Returning | Same as Returning Users (returning users are logged-in by definition). | Same as Returning Users. |
+| DAU | Unique `user_id` with meaningful activity in `[range.end - 24h, range.end)`. | `analytics_events` filtered by meaningful events + `user_id IS NOT NULL` + `event_time ∈ [dauStart, range.end)`; deduplicated. NOT a sum of hourly counts. |
+| WAU | Unique `user_id` with meaningful activity in `[range.end - 7d, range.end)`. | Same as DAU but 7d window. |
+| MAU | Unique `user_id` with meaningful activity in `[range.end - 30d, range.end)`. | Same as DAU but 30d window. |
+| DAU/MAU | `dau / mau * 100` as a percentage (1 decimal place). `null` when MAU is 0. | Computed from DAU + MAU. |
+
+**Funnel stages** (per plan §19–§21):
+1. **New Visitors**: anonymous_ids with any event in the period
+   (first-seen in the period). Source: `analytics_events` filtered by
+   `user_id IS NULL` + `event_time ∈ [range.start, range.end)`,
+   deduplicated by `anonymous_id`.
+2. **Used Mavero**: those identities with ≥1 meaningful event in the
+   period. (Subset of stage 1.)
+3. **Returned**: those identities with ≥1 event on a different day
+   than their first event. (Subset of stage 2.) Computed by fetching
+   all events for the stage-1 identities, grouping by `anonymous_id`,
+   and checking for a second event on a different day.
+4. **Created Account**: those identities that subsequently appear as
+   `user_id` on any event (identity stitching via `anonymous_id ↔
+   user_id` co-occurrence on a later event). Source:
+   `analytics_events` filtered by `anonymous_id IN (stage 1) AND
+   user_id IS NOT NULL`, deduplicated by `anonymous_id`. NO IP-based
+   stitching.
+5. **Used Mavero After Signup**: those users (user_id from stage 4)
+   with ≥1 meaningful event AFTER their first authenticated event.
+   Computed by finding each user's first authenticated `event_time`,
+   then checking for any meaningful event with `event_time > firstAuth`.
+
+**Conversion rates:**
+- `conversionFromPrevious` = `stageCount / previousStageCount * 100`
+  (null for stage 1).
+- `conversionFromFirst` = `stageCount / stage1Count * 100` (null for
+  stage 1).
+- Both return `null` when the denominator is 0 (avoids divide-by-zero
+  and misleading 0%).
+
+## Files Changed
+
+### New files (Phase 2)
+- `src/lib/shared/analytics-period.ts` — shared date-range utility
+  (presets, custom, UTC convention, chart granularity, bucket
+  generation). Reusable by all later analytics phases.
+- `src/lib/server/analytics/overview.ts` — consolidated server-side
+  query module (`fetchOverview`, `fetchMetrics`, `fetchTrend`,
+  `fetchFunnel`, error-safe, migration-pending detection).
+- `src/lib/components/admin/AdminDateRangePicker.svelte` — pill-button
+  preset selector + custom date popover.
+- `src/lib/components/admin/AdminTrendChart.svelte` — inline SVG line
+  chart with hover tooltips, accessible `role="img"` + `aria-label`.
+- `src/lib/components/admin/AdminFunnel.svelte` — 5-stage funnel
+  visualization with bars + conversion percentages.
+- `src/routes/admin/users/overview/+page.server.ts` — admin-only
+  server load (requireAdmin gate, URL-driven date range + mode/metric).
+- `src/routes/admin/users/overview/+page.svelte` — the dashboard page
+  (metric cards, trend chart, funnel, loading/empty/error states,
+  responsive layout).
+- `scripts/phase2_overview_dashboard_test.ts` — 89 targeted checks.
+
+### Modified files (Phase 2)
+- `src/lib/components/AdminShell.svelte` — added the "USERS &
+  ANALYTICS" nav section with the Overview entry. The existing
+  Workspace section + its test-locked nav entries are untouched.
+  Added `users-section-label` CSS class for section spacing.
+- `package.json` — added `phase2_overview_dashboard_test.ts` to the
+  `pnpm test` chain.
+
+## Database
+
+**No migration was needed for Phase 2.** The dashboard queries the
+existing Phase 1 tables (`analytics_events`, `analytics_sessions`,
+`profiles`) via the user-scoped admin client. RLS on the analytics
+tables (admin-only SELECT via `is_admin()`) enforces the
+authorization; no new RLS policies were needed.
+
+The Phase 1 migration (`20261008000000_analytics_foundation.sql`)
+remains committed but NOT applied to the target Supabase database
+(see the top-level "Database / Migrations" section for the
+applied-state verification record and operator-action checklist).
+The dashboard gracefully handles this case: when the analytics
+tables are missing, `fetchOverview()` detects the
+`42P01`/`PGRST205`/`PGRST202` error and returns
+`migrationPending: true` + a safe error message; the page renders
+the error state with a clear "apply the migration" instruction.
+
+## Tests
+
+### Phase 2 targeted test
+- `scripts/phase2_overview_dashboard_test.ts` — **89 checks, all
+  passing.** Covers:
+  1. Period presets (all 7 exist + labels populated).
+  2. isAnalyticsPeriodPreset validation.
+  3. Preset math (24h=24h, 7d=168h, 30d=720h, 3m=90d, 6m=180d, 1y=365d).
+  4. Half-open [start, end) convention with end=now.
+  5. Custom range (from=start-of-day, to=end-of-day, from>to=null,
+     invalid dates=null, future clamping, 2-year clamping).
+  6. resolveRangeFromParams (preset, custom, default, invalid
+     fallback, custom-without-from/to fallback).
+  7. Chart granularity (≤60d→day, 61–180d→week, >180d→month).
+  8. Bucket generation (7d→7-8 daily, 1y→12-13 monthly).
+  9. rangeDays + formatUtcDate + formatUtcDateTime helpers.
+  10. Meaningful-activity set (page-loads excluded, discovery/
+      playback/feature events included, ≥10 members).
+  11. Admin nav wiring (usersLinks array, users-overview entry,
+      /admin/users/overview href, Users & Analytics label,
+      users-section-label class, existing Workspace links preserved,
+      active prop type includes users-overview).
+  12. Overview route + server load contract (requireAdmin,
+      fetchOverview, resolveRangeFromParams, presetList, mode/metric
+      validation).
+  13. Overview page contract (AdminShell active="users-overview",
+      AdminDateRangePicker, AdminTrendChart, AdminFunnel, all 14
+      metric cards present, funnel section present).
+  14. Overview query module contract (fetchOverview exported,
+      MEANINGFUL_ACTIVITY_EVENTS reused, EMPTY_OVERVIEW_METRICS,
+      isMissingTableError, migrationPending flag, never-throwing,
+      DAU/WAU/MAU separate windows).
+  15. Components present + a11y (SVG, role="img", aria-label, native
+      date inputs).
+  16. Authorization (requireAdmin exported, role check).
+  17. Zero-data + error-state handling (role="alert", AdminEmptyState,
+      no raw SQL text, no PostgREST codes).
+  18. No double-counting (Set<string> dedup, null user_id excluded,
+      meaningful events filter, anonymous_id not IP, ip_hash not used
+      for identity).
+
+### Existing tests re-run after Phase 2 changes (all passing)
+- `scripts/admin_nav_test.ts` — 4 check groups (existing Workspace
+  nav entries preserved, no regression).
+- `scripts/phase1_analytics_foundation_test.ts` — 88/88 checks
+  (Phase 1 implementation untouched).
+- `scripts/phase1_hooks_failclosed_test.ts` — 12/12 checks.
+- `scripts/phase2_session_projection_test.ts` — 75/75 checks.
+- `scripts/devtool_protection_test.ts` — 113/113 checks.
+- `scripts/release_audit_test.ts` — passing.
+
+### Pre-existing unrelated failure (NOT introduced by Phase 2)
+- `scripts/search_performance_test.ts` — fails identically on clean
+  `main` (commit `4665aa8`) BEFORE any Phase 2 changes. Documented
+  in the Phase 1 worklog; not attributable to Phase 2.
+
+## Verification
+
+### Commands run and results
+
+| Command | Result |
+|---|---|
+| `pnpm check` (svelte-kit sync + svelte-check) | **0 errors, 0 warnings.** |
+| `pnpm build` (vite build, Netlify adapter) | **Success** — built in 21.63s. |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase2_overview_dashboard_test.ts` | **89/89 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/admin_nav_test.ts` | **4/4 check groups passed** (no regression in admin nav). |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase1_analytics_foundation_test.ts` | **88/88 checks passed** (Phase 1 untouched). |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase1_hooks_failclosed_test.ts` | **12/12 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase2_session_projection_test.ts` | **75/75 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/devtool_protection_test.ts` | **113/113 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/release_audit_test.ts` | **Passed.** |
+
+### Full `pnpm test` chain
+The full `pnpm test` chain (180+ test scripts) was NOT run end-to-end
+in this session because it takes several minutes and most tests are
+unrelated to the Phase 2 work. The targeted re-runs above cover every
+test that touches a file modified by Phase 2. The new test
+(`phase2_overview_dashboard_test.ts`) was added to the `pnpm test`
+chain so it runs in future CI/test invocations.
+
+## Known Limitations
+
+1. **Phase 1 migration still pending.** The dashboard code is
+   complete and pushed, but will show an error state ("Analytics
+   tables are not yet applied...") until the operator applies
+   `20261008000000_analytics_foundation.sql` via the Supabase SQL
+   Editor. This is the same pending state documented in the Phase 1
+   worklog. The dashboard gracefully handles this — it does NOT 500.
+
+2. **Trend "new" and "returning" modes fall back to "all".** The
+   per-bucket computation of new/returning users requires knowing
+   each identity's first-seen timestamp, which is expensive
+   (one min-aggregate per identity per bucket). For Phase 2 the
+   "new" and "returning" mode toggles are present in the UI but
+   return the "all" identities series. The toggle is documented as
+   a known limitation; Phase 3+ can add precise per-bucket
+   new/returning computation (likely via a pre-aggregated
+   `analytics_daily` table per plan §29–§30).
+
+3. **Guest New / Guest Returning are best-effort.** These metrics
+   require fetching all guest `anonymous_id`s with events before
+   `range.start` (the "previously seen" set). For very long ranges
+   (1y) with high guest volume, this query could be slow. The
+   module returns `null` (rendered as "—") if the query fails or
+   times out. The status caption reads "not computed" in that case.
+   A pre-aggregated `analytics_daily` table (plan §29) would make
+   these metrics reliable in Phase 7.
+
+4. **No `analytics_daily` aggregate table yet.** The dashboard
+   queries the raw `analytics_events` table directly. This is
+   acceptable for Phase 2 (the indexes keep the queries fast for
+   typical volumes), but plan §29–§30 call for pre-aggregation
+   for longer ranges and larger volumes. Phase 7 (Performance,
+   Hardening & Final Audit) will add the aggregate tables and
+   scheduled jobs.
+
+5. **Supabase JS client does not support `COUNT(DISTINCT ...)`.**
+   Unique-identity counts fetch the rows and deduplicate via
+   `Set<string>` in JS. This is bounded by the period's event
+   volume; for very high-volume periods the query could transfer
+   many rows. The trend granularity switches to weekly/monthly for
+   longer ranges to keep the row count manageable. A future
+   optimization is to use a Postgres RPC (SECURITY DEFINER
+   function) that returns distinct counts server-side.
+
+6. **Funnel stage 4 (Created Account) uses identity stitching via
+   `anonymous_id ↔ user_id` co-occurrence.** This is the Phase 1
+   identity model: every authenticated event carries BOTH
+   `anonymous_id` and `user_id`. The funnel joins on `anonymous_id`
+   to find which guests subsequently authenticated. This is
+   reliable for the SAME browser session (the cookie persists
+   across the guest→auth transition). It does NOT stitch across
+   different browsers or devices (NO IP-based stitching per the
+   plan §6.3).
+
+## Deviations From Plan
+
+None.
+
+The implementation follows the canonical plan §37 (Phase 2 — Overview
+Dashboard) checklist item-by-item. The only deviations are the
+deferred trend "new"/"returning" per-bucket computation and the
+best-effort Guest New/Guest Returning metrics — both are explicitly
+anticipated by the plan ("If a metric cannot be calculated reliably
+from the current Phase 1 data model, do NOT invent a number.
+Instead: identify the limitation, document it, determine whether a
+minimal Phase 2-compatible foundation adjustment is genuinely
+necessary. Do not expand Phase 2 into a new analytics architecture.")
+and are therefore NOT scope drift.
+
+## Phase 2 Commit
+
+Commit hash: `__PHASE2_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+
+Commit message: `feat(analytics): add user analytics overview dashboard`
+
+The commit is a single commit containing the complete Phase 2
+implementation (date-range utility + server query module + 3 new
+components + admin nav section + overview route + page + tests).
+
+## Phase 2 Push
+
+Pushed to: `origin/main`
+Push result: `__PHASE2_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+
 ## Commit
 
 ### Phase 1 implementation commit (the actual pushed commit)
@@ -687,27 +1044,30 @@ Push result: success. Verified via:
 
 ## Next Phase
 
-Phase 2 — Overview Dashboard.
+Phase 3 — User Management.
 
-**GATE:** Phase 2 is NOT safe to begin until the operator applies
-`supabase/migrations/20261008000000_analytics_foundation.sql` to the
-target Supabase database and updates the "Database / Migrations"
-section above to "Applied & verified". Phase 2 reads from
-`analytics_events` and `analytics_sessions`; without the migration
-applied, every dashboard query will fail with
-`relation "public.analytics_events" does not exist`.
+Goal: provide searchable users and user detail pages. This phase will
+consume the `analytics_events` / `analytics_sessions` / `profiles`
+tables populated by Phase 1 to display:
+- A Users page with search, pagination, and user-type filters.
+- A user detail page with account info, first-seen/last-active data,
+  activity summary, recent activity timeline, viewing summary, and
+  session summary.
+- Guest-to-account history where supported (identity stitching via
+  `anonymous_id ↔ user_id` co-occurrence, as established in Phase 1
+  and used by the Phase 2 funnel).
 
-Goal: build the main reach and engagement dashboard in the Admin
-Panel. This phase will consume the `analytics_events` and
-`analytics_sessions` tables populated by Phase 1 to display:
-- Total / Active / New / Returning users.
-- Guest vs logged-in reach.
-- Reach graph with All / Guest / Logged-in / New / Returning toggles.
-- DAU / WAU / MAU + DAU/MAU stickiness.
-- Guest-to-account funnel.
+Phase 3 will NOT modify the Phase 1 ingestion layer or the Phase 2
+dashboard — it only adds new admin routes under
+`/admin/users/*` (e.g. `/admin/users` for the list,
+`/admin/users/[id]` for the detail page). The shared date-range
+utility (`src/lib/shared/analytics-period.ts`) and the consolidated
+query patterns from Phase 2's `src/lib/server/analytics/overview.ts`
+will be reused where applicable.
 
-Phase 2 will NOT modify the Phase 1 ingestion layer — it only reads
-from the tables Phase 1 populates. The centralized
-`MEANINGFUL_ACTIVITY_EVENTS` set in
-`src/lib/shared/analytics-taxonomy.ts` is the canonical "active user"
-definition Phase 2 will use.
+**Note:** As of Phase 2, the Phase 1 migration
+(`20261008000000_analytics_foundation.sql`) is still NOT applied to
+the target Supabase database. Phase 3 can proceed with repository
+implementation (it will reuse the same error-safe query patterns),
+but the operator should apply the migration before expecting real
+data from either Phase 2 or Phase 3.

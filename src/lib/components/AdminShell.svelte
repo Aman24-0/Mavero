@@ -28,10 +28,10 @@
   //   - `<a class="admin-back" href="/discover">` Back to app link.
   // ============================================================
   let {
-    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control',
+    active = 'overview' as 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview',
     children
   }: {
-    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control';
+    active?: 'overview' | 'providers' | 'sources' | 'downloaders' | 'categories' | 'defaults' | 'addons' | 'feature-control' | 'users-overview';
     children: Snippet;
   } = $props();
 
@@ -44,6 +44,15 @@
     { id: 'categories', label: 'Categories', href: '/admin/categories', icon: Layers3 },
     { id: 'feature-control', label: 'Feature Control', href: '/admin/feature-control', icon: ToggleRight },
     { id: 'addons', label: 'Stremio Addons', href: '/admin/addons', icon: Puzzle },
+  ] as const;
+
+  // Phase 2 — User Management & Analytics section. Separate `usersLinks`
+  // array under its own "USERS & ANALYTICS" label so the existing
+  // Workspace section + its test-locked nav entries are untouched.
+  // Later phases (Users / Viewing / Providers / Retention) will add
+  // entries here. Phase 2 ships only the Overview entry.
+  const usersLinks = [
+    { id: 'users-overview', label: 'Overview', href: '/admin/users/overview', icon: Activity },
   ] as const;
 
   const STORAGE_KEY = 'mavero:admin-sidebar-collapsed';
@@ -214,6 +223,22 @@
           {#if !sidebarCollapsed}<span class="admin-link-label">{link.label}</span>{/if}
         </a>
       {/each}
+
+      <!-- Phase 2 — User Management & Analytics section. -->
+      <div class="admin-label users-section-label">Users &amp; Analytics</div>
+      {#each usersLinks as link}
+        {@const Icon = link.icon}
+        <a
+          class:active={active === link.id}
+          class="admin-link"
+          href={link.href}
+          aria-current={active === link.id ? 'page' : undefined}
+          title={sidebarCollapsed ? link.label : undefined}
+        >
+          <span class="admin-link-icon"><Icon size={17} strokeWidth={active === link.id ? 2.2 : 1.8} /></span>
+          {#if !sidebarCollapsed}<span class="admin-link-label">{link.label}</span>{/if}
+        </a>
+      {/each}
     </nav>
 
     <div class="admin-sidebar-foot">
@@ -288,6 +313,22 @@
       <nav class="admin-drawer-nav" aria-label="Admin navigation">
         <div class="admin-label">Workspace</div>
         {#each links as link}
+          {@const Icon = link.icon}
+          <a
+            class:active={active === link.id}
+            class="admin-link"
+            href={link.href}
+            aria-current={active === link.id ? 'page' : undefined}
+            onclick={closeDrawer}
+          >
+            <span class="admin-link-icon"><Icon size={17} strokeWidth={active === link.id ? 2.2 : 1.8} /></span>
+            <span class="admin-link-label">{link.label}</span>
+          </a>
+        {/each}
+
+        <!-- Phase 2 — User Management & Analytics section. -->
+        <div class="admin-label users-section-label">Users &amp; Analytics</div>
+        {#each usersLinks as link}
           {@const Icon = link.icon}
           <a
             class:active={active === link.id}
@@ -431,6 +472,11 @@
     font-weight: 800;
     letter-spacing: .14em;
     text-transform: uppercase;
+  }
+  /* Phase 2 — extra top margin for the Users & Analytics section label
+     so it is visually separated from the Workspace section above. */
+  .admin-label.users-section-label {
+    margin-top: 18px;
   }
   .admin-link {
     display: flex;
