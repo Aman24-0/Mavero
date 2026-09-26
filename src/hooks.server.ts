@@ -11,6 +11,7 @@ import { extractSessionId } from '$lib/server/auth/jwt-session-id';
 import { parseDeviceMetadata, ensureDeviceIdCookie, readDeviceHintCookie, DEVICE_ID_COOKIE, DEVICE_HINT_COOKIE } from '$lib/server/auth/device-metadata';
 import { registerCurrentSession, lookupSessionRevocationState } from '$lib/server/auth/device-sessions';
 import { isSessionRevoked } from '$lib/server/auth/session-revocation-cache';
+import { ensureAnonymousIdCookie, ANONYMOUS_ID_COOKIE } from '$lib/server/analytics/anonymous-id';
 
 // Session-registration timeout (Newtask §3 + §22).
 //
@@ -163,6 +164,24 @@ export const handle: Handle = async ({ event, resolve }) => {
   const auth = await event.locals.safeGetSession();
   event.locals.session = auth.session;
   event.locals.user = auth.user;
+
+  // Phase 1 Analytics Foundation — issue the anonymous_id cookie on
+  // EVERY request (guest + authenticated). The cookie is httpOnly, so
+  // the client cannot read it; the server reads it on subsequent
+  // requests and uses it as the source of truth for the event's
+  // anonymous_id. The projected value is also passed to the client via
+  // PageData (see +layout.server.ts) so the client dispatcher can
+  // include it in queued events (the cookie value still wins on the
+  // server side).
+  //
+  // Done AFTER safeGetSession so we know whether this is a guest or
+  // authenticated request — though the cookie logic is identical for
+  // both, doing it here keeps the auth-context block cohesive.
+  event.locals.anonymousId = ensureAnonymousIdCookie(
+    event.cookies.get(ANONYMOUS_ID_COOKIE),
+    (value, options) => event.cookies.set(ANONYMOUS_ID_COOKIE, value, options),
+    event.url.protocol === 'https:'
+  );
 
   // Phase 3 — application-level session revocation enforcement.
   //

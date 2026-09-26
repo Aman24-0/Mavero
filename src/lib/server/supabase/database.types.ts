@@ -1005,6 +1005,104 @@ export type Database = {
         }
         Relationships: []
       }
+      // Added by 20261008000000_analytics_foundation.sql.
+      // Phase 1 Analytics Foundation — canonical raw event table.
+      // Admin-only reads (RLS); writes via service-role admin client only.
+      // Closed taxonomy enforced by CHECK constraint. Idempotent on event_id.
+      analytics_events: {
+        Row: {
+          event_id: string
+          anonymous_id: string
+          user_id: string | null
+          session_id: string | null
+          event_name: string
+          event_time: string
+          content_id: string | null
+          content_type: string | null
+          provider_id: string | null
+          source_id: string | null
+          metadata: Json
+          request_id: string | null
+          ip_hash: string | null
+          user_agent: string | null
+          ingested_at: string
+        }
+        Insert: {
+          event_id: string
+          anonymous_id: string
+          user_id?: string | null
+          session_id?: string | null
+          event_name: string
+          event_time?: string
+          content_id?: string | null
+          content_type?: string | null
+          provider_id?: string | null
+          source_id?: string | null
+          metadata?: Json
+          request_id?: string | null
+          ip_hash?: string | null
+          user_agent?: string | null
+          ingested_at?: string
+        }
+        Update: {
+          event_id?: string
+          anonymous_id?: string
+          user_id?: string | null
+          session_id?: string | null
+          event_name?: string
+          event_time?: string
+          content_id?: string | null
+          content_type?: string | null
+          provider_id?: string | null
+          source_id?: string | null
+          metadata?: Json
+          request_id?: string | null
+          ip_hash?: string | null
+          user_agent?: string | null
+          ingested_at?: string
+        }
+        Relationships: []
+      }
+      // Added by 20261008000000_analytics_foundation.sql.
+      // Phase 1 Analytics Foundation — analytics session registry
+      // (separate from auth device_sessions). One row per analytics
+      // session_id; upserted by the ingest endpoint. Admin-only reads.
+      analytics_sessions: {
+        Row: {
+          session_id: string
+          anonymous_id: string
+          user_id: string | null
+          started_at: string
+          last_activity_at: string
+          ended_at: string | null
+          device_type: string | null
+          metadata: Json
+          created_at: string
+        }
+        Insert: {
+          session_id: string
+          anonymous_id: string
+          user_id?: string | null
+          started_at?: string
+          last_activity_at?: string
+          ended_at?: string | null
+          device_type?: string | null
+          metadata?: Json
+          created_at?: string
+        }
+        Update: {
+          session_id?: string
+          anonymous_id?: string
+          user_id?: string | null
+          started_at?: string
+          last_activity_at?: string
+          ended_at?: string | null
+          device_type?: string | null
+          metadata?: Json
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       // Added by 20260915000000_download_providers.sql.

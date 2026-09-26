@@ -4,6 +4,8 @@ import { contentErrorResponse } from '$lib/server/content/response';
 import { isContentType, type SearchFilters, type SearchSort } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
+import { recordServerEvent } from '$lib/server/analytics/ingest';
+import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url, request, locals, cookies }) => {
@@ -40,6 +42,38 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
 
   try {
     const result = await search(query, type, page, filters, canAccessAdult);
+
+    // Phase 1 Analytics Foundation — server-authoritative `search` event.
+    // Only meaningful searches (non-empty query, successful response) are
+    // recorded. The event is emitted fire-and-forget with a bounded timeout;
+    // failures are logged but never break the search response. anonymous_id
+    // is taken from the server-issued cookie (locals.anonymousId); user_id
+    // from locals.user. Both are server-derived — never client-supplied.
+    if (query.length > 0 && locals.anonymousId) {
+      try {
+        const admin = createSupabaseAdminClient();
+        void recordServerEvent(
+          admin,
+          {
+            event_id: crypto.randomUUID(),
+            event_name: 'search',
+            anonymous_id: locals.anonymousId,
+            user_id: user?.id ?? null,
+            metadata: {
+              query: query.slice(0, 120),
+              type: type ?? null,
+              page,
+              result_count: result?.items?.length ?? 0,
+              has_next_page: result?.hasNextPage ?? false,
+            },
+          },
+          { requestId: locals.requestId }
+        );
+      } catch {
+        // Analytics must not break search — silently ignore.
+      }
+    }
+
     return json({ ok: true, ...result });
   } catch (error) {
     return contentErrorResponse(error);

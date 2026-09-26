@@ -2,6 +2,8 @@ import { fail, redirect } from '@sveltejs/kit';
 import { friendlyAuthMessage, safeRedirectPath } from '$lib/server/supabase/server';
 import { isValidEmail, MIN_PASSWORD_LENGTH } from '$lib/shared/auth';
 import { env as publicEnv } from '$env/dynamic/public';
+import { recordServerEvent } from '$lib/server/analytics/ingest';
+import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import type { Actions } from './$types';
 
 export const actions: Actions = {
@@ -25,6 +27,29 @@ export const actions: Actions = {
       return fail(400, { message: `Enter your name, a valid email, and a password with at least ${MIN_PASSWORD_LENGTH} characters.`, displayName, email });
     }
 
+    // Phase 1 Analytics Foundation — `signup_started` event. Emitted BEFORE
+    // the Supabase signUp call so we capture the attempt even if Supabase
+    // rejects it (e.g. email already registered). This is a server-side
+    // event because the form-submit is server-handled; anonymous_id is
+    // taken from the cookie. user_id is null (the user does not exist yet).
+    if (locals.anonymousId) {
+      try {
+        const admin = createSupabaseAdminClient();
+        void recordServerEvent(
+          admin,
+          {
+            event_id: crypto.randomUUID(),
+            event_name: 'signup_started',
+            anonymous_id: locals.anonymousId,
+            metadata: { method: 'password' },
+          },
+          { requestId: locals.requestId }
+        );
+      } catch {
+        // Analytics must not break sign-up.
+      }
+    }
+
     const { data, error } = await locals.supabase.auth.signUp({
       email,
       password,
@@ -32,7 +57,31 @@ export const actions: Actions = {
     });
 
     if (error) return fail(400, { message: friendlyAuthMessage(error.message, 'sign-up'), displayName, email });
-    if (data.session) throw redirect(303, next);
+
+    // Phase 1 Analytics Foundation — `signup_completed` event. Emitted
+    // ONLY when signUp returned an immediate session (Supabase auto-logs
+    // in when email confirmation is disabled). When email confirmation
+    // is required, the actual signup_completed is emitted in the
+    // /auth/callback handler on email click.
+    if (data.session && data.user && locals.anonymousId) {
+      try {
+        const admin = createSupabaseAdminClient();
+        void recordServerEvent(
+          admin,
+          {
+            event_id: crypto.randomUUID(),
+            event_name: 'signup_completed',
+            anonymous_id: locals.anonymousId,
+            user_id: data.user.id,
+            metadata: { method: 'password_auto_session' },
+          },
+          { requestId: locals.requestId }
+        );
+      } catch {
+        // Analytics must not break sign-up.
+      }
+      throw redirect(303, next);
+    }
 
     return { success: true, message: 'Check your email to confirm your MAVERO account, then sign in.', displayName, email };
   },

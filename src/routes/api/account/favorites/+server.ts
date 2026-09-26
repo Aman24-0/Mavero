@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit';
 import { favoriteKey, type LocalContentType } from '$lib/client/progress/types';
 import { favoriteDeletionToRow } from '$lib/server/supabase/records';
+import { recordServerEvent } from '$lib/server/analytics/ingest';
+import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import type { RequestHandler } from './$types';
 
 function validType(value: string | null): value is LocalContentType {
@@ -25,5 +27,33 @@ export const DELETE: RequestHandler = async ({ locals, url }) => {
 
   const favoriteResult = await locals.supabase.from('favorites').delete().eq('user_id', user.id).eq('favorite_key', key);
   if (favoriteResult.error) return json({ message: 'Cloud library removal failed.' }, { status: 503 });
+
+  // Phase 1 Analytics Foundation — server-authoritative `favorite_removed`
+  // event. Emitted AFTER the successful tombstone + delete so we only
+  // record events for actual removals. Fire-and-forget; never breaks the
+  // response. `favorite_added` is NOT emitted here — that event is
+  // recorded client-side via the dispatcher (see Phase 4 plan) because
+  // there is no dedicated server-side "add favorite" endpoint; adds go
+  // through the sync endpoint as part of a batch upsert.
+  if (locals.anonymousId) {
+    try {
+      const admin = createSupabaseAdminClient();
+      void recordServerEvent(
+        admin,
+        {
+          event_id: crypto.randomUUID(),
+          event_name: 'favorite_removed',
+          anonymous_id: locals.anonymousId,
+          user_id: user.id,
+          content_id: contentId,
+          content_type: contentType,
+        },
+        { requestId: locals.requestId }
+      );
+    } catch {
+      // Analytics must not break favorite removal.
+    }
+  }
+
   return json({ ok: true, deletedAt });
 };

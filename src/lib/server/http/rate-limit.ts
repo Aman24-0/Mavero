@@ -99,6 +99,11 @@ export const RATE_LIMIT_RULES = {
   pairingCancel: { limit: 20, windowMs: 60_000 },
   pairingCodeLookupUser: { limit: 10, windowMs: 60_000 },
   pairingCodeLookupIp: { limit: 30, windowMs: 60_000 },
+  // Phase 1 Analytics Foundation — client event ingest. Each batch may
+  // contain up to 50 events; 60 batches/min = up to 3000 events/min per
+  // client, generous for any realistic UX. Per-identity (user or IP)
+  // so a single misbehaving client cannot drive unbounded DB writes.
+  eventsIngest: { limit: 60, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;

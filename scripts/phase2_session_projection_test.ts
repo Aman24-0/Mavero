@@ -115,7 +115,15 @@ const layout = read('src/routes/+layout.server.ts');
 // user -> false) that only decides whether the CLIENT-side DevTools
 // detector initializes. It is a UI-deterrence capability, never an
 // authorization signal, and carries no other profile data.
-ok(/return\s*\{\s*user:\s*null,\s*isAuthenticated:\s*false,\s*deviceType,\s*devtoolExempt:\s*false\s*\}/.test(layout), '4a. guest payload is { user: null, isAuthenticated: false, deviceType, devtoolExempt: false }');
+//
+// Phase 1 Analytics Foundation added two more projected fields:
+//   - anonymousId (string | null): the server-issued guest identity
+//     used by the client analytics dispatcher. NOT a credential.
+//   - analyticsEnabled (boolean): kill switch for the dispatcher.
+// These are additive and do not change any of the original Phase 2-B
+// security guarantees (no tokens, no full session, no profile data
+// beyond the minimal identity).
+ok(/return\s*\{\s*user:\s*null,\s*isAuthenticated:\s*false,\s*deviceType,\s*devtoolExempt:\s*false/.test(layout), '4a. guest payload projects { user: null, isAuthenticated: false, deviceType, devtoolExempt: false } (Phase 1 Analytics adds anonymousId + analyticsEnabled)');
 ok(/isAuthenticated:\s*true/.test(layout), '4b. authenticated payload sets isAuthenticated: true');
 // Projected user shape: { id, email, displayName }.
 ok(/user:\s*\{\s*id:\s*user\.id,\s*email:\s*user\.email,\s*displayName\s*\}/.test(layout), '4c. authenticated user payload is the minimal projection { id, email, displayName }');

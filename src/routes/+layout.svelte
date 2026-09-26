@@ -11,6 +11,7 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { syncDevtoolProtection } from '$lib/client/devtool-protection';
   import { isLibraryAwareRoute } from '$lib/shared/route-policy';
+  import { analytics } from '$lib/client/analytics/dispatcher';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
   const title = 'Mavero — Movies, series & anime';
@@ -37,6 +38,16 @@
   // Guests remain local-only — the `data.user` guard below already
   // short-circuits for unauthenticated users.
   onMount(() => {
+    // Phase 1 Analytics Foundation — initialize the client dispatcher
+    // with the server-projected anonymous_id. The dispatcher no-ops
+    // track() calls if analyticsEnabled is false (used as a kill switch)
+    // or if anonymous_id is null (SSR safety). The dispatcher itself
+    // emits app_open and session_start on first configure().
+    analytics.configure({
+      anonymousId: data.anonymousId,
+      enabled: data.analyticsEnabled !== false,
+      deviceType: data.deviceType,
+    });
     if (!data.user) return;
     if (!isLibraryAwareRoute(page.url.pathname)) return;
     void syncAuthenticatedState();
