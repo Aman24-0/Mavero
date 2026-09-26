@@ -27,7 +27,7 @@ import { applyPositionEdits, clampPosition, moveItemToPosition } from '../src/li
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-const migration = read('supabase/migrations/20261007000000_source_badge_icon_reorder.sql');
+const migration = read('supabase/migrations/20260926150000_source_badge_icon_reorder.sql');
 const adminServiceSource = read('src/lib/server/streaming/admin-service.ts');
 const categoriesServer = read('src/routes/admin/categories/+page.server.ts');
 const categoriesPage = read('src/routes/admin/categories/+page.svelte');

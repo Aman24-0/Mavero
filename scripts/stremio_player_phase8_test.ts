@@ -1072,7 +1072,7 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // Task 13: admin-addons.ts adds TWO more sanctioned warns — the
   // set_addon_position RPC fallback diagnostics (same pattern as Phase F:
   // RPC unavailable → deterministic read-modify-write fallback; operator
-  // warned that migration 20261007000000_source_badge_icon_reorder.sql
+  // warned that migration 20260926150000_source_badge_icon_reorder.sql
   // needs applying to enable the atomic path). Id/curated message only.
   ok(warnTotal === 13 && logTotal === 0, `T: stremio server modules log through exactly the 13 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics, Phase 14 +2 downloader loss-point diagnostics, Phase F +2 setAddonLinkTypes RPC fallback diagnostics, Task 13 +2 setAddonPosition RPC fallback diagnostics)`);
   // Phase 10: session-env.ts may REFERENCE the env-var NAME for the documented

@@ -37,7 +37,7 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 
 const shared = read('src/lib/shared/source-presentation.ts');
 const sourceIconComponent = read('src/lib/components/source/SourceIcon.svelte');
-const migration = read('supabase/migrations/20261007000000_source_badge_icon_reorder.sql');
+const migration = read('supabase/migrations/20260926150000_source_badge_icon_reorder.sql');
 const dbTypes = read('src/lib/server/supabase/database.types.ts');
 const publicConfig = read('src/lib/server/streaming/public-config.ts');
 const serverTypes = read('src/lib/server/streaming/types.ts');

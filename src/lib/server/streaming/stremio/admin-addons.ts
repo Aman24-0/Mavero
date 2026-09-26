@@ -461,7 +461,7 @@ export async function setAddonPosition(client: StreamingClient, id: unknown, pos
     // so the admin route can show them. Only "function does not exist" falls back.
     if (!functionMissing) throw new Error(message || 'Failed to set the addon position.');
     console.warn(
-      '[setAddonPosition] RPC set_addon_position unavailable — falling back to the deterministic read-modify-write. Apply migration 20261007000000_source_badge_icon_reorder.sql to enable the atomic path.',
+      '[setAddonPosition] RPC set_addon_position unavailable — falling back to the deterministic read-modify-write. Apply migration 20260926150000_source_badge_icon_reorder.sql to enable the atomic path.',
     );
   } catch (rpcError) {
     const message = rpcError instanceof Error ? rpcError.message : String(rpcError);

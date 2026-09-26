@@ -282,7 +282,7 @@ export async function reorderCategorySources(client: StreamingClient, categoryId
     // admin route can show them. Only "function does not exist" falls back.
     if (!isMissingRpc('reorder_category_sources', error)) throw new Error(error.message ?? 'Reorder failed. Please try again.');
     console.warn(
-      '[reorderCategorySources] RPC reorder_category_sources unavailable — falling back to the sequential two-phase renumber. Apply migration 20261007000000_source_badge_icon_reorder.sql to enable the atomic path.',
+      '[reorderCategorySources] RPC reorder_category_sources unavailable — falling back to the sequential two-phase renumber. Apply migration 20260926150000_source_badge_icon_reorder.sql to enable the atomic path.',
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

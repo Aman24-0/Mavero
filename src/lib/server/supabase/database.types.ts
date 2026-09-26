@@ -1231,7 +1231,7 @@ export type Database = {
         Args: { p_addon_id: string; p_link_types: unknown }
         Returns: undefined
       }
-      // Added by 20261007000000_source_badge_icon_reorder.sql.
+      // Added by 20260926150000_source_badge_icon_reorder.sql.
       // Task 13: ATOMIC category source reorder. SECURITY DEFINER with an
       // explicit is_admin() check; validates the full assignment set and
       // renumbers to dense 0..N-1 inside one transaction (the
@@ -1241,7 +1241,7 @@ export type Database = {
         Args: { p_category_id: string; p_ordered_source_ids: string[] }
         Returns: number
       }
-      // Added by 20261007000000_source_badge_icon_reorder.sql.
+      // Added by 20260926150000_source_badge_icon_reorder.sql.
       // Task 13: ABSOLUTE addon position (1-based). SECURITY DEFINER with an
       // explicit is_admin() check and an advisory lock serializing reorder
       // operations; rejects out-of-range positions and renumbers 0..N-1.
