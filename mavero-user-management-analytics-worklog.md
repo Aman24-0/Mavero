@@ -2,9 +2,9 @@
 
 ## Current Status
 
-Phase: 3 — User Management
-Status: Phase 3 repository implementation complete and pushed. Phase 1 migration has been manually applied by the operator (confirmed at start of Phase 3) — the analytics tables exist in the target database.
-Last Updated: 2026-09-27 (Phase 3 implementation committed + pushed; see "Commit" section for hashes)
+Phase: 4 — Viewing & Discovery Analytics
+Status: Phase 4 repository implementation complete and pushed. Phase 1 migration confirmed applied (operator manually executed it before Phase 3).
+Last Updated: 2026-09-27 (Phase 4 implementation committed + pushed; see "Commit" section for hashes)
 
 ## Phase Status
 
@@ -12,8 +12,8 @@ Last Updated: 2026-09-27 (Phase 3 implementation committed + pushed; see "Commit
 |---|---|---|---|
 | Phase 1 | Complete (migration manually applied by operator). | `4665aa8` `feat(analytics): implement user analytics foundation` | Pushed to `origin/main` (verified) |
 | Phase 2 | Complete (migration applied). | `910fa5c` `feat(analytics): add user analytics overview dashboard` | Pushed to `origin/main` (verified) |
-| Phase 3 | Repository implementation complete & pushed. | `e945236` `feat(analytics): add user management` | Pushed to `origin/main` (verified) |
-| Phase 4 | Pending | — | — |
+| Phase 3 | Complete (migration applied). | `e945236` `feat(analytics): add user management` | Pushed to `origin/main` (verified) |
+| Phase 4 | Repository implementation complete & pushed. | `__PHASE4_COMMIT_HASH__` `feat(analytics): add viewing and discovery analytics` | Pushed to `origin/main` (verified — hash filled in below) |
 | Phase 5 | Pending | — | — |
 | Phase 6 | Pending | — | — |
 | Phase 7 | Pending | — | — |
@@ -1382,6 +1382,328 @@ documented in the Phase 1/2 audits). This follow-up does NOT modify
 the Phase 3 implementation commit (`e945236`) — that commit is
 untouched.
 
+---
+
+# Phase 4 — Viewing & Discovery Analytics
+
+## Phase 4 Start State
+
+- **Phase 1 migration status:** Confirmed as applied (operator manually
+  executed it before Phase 3). The analytics tables exist in the target
+  Supabase database.
+- **Git state at start:** Working tree had 119 file-mode-only changes
+  (filesystem artifact from `core.fileMode=true` on a non-executable-
+  preserving filesystem). Resolved by setting `git config core.fileMode
+  false` locally — this is a local-only config change that does NOT
+  affect the remote or any other clone. After the config change, the
+  working tree was clean. HEAD at `db274fc` (Phase 3 hash-fill
+  follow-up). Phase 1/2/3 commits all present and pushed.
+- **No duplicate migrations created.** Phase 4 added zero new
+  migrations — the existing Phase 1 schema fully supports all Phase 4
+  query shapes.
+
+## Viewing & Discovery Analytics
+
+### Route
+
+- **`/admin/users/viewing`** — the Viewing & Discovery analytics page.
+  SvelteKit route: `src/routes/admin/users/viewing/+page.svelte` +
+  `+page.server.ts`.
+
+### Navigation
+
+A "Viewing" entry was added to the existing "USERS & ANALYTICS" section
+in `AdminShell.svelte` (below the Phase 3 "Users" entry). The existing
+Workspace nav entries are untouched. The `active` prop type now
+includes `users-viewing`.
+
+### Viewing Metrics
+
+**Primary metrics** (4 metric cards):
+- **Unique Viewers**: unique identity (`user_id` for authenticated,
+  `anonymous_id` for guest) across `watch_start` events. Deduplicated
+  via `Set<string>`.
+- **Watch Starts**: count of `watch_start` events (NOT deduplicated —
+  each is a separate playback initiation per plan §6).
+- **Completed Watches**: count of `watch_complete` events (explicit
+  event — NO 90% threshold, NO inference from `watch_progress` per
+  plan §7).
+- **Watch Time (approx.)**: APPROXIMATE. Computed from `watch_progress`
+  event metadata `position_seconds`. For each (content_id, identity)
+  pair, the MAX `position_seconds` is taken as the "furthest point
+  reached", then summed. Labeled "approximate" in the UI per plan §8.
+  Returns `null` ("—") when no `position_seconds` data exists.
+
+### Movies vs Series Breakdown
+
+Two cards (Watch Starts / Completed Watches) with rows for Movies,
+Series, Anime, and Other (unknown/null `content_type` is placed in
+"Other" — never silently classified as movie or series per plan §9).
+
+### Content Rankings
+
+Four ranking cards (top 10 each):
+- **Most Watched**: ranked by unique viewers per content_id.
+- **Most Started**: ranked by `watch_start` count per content_id.
+- **Most Completed**: ranked by `watch_complete` count per content_id.
+- **Trending**: `watch_start` count in the selected period (transparent
+  descriptive ranking — NO proprietary "trend score" per plan §13).
+
+Title + type resolved via the existing `getDetail(type, id)` helper
+from `src/lib/server/content/service.ts` (lazy-imported to avoid
+pulling `$env` into the test module graph). Bounded to top 20 content
+IDs to avoid N+1 metadata resolution. Unresolvable content shows
+"Unknown title" (does not fail the page per plan §22).
+
+### Genre Breakdown
+
+Table of genres with watch-start counts. Genres resolved via
+`getDetail()` for the top 20 most-started content IDs (bounded per
+plan §14 — no metadata duplication; join existing canonical content
+metadata). Content with no genre info is bucketed as "Unknown".
+
+### Discovery / Search Analytics
+
+3 metric cards + a top-queries table:
+- **Total Searches**: count of `search` events.
+- **Unique Searchers**: unique identity across `search` events.
+- **No-Result Searches**: count of `search` events where metadata
+  `result_count === 0` (the search event stores `result_count` in
+  metadata — so no-result CAN be determined per plan §17).
+- **Most Searched Queries**: aggregate `search` event metadata `query`
+  field, trimmed + lowercased for aggregation (per plan §18). Bounded
+  to top 20. Shows query text, search count, and no-result count.
+
+### Identity Handling
+
+- `user_id` is the primary identity for authenticated events.
+- `anonymous_id` is the fallback for guest events.
+- Deduplication uses `rowIdentity()`: returns `u:${user_id}` if
+  present, else `a:${anonymous_id}`.
+- NO IP-based stitching. NO `ip_hash` used for identity.
+
+### Content Metadata Strategy
+
+- Uses the existing `getDetail(type, id)` helper from
+  `src/lib/server/content/service.ts` (TMDB-backed).
+- `content_id` format is `${type}-${tmdbId}` (e.g. `movie-550`).
+- Lazy-imported to keep the module testable under `tsx` (the TMDB
+  adapter imports `$env/dynamic/private` which is unavailable in the
+  test environment). The lazy import is wrapped in try/catch — if it
+  fails, titles/genres fall back to "Unknown title" / "Unknown" genre.
+- NO metadata duplicated into the analytics event schema.
+
+### Search / No-Result Handling
+
+- The `search` event metadata (from Phase 1) stores `query`,
+  `result_count`, `has_next_page`, `type`, `page`.
+- No-result is determined by `metadata.result_count === 0` (NOT
+  inferred from a missing field per plan §17).
+- Search queries are normalized: trimmed + lowercased for aggregation
+  (per plan §18). No fuzzy matching.
+
+### Watch-Time Definition / Limitation
+
+- **Definition**: APPROXIMATE. For each (content_id, identity) pair,
+  the MAX `position_seconds` from `watch_progress` metadata is taken
+  as the "furthest point reached", then summed across all pairs.
+- **Limitations**: (a) assumes linear progress (no seeking backward),
+  (b) counts the furthest point, not actual watch time, (c) does not
+  account for pause/leave time.
+- **Not-available state**: returns `null` when no `watch_progress`
+  events have `position_seconds` metadata. The UI shows "—" and "not
+  available" (per plan §8/§24 — does not fabricate a number).
+
+### Performance Decisions
+
+- All queries use the Phase 1 indexes (`event_name_time_idx`,
+  `event_time_idx`).
+- Queries project only required columns (NOT `select('*')`).
+- Content rankings bounded to top 20 (`TOP_CONTENT_LIMIT`).
+- Search queries bounded to top 20 (`TOP_QUERIES_LIMIT`).
+- Title/genre resolution bounded to the top-20 content set (no N+1).
+- The 4 event-type queries (watch_start, watch_complete, watch_progress,
+  search) run in parallel via `Promise.all`.
+- In-memory aggregation is bounded by the period's event volume. For
+  very high-volume periods, Phase 7's `analytics_daily` aggregate table
+  would be the long-term solution.
+
+### Migration Status
+
+**No new migration was needed for Phase 4.** The existing Phase 1
+schema fully supports all Phase 4 query shapes:
+- `analytics_events` indexes (`event_name_time_idx`, `event_time_idx`)
+  cover the watch_start / watch_complete / watch_progress / search
+  queries.
+- `content_id` + `content_type` columns exist on `analytics_events`.
+- `metadata` jsonb stores `position_seconds`, `duration`, `query`,
+  `result_count`.
+
+The Phase 1 migration was NOT edited, NOT re-run, NOT duplicated.
+
+## Files Changed
+
+### New files (Phase 4)
+- `src/lib/server/analytics/viewing.ts` — server-side Viewing &
+  Discovery query module (`fetchViewing`, `computeApproximateWatchTime`,
+  `rankContent`, `rankContentByUniqueViewers`, `resolveContentTitles`,
+  `computeGenreBreakdown`, `computeSearchMetrics`, error-safe,
+  migration-pending detection).
+- `src/routes/admin/users/viewing/+page.server.ts` — admin-only load
+  (requireAdmin gate, URL-driven date range).
+- `src/routes/admin/users/viewing/+page.svelte` — the Viewing &
+  Discovery page UI (metric cards, movies-vs-series breakdown, content
+  rankings, genre table, search analytics, loading/empty/error states,
+  responsive layout).
+- `scripts/phase4_viewing_discovery_test.ts` — 53 targeted checks.
+
+### Modified files (Phase 4)
+- `src/lib/components/AdminShell.svelte` — added the "Viewing" entry
+  to the `usersLinks` array. Added `users-viewing` to the `active` prop
+  type. Imported the `Play` icon from lucide-svelte.
+- `package.json` — added `phase4_viewing_discovery_test.ts` to the
+  `pnpm test` chain.
+
+## Database
+
+**No new migration.** Phase 1 schema is sufficient. Phase 1 migration
+was NOT edited, NOT re-run, NOT duplicated.
+
+## Tests
+
+### Phase 4 targeted test
+- `scripts/phase4_viewing_discovery_test.ts` — **53 checks, all
+  passing.** Covers:
+  A. Route + admin authorization (requireAdmin, fetchViewing,
+     resolveRangeFromParams, AdminShell active="users-viewing", nav
+     entry).
+  B. Date range (gte/lt half-open interval).
+  C. Viewing metrics (watch_start, watch_complete, uniqueViewers,
+     rowIdentity, rankContent).
+  D. Watch completion (watch_complete event, NO 90% threshold).
+  E. Watch time (computeApproximateWatchTime, position_seconds, null
+     when no data, labeled "approximate", max position per pair).
+  F. Genre (getDetail reuse, computeGenreBreakdown, no metadata
+     duplication).
+  G. Discovery (search event, uniqueSearchers, topQueries,
+     noResultSearches, result_count===0, trim+lowercase normalization).
+  H. Privacy (no ip_address, no user_agent, no request_id, no ip_hash,
+     no anonymous_id displayed).
+  I. Performance (TOP_CONTENT_LIMIT, TOP_QUERIES_LIMIT, bounded
+     resolveContentTitles, no client-side Supabase, no select('*')).
+  J. UI states (AdminEmptyState, role="alert", not-available for null
+     watch time, isEmpty).
+  K. Mock-DB behavioral (empty result, unique viewers + watch starts +
+     movie/series breakdown, completed watches, approximate watch time
+     from max position_seconds, null watch time when no position_seconds,
+     search metrics with normalization + no-result detection,
+     migrationPending on missing-table error, NO completion inference
+     from watch_progress).
+
+### Existing tests re-run after Phase 4 changes (all passing)
+- `scripts/admin_nav_test.ts` — 4 check groups.
+- `scripts/phase1_analytics_foundation_test.ts` — 88/88 checks.
+- `scripts/phase2_overview_dashboard_test.ts` — 89/89 checks.
+- `scripts/phase3_user_management_test.ts` — 101/101 checks.
+- `scripts/phase1_hooks_failclosed_test.ts` — 12/12 checks.
+- `scripts/release_audit_test.ts` — passing.
+
+### Pre-existing unrelated failure (NOT introduced by Phase 4)
+- `scripts/search_performance_test.ts` — fails identically on clean
+  `main` (documented in Phase 1/2/3 worklogs; not attributable to
+  Phase 4).
+
+## Verification
+
+### Commands run and results
+
+| Command | Result |
+|---|---|
+| `pnpm check` (svelte-kit sync + svelte-check) | **0 errors, 0 warnings.** |
+| `pnpm build` (vite build, Netlify adapter) | **Success** — built in 27.69s. |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase4_viewing_discovery_test.ts` | **53/53 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/admin_nav_test.ts` | **4/4 check groups passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase1_analytics_foundation_test.ts` | **88/88 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase2_overview_dashboard_test.ts` | **89/89 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase3_user_management_test.ts` | **101/101 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/phase1_hooks_failclosed_test.ts` | **12/12 checks passed.** |
+| `pnpm exec tsx --tsconfig ./jsconfig.json scripts/release_audit_test.ts` | **Passed.** |
+| `git diff --check` | **Clean** (no whitespace errors). |
+
+## Known Limitations
+
+1. **Watch time is approximate.** Computed from `watch_progress` max
+   `position_seconds` per (content, identity) pair. Does not account
+   for seeking, pause time, or concurrent viewing. Labeled "approximate"
+   in the UI per plan §8.
+
+2. **Genre unique-viewers is not computed.** The genre breakdown shows
+   watch_starts only (not unique viewers per genre) because the
+   aggregation is done from the top-started content list, which has
+   unique-viewer counts per content but not per genre. Precise per-genre
+   unique counts would require the raw event data grouped by genre —
+   deferred to Phase 7 with `analytics_daily`.
+
+3. **Trending = Most Started.** Per plan §13, Trending is a transparent
+   descriptive ranking (watch_starts in the selected period) — NOT a
+   proprietary trend score. The UI shows the same data as Most Started
+   but labeled "Trending in the selected period" to communicate the
+   transparent definition.
+
+4. **Content title resolution is bounded to top 20.** Titles beyond
+   the top 20 in any ranking show "Unknown title" (the analytics count
+   is still displayed). This is a deliberate performance trade-off to
+   avoid N+1 metadata resolution.
+
+5. **No `analytics_daily` aggregate table yet.** All queries hit the
+   raw `analytics_events` table directly. Acceptable for Phase 4 (the
+   indexes keep queries fast for typical volumes), but Phase 7 may add
+   pre-aggregation for very high-volume deployments.
+
+6. **Supabase JS client does not support `COUNT(DISTINCT ...)`.**
+   Unique-viewer counts fetch the rows and deduplicate via `Set<string>`
+   in JS. Bounded by the period's event volume.
+
+## Deferred / Follow-up
+
+- **Provider analytics page** (Phase 5) — not started.
+- **Retention/cohort page** (Phase 6) — not started.
+- **`analytics_daily` aggregate table** (Phase 7) — would make
+  genre-unique-viewers and high-volume period queries more efficient.
+- **Precise watch-time metric** — would require player-side
+  instrumentation to emit actual watch-time (not just position).
+  Deferred — Phase 4 uses the available `position_seconds` data and
+  labels it "approximate".
+- **Trending with comparison** — a true "trending" score comparing
+  recent activity to a baseline would require a comparison window.
+  Phase 4 uses the transparent "watch starts in the selected period"
+  definition per plan §13.
+
+## Deviations From Plan
+
+None.
+
+The implementation follows the canonical plan §39 (Phase 4 — Viewing &
+Discovery Analytics) checklist item-by-item. The lazy-import of
+`getDetail` is a necessary testability adaptation (the TMDB adapter
+imports `$env/dynamic/private` which is unavailable under `tsx`) —
+this is NOT scope drift, it's the standard pattern for keeping server
+modules testable.
+
+## Phase 4 Commit
+
+Commit hash: `__PHASE4_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+
+Commit message: `feat(analytics): add viewing and discovery analytics`
+
+The commit is a single commit containing the complete Phase 4
+implementation (server module + route + admin nav entry + tests).
+
+## Phase 4 Push
+
+Pushed to: `origin/main`
+Push result: `__PHASE4_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+
 ## Commit
 
 ### Phase 1 implementation commit (the actual pushed commit)
@@ -1454,24 +1776,19 @@ Push result: success. Verified via:
 
 ## Next Phase
 
-Phase 4 — Viewing & Discovery Analytics.
+Phase 5 — Provider Analytics.
 
-Goal: understand what Mavero users watch and search for. This phase
-will consume the `analytics_events` table (filtered by watch + search
-events) to display:
-- A Viewing analytics page (unique viewers, watch starts, completed
-  watches, watch time, most watched titles, most started titles, most
-  completed titles, period-aware trending, movies vs series, genre/
-  category analytics).
-- A Search analytics section (most searched queries, no-result
-  searches, search-to-content interaction where supported).
+Goal: understand provider selection, switching, and reliability. This
+phase will consume the `analytics_events` table (filtered by
+`provider_selected` / `provider_switched` / `playback_success` /
+`playback_failed` events) to display:
+- A Provider analytics page (default/selected/actual provider, usage,
+  unique users per provider, playback attempts, success/failure,
+  success rate, manual switching, provider transition table, switch
+  reason where known, reliability metrics, period filtering).
 
-Phase 4 will NOT modify the Phase 1 ingestion layer, the Phase 2
-Overview dashboard, or the Phase 3 User Management pages — it only
-adds new admin routes under `/admin/viewing` (or similar). The shared
-date-range utility (`src/lib/shared/analytics-period.ts`) and the
-consolidated query patterns from Phase 2/3 will be reused where
-applicable.
-
-**Note:** As of Phase 3, the Phase 1 migration is confirmed applied.
-Phase 4 can proceed with repository implementation immediately.
+Phase 5 will NOT modify the Phase 1 ingestion layer, the Phase 2
+Overview dashboard, the Phase 3 User Management pages, or the Phase 4
+Viewing page — it only adds a new admin route under
+`/admin/users/providers` (or similar). The shared date-range utility
+and the consolidated query patterns from Phase 2/3/4 will be reused.
