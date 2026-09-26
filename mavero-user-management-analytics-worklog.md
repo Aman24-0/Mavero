@@ -15,7 +15,7 @@ Last Updated: 2026-09-27 (Phase 6 implementation committed + pushed; see "Commit
 | Phase 3 | Complete (migration applied). | `e945236` `feat(analytics): add user management` | Pushed to `origin/main` (verified) |
 | Phase 4 | Complete (migration applied). | `b6729f7` `feat(analytics): add viewing and discovery analytics` | Pushed to `origin/main` (verified) |
 | Phase 5 | Complete (migration applied). | `9dcf03f` `feat(analytics): add provider analytics` | Pushed to `origin/main` (verified) |
-| Phase 6 | Repository implementation complete & pushed. | `__PHASE6_COMMIT_HASH__` `feat(analytics): add retention and cohorts` | Pushed to `origin/main` (verified — hash filled in below) |
+| Phase 6 | Repository implementation complete & pushed. | `c397c72` `feat(analytics): add retention and cohorts` | Pushed to `origin/main` (verified) |
 | Phase 7 | Pending | — | — |
 
 ## Completed Work
@@ -1914,14 +1914,14 @@ None.
 
 ## Phase 6 Commit
 
-Commit hash: `__PHASE6_COMMIT_HASH_TO_BE_FILLED_AFTER_PUSH__`
+Commit hash: `c397c721dac19bc7566c66449d30b85fc87f74dc` (short: `c397c72`)
 
 Commit message: `feat(analytics): add retention and cohorts`
 
 ## Phase 6 Push
 
-Pushed to: `origin/main`
-Push result: `__PHASE6_PUSH_RESULT_TO_BE_FILLED_AFTER_PUSH__`
+Pushed to: `origin/main` (commit `c397c72`)
+Push result: success. Verified via `git rev-parse HEAD` = `git rev-parse origin/main` = `c397c721dac19bc7566c66449d30b85fc87f74dc`.
 
 ## Commit
 
