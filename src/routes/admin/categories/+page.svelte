@@ -1,17 +1,20 @@
 <script lang="ts">
-  import { Check, ChevronRight, Layers3, Trash2, X, Plus } from 'lucide-svelte';
+  import { Check, ChevronRight, Layers3, Trash2, X, Plus, ArrowUpDown } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
   import AdminEmptyState from '$lib/components/admin/AdminEmptyState.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
+  import SourceIcon from '$lib/components/source/SourceIcon.svelte';
+  import { sourceBadgeLabelFor } from '$lib/shared/source-presentation';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const assignedFor = (categoryId: string) => data.sourceCategories.filter((mapping) => mapping.category_id === categoryId).sort((a, b) => a.ordering - b.ordering);
   const sourceName = (sourceId: string) => data.sources.find((source) => source.id === sourceId)?.name ?? 'Missing source';
+  const sourceById = (sourceId: string) => data.sources.find((source) => source.id === sourceId);
 
   // Create/Edit modal state.
   let sheetOpen = $state(false);
@@ -37,11 +40,46 @@
 
   function openAssignPanel(category: PageData['categories'][number]) {
     assignCategory = category;
+    reorderActive = false;
+    reorderError = '';
     assignSheetOpen = true;
   }
   function closeAssignSheet() {
     assignSheetOpen = false;
     assignCategory = null;
+    reorderActive = false;
+    reorderError = '';
+  }
+
+  // Task 13: reorder mode — each assigned source gets a 1-based position
+  // input. Saving submits the position targets; the server derives the new
+  // order from the database's current order and persists it atomically.
+  let reorderActive = $state(false);
+  let reorderError = $state('');
+  let positionBySourceId = $state<Record<string, number | null>>({});
+
+  function startReorder() {
+    if (!assignCategory) return;
+    const assignments = assignedFor(assignCategory.id);
+    positionBySourceId = Object.fromEntries(assignments.map((mapping, index) => [mapping.source_id, index + 1]));
+    reorderError = '';
+    reorderActive = true;
+  }
+
+  function cancelReorder() {
+    reorderActive = false;
+    reorderError = '';
+  }
+
+  function submitReorder(event: SubmitEvent) {
+    if (!assignCategory) return;
+    const assignments = assignedFor(assignCategory.id);
+    const total = assignments.length;
+    const values = assignments.map((mapping) => positionBySourceId[mapping.source_id]);
+    if (values.some((value) => value === null || value === undefined || !Number.isInteger(value) || value < 1 || value > total)) {
+      event.preventDefault();
+      reorderError = `Positions must be whole numbers from 1 to ${total}.`;
+    }
   }
 </script>
 
@@ -149,25 +187,70 @@
 >
   {#if assignCategory}
     <div class="assign-panel">
-      <form method="POST" action="?/assignSource" class="assign-form">
-        <input type="hidden" name="category_id" value={assignCategory.id} />
-        <select name="source_id" required>
-          <option value="" disabled selected>Select a source</option>
-          {#each data.sources as source}
-            <option value={source.id}>{source.name}</option>
-          {/each}
-        </select>
-        <input name="ordering" type="number" min="0" step="1" value={assignedFor(assignCategory.id).length} aria-label="Source ordering" />
-        <button class="btn btn-primary" type="submit"><Plus size={13} /> Assign</button>
-      </form>
+      {#if !reorderActive}
+        <form method="POST" action="?/assignSource" class="assign-form">
+          <input type="hidden" name="category_id" value={assignCategory.id} />
+          <select name="source_id" required aria-label="Select a source">
+            <option value="" disabled selected>Select a source</option>
+            {#each data.sources as source}
+              <!-- Task 13: badge shown as compact option text (native select
+                   options cannot render components); icon + badge render in
+                   the assignment rows below. -->
+              <option value={source.id}>{sourceBadgeLabelFor(source.badge) ? `${source.name} · ${sourceBadgeLabelFor(source.badge)}` : source.name}</option>
+            {/each}
+          </select>
+          <button class="btn btn-primary" type="submit"><Plus size={13} /> Assign</button>
+        </form>
+      {/if}
       {#if assignedFor(assignCategory.id).length === 0}
         <p class="assignment-empty">No sources assigned to this category yet.</p>
+      {:else if reorderActive}
+        <form method="POST" action="?/reorderSources" class="reorder-form" onsubmit={submitReorder}>
+          <input type="hidden" name="category_id" value={assignCategory.id} />
+          <div class="assignment-list">
+            {#each assignedFor(assignCategory.id) as mapping, index (mapping.source_id)}
+              {@const rowSource = sourceById(mapping.source_id)}
+              {@const rowBadge = sourceBadgeLabelFor(rowSource?.badge)}
+              <div class="assignment-row">
+                <span class="order">{String(index + 1).padStart(2, '0')}</span>
+                <span class="row-icon" aria-hidden="true"><SourceIcon icon={rowSource?.icon} size={14} /></span>
+                <strong class="row-name">{sourceName(mapping.source_id)}</strong>
+                {#if rowBadge}<span class="row-badge" data-badge={rowSource?.badge}>{rowBadge}</span>{/if}
+                <label class="position-label">
+                  Position
+                  <input
+                    class="position-input"
+                    name={`position_${mapping.source_id}`}
+                    type="number"
+                    min="1"
+                    max={assignedFor(assignCategory.id).length}
+                    step="1"
+                    bind:value={positionBySourceId[mapping.source_id]}
+                    aria-label={`Position for ${sourceName(mapping.source_id)}`}
+                  />
+                </label>
+              </div>
+            {/each}
+          </div>
+          {#if reorderError}<p class="reorder-error" role="alert">{reorderError}</p>{/if}
+          <div class="sheet-actions">
+            <button class="btn btn-primary" type="submit">Save order</button>
+            <button class="btn btn-secondary" type="button" onclick={cancelReorder}>Cancel</button>
+          </div>
+        </form>
       {:else}
+        <div class="assign-toolbar">
+          <button class="btn btn-secondary" type="button" onclick={startReorder}><ArrowUpDown size={13} /> Reorder</button>
+        </div>
         <div class="assignment-list">
-          {#each assignedFor(assignCategory.id) as mapping (mapping.source_id)}
+          {#each assignedFor(assignCategory.id) as mapping, index (mapping.source_id)}
+            {@const rowSource = sourceById(mapping.source_id)}
+            {@const rowBadge = sourceBadgeLabelFor(rowSource?.badge)}
             <div class="assignment-row">
-              <span class="order">{String(mapping.ordering).padStart(2, '0')}</span>
-              <strong>{sourceName(mapping.source_id)}</strong>
+              <span class="order">{String(index + 1).padStart(2, '0')}</span>
+              <span class="row-icon" aria-hidden="true"><SourceIcon icon={rowSource?.icon} size={14} /></span>
+              <strong class="row-name">{sourceName(mapping.source_id)}</strong>
+              {#if rowBadge}<span class="row-badge" data-badge={rowSource?.badge}>{rowBadge}</span>{/if}
               <form method="POST" action="?/removeSource" class="inline-form">
                 <input type="hidden" name="source_id" value={mapping.source_id} />
                 <input type="hidden" name="category_id" value={assignCategory.id} />
@@ -326,11 +409,21 @@
 
   /* Assign sources panel (inside its own modal) */
   .assign-panel { display: grid; gap: 14px; }
-  .assign-form { display: grid; grid-template-columns: minmax(0, 1fr) 95px auto; gap: 8px; }
+  .assign-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
   .assign-form select, .assign-form input { min-height: 40px; }
+  .assign-toolbar { display: flex; justify-content: flex-end; }
   .assignment-list { display: grid; gap: 6px; }
   .assignment-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-muted); font-size: .72rem; background: var(--color-surface-elevated); }
-  .assignment-row strong { flex: 1; color: var(--color-text); font-weight: 600; }
+  .assignment-row strong { color: var(--color-text); font-weight: 600; }
+  .row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-icon { display: grid; place-items: center; flex: 0 0 auto; color: var(--color-primary); }
+  .row-badge { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--color-border-strong); border-radius: 999px; color: var(--color-text-muted); font-size: .54rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .row-badge[data-badge='ads'] { color: var(--color-warning); border-color: rgba(255, 176, 32, .35); }
+  .row-badge[data-badge='ad-free'] { color: var(--color-primary); border-color: var(--color-primary-border); }
+  .position-label { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; margin: 0; color: var(--color-text-deep); font-size: .56rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .position-input { width: 74px; min-height: 38px; padding: 6px 8px; text-align: center; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .reorder-form { display: grid; gap: 12px; }
+  .reorder-error { margin: 0; color: var(--color-danger); font-size: .66rem; }
   .order { color: var(--color-primary); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .56rem; font-weight: 700; }
   .icon-btn { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-deep); background: transparent; cursor: pointer; transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
   .icon-btn:hover { color: var(--color-danger); border-color: rgba(255, 77, 109, .35); }
@@ -340,5 +433,7 @@
   @media (max-width: 640px) {
     .form-grid.three, .assign-form { grid-template-columns: 1fr; }
     .record-badges { gap: 4px; }
+    .assignment-row { flex-wrap: wrap; }
+    .position-label { margin-left: auto; }
   }
 </style>

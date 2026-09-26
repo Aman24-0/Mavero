@@ -1,8 +1,8 @@
 import { fail, redirect, isRedirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
-import { createCategory, deleteCategory, deleteSourceCategory, listAdminCategories, listAdminSources, listSourceCategories, updateCategory, upsertSourceCategory } from '$lib/server/streaming/admin-service';
-import { StreamingValidationError, parseCategoryForm, parseId, parseSourceCategoryForm } from '$lib/server/streaming/validation';
+import { applyCategorySourcePositions, assignSourceToCategory, createCategory, deleteCategory, deleteSourceCategory, listAdminCategories, listAdminSources, listSourceCategories, updateCategory } from '$lib/server/streaming/admin-service';
+import { StreamingValidationError, parseCategoryForm, parseCategoryReorderForm, parseId, parseSourceAssignmentForm } from '$lib/server/streaming/validation';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin/categories' });
@@ -62,11 +62,28 @@ export const actions: Actions = {
   assignSource: async ({ request, locals }) => {
     await requireAdmin(locals, { redirectTo: '/admin/categories' });
     try {
-      await upsertSourceCategory(locals.supabase, parseSourceCategoryForm(await request.formData()));
+      // Task 13: assignment appends at the END of the category (dense
+      // numbering); re-assigning an already assigned source is a no-op that
+      // keeps its position. Position changes go through reorderSources.
+      const assignment = parseSourceAssignmentForm(await request.formData());
+      await assignSourceToCategory(locals.supabase, assignment.source_id, assignment.category_id);
       throw redirect(303, '/admin/categories?notice=Source%20assignment%20saved.');
     } catch (error) {
       if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to assign source.') });
+    }
+  },
+  reorderSources: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/categories' });
+    try {
+      // Task 13: the client submits 1-based position targets; the server
+      // derives the final order from the database's current order.
+      const { categoryId, positions } = parseCategoryReorderForm(await request.formData());
+      await applyCategorySourcePositions(locals.supabase, categoryId, positions);
+      throw redirect(303, '/admin/categories?notice=Source%20order%20saved.');
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to save the source order.') });
     }
   },
   removeSource: async ({ request, locals }) => {

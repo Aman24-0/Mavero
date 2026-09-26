@@ -1,5 +1,6 @@
 export type PlayerSourceType = 'direct' | 'embed' | 'unavailable' | 'error';
 import type { SandboxPolicy, SandboxPolicyRuntime } from './sandbox-policy';
+import type { SourceBadge } from './source-presentation';
 
 export type PlayerProtocol = 'hls' | 'dash' | 'mp4' | 'file' | 'unknown';
 
@@ -154,6 +155,20 @@ export type PlayerSourceOption = {
    * under the "Other" / uncategorized group at the end of the list.
    */
   categoryName?: string;
+  /**
+   * Task 13: user-facing badge (e.g. 'ads' | 'ad-free'), copied from the
+   * public streaming config's presentation metadata. Undefined/null
+   * renders no badge; the label lookup is centralized in
+   * shared/source-presentation.ts (never stored in PlayerShell).
+   */
+  badge?: SourceBadge;
+  /**
+   * Task 13: safe icon KEY (allowlist in shared/source-presentation.ts),
+   * copied from the public streaming config. Rendering maps the key to a
+   * component with a guaranteed default fallback (SourceIcon.svelte) —
+   * never SVG/HTML from the database.
+   */
+  icon?: string;
   /**
    * Phase 7F (MegaPlay): optional playback variants exposed by a single
    * source. When present, the source selector renders inline variant

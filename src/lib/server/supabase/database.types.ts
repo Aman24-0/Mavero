@@ -628,9 +628,11 @@ export type Database = {
       streaming_public_sources: {
         Row: {
           audio_languages: string[]
+          badge: string | null
           capabilities: Json
           description: string | null
           enabled: boolean
+          icon: string | null
           id: string
           identifier_mode: string
           integration_type: string | null
@@ -646,9 +648,11 @@ export type Database = {
         }
         Insert: {
           audio_languages?: string[]
+          badge?: string | null
           capabilities?: Json
           description?: string | null
           enabled: boolean
+          icon?: string | null
           id: string
           identifier_mode: string
           integration_type?: string | null
@@ -664,9 +668,11 @@ export type Database = {
         }
         Update: {
           audio_languages?: string[]
+          badge?: string | null
           capabilities?: Json
           description?: string | null
           enabled?: boolean
+          icon?: string | null
           id?: string
           identifier_mode?: string
           integration_type?: string | null
@@ -722,10 +728,12 @@ export type Database = {
         Row: {
           anime_template: string | null
           audio_languages: string[]
+          badge: string | null
           capabilities: Json
           created_at: string
           description: string | null
           enabled: boolean
+          icon: string | null
           id: string
           identifier_mode: string
           integration_type: string | null
@@ -746,10 +754,12 @@ export type Database = {
         Insert: {
           anime_template?: string | null
           audio_languages?: string[]
+          badge?: string | null
           capabilities?: Json
           created_at?: string
           description?: string | null
           enabled?: boolean
+          icon?: string | null
           id?: string
           identifier_mode?: string
           integration_type?: string | null
@@ -770,10 +780,12 @@ export type Database = {
         Update: {
           anime_template?: string | null
           audio_languages?: string[]
+          badge?: string | null
           capabilities?: Json
           created_at?: string
           description?: string | null
           enabled?: boolean
+          icon?: string | null
           id?: string
           identifier_mode?: string
           integration_type?: string | null
@@ -1218,6 +1230,24 @@ export type Database = {
       set_addon_link_types: {
         Args: { p_addon_id: string; p_link_types: unknown }
         Returns: undefined
+      }
+      // Added by 20261007000000_source_badge_icon_reorder.sql.
+      // Task 13: ATOMIC category source reorder. SECURITY DEFINER with an
+      // explicit is_admin() check; validates the full assignment set and
+      // renumbers to dense 0..N-1 inside one transaction (the
+      // unique(category_id, ordering) constraint makes sequential updates
+      // unsafe). Returns the number of assignments in the category.
+      reorder_category_sources: {
+        Args: { p_category_id: string; p_ordered_source_ids: string[] }
+        Returns: number
+      }
+      // Added by 20261007000000_source_badge_icon_reorder.sql.
+      // Task 13: ABSOLUTE addon position (1-based). SECURITY DEFINER with an
+      // explicit is_admin() check and an advisory lock serializing reorder
+      // operations; rejects out-of-range positions and renumbers 0..N-1.
+      set_addon_position: {
+        Args: { p_addon_id: string; p_position: number }
+        Returns: number
       }
     }
     Enums: {

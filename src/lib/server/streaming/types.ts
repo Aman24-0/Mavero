@@ -1,5 +1,6 @@
 import type { Json, Tables, TablesInsert, TablesUpdate } from '$lib/server/supabase/database.types';
 import { providerStatuses, integrationTypes, sourceVisibilities, identifierModes } from '$lib/shared/streaming';
+import type { SourceBadge } from '$lib/shared/source-presentation';
 import { addonStatuses } from '$lib/shared/streaming-addons';
 import type { ProviderHealthSummary, RuntimeHealthRow } from './health';
 
@@ -10,6 +11,7 @@ export type IntegrationType = (typeof integrationTypes)[number];
 export type SourceVisibility = (typeof sourceVisibilities)[number];
 export type IdentifierMode = (typeof identifierModes)[number];
 export type { StreamingAddonStatus } from '$lib/shared/streaming-addons';
+export type { SourceBadge };
 
 export type StreamingProviderRow = Tables<'streaming_providers'>;
 export type StreamingSourceRow = Tables<'streaming_sources'>;
@@ -43,7 +45,13 @@ export type AdminOverview = {
 };
 
 export type PublicStreamingProvider = Pick<StreamingProviderRow, 'id' | 'name' | 'slug' | 'description' | 'icon' | 'status' | 'enabled' | 'integration_type' | 'capabilities'>;
-export type PublicStreamingSource = Pick<StreamingSourceRow, 'id' | 'provider_id' | 'name' | 'slug' | 'description' | 'enabled' | 'visibility' | 'status' | 'ordering' | 'integration_type' | 'capabilities' | 'identifier_mode' | 'language' | 'audio_languages' | 'subtitle_capability' | 'quality_capability'>;
+/**
+ * Task 13: `badge` (constrained 'ads' | 'ad-free' | null) and `icon` (safe
+ * allowlisted icon key) are PRESENTATION metadata exposed to the public
+ * config / player source selector. Templates, notes and other admin-only
+ * columns remain excluded.
+ */
+export type PublicStreamingSource = Pick<StreamingSourceRow, 'id' | 'provider_id' | 'name' | 'slug' | 'description' | 'enabled' | 'visibility' | 'status' | 'ordering' | 'integration_type' | 'capabilities' | 'identifier_mode' | 'language' | 'audio_languages' | 'subtitle_capability' | 'quality_capability' | 'badge' | 'icon'>;
 export type PublicStreamingCategory = Pick<StreamingCategoryRow, 'id' | 'name' | 'slug' | 'description' | 'enabled' | 'ordering'>;
 
 export type PublicStreamingConfig = {

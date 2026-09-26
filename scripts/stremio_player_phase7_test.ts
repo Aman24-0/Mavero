@@ -258,7 +258,9 @@ function fakeDb(initialRows: FakeRow[] = []) {
   ok(route.includes("await requireAdmin(locals"), 'A: admin authorization helper is used in the addons route');
   const requireAdminCount = route.split('await requireAdmin(locals').length - 1;
   // Phase E V2: added saveLinkTypes action — now 7 mutations + load = 8 requireAdmin calls.
-  ok(requireAdminCount === 8, `A: load + all 7 mutations independently verify admin authorization (${requireAdminCount}/8)`);
+  // Task 13: added setAddonPosition action (absolute addon reorder) — now
+  // 8 mutations + load = 9 requireAdmin calls.
+  ok(requireAdminCount === 9, `A: load + all 8 mutations independently verify admin authorization (${requireAdminCount}/9)`);
 
   const actionNames = ['previewAddon', 'confirmAddon', 'setEnabled', 'refreshAddon', 'moveAddon', 'deleteAddon'];
   const actionStarts = actionNames.map((name) => route.indexOf(`${name}: async`));

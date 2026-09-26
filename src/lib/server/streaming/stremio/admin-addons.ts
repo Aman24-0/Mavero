@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '$lib/server/supabase/database.types';
 import { mapAddonRow, mapAddonToInsert, type StreamingAddonRow } from '$lib/server/streaming/addons';
 import type { StreamingAddon } from '$lib/shared/streaming-addons';
+import { moveItemToPosition } from '$lib/shared/reorder';
 import { validateAddonManifestUrl } from '$lib/server/streaming/addon-validation';
 import { StreamingValidationError } from '$lib/server/streaming/validation';
 import type { ManifestSyncDeps, ManifestSyncOutcome } from './manifest-service';
@@ -417,6 +418,76 @@ export async function moveAddon(client: StreamingClient, id: unknown, direction:
     const row = swapped[position];
     if (row.ordering === position) continue;
     const { error: updateError } = await client.from('streaming_addons').update({ ordering: position }).eq('id', row.id);
+    if (updateError) throw updateError;
+  }
+}
+
+/**
+ * Task 13: ABSOLUTE addon reorder — moves one addon to a 1-based target
+ * position and shifts every other addon by exactly one, in a single
+ * server-side operation (no repeated up/down calls).
+ *
+ * Primary path: the atomic `set_addon_position` RPC (transaction-scoped
+ * advisory lock, explicit range validation, dense 0..N-1 renumbering over
+ * the SAME deterministic sort the admin listing and the resolver consume).
+ * Fallback when the RPC is unavailable (migration not yet applied): the
+ * equivalent deterministic read-modify-write. The fallback is safe because
+ * streaming_addons has NO unique(ordering) constraint — sequential writes
+ * cannot violate constraints, and every write stores a complete, consistent
+ * numbering (the same guarantee moveAddon relies on).
+ *
+ * Validation: `position` must be a whole number within 1..count — invalid
+ * input is REJECTED with a clear message (not silently clamped).
+ */
+export async function setAddonPosition(client: StreamingClient, id: unknown, position: number): Promise<void> {
+  const addonId = assertAddonId(id);
+  if (typeof position !== 'number' || !Number.isSafeInteger(position) || position < 1) {
+    throw new StreamingValidationError('Position must be a whole number starting at 1.');
+  }
+
+  // Primary path: atomic RPC.
+  try {
+    const { error } = await client.rpc('set_addon_position', {
+      p_addon_id: addonId,
+      p_position: position,
+    });
+    if (!error) return;
+    const code = (error as { code?: string }).code ?? '';
+    const message = error.message ?? '';
+    const functionMissing =
+      code === '42883' || code === 'PGRST202' || /set_addon_position/i.test(message) || /does not exist/i.test(message);
+    // Genuine RPC failures (auth, range validation, unknown addon) carry
+    // curated messages from our own SQL function — surface them as Errors
+    // so the admin route can show them. Only "function does not exist" falls back.
+    if (!functionMissing) throw new Error(message || 'Failed to set the addon position.');
+    console.warn(
+      '[setAddonPosition] RPC set_addon_position unavailable — falling back to the deterministic read-modify-write. Apply migration 20261007000000_source_badge_icon_reorder.sql to enable the atomic path.',
+    );
+  } catch (rpcError) {
+    const message = rpcError instanceof Error ? rpcError.message : String(rpcError);
+    if (!/set_addon_position|does not exist|42883|PGRST202/i.test(message)) throw rpcError;
+    console.warn('[setAddonPosition] RPC failed — falling back to the deterministic read-modify-write.', message);
+  }
+
+  // Fallback: deterministic read-modify-write over the canonical sort.
+  const { data, error } = await client
+    .from('streaming_addons')
+    .select('id, ordering')
+    .order('ordering', { ascending: true })
+    .order('name', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  const rows = (data ?? []) as Array<{ id: string; ordering: number }>;
+  const index = rows.findIndex((row) => row.id === addonId);
+  if (index === -1) throw new StreamingValidationError('Addon not found.');
+  if (position > rows.length) {
+    throw new StreamingValidationError(`Position must be between 1 and ${rows.length}.`);
+  }
+  const reordered = moveItemToPosition(rows, index, position);
+  for (let ordering = 0; ordering < reordered.length; ordering += 1) {
+    const row = reordered[ordering];
+    if (row.ordering === ordering) continue;
+    const { error: updateError } = await client.from('streaming_addons').update({ ordering }).eq('id', row.id);
     if (updateError) throw updateError;
   }
 }

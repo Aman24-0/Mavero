@@ -1,4 +1,5 @@
 import { identifierModes, integrationTypes, providerStatuses, sourceVisibilities, type IdentifierMode, type IntegrationType, type JsonObject, type ProviderStatus, type SourceVisibility } from './types';
+import { isSourceBadge, isSourceIconKey, type SourceBadge, type SourceIconKey } from '$lib/shared/source-presentation';
 import { withSandboxPolicy, sandboxPolicies, type SandboxPolicy } from '$lib/shared/sandbox-policy';
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -71,6 +72,38 @@ function template(value: FormDataEntryValue | null, label: string): string | nul
 }
 
 /**
+ * Task 13: parses the constrained user-facing badge. '' / 'none' / missing
+ * → NULL (no badge rendered). Any other value is REJECTED — arbitrary
+ * text, HTML or markup can never enter the column.
+ */
+function badgeValue(value: FormDataEntryValue | null): SourceBadge | null {
+  const normalized = String(value ?? '').trim();
+  if (!normalized || normalized === 'none') return null;
+  if (!isSourceBadge(normalized)) throw new StreamingValidationError('User tag is invalid.');
+  return normalized;
+}
+
+/**
+ * Task 13: parses the safe icon KEY. '' / missing → NULL (default icon
+ * rendered). Only allowlisted keys are accepted — SVG/HTML/arbitrary text
+ * is rejected here, by the DB format CHECK, and again at render time.
+ */
+function iconValue(value: FormDataEntryValue | null): SourceIconKey | null {
+  const normalized = String(value ?? '').trim();
+  if (!normalized || normalized === 'none') return null;
+  if (!isSourceIconKey(normalized)) throw new StreamingValidationError('Source icon is invalid.');
+  return normalized;
+}
+
+function positiveInteger(value: FormDataEntryValue | null, label: string): number {
+  const raw = String(value ?? '').trim();
+  if (!/^\d+$/.test(raw)) throw new StreamingValidationError(`${label} must be a positive whole number.`);
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new StreamingValidationError(`${label} must be a positive whole number.`);
+  return parsed;
+}
+
+/**
  * Phase 8: strips any legacy `sandbox_policy` key from a source's
  * capabilities JSON. Sandbox is now provider-level only — sources must
  * NOT carry this key. All other capability fields (allowed_embed_origins,
@@ -120,6 +153,10 @@ export function parseSourceForm(form: FormData) {
     name: requiredText(form.get('name'), 'Source name', 120),
     slug: validateSlug(requiredText(form.get('slug'), 'Source slug', 120), 'Source slug'),
     description: text(form.get('description'), 'Description', 500),
+    // Task 13: presentation metadata (badge + icon) — constrained values
+    // only, parsed by badgeValue/iconValue above.
+    badge: badgeValue(form.get('badge')),
+    icon: iconValue(form.get('icon')),
     enabled: booleanValue(form.get('enabled')),
     visibility: enumValue(form.get('visibility'), 'Visibility', sourceVisibilities, 'public') as SourceVisibility,
     status: enumValue(form.get('status'), 'Source status', providerStatuses, 'experimental') as ProviderStatus,
@@ -170,4 +207,40 @@ export function parseSourceCategoryForm(form: FormData) {
     return value;
   })();
   return { source_id: sourceId, category_id: categoryId, ordering: nonNegativeInteger(form.get('ordering'), 'Ordering') };
+}
+
+/**
+ * Task 13: assignment form WITHOUT a manual ordering input. Assigning a
+ * source appends it at the end of the category (dense numbering); position
+ * changes belong to the dedicated reorder workflow.
+ */
+export function parseSourceAssignmentForm(form: FormData): { source_id: string; category_id: string } {
+  const sourceId = requiredText(form.get('source_id'), 'Source', 80);
+  if (!/^[0-9a-f-]{36}$/i.test(sourceId)) throw new StreamingValidationError('Source is invalid.');
+  const categoryId = requiredText(form.get('category_id'), 'Category', 80);
+  if (!/^[0-9a-f-]{36}$/i.test(categoryId)) throw new StreamingValidationError('Category is invalid.');
+  return { source_id: sourceId, category_id: categoryId };
+}
+
+const POSITION_FIELD_PREFIX = 'position_';
+
+/**
+ * Task 13: category reorder form. The client submits 1-based position
+ * fields (`position_<source_id>`) for the sources the admin edited. The
+ * server derives the final order from the DATABASE's current order — the
+ * client can never inject an arbitrary ordering or touch another
+ * category's sources (membership is validated against the category's
+ * real assignments in the admin service).
+ */
+export function parseCategoryReorderForm(form: FormData): { categoryId: string; positions: Array<{ sourceId: string; position: number }> } {
+  const categoryId = requiredText(form.get('category_id'), 'Category', 80);
+  if (!/^[0-9a-f-]{36}$/i.test(categoryId)) throw new StreamingValidationError('Category is invalid.');
+  const positions: Array<{ sourceId: string; position: number }> = [];
+  for (const [key, value] of form.entries()) {
+    if (!key.startsWith(POSITION_FIELD_PREFIX)) continue;
+    const sourceId = key.slice(POSITION_FIELD_PREFIX.length);
+    if (!/^[0-9a-f-]{36}$/i.test(sourceId)) throw new StreamingValidationError('Source is invalid.');
+    positions.push({ sourceId, position: positiveInteger(value, 'Position') });
+  }
+  return { categoryId, positions };
 }

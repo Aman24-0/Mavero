@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Clapperboard, Info, ListVideo, Maximize2, Menu, RotateCcw, Settings2, ShieldCheck, ShieldOff, Smartphone, X } from 'lucide-svelte';
+  // Task 13: safe source icon renderer + centralized badge labels for the
+  // source selector (presentation metadata from the public streaming config).
+  import SourceIcon from '$lib/components/source/SourceIcon.svelte';
+  import { sourceBadgeLabel } from '$lib/shared/source-presentation';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import MaveroStreamCard from './MaveroStreamCard.svelte';
@@ -1546,7 +1550,7 @@
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark">{#if option.id === source?.sourceId}<Check size={14} />{:else}<span></span>{/if}</span><span><strong>{option.name}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}{#if option.id === MAVERO_PLAYER_SOURCE_ID && maveroStreams.length}
+      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark" class:selected={option.id === source?.sourceId}>{#if option.id === source?.sourceId}<Check size={14} />{:else}<SourceIcon icon={option.icon} size={15} />{/if}</span><span class="option-copy"><strong class="option-title"><span class="option-name">{option.name}</span>{#if option.badge}<span class="source-badge" data-badge={option.badge}>{sourceBadgeLabel(option.badge)}</span>{/if}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}{#if option.id === MAVERO_PLAYER_SOURCE_ID && maveroStreams.length}
           <button class="streams-entry-button" type="button" aria-label={`Open the ${maveroStreams.length} MAVERO Player streams`} onclick={(e) => { e.stopPropagation(); openStreamsSheet(e.currentTarget as HTMLElement, true); }}><Clapperboard size={14} aria-hidden="true" /><strong>{maveroStreams.length} Stream{maveroStreams.length === 1 ? '' : 's'}</strong><ArrowRight size={14} aria-hidden="true" /></button>
         {/if}</div>{/each}{/each}
       </div>
@@ -1726,8 +1730,17 @@
   .variant-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; min-width: 56px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; font-size: .58rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .variant-button:hover, .variant-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
   .variant-button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
-  .option-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
-  .option-mark > span { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-deep); }
+  .option-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; color: var(--muted); }
+  .option-mark.selected { border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
+  .option-copy { min-width: 0; flex: 1; }
+  .option-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+  .option-name { min-width: 0; overflow-wrap: anywhere; }
+  /* Task 13: user-facing source badge — visually small and secondary to the
+     source name. Existing design tokens only; the amber tint re-uses the
+     sheet's existing failed-state tone. */
+  .source-badge { flex: 0 0 auto; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 7px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .48rem; font-weight: 700; letter-spacing: .08em; line-height: 1.5; text-transform: uppercase; }
+  .source-badge[data-badge='ads'] { color: #ffb020; border-color: rgba(255, 176, 32, .35); }
+  .source-badge[data-badge='ad-free'] { color: var(--accent); border-color: var(--accent-soft); }
   .streams-entry-button { display: flex; align-items: center; gap: 8px; width: calc(100% - 24px); min-height: 44px; margin: 2px 12px 4px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 8px 12px; color: var(--ink-soft); background: rgba(255,255,255,.03); cursor: pointer; font: inherit; font-size: .62rem; }
   .streams-entry-button strong { color: var(--ink); font-size: .66rem; }
   .streams-entry-button:last-child { margin-left: auto; color: var(--muted); }

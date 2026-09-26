@@ -6,7 +6,10 @@
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
+  import SourceIcon from '$lib/components/source/SourceIcon.svelte';
   import { integrationTypes, identifierModes, providerStatuses, sourceVisibilities } from '$lib/shared/streaming';
+  // Task 13: presentation metadata — constrained badge enum + safe icon keys.
+  import { sourceBadgeLabelFor, sourceIconKeys, sourceIconLabels, DEFAULT_SOURCE_ICON } from '$lib/shared/source-presentation';
   // Phase 8: sandbox is provider-level only. Source forms no longer have
   // any sandbox-related imports or UI controls.
   import type { ActionData, PageData } from './$types';
@@ -36,16 +39,23 @@
 
   function openCreate(event?: Event) {
     editingSource = null;
+    // Task 13: new sources default to the default source icon; no badge.
+    iconChoice = DEFAULT_SOURCE_ICON;
     sheetOpen = true;
   }
   function openEdit(source: PageData['sources'][number], event?: Event) {
     editingSource = source;
+    iconChoice = source.icon ?? '';
     sheetOpen = true;
   }
   function closeSheet() {
     sheetOpen = false;
     editingSource = null;
   }
+
+  // Task 13: icon picker state — a controlled select bound to the safe icon
+  // key allowlist, with a live preview next to it.
+  let iconChoice = $state<string>('');
 
   // Phase 7: source test state — per-source modal.
   let testSourceId = $state('');
@@ -135,7 +145,7 @@
           <div class="record-head" onclick={(e) => openEdit(source, e)} role="button" tabindex="0"
                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(source, e); } }}
                  aria-label={`Edit ${source.name}`}>
-            <span class="source-icon">{source.name.slice(0, 1).toUpperCase()}</span>
+            <span class="source-icon" aria-hidden="true"><SourceIcon icon={source.icon} size={16} /></span>
             <div class="record-copy">
               <strong class="record-name">{source.name}</strong>
               <span class="record-sub">{source.slug} · {providerName(source.provider_id)}</span>
@@ -151,6 +161,12 @@
               label={visibilityLabels[source.visibility as keyof typeof visibilityLabels]}
               tone={visibilityToneFor(source.visibility)}
             />
+            {#if source.badge}
+              <AdminStatusBadge
+                label={sourceBadgeLabelFor(source.badge) ?? 'Tag'}
+                tone={source.badge === 'ads' ? 'warn' : 'good'}
+              />
+            {/if}
             <span class="record-actions">
               <form method="POST" action="?/toggleSource" class="inline-form" onsubmit={(event) => { const button = (event.currentTarget as HTMLFormElement).querySelector('button'); if (button) button.disabled = true; }}>
                 <input type="hidden" name="id" value={source.id} />
@@ -187,6 +203,27 @@
       <input type="hidden" name="id" value={editingSource.id} />
     {/if}
     <div class="form-grid two"><label>Name<input name="name" required maxlength="120" placeholder="Example source" value={editingSource?.name ?? ''} /></label><label>Slug<input name="slug" required maxlength="120" placeholder="example-source" value={editingSource?.slug ?? ''} /></label></div>
+    <!-- Task 13: presentation metadata (icon + user tag) next to Name/Slug. -->
+    <div class="form-grid two">
+      <label>Source icon
+        <div class="icon-field">
+          <select name="icon" bind:value={iconChoice}>
+            <option value="">Default</option>
+            {#each sourceIconKeys as iconKey}
+              <option value={iconKey}>{sourceIconLabels[iconKey]}</option>
+            {/each}
+          </select>
+          <span class="icon-preview" aria-hidden="true"><SourceIcon icon={iconChoice} size={16} /></span>
+        </div>
+      </label>
+      <label>User tag
+        <select name="badge">
+          <option value="" selected={!editingSource?.badge}>None</option>
+          <option value="ads" selected={editingSource?.badge === 'ads'}>Ads</option>
+          <option value="ad-free" selected={editingSource?.badge === 'ad-free'}>Ad-free</option>
+        </select>
+      </label>
+    </div>
     <div class="form-grid three"><label>Provider<select name="provider_id" required><option value="" disabled selected={!editingSource}>Select provider</option>{#each data.providers as provider}<option value={provider.id} selected={editingSource?.provider_id === provider.id}>{provider.name}</option>{/each}</select></label><label>Identifier mode<select name="identifier_mode">{#each identifierModes as mode}<option value={mode} selected={editingSource?.identifier_mode === mode}>{identifierLabels[mode]}</option>{/each}</select></label><label>Ordering<input name="ordering" type="number" min="0" step="1" value={editingSource?.ordering ?? 0} /></label></div>
     <div class="form-grid three"><label>Integration type<select name="integration_type"><option value="" selected={!editingSource?.integration_type}>Provider default</option>{#each integrationTypes as type}<option value={type} selected={editingSource?.integration_type === type}>{typeLabels[type]}</option>{/each}</select></label><label>Status<select name="status">{#each providerStatuses as status}<option value={status} selected={editingSource?.status === status}>{statusLabels[status]}</option>{/each}</select></label><label>Visibility<select name="visibility">{#each sourceVisibilities as visibility}<option value={visibility} selected={editingSource?.visibility === visibility}>{visibilityLabels[visibility]}</option>{/each}</select></label></div>
     <div class="form-grid two"><label>Language<input name="language" maxlength="60" placeholder="Original" value={editingSource?.language ?? ''} /></label><label>Audio languages<input name="audio_languages" placeholder="English, Hindi" value={editingSource?.audio_languages?.join(', ') ?? ''} /></label></div>
@@ -268,10 +305,12 @@
     color: var(--color-primary);
     background: var(--color-primary-soft);
     border: 1px solid var(--color-primary-border);
-    font-size: .68rem;
-    font-weight: 700;
     flex: 0 0 auto;
   }
+  /* Task 13: icon picker + live preview */
+  .icon-field { display: flex; align-items: center; gap: 8px; }
+  .icon-field select { flex: 1; min-width: 0; }
+  .icon-preview { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; border-radius: var(--radius-sm); color: var(--color-primary); background: var(--color-primary-soft); border: 1px solid var(--color-primary-border); }
   .record-copy { min-width: 0; flex: 1; }
   .record-name {
     display: block;

@@ -751,7 +751,9 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
 {
   const routeSource = readRepoFile('src/routes/admin/addons/+page.server.ts');
   ok(routeSource.includes("import { requireAdmin } from '$lib/server/streaming/admin-auth'"), 'L: admin route imports the shared requireAdmin gate');
-  ok(countOccurrences(routeSource, 'await requireAdmin(') === 8, 'L: requireAdmin runs on the load AND all seven mutations (8 call sites)');
+  // Task 13: added setAddonPosition (absolute addon reorder) — load + 8
+  // mutations = 9 requireAdmin call sites.
+  ok(countOccurrences(routeSource, 'await requireAdmin(') === 9, 'L: requireAdmin runs on the load AND all eight mutations (9 call sites)');
   for (const action of ['previewAddon', 'confirmAddon', 'setEnabled', 'refreshAddon', 'moveAddon', 'deleteAddon']) {
     ok(routeSource.includes(`${action}:`), `L: action ${action} exists and is gated`);
   }
@@ -1067,7 +1069,12 @@ function jsonManifestRoute(body: string = manifestBody()): RouteHandler {
   // legacy read-modify-write fallback; warns the operator that the
   // migration 20261002000000_phaseF_set_addon_link_types_rpc.sql needs
   // applying to enable atomic merges). Slug/error-code only — no secrets.
-  ok(warnTotal === 11 && logTotal === 0, `T: stremio server modules log through exactly the 11 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics, Phase 14 +2 downloader loss-point diagnostics, Phase F +2 setAddonLinkTypes RPC fallback diagnostics)`);
+  // Task 13: admin-addons.ts adds TWO more sanctioned warns — the
+  // set_addon_position RPC fallback diagnostics (same pattern as Phase F:
+  // RPC unavailable → deterministic read-modify-write fallback; operator
+  // warned that migration 20261007000000_source_badge_icon_reorder.sql
+  // needs applying to enable the atomic path). Id/curated message only.
+  ok(warnTotal === 13 && logTotal === 0, `T: stremio server modules log through exactly the 13 sanctioned warns (warn=${warnTotal}, log=${logTotal}; Phase 10 +1 unexpected-failure, Phase 11 +1 skip-diagnostic, Phase 12 +2 loss-point diagnostics, Phase 14 +2 downloader loss-point diagnostics, Phase F +2 setAddonLinkTypes RPC fallback diagnostics, Task 13 +2 setAddonPosition RPC fallback diagnostics)`);
   // Phase 10: session-env.ts may REFERENCE the env-var NAME for the documented
   // signing-key derivation (one-way, domain-separated SHA-256 — the raw key is
   // never used as a credential nor leaves the server). Zero references in every

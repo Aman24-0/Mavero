@@ -18,6 +18,7 @@
   // available for backward compatibility but is no longer on this path.
   import { mergeMaveroResults, startMaveroProgressiveResolution, type MaveroAddonResult, type MaveroAddonStatus, type ProgressiveSession } from '$lib/client/player/mavero-progressive';
   import { isMaveroPlayerSourceId, MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME } from '$lib/shared/mavero-player';
+  import { isSourceBadge } from '$lib/shared/source-presentation';
 
   export let data: PageData;
 
@@ -49,19 +50,47 @@
   // resolution path, but it is not surfaced as a separate "MAVERO Player"
   // entry in the embed/source selector. The underlying HLS implementation
   // and the addon resolution pipeline are untouched.
-  // Build a lookup map of source_id → category name from the public streaming
-  // config's sourceCategories mapping. Sources without a category assignment
-  // get categoryName = undefined and appear under "Other" in the selector.
-  $: sourceCategoryMap = new Map<string, string>(
-    (data.streamingConfig.sourceCategories ?? []).map((mapping) => {
-      const category = data.streamingConfig.categories?.find((c) => c.id === mapping.category_id);
-      return [mapping.source_id, category?.name ?? 'Other'];
-    })
-  );
+  // Task 13: PRIMARY category assignment + category-specific ordering.
+  //
+  // The public config's sourceCategories mapping can assign ONE source to
+  // MULTIPLE categories, but the option model carries a single categoryName
+  // (existing semantics). The primary assignment is the mapping whose
+  // category comes FIRST in the category registry order — deterministic for
+  // multi-assigned sources (previously it was whichever row happened to sort
+  // first in a globally-mixed ordering array).
+  type SourceCategoryAssignment = { categoryId: string; categoryName: string; ordering: number };
+  $: categoryRankById = new Map<string, number>((data.streamingConfig.categories ?? []).map((category, index) => [category.id, index]));
+  $: primaryAssignmentBySourceId = (() => {
+    const primary = new Map<string, SourceCategoryAssignment>();
+    for (const mapping of data.streamingConfig.sourceCategories ?? []) {
+      const rank = categoryRankById.get(mapping.category_id);
+      if (rank === undefined) continue; // mapping whose category is not public — not renderable
+      const existing = primary.get(mapping.source_id);
+      const existingRank = existing ? categoryRankById.get(existing.categoryId) : undefined;
+      if (existing && existingRank !== undefined && existingRank <= rank) continue;
+      const category = (data.streamingConfig.categories ?? []).find((candidate) => candidate.id === mapping.category_id);
+      primary.set(mapping.source_id, { categoryId: mapping.category_id, categoryName: category?.name ?? 'Other', ordering: mapping.ordering });
+    }
+    return primary;
+  })();
 
-  $: sourceOptions = [
-    ...data.streamingConfig.sources.map((source) => {
+  // Task 13: category-order-aware option list.
+  //   * GROUP order = first appearance in the global source list (previous
+  //     behavior preserved; "Other" still moves to the end in PlayerShell).
+  //   * WITHIN a group = the category-specific assignment ordering
+  //     (streaming_source_categories.ordering). This was previously LOST —
+  //     options rendered in global source order inside every group, so an
+  //     admin's category reorder never reached the player. It is now derived
+  //     here (the watch route owns sourceOptions) so PlayerShell stays
+  //     presentation-only.
+  //   * Unassigned sources keep the global source order and render in the
+  //     trailing "Other" group.
+  // Badge/icon are presentation metadata copied straight from the public
+  // config (constrained badge enum; safe icon key with render fallback).
+  $: sourceOptions = (() => {
+    const options: PlayerSourceOption[] = data.streamingConfig.sources.map((source) => {
       const provider = data.streamingConfig.providers.find((provider) => provider.id === source.provider_id);
+      const assignment = primaryAssignmentBySourceId.get(source.id);
       const option: PlayerSourceOption = {
         id: source.id,
         name: source.name,
@@ -73,11 +102,38 @@
         // configured-vs-effective provenance in one place; the option and
         // the resolved source always agree.
         sandboxPolicy: resolveSandboxRuntime(provider?.capabilities, source.capabilities).effectiveSandboxPolicy,
-        categoryName: sourceCategoryMap.get(source.id),
+        categoryName: assignment?.categoryName,
+        // Guarded copy: only the constrained enum values ever reach the
+        // option — unknown/legacy badge values render no badge.
+        badge: isSourceBadge(source.badge) ? source.badge : undefined,
+        icon: source.icon ?? undefined,
       };
       return option;
-    }),
-  ];
+    });
+    const groupFirstSeen = new Map<string, number>();
+    options.forEach((option, index) => {
+      const assignment = option.id ? primaryAssignmentBySourceId.get(option.id) : undefined;
+      if (assignment && !groupFirstSeen.has(assignment.categoryId)) groupFirstSeen.set(assignment.categoryId, index);
+    });
+    const groupRank = (option: PlayerSourceOption): number => {
+      const assignment = primaryAssignmentBySourceId.get(option.id);
+      if (!assignment) return Number.MAX_SAFE_INTEGER;
+      return groupFirstSeen.get(assignment.categoryId) ?? Number.MAX_SAFE_INTEGER;
+    };
+    return options
+      .map((option, index) => ({ option, index }))
+      .sort((a, b) => {
+        const rankA = groupRank(a.option);
+        const rankB = groupRank(b.option);
+        if (rankA !== rankB) return rankA - rankB;
+        const assignmentA = primaryAssignmentBySourceId.get(a.option.id);
+        const assignmentB = primaryAssignmentBySourceId.get(b.option.id);
+        // Same category group → category-specific ordering decides.
+        if (assignmentA && assignmentB && assignmentA.categoryId === assignmentB.categoryId) return assignmentA.ordering - assignmentB.ordering;
+        return a.index - b.index; // stable for ties / unassigned sources
+      })
+      .map((entry) => entry.option);
+  })();
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
   $: playerContent = ({ id: item.id, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
 

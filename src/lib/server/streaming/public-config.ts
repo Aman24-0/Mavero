@@ -25,7 +25,7 @@ export async function getPublicStreamingConfig(client: StreamingClient): Promise
 
   const [providersResult, sourcesResult, categoriesResult, mappingsResult, defaultsResult] = await Promise.all([
     client.from('streaming_public_providers').select('id,name,slug,description,icon,status,enabled,integration_type,capabilities').eq('enabled', true).in('status', ['active', 'experimental', 'maintenance']).order('name'),
-    client.from('streaming_public_sources').select('id,provider_id,name,slug,description,enabled,visibility,status,ordering,integration_type,capabilities,identifier_mode,language,audio_languages,subtitle_capability,quality_capability').eq('enabled', true).eq('visibility', 'public').in('status', ['active', 'experimental', 'maintenance']).order('ordering').order('name'),
+    client.from('streaming_public_sources').select('id,provider_id,name,slug,description,enabled,visibility,status,ordering,integration_type,capabilities,identifier_mode,language,audio_languages,subtitle_capability,quality_capability,badge,icon').eq('enabled', true).eq('visibility', 'public').in('status', ['active', 'experimental', 'maintenance']).order('ordering').order('name'),
     client.from('streaming_public_categories').select('id,name,slug,description,enabled,ordering').eq('enabled', true).order('ordering').order('name'),
     client.from('streaming_public_source_categories').select('source_id,category_id,ordering,created_at').order('ordering'),
     client.from('streaming_default_sources').select('content_type,source_id,updated_at'),

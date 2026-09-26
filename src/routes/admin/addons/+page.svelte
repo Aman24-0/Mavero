@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp, Check, ChevronRight, Puzzle, RefreshCw, Trash2, X } from 'lucide-svelte';
+  import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronRight, Puzzle, RefreshCw, Trash2, X } from 'lucide-svelte';
   import AdminShell from '$lib/components/AdminShell.svelte';
   import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
   import AdminEmptyState from '$lib/components/admin/AdminEmptyState.svelte';
@@ -74,6 +74,39 @@
     detailSheetOpen = false;
     detailAddon = null;
   }
+
+  // Task 13: absolute position sheet — "enter target number → save → the
+  // addon moves there and everything else shifts". One server-side
+  // operation (setAddonPosition); Up/Down stay for quick adjacent moves.
+  let positionSheetOpen = $state(false);
+  let positionAddon = $state<PageData['addons'][number] | null>(null);
+  let positionValue = $state<number | null>(1);
+
+  function openPositionSheet(addon: PageData['addons'][number]) {
+    positionAddon = addon;
+    positionValue = data.addons.findIndex((candidate) => candidate.id === addon.id) + 1;
+    positionSheetOpen = true;
+  }
+  function closePositionSheet() {
+    positionSheetOpen = false;
+    positionAddon = null;
+    positionValue = 1;
+  }
+
+  const currentPosition = $derived.by(() => {
+    const addon = positionAddon;
+    return addon ? data.addons.findIndex((candidate) => candidate.id === addon.id) + 1 : 0;
+  });
+
+  function submitPosition(event: SubmitEvent) {
+    // Duplicate-submission guard first (same convention as the other forms).
+    guard('setAddonPosition')(event);
+    if (event.defaultPrevented) return;
+    const total = data.addons.length;
+    if (positionValue === null || !Number.isInteger(positionValue) || positionValue < 1 || positionValue > total) {
+      event.preventDefault();
+    }
+  }
 </script>
 
 <svelte:head><title>Stremio Addons — Mavero</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
@@ -146,6 +179,7 @@
                 <input type="hidden" name="direction" value="down" />
                 <button class="mini-btn mini-btn-icon" type="submit" disabled={pending !== ''} aria-label={`Move ${addon.name} down`}><ArrowDown size={13} /></button>
               </form>
+              <button class="mini-btn" type="button" disabled={pending !== ''} onclick={() => openPositionSheet(addon)} aria-label={`Reorder ${addon.name}`}><ArrowUpDown size={13} /> Reorder</button>
               <form method="POST" action="?/deleteAddon" class="inline-form" onsubmit={guard('deleteAddon', DELETE_CONFIRM)}>
                 <input type="hidden" name="id" value={addon.id} />
                 <button class="mini-btn mini-btn-danger" type="submit" disabled={pending !== ''} aria-busy={pending === 'deleteAddon'} aria-label={`Remove ${addon.name}`}><Trash2 size={13} /> {pending === 'deleteAddon' ? 'Removing…' : 'Remove'}</button>
@@ -250,6 +284,39 @@
         </div>
       </form>
     </div>
+  {/if}
+</AdminSheet>
+
+<!-- ============================================================
+     TASK 13 — ABSOLUTE POSITION SHEET: move one addon to a target
+     1-based position. Server-side setAddonPosition derives the new
+     order and renumbers 0..N-1 deterministically.
+     ============================================================ -->
+<AdminSheet
+  open={positionSheetOpen}
+  title={positionAddon ? `Reorder ${positionAddon.name}` : 'Reorder addon'}
+  description={positionAddon ? `Current position: ${currentPosition} of ${data.addons.length}. Other addons shift automatically.` : `Total addons: ${data.addons.length}.`}
+  onClose={closePositionSheet}
+>
+  {#if positionAddon}
+    <form method="POST" action="?/setAddonPosition" class="registry-form position-form" onsubmit={submitPosition}>
+      <input type="hidden" name="id" value={positionAddon.id} />
+      <label for="addon-position">Target position (1–{data.addons.length})</label>
+      <input
+        id="addon-position"
+        name="position"
+        type="number"
+        min="1"
+        max={data.addons.length}
+        step="1"
+        required
+        bind:value={positionValue}
+      />
+      <div class="sheet-actions">
+        <button class="btn btn-primary" type="submit" disabled={pending !== ''} aria-busy={pending === 'setAddonPosition'}>{pending === 'setAddonPosition' ? 'Saving…' : 'Save position'}</button>
+        <button class="btn btn-secondary" type="button" onclick={closePositionSheet}>Cancel</button>
+      </div>
+    </form>
   {/if}
 </AdminSheet>
 
@@ -406,6 +473,9 @@
   .meta-grid dd.good { color: var(--color-primary); }
   .meta-grid dd.bad { color: var(--color-danger); }
   .url { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .6rem; color: var(--color-text-muted); word-break: break-all; }
+
+  /* Task 13: absolute position form (inside its own modal) */
+  .position-form { max-width: 320px; }
 
   @media (max-width: 640px) {
     .record-badges { gap: 4px; }

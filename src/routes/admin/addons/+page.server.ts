@@ -11,6 +11,7 @@ import {
   refreshAddonById,
   setAddonEnabled,
   setAddonLinkTypes,
+  setAddonPosition,
 } from '$lib/server/streaming/stremio/admin-addons';
 import { StreamingValidationError } from '$lib/server/streaming/validation';
 import { ManifestServiceError } from '$lib/server/streaming/stremio/errors';
@@ -122,6 +123,27 @@ export const actions: Actions = {
     } catch (error) {
       if (isRedirect(error)) throw error;
       return addonActionError(error, 'Unable to reorder the addons.');
+    }
+  },
+
+  /**
+   * Task 13: ABSOLUTE position — moves one addon to a 1-based target
+   * position in a single server-side operation (insert-at-position +
+   * shift + dense 0..N-1 renumbering). No repeated up/down calls.
+   */
+  setAddonPosition: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: REDIRECT });
+    try {
+      const form = await request.formData();
+      const rawPosition = String(form.get('position') ?? '').trim();
+      if (!/^\d+$/.test(rawPosition)) throw new StreamingValidationError('Position must be a whole number starting at 1.');
+      const position = Number(rawPosition);
+      if (!Number.isSafeInteger(position) || position < 1) throw new StreamingValidationError('Position must be a whole number starting at 1.');
+      await setAddonPosition(locals.supabase, form.get('id'), position);
+      throw redirect(303, `${REDIRECT}?notice=${encodeURIComponent('Addon position saved.')}`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return addonActionError(error, 'Unable to save the addon position.');
     }
   },
 
