@@ -829,14 +829,20 @@ assert.match(upcomingPageSrc, /params\.set\('startDate', next\.startDate\)/, 'st
 assert.match(upcomingPageSrc, /params\.set\('type', next\.type\)/, 'type written to URL');
 assert.match(upcomingPageSrc, /params\.set\('language', next\.language\)/, 'language written to URL');
 assert.match(upcomingPageSrc, /function setLanguage\(value: string\) \{ selectedLanguage = value; updateFilter\(\{ language: value \}\); \}/, 'language setter flows through the shared updateFilter model');
-// F7-B: page heading now reflects the 30-day window starting at
-// selectedStartDate (e.g. "Next 30 days from Sep 27, 2026 — through Oct 26, 2026").
+// F7-B UX fix: page heading is now the CONCISE date-window
+// representation ("Sep 27 – Oct 26, 2026") instead of the verbose
+// "Next 30 days from..." copy. The page already says "Upcoming", so
+// the heading does not need to repeat that context.
 assert.match(upcomingPageSrc, /let startDateLabel = \$derived\.by\(/, 'page heading computes a startDateLabel');
 assert.match(upcomingPageSrc, /let windowEndLabel = \$derived\.by\(/, 'page heading computes a windowEndLabel');
-assert.match(upcomingPageSrc, /Next 30 days from/, 'page heading uses the "Next 30 days from" copy');
-// Mobile: the four controls stay on ONE horizontal row.
-assert.match(upcomingPageSrc, /\.filters-inner \{ flex-wrap: nowrap; gap: 8px; \}/, 'mobile filters stay on one horizontal row (no second filter row)');
-assert.match(upcomingPageSrc, /\.filter-wrap \{ min-width: 0; flex: 1 1 0; \}/, 'mobile filter controls shrink instead of overflowing the viewport');
+assert.match(upcomingPageSrc, /\{startDateLabel\} – \{windowEndLabel\}/, 'page heading uses the concise "{startDateLabel} – {windowEndLabel}" copy');
+assert.match(upcomingPageSrc, /\.month-heading \{[\s\S]*?white-space: nowrap;/, 'month-heading enforces single-line (no wrap) so the concise date-window heading stays one line on mobile');
+// F7-B UX fix: mobile uses a TWO-ROW filter layout
+// (Row 1 = Date + Language, Row 2 = Movies/Shows/Anime chips).
+// Tablet/desktop (>=768px) collapses back into a single horizontal row.
+assert.match(upcomingPageSrc, /\.filters-inner \{[\s\S]*?flex-direction: column;/, 'mobile filters stack vertically (two rows: Date+Language, then chips)');
+assert.match(upcomingPageSrc, /\.filter-row-filters|\.filter-row-chips/, 'filter rows are split into a filters row + a chips row');
+assert.match(upcomingPageSrc, /@media \(min-width: 768px\)[\s\S]*?\.filters-inner \{ flex-direction: row;/, 'tablet/desktop collapses the two rows back into a single horizontal row');
 // Language label surfaces in the empty state.
 assert.match(upcomingPageSrc, /startDateLabel|windowEndLabel|languageLabel/, 'date + language labels participate in the empty-state copy');
 

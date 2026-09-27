@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Play, Star, Check } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
@@ -34,22 +33,25 @@
   export let selected = false;
   export let onSelect: (item: MediaItem) => void = () => {};
   let imageFailed = false;
-  let imageReady = false;
-  let posterElement: HTMLElement;
+  // F7-B UX fix: the previous implementation wrapped the <img> in a
+  // custom IntersectionObserver + `imageReady` state gate. That gate
+  // was the root cause of the "cards pop in when scrolling" behavior
+  // the user reported on mobile — every card started with a flat
+  // placeholder and only swapped to the <img> after the observer
+  // fired, even though the browser's native `loading="lazy"` already
+  // handles viewport-aware image loading (and the HTTP cache + the
+  // browser's decoded-image cache already keep already-loaded posters
+  // ready for instant re-paint on scroll-back).
+  //
+  // Removing the observer + state gate means:
+  //   - the <img> is in the DOM from first paint (with `loading="lazy"`,
+  //     so off-screen posters are NOT fetched eagerly);
+  //   - once a poster has been fetched + decoded, the browser caches it
+  //     and re-paints it instantly when the card scrolls back into view
+  //     (no re-mount, no re-fetch, no re-decode, no pop-in);
+  //   - the onerror fallback still surfaces a graceful letter tile if
+  //     the upstream image truly fails.
   $: if (item.poster) imageFailed = false;
-  onMount(() => {
-    if (!('IntersectionObserver' in window) || !posterElement) {
-      imageReady = true;
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      imageReady = true;
-      observer.disconnect();
-    }, { rootMargin: '320px 0px' });
-    observer.observe(posterElement);
-    return () => observer.disconnect();
-  });
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
   $: cardHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
   $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
@@ -76,7 +78,7 @@
 </script>
 
 <div class:compact class:editorial class:selectable class:selected class="mc-wrap">
-  <div class="mc-poster" bind:this={posterElement} style={`--poster-accent: ${item.accent}`}>
+  <div class="mc-poster" style={`--poster-accent: ${item.accent}`}>
     {#if selectable}
       <!-- Selection mode: a button overlaying the whole poster so the
            tap target is the entire card. We do NOT nest the button
@@ -84,9 +86,7 @@
            render the <a> as a non-interactive backdrop (tabindex=-1,
            aria-hidden) and let the button own the interaction. -->
       <a class="mc-card-link mc-card-link-disabled" href={cardHref} aria-label={`${item.title}`} tabindex="-1" aria-hidden="true" onclick={handleSelectToggle}>
-        {#if !imageReady}
-          <div class="mc-placeholder" aria-hidden="true"></div>
-        {:else if imageFailed}
+        {#if imageFailed}
           <div class="mc-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
         {:else}
           <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
@@ -105,9 +105,7 @@
       </button>
     {:else}
       <a class="mc-card-link" href={cardHref} aria-label={`${item.title}`}>
-        {#if !imageReady}
-          <div class="mc-placeholder" aria-hidden="true"></div>
-        {:else if imageFailed}
+        {#if imageFailed}
           <div class="mc-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
         {:else}
           <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
@@ -199,7 +197,11 @@
     box-shadow: var(--glow-primary);
   }
   .mc-wrap.selectable .mc-poster:hover { transform: none; box-shadow: none; }
-  .mc-placeholder { position: absolute; inset: 0; background: linear-gradient(135deg, var(--color-surface-elevated), rgba(0,255,156,.02)); }
+  /* F7-B UX fix: the .mc-placeholder rule was tied to the now-removed
+     IntersectionObserver + imageReady gate. The poster surface itself
+     (mc-poster) already provides a stable surface-colored background
+     while the browser fetches + decodes the lazy <img>, so the extra
+     placeholder div is no longer needed. */
   .mc-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(242,255,248,.12); background: radial-gradient(circle at 72% 24%, color-mix(in srgb, var(--poster-accent) 25%, transparent), transparent 42%), var(--color-surface-elevated); }
   .mc-fallback span { font-size: clamp(1.5rem, 6vw, 3rem); font-weight: 800; }
 

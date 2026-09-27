@@ -181,9 +181,20 @@
 
 <!-- Navigation progress indicator — thin Mavero-green top bar that
      appears during SPA navigation and disappears when it completes.
-     Non-blocking (pointer-events: none), respects reduced-motion. -->
+     Non-blocking (pointer-events: none), respects reduced-motion.
+     F7-B UX fix: positioned BELOW the mobile status bar / notch via
+     env(safe-area-inset-top) so it is actually visible on mobile
+     devices (the previous 3px bar at top:0 was hidden behind the
+     iOS dynamic island / Android status bar). Slightly thicker (4px)
+     and uses an indeterminate shimmer so the user sees clear feedback
+     that navigation/data is loading. The `navigating` store stays
+     truthy for the WHOLE SPA transition (route swap + load functions
+     + new page mount), so the indicator represents REAL pending
+     work, not an artificial delay. -->
 {#if navigating}
-  <div class="nav-progress" aria-hidden="true"></div>
+  <div class="nav-progress" role="status" aria-label="Loading…">
+    <div class="nav-progress-bar"></div>
+  </div>
 {/if}
 
 <!-- Mavero branded boot overlay — shown on EVERY initial app load
@@ -198,29 +209,49 @@
 <Toast />
 
 <style>
+  /* F7-B UX fix: the indicator is positioned below the mobile status
+     bar / notch via env(safe-area-inset-top), so it is actually visible
+     on iPhone (dynamic island) and Android devices. The bar itself
+     uses an indeterminate shimmer (a moving highlight sweep) so the
+     user sees continuous motion feedback for the entire navigation,
+     not just a single 0.8s grow animation that then freezes. */
   .nav-progress {
     position: fixed;
-    top: 0;
+    /* env(safe-area-inset-top) on mobile pushes the bar below the
+       status bar / notch. On desktop it evaluates to 0, so the bar
+       sits at the very top of the viewport there. The 4px fallback
+       keeps it visible even on browsers that don't expose the env(). */
+    top: calc(env(safe-area-inset-top, 0px));
     left: 0;
     right: 0;
-    height: 3px;
+    height: 4px;
     z-index: 9999;
     pointer-events: none;
-    background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
-    box-shadow: 0 0 8px rgba(0, 255, 156, .4);
-    animation: nav-progress-grow 0.8s ease-out forwards;
-    transform-origin: left center;
+    background: rgba(0, 255, 156, .12);
+    overflow: hidden;
   }
-  @keyframes nav-progress-grow {
-    0% { transform: scaleX(0); opacity: 0.8; }
-    50% { transform: scaleX(0.7); opacity: 1; }
-    100% { transform: scaleX(1); opacity: 0.6; }
+  .nav-progress-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 40%;
+    background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
+    box-shadow: 0 0 8px rgba(0, 255, 156, .55);
+    border-radius: 0 4px 4px 0;
+    animation: nav-progress-sweep 1s ease-in-out infinite;
+  }
+  @keyframes nav-progress-sweep {
+    0%   { transform: translateX(-100%); }
+    50%  { transform: translateX(150%); }
+    100% { transform: translateX(350%); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .nav-progress {
+    .nav-progress-bar {
       animation: none;
-      transform: scaleX(1);
-      opacity: 0.6;
+      width: 100%;
+      transform: none;
+      border-radius: 0;
     }
   }
 </style>

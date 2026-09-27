@@ -439,41 +439,50 @@
 
   <div class="filters-bar">
     <div class="filters-inner">
-      <!-- F7-B: single date selector (default = today, UTC). The chosen
-           date opens a fixed 30-calendar-day window. Native <input
-           type="date"> constrains user input server-side independently
-           via parseUpcomingStartDate (strict YYYY-MM-DD, fail-safe to
-           today). -->
-      <div class="filter-wrap filter-wrap-date">
-        <label class="date-label" for="upcoming-start-date">From</label>
-        <input
-          id="upcoming-start-date"
-          class="date-input"
-          type="date"
-          value={selectedStartDate}
-          max="2100-12-31"
-          min="1900-01-01"
-          onchange={(e) => {
-            const v = (e.currentTarget as HTMLInputElement).value;
-            if (v) setStartDate(v);
-          }}
-        />
+      <!-- F7-B UX fix: two-row mobile layout.
+           Row 1 = Date picker + Language dropdown (proportional widths).
+           Row 2 = Movies / Shows / Anime chips (equal widths, full row).
+           On >= 768px (tablet/desktop) the rows collapse back into a
+           single horizontal row — see the responsive CSS at the bottom. -->
+      <div class="filter-row filter-row-filters">
+        <!-- F7-B: single date selector (default = today, UTC). The chosen
+             date opens a fixed 30-calendar-day window. Native <input
+             type="date"> constrains user input server-side independently
+             via parseUpcomingStartDate (strict YYYY-MM-DD, fail-safe to
+             today). -->
+        <div class="filter-wrap filter-wrap-date">
+          <label class="date-label" for="upcoming-start-date">From</label>
+          <input
+            id="upcoming-start-date"
+            class="date-input"
+            type="date"
+            value={selectedStartDate}
+            max="2100-12-31"
+            min="1900-01-01"
+            onchange={(e) => {
+              const v = (e.currentTarget as HTMLInputElement).value;
+              if (v) setStartDate(v);
+            }}
+          />
+        </div>
+        <div class="filter-wrap filter-wrap-language">
+          <Dropdown id="upcoming-language" label="Language" value={selectedLanguage} options={languageOptions} onChange={setLanguage} />
+        </div>
       </div>
       <!-- F7: type selector changed from a Dropdown to chips (Movies / Shows / Anime).
            No 'All' option — each type is loaded independently and lazily. -->
-      <div class="type-chips" role="group" aria-label="Content type">
-        {#each typeOptions as opt}
-          <button
-            type="button"
-            class="type-chip"
-            class:active={selectedType === opt.value}
-            onclick={() => setType(opt.value)}
-            aria-pressed={selectedType === opt.value}
-          >{opt.label}</button>
-        {/each}
-      </div>
-      <div class="filter-wrap">
-        <Dropdown id="upcoming-language" label="Language" value={selectedLanguage} options={languageOptions} onChange={setLanguage} />
+      <div class="filter-row filter-row-chips">
+        <div class="type-chips" role="group" aria-label="Content type">
+          {#each typeOptions as opt}
+            <button
+              type="button"
+              class="type-chip"
+              class:active={selectedType === opt.value}
+              onclick={() => setType(opt.value)}
+              aria-pressed={selectedType === opt.value}
+            >{opt.label}</button>
+          {/each}
+        </div>
       </div>
     </div>
     {#if filterNavError}
@@ -521,7 +530,7 @@
         </div>
       {/if}
 
-      <div class="month-heading">Next 30 days from {startDateLabel} — through {windowEndLabel}</div>
+      <div class="month-heading">{startDateLabel} – {windowEndLabel}</div>
 
       <div class="day-groups">
         {#each dayGroups as group (group.date)}
@@ -652,22 +661,40 @@
     padding: 18px var(--u-gutter);
     border-bottom: 1px solid var(--color-border);
   }
+  /* F7-B UX fix: two-row mobile layout.
+     - .filters-inner is a vertical stack of two .filter-row elements on
+       mobile. Row 1 = Date + Language (proportional widths, each gets
+       ~50% of the row). Row 2 = Movies / Shows / Anime chips (each chip
+       takes an equal share of the full row width, no clipping).
+     - On tablet/desktop (>=768px) the rows collapse into a single
+       horizontal row (see the responsive media query below). */
   .filters-inner {
-    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     width: min(1100px, 100%);
     margin-inline: auto;
   }
-  .filter-wrap { min-width: 130px; flex: 1 1 130px; }
+  .filter-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+  }
+  .filter-row-filters { flex-wrap: nowrap; }
+  .filter-row-chips { flex-wrap: nowrap; }
+  /* Date + Language each take a proportional share of Row 1 so neither
+     is squeezed off-screen. Date is slightly wider (the YYYY-MM-DD
+     format needs the room); Language fills the rest. */
+  .filter-wrap-date { flex: 1 1 55%; min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
+  .filter-wrap-language { flex: 1 1 45%; min-width: 0; }
+  /* Type chips Row 2: each chip takes an equal share of the full row. */
+  .filter-row-chips .type-chips { display: flex; gap: 6px; width: 100%; }
+  .filter-row-chips .type-chip { flex: 1 1 0; min-width: 0; }
 
   /* F7-B: date selector — native <input type="date"> styled to match
      the existing Dropdown geometry so it sits cleanly on the filter row. */
-  .filter-wrap-date {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    flex: 0 0 auto;
-    min-width: 0;
-  }
   .date-label {
     color: var(--color-text-muted);
     font-size: .68rem;
@@ -675,11 +702,13 @@
     letter-spacing: .08em;
     text-transform: uppercase;
     white-space: nowrap;
+    flex: 0 0 auto;
   }
   .date-input {
+    flex: 1 1 auto;
+    min-width: 0;
     min-height: 36px;
-    min-width: 150px;
-    padding: 0 12px;
+    padding: 0 10px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: var(--color-surface);
@@ -726,8 +755,7 @@
   }
   .type-chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* Date / Type / Language share ONE horizontal row on every viewport.
-     The micro labels stay in the DOM for aria-labelledby but are
+  /* Date / Language labels stay in the DOM for aria-labelledby but are
      visually hidden — the selected values are self-descriptive, so
      labels would only burn a vertical row. */
   .filters-inner :global(.dropdown-label) {
@@ -763,6 +791,12 @@
     font-size: 1.2rem; font-weight: 800;
     letter-spacing: -.015em;
     margin-bottom: 16px;
+    /* F7-B UX fix: the concise date-window heading ("Sep 27 – Oct 26,
+       2026") must stay one line on every viewport — wrapping would
+       re-introduce the multi-line mess the user reported. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .day-groups { display: grid; gap: 24px; }
@@ -1000,20 +1034,34 @@
   .empty-action:hover, .retry-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
   .empty-action:focus-visible, .retry-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
+  /* F7-B UX fix: at <=640px the base styles already implement the
+     two-row mobile layout (Row 1 = Date+Language, Row 2 = chips).
+     We only need to tighten the heading + skeleton grid for small
+     screens here — the filter rows themselves are handled by the
+     base .filters-inner flex-direction: column rule. */
   @media (max-width: 640px) {
     .upcoming-header { padding-top: 22px; padding-bottom: 18px; }
     .upcoming-header h1 { font-size: clamp(1.5rem, 6vw, 2rem); }
-    /* One row: date input + type chips + language dropdown.
-       min-width: 0 lets each control shrink instead of pushing the row
-       wider than the viewport. The date input keeps a 130px floor so
-       YYYY-MM-DD stays readable at 360px. */
-    .filters-inner { flex-wrap: nowrap; gap: 8px; }
-    .filter-wrap { min-width: 0; flex: 1 1 0; }
-    .filter-wrap-date { flex: 0 0 auto; }
-    .date-input { min-width: 130px; }
+    /* The concise date-window heading must stay one line. Allow it to
+       shrink slightly on the narrowest phones so "Sep 27 – Oct 26,
+       2026" never wraps. */
+    .month-heading { font-size: 1.02rem; }
     .day-cards { grid-template-columns: 1fr; }
     .release-card { grid-template-columns: 64px 1fr auto; gap: 10px; padding: 10px; }
     .card-poster { width: 64px; }
+  }
+  /* F7-B UX fix: at >=768px (tablet + desktop) the two-row mobile
+     layout collapses into a single horizontal row — Date + Type chips
+     + Language all on one line. This matches the previous single-row
+     desktop behavior, just with startDate replacing month/year. */
+  @media (min-width: 768px) {
+    .filters-inner { flex-direction: row; flex-wrap: wrap; gap: 10px; }
+    .filter-row { width: auto; }
+    .filter-row-filters { gap: 10px; }
+    .filter-wrap-date { flex: 0 0 auto; }
+    .filter-wrap-language { flex: 0 0 220px; }
+    .filter-row-chips .type-chips { width: auto; }
+    .filter-row-chips .type-chip { flex: 0 0 auto; }
   }
   /* Tablet — 2-3 columns per row. */
   @media (min-width: 641px) and (max-width: 1024px) {
