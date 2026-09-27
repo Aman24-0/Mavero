@@ -677,7 +677,7 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page
   // Phase F.2: movie candidates come from ONE India discovery stream
   // (discoverIndiaMovieCandidates — no with_release_type); the adult
   // exclusion rides on that same query. Semantics unchanged from F.1.
-  assert.match(upcomingSource, /loadUpcomingMovies[\s\S]*?discoverIndiaMovieCandidates\(year, month, region, language, providerExclusion\)/, 'upcoming movies flow through the single India candidate stream');
+  assert.match(upcomingSource, /loadUpcomingMovies[\s\S]*?discoverIndiaMovieCandidates\(startDate, region, language, providerExclusion\)/, 'upcoming movies flow through the single India candidate stream');
   assert.match(upcomingSource, /async function discoverIndiaMovieCandidates[\s\S]*?include_adult: false/, 'upcoming movies send include_adult: false');
   assert.match(upcomingSource, /async function discoverIndiaMovieCandidates[\s\S]*?'without_watch_providers': providerExclusion, watch_region: region/, 'upcoming movies apply the transitional provider exclusion WITH region');
   assert.match(upcomingSource, /loadUpcomingSeries[\s\S]*?without_networks: networkExclusion/, 'upcoming series excludes verified adult networks (canonical)');

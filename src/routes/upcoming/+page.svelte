@@ -6,16 +6,17 @@
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import AppFooter from '$components/AppFooter.svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
-  import { upcomingDetailPath, UPCOMING_LANGUAGE_OPTIONS } from '$lib/shared/upcoming-policy';
+  import { upcomingDetailPath, UPCOMING_LANGUAGE_OPTIONS, todayUtcDate } from '$lib/shared/upcoming-policy';
   import type { PageData } from './$types';
   import type { UpcomingItem, UpcomingType } from '$lib/server/content/upcoming-types';
 
   let { data }: { data: PageData } = $props();
 
-  // ---- Infinite scroll pagination (v2: compact cursor + server-side
-  // snapshots). The cursor is a small continuation token the server
-  // validates against the active filters — it never carries item
-  // payloads, so the URL stays small for every filter combination. ----
+  // ---- Infinite scroll pagination (v3: compact cursor + server-side
+  // snapshots, keyed on startDate/30-day window). The cursor is a small
+  // continuation token the server validates against the active filters
+  // — it never carries item payloads, so the URL stays small for every
+  // filter combination. ----
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
   let allItems = $state<UpcomingItem[]>([...data.items]);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
@@ -71,30 +72,10 @@
     currentPage = d.page ?? 1;
     hasNextPage = d.hasNextPage ?? false;
     nextCursor = d.cursor ?? '';
-    selectedMonth = String(d.filters.month);
-    selectedYear = String(d.filters.year);
+    selectedStartDate = d.filters.startDate;
     selectedType = d.filters.type;
     selectedLanguage = String(d.filters.language ?? 'all');
   });
-
-  // Phase F.1 — COMPACT month labels keep all four filters on ONE row on
-  // small mobile screens (the dropdown trigger shows the selected value).
-  const monthOptions = [
-    { value: '1', label: 'Jan' },
-    { value: '2', label: 'Feb' },
-    { value: '3', label: 'Mar' },
-    { value: '4', label: 'Apr' },
-    { value: '5', label: 'May' },
-    { value: '6', label: 'Jun' },
-    { value: '7', label: 'Jul' },
-    { value: '8', label: 'Aug' },
-    { value: '9', label: 'Sep' },
-    { value: '10', label: 'Oct' },
-    { value: '11', label: 'Nov' },
-    { value: '12', label: 'Dec' }
-  ];
-  // Full month names for the page heading + empty state ("September 2026").
-  const monthFullNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
   // F7: type options changed from a dropdown with 'All' to three chips:
   // Movies (default), Shows, Anime. No 'All' option — each type is
@@ -105,21 +86,17 @@
     { value: 'anime', label: 'Anime' }
   ];
 
-  // Phase F.1 — language filter (Month | Year | Type | Language, one row).
+  // Phase F.1 — language filter (StartDate | Type | Language, one row).
   // Options come from the shared pure policy module so the page and the
   // server parser share ONE canonical list. The filter means TMDB ORIGINAL
   // language — never dubbed-audio availability.
   const languageOptions = UPCOMING_LANGUAGE_OPTIONS.map((option) => ({ value: option.code, label: option.label }));
 
-  // Build year options from the server-provided list.
-  let yearOptions = $derived(
-    (data.yearOptions ?? []).map((y: number) => ({ value: String(y), label: String(y) }))
-  );
-
+  // F7-B: the date selector default. The server always returns a
+  // canonical startDate (YYYY-MM-DD), so this is purely the SSR initial
+  // value — direct user input is constrained by <input type="date">.
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
-  let selectedMonth = $state(String(data.filters.month));
-  // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
-  let selectedYear = $state(String(data.filters.year));
+  let selectedStartDate = $state(data.filters.startDate);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
   let selectedType = $state<'all' | UpcomingType>(data.filters.type);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
@@ -133,22 +110,20 @@
   let filterNavError = $state<string | null>(null);
   // The filter values whose navigation failed, so Retry re-applies
   // exactly what failed. Non-reactive on purpose — only handlers read it.
-  let failedFilter: { month?: string; year?: string; type?: string; language?: string } | null = null;
+  let failedFilter: { startDate?: string; type?: string; language?: string } | null = null;
 
   function restoreFilterSelections() {
     // After a failed navigation `data` still holds the last SUCCESSFUL
-    // server state — the dropdowns re-sync to it (the optimistic
+    // server state — the controls re-sync to it (the optimistic
     // selection is rolled back; no stale mismatch with the URL).
-    selectedMonth = String(data.filters.month);
-    selectedYear = String(data.filters.year);
+    selectedStartDate = data.filters.startDate;
     selectedType = data.filters.type;
     selectedLanguage = String(data.filters.language ?? 'all');
   }
 
-  function updateFilter(next: { month?: string; year?: string; type?: string; language?: string }) {
+  function updateFilter(next: { startDate?: string; type?: string; language?: string }) {
     const params = new URLSearchParams(page.url.searchParams);
-    if (next.month !== undefined) params.set('month', next.month);
-    if (next.year !== undefined) params.set('year', next.year);
+    if (next.startDate !== undefined) params.set('startDate', next.startDate);
     if (next.type !== undefined) params.set('type', next.type);
     if (next.language !== undefined) params.set('language', next.language);
     // Filter changes reset pagination completely: the server re-runs
@@ -186,8 +161,7 @@
     if (failed) updateFilter(failed);
   }
 
-  function setMonth(value: string) { selectedMonth = value; updateFilter({ month: value }); }
-  function setYear(value: string) { selectedYear = value; updateFilter({ year: value }); }
+  function setStartDate(value: string) { selectedStartDate = value; updateFilter({ startDate: value }); }
   function setType(value: string) { selectedType = value as 'all' | UpcomingType; updateFilter({ type: value }); }
   function setLanguage(value: string) { selectedLanguage = value; updateFilter({ language: value }); }
 
@@ -215,10 +189,22 @@
   });
 
   let hasResults = $derived(allItems.length > 0);
-  // Page heading keeps the FULL month name ("September 2026") while the
-  // dropdown triggers use the compact labels.
-  let monthLabel = $derived(monthFullNames[Number(selectedMonth) - 1] ?? '');
-  let yearLabel = $derived(selectedYear);
+  // F7-B: page heading reflects the 30-day window starting at
+  // selectedStartDate (e.g. "Sep 27 — Oct 26, 2026").
+  let windowEndLabel = $derived.by(() => {
+    // Mirror the canonical [startDate, startDate + 30 days) window. The
+    // last in-window day is startDate + 29 calendar days.
+    const startMs = Date.parse(selectedStartDate + 'T00:00:00Z');
+    if (!Number.isFinite(startMs)) return '';
+    const lastDayMs = startMs + 29 * 24 * 60 * 60 * 1000;
+    const d = new Date(lastDayMs);
+    return `${monthLabels[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2, '0')}, ${d.getUTCFullYear()}`;
+  });
+  let startDateLabel = $derived.by(() => {
+    const d = new Date(selectedStartDate + 'T00:00:00Z');
+    if (Number.isNaN(d.getTime())) return selectedStartDate;
+    return `${monthLabels[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2, '0')}, ${d.getUTCFullYear()}`;
+  });
   let languageLabel = $derived(UPCOMING_LANGUAGE_OPTIONS.find((option) => option.code === selectedLanguage)?.label ?? 'All');
 
   function typeIcon(type: UpcomingType) {
@@ -276,8 +262,7 @@
     liveMessage = 'Loading more results…';
     try {
       const params = new URLSearchParams({
-        month: String(data.filters.month),
-        year: String(data.filters.year),
+        startDate: data.filters.startDate,
         type: data.filters.type,
         language: data.filters.language ?? 'all',
         page: String(currentPage + 1),
@@ -352,8 +337,7 @@
     liveMessage = 'Results were refreshed — starting from the first page.';
     try {
       const params = new URLSearchParams({
-        month: String(data.filters.month),
-        year: String(data.filters.year),
+        startDate: data.filters.startDate,
         type: data.filters.type,
         language: data.filters.language ?? 'all',
         page: '1'
@@ -455,11 +439,25 @@
 
   <div class="filters-bar">
     <div class="filters-inner">
-      <div class="filter-wrap">
-        <Dropdown id="upcoming-month" label="Month" value={selectedMonth} options={monthOptions} onChange={setMonth} />
-      </div>
-      <div class="filter-wrap">
-        <Dropdown id="upcoming-year" label="Year" value={selectedYear} options={yearOptions} onChange={setYear} />
+      <!-- F7-B: single date selector (default = today, UTC). The chosen
+           date opens a fixed 30-calendar-day window. Native <input
+           type="date"> constrains user input server-side independently
+           via parseUpcomingStartDate (strict YYYY-MM-DD, fail-safe to
+           today). -->
+      <div class="filter-wrap filter-wrap-date">
+        <label class="date-label" for="upcoming-start-date">From</label>
+        <input
+          id="upcoming-start-date"
+          class="date-input"
+          type="date"
+          value={selectedStartDate}
+          max="2100-12-31"
+          min="1900-01-01"
+          onchange={(e) => {
+            const v = (e.currentTarget as HTMLInputElement).value;
+            if (v) setStartDate(v);
+          }}
+        />
       </div>
       <!-- F7: type selector changed from a Dropdown to chips (Movies / Shows / Anime).
            No 'All' option — each type is loaded independently and lazily. -->
@@ -513,8 +511,8 @@
       <section class="empty-state" aria-live="polite">
         <div class="empty-mark" aria-hidden="true"><Calendar size={24} /></div>
         <h2>No releases found</h2>
-        <p>No Movies, Series, or Anime matching {monthLabel} {yearLabel} with the {typeOptions.find((t) => t.value === selectedType)?.label}{#if selectedLanguage !== 'all'} · {languageLabel}{/if} filter.</p>
-        <button class="empty-action" type="button" onclick={() => setType('all')}>Change filters</button>
+        <p>No {typeOptions.find((t) => t.value === selectedType)?.label} releases in the 30-day window from {startDateLabel}{#if selectedLanguage !== 'all'} · {languageLabel}{/if}.</p>
+        <button class="empty-action" type="button" onclick={() => setStartDate(todayUtcDate())}>Reset to today</button>
       </section>
     {:else}
       {#if pageWarnings.length}
@@ -523,7 +521,7 @@
         </div>
       {/if}
 
-      <div class="month-heading">{monthLabel} {yearLabel}</div>
+      <div class="month-heading">Next 30 days from {startDateLabel} — through {windowEndLabel}</div>
 
       <div class="day-groups">
         {#each dayGroups as group (group.date)}
@@ -661,6 +659,46 @@
   }
   .filter-wrap { min-width: 130px; flex: 1 1 130px; }
 
+  /* F7-B: date selector — native <input type="date"> styled to match
+     the existing Dropdown geometry so it sits cleanly on the filter row. */
+  .filter-wrap-date {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+  .date-label {
+    color: var(--color-text-muted);
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .date-input {
+    min-height: 36px;
+    min-width: 150px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    font-size: .78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 150ms ease, background 150ms ease;
+  }
+  .date-input:hover { border-color: var(--color-primary-border); }
+  .date-input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  /* Keep the native date-edit affordance but tone down the indicator
+     icon so it matches the dark surface. Webkit + Firefox selectors. */
+  .date-input::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+  }
+
   /* F7: type chips — Movies / Shows / Anime on one row */
   .type-chips {
     display: inline-flex;
@@ -688,11 +726,10 @@
   }
   .type-chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* Month / Year / Type / Language share ONE horizontal row on every
-     viewport. The micro labels stay in the DOM for aria-labelledby but
-     are visually hidden — the selected values (compact month name, year,
-     type, language) are self-descriptive, so labels would only burn a
-     vertical row. */
+  /* Date / Type / Language share ONE horizontal row on every viewport.
+     The micro labels stay in the DOM for aria-labelledby but are
+     visually hidden — the selected values are self-descriptive, so
+     labels would only burn a vertical row. */
   .filters-inner :global(.dropdown-label) {
     position: absolute;
     width: 1px; height: 1px;
@@ -966,12 +1003,14 @@
   @media (max-width: 640px) {
     .upcoming-header { padding-top: 22px; padding-bottom: 18px; }
     .upcoming-header h1 { font-size: clamp(1.5rem, 6vw, 2rem); }
-    /* One row: four equal-width dropdowns (Month | Year | Type | Language).
-       min-width: 0 lets each control shrink and ellipsize instead of
-       pushing the row wider than the viewport (compact month labels keep
-       the values readable at 360px). */
+    /* One row: date input + type chips + language dropdown.
+       min-width: 0 lets each control shrink instead of pushing the row
+       wider than the viewport. The date input keeps a 130px floor so
+       YYYY-MM-DD stays readable at 360px. */
     .filters-inner { flex-wrap: nowrap; gap: 8px; }
     .filter-wrap { min-width: 0; flex: 1 1 0; }
+    .filter-wrap-date { flex: 0 0 auto; }
+    .date-input { min-width: 130px; }
     .day-cards { grid-template-columns: 1fr; }
     .release-card { grid-template-columns: 64px 1fr auto; gap: 10px; padding: 10px; }
     .card-poster { width: 64px; }

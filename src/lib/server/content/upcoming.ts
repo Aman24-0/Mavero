@@ -5,13 +5,16 @@
 //     query for upcoming movies (the architecture already proven in
 //     production by CineLog's Upcoming implementation):
 //       /discover/movie { region: 'IN', with_release_country: 'IN',
-//         release_date.gte/lte = monthBounds(year, month),
+//         release_date.gte/lte = windowBounds(startDate) [30-day window],
 //         include_adult: false, sort_by: 'release_date.asc' }
-//     The selected Mavero Month + Year becomes FROM = YYYY-MM-01 and
-//     TO = YYYY-MM-last-day, passed DIRECTLY into the query — no hidden
-//     "next 30 days" behavior, no per-kind duplication, no candidate
-//     union, no vote_count floor (upcoming titles commonly have ZERO
-//     votes — a floor starves future months), no with_release_type.
+//     F7-B: the selected Mavero `startDate` (YYYY-MM-DD) opens a fixed
+//     30-calendar-day window [startDate, startDate + 30 days). The
+//     window is converted to TMDB's date-inclusive bounds via
+//     windowBounds(): gte = startDate, lte = startDate + 29 calendar
+//     days (the last day INSIDE the 30-day window). No hidden month
+//     semantics, no per-kind duplication, no candidate union, no
+//     vote_count floor (upcoming titles commonly have ZERO votes — a
+//     floor starves future windows), no with_release_type.
 //
 //     IMPORTANT (CineLog lesson — DISCOVERY IS THE TRUTH):
 //     with region + with_release_country=IN, a movie returned by this
@@ -24,9 +27,9 @@
 //         movie that discover already qualified (no post-discovery
 //         starvation gate — the card renders without kind badges);
 //       · an empty enrichment result renders the same way;
-//       · the final month invariant is still enforced on the CARD DATE
-//         itself (isDateInMonth): a card can never display a date
-//         outside the selected month/year.
+//       · the final window invariant is still enforced on the CARD DATE
+//         itself (isDateInWindow): a card can never display a date
+//         outside the selected 30-day window.
 //   - TMDB watch providers (flatrate only, results.IN only) for movie
 //     OTT logos (no US/cross-region fallback; a provider lookup failure
 //     hides the icons but never removes the movie) and for series OTT
@@ -137,6 +140,10 @@ import {
   upcomingTvCurationVerdict,
   selectUpcomingSeasonCandidates,
   parseUpcomingLanguage,
+  parseUpcomingStartDate,
+  windowBounds,
+  isDateInWindow,
+  todayUtcDate,
   isAnimeCandidate,
   isIndiaFlatrateEligible,
   seasonIndiaProviderOutcome,
@@ -144,7 +151,6 @@ import {
   dedupeProvidersById,
   extractIndiaMovieReleaseEvents,
   deriveMovieReleaseKinds,
-  isDateInMonth,
   normalizeRegionFlatrateProviders
 } from '../../shared/upcoming-policy';
 import type { UpcomingFilters, UpcomingItem, UpcomingProvider, UpcomingReleaseKind, UpcomingResult, UpcomingType } from './upcoming-types';
@@ -187,21 +193,15 @@ const ANIME_ORIGINAL_LANGUAGE = UPCOMING_ANIME_ORIGINAL_LANGUAGE;
 
 // ---------- filter parsing & validation ----------
 
-export function parseUpcomingMonth(value: string | null | undefined): number {
-  const now = new Date();
-  if (!value) return now.getMonth() + 1;
-  const n = Number(value);
-  if (Number.isInteger(n) && n >= 1 && n <= 12) return n;
-  return now.getMonth() + 1;
-}
-
-export function parseUpcomingYear(value: string | null | undefined): number {
-  const now = new Date();
-  if (!value) return now.getFullYear();
-  const n = Number(value);
-  if (Number.isInteger(n) && n >= 1900 && n <= 2100) return n;
-  return now.getFullYear();
-}
+// F7-B: the canonical Upcoming date input is a single `startDate`
+// (YYYY-MM-DD) opening a fixed 30-calendar-day window. The legacy
+// parseUpcomingMonth/parseUpcomingYear/upcomingYearOptions/monthBounds
+// helpers are GONE — month/year are no longer accepted anywhere on the
+// wire, and the server never derives month/year underneath startDate.
+// The pure helpers (parseUpcomingStartDate, windowBounds, isDateInWindow,
+// todayUtcDate) live in the shared policy module so the page server, the
+// API endpoint and the cursor fingerprint all share ONE canonical
+// implementation.
 
 export function parseUpcomingType(value: string | null | undefined): 'all' | UpcomingType {
   if (value === 'all' || value === 'movie' || value === 'series' || value === 'anime') return value;
@@ -213,29 +213,10 @@ export function parseUpcomingType(value: string | null | undefined): 'all' | Upc
   return 'movie';
 }
 
-// Dynamic year options: current year, previous year, and next 3 years.
-// Gives a useful surrounding range without hard-coding a specific year.
-export function upcomingYearOptions(): number[] {
-  const current = new Date().getFullYear();
-  return [current - 1, current, current + 1, current + 2, current + 3];
-}
-
-// ---------- date helpers ----------
-
-export function monthBounds(year: number, month: number): { gte: string; lte: string; startMs: number; endMs: number } {
-  // month is 1-12. Build YYYY-MM-DD strings for the first and last day
-  // of the month. Date.UTC handles day-0-of-next-month = last-day-of-
-  // this-month correctly.
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 0)); // day 0 = last day of prev month
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return {
-    gte: `${start.getUTCFullYear()}-${pad(start.getUTCMonth() + 1)}-${pad(start.getUTCDate())}`,
-    lte: `${end.getUTCFullYear()}-${pad(end.getUTCMonth() + 1)}-${pad(end.getUTCDate())}`,
-    startMs: start.getTime(),
-    endMs: end.getTime() + 24 * 60 * 60 * 1000 - 1
-  };
-}
+// Re-export the canonical startDate parser + window helpers under the
+// upcoming module namespace so callers (page server, API, tests,
+// diagnostics) import them from ONE place.
+export { parseUpcomingStartDate, windowBounds, isDateInWindow, todayUtcDate };
 
 // ---------- TMDB helpers (self-contained, does not modify adapter) ----------
 
@@ -258,16 +239,19 @@ const genreNames: Record<number, string> = {
 
 // CineLog-proven India movie DISCOVERY — ONE direct date-range query.
 //
-// The selected Mavero Month + Year becomes FROM = YYYY-MM-01 and
-// TO = YYYY-MM-last-day (monthBounds), passed DIRECTLY into
-// /discover/movie:
+// F7-B: the selected Upcoming `startDate` (YYYY-MM-DD) opens a fixed
+// 30-calendar-day window [startDate, startDate + 30 days). The window
+// is converted to TMDB's date-inclusive bounds via windowBounds():
+//   gte = startDate                         (the first day, inclusive)
+//   lte = startDate + 29 calendar days      (the last day inside the
+//                                            30-day window, inclusive)
+// passed DIRECTLY into /discover/movie:
 //   region=IN                 — the date window applies to INDIA release
 //                               dates (TMDB regional semantics);
 //   with_release_country=IN   — only movies that HAVE a release entry in
 //                               India are returned (banned/unreleased-in-
 //                               India titles never become candidates);
-//   release_date.gte/lte      — the exact month bounds (no hidden
-//                               "next 30 days" behavior);
+//   release_date.gte/lte      — the exact 30-day window bounds;
 //   include_adult=false       — Adult Mode exclusion at the source;
 //   sort_by=release_date.asc  — earliest releases first (CineLog model);
 //   with_original_language    — ONLY when a language is selected (TMDB
@@ -297,15 +281,17 @@ const genreNames: Record<number, string> = {
 // is optional enrichment — see loadUpcomingMovies).
 type TmdbDiscoverMovieParams = Record<string, string | number | boolean | undefined>;
 
-async function discoverIndiaMovieCandidates(year: number, month: number, region: string, language: string, providerExclusion: string | undefined): Promise<TmdbMovieRow[]> {
-  const { gte, lte } = monthBounds(year, month);
-  // The cache key embeds every query dimension: year, month, region,
-  // language filter, adult exclusion and the movie discovery/enrichment
-  // model version (a model bump re-keys instead of serving stale-era
-  // rows — including every entry created under the pre-v4 F.3 source
-  // union, the pre-F.3 single-stream discovery and the pre-F.2 per-kind
-  // discovery).
-  const key = `upcoming:movies:${year}:${month}:${region}:${language}:${providerExclusion ?? 'no-adult'}:${UPCOMING_MOVIE_RELEASE_TRUTH_KEY}`;
+async function discoverIndiaMovieCandidates(startDate: string, region: string, language: string, providerExclusion: string | undefined): Promise<TmdbMovieRow[]> {
+  const bounds = windowBounds(startDate);
+  if (!bounds) return [];
+  const { gte, lte } = bounds;
+  // The cache key embeds every query dimension: startDate (the 30-day
+  // window identity), region, language filter, adult exclusion and the
+  // movie discovery/enrichment model version (a model bump re-keys
+  // instead of serving stale-era rows — including every entry created
+  // under the pre-v4 F.3 source union, the pre-F.3 single-stream
+  // discovery and the pre-F.2 per-kind discovery).
+  const key = `upcoming:movies:${startDate}:${region}:${language}:${providerExclusion ?? 'no-adult'}:${UPCOMING_MOVIE_RELEASE_TRUTH_KEY}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     const collected: TmdbMovieRow[] = [];
     const seen = new Set<number>();
@@ -383,7 +369,7 @@ async function getMovieWatchProviders(movieId: number, region: string): Promise<
   return value ?? [];
 }
 
-async function loadUpcomingMovies(year: number, month: number, region: string, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
+async function loadUpcomingMovies(startDate: string, region: string, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
   // Phase 6: the Upcoming module previously sent NO adult filters at all.
   // /discover/movie supports the TRANSITIONAL watch-provider exclusion
   // (documented Phase 3 movie-side mechanism — same as every other movie
@@ -394,11 +380,11 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
   const adultIds = getAdultProviderIds();
   const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
   // CineLog model — ONE direct India date-range discovery query (region
-  // + with_release_country + release_date month window, release_date.asc
+  // + with_release_country + release_date 30-day window, release_date.asc
   // sort, NO vote_count floor, NO with_release_type, no candidate
   // union). Rows are deduped by canonical movie ID inside the discovery
   // and re-deduped defensively below.
-  const candidateRows = await discoverIndiaMovieCandidates(year, month, region, language, providerExclusion);
+  const candidateRows = await discoverIndiaMovieCandidates(startDate, region, language, providerExclusion);
   // Metadata lookup map (one entry per unique candidate — the same
   // dedupe guarantee, re-established defensively before the N+1 stage).
   const rowsById = new Map<number, TmdbMovieRow>();
@@ -407,23 +393,25 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
   // N+1 (bounded N+1 invariant; see UPCOMING_MOVIE_MAX_CANDIDATES — the
   // cap covers the whole bounded page walk and never truncates it).
   // When maxCandidates is provided (pagination page 1), use the smaller
-  // bound so page 1 does NOT process the full month.
+  // bound so page 1 does NOT process the full window.
   const candidateCap = maxCandidates !== undefined ? Math.min(maxCandidates, UPCOMING_MOVIE_MAX_CANDIDATES) : UPCOMING_MOVIE_MAX_CANDIDATES;
 
   // CineLog model — DISCOVERY IS THE TRUTH for existence + date. Every
   // candidate row was returned by region=IN + with_release_country=IN +
-  // release_date month window, so it HAS an India release inside the
-  // selected month and its `release_date` IS the primary card date.
+  // release_date 30-day window, so it HAS an India release inside the
+  // selected window and its `release_date` IS the primary card date.
   // No mandatory post-discovery gate may starve it (see the shared
   // enrichMovieCandidates helper below for the full gate contract).
   const candidates = [...rowsById.values()].slice(0, candidateCap);
-  const { startMs, endMs } = monthBounds(year, month);
+  const bounds = windowBounds(startDate);
+  if (!bounds) return [];
+  const { startMs, endMs } = bounds;
   // Shared enrichment + mapping + classification pipeline (one aligned
-  // entry per candidate). loadUpcomingMovies keeps its FULL-month
+  // entry per candidate). loadUpcomingMovies keeps its FULL-window
   // contract: every capped candidate is enriched, mapped, classified and
-  // month-guarded exactly as before — the identical pipeline the
+  // window-guarded exactly as before — the identical pipeline the
   // bounded pagination stream uses per chunk.
-  const aligned = await enrichMovieCandidates(candidates, year, month, region, startMs, endMs);
+  const aligned = await enrichMovieCandidates(candidates, startDate, region, startMs, endMs);
   return aligned
     .filter((item): item is UpcomingItem => item !== null)
     .sort((a, b) => a.timestamp - b.timestamp);
@@ -449,12 +437,12 @@ async function loadUpcomingMovies(year: number, month: number, region: string, l
 //     movie (caught inside the provider lookup).
 //   - Phase 6 defense-in-depth: every row passes the ONE central adult
 //     classifier (cheap flag path; anime exemption via genre 16 + ja).
-//   - Final month invariant: a card's date always belongs to the
-//     selected YYYY-MM (defensive backstop; no post-filter starvation).
+//   - Final window invariant: a card's date always belongs to the
+//     selected 30-day window (defensive backstop; no post-filter
+//     starvation).
 async function enrichMovieCandidates(
   candidates: TmdbMovieRow[],
-  year: number,
-  month: number,
+  startDate: string,
   region: string,
   startMs: number,
   endMs: number
@@ -504,10 +492,10 @@ async function enrichMovieCandidates(
       isAnime: isAnimeCandidate(m.genre_ids, m.original_language)
     });
     if (verdict === 'adult') return null;
-    // Final month invariant (kept from Phase F.1): a month-filtered
-    // Upcoming page must NEVER display a movie whose date is outside the
-    // selected month.
-    if (!isDateInMonth(item.date, year, month)) return null;
+    // Final window invariant (kept from Phase F.1, repointed to the
+    // 30-day window by F7-B): a window-filtered Upcoming page must NEVER
+    // display a movie whose date is outside the selected 30-day window.
+    if (!isDateInWindow(item.date, startDate)) return null;
     return item;
   });
 }
@@ -607,7 +595,7 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 // and are EXEMPT from the Upcoming Series curation policy (anime series
 // are long-running by design; the serial rule is a Series-only curation
 // signal, never an anime signal).
-async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[]; original_language?: string }, year: number, month: number, region: string, itemType: 'series' | 'anime' = 'series'): Promise<UpcomingItem[]> {
+async function buildSeriesItems(raw: { id: number; name?: string; original_name?: string; poster_path?: string | null; backdrop_path?: string | null; vote_average?: number; genre_ids?: number[]; original_language?: string }, startDate: string, region: string, itemType: 'series' | 'anime' = 'series'): Promise<UpcomingItem[]> {
   // Phase F.1 — SERIES MUST NOT MIX ANIME. Mavero's anime definition is
   // TMDB TV genre 16 (Animation) + original_language 'ja'; a candidate
   // matching that identity is REJECTED from the Series pipeline before
@@ -650,11 +638,14 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
   });
   if (curationVerdict !== 'keep') return [];
 
-  // Phase F — month-window season candidates (replaces the unsafe
+  // Phase F — window season candidates (replaces the unsafe
   // last_episode_to_air preference). Deterministic, metadata-based, and
   // capped so a pathological detail payload cannot create unbounded
-  // season lookups.
-  const { startMs, endMs } = monthBounds(year, month);
+  // season lookups. F7-B: the window is the 30-day window opened by
+  // startDate (same bounds the discovery query used).
+  const bounds = windowBounds(startDate);
+  if (!bounds) return [];
+  const { startMs, endMs } = bounds;
   const seasonCandidates = selectUpcomingSeasonCandidates(
     // Normalize TMDB snake_case rows into the policy module's structural
     // input shape (the pure policy stays independent of TMDB field naming).
@@ -802,8 +793,10 @@ async function buildSeriesItems(raw: { id: number; name?: string; original_name?
   });
 }
 
-async function loadUpcomingSeries(year: number, month: number, region: string, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
-  const { gte, lte } = monthBounds(year, month);
+async function loadUpcomingSeries(startDate: string, region: string, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
+  const bounds = windowBounds(startDate);
+  if (!bounds) return [];
+  const { gte, lte } = bounds;
   // Phase 6: the Upcoming series source previously sent NO adult filters.
   // /discover/tv supports the canonical Phase 3 mechanism — exclude VERIFIED
   // adult TV NETWORKS via without_networks (values from the central registry
@@ -811,15 +804,15 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
   // embedded in the cache key (no network-era/no-filter result sharing).
   const networkExclusion = adultNetworkExclusionValue();
   // Phase F.2 — the cache key embeds EVERY dimension that materially
-  // changes the query/result shape: year, month, region (used by the
-  // eligibility provider lookups), LANGUAGE filter, adult-network
-  // exclusion, the candidate DISCOVERY query version (bumped from the
-  // old flatrate-at-discovery semantics AND from the vote-floored
-  // pre-v4 discovery), the India-OTT ELIGIBILITY model version, the
-  // serial curation policy version and the season-resolution model
-  // version — so a policy or semantics bump re-keys instead of serving
-  // stale-era entries.
-  const key = `upcoming:series:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_TV_ELIGIBILITY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}:${maxCandidates ?? 'full'}`;
+  // changes the query/result shape: startDate (the 30-day window
+  // identity), region (used by the eligibility provider lookups),
+  // LANGUAGE filter, adult-network exclusion, the candidate DISCOVERY
+  // query version (bumped from the old flatrate-at-discovery semantics
+  // AND from the vote-floored pre-v4 discovery), the India-OTT
+  // ELIGIBILITY model version, the serial curation policy version and
+  // the season-resolution model version — so a policy or semantics bump
+  // re-keys instead of serving stale-era entries.
+  const key = `upcoming:series:${startDate}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_TV_ELIGIBILITY_KEY}:${UPCOMING_TV_SERIAL_POLICY_KEY}:${UPCOMING_SEASON_MODEL_KEY}:${maxCandidates ?? 'full'}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
     // Step 1: DISCOVER candidate series with episodes airing in the
     // month (CineLog TV model — DISCOVERY IS PURELY SCHEDULE + LANGUAGE
@@ -901,7 +894,7 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
     let failures = 0;
     const built = await mapWithConcurrency(scopedCandidates, async (c) => {
       try {
-        return await buildSeriesItems(c, year, month, region);
+        return await buildSeriesItems(c, startDate, region);
       } catch {
         failures += 1;
         return [];
@@ -928,14 +921,16 @@ async function loadUpcomingSeries(year: number, month: number, region: string, l
 //
 // IMPORTANT: this replaces the previous AniList AiringSchedule source.
 // AniList is no longer used — anime is now TMDB content only.
-export async function loadUpcomingAnime(year: number, month: number, region: string = DEFAULT_REGION, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
+export async function loadUpcomingAnime(startDate: string, region: string = DEFAULT_REGION, language: string = 'all', maxCandidates?: number): Promise<UpcomingItem[]> {
   // Phase F.1 — anime language semantics: anime is intrinsically
   // original_language='ja' (Mavero's TMDB-only anime definition). When a
   // language OTHER than ja is selected, no anime can match — return an
   // EMPTY section deterministically (correct result, no upstream query,
   // no error). language='all' and language='ja' both query normally.
   if (language !== 'all' && language !== ANIME_ORIGINAL_LANGUAGE) return [];
-  const { gte, lte } = monthBounds(year, month);
+  const bounds = windowBounds(startDate);
+  if (!bounds) return [];
+  const { gte, lte } = bounds;
   // Phase 6: include_adult=false (consistent with the anime rails) + the
   // canonical without_networks exclusion. The anime exemption is preserved:
   // the ONE central classifier never classifies an anime title adult from
@@ -945,20 +940,21 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
   // Phase F: anime deliberately does NOT require India flatrate OTT
   // availability and is exempt from the Series serial curation policy —
   // anime keeps its own TMDB-only semantics (genre 16 + ja). The cache
-  // key embeds the TV DISCOVERY query version (the anime discover query
-  // is a /discover/tv query shape — a discovery-semantics bump must
-  // re-key anime too) and the season-resolution model version because
-  // the shared season/episode discovery path (re-key, never serve
-  // stale-era item sets under new semantics) plus the language filter
-  // dimension (Phase F.1) so language-era result sets never share
-  // entries.
+  // key embeds startDate (the 30-day window identity), the TV DISCOVERY
+  // query version (the anime discover query is a /discover/tv query
+  // shape — a discovery-semantics bump must re-key anime too) and the
+  // season-resolution model version because the shared season/episode
+  // discovery path (re-key, never serve stale-era item sets under new
+  // semantics) plus the language filter dimension (Phase F.1) so
+  // language-era result sets never share entries.
   const networkExclusion = adultNetworkExclusionValue();
-  const key = `upcoming:anime:${year}:${month}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_SEASON_MODEL_KEY}:${maxCandidates ?? 'full'}`;
+  const key = `upcoming:anime:${startDate}:${region}:${language}:${networkExclusion ?? 'no-nets'}:${UPCOMING_TV_DISCOVERY_KEY}:${UPCOMING_SEASON_MODEL_KEY}:${maxCandidates ?? 'full'}`;
   const { value } = await getOrSet(key, upcomingPolicy, async () => {
-    // Step 1: discover anime TV series with episodes airing in the month.
-    // TMDB filters server-side by Animation genre (16) + ja language.
-    // NO vote_count floor: future anime episodes commonly carry zero
-    // votes (same CineLog lesson as every other Upcoming discovery).
+    // Step 1: discover anime TV series with episodes airing in the
+    // 30-day window. TMDB filters server-side by Animation genre (16) +
+    // ja language. NO vote_count floor: future anime episodes commonly
+    // carry zero votes (same CineLog lesson as every other Upcoming
+    // discovery).
     const result = await tmdbRequest<TmdbTvList>('/discover/tv', {
       'air_date.gte': gte,
       'air_date.lte': lte,
@@ -982,7 +978,7 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
     let failures = 0;
     const built = await mapWithConcurrency(candidates, async (c) => {
       try {
-        return await buildSeriesItems(c, year, month, region, 'anime');
+        return await buildSeriesItems(c, startDate, region, 'anime');
       } catch {
         failures += 1;
         return [];
@@ -1069,7 +1065,7 @@ const CURSOR_POLICY_KEYS = [
 ];
 
 function freshCursor(fingerprint: string, streamId: string): UpcomingCursorV2 {
-  return { version: 2, fingerprint, streamId, movieCandidateIndex: 0, snapshotOffset: 0 };
+  return { version: 3, fingerprint, streamId, movieCandidateIndex: 0, snapshotOffset: 0 };
 }
 
 type SourcePage = {
@@ -1130,7 +1126,7 @@ async function loadMovieStreamPage(
     const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
     // Cached discovery (10-minute TTL). A discovery failure propagates —
     // it is a real upstream error, never a silently empty stream.
-    const candidateRows = await discoverIndiaMovieCandidates(filters.year, filters.month, region, language, providerExclusion);
+    const candidateRows = await discoverIndiaMovieCandidates(filters.startDate, region, language, providerExclusion);
     const rowsById = new Map<number, TmdbMovieRow>();
     for (const row of candidateRows) if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
     // Deterministic chronological candidate stream. Discovery already
@@ -1149,7 +1145,12 @@ async function loadMovieStreamPage(
         throw new UpcomingCursorError('stale', 'The movie position is beyond the current result set.');
       }
     }
-    const { startMs, endMs } = monthBounds(filters.year, filters.month);
+    const bounds = windowBounds(filters.startDate);
+    if (!bounds) {
+      errors.push('Movies: invalid startDate');
+      return { items: [], hasNextPage: false, cursor: freshCursor(fingerprint, streamIdForItems([])), errors };
+    }
+    const { startMs, endMs } = bounds;
     // Enrich chunk-by-chunk until the page is filled or the stream ends.
     // The loop never stops early with zero collected items while
     // candidates remain (zero-progress pages are structurally
@@ -1160,7 +1161,7 @@ async function loadMovieStreamPage(
     while (scanIndex < candidates.length && collected.length < pageSize) {
       const chunkEnd = Math.min(scanIndex + SOURCE_CANDIDATE_BATCH, candidates.length);
       const chunk = candidates.slice(scanIndex, chunkEnd);
-      const aligned = await enrichMovieCandidates(chunk, filters.year, filters.month, region, startMs, endMs);
+      const aligned = await enrichMovieCandidates(chunk, filters.startDate, region, startMs, endMs);
       for (let k = 0; k < aligned.length; k++) {
         const item = aligned[k];
         if (item) collected.push({ index: scanIndex + k, item });
@@ -1192,7 +1193,7 @@ async function loadMovieStreamPage(
     return {
       items,
       hasNextPage,
-      cursor: { version: 2, fingerprint, streamId, movieCandidateIndex: nextIndex, snapshotOffset: 0 },
+      cursor: { version: 3, fingerprint, streamId, movieCandidateIndex: nextIndex, snapshotOffset: 0 },
       errors
     };
   } catch (error) {
@@ -1229,21 +1230,21 @@ async function loadSnapshotPage(
     if (filters.type === 'series') {
       // A total series failure propagates to the graceful failure shape
       // below — a failed source is never silently "empty".
-      stream = sortStream(await loadUpcomingSeries(filters.year, filters.month, region, language));
+      stream = sortStream(await loadUpcomingSeries(filters.startDate, region, language));
     } else if (filters.type === 'anime') {
       // Anime language semantics live inside loadUpcomingAnime: a
       // non-ja language filter returns [] deterministically without
       // querying upstream.
-      stream = sortStream(await loadUpcomingAnime(filters.year, filters.month, region, language));
+      stream = sortStream(await loadUpcomingAnime(filters.startDate, region, language));
     } else {
       // type=all: full chronological merge of the three cached sources.
       // Partial failure keeps the successful sources' events and
       // surfaces the failed ones in `errors` (never silent); a failure
       // of EVERY requested source lands in the graceful failure shape.
       const [moviesResult, seriesResult, animeResult] = await Promise.allSettled([
-        loadUpcomingMovies(filters.year, filters.month, region, language),
-        loadUpcomingSeries(filters.year, filters.month, region, language),
-        loadUpcomingAnime(filters.year, filters.month, region, language)
+        loadUpcomingMovies(filters.startDate, region, language),
+        loadUpcomingSeries(filters.startDate, region, language),
+        loadUpcomingAnime(filters.startDate, region, language)
       ]);
       const parts: UpcomingItem[][] = [];
       if (moviesResult.status === 'fulfilled') parts.push(moviesResult.value);
@@ -1288,7 +1289,7 @@ async function loadSnapshotPage(
   return {
     items,
     hasNextPage: nextOffset < stream.length,
-    cursor: { version: 2, fingerprint, streamId, movieCandidateIndex: 0, snapshotOffset: nextOffset },
+    cursor: { version: 3, fingerprint, streamId, movieCandidateIndex: 0, snapshotOffset: nextOffset },
     errors
   };
 }
@@ -1359,21 +1360,21 @@ export async function loadUpcoming(filters: UpcomingFilters): Promise<UpcomingRe
 
   if (wantMovies) {
     tasks.push(
-      loadUpcomingMovies(filters.year, filters.month, region, language)
+      loadUpcomingMovies(filters.startDate, region, language)
         .then((m) => { items.push(...m); })
         .catch((err) => { errors.push(`Movies: ${safeMessage(err)}`); })
     );
   }
   if (wantSeries) {
     tasks.push(
-      loadUpcomingSeries(filters.year, filters.month, region, language)
+      loadUpcomingSeries(filters.startDate, region, language)
         .then((s) => { items.push(...s); })
         .catch((err) => { errors.push(`Series: ${safeMessage(err)}`); })
     );
   }
   if (wantAnime) {
     tasks.push(
-      loadUpcomingAnime(filters.year, filters.month, region, language)
+      loadUpcomingAnime(filters.startDate, region, language)
         .then((a) => { items.push(...a); })
         .catch((err) => { errors.push(`Anime: ${safeMessage(err)}`); })
     );
@@ -1400,11 +1401,11 @@ function safeMessage(err: unknown): string {
 
 // Exported for tests + diagnostics.
 export const upcomingInternals = {
-  parseUpcomingMonth,
-  parseUpcomingYear,
+  parseUpcomingStartDate,
   parseUpcomingType,
-  upcomingYearOptions,
-  monthBounds,
+  windowBounds,
+  isDateInWindow,
+  todayUtcDate,
   loadUpcomingMovies,
   loadUpcomingSeries,
   loadUpcomingAnime,

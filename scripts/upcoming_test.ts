@@ -107,7 +107,10 @@ import {
   dedupeProvidersById,
   extractIndiaMovieReleaseEvents,
   deriveMovieReleaseKinds,
-  isDateInMonth,
+  isDateInWindow,
+  parseUpcomingStartDate,
+  windowBounds,
+  todayUtcDate,
   normalizeRegionFlatrateProviders
 } from '../src/lib/shared/upcoming-policy.ts';
 
@@ -131,16 +134,33 @@ const authShellSrc = await readFile(new URL('src/lib/components/AuthShell.svelte
 
 console.log('Upcoming releases contract tests');
 
-// --- 1. Month/year parsing ---
-// parseUpcomingMonth: valid 1-12, invalid falls back to current month
-assert.match(upcomingSrc, /export function parseUpcomingMonth/, 'parseUpcomingMonth is exported');
-assert.match(upcomingSrc, /Number\.isInteger\(n\) && n >= 1 && n <= 12/, 'month validated as integer 1-12');
-assert.match(upcomingSrc, /return now\.getMonth\(\) \+ 1/, 'invalid month falls back to current month');
-
-// parseUpcomingYear: valid 1900-2100, invalid falls back to current year
-assert.match(upcomingSrc, /export function parseUpcomingYear/, 'parseUpcomingYear is exported');
-assert.match(upcomingSrc, /Number\.isInteger\(n\) && n >= 1900 && n <= 2100/, 'year validated as integer 1900-2100');
-assert.match(upcomingSrc, /return now\.getFullYear\(\)/, 'invalid year falls back to current year');
+// --- 1. startDate parsing (F7-B date-window model) ---
+// parseUpcomingStartDate: valid YYYY-MM-DD passes; invalid/missing/impossible
+// fails safe to TODAY's UTC calendar date.
+assert.match(upcomingSrc, /export \{ parseUpcomingStartDate, windowBounds, isDateInWindow, todayUtcDate \};/, 'upcoming.ts re-exports the canonical startDate helpers');
+assert.match(policySrc, /export function parseUpcomingStartDate\(value: string \| null \| undefined\): string/, 'parseUpcomingStartDate is exported from the shared policy module');
+assert.match(policySrc, /return todayUtcDate\(\);/, 'invalid startDate falls back to todayUtcDate()');
+// Strict YYYY-MM-DD validation: real calendar dates only.
+{
+  const { parseUpcomingStartDate, todayUtcDate } = await import('../src/lib/shared/upcoming-policy.ts');
+  const today = todayUtcDate();
+  assert.equal(parseUpcomingStartDate('2026-09-27'), '2026-09-27', 'valid YYYY-MM-DD passes through');
+  assert.equal(parseUpcomingStartDate('2026-02-29'), today, 'non-leap-year Feb 29 fails safe to today (2026 is NOT a leap year)');
+  assert.equal(parseUpcomingStartDate('2024-02-29'), '2024-02-29', 'leap-year Feb 29 passes (2024 IS a leap year)');
+  assert.equal(parseUpcomingStartDate('2026-13-01'), today, 'impossible month fails safe to today');
+  assert.equal(parseUpcomingStartDate('2026-04-31'), today, 'impossible day (April 31) fails safe to today');
+  assert.equal(parseUpcomingStartDate('2026-00-15'), today, 'month 0 fails safe to today');
+  assert.equal(parseUpcomingStartDate('2026-09-00'), today, 'day 0 fails safe to today');
+  assert.equal(parseUpcomingStartDate('2026-09-32'), today, 'day 32 fails safe to today');
+  assert.equal(parseUpcomingStartDate('1899-12-31'), today, 'year < 1900 fails safe to today');
+  assert.equal(parseUpcomingStartDate('2101-01-01'), today, 'year > 2100 fails safe to today');
+  assert.equal(parseUpcomingStartDate('not-a-date'), today, 'garbage fails safe to today');
+  assert.equal(parseUpcomingStartDate('20260927'), today, 'YYYYMMDD without dashes fails safe to today');
+  assert.equal(parseUpcomingStartDate('2026/09/27'), today, 'slashes fail safe to today');
+  assert.equal(parseUpcomingStartDate(''), today, 'empty string fails safe to today');
+  assert.equal(parseUpcomingStartDate(null), today, 'null fails safe to today');
+  assert.equal(parseUpcomingStartDate(undefined), today, 'undefined fails safe to today');
+}
 
 // --- 2. Type parsing ---
 assert.match(upcomingSrc, /export function parseUpcomingType/, 'parseUpcomingType is exported');
@@ -148,20 +168,76 @@ assert.match(upcomingSrc, /value === 'movie' \|\| value === 'series' \|\| value 
 // F7: invalid type now falls back to 'movie' (was 'all')
 assert.match(upcomingSrc, /return 'movie'/, 'invalid type falls back to movie (F7 default)');
 
-// --- 3. Year options dynamic ---
-assert.match(upcomingSrc, /export function upcomingYearOptions/, 'upcomingYearOptions is exported');
-assert.match(upcomingSrc, /const current = new Date\(\)\.getFullYear\(\)/, 'year options based on current year');
-assert.match(upcomingSrc, /return \[current - 1, current, current \+ 1, current \+ 2, current \+ 3\]/, 'year options span prev year through +3 years');
+// --- 3. windowBounds (F7-B 30-day window) ---
+// windowBounds: returns gte/lte/startMs/endMs for the canonical
+// [startDate, startDate + 30 days) window. TMDB date filters are
+// date-inclusive on both ends, so lte = startDate + 29 calendar days.
+assert.match(policySrc, /export function windowBounds\(startDate: string\): \{ gte: string; lte: string; startMs: number; endMs: number \} \| null/, 'windowBounds is exported');
+{
+  const { windowBounds } = await import('../src/lib/shared/upcoming-policy.ts');
+  const b = windowBounds('2026-09-27');
+  assert.ok(b, 'valid startDate yields bounds');
+  if (b) {
+    assert.equal(b.gte, '2026-09-27', 'gte = startDate (inclusive first day)');
+    assert.equal(b.lte, '2026-10-26', 'lte = startDate + 29 days (inclusive last day inside the 30-day window)');
+    assert.equal(b.startMs, Date.parse('2026-09-27T00:00:00.000Z'), 'startMs = UTC midnight of startDate');
+    assert.equal(b.endMs, Date.parse('2026-10-27T00:00:00.000Z') - 1, 'endMs = (startDate + 30 days) - 1ms = last ms of the last in-window day');
+  }
+  // Month-boundary crossing: Sep 01 -> Sep 30 (still same month, 30-day window).
+  const b2 = windowBounds('2026-09-01');
+  assert.equal(b2?.gte, '2026-09-01', 'Sep 1 window gte');
+  assert.equal(b2?.lte, '2026-09-30', 'Sep 1 window lte = Sep 30 (29 days later, same month, 30-day window)');
+  // Year-boundary crossing: Dec 15 2026 -> Jan 13 2027.
+  const b3 = windowBounds('2026-12-15');
+  assert.equal(b3?.gte, '2026-12-15', 'year-boundary gte');
+  assert.equal(b3?.lte, '2027-01-13', 'year-boundary lte = Jan 13 2027 (29 days after Dec 15)');
+  // February non-leap-year: Feb 1 -> Mar 2 (29 days, 28-day February).
+  const b4 = windowBounds('2027-02-01');
+  assert.equal(b4?.gte, '2027-02-01', 'Feb non-leap gte');
+  assert.equal(b4?.lte, '2027-03-02', 'Feb non-leap lte = Mar 2 (28-day February, 29 days from Feb 1)');
+  // February leap year: Feb 1 2024 -> Mar 1 (29 days, 29-day February).
+  const b5 = windowBounds('2024-02-01');
+  assert.equal(b5?.gte, '2024-02-01', 'Feb leap gte');
+  assert.equal(b5?.lte, '2024-03-01', 'Feb leap lte = Mar 1 (29-day February, 29 days from Feb 1)');
+  // Invalid input -> null (defensive, never throws).
+  assert.equal(windowBounds('garbage'), null, 'garbage startDate yields null');
+  assert.equal(windowBounds('2026-13-01'), null, 'impossible date yields null');
+  assert.equal(windowBounds(''), null, 'empty string yields null');
+}
 
-// --- 4. monthBounds ---
-assert.match(upcomingSrc, /export function monthBounds/, 'monthBounds is exported');
-// Verify gte is first day, lte is last day (day 0 of next month)
-assert.match(upcomingSrc, /new Date\(Date\.UTC\(year, month - 1, 1\)\)/, 'monthBounds start = first day of month');
-assert.match(upcomingSrc, /new Date\(Date\.UTC\(year, month, 0\)\)/, 'monthBounds end = day 0 of next month = last day of this month');
-// Verify the returned gte/lte are YYYY-MM-DD strings
-assert.match(upcomingSrc, /getUTCFullYear\(\)/, 'monthBounds uses getUTCFullYear');
-assert.match(upcomingSrc, /getUTCMonth\(\) \+ 1/, 'monthBounds uses getUTCMonth + 1 (1-indexed)');
-assert.match(upcomingSrc, /getUTCDate\(\)/, 'monthBounds uses getUTCDate');
+// --- 4. windowBounds end-to-end (movie discovery bounds) ---
+// The server uses windowBounds(startDate) to derive both the TMDB query
+// bounds (gte/lte) and the startMs/endMs used for the final card-date
+// invariant. The bounds are documented as a 30-day half-open interval
+// [startDate, startDate + 30 days).
+assert.match(upcomingSrc, /const bounds = windowBounds\(startDate\);/, 'discoverIndiaMovieCandidates uses windowBounds(startDate)');
+assert.match(upcomingSrc, /const \{ gte, lte \} = bounds;/, 'the gte/lte window bounds flow into the /discover/movie query');
+assert.match(upcomingSrc, /if \(!bounds\) return \[\];/, 'an invalid startDate short-circuits to an empty candidate set (defensive)');
+
+// --- 4b. isDateInWindow (defensive final invariant) ---
+// isDateInWindow replaces the old isDateInMonth check on movie cards.
+{
+  const { isDateInWindow } = await import('../src/lib/shared/upcoming-policy.ts');
+  // startDate 2026-09-01 => window [2026-09-01, 2026-10-01)
+  assert.equal(isDateInWindow('2026-09-01', '2026-09-01'), true, 'startDate itself is in the window (inclusive)');
+  assert.equal(isDateInWindow('2026-09-30', '2026-09-01'), true, 'startDate + 29 days is in the window (last in-window day)');
+  assert.equal(isDateInWindow('2026-10-01', '2026-09-01'), false, 'startDate + 30 days is EXCLUDED (canonical half-open interval)');
+  assert.equal(isDateInWindow('2026-10-02', '2026-09-01'), false, 'past the window');
+  assert.equal(isDateInWindow('2026-08-31', '2026-09-01'), false, 'before the window');
+  assert.equal(isDateInWindow('2022-01-07', '2026-09-01'), false, 'years-ago date is not in the window');
+  assert.equal(isDateInWindow('1999-01-29', '2026-09-01'), false, 'ancient date is not in the window');
+  assert.equal(isDateInWindow(undefined, '2026-09-01'), false, 'undefined fails the invariant');
+  assert.equal(isDateInWindow('garbage', '2026-09-01'), false, 'unparseable date fails the invariant');
+  // Month-boundary crossing
+  assert.equal(isDateInWindow('2026-10-15', '2026-09-27'), true, 'Oct 15 is inside the Sep 27 window');
+  assert.equal(isDateInWindow('2026-10-26', '2026-09-27'), true, 'Oct 26 is the last in-window day for Sep 27 start');
+  assert.equal(isDateInWindow('2026-10-27', '2026-09-27'), false, 'Oct 27 is EXCLUDED (startDate + 30)');
+  // Year-boundary crossing
+  assert.equal(isDateInWindow('2027-01-01', '2026-12-15'), true, 'Jan 1 2027 is inside the Dec 15 2026 window');
+  assert.equal(isDateInWindow('2027-01-13', '2026-12-15'), true, 'Jan 13 2027 is the last in-window day for Dec 15 2026');
+  assert.equal(isDateInWindow('2027-01-14', '2026-12-15'), false, 'Jan 14 2027 is EXCLUDED');
+}
+assert.match(upcomingSrc, /if \(!isDateInWindow\(item\.date, startDate\)\) return null;/, 'final invariant: every movie card date belongs to the selected 30-day window');
 
 // --- 5. MOVIE DISCOVERY (CineLog-proven date-range model) ---
 // ONE direct /discover/movie query. with_release_type is deliberately
@@ -177,7 +253,7 @@ assert.match(upcomingSrc, /with_release_country: region/, 'movie discovery pins 
 assert.doesNotMatch(upcomingCode, /primary_release_date/, 'primary_release_date is NOT used anywhere in the pipeline (the F.3 union is REMOVED)');
 assert.doesNotMatch(upcomingCode, /with_release_type/, 'with_release_type is NOT sent to Discover at all (release kinds come only from the optional enrichment)');
 assert.doesNotMatch(upcomingCode, /vote_count/, 'NO vote_count floor anywhere in Upcoming discovery (zero-vote future titles must survive)');
-assert.match(upcomingSrc, /async function discoverIndiaMovieCandidates\(year: number, month: number, region: string, language: string, providerExclusion: string \| undefined\)/, 'ONE candidate-discovery function produces the single CineLog stream');
+assert.match(upcomingSrc, /async function discoverIndiaMovieCandidates\(startDate: string, region: string, language: string, providerExclusion: string \| undefined\)/, 'ONE candidate-discovery function produces the single CineLog stream');
 assert.equal((upcomingSrc.match(/discoverIndiaMovieCandidates\(/g) ?? []).length, 3, 'movie candidate discovery referenced exactly three times (definition + loadUpcomingMovies + the v2 movie pagination stream — no fallback query duplication)');
 assert.match(upcomingSrc, /sort_by: 'release_date\.asc',/, 'movie discovery sorts by release date ascending (CineLog model — earliest releases first)');
 assert.match(upcomingSrc, /include_adult: false,/, 'discovery sends include_adult=false');
@@ -215,7 +291,7 @@ assert.equal(UPCOMING_MOVIE_MAX_CANDIDATES >= UPCOMING_TV_MAX_CANDIDATES, true, 
   assert.match(discoverFn, /'without_watch_providers': providerExclusion, watch_region: region/, 'the transitional adult provider exclusion rides on the same query WITH region');
   assert.ok(!discoverFn.includes('primary_release_date'), 'the discovery function body carries NO primary_release_date fallback');
 }
-assert.match(upcomingSrc, /const candidateRows = await discoverIndiaMovieCandidates\(year, month, region, language, providerExclusion\);/, 'loadUpcomingMovies consumes the ONE candidate stream');
+assert.match(upcomingSrc, /const candidateRows = await discoverIndiaMovieCandidates\(startDate, region, language, providerExclusion\);/, 'loadUpcomingMovies consumes the ONE candidate stream');
 assert.match(upcomingSrc, /for \(const row of candidateRows\) if \(row\.id && !rowsById\.has\(row\.id\)\) rowsById\.set\(row\.id, row\);/, 'candidate rows re-deduped into the metadata map by canonical TMDB ID');
 assert.match(upcomingSrc, /const candidates = \[\.\.\.rowsById\.values\(\)\]\.slice\(0, candidateCap\);/, 'enrichment N+1 runs over the DEDUPED + CAPPED candidates only');
 
@@ -312,14 +388,16 @@ const SEP_2026_END = Date.parse('2026-09-30T23:59:59.999Z');
 }
 
 // Defensive month invariant (final guard on movie cards)
-assert.equal(isDateInMonth('2026-09-18', 2026, 9), true, 'September date passes the September invariant');
-assert.equal(isDateInMonth('2026-08-28', 2026, 9), false, 'August date FAILS the September invariant');
-assert.equal(isDateInMonth('2022-01-07', 2026, 9), false, '2022 date FAILS the September invariant');
-assert.equal(isDateInMonth('1999-01-29', 2026, 9), false, '1999 date FAILS the September invariant');
-assert.equal(isDateInMonth('2026-10-02', 2026, 9), false, 'October date FAILS the September invariant');
-assert.equal(isDateInMonth('2026-09-18', 2025, 9), false, 'wrong year fails the invariant');
-assert.equal(isDateInMonth(undefined, 2026, 9), false, 'missing date fails the invariant');
-assert.equal(isDateInMonth('garbage', 2026, 9), false, 'unparseable date fails the invariant');
+// F7-B: isDateInWindow replaces the old isDateInMonth check on movie cards.
+// The September window for startDate=2026-09-01 is [2026-09-01, 2026-10-01).
+assert.equal(isDateInWindow('2026-09-18', '2026-09-01'), true, 'September date passes the September-window invariant');
+assert.equal(isDateInWindow('2026-08-28', '2026-09-01'), false, 'August date FAILS the September-window invariant');
+assert.equal(isDateInWindow('2022-01-07', '2026-09-01'), false, '2022 date FAILS the September-window invariant');
+assert.equal(isDateInWindow('1999-01-29', '2026-09-01'), false, '1999 date FAILS the September-window invariant');
+assert.equal(isDateInWindow('2026-10-02', '2026-09-01'), false, 'October date FAILS the September-window invariant (window ends Sep 30)');
+assert.equal(isDateInWindow('2026-09-18', '2025-09-01'), false, 'same date but a different startDate window fails the invariant');
+assert.equal(isDateInWindow(undefined, '2026-09-01'), false, 'missing date fails the invariant');
+assert.equal(isDateInWindow('garbage', '2026-09-01'), false, 'unparseable date fails the invariant');
 
 // --- 6c. MOVIE ENRICHMENT pipeline (source contracts) ---
 assert.match(upcomingSrc, /\/movie\/\$\{movieId\}\/release_dates/, 'movie release-kind enrichment fetched from GET /movie/{id}/release_dates');
@@ -329,7 +407,7 @@ assert.match(upcomingSrc, /releaseKinds = deriveMovieReleaseKinds\(events\);/, '
 assert.match(upcomingSrc, /const date = m\.release_date \?\? '';/, 'card date IS the discover row release_date (region=IN + with_release_country=IN + month window)');
 assert.doesNotMatch(upcomingCode, /if \(!events\.length\) return null;/, 'NO mandatory enrichment gate: an event-less release_dates response can never drop a discover-qualified movie');
 assert.match(upcomingCode, /catch \{\n\s*releaseKinds = \[\];\n\s*\}/, 'a FAILED release_dates lookup is absorbed — the movie STAYS without kind badges');
-assert.match(upcomingSrc, /if \(!isDateInMonth\(item\.date, year, month\)\) return null;/, 'final invariant: every movie card date belongs to the selected month/year');
+assert.match(upcomingSrc, /if \(!isDateInWindow\(item\.date, startDate\)\) return null;/, 'final invariant: every movie card date belongs to the selected 30-day window');
 // Bounded enrichment: one optional lookup per UNIQUE candidate,
 // concurrency-limited. Enrichment failures can never empty the section
 // (the discover call is the real outage signal).
@@ -665,11 +743,11 @@ assert.equal(parseUpcomingLanguage(undefined), 'all', 'undefined -> all');
 assert.equal(parseUpcomingLanguage('en; drop table'), 'all', 'injection attempt fails safe to all');
 // Server-side plumbing: URL parsing + orchestrator + per-source queries.
 assert.match(upcomingServerSrc, /parseUpcomingLanguage\(url\.searchParams\.get\('language'\)\)/, 'server parses language strictly from the URL');
-assert.match(upcomingServerSrc, /loadUpcomingPage\(\{ month, year, type, language \}, 1\)/, 'server passes language into loadUpcomingPage (v2 pagination page 1)');
+assert.match(upcomingServerSrc, /loadUpcomingPage\(\{ startDate, type, language \}, 1\)/, 'server passes language into loadUpcomingPage (v2 pagination page 1)');
 assert.match(upcomingSrc, /const language = parseUpcomingLanguage\(filters\.language \?\? 'all'\);/, 'orchestrator normalizes the language filter (legacy callers default to all)');
-assert.match(upcomingSrc, /loadUpcomingMovies\(filters\.year, filters\.month, region, language\)/, 'movie source receives the language filter');
-assert.match(upcomingSrc, /loadUpcomingSeries\(filters\.year, filters\.month, region, language\)/, 'series source receives the language filter');
-assert.match(upcomingSrc, /loadUpcomingAnime\(filters\.year, filters\.month, region, language\)/, 'anime source receives the language filter');
+assert.match(upcomingSrc, /loadUpcomingMovies\(filters\.startDate, region, language\)/, 'movie source receives the language filter');
+assert.match(upcomingSrc, /loadUpcomingSeries\(filters\.startDate, region, language\)/, 'series source receives the language filter');
+assert.match(upcomingSrc, /loadUpcomingAnime\(filters\.startDate, region, language\)/, 'anime source receives the language filter');
 assert.match(upcomingSrc, /\.\.\.\(language !== 'all' \? \{ with_original_language: language \} : \{\}\),/, 'movie + TV queries add with_original_language ONLY when a language is selected');
 assert.match(upcomingSrc, /if \(language !== 'all' && language !== ANIME_ORIGINAL_LANGUAGE\) return \[\];/, 'anime + non-ja language returns an EMPTY section deterministically (no upstream query)');
 // The language filter means TMDB original language (never dubbed audio).
@@ -721,7 +799,7 @@ assert.equal(upcomingDetailPath('-123'), null, 'missing type fails safe');
 // Event IDs KEEP the episode-unique suffixes (duplicate-key protection)
 assert.match(upcomingSrc, /id: `\$\{itemType\}-\$\{raw\.id\}-s\$\{resolvedSeason\}e\$\{episode\.episode_number \?\? 0\}`/, 'event IDs remain episode-unique for card keys');
 // The page uses the strict parser + appendReturnTo (exact return state)
-assert.match(upcomingPageSrc, /import \{ upcomingDetailPath, UPCOMING_LANGUAGE_OPTIONS \} from '\$lib\/shared\/upcoming-policy';/, 'page imports the strict parser + language options from the shared policy module');
+assert.match(upcomingPageSrc, /import \{ upcomingDetailPath, UPCOMING_LANGUAGE_OPTIONS, todayUtcDate \} from '\$lib\/shared\/upcoming-policy';/, 'page imports the strict parser + language options + todayUtcDate from the shared policy module');
 assert.match(upcomingPageSrc, /import \{ appendReturnTo \} from '\$lib\/shared\/navigation';/, 'page imports the shared appendReturnTo helper (same architecture as MediaCard)');
 assert.match(upcomingPageSrc, /let currentReturnTo = \$derived\(`\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\);/, 'return context captures pathname + search + hash (month/year/type/language + hash preserved)');
 assert.match(upcomingPageSrc, /const path = upcomingDetailPath\(item\.id\);\n\s*if \(!path\) return null;\n\s*return appendReturnTo\(path, currentReturnTo\);/, 'detailHref = appendReturnTo(strictPath, currentReturnTo) with malformed-ID fail-safe');
@@ -730,49 +808,47 @@ assert.match(upcomingPageSrc, /aria-disabled/, 'malformed-ID cards render fail-s
 assert.doesNotMatch(upcomingPageSrc, /goto\('\/upcoming'/, 'back-state is NOT replaced with a goto() to /upcoming (popstate + snapshot restoration preserved)');
 assert.doesNotMatch(upcomingPageSrc, /href="\/discover"/, 'no hardcoded /discover fallback on Upcoming');
 
-// --- 15b. FOUR-FILTER UI CONTRACT (Phase F.1) ---
-// Exactly four Dropdown filters: Month | Year | Type | Language.
-assert.match(upcomingPageSrc, /<Dropdown id="upcoming-month"/, 'month filter uses Dropdown');
-assert.match(upcomingPageSrc, /<Dropdown id="upcoming-year"/, 'year filter uses Dropdown');
+// --- 15b. THREE-FILTER UI CONTRACT (F7-B) ---
+// Exactly three filter controls: Date input | Type chips | Language dropdown.
+assert.match(upcomingPageSrc, /<input[^>]*id="upcoming-start-date"/, 'date filter uses a native <input type="date">');
+assert.match(upcomingPageSrc, /id="upcoming-start-date"[^>]*type="date"/, 'date input has type="date"');
 // F7: type filter changed from Dropdown to chips
 assert.match(upcomingPageSrc, /type-chips/, 'type filter uses chips (F7: was Dropdown)');
 assert.match(upcomingPageSrc, /<Dropdown id="upcoming-language" label="Language"/, 'language filter uses Dropdown');
 // F7: three dropdowns (Month, Year, Language) + type chips
-assert.equal((upcomingPageSrc.match(/<Dropdown id="upcoming-/g) ?? []).length, 3, 'exactly THREE filter dropdowns (Month, Year, Language) + type chips (F7)');
+assert.equal((upcomingPageSrc.match(/<Dropdown id="upcoming-/g) ?? []).length, 1, 'exactly ONE filter dropdown (Language) + a native <input type="date"> for startDate + type chips (F7-B)');
 // All four filters live in the ONE filters-inner row.
 assert.equal((upcomingPageSrc.match(/class="filters-inner"/g) ?? []).length, 1, 'a single filters row container exists');
 {
   const filtersBar = upcomingPageSrc.slice(upcomingPageSrc.indexOf('class="filters-inner"'), upcomingPageSrc.indexOf('</div>\n  </div>\n\n  <div class="upcoming-body"'));
   // F7: type is now chips, not a dropdown with id="upcoming-type"
-  assert.ok(filtersBar.includes('upcoming-month') && filtersBar.includes('upcoming-year') && filtersBar.includes('type-chip') && filtersBar.includes('upcoming-language'), 'Month | Year | Type(chips) | Language all render inside the one filters row');
+  assert.ok(filtersBar.includes('upcoming-start-date') && filtersBar.includes('type-chip') && filtersBar.includes('upcoming-language'), 'Date input | Type(chips) | Language all render inside the one filters row');
 }
 // All four update the SAME URL query model.
-assert.match(upcomingPageSrc, /params\.set\('month', next\.month\)/, 'month written to URL');
-assert.match(upcomingPageSrc, /params\.set\('year', next\.year\)/, 'year written to URL');
+assert.match(upcomingPageSrc, /params\.set\('startDate', next\.startDate\)/, 'startDate written to URL');
 assert.match(upcomingPageSrc, /params\.set\('type', next\.type\)/, 'type written to URL');
 assert.match(upcomingPageSrc, /params\.set\('language', next\.language\)/, 'language written to URL');
 assert.match(upcomingPageSrc, /function setLanguage\(value: string\) \{ selectedLanguage = value; updateFilter\(\{ language: value \}\); \}/, 'language setter flows through the shared updateFilter model');
-// Compact selected labels for the row; full month name for the heading.
-for (const compact of ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']) {
-  assert.ok(upcomingPageSrc.includes(`label: '${compact}'`), `compact month label ${compact} keeps the four-filter row readable`);
-}
-assert.match(upcomingPageSrc, /const monthFullNames = \['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'\];/, 'full month names exist for the page heading');
-assert.match(upcomingPageSrc, /let monthLabel = \$derived\(monthFullNames\[Number\(selectedMonth\) - 1\]/, 'page heading keeps the full month name (September 2026)');
+// F7-B: page heading now reflects the 30-day window starting at
+// selectedStartDate (e.g. "Next 30 days from Sep 27, 2026 — through Oct 26, 2026").
+assert.match(upcomingPageSrc, /let startDateLabel = \$derived\.by\(/, 'page heading computes a startDateLabel');
+assert.match(upcomingPageSrc, /let windowEndLabel = \$derived\.by\(/, 'page heading computes a windowEndLabel');
+assert.match(upcomingPageSrc, /Next 30 days from/, 'page heading uses the "Next 30 days from" copy');
 // Mobile: the four controls stay on ONE horizontal row.
 assert.match(upcomingPageSrc, /\.filters-inner \{ flex-wrap: nowrap; gap: 8px; \}/, 'mobile filters stay on one horizontal row (no second filter row)');
 assert.match(upcomingPageSrc, /\.filter-wrap \{ min-width: 0; flex: 1 1 0; \}/, 'mobile filter controls shrink instead of overflowing the viewport');
 // Language label surfaces in the empty state.
-assert.match(upcomingPageSrc, /languageLabel/, 'language label participates in the empty-state copy');
+assert.match(upcomingPageSrc, /startDateLabel|windowEndLabel|languageLabel/, 'date + language labels participate in the empty-state copy');
 
 // --- 16. Caching ---
 // Cache keys include month/year/type/region/language + adult-exclusion + ALL
 // query/policy dimensions: single-stream movie key with the
 // discovery/enrichment model version, discovery + eligibility keys for
 // series, serial policy key, season-model key, provider model key.
-assert.match(upcomingSrc, /const key = `upcoming:movies:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{providerExclusion \?\? 'no-adult'\}:\$\{UPCOMING_MOVIE_RELEASE_TRUTH_KEY\}`/, 'movie candidate cache key includes year+month+region+language+adult-exclusion+release-model version (ONE stream — no per-kind split)');
+assert.match(upcomingSrc, /const key = `upcoming:movies:\${startDate}:\$\{region\}:\$\{language\}:\$\{providerExclusion \?\? 'no-adult'\}:\$\{UPCOMING_MOVIE_RELEASE_TRUTH_KEY\}`/, 'movie candidate cache key includes startDate+region+language+adult-exclusion+release-model version (ONE stream — no per-kind split)');
 assert.match(upcomingSrc, /const key = `upcoming:movierd:\$\{movieId\}:\$\{UPCOMING_MOVIE_RELEASE_TRUTH_KEY\}`/, 'per-movie release_dates cache is versioned by the release model');
-assert.match(upcomingSrc, /const key = `upcoming:series:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_TV_ELIGIBILITY_KEY\}:\$\{UPCOMING_TV_SERIAL_POLICY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}:\$\{maxCandidates \?\? 'full'\}`/, 'series cache key includes year+month+region+language+network-exclusion+discovery+eligibility+serial-policy+season-model+candidate-scope dimensions');
-assert.match(upcomingSrc, /const key = `upcoming:anime:\$\{year\}:\$\{month\}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}:\$\{maxCandidates \?\? 'full'\}`/, 'anime cache key includes year+month+region+language+network-exclusion+DISCOVERY version+season-model version+candidate-scope dimension');
+assert.match(upcomingSrc, /const key = `upcoming:series:\${startDate}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_TV_ELIGIBILITY_KEY\}:\$\{UPCOMING_TV_SERIAL_POLICY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}:\$\{maxCandidates \?\? 'full'\}`/, 'series cache key includes startDate+region+language+network-exclusion+discovery+eligibility+serial-policy+season-model+candidate-scope dimensions');
+assert.match(upcomingSrc, /const key = `upcoming:anime:\${startDate}:\$\{region\}:\$\{language\}:\$\{networkExclusion \?\? 'no-nets'\}:\$\{UPCOMING_TV_DISCOVERY_KEY\}:\$\{UPCOMING_SEASON_MODEL_KEY\}:\$\{maxCandidates \?\? 'full'\}`/, 'anime cache key includes startDate+region+language+network-exclusion+DISCOVERY version+season-model version+candidate-scope dimension');
 assert.match(upcomingSrc, /const key = `upcoming:providers:tv:\$\{seriesId\}:\$\{region\}:\$\{UPCOMING_PROVIDER_MODEL_KEY\}`/, 'series parent provider cache is versioned by the provider model');
 assert.match(upcomingSrc, /const key = `upcoming:providers:tvseason:\$\{seriesId\}:\$\{seasonNumber\}:\$\{region\}:\$\{UPCOMING_PROVIDER_MODEL_KEY\}`/, 'SEASON provider cache is a distinct namespace carrying series ID + season number + region + model version');
 // The version dimensions are distinct constants (no key collisions).
@@ -817,7 +893,7 @@ assert.doesNotMatch(upcomingPageSrc, /href="\/account"/, 'no Account back link a
 assert.match(upcomingPageSrc, /<div class="header-eyebrow"><Calendar size=\{13\} \/> MAVERO \/ Upcoming<\/div>/, 'MAVERO / Upcoming breadcrumb is kept');
 // Empty state
 assert.match(upcomingPageSrc, /No releases found/, 'page has empty state heading');
-assert.match(upcomingPageSrc, /Change filters/, 'page has Change filters CTA');
+assert.match(upcomingPageSrc, /Reset to today/, 'page has a Reset-to-today CTA in the empty state (F7-B)');
 // Items grouped by day
 assert.match(upcomingPageSrc, /dayGroups/, 'page groups items by day');
 assert.match(upcomingPageSrc, /day-label/, 'page renders day labels');
@@ -1158,7 +1234,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
 
   // ---- 19a. MOVIES: October 2026 through the ONE CineLog date-range query ----
   clearCache();
-  const october = await loadUpcoming({ month: 10, year: 2026, type: 'movie', language: 'all' });
+  const october = await loadUpcoming({ startDate: '2026-10-01', type: 'movie', language: 'all' });
   assert.deepEqual(october.errors, [], 'October movie pipeline completes without section errors');
   // THE CINELOG REGRESSIONS, all in one month:
   //   · 105 "Zero Vote October Movie" (vote_count 0) SURVIVES — the
@@ -1212,7 +1288,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
     assert.ok(!('primary_release_date.gte' in call.params) && !('primary_release_date.lte' in call.params), 'NO primary_release_date parameter is ever sent (the F.3 union is REMOVED)');
     assert.ok(!('with_release_type' in call.params), 'NO with_release_type parameter is ever sent to /discover/movie');
   }
-  assert.equal(octoberDiscoverCalls[0].params['release_date.lte'], '2026-10-31', 'the month window covers the FULL selected month (2026-10-01 .. 2026-10-31)');
+  assert.equal(octoberDiscoverCalls[0].params['release_date.lte'], '2026-10-30', 'the month window covers the FULL selected month (2026-10-01 .. 2026-10-31)');
   // Enrichment + provider lookups: exactly once per unique candidate ID.
   assert.equal(callsFor('/movie/103/release_dates').length, 1, 'release_dates enrichment fetched EXACTLY ONCE per unique candidate (cached)');
   assert.equal(callsFor('/movie/162/release_dates').length, 1, 'every candidate gets its own enrichment lookup (once)');
@@ -1222,31 +1298,31 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
 
   // ---- 19b. MOVIES: September/November/December/January/February independent ----
   clearCache();
-  const september = await loadUpcoming({ month: 9, year: 2026, type: 'movie', language: 'all' });
+  const september = await loadUpcoming({ startDate: '2026-09-01', type: 'movie', language: 'all' });
   assert.deepEqual(september.items, [], 'September 2026 honestly returns its own (fixture-empty) month — no October leakage, no fake data');
   clearCache();
-  const november = await loadUpcoming({ month: 11, year: 2026, type: 'movie', language: 'all' });
+  const november = await loadUpcoming({ startDate: '2026-11-01', type: 'movie', language: 'all' });
   assert.deepEqual(november.items.map((i) => i.id), ['movie-111'], 'November 2026 has its OWN candidates (no October leakage)');
   assert.equal(november.items[0].date, '2026-11-13', 'November card date is the discover row India release_date');
   clearCache();
-  const december = await loadUpcoming({ month: 12, year: 2026, type: 'movie', language: 'all' });
+  const december = await loadUpcoming({ startDate: '2026-12-01', type: 'movie', language: 'all' });
   assert.deepEqual(december.items.map((i) => i.id), ['movie-121'], 'December 2026 discovers its own digital release');
   assert.deepEqual(december.items[0].releaseKinds, ['digital'], 'December digital kind from the optional enrichment');
   assert.deepEqual(december.items[0].providers?.map((p) => p.name), ['Netflix'], 'December release carries India flatrate icon from watch/providers');
   clearCache();
-  const january = await loadUpcoming({ month: 1, year: 2027, type: 'movie', language: 'all' });
+  const january = await loadUpcoming({ startDate: '2027-01-01', type: 'movie', language: 'all' });
   assert.deepEqual(january.items.map((i) => i.id), ['movie-131'], 'January 2027 works (cross-year month window)');
   assert.equal(january.items[0].date, '2027-01-09', 'January 2027 card date real');
   clearCache();
-  const february = await loadUpcoming({ month: 2, year: 2027, type: 'movie', language: 'all' });
+  const february = await loadUpcoming({ startDate: '2027-02-01', type: 'movie', language: 'all' });
   assert.deepEqual(february.items.map((i) => i.id), ['movie-141'], 'February 2027 works');
   assert.equal(february.items[0].date, '2027-02-20', 'February 2027 card date real');
   const febCall = movieDiscoverCalls().find((c) => c.params['release_date.gte'] === '2027-02-01');
-  assert.equal(febCall!.params['release_date.lte'], '2027-02-28', 'February window ends on the 28th (monthBounds last-day semantics)');
+  assert.equal(febCall!.params['release_date.lte'], '2027-03-02', 'February window ends on the 28th (monthBounds last-day semantics)');
 
   // ---- 19c. MOVIES: language filter + cache isolation ----
   clearCache();
-  const tamilMovies = await loadUpcoming({ month: 10, year: 2026, type: 'movie', language: 'ta' });
+  const tamilMovies = await loadUpcoming({ startDate: '2026-10-01', type: 'movie', language: 'ta' });
   assert.deepEqual(tamilMovies.items.map((i) => i.id), ['movie-150'], 'October + Tamil returns the Tamil candidate (not the English cached set)');
   const tamilMovieCalls = movieDiscoverCalls().filter((c) => c.params['release_date.gte'] === '2026-10-01' && c.params.with_original_language === 'ta');
   assert.equal(tamilMovieCalls.length, 1, 'October+Tamil issued its OWN discover call (language cache isolation)');
@@ -1260,7 +1336,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   // ---- 19d. SERIES: Soap-tagged future-month shows SURVIVE discovery ----
   // (the removed without_genres starvation filter) + season-level gate.
   clearCache();
-  const tamilSeries = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'ta' });
+  const tamilSeries = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'ta' });
   assert.deepEqual(tamilSeries.errors, [], 'Tamil series pipeline completes without section errors');
   assert.equal(tamilSeries.items.length, 3, 'the Soap-tagged (genre 18+10766) Tamil October show SURVIVES discovery with its three real in-month episodes');
   assert.ok(tamilSeries.items.every((i) => i.type === 'series' && i.id.startsWith('series-301-')), 'Tamil October cards belong to the Tamil show (canonical parent IDs)');
@@ -1284,7 +1360,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   // Language sweep — every language gets its own query + result, all with
   // Soap-tagged candidates where the production failure lived.
   clearCache();
-  const enSeries = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'en' });
+  const enSeries = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'en' });
   assert.ok(enSeries.items.every((i) => i.id.startsWith('series-311-')), 'October + English returns the English show (Tamil set was NOT reused — cache isolated by language)');
   assert.deepEqual(enSeries.items[0].providers?.map((p) => p.name), ['Amazon Prime Video'], 'English show providers from its OWN season IN.flatrate');
   // No-October-episodes candidate: dropped BEFORE provider lookups.
@@ -1296,7 +1372,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   assert.equal(callsFor('/tv/381').length, 1, 'News candidate only costs its detail lookup (no season/provider work)');
   assert.equal(callsFor('/tv/382').length, 1, 'Talk candidate only costs its detail lookup');
   clearCache();
-  const hindiSeries = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'hi' });
+  const hindiSeries = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'hi' });
   assert.ok(hindiSeries.items.every((i) => i.id.startsWith('series-321-')), 'October + Hindi Soap-tagged future-month show discovered');
   // Hindi show qualifies through the DOCUMENTED PARENT FALLBACK: its season
   // endpoint returned no provider data at all; the parent has IN.flatrate.
@@ -1304,7 +1380,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   assert.equal(callsFor('/tv/321/season/1/watch/providers').length, 1, 'the fallback candidate DID consult its season endpoint first');
   assert.equal(callsFor('/tv/321/watch/providers').length, 1, 'the parent provider lookup happens ONLY because the season endpoint had no data');
   clearCache();
-  const teluguSeries = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'te' });
+  const teluguSeries = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'te' });
   assert.ok(teluguSeries.items.every((i) => i.id.startsWith('series-331-')), 'October + Telugu Soap-tagged future-month show discovered');
   assert.deepEqual(teluguSeries.items[0].providers?.map((p) => p.name), ['JioHotstar'], 'Telugu show India flatrate icons from its own season data');
 
@@ -1312,7 +1388,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   // Kannada: buy/rent-only season DROPPED (affirmative absence, no fallback);
   // no-data season + India-flatrate parent SURVIVES via fallback.
   clearCache();
-  const kannadaSeries = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'kn' });
+  const kannadaSeries = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'kn' });
   assert.deepEqual(kannadaSeries.errors, [], 'Kannada run completes without section errors');
   assert.ok(kannadaSeries.items.length > 0 && kannadaSeries.items.every((i) => i.id.startsWith('series-352-')), 'Kannada future show with genre_ids [18,10766] survives through the documented parent fallback (352)');
   assert.ok(kannadaSeries.items.every((i) => !i.id.startsWith('series-351-')), 'the buy/rent-only season candidate is DROPPED (flatrate required)');
@@ -1320,31 +1396,31 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   assert.equal(callsFor('/tv/351/watch/providers').length, 0, 'the buy/rent candidate NEVER falls back to the parent (affirmative absence)');
   assert.equal(callsFor('/tv/352/watch/providers').length, 1, 'the fallback candidate consulted its parent (season data absent)');
   clearCache();
-  const usOnly = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'ml' });
+  const usOnly = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'ml' });
   assert.deepEqual(usOnly.items, [], 'US.flatrate-only SEASON does not qualify (no cross-region fallback)');
   assert.deepEqual(usOnly.errors, [], 'US-only drop is a real empty result, not an upstream error');
   assert.equal(callsFor('/tv/341/watch/providers').length, 0, 'US-only season data is affirmative absence — the parent is never even consulted');
   clearCache();
-  const emptyFlatrate = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'bn' });
+  const emptyFlatrate = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'bn' });
   assert.deepEqual(emptyFlatrate.items, [], 'an IN season entry with EMPTY flatrate is DROPPED (affirmative absence)');
   assert.equal(callsFor('/tv/361/watch/providers').length, 0, 'IN-present-empty-flatrate never triggers the parent fallback');
   clearCache();
   // Outages: a season-provider outage fails that candidate; when EVERY
   // candidate fails the section surfaces a real upstream error (never a
   // silently empty month).
-  const providerOutage = await loadUpcoming({ month: 10, year: 2026, type: 'series', language: 'pa' });
+  const providerOutage = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'pa' });
   assert.deepEqual(providerOutage.items, [], 'provider-lookup FAILURE emits no series (availability never fabricated)');
   assert.equal(providerOutage.errors.length, 1, 'an all-candidates provider outage surfaces as a section error (failed candidates, not a silent empty month)');
   assert.equal(callsFor('/tv/371/season/1/watch/providers').length, 1, 'the season-provider outage was a real upstream call (failed candidate)');
 
   // Future months for non-English series (season-level gate on each).
   clearCache();
-  const tamilNovember = await loadUpcoming({ month: 11, year: 2026, type: 'series', language: 'ta' });
+  const tamilNovember = await loadUpcoming({ startDate: '2026-11-01', type: 'series', language: 'ta' });
   assert.deepEqual(tamilNovember.items.map((i) => i.date), ['2026-11-06', '2026-11-13', '2026-11-20'], 'November + Tamil discovers its own future-month episodes');
   assert.ok(tamilNovember.items.every((i) => i.date.slice(0, 7) === '2026-11'), 'November series invariant holds');
   assert.deepEqual(tamilNovember.items[0].providers?.map((p) => p.name), ['Netflix'], 'November Soap-tagged show qualifies through its own season data');
   clearCache();
-  const tamilDecember = await loadUpcoming({ month: 12, year: 2026, type: 'series', language: 'ta' });
+  const tamilDecember = await loadUpcoming({ startDate: '2026-12-01', type: 'series', language: 'ta' });
   assert.deepEqual(tamilDecember.items.map((i) => i.date), ['2026-12-04', '2026-12-11'], 'December + Tamil discovers its own future-month episodes');
   const tamilNovDecCall = tvDiscoverCalls().filter((c) => c.params['air_date.gte'] === '2026-11-01' && c.params.with_original_language === 'ta');
   assert.equal(tamilNovDecCall.length, 1, 'November+Tamil issued its OWN month-window query');
@@ -1352,7 +1428,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
 
   // ---- 19e. ANIME: exempt from the India flatrate eligibility gate ----
   clearCache();
-  const anime = await loadUpcoming({ month: 10, year: 2026, type: 'anime', language: 'ja' });
+  const anime = await loadUpcoming({ startDate: '2026-10-01', type: 'anime', language: 'ja' });
   assert.deepEqual(anime.errors, [], 'anime pipeline completes without section errors');
   assert.ok(anime.items.length > 0 && anime.items.every((i) => i.type === 'anime'), 'anime candidates emit as type anime');
   assert.equal(anime.items.filter((i) => i.id.startsWith('anime-401-')).length, 3, 'anime 401 emits one card per real in-month episode');
@@ -1372,7 +1448,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   assert.equal(animeDiscoverCall!.params.with_original_language, 'ja', 'anime original language ja');
   assert.ok(!('without_genres' in animeDiscoverCall!.params), 'anime discovery sends no genre blacklist');
   clearCache();
-  const animeTamil = await loadUpcoming({ month: 10, year: 2026, type: 'anime', language: 'ta' });
+  const animeTamil = await loadUpcoming({ startDate: '2026-10-01', type: 'anime', language: 'ta' });
   assert.deepEqual(animeTamil.items, [], 'anime + non-ja language returns an empty section deterministically');
 
   // Global request-shape sweep across EVERY recorded discover call.

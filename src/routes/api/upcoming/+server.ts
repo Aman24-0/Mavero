@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { loadUpcomingPage, parseUpcomingMonth, parseUpcomingType, parseUpcomingYear, serializeCursor } from '$lib/server/content/upcoming';
+import { loadUpcomingPage, parseUpcomingStartDate, parseUpcomingType, serializeCursor } from '$lib/server/content/upcoming';
 import { UpcomingCursorError } from '$lib/server/content/upcoming-cursor';
 import { parseUpcomingLanguage } from '$lib/shared/upcoming-policy';
 import { PUBLIC_CATALOG_CACHE } from '$lib/server/http/cache-headers';
@@ -37,8 +37,11 @@ import type { RequestHandler } from './$types';
 // traces are never exposed.
 
 export const GET: RequestHandler = async ({ url, setHeaders }) => {
-  const month = parseUpcomingMonth(url.searchParams.get('month'));
-  const year = parseUpcomingYear(url.searchParams.get('year'));
+  // F7-B: single startDate (YYYY-MM-DD) opens a fixed 30-day window.
+  // Strict parse: missing/empty/malformed/impossible dates fail safe
+  // to TODAY's UTC calendar date. The legacy month/year parameters are
+  // NO LONGER accepted on this endpoint.
+  const startDate = parseUpcomingStartDate(url.searchParams.get('startDate'));
   const type = parseUpcomingType(url.searchParams.get('type'));
   const language = parseUpcomingLanguage(url.searchParams.get('language'));
   // Informational only — the cursor carries the authoritative
@@ -58,7 +61,7 @@ export const GET: RequestHandler = async ({ url, setHeaders }) => {
   };
 
   try {
-    const result = await loadUpcomingPage({ month, year, type, language }, page, cursor);
+    const result = await loadUpcomingPage({ startDate, type, language }, page, cursor);
     // A complete upstream failure for the requested mode is a real
     // failure — surfaced as a structured retryable response, never as a
     // silently empty "end of results" page.

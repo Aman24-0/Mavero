@@ -534,17 +534,135 @@ export function deriveMovieReleaseKinds(events: IndiaMovieReleaseEvent[]): Upcom
   return [];
 }
 
+// ---------- F7-B date-window model ----------
+//
+// The Upcoming feature uses a single `startDate` (YYYY-MM-DD) that opens
+// a fixed 30-calendar-day window. Canonical interval:
+//
+//   [startDate, startDate + 30 calendar days)
+//
+// i.e. startDate is INCLUDED, the day exactly 30 days after startDate is
+// EXCLUDED. The window therefore covers exactly 30 calendar days.
+//
+// `startDate` is a CALENDAR DATE, not a timestamp. The same startDate
+// string MUST produce identical server/cache/cursor behavior regardless
+// of request execution time or server timezone. To enforce that invariant
+// all conversions go through Date.UTC and the YYYY-MM-DD wire format is
+// strictly validated.
+//
+// TMDB's `release_date.gte` / `release_date.lte` and `air_date.gte` /
+// `air_date.lte` query parameters are DATE-INCLUSIVE on both ends. To
+// express the canonical half-open window above through those inclusive
+// bounds, the implementation uses:
+//
+//   gte = startDate                          (inclusive)
+//   lte = startDate + 29 calendar days       (inclusive; the last day
+//                                             inside the 30-day window)
+//
+// `parseUpcomingStartDate` accepts the wire format strictly. `isDateInWindow`
+// is the defensive final invariant on movie cards: item.date MUST fall
+// inside the canonical [startDate, startDate+30 days) window.
+
+const STARTDATE_RE = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
 /**
- * Defensive month-membership guard for a YYYY-MM-DD date. Used as the
- * final invariant check on movie cards: item.date MUST belong to the
- * selected month/year or the card is dropped.
+ * Parse and validate an Upcoming `startDate` wire value.
+ *
+ * Accepted: a strict YYYY-MM-DD string with a real calendar date
+ * (month 1-12, day valid for the month including leap-year Feb 29).
+ * EVERYTHING else (missing, empty, malformed, impossible date, non-UTC
+ * offset forms) fails SAFE to TODAY's UTC calendar date.
+ *
+ * The returned string is always canonical YYYY-MM-DD (zero-padded) so
+ * it is byte-comparable across the URL, the cache key, the cursor
+ * fingerprint and the URL query model.
  */
-export function isDateInMonth(date: string | undefined | null, year: number, month: number): boolean {
+export function parseUpcomingStartDate(value: string | null | undefined): string {
+  if (typeof value !== 'string' || value.length === 0) return todayUtcDate();
+  const match = STARTDATE_RE.exec(value);
+  if (!match) return todayUtcDate();
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  // Reject impossible calendar dates (e.g. 2026-02-30, 2026-04-31, 2026-13-01).
+  // Date.UTC rolls them over silently; we want a hard fail-safe instead.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (
+    d.getUTCFullYear() !== year ||
+    d.getUTCMonth() + 1 !== month ||
+    d.getUTCDate() !== day
+  ) {
+    return todayUtcDate();
+  }
+  // Hard bound on year range — same as the legacy parseUpcomingYear
+  // contract (1900-2100) so an implausible far-future/past date cannot
+  // poison cache keys or upstream queries.
+  if (year < 1900 || year > 2100) return todayUtcDate();
+  return value;
+}
+
+/** Today's UTC calendar date as canonical YYYY-MM-DD. */
+export function todayUtcDate(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}`;
+}
+
+/**
+ * Given a startDate (YYYY-MM-DD), return the canonical 30-day window:
+ *   - gte: the inclusive start date string (startDate).
+ *   - lte: the inclusive end date string (startDate + 29 calendar days,
+ *          the last day INSIDE the 30-day window).
+ *   - startMs: UTC ms at the start of startDate (00:00:00.000Z).
+ *   - endMs: UTC ms at the END of the last in-window day
+ *            (startDate + 29 days, 23:59:59.999Z). Equivalent to
+ *            Date.parse(startDate + 30 days) - 1ms — i.e. the canonical
+ *            [startMs, startMs + 30 days) half-open interval expressed
+ *            as inclusive ms bounds.
+ *
+ * Returns null when startDate is invalid (the caller is expected to
+ * have already validated via parseUpcomingStartDate, but the function
+ * is pure + defensive — invalid input yields null rather than throwing).
+ */
+export function windowBounds(startDate: string): { gte: string; lte: string; startMs: number; endMs: number } | null {
+  if (typeof startDate !== 'string') return null;
+  const match = STARTDATE_RE.exec(startDate);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const start = new Date(Date.UTC(year, month - 1, day));
+  if (
+    start.getUTCFullYear() !== year ||
+    start.getUTCMonth() + 1 !== month ||
+    start.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  const startMs = start.getTime();
+  // +30 days EXCLUSIVE: endMs is one millisecond before startDate + 30 days.
+  const exclusiveEndMs = startMs + 30 * 24 * 60 * 60 * 1000;
+  const endMs = exclusiveEndMs - 1;
+  // Inclusive date string = startDate + 29 calendar days (last day in the window).
+  const lastDay = new Date(exclusiveEndMs - 24 * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const lte = `${lastDay.getUTCFullYear()}-${pad(lastDay.getUTCMonth() + 1)}-${pad(lastDay.getUTCDate())}`;
+  return { gte: startDate, lte, startMs, endMs };
+}
+
+/**
+ * Defensive window-membership guard for a YYYY-MM-DD date. Used as the
+ * final invariant check on movie cards: item.date MUST fall inside the
+ * canonical [startDate, startDate + 30 calendar days) window. The check
+ * is timezone-stable: it compares UTC ms, never local time.
+ */
+export function isDateInWindow(date: string | undefined | null, startDate: string): boolean {
   if (typeof date !== 'string' || date.length === 0) return false;
   const ms = Date.parse(date);
   if (!Number.isFinite(ms)) return false;
-  const d = new Date(ms);
-  return d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month;
+  const bounds = windowBounds(startDate);
+  if (!bounds) return false;
+  return ms >= bounds.startMs && ms <= bounds.endMs;
 }
 
 // ---------- watch-provider normalization (Phase F.1: movies too) ----------

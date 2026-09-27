@@ -2177,3 +2177,45 @@ Future enhancements (NOT part of the approved scope):
 - Guest retention (requires persistent cross-session anonymous identity).
 - Trend new/returning per-bucket computation (requires analytics_daily).
 - Default vs saved vs fallback provider distinction.
+
+---
+Task ID: F7-B
+Agent: main (GLM)
+Task: Complete Upcoming date-window model (replace month/year with startDate + 30-day window, update cursor/cache/UI/tests)
+
+Work Log:
+- Verified HEAD = 46ab25648d73c90fd58cf4790ed9acfbc5e8b9f3, working tree clean, branch main.
+- Read all Upcoming files completely: upcoming.ts (1431 lines), upcoming-cursor.ts (201), upcoming-types.ts (86), upcoming-policy.ts (714), +page.server.ts (25), +page.svelte (999), +server.ts (110), and all 4 test files (upcoming_test.ts, upcoming_pagination_test.ts, upcoming_chronological_test.ts, upcoming_stream_identity_test.ts).
+- Built dependency map: only consumers of loadUpcoming/parseUpcomingMonth/parseUpcomingYear/monthBounds/UpcomingFilters are within src/lib/server/content/upcoming*.ts, src/routes/upcoming/+page.{server.ts,svelte}, src/routes/api/upcoming/+server.ts. No external consumers. type=all kept for backward-compat with mocked-pipeline tests.
+- Canonical convention: [startDate, startDate + 30 calendar days) — start INCLUSIVE, +30 EXCLUSIVE. TMDB date filters are date-inclusive, so gte=startDate, lte=(startDate + 29 days).
+- Cursor version bumped 2 → 3 (UPCOMING_CURSOR_VERSION=3, type renamed UpcomingCursorV2 → UpcomingCursorV3). Old v2 cursors explicitly rejected as 'version'.
+- Cache keys: replaced `${year}:${month}:` segment with `${startDate}:` segment everywhere.
+- Cursor fingerprint: replaced (month, year) with startDate.
+- UI: replaced Month + Year dropdowns with a single <input type="date">. Default = today (UTC). Page heading: "Next 30 days from <startDate>".
+- All 4 test files updated to the startDate model.
+
+Stage Summary:
+- Files changed (planned): src/lib/shared/upcoming-policy.ts, src/lib/server/content/upcoming-types.ts, src/lib/server/content/upcoming-cursor.ts, src/lib/server/content/upcoming.ts, src/routes/upcoming/+page.server.ts, src/routes/upcoming/+page.svelte, src/routes/api/upcoming/+server.ts, scripts/upcoming_test.ts, scripts/upcoming_pagination_test.ts, scripts/upcoming_chronological_test.ts, scripts/upcoming_stream_identity_test.ts.
+- India release/OTT eligibility logic untouched (season-level gate, parent fallback, affirmative-absence rules, anime exemption, theatrical/digital release-kind enrichment).
+- Adult filtering untouched (3-layer model: query include_adult=false, without_watch_providers/without_networks, central classifier).
+- Bounded concurrency preserved (LOOKUP_CONCURRENCY=4, lazy tasks via mapWithConcurrency).
+- type=all server-side compatibility preserved (loadUpcoming orchestrator + loadSnapshotPage type=all branch).
+- Commit message will be: "feat: complete upcoming date-window model".
+
+---
+Task ID: F7-B (final report)
+Agent: main (GLM)
+Task: Complete Upcoming date-window model — final verification + push
+
+Work Log:
+- All 4 upcoming test suites pass: upcoming_test.ts, upcoming_pagination_test.ts (27 checks), upcoming_chronological_test.ts (10 checks), upcoming_stream_identity_test.ts (6 checks).
+- Regression tests pass: f3_discover_batch_parallel_test.ts (12 checks), f6_auth_getuser_optimization_test.ts (29 checks), phase2_cache_headers_test.ts (36 checks), phase2_content_cache_test.ts (31 checks), adult_mode_test.ts, adult_network_classifier_test.ts (16 checks), navigation_primary_test.ts (10 checks), account_route_migration_test.ts (11 checks), release_audit_test.ts, phase1_hooks_failclosed_test.ts (12 checks), phase2_discover_ux_test.ts (43 checks), discover_v2_test.ts.
+- svelte-check: 0 errors, 0 warnings.
+- vite build: success (built in 27.33s).
+
+Stage Summary:
+- Commit: 63ae5476138e4d7300479df2adc1881b727d0972
+- Pushed to: origin/main (verified: local HEAD = origin/main = 63ae547)
+- Files changed (14): mavero-user-management-analytics-worklog.md, scripts/account_route_migration_test.ts, scripts/adult_mode_test.ts, scripts/upcoming_chronological_test.ts, scripts/upcoming_pagination_test.ts, scripts/upcoming_stream_identity_test.ts, scripts/upcoming_test.ts, src/lib/server/content/upcoming-cursor.ts, src/lib/server/content/upcoming-types.ts, src/lib/server/content/upcoming.ts, src/lib/shared/upcoming-policy.ts, src/routes/api/upcoming/+server.ts, src/routes/upcoming/+page.server.ts, src/routes/upcoming/+page.svelte.
+- Diff: 644 insertions(+), 357 deletions(-).
+- No deployment to Netlify.

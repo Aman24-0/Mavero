@@ -326,7 +326,7 @@ function assertCompactCursors(pages: Array<{ cursor: string; body: any }>, label
     assert.ok(cursor.length <= 250, `${label}: cursor stays compact (${cursor.length} chars <= 250) — never item payloads`);
     assert.ok(!cursor.includes('title') && !cursor.includes('poster') && !cursor.includes('image.tmdb.org'), `${label}: cursor carries zero item content`);
     const decoded = JSON.parse(decodeURIComponent(cursor));
-    assert.equal(decoded.v, 2, `${label}: cursor is versioned (v2)`);
+    assert.equal(decoded.v, 3, `${label}: cursor is versioned (v2)`);
     assert.ok(typeof decoded.fp === 'string' && decoded.fp.length > 0, `${label}: cursor carries the filter fingerprint`);
     assert.ok(typeof decoded.sn === 'string' && decoded.sn.length > 0, `${label}: cursor carries the stream identity`);
   }
@@ -345,7 +345,7 @@ console.log('Upcoming v2 pagination behavioral tests (real pipeline + real API h
 console.log('\n1. type=movie: pages 1..N through the deterministic candidate stream');
 clearCache();
 {
-  const filters = { month: '5', year: '2027', type: 'movie', language: 'all' };
+  const filters = { startDate: '2027-05-01', type: 'movie', language: 'all' };
   const pages = await walkAllPages(filters);
   assert.equal(pages.length, 3, `58 movies / ${UPCOMING_PAGE_SIZE} = 3 pages (20 + 20 + 18), got ${pages.length}`);
   const allItems = pages.flatMap((p) => p.items);
@@ -393,7 +393,7 @@ console.log('\n2. type=series: snapshot pagination over the fully enriched sourc
 clearCache();
 tmdbCalls.length = 0;
 {
-  const filters = { month: '5', year: '2027', type: 'series', language: 'all' };
+  const filters = { startDate: '2027-05-01', type: 'series', language: 'all' };
   const pages = await walkAllPages(filters);
   assert.equal(pages.length, 3, `60 series events / ${UPCOMING_PAGE_SIZE} = 3 pages (20 + 20 + 20), got ${pages.length}`);
   const allItems = pages.flatMap((p) => p.items);
@@ -429,7 +429,7 @@ console.log('\n3. type=anime: snapshot pagination with the anime exemptions');
 clearCache();
 tmdbCalls.length = 0;
 {
-  const filters = { month: '5', year: '2027', type: 'anime', language: 'all' };
+  const filters = { startDate: '2027-05-01', type: 'anime', language: 'all' };
   const pages = await walkAllPages(filters);
   // F7: page size changed from 24 to 20 → 72/20 = 4 pages (20+20+20+12)
 assert.equal(pages.length, 4, `72 anime events / ${UPCOMING_PAGE_SIZE} = 4 pages (20+20+20+12), got ${pages.length}`);
@@ -442,7 +442,7 @@ assert.equal(pages.length, 4, `72 anime events / ${UPCOMING_PAGE_SIZE} = 4 pages
   // never requires India flatrate) — unchanged by pagination.
   assert.equal(tmdbCalls.filter((c) => c.path.includes('/watch/providers') && c.path.includes('/season/')).length, 0, 'anime never triggers season-provider lookups (exemption preserved)');
   // Series/anime separation: the anime shows never leak into series.
-  const seriesFilters = { month: '5', year: '2027', type: 'series', language: 'all' };
+  const seriesFilters = { startDate: '2027-05-01', type: 'series', language: 'all' };
   clearCache();
   const seriesPages = await walkAllPages(seriesFilters);
   assert.ok(seriesPages.flatMap((p) => p.items).every((i) => i.id.startsWith('series-')), 'anime (genre 16 + ja) never leaks into the series pipeline');
@@ -457,7 +457,7 @@ console.log('\n4. type=all: globally merged chronological pagination');
 clearCache();
 tmdbCalls.length = 0;
 {
-  const filters = { month: '5', year: '2027', type: 'all', language: 'all' };
+  const filters = { startDate: '2027-05-01', type: 'all', language: 'all' };
   const pages = await walkAllPages(filters);
   const total = MOVIE_COUNT + SERIES_COUNT * SERIES_EPISODES + ANIME_COUNT * ANIME_EPISODES;
   assert.equal(total, 190, 'fixture arithmetic: 58 movies + 60 series + 72 anime');
@@ -490,7 +490,7 @@ ok('type=all: 6 pages, global chronological merge, zero dup/loss, one discovery 
 // ============================================================
 console.log('\n5. Cursor isolation through the REAL API (structured error codes)');
 {
-  const filters = { month: '5', year: '2027', type: 'series', language: 'all' };
+  const filters = { startDate: '2027-05-01', type: 'series', language: 'all' };
   clearCache();
   const first = await callApi({ ...filters, page: '1' });
   assert.equal(first.body.ok, true, 'page 1 loads for the isolation scenario');
@@ -506,10 +506,10 @@ console.log('\n5. Cursor isolation through the REAL API (structured error codes)
 
   // Filter isolation: the cursor is bound to month/year/type/language.
   const mismatches: Array<[Record<string, string>, string]> = [
-    [{ month: '6', year: '2027', type: 'series', language: 'all' }, 'different month'],
-    [{ month: '5', year: '2028', type: 'series', language: 'all' }, 'different year'],
-    [{ month: '5', year: '2027', type: 'all', language: 'all' }, 'different type'],
-    [{ month: '5', year: '2027', type: 'series', language: 'ta' }, 'different language']
+    [{ startDate: '2027-06-01', type: 'series', language: 'all' }, 'different month'],
+    [{ startDate: '2028-05-01', type: 'series', language: 'all' }, 'different year'],
+    [{ startDate: '2027-05-01', type: 'all', language: 'all' }, 'different type'],
+    [{ startDate: '2027-05-01', type: 'series', language: 'ta' }, 'different language']
   ];
   for (const [query, label] of mismatches) {
     const res = await callApi({ ...query, page: '2', cursor: first.body.cursor });
@@ -524,7 +524,7 @@ console.log('\n5. Cursor isolation through the REAL API (structured error codes)
 // ============================================================
 console.log('\n6. Stream identity: changed upstream data -> CURSOR_STALE (never silent slicing)');
 {
-  const filters = { month: '5', year: '2027', type: 'anime', language: 'all' };
+  const filters = { startDate: '2027-05-01', type: 'anime', language: 'all' };
   clearCache();
   extraAnimeEpisode = false;
   const first = await callApi({ ...filters, page: '1' });
@@ -551,7 +551,7 @@ ok('stale cursors: 409 CURSOR_STALE via stream identity; explicit deterministic 
 // ============================================================
 console.log('\n7. Upstream failure: structured 503, cursor stays retryable, no false end');
 {
-  const filters = { month: '5', year: '2027', type: 'series', language: 'all' };
+  const filters = { startDate: '2027-05-01', type: 'series', language: 'all' };
   clearCache();
   const first = await callApi({ ...filters, page: '1' });
   assert.equal(first.body.ok, true, 'series page 1 loads');
@@ -579,7 +579,7 @@ console.log('\n7. Upstream failure: structured 503, cursor stays retryable, no f
   // kills the merged page — the errors array surfaces it.
   clearCache();
   failDiscoverTv = 1;
-  const partial = await callApi({ month: '5', year: '2027', type: 'all', language: 'all', page: '1' });
+  const partial = await callApi({ startDate: '2027-05-01', type: 'all', language: 'all', page: '1' });
   assert.equal(partial.status, 200, 'a partial source failure still answers 200');
   assert.equal(partial.body.ok, true, 'partial failure answers ok:true with the surviving sources');
   assert.ok(partial.body.items.length > 0, 'the merged page keeps the successful sources\u2019 events');
@@ -589,7 +589,7 @@ console.log('\n7. Upstream failure: structured 503, cursor stays retryable, no f
   // exhausted stream returns hasNextPage=false with zero items (the
   // frontend stops; no infinite "Loading more…").
   clearCache();
-  const movieFilters = { month: '5', year: '2027', type: 'movie', language: 'all' };
+  const movieFilters = { startDate: '2027-05-01', type: 'movie', language: 'all' };
   let cursor = '';
   let last = null as any;
   for (let p = 1; p <= 4; p++) {
@@ -615,28 +615,28 @@ console.log('\n8. Filter reset and language semantics');
   // A fresh page 1 for different filters delivers a DIFFERENT result
   // set with its own cursor — no old state survives.
   clearCache();
-  const may = await callApi({ month: '5', year: '2027', type: 'movie', language: 'all', page: '1' });
-  const june = await callApi({ month: '6', year: '2027', type: 'movie', language: 'all', page: '1' });
+  const may = await callApi({ startDate: '2027-05-01', type: 'movie', language: 'all', page: '1' });
+  const june = await callApi({ startDate: '2027-06-01', type: 'movie', language: 'all', page: '1' });
   assert.deepEqual(june.body.items, [], 'June 2027 (fixture-empty) honestly returns its own empty month — no May leakage');
   assert.notEqual(june.body.cursor, may.body.cursor, 'a filter change issues a fresh cursor (the old cursor never survives)');
   // Language filter reaches the movie source (TMDB ORIGINAL language).
   clearCache();
   tmdbCalls.length = 0;
-  const tamil = await callApi({ month: '5', year: '2027', type: 'movie', language: 'ta', page: '1' });
+  const tamil = await callApi({ startDate: '2027-05-01', type: 'movie', language: 'ta', page: '1' });
   assert.deepEqual(tamil.body.items.map((i: ApiItem) => i.id), ['movie-1500'], 'language=ta returns the Tamil candidate only (cache isolated by language)');
   const taDiscover = tmdbCalls.find((c) => c.path === '/discover/movie');
   assert.equal(taDiscover?.params.with_original_language, 'ta', 'with_original_language=ta reaches TMDB');
   // Anime language semantics: non-ja is deterministically empty WITHOUT
   // querying upstream.
   tmdbCalls.length = 0;
-  const animeTa = await callApi({ month: '5', year: '2027', type: 'anime', language: 'ta', page: '1' });
+  const animeTa = await callApi({ startDate: '2027-05-01', type: 'anime', language: 'ta', page: '1' });
   assert.deepEqual(animeTa.body.items, [], 'anime + non-ja language is deterministically empty');
   assert.equal(animeTa.body.hasNextPage, false, 'anime + non-ja language reports a clean end');
   assert.equal(tmdbCalls.filter((c) => c.path === '/discover/tv').length, 0, 'the non-ja anime filter queries NOTHING upstream');
   // Language cursor isolation: the Tamil cursor cannot paginate the
   // all-languages stream.
-  const allFirst = await callApi({ month: '5', year: '2027', type: 'movie', language: 'all', page: '1' });
-  const crossed = await callApi({ month: '5', year: '2027', type: 'movie', language: 'all', page: '2', cursor: tamil.body.cursor });
+  const allFirst = await callApi({ startDate: '2027-05-01', type: 'movie', language: 'all', page: '1' });
+  const crossed = await callApi({ startDate: '2027-05-01', type: 'movie', language: 'all', page: '2', cursor: tamil.body.cursor });
   assert.equal(crossed.status, 409, 'a cursor from another language is rejected (CURSOR_FILTER_MISMATCH)');
   assert.equal(crossed.body.error.code, 'CURSOR_FILTER_MISMATCH', 'cross-language cursor code verified');
   assert.ok(allFirst.body.ok, 'the all-languages stream is unaffected');
@@ -649,7 +649,7 @@ ok('filter reset + language: fresh cursors per filter set, language reaches ever
 console.log('\n9. loadUpcomingPage direct contract');
 clearCache();
 {
-  const result = await loadUpcomingPage({ month: 5, year: 2027, type: 'movie', language: 'all' }, 1);
+  const result = await loadUpcomingPage({ startDate: '2027-05-01', type: 'movie', language: 'all' }, 1);
   assert.equal(result.items.length, UPCOMING_PAGE_SIZE, 'SSR page 1 returns a full page');
   assert.equal(result.page, 1, 'page echoed');
   assert.equal(result.pageSize, UPCOMING_PAGE_SIZE, 'pageSize contract');
@@ -660,7 +660,7 @@ clearCache();
   assert.ok(serialized.length < 250, `the SSR cursor is compact (${serialized.length} chars)`);
   // Round-trip: the serialized cursor continues correctly (the API
   // already proved this — assert the direct-function path too).
-  const second = await loadUpcomingPage({ month: 5, year: 2027, type: 'movie', language: 'all' }, 2, serialized);
+  const second = await loadUpcomingPage({ startDate: '2027-05-01', type: 'movie', language: 'all' }, 2, serialized);
   const page1Ids = new Set(result.items.map((i) => i.id));
   assert.ok(second.items.every((i) => !page1Ids.has(i.id)), 'direct continuation yields only new events');
   assert.equal(second.items.length + result.items.length, 2 * UPCOMING_PAGE_SIZE, 'continuation sizes align exactly');

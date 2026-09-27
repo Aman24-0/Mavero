@@ -268,8 +268,8 @@ async function callApi(query: Record<string, string>): Promise<{ status: number;
   return { status: res.status, body };
 }
 
-const seriesFilters = { month: '3', year: '2026', type: 'series', language: 'all' };
-const movieFilters = { month: '3', year: '2026', type: 'movie', language: 'all' };
+const seriesFilters = { startDate: '2026-03-01', type: 'series', language: 'all' };
+const movieFilters = { startDate: '2026-03-01', type: 'movie', language: 'all' };
 
 console.log('\n13-14. Behavioral stale detection through the REAL /api/upcoming handler');
 

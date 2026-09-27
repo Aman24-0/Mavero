@@ -101,8 +101,8 @@ assert.doesNotMatch(upcomingPage, /back-pill/, 'Upcoming back-pill is REMOVED (m
 assert.doesNotMatch(upcomingPage, /<span>Account<\/span>/, 'Upcoming Account back-pill label is removed');
 assert.doesNotMatch(upcomingPage, /href="\/profile"/, 'Upcoming has no legacy back link to /profile');
 // Upcoming functionality untouched — filters, grouping, pagination markers.
-assert.match(upcomingPage, /parseUpcomingMonth|selectedMonth/, 'month filter intact');
-assert.match(upcomingPage, /selectedYear/, 'year filter intact');
+// F7-B: the legacy month+year filters were replaced by a single startDate input.
+assert.match(upcomingPage, /selectedStartDate/, 'date (startDate) filter intact (F7-B: replaced month+year)');
 assert.match(upcomingPage, /selectedType/, 'type filter intact');
 assert.match(upcomingPage, /dayGroups/, 'release day grouping intact');
 ok('6. Upcoming back-pill removed (main navigation page); Upcoming functionality untouched');

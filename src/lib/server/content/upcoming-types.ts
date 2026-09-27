@@ -59,8 +59,13 @@ export type UpcomingItem = {
 };
 
 export type UpcomingFilters = {
-  month: number;   // 1-12
-  year: number;    // e.g. 2026
+  // F7-B: the canonical Upcoming date input is a single `startDate`
+  // (YYYY-MM-DD) that opens a fixed 30-calendar-day window
+  // [startDate, startDate + 30 days). The previous month/year model is
+  // REMOVED — the server never derives month/year underneath. Strict
+  // parse + validate via parseUpcomingStartDate; invalid input fails
+  // safe to TODAY's UTC calendar date.
+  startDate: string;   // YYYY-MM-DD (canonical, validated)
   type: 'all' | UpcomingType;
   // TMDB ORIGINAL language filter (NOT dubbed-audio language).
   // 'all' = no language constraint; otherwise a canonical ISO-639-1

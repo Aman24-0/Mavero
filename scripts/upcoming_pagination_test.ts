@@ -41,8 +41,8 @@ const apiCode = apiSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g
 // ============================================================
 console.log('\n1. CRITICAL: compact cursor — NO item payloads in the URL cursor');
 
-assert.match(cursorSource, /export const UPCOMING_CURSOR_VERSION = 2/, 'cursor is versioned (v2)');
-assert.match(cursorSource, /export type UpcomingCursorV2 = \{[\s\S]*?movieCandidateIndex: number;[\s\S]*?snapshotOffset: number;/, 'cursor carries ONLY compact positions (movie candidate index + snapshot offset)');
+assert.match(cursorSource, /export const UPCOMING_CURSOR_VERSION = 3/, 'cursor is versioned (v2)');
+assert.match(cursorSource, /export type UpcomingCursorV3 = \{[\s\S]*?movieCandidateIndex: number;[\s\S]*?snapshotOffset: number;/, 'cursor carries ONLY compact positions (movie candidate index + snapshot offset)');
 assert.doesNotMatch(cursorCode, /UpcomingItem/, 'the cursor module NEVER references UpcomingItem (no item payloads can enter the cursor)');
 assert.doesNotMatch(cursorCode, /pending/, 'the cursor module has NO pending buffer (the v1 regression is gone)');
 ok('CRITICAL: the cursor type carries positions only — never items');
@@ -63,7 +63,7 @@ console.log('\n2. Cursor module: parse/serialize round-trip + strict validation'
   const { parseUpcomingCursor, serializeUpcomingCursor, computeUpcomingFilterFingerprint, computeStreamId, UpcomingCursorError } = await import('../src/lib/server/content/upcoming-cursor.ts');
 
   // Round-trip: serialize -> parse returns the identical cursor.
-  const cursor = { version: 2 as const, fingerprint: 'fp123abc', streamId: 'sn789def', movieCandidateIndex: 4711, snapshotOffset: 132 };
+  const cursor = { version: 3 as const, fingerprint: 'fp123abc', streamId: 'sn789def', movieCandidateIndex: 4711, snapshotOffset: 132 };
   const serialized = serializeUpcomingCursor(cursor);
   const parsed = parseUpcomingCursor(serialized);
   assert.ok(parsed.ok, 'a valid cursor parses');
@@ -72,7 +72,7 @@ console.log('\n2. Cursor module: parse/serialize round-trip + strict validation'
   // COMPACT SIZE GUARANTEE (the regression contract): even with far
   // beyond-realistic positions (real positions are bounded by the
   // candidate caps — hundreds at most) the serialized cursor stays tiny.
-  const extreme = { version: 2 as const, fingerprint: 'zzzzzzzzzz', streamId: 'yyyyyyyyyy', movieCandidateIndex: 999999, snapshotOffset: 999999 };
+  const extreme = { version: 3 as const, fingerprint: 'zzzzzzzzzz', streamId: 'yyyyyyyyyy', movieCandidateIndex: 999999, snapshotOffset: 999999 };
   const extremeSerialized = serializeUpcomingCursor(extreme);
   assert.ok(extremeSerialized.length <= 120, `the serialized cursor stays <= 120 chars even at far-beyond-real positions (got ${extremeSerialized.length})`);
   ok(`cursor is compact: ${serialized.length} chars typical, ${extremeSerialized.length} chars at extreme positions`);
@@ -111,19 +111,19 @@ console.log('\n2. Cursor module: parse/serialize round-trip + strict validation'
   // Filter fingerprint isolation: EVERY filter dimension changes the
   // fingerprint, and policy keys ride inside it.
   const policyKeys = ['daily-serial-gt100', 'airdate-discovery-v4'];
-  const base = computeUpcomingFilterFingerprint({ month: 10, year: 2026, type: 'all', language: 'all' }, 'IN', policyKeys);
+  const base = computeUpcomingFilterFingerprint({ startDate: '2026-10-01', type: 'all', language: 'all' }, 'IN', policyKeys);
   const variants = [
-    computeUpcomingFilterFingerprint({ month: 11, year: 2026, type: 'all', language: 'all' }, 'IN', policyKeys),
-    computeUpcomingFilterFingerprint({ month: 10, year: 2027, type: 'all', language: 'all' }, 'IN', policyKeys),
-    computeUpcomingFilterFingerprint({ month: 10, year: 2026, type: 'movie', language: 'all' }, 'IN', policyKeys),
-    computeUpcomingFilterFingerprint({ month: 10, year: 2026, type: 'all', language: 'ta' }, 'IN', policyKeys),
-    computeUpcomingFilterFingerprint({ month: 10, year: 2026, type: 'all', language: 'all' }, 'US', policyKeys),
-    computeUpcomingFilterFingerprint({ month: 10, year: 2026, type: 'all', language: 'all' }, 'IN', ['daily-serial-gt100', 'airdate-discovery-v5'])
+    computeUpcomingFilterFingerprint({ startDate: '2026-11-01', type: 'all', language: 'all' }, 'IN', policyKeys),
+    computeUpcomingFilterFingerprint({ startDate: '2027-10-01', type: 'all', language: 'all' }, 'IN', policyKeys),
+    computeUpcomingFilterFingerprint({ startDate: '2026-10-01', type: 'movie', language: 'all' }, 'IN', policyKeys),
+    computeUpcomingFilterFingerprint({ startDate: '2026-10-01', type: 'all', language: 'ta' }, 'IN', policyKeys),
+    computeUpcomingFilterFingerprint({ startDate: '2026-10-01', type: 'all', language: 'all' }, 'US', policyKeys),
+    computeUpcomingFilterFingerprint({ startDate: '2026-10-01', type: 'all', language: 'all' }, 'IN', ['daily-serial-gt100', 'airdate-discovery-v5'])
   ];
   for (const variant of variants) {
     assert.notEqual(variant, base, 'a changed filter/policy dimension changes the fingerprint');
   }
-  assert.equal(computeUpcomingFilterFingerprint({ month: 10, year: 2026, type: 'all', language: 'all' }, 'IN', policyKeys), base, 'identical filters produce the identical fingerprint (deterministic)');
+  assert.equal(computeUpcomingFilterFingerprint({ startDate: '2026-10-01', type: 'all', language: 'all' }, 'IN', policyKeys), base, 'identical filters produce the identical fingerprint (deterministic)');
   assert.ok(base.length <= 32, 'fingerprint token is compact');
   ok('filter fingerprint isolates month/year/type/language/region/policy version — deterministic and compact');
 
@@ -238,7 +238,7 @@ ok('API contract: structured success shape + structured cursor/upstream error co
 
 // The API passes the RAW cursor to loadUpcomingPage (strict server-side
 // validation) and never pre-decodes or drops it.
-assert.match(apiSource, /loadUpcomingPage\(\{ month, year, type, language \}, page, cursor\)/, 'the API forwards the raw cursor for strict server-side validation');
+assert.match(apiSource, /loadUpcomingPage\(\{ startDate, type, language \}, page, cursor\)/, 'the API forwards the raw cursor for strict server-side validation');
 ok('API forwards the raw cursor — no client-side cursor interpretation');
 
 // ============================================================
@@ -246,7 +246,7 @@ ok('API forwards the raw cursor — no client-side cursor interpretation');
 // ============================================================
 console.log('\n5. Page server contract');
 
-assert.match(pageServerSource, /loadUpcomingPage\(\{ month, year, type, language \}, 1\)/, 'SSR page 1 loads WITHOUT a cursor (fresh deterministic start)');
+assert.match(pageServerSource, /loadUpcomingPage\(\{ startDate, type, language \}, 1\)/, 'SSR page 1 loads WITHOUT a cursor (fresh deterministic start)');
 assert.match(pageServerSource, /serializeCursor\(result\.cursor\)/, 'SSR returns the COMPACT serialized cursor');
 assert.match(pageServerSource, /hasNextPage: result\.hasNextPage/, 'SSR returns hasNextPage');
 assert.match(pageServerSource, /errorMessage: result\.errorMessage/, 'SSR preserves the total-failure errorMessage contract');
@@ -323,8 +323,8 @@ ok('loading states + accessibility: skeleton, aria-busy, aria-live announcements
 
 // Filter controls sync from server state.
 const syncEffect = pageSvelteSource.slice(pageSvelteSource.indexOf('// Server data sync'), pageSvelteSource.indexOf('// Phase F.1 — COMPACT month labels'));
-assert.match(syncEffect, /selectedMonth = String\(d\.filters\.month\);/, 'month control re-syncs from URL/server state');
-assert.match(syncEffect, /selectedYear = String\(d\.filters\.year\);/, 'year control re-syncs from URL/server state');
+assert.match(syncEffect, /selectedStartDate = d\.filters\.startDate;/, 'date control re-syncs from URL/server state');
+// F7-B: year control removed (single date input replaces month+year).
 assert.match(syncEffect, /selectedType = d\.filters\.type;/, 'type control re-syncs from URL/server state');
 assert.match(syncEffect, /selectedLanguage = String\(d\.filters\.language \?\? 'all'\);/, 'language control re-syncs from URL/server state');
 assert.match(syncEffect, /allItems = \[\.\.\.d\.items\];\s*currentPage = d\.page \?\? 1;\s*hasNextPage = d\.hasNextPage \?\? false;\s*nextCursor = d\.cursor \?\? '';/, 'pagination state resets COMPLETELY on filter change (no old cursor survives)');

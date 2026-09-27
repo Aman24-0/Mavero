@@ -1,20 +1,27 @@
 // ============================================================
-// UPCOMING — v2 pagination cursor (transport metadata ONLY).
+// UPCOMING — v3 pagination cursor (transport metadata ONLY).
 //
 // THE INVARIANT: the cursor NEVER carries UpcomingItem payloads.
 // The previous architecture serialized full `UpcomingItem[]` pending
 // events into the URL, which made the cursor grow with every enriched
 // overflow event and broke pagination for series/anime/all (oversized
-// requests). The v2 cursor is a compact continuation token:
+// requests). The v2 cursor replaced that with a compact continuation
+// token. The v3 cursor (F7-B) carries the SAME compact shape but is
+// keyed on the new startDate/30-day-window identity instead of the
+// legacy month/year identity. A v2 cursor is REJECTED by the v3
+// parser (`reason: 'version'`) so an old cursor can never be
+// silently re-interpreted against the new fingerprint semantics.
 //
-//   { v: 2, fp: "<filter fingerprint>", sn: "<stream id>",
+//   { v: 3, fp: "<filter fingerprint>", sn: "<stream id>",
 //     m: <movie candidate position>, x: <snapshot offset> }
 //
-//   - v   cursor schema version (2) — old cursors are rejected,
-//         never silently converted into a fresh page-1 request.
-//   - fp  filter fingerprint (month/year/type/language/region +
+//   - v   cursor schema version (3) — old cursors (v1, v2) are
+//         rejected, never silently converted into a fresh page-1
+//         request.
+//   - fp  filter fingerprint (startDate/type/language/region +
 //         policy/query version constants). A cursor can never be
-//         reused for different filters.
+//         reused for different filters (different startDate, type,
+//         language, region or policy version).
 //   - sn  stream identity (a FULL deterministic digest of the
 //         pagination-relevant stream the position refers to — every
 //         event contributes its ID plus its timestamp/date, in stream
@@ -32,15 +39,23 @@
 // ============================================================
 
 // Cursor schema version. Bumping rejects every pre-existing cursor.
-export const UPCOMING_CURSOR_VERSION = 2;
+// F7-B: bumped 2 -> 3 to invalidate every v2 cursor whose fingerprint
+// was keyed on month/year (a v2 cursor would otherwise silently
+// validate against a v3 startDate fingerprint that never matches).
+export const UPCOMING_CURSOR_VERSION = 3;
 
-export type UpcomingCursorV2 = {
-  version: 2;
+export type UpcomingCursorV3 = {
+  version: 3;
   fingerprint: string;
   streamId: string;
   movieCandidateIndex: number;
   snapshotOffset: number;
 };
+
+// Back-compat alias for callers/tests that still reference the v2 type
+// name. The runtime shape is identical; only the version constant and
+// the fingerprint semantics differ.
+export type UpcomingCursorV2 = UpcomingCursorV3;
 
 export type UpcomingCursorErrorReason =
   | 'malformed'
@@ -111,7 +126,7 @@ export function parseUpcomingCursor(raw: string | null | undefined): ParsedUpcom
   if (raw === null || raw === undefined || raw === '') {
     return {
       ok: true,
-      cursor: { version: 2, fingerprint: '', streamId: '', movieCandidateIndex: 0, snapshotOffset: 0 }
+      cursor: { version: 3, fingerprint: '', streamId: '', movieCandidateIndex: 0, snapshotOffset: 0 }
     };
   }
   let decoded: unknown;
@@ -125,8 +140,8 @@ export function parseUpcomingCursor(raw: string | null | undefined): ParsedUpcom
   }
   const wire = decoded as Partial<WireCursor>;
   if (wire.v !== UPCOMING_CURSOR_VERSION) {
-    // Unknown/legacy cursor versions are rejected explicitly (the
-    // frontend restarts deterministically) — never silently reset.
+    // Unknown/legacy cursor versions (v1, v2) are rejected explicitly
+    // (the frontend restarts deterministically) — never silently reset.
     return { ok: false, reason: 'version' };
   }
   if (typeof wire.fp !== 'string' || !TOKEN_RE.test(wire.fp)) return { ok: false, reason: 'shape' };
@@ -135,7 +150,7 @@ export function parseUpcomingCursor(raw: string | null | undefined): ParsedUpcom
   return {
     ok: true,
     cursor: {
-      version: 2,
+      version: 3,
       fingerprint: wire.fp,
       streamId: wire.sn,
       movieCandidateIndex: wire.m,
@@ -160,17 +175,20 @@ export function serializeUpcomingCursor(cursor: UpcomingCursorV2): string {
 
 /**
  * Filter fingerprint: binds a cursor to EXACTLY one
- * month/year/type/language/region/policy-version combination. The
+ * startDate/type/language/region/policy-version combination. The
  * policy/query version constants ride inside the fingerprint so a
  * policy bump invalidates outstanding cursors instead of serving
- * stale-era pages.
+ * stale-era pages. F7-B: the legacy month/year dimensions are GONE;
+ * startDate (YYYY-MM-DD) is the sole date identity. A cursor issued
+ * for startDate=2026-09-27 MUST be rejected when re-presented with
+ * startDate=2026-09-28 (different identity → different fingerprint).
  */
 export function computeUpcomingFilterFingerprint(
-  filters: { month: number; year: number; type: string; language: string },
+  filters: { startDate: string; type: string; language: string },
   region: string,
   policyKeys: string[]
 ): string {
-  const identity = JSON.stringify([UPCOMING_CURSOR_VERSION, filters.month, filters.year, filters.type, filters.language, region, [...policyKeys].sort().join('|')]);
+  const identity = JSON.stringify([UPCOMING_CURSOR_VERSION, filters.startDate, filters.type, filters.language, region, [...policyKeys].sort().join('|')]);
   return toToken(cyrb53(identity));
 }
 
