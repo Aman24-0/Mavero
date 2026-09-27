@@ -179,22 +179,29 @@
   </AppShell>
 {/if}
 
-<!-- Navigation progress indicator — thin Mavero-green top bar that
-     appears during SPA navigation and disappears when it completes.
-     Non-blocking (pointer-events: none), respects reduced-motion.
-     F7-B UX fix: positioned BELOW the mobile status bar / notch via
-     env(safe-area-inset-top) so it is actually visible on mobile
-     devices (the previous 3px bar at top:0 was hidden behind the
-     iOS dynamic island / Android status bar). Slightly thicker (4px)
-     and uses an indeterminate shimmer so the user sees clear feedback
-     that navigation/data is loading. The `navigating` store stays
-     truthy for the WHOLE SPA transition (route swap + load functions
-     + new page mount), so the indicator represents REAL pending
-     work, not an artificial delay. -->
+<!-- Navigation loading indicators — appear during SPA navigation and
+     disappear when it completes. Non-blocking (pointer-events: none),
+     respects reduced-motion. The `navigating` store from SvelteKit
+     stays truthy for the WHOLE SPA transition (route swap + load
+     functions + new page mount), so both indicators represent REAL
+     pending work, not an artificial delay.
+
+     Two elements, ONE animation (no competing motion):
+       1. .nav-spinner  — compact circular spinner, the PRIMARY visible
+                          feedback. Fixed top-center, below the mobile
+                          status bar / notch via env(safe-area-inset-top).
+                          Dark translucent background + Mavero-green
+                          accent ring + subtle glow. This is the clear
+                          "navigation is loading" signal the user sees.
+       2. .nav-progress  — thin static accent line at the very top edge
+                          (no animation). Secondary peripheral cue only;
+                          the sweep animation was removed so the spinner
+                          is the sole animated element. -->
 {#if navigating}
-  <div class="nav-progress" role="status" aria-label="Loading…">
-    <div class="nav-progress-bar"></div>
+  <div class="nav-spinner" role="status" aria-label="Loading">
+    <div class="nav-spinner-ring"></div>
   </div>
+  <div class="nav-progress" aria-hidden="true"></div>
 {/if}
 
 <!-- Mavero branded boot overlay — shown on EVERY initial app load
@@ -209,49 +216,80 @@
 <Toast />
 
 <style>
-  /* F7-B UX fix: the indicator is positioned below the mobile status
-     bar / notch via env(safe-area-inset-top), so it is actually visible
-     on iPhone (dynamic island) and Android devices. The bar itself
-     uses an indeterminate shimmer (a moving highlight sweep) so the
-     user sees continuous motion feedback for the entire navigation,
-     not just a single 0.8s grow animation that then freezes. */
+  /* ============================================================
+     Navigation spinner — PRIMARY loading feedback.
+     Compact circular spinner, fixed top-center, below the mobile
+     status bar / notch. Dark translucent background + Mavero-green
+     rotating ring + subtle glow. This is the clear "navigation is
+     loading" signal the user sees immediately on tap.
+     ============================================================ */
+  .nav-spinner {
+    position: fixed;
+    /* env(safe-area-inset-top) on mobile pushes the spinner below the
+       status bar / notch. On desktop it evaluates to 0, so the spinner
+       sits at the top of the viewport. The 12px offset gives breathing
+       room below the safe area. */
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    pointer-events: none;
+    /* Dark translucent circular background — visible against any page
+       content underneath, with a subtle backdrop blur for legibility. */
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: rgba(5, 7, 8, .72);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(0, 255, 156, .22);
+    /* Subtle Mavero-green glow so the spinner reads as an active
+       loading state, not a static decoration. */
+    box-shadow: 0 0 14px rgba(0, 255, 156, .3), 0 2px 8px rgba(0, 0, 0, .4);
+  }
+  /* The rotating ring — a CSS border spinner. 20px circle with a
+     translucent track and a solid Mavero-green top segment. */
+  .nav-spinner-ring {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid rgba(242, 255, 248, .12);
+    border-top-color: var(--color-primary, #00ff9c);
+    animation: nav-spinner-rotate 0.7s linear infinite;
+  }
+  @keyframes nav-spinner-rotate {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ============================================================
+     Navigation progress bar — SECONDARY peripheral cue.
+     Thin static accent line at the very top edge. The sweep animation
+     was removed so the spinner is the sole animated element (no
+     competing motion). This bar provides a subtle peripheral signal
+     at the screen edge without drawing focus from the spinner.
+     ============================================================ */
   .nav-progress {
     position: fixed;
-    /* env(safe-area-inset-top) on mobile pushes the bar below the
-       status bar / notch. On desktop it evaluates to 0, so the bar
-       sits at the very top of the viewport there. The 4px fallback
-       keeps it visible even on browsers that don't expose the env(). */
     top: calc(env(safe-area-inset-top, 0px));
     left: 0;
     right: 0;
-    height: 4px;
+    height: 3px;
     z-index: 9999;
     pointer-events: none;
-    background: rgba(0, 255, 156, .12);
-    overflow: hidden;
+    background: linear-gradient(90deg, var(--color-primary, #00ff9c), var(--color-primary-hover, #00e88c));
+    opacity: .55;
   }
-  .nav-progress-bar {
-    position: absolute;
-    top: 0;
-    left: 0;
-    height: 100%;
-    width: 40%;
-    background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
-    box-shadow: 0 0 8px rgba(0, 255, 156, .55);
-    border-radius: 0 4px 4px 0;
-    animation: nav-progress-sweep 1s ease-in-out infinite;
-  }
-  @keyframes nav-progress-sweep {
-    0%   { transform: translateX(-100%); }
-    50%  { transform: translateX(150%); }
-    100% { transform: translateX(350%); }
-  }
+
+  /* Reduced motion: stop the spinner rotation; show a static ring
+     instead. The bar is already static. No continuous motion. */
   @media (prefers-reduced-motion: reduce) {
-    .nav-progress-bar {
+    .nav-spinner-ring {
       animation: none;
-      width: 100%;
-      transform: none;
-      border-radius: 0;
+      border-color: rgba(242, 255, 248, .12);
+      border-top-color: var(--color-primary, #00ff9c);
+      border-right-color: var(--color-primary, #00ff9c);
     }
   }
 </style>
