@@ -263,7 +263,7 @@ const adminAuth = read('src/lib/server/streaming/admin-auth.ts');
   ok(/export async function isAdminUser/.test(adminAuth), '4b. isAdminUser exported from the canonical admin-auth module');
   ok(/from\('profiles'\)[\s\S]*?select\('role'\)[\s\S]*?eq\('id',\s*userId\)/.test(adminAuth), '4c. isAdminUser queries profiles.role by the authenticated user id');
   ok(/data\?\.role === 'admin'/.test(adminAuth), '4d. exemption is true only for profiles.role === "admin"');
-  ok(/return false;[\s\S]*?return data\?\.role === 'admin'/.test(adminAuth), '4e. lookup errors fail CLOSED (protection stays on)');
+  ok(/return false;[\s\S]*?(?:return data\?\.role === 'admin'|return isAdmin)/.test(adminAuth), '4e. lookup errors fail CLOSED (protection stays on)');
   // Admin: never initialized (behavioral A5) — and the layout only
   // feeds the boolean to the client.
   ok(/devtoolExempt: boolean/.test(read('src/app.d.ts')), '5a. PageData declares devtoolExempt: boolean (minimal capability projection)');

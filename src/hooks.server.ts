@@ -31,6 +31,19 @@ import { ensureAnonymousIdCookie, ANONYMOUS_ID_COOKIE } from '$lib/server/analyt
 // (requestId + error class only; never tokens or session IDs).
 const REGISTRATION_TIMEOUT_MS = 1500;
 
+// Performance fix: per-instance heartbeat cache for device session
+// registration. The RPC heartbeats at most once per HEARTBEAT_INTERVAL_MS
+// (5 min) — but the NETWORK ROUNDTRIP to Supabase still happens on every
+// authenticated request. This cache skips the RPC entirely when the last
+// call was < 4.5 min ago (90% of the heartbeat interval, to avoid edge
+// races). Per-instance (same honesty contract as the revocation cache —
+// a cold Netlify instance has an empty cache and pays the RPC on first
+// request). Security authorization (requireAdmin/RLS) does NOT depend
+// on this cache — it only optimizes the heartbeat write path.
+const REGISTRATION_HEARTBEAT_CACHE_TTL_MS = 4.5 * 60 * 1000; // 4.5 min
+const REGISTRATION_CACHE_MAX_ENTRIES = 5000;
+const registrationCache = new Map<string, number>(); // sessionId → lastRegisteredAt
+
 /**
  * Awaits a promise with a bounded timeout. Never rejects — resolves
  * `{ timedOut: true, value: null }` when the deadline passes first.
@@ -293,42 +306,55 @@ export const handle: Handle = async ({ event, resolve }) => {
       touchCapable: readDeviceHintCookie(event.cookies.get(DEVICE_HINT_COOKIE)),
     });
 
-    const registration = await awaitWithTimeout(
-      registerCurrentSession(admin, {
-        userId: auth.user.id,
-        supabaseSessionId,
-        deviceId,
-        metadata,
-      }),
-      REGISTRATION_TIMEOUT_MS
-    );
+    // Performance fix: check the per-instance heartbeat cache. If we've
+    // registered this session recently (< 4.5 min ago), skip the RPC
+    // entirely — the registry already has a fresh last_seen_at. This
+    // eliminates one Supabase roundtrip on ~99% of authenticated
+    // navigations on warm instances.
+    const nowMs = Date.now();
+    const lastRegisteredAt = registrationCache.get(supabaseSessionId);
+    if (lastRegisteredAt && (nowMs - lastRegisteredAt) < REGISTRATION_HEARTBEAT_CACHE_TTL_MS) {
+      // Cache hit — skip the RPC. The revocation check (above) still
+      // ran independently and caught any revoked sessions.
+    } else {
+      // Cache miss or expired — perform the RPC.
+      // Bounded eviction (same pattern as the revocation cache).
+      if (registrationCache.size >= REGISTRATION_CACHE_MAX_ENTRIES) {
+        for (const [key, ts] of registrationCache) {
+          if (nowMs - ts >= REGISTRATION_HEARTBEAT_CACHE_TTL_MS) registrationCache.delete(key);
+        }
+      }
 
-    if (registration.timedOut) {
-      // Bounded-timeout miss: auth continues, registry may be stale
-      // for this session until the next request heartbeats it.
-      console.error('[DeviceSessions] Registration timed out (non-blocking)', {
-        requestId: event.locals.requestId,
-      });
-    } else if (registration.value) {
-      // Safe observability (Newtask §40): distinguish a fresh
-      // registration from a heartbeat touch via the RPC's
-      // `registered` flag. Never log tokens or session IDs.
-      if (registration.value.registered === true) {
-        console.log('[DeviceSessions] register success', {
+      const registration = await awaitWithTimeout(
+        registerCurrentSession(admin, {
+          userId: auth.user.id,
+          supabaseSessionId,
+          deviceId,
+          metadata,
+        }),
+        REGISTRATION_TIMEOUT_MS
+      );
+
+      if (registration.timedOut) {
+        console.error('[DeviceSessions] Registration timed out (non-blocking)', {
           requestId: event.locals.requestId,
-          deviceType: metadata.deviceType,
         });
-      } else {
-        console.log('[DeviceSessions] heartbeat ok', {
-          requestId: event.locals.requestId,
-          deviceType: metadata.deviceType,
-        });
+      } else if (registration.value) {
+        // Cache the successful registration.
+        registrationCache.set(supabaseSessionId, Date.now());
+        if (registration.value.registered === true) {
+          console.log('[DeviceSessions] register success', {
+            requestId: event.locals.requestId,
+            deviceType: metadata.deviceType,
+          });
+        } else {
+          console.log('[DeviceSessions] heartbeat ok', {
+            requestId: event.locals.requestId,
+            deviceType: metadata.deviceType,
+          });
+        }
       }
     }
-    // registration.value === null (and not timed out) ⇒ the RPC
-    // failed or the session was revoked in the race window.
-    // registerCurrentSession already logged the safe diagnostic;
-    // authentication continues (failure-safe contract).
   }
 
   // Phase 3-A: return the request ID in the response header so the

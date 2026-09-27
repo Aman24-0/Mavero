@@ -62,7 +62,45 @@ export async function assertAdminClient(client: SupabaseClient<Database>, userId
  *   - Minimal disclosure: only the boolean capability reaches the
  *     client. No role string, no profile fields, no admin enumeration.
  */
+// Performance fix: per-instance capability cache for isAdminUser.
+// The result (devtoolExempt boolean) is a UI-deterrence capability only,
+// NOT an authorization signal. requireAdmin()/assertAdminClient() always
+// query the profiles table directly — this cache does NOT affect them.
+// TTL = 5 min (admin role changes are rare admin actions). Bounded LRU.
+const ADMIN_CAPABILITY_TTL_MS = 5 * 60 * 1000;
+const ADMIN_CAPABILITY_MAX_ENTRIES = 1000;
+const adminCapabilityCache = new Map<string, { isAdmin: boolean; expiresAt: number }>();
+
+function evictExpiredAdminCapabilities(now: number): void {
+  for (const [key, entry] of adminCapabilityCache) {
+    if (entry.expiresAt <= now) adminCapabilityCache.delete(key);
+  }
+}
+
+/**
+ * Invalidates the cached admin capability for a user. Call on sign-out
+ * or role-change flows to ensure the next request re-queries the DB.
+ */
+export function invalidateAdminCapabilityCache(userId?: string): void {
+  if (userId) {
+    adminCapabilityCache.delete(userId);
+  } else {
+    adminCapabilityCache.clear();
+  }
+}
+
 export async function isAdminUser(client: SupabaseClient<Database>, userId: string): Promise<boolean> {
+  const now = Date.now();
+  const cached = adminCapabilityCache.get(userId);
+  if (cached && cached.expiresAt > now) {
+    return cached.isAdmin;
+  }
+
+  // Bounded eviction (same pattern as the revocation cache).
+  if (adminCapabilityCache.size >= ADMIN_CAPABILITY_MAX_ENTRIES) {
+    evictExpiredAdminCapabilities(now);
+  }
+
   try {
     const { data, error } = await client
       .from('profiles')
@@ -72,11 +110,13 @@ export async function isAdminUser(client: SupabaseClient<Database>, userId: stri
       .maybeSingle();
     if (error) {
       console.error('[Admin] Role capability lookup failed', { code: error.code, message: error.message });
-      return false;
+      return false; // fail-closed — cache nothing on error
     }
-    return data?.role === 'admin';
+    const isAdmin = data?.role === 'admin';
+    adminCapabilityCache.set(userId, { isAdmin, expiresAt: now + ADMIN_CAPABILITY_TTL_MS });
+    return isAdmin;
   } catch (err) {
     console.error('[Admin] Role capability lookup exception', { name: (err as Error)?.name ?? 'unknown' });
-    return false;
+    return false; // fail-closed — cache nothing on error
   }
 }

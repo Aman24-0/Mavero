@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { discoverBatchDeduped, isDiscoverLanguage } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { contentErrorResponse } from '$lib/server/content/response';
+import { PUBLIC_CATALOG_CACHE } from '$lib/server/http/cache-headers';
 import type { RequestHandler } from './$types';
 
 /**
@@ -55,7 +56,7 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
       language: languageParam,
       provider: safeProvider ?? null,
       rails: responseRails,
-    }, { headers: { 'cache-control': 'no-store' } });
+    }, { headers: { 'cache-control': PUBLIC_CATALOG_CACHE } });
   } catch (error) {
     return contentErrorResponse(error);
   }

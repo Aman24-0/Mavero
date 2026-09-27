@@ -1,7 +1,7 @@
 <script lang="ts">
   import '$lib/../app.css';
   import { onMount } from 'svelte';
-  import { page } from '$app/state';
+  import { page, navigating } from '$app/state';
   import AppShell from '$components/AppShell.svelte';
   import PwaExperience from '$components/PwaExperience.svelte';
   import PwaBootOverlay from '$components/PwaBootOverlay.svelte';
@@ -179,6 +179,13 @@
   </AppShell>
 {/if}
 
+<!-- Navigation progress indicator — thin Mavero-green top bar that
+     appears during SPA navigation and disappears when it completes.
+     Non-blocking (pointer-events: none), respects reduced-motion. -->
+{#if navigating}
+  <div class="nav-progress" aria-hidden="true"></div>
+{/if}
+
 <!-- Mavero branded boot overlay — shown on EVERY initial app load
      (both normal browser tabs AND installed PWA launches). The overlay
      is a pure visual layer: pointer-events: none, aria-hidden, no
@@ -189,3 +196,31 @@
 
 <PwaExperience />
 <Toast />
+
+<style>
+  .nav-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    z-index: 9999;
+    pointer-events: none;
+    background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
+    box-shadow: 0 0 8px rgba(0, 255, 156, .4);
+    animation: nav-progress-grow 0.8s ease-out forwards;
+    transform-origin: left center;
+  }
+  @keyframes nav-progress-grow {
+    0% { transform: scaleX(0); opacity: 0.8; }
+    50% { transform: scaleX(0.7); opacity: 1; }
+    100% { transform: scaleX(1); opacity: 0.6; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nav-progress {
+      animation: none;
+      transform: scaleX(1);
+      opacity: 0.6;
+    }
+  }
+</style>

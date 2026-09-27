@@ -15,7 +15,8 @@
   import AppFooter from '$components/AppFooter.svelte';
   import { haptic } from '$lib/client/haptics';
   import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
-  import { clearRailCache } from '$lib/client/discover/rail-cache';
+  // rail-cache import removed — clearRailCache() is no longer called
+  // (performance fix: the cache survives back-nav instead of being wiped).
   // Phase 9 fix: import the canonical SECTION_PRIORITY + canonicalExcludeIds
   // from the SHARED module (client-safe). The server dedup loop walks the
   // SAME SECTION_PRIORITY, so Show More exclude lists honor the same
@@ -148,11 +149,16 @@
       if (!payload.ok || !payload.rails) { batchStatus = 'failed'; return; }
       batchRails = payload.rails;
       batchStatus = 'success';
-      // Phase 8 fix: clear the rail cache so stale independent-rail data
-      // from the old architecture cannot bypass the new global dedup.
-      // The batch results are the authoritative initial state — cached
-      // independent rails may contain duplicates.
-      clearRailCache();
+      // Performance fix: do NOT clear the rail cache on batch success.
+      // The rail cache stores Show More continuation results keyed by
+      // (user, section, page). Clearing it on every batch fetch defeats
+      // its purpose — back-nav from a detail page forces the batch to
+      // refetch AND forces every subsequent Show More to hit the
+      // network cold. The batch results initialize each section's
+      // initialItems directly (not through the rail cache), so leaving
+      // the cache intact cannot corrupt the batch. The cache is
+      // per-user keyed, TTL-bounded (2 min), and LRU-bounded (32
+      // entries) — it cannot serve another user's rails.
     } catch {
       // Silent fail — sections will fall back to independent fetches.
       batchStatus = 'failed';

@@ -5,6 +5,7 @@ import type { RequestHandler } from './$types';
 import { extractSessionId } from '$lib/server/auth/jwt-session-id';
 import { revokeSession } from '$lib/server/auth/device-sessions';
 import { invalidateRevocationCache } from '$lib/server/auth/session-revocation-cache';
+import { invalidateAdminCapabilityCache } from '$lib/server/streaming/admin-auth';
 import { recordServerEvent } from '$lib/server/analytics/ingest';
 
 // Sign-out endpoint.
@@ -105,6 +106,9 @@ export const POST: RequestHandler = async ({ locals }) => {
           // current session so the next request from this browser
           // (if any cookie lingers) is re-queried and rejected.
           invalidateRevocationCache(supabaseSessionId);
+          // Performance fix: invalidate the admin capability cache so
+          // the next request re-queries the profiles table.
+          invalidateAdminCapabilityCache(locals.user.id);
         }
       }
     } catch {
