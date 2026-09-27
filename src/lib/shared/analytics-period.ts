@@ -132,6 +132,11 @@ export function resolveCustomRange(
   // Clamp `from` to 2 years ago (bounded query window).
   const twoYearsAgoMs = now.getTime() - 2 * 365 * 24 * 60 * 60 * 1000;
   const startMs = Math.max(fromDate.getTime(), twoYearsAgoMs);
+  // Phase 7 fix: after clamping, if start > end (e.g. both from and to
+  // were in the future, so `to` was clamped to now but `from` was not),
+  // return null to prevent a negative range that silently produces an
+  // empty dashboard.
+  if (startMs > endMs) return null;
   return {
     start: new Date(startMs).toISOString(),
     end: new Date(endMs).toISOString(),

@@ -196,30 +196,10 @@ function rowIdentity(row: { user_id?: string | null; anonymous_id?: string | nul
 // Provider name resolution
 // ============================================================
 
-/**
- * Resolves provider names from provider_id UUIDs via the existing
- * `getPublicStreamingConfig()` helper. Lazy-imported for testability
- * (the streaming config module imports Supabase which is fine, but
- * we keep the lazy pattern consistent with Phase 4).
- */
-async function resolveProviderNames(providerIds: Set<string>): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
-  if (providerIds.size === 0) return result;
-  try {
-    const { getPublicStreamingConfig } = await import('$lib/server/streaming/public-config');
-    // We need a Supabase client to call getPublicStreamingConfig, but
-    // we don't have one here. Instead, we'll resolve names in the
-    // route load function (which has locals.supabase) and pass them
-    // to the page. For the server module, we return null names and
-    // the caller resolves them.
-    //
-    // Actually, let's pass the client to fetchProviders so it can
-    // resolve names. Let me refactor.
-    return result;
-  } catch {
-    return result;
-  }
-}
+// Phase 7 cleanup: removed the dead `resolveProviderNames` stub that
+// always returned an empty Map and was never called. The actual
+// implementation is `resolveProviderNamesViaConfig` (below), which IS
+// called from `fetchProviders`.
 
 // ============================================================
 // fetchProviders — top-level entry point

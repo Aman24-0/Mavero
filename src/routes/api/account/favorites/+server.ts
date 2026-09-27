@@ -31,10 +31,14 @@ export const DELETE: RequestHandler = async ({ locals, url }) => {
   // Phase 1 Analytics Foundation — server-authoritative `favorite_removed`
   // event. Emitted AFTER the successful tombstone + delete so we only
   // record events for actual removals. Fire-and-forget; never breaks the
-  // response. `favorite_added` is NOT emitted here — that event is
-  // recorded client-side via the dispatcher (see Phase 4 plan) because
-  // there is no dedicated server-side "add favorite" endpoint; adds go
-  // through the sync endpoint as part of a batch upsert.
+  // response.
+  //
+  // Phase 7 audit note: `favorite_added` is NOT emitted anywhere in the
+  // current codebase (neither server-side nor client-side). It is defined
+  // in the taxonomy but deferred — there is no dedicated "add favorite"
+  // endpoint; adds go through the sync endpoint as a batch upsert. Adding
+  // `favorite_added` instrumentation is a future enhancement, not a Phase 7
+  // scope item.
   if (locals.anonymousId) {
     try {
       const admin = createSupabaseAdminClient();

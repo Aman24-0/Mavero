@@ -28,6 +28,7 @@ import { isAnalyticsEventName, type AnalyticsEventName } from '$lib/shared/analy
 
 const FLUSH_INTERVAL_MS = 5_000;
 const MAX_QUEUE_SIZE = 100; // flush early if queue gets large
+const MAX_BATCH_SIZE = 50; // server rejects batches > 50 (Phase 7 fix)
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes idle = new session
 const SESSION_STORAGE_KEY = 'mavero:analytics-session';
 const INGEST_URL = '/api/events';
@@ -154,7 +155,11 @@ class AnalyticsDispatcher {
     if (this.flushing) return;
     if (this.queue.length === 0) return;
     if (!this.config.enabled || !this.config.anonymousId) return;
-    const batch = this.queue.splice(0, MAX_QUEUE_SIZE);
+    // Phase 7 fix: cap batch at MAX_BATCH_SIZE (50) to match the server's
+    // MAX_EVENTS_PER_BATCH limit. Previously used MAX_QUEUE_SIZE (100)
+    // which caused the server to reject the batch with 400, triggering
+    // an infinite retry loop.
+    const batch = this.queue.splice(0, MAX_BATCH_SIZE);
     this.flushing = true;
     try {
       const payload = {
@@ -183,10 +188,18 @@ class AnalyticsDispatcher {
           keepalive: true,
         });
         if (!response.ok) {
-          // Server returned non-2xx — re-queue the batch for a single
-          // retry on the next flush. Idempotency on event_id means a
-          // duplicate send is harmless if the server did receive it.
-          this.queue.unshift(...batch);
+          // Phase 7 fix: distinguish 4xx (client error — drop, never
+          // retry) from 5xx (server error — retry once). Previously
+          // ALL non-2xx were re-queued, causing infinite retry loops
+          // on 400 (malformed batch / too many events).
+          if (response.status >= 400 && response.status < 500) {
+            // 4xx: client error — the batch will never succeed. Drop it.
+            // Idempotency on event_id means a duplicate send is harmless
+            // if the server did partially receive it.
+          } else {
+            // 5xx or other: server/network error — re-queue for retry.
+            this.queue.unshift(...batch);
+          }
         }
       }
     } catch {

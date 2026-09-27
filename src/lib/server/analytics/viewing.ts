@@ -128,7 +128,8 @@ export type ContentRankingEntry = {
 export type GenreEntry = {
   genre: string;
   watch_starts: number;
-  unique_viewers: number;
+  /** Null = not computed (Phase 7: per-genre unique viewers requires analytics_daily). */
+  unique_viewers: number | null;
 };
 
 export type SearchMetrics = {
@@ -581,8 +582,14 @@ async function computeGenreBreakdown(
       }
     }
   }
+  // Phase 7 fix: unique_viewers per genre is not computed (the
+  // aggregation works from the ranked content list, not per-genre
+  // viewer sets). Return null instead of 0 to honestly represent
+  // "not computed" rather than misleadingly implying "zero viewers".
+  // The UI does not display this field, but the API contract should
+  // be honest.
   return Array.from(byGenre.entries())
-    .map(([genre, e]) => ({ genre, watch_starts: e.watch_starts, unique_viewers: e.viewers.size }))
+    .map(([genre, e]) => ({ genre, watch_starts: e.watch_starts, unique_viewers: null }))
     .sort((a, b) => b.watch_starts - a.watch_starts);
 }
 
