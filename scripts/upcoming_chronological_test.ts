@@ -347,7 +347,7 @@ clearCache();
 {
   const filters = { month: '5', year: '2027', type: 'movie', language: 'all' };
   const pages = await walkAllPages(filters);
-  assert.equal(pages.length, 3, `58 movies / ${UPCOMING_PAGE_SIZE} = 3 pages (24 + 24 + 10), got ${pages.length}`);
+  assert.equal(pages.length, 3, `58 movies / ${UPCOMING_PAGE_SIZE} = 3 pages (20 + 20 + 18), got ${pages.length}`);
   const allItems = pages.flatMap((p) => p.items);
   assert.equal(allItems.length, MOVIE_COUNT, 'NO event loss: every movie renders across the pages');
   assertNoDuplicates(allItems);
@@ -395,7 +395,7 @@ tmdbCalls.length = 0;
 {
   const filters = { month: '5', year: '2027', type: 'series', language: 'all' };
   const pages = await walkAllPages(filters);
-  assert.equal(pages.length, 3, `60 series events / ${UPCOMING_PAGE_SIZE} = 3 pages (24 + 24 + 12), got ${pages.length}`);
+  assert.equal(pages.length, 3, `60 series events / ${UPCOMING_PAGE_SIZE} = 3 pages (20 + 20 + 20), got ${pages.length}`);
   const allItems = pages.flatMap((p) => p.items);
   assert.equal(allItems.length, SERIES_COUNT * SERIES_EPISODES, 'NO event loss: all 60 series episodes render');
   assertNoDuplicates(allItems);
@@ -431,7 +431,8 @@ tmdbCalls.length = 0;
 {
   const filters = { month: '5', year: '2027', type: 'anime', language: 'all' };
   const pages = await walkAllPages(filters);
-  assert.equal(pages.length, 3, `72 anime events / ${UPCOMING_PAGE_SIZE} = 3 pages (24 + 24 + 24), got ${pages.length}`);
+  // F7: page size changed from 24 to 20 → 72/20 = 4 pages (20+20+20+12)
+assert.equal(pages.length, 4, `72 anime events / ${UPCOMING_PAGE_SIZE} = 4 pages (20+20+20+12), got ${pages.length}`);
   const allItems = pages.flatMap((p) => p.items);
   assert.equal(allItems.length, ANIME_COUNT * ANIME_EPISODES, 'NO event loss: all 72 anime episodes render');
   assertNoDuplicates(allItems);
@@ -460,7 +461,8 @@ tmdbCalls.length = 0;
   const pages = await walkAllPages(filters);
   const total = MOVIE_COUNT + SERIES_COUNT * SERIES_EPISODES + ANIME_COUNT * ANIME_EPISODES;
   assert.equal(total, 190, 'fixture arithmetic: 58 movies + 60 series + 72 anime');
-  assert.equal(pages.length, 8, `190 events / ${UPCOMING_PAGE_SIZE} = 8 pages (7×24 + 22), got ${pages.length}`);
+  // F7: page size changed from 24 to 20 → 190/20 = 10 pages (9×20 + 10)
+assert.equal(pages.length, 10, `190 events / ${UPCOMING_PAGE_SIZE} = 10 pages (9×20 + 10), got ${pages.length}`);
   const allItems = pages.flatMap((p) => p.items);
   assert.equal(allItems.length, total, 'NO event loss: movies + series + anime ALL render across the merged pages');
   assertNoDuplicates(allItems);
@@ -478,7 +480,8 @@ tmdbCalls.length = 0;
   assert.equal(tmdbCalls.filter((c) => c.path === '/discover/tv' && !c.params.with_genres).length, 1, 'series discovered exactly once across all pages');
   assertCompactCursors(pages.slice(0, -1), 'all');
   const p5 = cursorPositions(pages[4].body.cursor);
-  assert.equal(p5.x, 5 * UPCOMING_PAGE_SIZE, 'type=all page 5 continues at 5×PAGE_SIZE (offset pagination over the merged snapshot)');
+  // F7: page 5 still exists (190 items / 20 per page = 10 pages)
+assert.equal(p5.x, 5 * UPCOMING_PAGE_SIZE, 'type=all page 5 continues at 5×PAGE_SIZE (offset pagination over the merged snapshot)');
 }
 ok('type=all: 6 pages, global chronological merge, zero dup/loss, one discovery per source');
 

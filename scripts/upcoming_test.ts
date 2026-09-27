@@ -145,7 +145,8 @@ assert.match(upcomingSrc, /return now\.getFullYear\(\)/, 'invalid year falls bac
 // --- 2. Type parsing ---
 assert.match(upcomingSrc, /export function parseUpcomingType/, 'parseUpcomingType is exported');
 assert.match(upcomingSrc, /value === 'movie' \|\| value === 'series' \|\| value === 'anime'/, 'type validated against movie/series/anime');
-assert.match(upcomingSrc, /return 'all'/, 'invalid type falls back to all');
+// F7: invalid type now falls back to 'movie' (was 'all')
+assert.match(upcomingSrc, /return 'movie'/, 'invalid type falls back to movie (F7 default)');
 
 // --- 3. Year options dynamic ---
 assert.match(upcomingSrc, /export function upcomingYearOptions/, 'upcomingYearOptions is exported');
@@ -733,14 +734,17 @@ assert.doesNotMatch(upcomingPageSrc, /href="\/discover"/, 'no hardcoded /discove
 // Exactly four Dropdown filters: Month | Year | Type | Language.
 assert.match(upcomingPageSrc, /<Dropdown id="upcoming-month"/, 'month filter uses Dropdown');
 assert.match(upcomingPageSrc, /<Dropdown id="upcoming-year"/, 'year filter uses Dropdown');
-assert.match(upcomingPageSrc, /<Dropdown id="upcoming-type"/, 'type filter uses Dropdown');
+// F7: type filter changed from Dropdown to chips
+assert.match(upcomingPageSrc, /type-chips/, 'type filter uses chips (F7: was Dropdown)');
 assert.match(upcomingPageSrc, /<Dropdown id="upcoming-language" label="Language"/, 'language filter uses Dropdown');
-assert.equal((upcomingPageSrc.match(/<Dropdown id="upcoming-/g) ?? []).length, 4, 'exactly FOUR filter dropdowns (no second filter implementation)');
+// F7: three dropdowns (Month, Year, Language) + type chips
+assert.equal((upcomingPageSrc.match(/<Dropdown id="upcoming-/g) ?? []).length, 3, 'exactly THREE filter dropdowns (Month, Year, Language) + type chips (F7)');
 // All four filters live in the ONE filters-inner row.
 assert.equal((upcomingPageSrc.match(/class="filters-inner"/g) ?? []).length, 1, 'a single filters row container exists');
 {
   const filtersBar = upcomingPageSrc.slice(upcomingPageSrc.indexOf('class="filters-inner"'), upcomingPageSrc.indexOf('</div>\n  </div>\n\n  <div class="upcoming-body"'));
-  assert.ok(filtersBar.includes('upcoming-month') && filtersBar.includes('upcoming-year') && filtersBar.includes('upcoming-type') && filtersBar.includes('upcoming-language'), 'Month | Year | Type | Language all render inside the one filters row');
+  // F7: type is now chips, not a dropdown with id="upcoming-type"
+  assert.ok(filtersBar.includes('upcoming-month') && filtersBar.includes('upcoming-year') && filtersBar.includes('type-chip') && filtersBar.includes('upcoming-language'), 'Month | Year | Type(chips) | Language all render inside the one filters row');
 }
 // All four update the SAME URL query model.
 assert.match(upcomingPageSrc, /params\.set\('month', next\.month\)/, 'month written to URL');

@@ -204,8 +204,13 @@ export function parseUpcomingYear(value: string | null | undefined): number {
 }
 
 export function parseUpcomingType(value: string | null | undefined): 'all' | UpcomingType {
-  if (value === 'movie' || value === 'series' || value === 'anime') return value;
-  return 'all';
+  if (value === 'all' || value === 'movie' || value === 'series' || value === 'anime') return value;
+  // F7: default to 'movie' (was 'all'). Movies is the default tab;
+  // Shows and Anime are lazy-loaded only when the user selects them.
+  // 'all' is still accepted as a valid value for backward compatibility
+  // (the type=all merged view is still supported server-side, just not
+  // exposed as a default chip in the UI).
+  return 'movie';
 }
 
 // Dynamic year options: current year, previous year, and next 3 years.
@@ -993,7 +998,8 @@ export async function loadUpcomingAnime(year: number, month: number, region: str
 
 // ---------- top-level orchestrator (v2 pagination) ----------
 
-export const UPCOMING_PAGE_SIZE = 24;
+// F7: reduced from 24 to 20 for a tighter initial result set.
+export const UPCOMING_PAGE_SIZE = 20;
 
 // Bounded candidate chunk per page request for the MOVIE stream. Movie
 // discovery (release_date.asc) IS chronological, so the movie stream can

@@ -96,10 +96,12 @@
   // Full month names for the page heading + empty state ("September 2026").
   const monthFullNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+  // F7: type options changed from a dropdown with 'All' to three chips:
+  // Movies (default), Shows, Anime. No 'All' option — each type is
+  // loaded independently and lazily.
   const typeOptions = [
-    { value: 'all', label: 'All' },
     { value: 'movie', label: 'Movies' },
-    { value: 'series', label: 'Series' },
+    { value: 'series', label: 'Shows' },
     { value: 'anime', label: 'Anime' }
   ];
 
@@ -459,8 +461,18 @@
       <div class="filter-wrap">
         <Dropdown id="upcoming-year" label="Year" value={selectedYear} options={yearOptions} onChange={setYear} />
       </div>
-      <div class="filter-wrap">
-        <Dropdown id="upcoming-type" label="Type" value={selectedType} options={typeOptions} onChange={setType} />
+      <!-- F7: type selector changed from a Dropdown to chips (Movies / Shows / Anime).
+           No 'All' option — each type is loaded independently and lazily. -->
+      <div class="type-chips" role="group" aria-label="Content type">
+        {#each typeOptions as opt}
+          <button
+            type="button"
+            class="type-chip"
+            class:active={selectedType === opt.value}
+            onclick={() => setType(opt.value)}
+            aria-pressed={selectedType === opt.value}
+          >{opt.label}</button>
+        {/each}
       </div>
       <div class="filter-wrap">
         <Dropdown id="upcoming-language" label="Language" value={selectedLanguage} options={languageOptions} onChange={setLanguage} />
@@ -648,6 +660,33 @@
     margin-inline: auto;
   }
   .filter-wrap { min-width: 130px; flex: 1 1 130px; }
+
+  /* F7: type chips — Movies / Shows / Anime on one row */
+  .type-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+  }
+  .type-chip {
+    min-height: 36px;
+    padding: 0 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    font-size: .72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+  }
+  .type-chip:hover { border-color: var(--color-primary-border); color: var(--color-text); }
+  .type-chip.active {
+    border-color: var(--color-primary-border);
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+  }
+  .type-chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
   /* Month / Year / Type / Language share ONE horizontal row on every
      viewport. The micro labels stay in the DOM for aria-labelledby but
