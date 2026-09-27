@@ -285,4 +285,41 @@ ok(true, '9. empty batch: all sections have 0 items');
 }
 ok(true, '10. page-1 errors caught: failed sections have 0 items, successful sections unaffected');
 
-console.log(`\nf3_discover_batch_parallel_test: ${passed} checks passed (deterministic ordering + dedup + failure isolation + bounded concurrency + continuation + genre assignment + response shape + cap + empty + error handling)`);
+// ============================================================
+// 11. REAL concurrency limit — max active fetches <= PAGE1_CONCURRENCY
+// ============================================================
+// This test proves that the lazy-task scheduling actually limits
+// concurrency. It would FAIL against the old implementation (which
+// passed already-started promises to boundedAll, allowing all 17
+// fetchRail calls to be in flight simultaneously).
+{
+  let activeFetches = 0;
+  let maxActiveFetches = 0;
+  let totalFetches = 0;
+
+  // Each mock fetch: increment active, update max, wait, decrement.
+  const fetchRail = async (filters: DiscoverRailFilters) => {
+    activeFetches++;
+    maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
+    totalFetches++;
+    // Small delay so concurrent workers overlap.
+    await new Promise((r) => setTimeout(r, 5));
+    activeFetches--;
+    return { items: [], page: filters.page ?? 1, hasNextPage: false, source: 'mock' as any };
+  };
+
+  await discoverBatchDeduped('all', undefined, false, fetchRail);
+
+  // The max concurrent page-1 fetches MUST be <= 6 (PAGE1_CONCURRENCY).
+  assert.ok(
+    maxActiveFetches <= 6,
+    `max active page-1 fetches = ${maxActiveFetches}, expected <= 6`
+  );
+  ok(true, `11. real concurrency limit: max active fetches = ${maxActiveFetches} (<= 6)`);
+
+  // All 17 sections must have been fetched (page-1).
+  assert.ok(totalFetches >= 17, `total fetches = ${totalFetches}, expected >= 17`);
+  ok(true, `12. all 17 sections fetched (total page-1 fetches = ${totalFetches})`);
+}
+
+console.log(`\nf3_discover_batch_parallel_test: ${passed} checks passed (deterministic ordering + dedup + failure isolation + bounded concurrency + continuation + genre assignment + response shape + cap + empty + error handling + REAL concurrency limit)`);

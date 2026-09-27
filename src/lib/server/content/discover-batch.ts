@@ -86,27 +86,32 @@ import type {
 const PAGE1_CONCURRENCY = 6;
 
 /**
- * Runs promises with bounded concurrency.
+ * Runs lazy task functions with bounded concurrency.
+ *
+ * CRITICAL: accepts `() => Promise<T>` (lazy tasks), NOT `Promise<T>`
+ * (already-started promises). This ensures the task function is only
+ * INVOKED when a concurrency slot is available — preventing all 17
+ * fetchRail calls from being in flight simultaneously.
+ *
  * Returns results in the SAME ORDER as the input array (not completion order).
  */
 async function boundedAll<T>(
-  promises: Promise<T>[],
+  tasks: (() => Promise<T>)[],
   concurrency: number
 ): Promise<T[]> {
-  if (promises.length === 0) return [];
-  if (concurrency >= promises.length) return Promise.all(promises);
-
-  const results: T[] = new Array(promises.length);
+  if (tasks.length === 0) return [];
+  const results: T[] = new Array(tasks.length);
   let nextIndex = 0;
 
   async function runNext(): Promise<void> {
-    while (nextIndex < promises.length) {
+    while (nextIndex < tasks.length) {
       const index = nextIndex++;
-      results[index] = await promises[index];
+      // Invoke the task ONLY when a slot is available.
+      results[index] = await tasks[index]();
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, promises.length) }, () => runNext());
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => runNext());
   await Promise.all(workers);
   return results;
 }
@@ -152,14 +157,19 @@ export async function discoverBatchDeduped(
   // Page-1 fetches are independent — no section's page-1 result
   // depends on another section's page-1 result. The dedup only
   // matters when deciding which items to KEEP.
+  //
+  // CRITICAL: pass LAZY TASK FUNCTIONS (() => Promise<T>), NOT
+  // already-started promises. This ensures fetchRail is only INVOKED
+  // when a concurrency slot is available — preventing all 17 requests
+  // from being in flight simultaneously.
   // ============================================================
-  const page1Promises = SECTION_PRIORITY.map((section) =>
+  const page1Tasks = SECTION_PRIORITY.map((section) => () =>
     fetchRail(
       { section: section as DiscoverSectionKey, language, provider, page: 1 },
       canAccessAdult
     ).catch(() => ({ items: [], page: 1, hasNextPage: false, source: 'error' } as unknown as ContentList))
   );
-  const page1Results = await boundedAll(page1Promises, PAGE1_CONCURRENCY);
+  const page1Results = await boundedAll(page1Tasks, PAGE1_CONCURRENCY);
 
   // ============================================================
   // Process page-1 results sequentially in SECTION_PRIORITY order.
