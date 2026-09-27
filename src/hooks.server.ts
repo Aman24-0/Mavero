@@ -318,10 +318,16 @@ export const handle: Handle = async ({ event, resolve }) => {
       // ran independently and caught any revoked sessions.
     } else {
       // Cache miss or expired — perform the RPC.
-      // Bounded eviction (same pattern as the revocation cache).
+      // Bounded eviction: expired first, then oldest FIFO (same pattern
+      // as the revocation cache). Guarantees the cache NEVER exceeds
+      // REGISTRATION_CACHE_MAX_ENTRIES.
       if (registrationCache.size >= REGISTRATION_CACHE_MAX_ENTRIES) {
         for (const [key, ts] of registrationCache) {
           if (nowMs - ts >= REGISTRATION_HEARTBEAT_CACHE_TTL_MS) registrationCache.delete(key);
+        }
+        if (registrationCache.size >= REGISTRATION_CACHE_MAX_ENTRIES) {
+          const oldestKey = registrationCache.keys().next().value;
+          if (oldestKey !== undefined) registrationCache.delete(oldestKey);
         }
       }
 

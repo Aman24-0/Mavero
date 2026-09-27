@@ -96,9 +96,16 @@ export async function isAdminUser(client: SupabaseClient<Database>, userId: stri
     return cached.isAdmin;
   }
 
-  // Bounded eviction (same pattern as the revocation cache).
+  // Bounded eviction: first try expired entries; if still full,
+  // evict the oldest entry (FIFO — Map preserves insertion order).
+  // This guarantees the cache NEVER exceeds ADMIN_CAPABILITY_MAX_ENTRIES.
   if (adminCapabilityCache.size >= ADMIN_CAPABILITY_MAX_ENTRIES) {
     evictExpiredAdminCapabilities(now);
+    if (adminCapabilityCache.size >= ADMIN_CAPABILITY_MAX_ENTRIES) {
+      // Still full after expired eviction — remove the oldest entry.
+      const oldestKey = adminCapabilityCache.keys().next().value;
+      if (oldestKey !== undefined) adminCapabilityCache.delete(oldestKey);
+    }
   }
 
   try {
