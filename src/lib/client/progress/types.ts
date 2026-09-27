@@ -35,6 +35,31 @@ export type WatchProgressRecord = PlaybackContext & {
   snapshot: ContentSnapshot;
   lastWatchedAt: number;
   updatedAt: number;
+  // Cross-device conflict resolution: the timestamp of the LAST update
+  // that actually advanced the playback position (currentTime). This is
+  // distinct from `updatedAt` (which advances on ANY record mutation,
+  // including runtime-only updates that do NOT change the position).
+  //
+  // Why this field exists:
+  //   A runtime-only update (e.g. a provider emitting a duration event
+  //   without a progress event) calls saveProgress() which stamps
+  //   updatedAt = Date.now(). Without positionUpdatedAt, mergeProgress()
+  //   would see the stale-position record as "fresher" (newer updatedAt)
+  //   and let it overwrite a real-position record from another device
+  //   that had an older updatedAt but a genuinely newer currentTime.
+  //   This is the exact regression that caused Midsommar's position to
+  //   drop from ~1h29m to ~28m.
+  //
+  // positionUpdatedAt is ONLY advanced when currentTime actually
+  // changes. mergeProgress() uses positionUpdatedAt (not updatedAt) as
+  // the position-freshness signal. Runtime metadata (duration,
+  // sourceRuntimes) still merges by its own per-entry updatedAt.
+  //
+  // Backward compatibility: old records (local IDB + cloud rows created
+  // before this field) have positionUpdatedAt = 0. The merge logic
+  // falls back to `updatedAt` when positionUpdatedAt is 0, preserving
+  // the old behavior for pre-migration records.
+  positionUpdatedAt: number;
 };
 
 export type WatchlistStatus = 'watching' | 'planned' | 'completed';
@@ -68,6 +93,13 @@ export type SaveProgressInput = PlaybackContext & {
   snapshot: ContentSnapshot;
   completed?: boolean;
   now?: number;
+  // Optional: the position-freshness timestamp to persist. When omitted,
+  // saveProgress() computes it: if currentTime advanced, use `now`;
+  // otherwise preserve the existing record's positionUpdatedAt (or fall
+  // back to `now` for new records). This lets the ProgressWriter control
+  // whether a given flush advances the position-freshness clock or not
+  // (runtime-only updates must NOT advance it).
+  positionUpdatedAt?: number;
 };
 
 export type LocalStorageStatus = 'indexeddb' | 'memory' | 'unavailable';
@@ -166,7 +198,12 @@ export function isPlaybackRecord(value: unknown): value is WatchProgressRecord {
     && isFiniteTimestamp(record.lastWatchedAt)
     && isFiniteTimestamp(record.updatedAt)
     && isContentSnapshot(record.snapshot)
-    && validSourceRuntimes;
+    && validSourceRuntimes
+    // positionUpdatedAt is optional for backward compatibility — old
+    // records (pre-migration) won't have it. When present, it must be a
+    // finite positive timestamp. When absent, merge logic falls back to
+    // updatedAt.
+    && (record.positionUpdatedAt === undefined || (typeof record.positionUpdatedAt === 'number' && Number.isFinite(record.positionUpdatedAt) && record.positionUpdatedAt >= 0));
 }
 
 export function isFavoriteRecord(value: unknown): value is FavoriteRecord {

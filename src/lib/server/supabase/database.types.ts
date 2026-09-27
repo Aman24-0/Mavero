@@ -957,6 +957,10 @@ export type Database = {
           id: string
           last_watched_at: string
           position_seconds: number
+          // Cross-device conflict resolution: timestamp of the LAST
+          // update that actually advanced the playback position. NULL
+          // for pre-migration rows (fall back to updated_at).
+          position_updated_at: string | null
           progress_key: string
           season: number | null
           selected_source_id: string | null
@@ -976,6 +980,7 @@ export type Database = {
           id?: string
           last_watched_at?: string
           position_seconds?: number
+          position_updated_at?: string | null
           progress_key: string
           season?: number | null
           selected_source_id?: string | null
@@ -995,6 +1000,7 @@ export type Database = {
           id?: string
           last_watched_at?: string
           position_seconds?: number
+          position_updated_at?: string | null
           progress_key?: string
           season?: number | null
           selected_source_id?: string | null

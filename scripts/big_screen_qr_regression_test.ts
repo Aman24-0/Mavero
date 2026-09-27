@@ -305,6 +305,7 @@ function makeProgress(contentId: string, updatedAt: number, currentTime = 600, c
     snapshot: { title: `Title ${contentId}`, poster: '' },
     lastWatchedAt: updatedAt,
     updatedAt,
+    positionUpdatedAt: updatedAt,
   };
 }
 

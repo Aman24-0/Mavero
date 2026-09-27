@@ -45,6 +45,7 @@ const activeProgress: WatchProgressRecord = {
   completionState: 'in_progress',
   lastWatchedAt: 900,
   updatedAt: 900,
+  positionUpdatedAt: 900,
 };
 
 const completedProgress: WatchProgressRecord = {
@@ -59,6 +60,7 @@ const completedProgress: WatchProgressRecord = {
   completionState: 'completed',
   lastWatchedAt: 950,
   updatedAt: 950,
+  positionUpdatedAt: 950,
 };
 
 const watchingFavoriteWithZeroProgress: FavoriteRecord = {
@@ -111,7 +113,7 @@ const plannedFavorite: FavoriteRecord = {
   assert.equal(completedOnly.length, 0, 'completed progress must NOT appear');
 
   // 4. Progress with currentTime <= 0 is not active progress.
-  const zeroProgress: WatchProgressRecord = { ...activeProgress, currentTime: 0, lastWatchedAt: 900, updatedAt: 900 };
+  const zeroProgress: WatchProgressRecord = { ...activeProgress, currentTime: 0, lastWatchedAt: 900, updatedAt: 900, positionUpdatedAt: 900 };
   assert.equal(continueWatchingRecords([zeroProgress], []).length, 0, 'zero-currentTime progress without a watching favorite must NOT appear');
 
   // 5. A "planned" favorite is not Continue Watching.

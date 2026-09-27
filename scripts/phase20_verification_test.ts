@@ -66,6 +66,7 @@ async function testMyListDeletionResurrection(): Promise<void> {
     snapshot,
     lastWatchedAt: Date.now() - 10000,
     updatedAt: Date.now() - 10000,
+    positionUpdatedAt: Date.now() - 10000,
   }];
 
   // Remove title A from My List (this creates a deletion tombstone + deletes local progress).

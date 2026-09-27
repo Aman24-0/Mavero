@@ -26,14 +26,35 @@ export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgress
     const existing = merged.get(record.key);
     if (!existing) {
       merged.set(record.key, record);
-    } else if (record.updatedAt > existing.updatedAt || (record.updatedAt === existing.updatedAt && record.currentTime > existing.currentTime)) {
-      // Phase 9: merge sourceRuntimes from the losing record before replacing.
-      const mergedRuntimes = mergeSourceRuntimes(record, existing);
-      merged.set(record.key, { ...record, sourceRuntimes: mergedRuntimes });
     } else {
-      // The existing record wins, but merge sourceRuntimes from the losing record.
-      const mergedRuntimes = mergeSourceRuntimes(existing, record);
-      merged.set(record.key, { ...existing, sourceRuntimes: mergedRuntimes });
+      // Cross-device conflict resolution: use positionUpdatedAt (not
+      // updatedAt) as the position-freshness signal. positionUpdatedAt
+      // is ONLY advanced when currentTime actually changes; updatedAt
+      // advances on ANY mutation (including runtime-only updates that
+      // do NOT change the position). Using updatedAt caused the
+      // Midsommar regression: a runtime-only flush on Device B stamped
+      // updatedAt = now, making its stale 28m position "win" over
+      // Device A's real 1h29m position.
+      //
+      // Backward compatibility: old records (pre-migration, local IDB
+      // + cloud rows created before positionUpdatedAt existed) have
+      // positionUpdatedAt = 0 or undefined. In that case, fall back to
+      // the old behavior (compare by updatedAt) so pre-migration
+      // records merge the same way they always did.
+      const recordPosTs = record.positionUpdatedAt ?? 0;
+      const existingPosTs = existing.positionUpdatedAt ?? 0;
+      const usePositionTs = recordPosTs > 0 || existingPosTs > 0;
+      const recordTs = usePositionTs ? recordPosTs : record.updatedAt;
+      const existingTs = usePositionTs ? existingPosTs : existing.updatedAt;
+      if (recordTs > existingTs || (recordTs === existingTs && record.currentTime > existing.currentTime)) {
+        // New record wins — merge sourceRuntimes from the losing record.
+        const mergedRuntimes = mergeSourceRuntimes(record, existing);
+        merged.set(record.key, { ...record, sourceRuntimes: mergedRuntimes });
+      } else {
+        // Existing record wins — merge sourceRuntimes from the losing record.
+        const mergedRuntimes = mergeSourceRuntimes(existing, record);
+        merged.set(record.key, { ...existing, sourceRuntimes: mergedRuntimes });
+      }
     }
   }
   return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -157,6 +178,7 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
       snapshot: fav.snapshot,
       lastWatchedAt: fav.updatedAt,
       updatedAt: fav.updatedAt,
+      positionUpdatedAt: 0,
     });
     progressKeys.add(key);
   }

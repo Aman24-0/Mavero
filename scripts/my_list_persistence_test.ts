@@ -15,7 +15,7 @@ const deletion = (deletedAt: number): FavoriteDeletionRecord => ({
 });
 const playback = (updatedAt: number): WatchProgressRecord => ({
   key: 'movie:probe:-:-', contentType: 'movie', contentId: 'probe', snapshot,
-  currentTime: 42, duration: 100, completionState: 'in_progress', lastWatchedAt: updatedAt, updatedAt,
+  currentTime: 42, duration: 100, completionState: 'in_progress', lastWatchedAt: updatedAt, updatedAt, positionUpdatedAt: updatedAt,
 });
 
 assert.equal(mergeFavoriteDeletions([deletion(200)], [deletion(150)])[0]?.deletedAt, 200, 'latest deletion tombstone must win');

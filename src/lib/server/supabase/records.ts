@@ -84,6 +84,11 @@ export function progressFromRow(row: Tables<'watch_progress'>): WatchProgressRec
     snapshot: snapshotFromJson(row.snapshot),
     lastWatchedAt: Date.parse(row.last_watched_at),
     updatedAt: Date.parse(row.updated_at),
+    // Cross-device conflict resolution: position_updated_at is the
+    // timestamp of the LAST update that actually advanced the playback
+    // position. Pre-migration rows have this as NULL; we coerce to 0
+    // so mergeProgress falls back to updatedAt for old records.
+    positionUpdatedAt: row.position_updated_at ? Date.parse(row.position_updated_at) : 0,
   };
 }
 
@@ -104,6 +109,14 @@ export function progressToRow(userId: string, record: WatchProgressRecord): Tabl
     snapshot: record.snapshot as unknown as Json,
     last_watched_at: new Date(record.lastWatchedAt).toISOString(),
     updated_at: new Date(record.updatedAt).toISOString(),
+    // Cross-device conflict resolution: persist positionUpdatedAt so
+    // the server-side compare-and-swap can reject stale-position
+    // overwrites. When positionUpdatedAt is 0 (pre-migration or
+    // new-record stub), persist NULL so the server treats it as
+    // "unknown — fall back to updatedAt".
+    position_updated_at: record.positionUpdatedAt && record.positionUpdatedAt > 0
+      ? new Date(record.positionUpdatedAt).toISOString()
+      : null,
   };
 }
 

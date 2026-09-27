@@ -15,6 +15,20 @@ export const DEFAULT_FLUSH_INTERVAL = 12_000;
 export async function saveProgress(input: SaveProgressInput): Promise<WatchProgressRecord> {
   const now = input.now ?? Date.now();
   const safe = clampTime(input.currentTime, input.duration ?? 0);
+  // Cross-device conflict resolution: compute positionUpdatedAt.
+  //
+  // The caller may pass an explicit positionUpdatedAt (the ProgressWriter
+  // does this — it tracks whether the current flush advanced the position
+  // or is a runtime-only update). When the caller does NOT pass one, we
+  // compute it conservatively: a saveProgress call with currentTime > 0
+  // is treated as a position-advancing update (stamp `now`); a call with
+  // currentTime === 0 is treated as a non-position update (stamp 0 so
+  // mergeProgress falls back to updatedAt for backward compat).
+  //
+  // The ProgressWriter always passes an explicit positionUpdatedAt, so
+  // this fallback path only affects direct saveProgress callers (tests,
+  // the markLatestEpisode helper, etc.).
+  const positionUpdatedAt = input.positionUpdatedAt ?? (safe.currentTime > 0 ? now : 0);
   const record: WatchProgressRecord = {
     key: progressKey(input),
     contentType: input.contentType,
@@ -29,7 +43,8 @@ export async function saveProgress(input: SaveProgressInput): Promise<WatchProgr
     sourceRuntimes: input.sourceRuntimes,
     snapshot: input.snapshot,
     lastWatchedAt: now,
-    updatedAt: now
+    updatedAt: now,
+    positionUpdatedAt
   };
   return putProgress(record);
 }
@@ -59,15 +74,23 @@ export async function markEpisodeAsResumeTarget(
   const existing = await getProgress(context);
   if (existing) {
     // Episode already has a record — just bump updatedAt/lastWatchedAt
-    // to make it the latest resume target. Preserve all other fields.
+    // to make it the latest resume target. Preserve all other fields,
+    // INCLUDING positionUpdatedAt (this is a metadata-only update that
+    // does NOT advance the playback position, so positionUpdatedAt must
+    // NOT be stamped to `now` — otherwise a stale-position record would
+    // look fresher than a real-position record from another device).
     const updated: WatchProgressRecord = {
       ...existing,
       lastWatchedAt: now,
       updatedAt: now,
+      positionUpdatedAt: existing.positionUpdatedAt ?? 0,
     };
     await putProgress(updated);
   } else {
     // No record for this episode — create a zero-progress stub.
+    // positionUpdatedAt = 0 because no playback position has been
+    // established yet (currentTime = 0). mergeProgress will fall back
+    // to updatedAt for this record.
     const record: WatchProgressRecord = {
       key: progressKey(context),
       contentType: context.contentType,
@@ -80,6 +103,7 @@ export async function markEpisodeAsResumeTarget(
       snapshot,
       lastWatchedAt: now,
       updatedAt: now,
+      positionUpdatedAt: 0,
     };
     await putProgress(record);
   }
@@ -463,7 +487,7 @@ export async function getLocalPersistenceState() {
   return getLocalProgressState();
 }
 
-export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime' | 'duration'> & { initialCurrentTime?: number; initialDuration?: number }, flushInterval = DEFAULT_FLUSH_INTERVAL) {
+export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime' | 'duration'> & { initialCurrentTime?: number; initialDuration?: number; initialPositionUpdatedAt?: number }, flushInterval = DEFAULT_FLUSH_INTERVAL) {
   let latest: SaveProgressInput | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -480,6 +504,30 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
   // duration=0/undefined, which overwrites latest.duration, causing the
   // persisted record to have duration=0 → "Resume" with no progress bar.
   let lastKnownDuration = Math.max(0, Number.isFinite(base.initialDuration) ? (base.initialDuration ?? 0) : 0);
+  // Cross-device conflict resolution: track whether the current pending
+  // flush advanced the playback position (via update() or complete()) or
+  // is a runtime-only update (via updateRuntime()). This flag controls
+  // whether saveProgress stamps positionUpdatedAt = now (position
+  // advanced) or preserves the existing positionUpdatedAt (runtime-only).
+  //
+  // Why this matters:
+  //   A runtime-only update (provider emits duration but no progress)
+  //   calls updateRuntime() which schedules a flush. Without this flag,
+  //   the flush would stamp positionUpdatedAt = now via saveProgress's
+  //   fallback, making a stale-position record look "fresher" than a
+  //   real-position record from another device. This is the exact
+  //   regression that caused Midsommar's position to drop from ~1h29m
+  //   to ~28m — a runtime-only flush at 11:00 stamped updatedAt = now,
+  //   and mergeProgress let that stale-position record overwrite the
+  //   real-position record.
+  let positionAdvanced = false;
+  // Track the positionUpdatedAt from the existing record (if any) so
+  // runtime-only flushes can preserve it instead of stamping `now`.
+  // When the writer is created from an existing record (resume), this
+  // is initialized to that record's positionUpdatedAt. When the writer
+  // is created for a new title (no existing record), this stays 0 —
+  // the first real update() will stamp `now` via positionAdvanced=true.
+  let basePositionUpdatedAt = Math.max(0, Number.isFinite(base.initialPositionUpdatedAt) ? (base.initialPositionUpdatedAt ?? 0) : 0);
 
   // Phase 9 fix (race-safe): register this writer in the title-level
   // registry so removeFavoriteFromMyList() can invalidate it. The
@@ -508,8 +556,20 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
     // setTimeout callback that fired before clearTimeout, or a writer
     // replaced by a newer writer) from persisting.
     if (disposed || !latest) return;
-    const next = { ...latest, sourceRuntimes: { ...sourceRuntimes } };
+    // Cross-device conflict resolution: compute positionUpdatedAt for
+    // this flush. If the position was advanced (update/complete), stamp
+    // `now` — this is a real position update. If the position was NOT
+    // advanced (runtime-only update via updateRuntime), preserve the
+    // existing record's positionUpdatedAt so mergeProgress does NOT
+    // treat this stale-position record as fresher than a real-position
+    // record from another device.
+    const now = Date.now();
+    const positionUpdatedAt = positionAdvanced ? now : basePositionUpdatedAt;
+    const next = { ...latest, sourceRuntimes: { ...sourceRuntimes }, positionUpdatedAt };
     latest = undefined;
+    // Reset the positionAdvanced flag for the next flush cycle. A new
+    // update() call before the next flush will set it back to true.
+    positionAdvanced = false;
     // Phase 9 fix (race-safe): capture the title generation token
     // BEFORE awaiting saveProgress(). If removeFavoriteFromMyList()
     // invalidates the title during the await, the title's current
@@ -552,6 +612,11 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
     update(currentTime: number, duration?: number, completed = false) {
       if (disposed) return; // Phase 9 fix: no-op if invalidated.
       knownCurrentTime = currentTime;
+      // Cross-device conflict resolution: a real progress update (from
+      // a provider timeupdate/seeked event) advances the playback
+      // position. Mark this flush as position-advancing so saveProgress
+      // stamps positionUpdatedAt = now.
+      positionAdvanced = true;
       // Phase 20 fix: preserve the last known valid duration. A later update()
       // call with duration=0/undefined must NOT overwrite a previously received
       // valid duration. This is the root cause of the Viduki progress bug.
@@ -565,6 +630,13 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
     },
     updateRuntime(sourceId: string, duration: number) {
       if (disposed || !Number.isFinite(duration) || duration <= 0) return;
+      // Cross-device conflict resolution: updateRuntime is a RUNTIME-ONLY
+      // update. It does NOT advance the playback position. The
+      // positionAdvanced flag remains whatever it was (false unless a
+      // prior update() in the same flush cycle set it to true). When
+      // flush() fires, it will preserve basePositionUpdatedAt instead of
+      // stamping now — preventing a stale-position record from looking
+      // fresher than a real-position record from another device.
       sourceRuntimes[sourceId] = { duration, updatedAt: Date.now() };
       if (duration > 0) lastKnownDuration = duration; // Phase 20 fix: track duration.
       if (latest) {
@@ -582,6 +654,10 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
     complete(currentTime: number, duration?: number) {
       if (disposed) return Promise.resolve(); // Phase 9 fix: no-op if invalidated.
       knownCurrentTime = currentTime;
+      // Cross-device conflict resolution: complete() is a position-
+      // advancing update (the user reached the end). Mark this flush as
+      // position-advancing so saveProgress stamps positionUpdatedAt = now.
+      positionAdvanced = true;
       // Phase 20 fix: use effectiveDuration to preserve the last known duration.
       const effectiveDuration = duration && duration > 0 ? duration : lastKnownDuration;
       latest = { ...base, currentTime, duration: effectiveDuration, completed: true, sourceRuntimes: { ...sourceRuntimes } };

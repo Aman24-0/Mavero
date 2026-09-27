@@ -81,8 +81,97 @@ export const PUT: RequestHandler = async ({ locals, request }) => {
     .map((record) => ({ ...record, deletedAt: Math.max(record.deletedAt, existingDeletionByKey.get(record.key) ?? 0) }))
     .filter((record) => (favoriteByKey.get(record.key)?.updatedAt ?? 0) <= record.deletedAt);
 
-  const cloudProgressResult = progress.length
-    ? await locals.supabase.from('watch_progress').upsert(progress.map((record) => progressToRow(user.id, record)), { onConflict: 'user_id,progress_key' })
+  // ============================================================
+  // Cross-device conflict resolution: server-side compare-and-swap
+  // for watch_progress.
+  //
+  // PROBLEM: the previous implementation did a blind upsert — whatever
+  // the client sent overwrote the cloud row, regardless of whether the
+  // client's record was older than the existing cloud record. This
+  // allowed a stale-position record from Device B to overwrite a real-
+  // position record from Device A.
+  //
+  // FIX: before upserting, fetch the existing cloud rows for the
+  // progress keys in the payload. For each incoming record, compare
+  // its positionUpdatedAt against the existing cloud row's
+  // position_updated_at. If the incoming record's positionUpdatedAt is
+  // OLDER than the cloud row's position_updated_at, the incoming
+  // record's position_seconds is STALE — we must NOT let it overwrite
+  // the cloud's newer position. Instead, we merge: keep the cloud's
+  // position_seconds + position_updated_at, but take the incoming
+  // record's runtime metadata (duration, source_runtimes,
+  // selected_source_id) since those are not position-conflict-sensitive.
+  //
+  // If the incoming record's positionUpdatedAt is NEWER than or equal
+  // to the cloud's, the incoming record wins normally (the client's
+  // position is authoritative).
+  //
+  // Backward compatibility: if either side has positionUpdatedAt = 0
+  // (NULL in the DB — pre-migration rows), fall back to the old
+  // behavior (blind upsert, last-writer-wins by updatedAt). This
+  // ensures pre-migration cloud rows are not accidentally "locked" by
+  // the compare-and-swap.
+  // ============================================================
+  let safeProgress = progress;
+  if (progress.length > 0) {
+    const progressKeys = progress.map((record) => record.key);
+    const existingProgressResult = await locals.supabase
+      .from('watch_progress')
+      .select('progress_key,position_seconds,position_updated_at,updated_at,source_runtimes,duration,selected_source_id,completion_state')
+      .eq('user_id', user.id)
+      .in('progress_key', progressKeys)
+      .limit(MAX_RECORDS);
+    if (existingProgressResult.error) return json({ message: 'Cloud sync could not be completed.' }, { status: 503 });
+
+    const existingByKey = new Map((existingProgressResult.data ?? []).map((row) => [row.progress_key, row]));
+    safeProgress = progress.map((record) => {
+      const existing = existingByKey.get(record.key);
+      if (!existing) return record; // new record — no conflict
+      const incomingPosTs = record.positionUpdatedAt ?? 0;
+      const existingPosTs = existing.position_updated_at ? Date.parse(existing.position_updated_at) : 0;
+      // Backward compat: if either side has no positionUpdatedAt, fall
+      // back to blind upsert (the old behavior).
+      if (incomingPosTs === 0 || existingPosTs === 0) return record;
+      // Compare-and-swap: if the incoming position is OLDER than the
+      // cloud position, do NOT overwrite the cloud's position. Merge:
+      // keep cloud's position_seconds + position_updated_at +
+      // completion_state (position-derived fields), take incoming's
+      // runtime metadata (duration, source_runtimes,
+      // selected_source_id — these are not position-conflict-sensitive
+      // and the incoming device may have newer runtime data from a
+      // different provider).
+      if (incomingPosTs < existingPosTs) {
+        // The cloud row's position is newer. Preserve it.
+        // But still merge sourceRuntimes (per-entry updatedAt merge)
+        // and update duration/selected_source_id if the incoming
+        // record has newer info.
+        const mergedSourceRuntimes: Record<string, { duration: number; updatedAt: number }> = {};
+        const existingRuntimes = (existing.source_runtimes as Record<string, { duration: number; updatedAt: number }> | null) ?? {};
+        for (const [sourceId, entry] of Object.entries(existingRuntimes)) mergedSourceRuntimes[sourceId] = entry;
+        for (const [sourceId, entry] of Object.entries(record.sourceRuntimes ?? {})) {
+          const existingEntry = mergedSourceRuntimes[sourceId];
+          if (!existingEntry || entry.updatedAt >= existingEntry.updatedAt) mergedSourceRuntimes[sourceId] = entry;
+        }
+        return {
+          ...record,
+          // Preserve the cloud's position-derived fields.
+          currentTime: existing.position_seconds,
+          positionUpdatedAt: existingPosTs,
+          completionState: existing.completion_state as WatchProgressRecord['completionState'],
+          // Take the merged runtime metadata.
+          sourceRuntimes: mergedSourceRuntimes,
+          // Keep the incoming record's updatedAt/lastWatchedAt (the
+          // client's wall-clock for this mutation). The DB trigger
+          // will overwrite updated_at anyway, but last_watched_at
+          // should reflect when this device last touched the record.
+        };
+      }
+      return record; // incoming is newer or equal — normal upsert
+    });
+  }
+
+  const cloudProgressResult = safeProgress.length
+    ? await locals.supabase.from('watch_progress').upsert(safeProgress.map((record) => progressToRow(user.id, record)), { onConflict: 'user_id,progress_key' })
     : { error: null };
   const cloudFavoritesResult = favorites.length
     ? await locals.supabase.from('favorites').upsert(favorites.map((record) => favoriteToRow(user.id, record)), { onConflict: 'user_id,favorite_key' })

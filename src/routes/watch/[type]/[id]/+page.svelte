@@ -165,6 +165,12 @@
   let active = true;
   let resumeTime = 0;
   let duration = 0;
+  // Cross-device conflict resolution: the positionUpdatedAt from the
+  // existing progress record. Passed to createProgressWriter so
+  // runtime-only flushes preserve the position-freshness timestamp
+  // instead of stamping now (which would make a stale-position record
+  // look fresher than a real-position record from another device).
+  let currentPositionUpdatedAt = 0;
   let progressReady = false;
   let localState = 'Preparing local progress…';
   let writer: ReturnType<typeof createProgressWriter> | undefined;
@@ -399,21 +405,32 @@
   // sourceOptions[0] to be selected instead of the admin default or saved source.
   // Now we gate on progressReady so the saved/default source is known first.
   $: if (browser && progressReady && !selectedSourceId && sourceOptions.length) {
-    // P9+P10: For SERIES/ANIME, ALWAYS use the content-type default source
-    // (e.g. VidZee for series). Do NOT use savedSourceId for series —
-    // the series default provider must always win on resume.
-    // For MOVIES, preserve the saved-source resume behavior (saved → default → fallback).
-    const isSeriesLike = contentType === 'series' || contentType === 'anime';
-    if (isSeriesLike) {
-      // Series: always use the configured series default (VidZee/etc.)
-      const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
-      selectedSourceId = defaultValid ? defaultSourceId! : sourceOptions[0].id;
-    } else {
-      // Movie: saved source → admin default → fallback
-      const savedValid = savedSourceId && sourceOptions.some((s) => s.id === savedSourceId);
-      const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
-      selectedSourceId = savedValid ? savedSourceId! : (defaultValid ? defaultSourceId! : sourceOptions[0].id);
-    }
+    // Cross-device source-selection fix: the admin-configured default
+    // source is AUTHORITATIVE for initial playback on ALL content types.
+    //
+    // Previous behavior (movies): saved → default → fallback. A stale
+    // local savedSourceId (e.g. SLast from an old session on Device B)
+    // would override the admin-configured default (VidStuck), causing
+    // the user to see the wrong provider on cross-device resume.
+    //
+    // New behavior: default → saved → fallback.
+    //   1. If the admin configured a default source for this content
+    //      type (movie/series/anime/adult), use it. This is the
+    //      authoritative source policy — it applies identically across
+    //      all devices.
+    //   2. If NO default is configured, fall back to the saved source
+    //      (the user's last-used source on this device). This preserves
+    //      the "last manually selected source" behavior for deployments
+    //      where no default is set.
+    //   3. If neither default nor saved is available/valid, use the
+    //      first source in the admin-ordered source list.
+    //
+    // The user can still manually switch sources at any time — the
+    // manual switch calls handleSourceChange() which sets
+    // selectedSourceId directly, bypassing this reactive block.
+    const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
+    const savedValid = savedSourceId && sourceOptions.some((s) => s.id === savedSourceId);
+    selectedSourceId = defaultValid ? defaultSourceId! : (savedValid ? savedSourceId! : sourceOptions[0].id);
     // Phase 1 Analytics Foundation — provider_selected event for the
     // initial source. Emitted once per playbackKey change (the reactive
     // block only fires when selectedSourceId is empty). The dispatcher
@@ -445,8 +462,19 @@
       if (page.data.user) void syncAuthenticatedState();
     };
     const flushBeforeUnload = () => { void writer?.flush(); };
+    // Mobile progress flush: pagehide is the reliable lifecycle event on
+    // mobile Safari (beforeunload is unreliable on iOS — it does not fire
+    // when the user switches tabs or backgrounds the app). pagehide fires
+    // on both desktop and mobile when the page is being unloaded or put
+    // into the back/forward cache. We flush progress on pagehide so the
+    // user's last playback position is persisted before the page is
+    // discarded. The flush is fire-and-forget (the page is being torn
+    // down — we cannot await), but IndexedDB writes are fast enough to
+    // complete in the brief window before the page is destroyed.
+    const flushOnPageHide = () => { void writer?.flush(); };
     document.addEventListener('visibilitychange', flushWhenHidden);
     window.addEventListener('beforeunload', flushBeforeUnload);
+    window.addEventListener('pagehide', flushOnPageHide);
 
     // Viduki V1 → V2 automatic fallback.
     // Viduki (https://www.viduki.net) posts a 'viduki:all-servers-failed' message
@@ -478,6 +506,7 @@
       active = false;
       document.removeEventListener('visibilitychange', flushWhenHidden);
       window.removeEventListener('beforeunload', flushBeforeUnload);
+      window.removeEventListener('pagehide', flushOnPageHide);
       window.removeEventListener('message', vidukiFallback);
       void writer?.flush();
       writer?.dispose();
@@ -507,12 +536,33 @@
     await writer?.flush();
     const existingRuntimes = writer?.getSourceRuntimes();
     writer?.dispose();
+    // Cross-device conflict resolution: await cloud sync BEFORE reading
+    // local progress. The previous implementation read from IndexedDB
+    // only — if the user navigated to the watch route before background
+    // sync converged, the watch page would use a STALE local position
+    // (e.g. 28m from Device B) instead of the authoritative cloud
+    // position (e.g. 1h29m from Device A). Awaiting syncAuthenticatedState()
+    // ensures the local IDB has the merged (cloud-authoritative) record
+    // before getResumeProgress reads it.
+    //
+    // syncAuthenticatedState is a singleton (syncInFlight dedup) — if the
+    // root layout already started a sync, this call shares the same
+    // promise and does NOT trigger a duplicate network roundtrip. If the
+    // user is offline or the sync fails, getResumeProgress still returns
+    // the best available local record (graceful degradation).
+    //
+    // For guests (no user), syncAuthenticatedState returns immediately
+    // with { authenticated: false } — no network call, no delay.
+    if (data.user) {
+      try { await syncAuthenticatedState(); } catch { /* offline/failed — use local */ }
+    }
     // Phase 9 fix: load existing progress BEFORE creating the writer so
     // sourceRuntimes from the record are available at writer initialization.
     const [resume, state] = await Promise.all([getResumeProgress(playbackContext), getLocalPersistenceState()]);
     if (!active || writerKey !== playbackKey) return;
     resumeTime = resume.resumeTime;
     duration = resume.record?.duration ?? 0;
+    currentPositionUpdatedAt = resume.record?.positionUpdatedAt ?? 0;
     // Phase 9: only use savedSourceId for INCOMPLETE progress. Completed
     // records should NOT force the old source — they should use admin default.
     if (resume.record && resume.record.completionState !== 'completed') {
@@ -532,7 +582,11 @@
     // ProgressWriter's lastKnownDuration is initialized correctly. This
     // prevents a later update() call with duration=0/undefined from
     // overwriting a previously persisted valid duration.
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot, initialCurrentTime: resume.record?.currentTime ?? 0, initialDuration: resume.record?.duration ?? 0 });
+    // Cross-device fix: pass initialPositionUpdatedAt so runtime-only
+    // flushes preserve the existing position-freshness timestamp instead
+    // of stamping now (which would make a stale-position record look
+    // fresher than a real-position record from another device).
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot, initialCurrentTime: resume.record?.currentTime ?? 0, initialDuration: resume.record?.duration ?? 0, initialPositionUpdatedAt: currentPositionUpdatedAt });
     localState = state.status === 'indexeddb' ? 'Local progress on this device' : 'Temporary local progress only';
     progressReady = true;
   }
@@ -550,8 +604,13 @@
     // into the new writer so per-source runtimes survive source switches
     // within the same episode, and the known position is never reset to 0.
     // Phase 20 fix: also pass the last known duration.
+    // Cross-device fix: pass initialPositionUpdatedAt so the new writer
+    // preserves the position-freshness timestamp across source switches
+    // (a source switch is NOT a position advancement — it's a metadata
+    // change. The new writer must not stamp positionUpdatedAt = now on
+    // its first runtime-only flush).
     const knownDuration = duration;
-    writer = createProgressWriter({ ...playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime, initialDuration: knownDuration });
+    writer = createProgressWriter({ ...playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime, initialDuration: knownDuration, initialPositionUpdatedAt: currentPositionUpdatedAt });
   }
 
   /**
