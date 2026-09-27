@@ -94,12 +94,15 @@ for (const route of identityOnlyRoutes) {
 }
 
 // ============================================================
-// 3. /auth/reset still re-calls safeGetSession — the ONLY legitimate
-// second resolution, because exchangeCodeForSession changes cookies.
+// 3. /auth/reset re-resolves session AFTER exchangeCodeForSession —
+// the ONLY legitimate second resolution, because exchangeCodeForSession
+// changes cookies. F6 optimization: now uses getSession() directly
+// instead of safeGetSession() (only needs session existence, not user).
 // ============================================================
 const authReset = read('src/routes/auth/reset/+page.server.ts');
 ok(/exchangeCodeForSession/.test(authReset), '3a. /auth/reset uses exchangeCodeForSession (the only cookie-mutating path)');
-ok(/locals\.safeGetSession\(\)/.test(authReset), '3b. /auth/reset re-calls safeGetSession AFTER exchangeCodeForSession (legitimate: cookies changed mid-request)');
+// F6: reset now uses getSession() directly (not safeGetSession which calls getUser too)
+ok(/getSession\(\)/.test(authReset), '3b. /auth/reset re-resolves session via getSession() AFTER exchangeCodeForSession (F6: no redundant getUser)');
 // But the form action (separate request — hook already resolved) reads locals.session directly.
 ok(/const session = locals\.session/.test(authReset), '3c. /auth/reset form action reads locals.session directly (separate request — no second resolution needed)');
 

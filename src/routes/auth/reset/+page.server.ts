@@ -12,10 +12,19 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     // this exchange, so locals.session/locals.user are now stale — we
     // MUST re-resolve here. This is the ONLY legitimate second resolution
     // in the codebase; everywhere else reads locals.user directly.
+    //
+    // F6 optimization: previously this called safeGetSession() which
+    // performs BOTH getSession() AND getUser() (2 network roundtrips).
+    // This page only needs session EXISTENCE (not the user object), so
+    // we use getSession() directly — saving one getUser() roundtrip.
     const { error } = await locals.supabase.auth.exchangeCodeForSession(code);
     if (error) throw redirect(303, '/auth/sign-in?error=confirmation');
-    const { session } = await locals.safeGetSession();
-    return { ready: Boolean(session) };
+    try {
+      const { data: { session } } = await locals.supabase.auth.getSession();
+      return { ready: Boolean(session) };
+    } catch {
+      return { ready: false };
+    }
   }
   // No code-exchange branch: locals.session is already authoritative.
   return { ready: Boolean(locals.session) };

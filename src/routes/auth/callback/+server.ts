@@ -9,7 +9,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   const next = safeRedirectPath(url.searchParams.get('next'), '/account');
 
   if (code) {
-    const { error } = await locals.supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await locals.supabase.auth.exchangeCodeForSession(code);
     if (error) throw redirect(303, `/auth/sign-in?error=confirmation&next=${encodeURIComponent(next)}`);
 
     // Phase 1 Analytics Foundation — server-authoritative `signup_completed`
@@ -17,10 +17,15 @@ export const GET: RequestHandler = async ({ url, locals }) => {
     // completes a NEW account in the email-confirmation flow). For
     // password-sign-up that auto-creates a session, the sign-up action
     // emits the event directly. anonymous_id comes from the cookie (still
-    // present on the callback); user_id is re-resolved AFTER the session
-    // exchange so we have the real authenticated identity.
+    // present on the callback); user_id is taken from the
+    // exchangeCodeForSession response — NO separate getUser() call needed
+    // (the exchange already returns the authenticated user).
+    //
+    // F6 optimization: previously this code called locals.supabase.auth.getUser()
+    // AFTER exchangeCodeForSession, which was a redundant network roundtrip —
+    // exchangeCodeForSession already returns { data: { user, session } }.
     try {
-      const { data: { user } } = await locals.supabase.auth.getUser();
+      const user = data.user;
       if (user && locals.anonymousId) {
         const admin = createSupabaseAdminClient();
         void recordServerEvent(
