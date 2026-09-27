@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { readJsonBody } from '$lib/server/http/body';
 import { favoriteDeletionFromRow, favoriteDeletionToRow, favoriteFromRow, favoriteToRow, progressFromRow, progressToRow } from '$lib/server/supabase/records';
 import { isFavoriteDeletionRecord, isFavoriteRecord, isPlaybackRecord, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord } from '$lib/client/progress/types';
+import { resolvePositionConflict } from '$lib/shared/progress-conflict';
 
 const MAX_RECORDS = 300;
 const MAX_SYNC_BODY_BYTES = 1024 * 1024;
@@ -129,44 +130,48 @@ export const PUT: RequestHandler = async ({ locals, request }) => {
       if (!existing) return record; // new record — no conflict
       const incomingPosTs = record.positionUpdatedAt ?? 0;
       const existingPosTs = existing.position_updated_at ? Date.parse(existing.position_updated_at) : 0;
-      // Backward compat: if either side has no positionUpdatedAt, fall
-      // back to blind upsert (the old behavior).
-      if (incomingPosTs === 0 || existingPosTs === 0) return record;
-      // Compare-and-swap: if the incoming position is OLDER than the
-      // cloud position, do NOT overwrite the cloud's position. Merge:
-      // keep cloud's position_seconds + position_updated_at +
-      // completion_state (position-derived fields), take incoming's
-      // runtime metadata (duration, source_runtimes,
-      // selected_source_id — these are not position-conflict-sensitive
-      // and the incoming device may have newer runtime data from a
-      // different provider).
-      if (incomingPosTs < existingPosTs) {
-        // The cloud row's position is newer. Preserve it.
-        // But still merge sourceRuntimes (per-entry updatedAt merge)
-        // and update duration/selected_source_id if the incoming
-        // record has newer info.
-        const mergedSourceRuntimes: Record<string, { duration: number; updatedAt: number }> = {};
-        const existingRuntimes = (existing.source_runtimes as Record<string, { duration: number; updatedAt: number }> | null) ?? {};
-        for (const [sourceId, entry] of Object.entries(existingRuntimes)) mergedSourceRuntimes[sourceId] = entry;
-        for (const [sourceId, entry] of Object.entries(record.sourceRuntimes ?? {})) {
-          const existingEntry = mergedSourceRuntimes[sourceId];
-          if (!existingEntry || entry.updatedAt >= existingEntry.updatedAt) mergedSourceRuntimes[sourceId] = entry;
-        }
-        return {
-          ...record,
-          // Preserve the cloud's position-derived fields.
-          currentTime: existing.position_seconds,
-          positionUpdatedAt: existingPosTs,
-          completionState: existing.completion_state as WatchProgressRecord['completionState'],
-          // Take the merged runtime metadata.
-          sourceRuntimes: mergedSourceRuntimes,
-          // Keep the incoming record's updatedAt/lastWatchedAt (the
-          // client's wall-clock for this mutation). The DB trigger
-          // will overwrite updated_at anyway, but last_watched_at
-          // should reflect when this device last touched the record.
-        };
+      // Use the SHARED pure conflict-resolution helper — the same
+      // ordering used by the client-side mergeProgress(). This
+      // guarantees client and server agree on which position wins.
+      const verdict = resolvePositionConflict(
+        incomingPosTs,
+        existingPosTs,
+        record.currentTime,
+        existing.position_seconds,
+      );
+      // Backward compat: fall back to blind upsert when BOTH sides are
+      // pre-migration records (positionUpdatedAt = 0 on both). The
+      // helper handles the mixed case (one side 0, other side > 0) by
+      // returning 'incoming-wins'/'existing-wins' — the side with a
+      // real positionUpdatedAt wins.
+      if (verdict === 'backward-compat') return record;
+      // If the incoming position wins, normal upsert.
+      if (verdict === 'incoming-wins') return record;
+      // The existing (cloud) position wins. Preserve the cloud's
+      // position-derived fields (currentTime, positionUpdatedAt,
+      // completionState) but still merge runtime metadata (duration,
+      // source_runtimes, selected_source_id) since those are not
+      // position-conflict-sensitive.
+      const mergedSourceRuntimes: Record<string, { duration: number; updatedAt: number }> = {};
+      const existingRuntimes = (existing.source_runtimes as Record<string, { duration: number; updatedAt: number }> | null) ?? {};
+      for (const [sourceId, entry] of Object.entries(existingRuntimes)) mergedSourceRuntimes[sourceId] = entry;
+      for (const [sourceId, entry] of Object.entries(record.sourceRuntimes ?? {})) {
+        const existingEntry = mergedSourceRuntimes[sourceId];
+        if (!existingEntry || entry.updatedAt >= existingEntry.updatedAt) mergedSourceRuntimes[sourceId] = entry;
       }
-      return record; // incoming is newer or equal — normal upsert
+      return {
+        ...record,
+        // Preserve the cloud's position-derived fields.
+        currentTime: existing.position_seconds,
+        positionUpdatedAt: existingPosTs,
+        completionState: existing.completion_state as WatchProgressRecord['completionState'],
+        // Take the merged runtime metadata.
+        sourceRuntimes: mergedSourceRuntimes,
+        // Keep the incoming record's updatedAt/lastWatchedAt (the
+        // client's wall-clock for this mutation). The DB trigger
+        // will overwrite updated_at anyway, but last_watched_at
+        // should reflect when this device last touched the record.
+      };
     });
   }
 

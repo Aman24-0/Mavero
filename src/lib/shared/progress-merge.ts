@@ -1,5 +1,6 @@
 import { favoriteKey, normalizeWatchlistStatus, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord, type SourceRuntimeEntry } from '$lib/client/progress/types';
 import { getLatestResumeTarget } from '$lib/client/progress/presenter';
+import { resolvePositionConflict } from './progress-conflict';
 
 // Phase 9: merge sourceRuntimes from both sides. For each source ID, prefer
 // the entry with the newer updatedAt. This preserves runtimes from both
@@ -27,26 +28,30 @@ export function mergeProgress(local: WatchProgressRecord[], cloud: CloudProgress
     if (!existing) {
       merged.set(record.key, record);
     } else {
-      // Cross-device conflict resolution: use positionUpdatedAt (not
-      // updatedAt) as the position-freshness signal. positionUpdatedAt
-      // is ONLY advanced when currentTime actually changes; updatedAt
-      // advances on ANY mutation (including runtime-only updates that
-      // do NOT change the position). Using updatedAt caused the
-      // Midsommar regression: a runtime-only flush on Device B stamped
-      // updatedAt = now, making its stale 28m position "win" over
-      // Device A's real 1h29m position.
+      // Cross-device conflict resolution: use the SHARED pure helper
+      // (resolvePositionConflict) — the same ordering used by the
+      // server-side compare-and-swap in /api/account/sync. This
+      // guarantees client and server agree on which position wins.
       //
-      // Backward compatibility: old records (pre-migration, local IDB
-      // + cloud rows created before positionUpdatedAt existed) have
-      // positionUpdatedAt = 0 or undefined. In that case, fall back to
-      // the old behavior (compare by updatedAt) so pre-migration
-      // records merge the same way they always did.
+      // Ordering:
+      //   1. Higher positionUpdatedAt wins.
+      //   2. If equal, higher currentTime wins.
+      //   3. If both equal, existing wins (preserve — never regress).
+      //
+      // Backward compatibility: when either side has positionUpdatedAt
+      // = 0 (pre-migration records), the helper returns 'backward-compat'
+      // and we fall back to the old updatedAt-based comparison.
       const recordPosTs = record.positionUpdatedAt ?? 0;
       const existingPosTs = existing.positionUpdatedAt ?? 0;
-      const usePositionTs = recordPosTs > 0 || existingPosTs > 0;
-      const recordTs = usePositionTs ? recordPosTs : record.updatedAt;
-      const existingTs = usePositionTs ? existingPosTs : existing.updatedAt;
-      if (recordTs > existingTs || (recordTs === existingTs && record.currentTime > existing.currentTime)) {
+      const verdict = resolvePositionConflict(recordPosTs, existingPosTs, record.currentTime, existing.currentTime);
+      let recordWins: boolean;
+      if (verdict === 'backward-compat') {
+        // Old behavior: compare by updatedAt, tiebreak by currentTime.
+        recordWins = record.updatedAt > existing.updatedAt || (record.updatedAt === existing.updatedAt && record.currentTime > existing.currentTime);
+      } else {
+        recordWins = verdict === 'incoming-wins';
+      }
+      if (recordWins) {
         // New record wins — merge sourceRuntimes from the losing record.
         const mergedRuntimes = mergeSourceRuntimes(record, existing);
         merged.set(record.key, { ...record, sourceRuntimes: mergedRuntimes });

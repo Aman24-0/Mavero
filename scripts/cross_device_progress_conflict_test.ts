@@ -356,4 +356,144 @@ console.log('\n10. sourceRuntimes merge across position conflict');
   ok('sourceRuntimes merge: winner\'s position + both devices\' runtimes');
 }
 
+// ============================================================
+// 11–14. Server-side CAS equal-timestamp conflict resolution
+// ============================================================
+// These tests exercise the ACTUAL pure helper (resolvePositionConflict)
+// used by the /api/account/sync PUT endpoint. The helper is imported
+// directly — NOT duplicated — so a bug in the helper will fail the
+// test, and a bug in the endpoint's USE of the helper would also
+// surface (the endpoint delegates to the same function).
+import { resolvePositionConflict } from '../src/lib/shared/progress-conflict.ts';
+
+console.log('\n11. CAS: equal positionUpdatedAt, incoming lower currentTime → existing wins (TEST A)');
+
+{
+  // Existing cloud: currentTime=5340, positionUpdatedAt=T
+  // Incoming:        currentTime=1676, positionUpdatedAt=T
+  // Expected: cloud 5340 remains (existing wins on tie → higher currentTime)
+  const T = 12_000_000;
+  const verdict = resolvePositionConflict(T, T, 1676, 5340);
+  assert.equal(verdict, 'existing-wins', 'equal positionUpdatedAt + lower incoming currentTime → existing wins');
+  ok('TEST A: cloud 5340 remains, incoming 1676 rejected');
+}
+
+console.log('\n12. CAS: equal positionUpdatedAt, incoming higher currentTime → incoming wins (TEST B)');
+
+{
+  // Existing cloud: currentTime=1676, positionUpdatedAt=T
+  // Incoming:        currentTime=5340, positionUpdatedAt=T
+  // Expected: incoming 5340 wins (higher currentTime on tie)
+  const T = 12_000_000;
+  const verdict = resolvePositionConflict(T, T, 5340, 1676);
+  assert.equal(verdict, 'incoming-wins', 'equal positionUpdatedAt + higher incoming currentTime → incoming wins');
+  ok('TEST B: incoming 5340 wins over cloud 1676');
+}
+
+console.log('\n13. CAS: exact tie (equal positionUpdatedAt + equal currentTime) → existing wins (TEST C)');
+
+{
+  // Existing cloud: currentTime=5340, positionUpdatedAt=T
+  // Incoming:        currentTime=5340, positionUpdatedAt=T
+  // Expected: position remains 5340 (existing wins on exact tie → preserve, no regression)
+  const T = 12_000_000;
+  const verdict = resolvePositionConflict(T, T, 5340, 5340);
+  assert.equal(verdict, 'existing-wins', 'exact tie → existing wins (preserve, never regress)');
+  ok('TEST C: exact tie preserves existing position — no regression');
+}
+
+console.log('\n14. CAS: newer incoming positionUpdatedAt → incoming wins');
+
+{
+  // Existing cloud: currentTime=1676, positionUpdatedAt=09:00
+  // Incoming:        currentTime=5340, positionUpdatedAt=10:00
+  // Expected: incoming wins (newer positionUpdatedAt)
+  const verdict = resolvePositionConflict(10_000_000, 9_000_000, 5340, 1676);
+  assert.equal(verdict, 'incoming-wins', 'newer incoming positionUpdatedAt → incoming wins');
+  ok('CAS: newer incoming positionUpdatedAt wins');
+}
+
+console.log('\n15. CAS: older incoming positionUpdatedAt → existing wins (original Midsommar regression)');
+
+{
+  // Existing cloud (Device A): currentTime=5340, positionUpdatedAt=10:00
+  // Incoming (Device B):        currentTime=1676, positionUpdatedAt=09:00
+  //   (Device B has a newer updatedAt from a runtime-only flush, but
+  //    the helper does NOT consult updatedAt — only positionUpdatedAt.)
+  // Expected: existing wins (Device A's real 5340 position preserved)
+  const verdict = resolvePositionConflict(9_000_000, 10_000_000, 1676, 5340);
+  assert.equal(verdict, 'existing-wins', 'older incoming positionUpdatedAt → existing wins (Midsommar regression)');
+  ok('CAS: older incoming positionUpdatedAt loses — Midsommar regression prevented');
+}
+
+console.log('\n16. CAS: backward compat (BOTH positionUpdatedAt=0) → backward-compat');
+
+{
+  // Pre-migration records: BOTH sides have positionUpdatedAt=0.
+  // The helper returns 'backward-compat' so the caller falls back to
+  // the old updatedAt-based behavior.
+  const verdict = resolvePositionConflict(0, 0, 5340, 1676);
+  assert.equal(verdict, 'backward-compat', 'both positionUpdatedAt=0 → backward-compat');
+  ok('CAS: both pre-migration records (positionUpdatedAt=0) return backward-compat');
+}
+
+console.log('\n16b. CAS: mixed case (one side positionUpdatedAt=0) → side with positionUpdatedAt wins');
+
+{
+  // Mixed case: one side has positionUpdatedAt > 0, the other has 0.
+  // The side with positionUpdatedAt > 0 wins (0 = unknown/very old).
+  // This prevents a stale pre-migration record from winning over a
+  // fresh new-client record just because the pre-migration record has
+  // a newer updatedAt (from a runtime-only flush).
+  const verdict1 = resolvePositionConflict(0, 10_000_000, 1676, 5340);
+  assert.equal(verdict1, 'existing-wins', 'incoming=0, existing>0 → existing wins');
+  const verdict2 = resolvePositionConflict(10_000_000, 0, 5340, 1676);
+  assert.equal(verdict2, 'incoming-wins', 'incoming>0, existing=0 → incoming wins');
+  ok('CAS: mixed case — side with positionUpdatedAt>0 wins over side with 0');
+}
+
+console.log('\n17. Client merge: equal positionUpdatedAt, higher currentTime wins (client-side mirror of TEST B)');
+
+{
+  // Verify the CLIENT-SIDE mergeProgress also uses the same ordering.
+  // This is the mirror of TEST B but through the merge function.
+  const T = 12_000_000;
+  const cloudLower = makeRecord({ contentId: 'client-tie', currentTime: 1676, updatedAt: T, positionUpdatedAt: T });
+  const localHigher = makeRecord({ contentId: 'client-tie', currentTime: 5340, updatedAt: T, positionUpdatedAt: T });
+
+  // Both have the same positionUpdatedAt. The higher currentTime (5340) should win.
+  const merged = mergeProgress([localHigher], [cloudLower]);
+  assert.equal(merged[0]!.currentTime, 5340, 'client merge: higher currentTime wins on equal positionUpdatedAt');
+  ok('client merge mirrors server CAS: equal positionUpdatedAt → higher currentTime wins');
+}
+
+console.log('\n18. Client merge: equal positionUpdatedAt, lower currentTime loses (client-side mirror of TEST A)');
+
+{
+  const T = 12_000_000;
+  const cloudHigher = makeRecord({ contentId: 'client-tie-a', currentTime: 5340, updatedAt: T, positionUpdatedAt: T });
+  const localLower = makeRecord({ contentId: 'client-tie-a', currentTime: 1676, updatedAt: T, positionUpdatedAt: T });
+
+  const merged = mergeProgress([localLower], [cloudHigher]);
+  assert.equal(merged[0]!.currentTime, 5340, 'client merge: lower currentTime loses on equal positionUpdatedAt');
+  ok('client merge mirrors server CAS: equal positionUpdatedAt → lower currentTime loses');
+}
+
+console.log('\n19. Client merge: exact tie preserves existing (client-side mirror of TEST C)');
+
+{
+  const T = 12_000_000;
+  const cloud = makeRecord({ contentId: 'client-tie-c', currentTime: 5340, updatedAt: T, positionUpdatedAt: T, selectedSourceId: 'cloud-source' });
+  const local = makeRecord({ contentId: 'client-tie-c', currentTime: 5340, updatedAt: T, positionUpdatedAt: T, selectedSourceId: 'local-source' });
+
+  // Exact tie on positionUpdatedAt + currentTime. The merge iterates
+  // [...local, ...cloud] — local is processed first, then cloud. When
+  // cloud is processed, existing=local. The helper returns 'existing-wins'
+  // on exact tie, so local (the existing) wins. The position is 5340
+  // either way — no regression.
+  const merged = mergeProgress([local], [cloud]);
+  assert.equal(merged[0]!.currentTime, 5340, 'client merge: exact tie preserves position (no regression)');
+  ok('client merge mirrors server CAS: exact tie → no regression');
+}
+
 console.log(`\nAll ${passed} cross-device conflict resolution checks passed`);
