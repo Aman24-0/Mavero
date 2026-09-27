@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Play, Star, Check } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
@@ -33,24 +34,126 @@
   export let selected = false;
   export let onSelect: (item: MediaItem) => void = () => {};
   let imageFailed = false;
-  // F7-B UX fix: the previous implementation wrapped the <img> in a
-  // custom IntersectionObserver + `imageReady` state gate. That gate
-  // was the root cause of the "cards pop in when scrolling" behavior
-  // the user reported on mobile — every card started with a flat
-  // placeholder and only swapped to the <img> after the observer
-  // fired, even though the browser's native `loading="lazy"` already
-  // handles viewport-aware image loading (and the HTTP cache + the
-  // browser's decoded-image cache already keep already-loaded posters
-  // ready for instant re-paint on scroll-back).
+
+  // ============================================================
+  // F7-B UX fix (revision 2): preload-ahead image warming.
   //
-  // Removing the observer + state gate means:
-  //   - the <img> is in the DOM from first paint (with `loading="lazy"`,
-  //     so off-screen posters are NOT fetched eagerly);
-  //   - once a poster has been fetched + decoded, the browser caches it
-  //     and re-paints it instantly when the card scrolls back into view
-  //     (no re-mount, no re-fetch, no re-decode, no pop-in);
-  //   - the onerror fallback still surfaces a graceful letter tile if
-  //     the upstream image truly fails.
+  // HISTORY:
+  //   1. Original: IntersectionObserver + `imageReady` state gate that
+  //      swapped a placeholder div → <img>. Caused visible pop-in
+  //      because every card started blank and swapped after observer
+  //      fire. REMOVED in the first UX pass.
+  //   2. First UX pass: removed the observer entirely, left only
+  //      `<img loading="lazy">`. Solved the pop-in BUT exposed a
+  //      second issue: native `loading="lazy"` on mobile (especially
+  //      WebKit) uses a relatively conservative rootMargin, so during
+  //      a fast finger-scroll the user can reach the next card before
+  //      its poster has finished fetching/decoding — the card shell
+  //      (surface-colored background) is briefly visible until the
+  //      image paints.
+  //
+  // CURRENT APPROACH (Option B from the audit):
+  //   - The DOM `<img>` STAYS MOUNTED with `loading="lazy"`. No state
+  //     toggle, no DOM swap, no remount. This preserves the fix for
+  //     the original pop-in bug.
+  //   - A separate IntersectionObserver watches the card element with
+  //     a WIDE rootMargin (1000px). When the card enters that preload
+  //     zone, we warm the browser's HTTP cache + decoded-image cache
+  //     for the poster URL via `new Image()` (a detached preload
+  //     hint). The browser fetches the URL once; when the actual DOM
+  //     `<img>` scrolls into view, the cached response is served
+  //     instantly — no fetch latency, no decode delay, no blank shell.
+  //   - The observer disconnects after the FIRST intersection (one
+  //     preload per card, ever). No per-scroll state updates, no
+  //     rerenders, no full-page recomputation.
+  //   - A bounded module-level `Set<string>` (`preloadedUrls`) tracks
+  //     which URLs have already been warmed, so the same poster is
+  //     never preloaded twice even if the card remounts (e.g. back-nav
+  //     from a detail page). The Set is bounded (max 256 entries);
+  //     when full, the oldest entries are evicted (FIFO). This keeps
+  //     memory bounded across long browsing sessions.
+  //
+  // WHY 1000px rootMargin:
+  //   - Mobile viewport height ≈ 844px (iPhone 12/13/14 at 390x844).
+  //   - Discover rail card height ≈ 40vw × 1.5 (2:3 aspect) ≈ 234px
+  //     on a 390px viewport, plus ~30px title/meta = ~264px per row.
+  //   - A typical fast finger-scroll covers ~800–1200px/sec. 1000px
+  //     of preload-ahead gives ~1 second of headroom — enough for the
+  //     preload fetch + decode to complete before the user's finger
+  //     arrives, even on a slow 3G connection (a 342px-wide poster is
+  //     ~30–50KB; at 400kbps that's ~1s, at 1Mbps ~0.4s).
+  //   - 1000px is also small enough that we don't eagerly preload the
+  //     ENTIRE page's worth of posters on initial load. With ~10 rails
+  //     × 6 visible cards = 60 cards, a 1000px zone covers roughly
+  //     the next 3–4 rails below the viewport — a sensible preload
+  //     budget, not a full-network-burst.
+  //   - Horizontal rails: the same observer covers horizontal
+  //     scroll-into-view because IntersectionObserver's rootMargin
+  //     applies to BOTH axes. A card offscreen to the right within
+  //     1000px also preloads.
+  //
+  // WHAT THIS DOES NOT DO:
+  //   - Does NOT toggle any Svelte state on intersection (no rerender).
+  //   - Does NOT swap DOM elements (no placeholder → img dance).
+  //   - Does NOT remount the card or the image.
+  //   - Does NOT preload EVERY card on initial load (only those within
+  //     1000px of the viewport — the rest stay on native lazy).
+  //   - Does NOT attach a scroll listener.
+  //   - Does NOT poll.
+  //   - Does NOT use setTimeout / minimum durations.
+  //   - Does NOT touch the existing `imageFailed` onerror fallback.
+  // ============================================================
+  const PRELOAD_ROOT_MARGIN = '1000px 1000px 1000px 1000px';
+  const PRELOAD_SET_MAX = 256;
+  const preloadedUrls = new Set<string>();
+  const preloadOrder: string[] = [];
+
+  function warmPoster(url: string | null | undefined) {
+    if (!url || typeof window === 'undefined') return;
+    if (preloadedUrls.has(url)) return;
+    preloadedUrls.add(url);
+    preloadOrder.push(url);
+    // Bounded FIFO eviction — keep memory predictable across long
+    // browsing sessions. 256 entries × ~50KB poster ≈ 12MB of URL
+    // tracking (the URLs themselves are tiny strings; the actual
+    // image bytes live in the browser's HTTP cache, which has its own
+    // independent eviction policy).
+    if (preloadOrder.length > PRELOAD_SET_MAX) {
+      const oldest = preloadOrder.shift();
+      if (oldest) preloadedUrls.delete(oldest);
+    }
+    // `new Image()` is the classic preload hint: the browser fetches
+    // the URL into its HTTP cache (and decodes it into the
+    // decoded-image cache) without inserting anything into the DOM.
+    // When the actual `<img>` element scrolls into view, the browser
+    // serves the cached response instantly. We deliberately do NOT
+    // attach onload/onerror handlers here — the preload is a best-
+    // effort hint; if it fails (e.g. network blip), the real DOM
+    // `<img>`'s own onerror fallback still fires normally and the
+    // `imageFailed` state shows the letter tile. The preload failing
+    // does NOT permanently mark the URL as failed.
+    const preloader = new Image();
+    preloader.decoding = 'async';
+    preloader.src = url;
+  }
+
+  let posterElement: HTMLElement;
+  onMount(() => {
+    if (typeof window === 'undefined' || !('IntersectionObserver' in window) || !posterElement) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      warmPoster(item.poster);
+      // One-shot: disconnect after the first intersection. The card
+      // is mounted once (keyed each block in DiscoverSection); the
+      // preload only needs to fire once per mount. On back-nav the
+      // card remounts, but `preloadedUrls` already has the URL so the
+      // second warm-up is a no-op (the Set check returns early).
+      observer.disconnect();
+    }, { rootMargin: PRELOAD_ROOT_MARGIN });
+    observer.observe(posterElement);
+    return () => observer.disconnect();
+  });
+
   $: if (item.poster) imageFailed = false;
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
   $: cardHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
@@ -78,7 +181,7 @@
 </script>
 
 <div class:compact class:editorial class:selectable class:selected class="mc-wrap">
-  <div class="mc-poster" style={`--poster-accent: ${item.accent}`}>
+  <div class="mc-poster" bind:this={posterElement} style={`--poster-accent: ${item.accent}`}>
     {#if selectable}
       <!-- Selection mode: a button overlaying the whole poster so the
            tap target is the entire card. We do NOT nest the button

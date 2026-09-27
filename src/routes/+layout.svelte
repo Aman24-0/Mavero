@@ -181,10 +181,30 @@
 
 <!-- Navigation loading indicators — appear during SPA navigation and
      disappear when it completes. Non-blocking (pointer-events: none),
-     respects reduced-motion. The `navigating` store from SvelteKit
-     stays truthy for the WHOLE SPA transition (route swap + load
-     functions + new page mount), so both indicators represent REAL
-     pending work, not an artificial delay.
+     respects reduced-motion.
+
+     CRITICAL: in SvelteKit's `$app/state` API, `navigating` is an
+     always-truthy OBJECT (a plain reference with `from`, `to`, `type`,
+     `willUnload`, `delta`, `complete` getters). When no navigation is
+     active, every getter returns `null` — but the object itself is
+     never null. Therefore `{#if navigating}` is ALWAYS truthy and the
+     spinner would never disappear.
+
+     The correct "is a navigation currently in progress?" check is
+     `navigating.to !== null` (or equivalently `navigating.complete`
+     being null + a non-null `to`). SvelteKit sets `navigating.to` to
+     the destination route's navigation target the instant a SPA
+     navigation begins, and resets it to `null` the instant the
+     navigation completes (success OR error — SvelteKit's router
+     clears the navigating state on both). So:
+
+       idle                  → navigating.to === null  → no spinner
+       navigation in flight  → navigating.to !== null  → spinner visible
+       navigation completes  → navigating.to === null  → spinner gone
+
+     No setTimeout, no minimum duration, no manual "hide" call — the
+     spinner lifecycle is driven entirely by SvelteKit's navigation
+     state.
 
      Two elements, ONE animation (no competing motion):
        1. .nav-spinner  — compact circular spinner, the PRIMARY visible
@@ -197,7 +217,7 @@
                           (no animation). Secondary peripheral cue only;
                           the sweep animation was removed so the spinner
                           is the sole animated element. -->
-{#if navigating}
+{#if navigating.to !== null}
   <div class="nav-spinner" role="status" aria-label="Loading">
     <div class="nav-spinner-ring"></div>
   </div>
