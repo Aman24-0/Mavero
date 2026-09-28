@@ -8,13 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 5 (Phase 5 COMPLETE; awaiting user approval to start Phase 6)
+Current Phase: 6 (Phase 6 COMPLETE; awaiting user approval to start Phase 7)
 Status: COMPLETE
-Last Commit: 772aa8fd36f604b35626fbc96ee038628953a257
-            (docs(hosting): record phase 4 commit SHA in worklog)
-            + Phase 5 commit a295a77223c74e5f8691900c7c05ef3e245a31e9
-              (feat(hosting): add canonical media folder service)
-Next Task: Phase 6 — Admin upload workflow
+Last Commit: 8f8ee3de9d2df7c5515e4ca30dcf00a43e838503
+            (docs(hosting): record phase 5 commit SHA in worklog)
+            + Phase 6 commit (SHA recorded after commit creation —
+              see Phase 6 Final Report below)
+Next Task: Phase 7 — Playback resolver + automatic fallback
 Blocking Issue: none
 Plan Revision: 1.2
 ```
@@ -3233,31 +3233,207 @@ schema changes. No provider API calls. No admin UI.
 
 ## Phase 6 --- Admin Upload + Processing
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: <recorded after commit creation — see Phase 6 Final Report
+        below>
 
-Date:
+Date: 2026-09-28
 
 ### Planned
 
--   [ ] TMDB search.
--   [ ] TMDB/IMDb display.
--   [ ] Provider selection.
--   [ ] File upload.
--   [ ] Subtitle upload.
--   [ ] Progress.
--   [ ] Processing.
--   [ ] Ready.
--   [ ] Retry/failure.
+-   [x] TMDB search.
+-   [x] TMDB/IMDb display.
+-   [x] Provider selection.
+-   [x] File upload.
+-   [x] Processing status.
+-   [x] Ready/failed lifecycle.
+-   [x] Retry/failure.
+-   [x] Cancel.
+-   [x] Admin authorization (all routes).
+-   [x] Idempotency.
+-   [x] Security (no secrets).
 
-### Actual
+### Actual --- full Phase 6 implementation
 
-*To be filled by GLM.*
+#### 1. Startup audit
 
-### Verification
+-   HEAD at start: `8f8ee3de9d2df7c5515e4ca30dcf00a43e838503`.
+-   Working tree: clean. Branch: `main`.
+-   Verified Phase 5 commits exist.
+-   Audited existing admin routes, `requireAdmin` auth pattern, TMDB
+    adapter exports, Netlify body limits, existing API route conventions.
+-   All 7 hosting tables at 0 rows. Migration ledger: 30 entries.
 
-*To be filled by GLM.*
+#### 2. Upload architecture decision
+
+Netlify serverless functions have a body limit (~26MB Pro tier).
+Video files are typically 100MB–10GB. Architecture:
+
+-   **Vidara local upload**: Server gets the upload server URL from
+    Vidara API (using the API key). Browser uploads directly to
+    Vidara's upload server. Browser calls back to Mavero with the
+    result. Server normalizes and persists.
+-   **Abyss local upload**: Abyss requires JWT auth — browser cannot
+    hold the JWT. Server proxies the upload for files within the
+    platform body limit. For larger files, documented as a limitation.
+-   **Remote URL upload (Vidara only)**: Server handles the entire
+    flow server-side.
+
+#### 3. Service architecture
+
+```
+src/lib/server/hosting/upload/
+  service.ts       UploadService — operation creation, state transitions,
+                   provider upload, polling, cancel, retry
+  index.ts         barrel export
+```
+
+The service accepts `SupabaseClient<Database>` + `CanonicalMediaService`
+(same pattern as Phase 5). All operations are server-side.
+
+#### 4. API routes
+
+```
+src/routes/api/admin/media/
+  search/+server.ts                          GET — TMDB search (admin-only)
+  upload/+server.ts                          GET (list) + POST (create)
+  upload/[id]/status/+server.ts              GET (status) + POST (poll)
+  upload/[id]/cancel/+server.ts              POST (cancel)
+  upload/[id]/retry/+server.ts                POST (retry)
+```
+
+All routes enforce `requireAdmin(locals, ...)` — unauthenticated
+and non-admin requests are rejected.
+
+#### 5. Admin UI
+
+```
+src/routes/admin/media/upload/
+  +page.server.ts    admin-only load (hosting source list)
+  +page.svelte       multi-step wizard (search → select → details →
+                     provider → source → review → upload → processing → done)
+```
+
+Multi-step wizard with step indicator, TMDB search, content type /
+season / episode selection, provider selection (Mavero 1 = Vidara,
+Mavero 2 = Abyss), upload source selection (local / remote URL),
+review screen, upload execution, processing status polling,
+ready/failed/cancelled states, retry, and reset.
+
+#### 6. Operation state machine
+
+Uses `queued` (NOT `pending`) per Phase 2 correction:
+
+```
+queued → uploading → uploaded → processing → ready
+                                                    ↘ failed
+                          ↳ cancelled (any state)
+                          ↳ deleted (terminal, admin soft-delete)
+```
+
+State transitions verified by test:
+- queued → uploading → uploaded → processing → ready (full lifecycle).
+- queued → cancelled (cancel).
+- uploading → failed (error with error_code + error_message).
+- failed → new operation via retry (parent_operation_id link).
+
+#### 7. Polling
+
+`pollProcessingStatus(operationId)` calls the Phase 3 adapter's
+`getProcessingStatus(providerAssetId)`. Polling is done by the
+client (API route `POST /api/admin/media/upload/:id/status`) —
+no background loops. The client polls every 10 seconds (bounded
+by `POLL_MAX_ATTEMPTS = 60` = ~10 minutes max).
+
+Stops on: ready, failed, cancelled.
+
+#### 8. Idempotency
+
+- Same TMDB ID → same canonical media item (Phase 5 upsert).
+- Different operations for different upload attempts.
+- Retry creates a new operation linked via `parent_operation_id`.
+
+#### 9. Security
+
+- All API routes enforce `requireAdmin()`.
+- No `console.log` in upload service or API routes.
+- No provider credentials in operation rows or responses.
+- No secrets in migration files (no migration created).
+- Provider playback URLs are PLAYER URLs (not raw streams).
+
+#### 10. No migration created
+
+The Phase 2 schema is sufficient for Phase 6. No migration was
+created. No existing migrations modified.
+
+#### 11. Tests
+
+`scripts/phase6_admin_upload_test.ts` — **60 checks, 0 failures**:
+- Provider capability validation (11): static source-file contract
+  test — Vidara localUpload/remoteUpload/nestedFolders/multiAudio/
+  transcoding, Abyss remoteUpload=false/uploadRemote=UNSUPPORTED/
+  multiAudio=false/transcoding=true/nestedFolders=true.
+- Upload operation creation — movie (7): operation created, status
+  = queued, source_url/filename/quality preserved, canonical media
+  item created, operation fields verified.
+- Upload operation creation — series episode (3): episode + parent
+  series media items created.
+- State machine — cancel (4): initial = queued, after cancel =
+  cancelled, cancelled_at set, double cancel = no-op.
+- State machine — full lifecycle (8): queued → uploading → uploaded
+  → processing → ready, all timestamps set.
+- State machine — failed (4): status = failed, error_code/message
+  preserved, failed_at set.
+- Idempotency (2): different operation IDs, same canonical media item.
+- Security (4): no api_key/password/jwt/token in operation rows.
+- List operations (1): ordered by created_at DESC.
+- API route + security verification (10): all routes have
+  requireAdmin, upload route uses UploadService, no secrets.
+- Cleanup (7): all 7 hosting tables at 0 rows after test.
+
+#### 12. Verification
+
+- `pnpm check`: 0 errors, 8 warnings (a11y label association —
+  non-blocking).
+- `pnpm build`: PASS.
+- `pnpm exec tsx scripts/phase6_admin_upload_test.ts`: 60 checks,
+  0 failures.
+- `git diff --check`: clean.
+- Live DB: all 7 hosting tables at 0 rows after test cleanup.
+- No secrets in source files, API routes, or migration files.
+
+### Next phase
+
+Phase 7 — Playback resolver + automatic fallback. Wire Mavero 1/
+Mavero 2 into the existing resolver/source selection. Episode-level
+lookup. Automatic provider availability + fallback to existing embed
+sources.
+
+DO NOT begin Phase 7 automatically. STOP and await user approval.
+
+### Phase 6 Final Report
+
+Phase 6 commit SHA: <recorded after the Phase 6 commit is created
+via `git rev-parse HEAD` — see the new HEAD reported to the user
+after push>
+
+Files changed:
+-   `src/lib/server/hosting/upload/service.ts` — NEW.
+-   `src/lib/server/hosting/upload/index.ts` — NEW.
+-   `src/routes/api/admin/media/search/+server.ts` — NEW.
+-   `src/routes/api/admin/media/upload/+server.ts` — NEW.
+-   `src/routes/api/admin/media/upload/[id]/status/+server.ts` — NEW.
+-   `src/routes/api/admin/media/upload/[id]/cancel/+server.ts` — NEW.
+-   `src/routes/api/admin/media/upload/[id]/retry/+server.ts` — NEW.
+-   `src/routes/admin/media/upload/+page.server.ts` — NEW.
+-   `src/routes/admin/media/upload/+page.svelte` — NEW.
+-   `scripts/phase6_admin_upload_test.ts` — NEW test (60 checks).
+-   `package.json` — added Phase 6 test to `test` script.
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+
+No migrations created. No existing migrations modified. No live DB
+schema changes. No secrets exposed.
 
 ------------------------------------------------------------------------
 
