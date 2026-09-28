@@ -5,7 +5,7 @@
 **Document status:** LOCKED FOR IMPLEMENTATION\
 **Audit date:** 2026-09-28\
 **Repository:** `Aman24-0/Mavero`\
-**Audited HEAD:** `fe25339a5d7753ef6b6e4c1d541c828caeaeed46`\
+**Audited HEAD:** `fe25339a5d7753ef6b6e4c1d541c828caeaeed46` (original plan audit). Phase 0 was executed against actual HEAD `29d049676a1b201fd8e5a827988d897893c3d211` which is `fe25339` + the planning docs upload commit. See worklog Phase 0 for details.\
 **Supabase project:** Mavero (`whekhqimzrafhsrmswbn`)\
 **Implementation owner:** GLM, phase-by-phase with mandatory worklog +
 commit discipline
@@ -413,10 +413,46 @@ Abyss API documentation supplied for this project includes:
 The supplied documentation only explicitly documents Google Drive remote
 import.
 
-Do NOT invent a generic arbitrary-URL remote API.
+### 3.2.1 Generic external direct-file URL upload --- VERIFIED (Phase 0 audit)
 
-If dashboard testing confirms an arbitrary URL remote feature exists,
-document the actual endpoint/contract before implementing it.
+The Abyss dashboard was tested manually (post-plan-lock) using an
+external direct media-file URL that was NOT Google Drive --- the URL
+pointed directly to an `.mp4` media file. Abyss successfully:
+
+-   accepted the external URL;
+-   started the upload;
+-   showed an ACTIVE upload;
+-   completed processing/upload;
+-   showed the resulting file as READY.
+
+Therefore generic external direct-file URL ingestion is CONFIRMED at the
+product level. The capability matrix in §6 is updated to:
+
+``` text
+Abyss.supportsGenericRemoteUrl = VERIFIED
+```
+
+IMPORTANT (Phase 0 plan change, see §27 Revision 1.1):
+
+-   Product-level verification ONLY. The exact API endpoint/contract
+    (request path, payload shape, auth scope, lifecycle callbacks) was
+    NOT yet identified --- the Phase 0 audit did not have provider
+    dashboard/API credentials to perform a live API call.
+-   Phase 3 (Vidara + Abyss provider adapters) MUST audit the actual
+    Abyss remote-upload API endpoint/contract before implementing the
+    `uploadRemote()` adapter method.
+-   The remote source MUST be a direct downloadable media-file URL
+    (direct .mp4 URL or other directly supported video file URL). A
+    webpage, watch page, player page, HTML page or arbitrary streaming
+    site page MUST NOT be passed to the provider --- if the provider
+    performs the fetch, Mavero passes the URL through the provider's
+    supported API and does NOT build an unnecessary Mavero-side
+    downloader/fetcher.
+
+Do NOT silently assume the API endpoint shape. The plan-change protocol
+in §22 applies to the final adapter contract.
+
+
 
 ------------------------------------------------------------------------
 
@@ -641,7 +677,7 @@ For Abyss:
 supportsNestedFolders = true
 supportsFolderCreate = true
 supportsGoogleDriveRemote = true
-supportsGenericRemoteUrl = only if verified
+supportsGenericRemoteUrl = VERIFIED (Phase 0 audit, see §3.2.1 + §27 Rev 1.1)
 supportsMultiAudio = false
 supportsMultiQualityProcessing = true
 supportsExternalSubtitles = true
@@ -2025,4 +2061,27 @@ The project is complete only when all are true:
                                                   after repository + live
                                                   Supabase audit.
 
+  1.1                     2026-09-28              Phase 0 audit
+                                                  confirmed Abyss generic
+                                                  external direct-file
+                                                  URL upload VERIFIED at
+                                                  the product level (via
+                                                  manual dashboard test
+                                                  with an external `.mp4`
+                                                  URL that was NOT Google
+                                                  Drive). §3.2.1 added;
+                                                  §6 Abyss capability
+                                                  matrix updated to
+                                                  `supportsGenericRemoteUrl
+                                                  = VERIFIED`. The exact
+                                                  API endpoint/contract
+                                                  remains UNVERIFIED at
+                                                  the API level and MUST
+                                                  be audited in Phase 3
+                                                  before the
+                                                  `uploadRemote()` adapter
+                                                  method is implemented.
+                                                  Plan-change protocol
+                                                  §22 applies to the final
+                                                  adapter contract.
   -----------------------------------------------------------------------
