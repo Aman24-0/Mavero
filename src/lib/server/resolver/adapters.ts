@@ -5,6 +5,7 @@ import type { AdapterResult, ProviderAdapter, ResolverContext } from './types';
 import type { IntegrationType } from '$lib/server/streaming/types';
 import { vidsrcProviderAdapter } from './vidsrc';
 import { vidlinkProviderAdapter } from './vidlink';
+import { createMaveroHostedAdapter, MAVERO_HOSTED_ADAPTER_ID_VIDARA, MAVERO_HOSTED_ADAPTER_ID_ABYSS } from './mavero-hosted';
 import type { Json } from '$lib/server/supabase/database.types';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
@@ -94,9 +95,21 @@ export function createDefaultAdapters(): Record<IntegrationType, ProviderAdapter
 export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
   // Yenime was removed (anime-only MAL-embed provider is no longer
   // supported). Only VidSrc and VidLink adapter IDs remain registered.
+  //
+  // Phase 7: Mavero-hosted adapters for Vidara ('vidara') and Abyss
+  // ('abyss') are registered here. The adapter_id values match the
+  // `streaming_providers.adapter_id` column set by Phase 4 migration
+  // 20260928213822. The resolver's `adapterFor(config)` function in
+  // core.ts dispatches to this map — adding the entries here is the
+  // SINGLE integration point. The adapters query `media_assets` for
+  // ready assets matching the canonical_key + provider_source_id and
+  // return the provider's playback_url as an embed URL (provider-hosted
+  // player, NOT a raw direct stream).
   return {
     [vidsrcProviderAdapter.adapterId ?? 'vidsrc-embed']: vidsrcProviderAdapter,
-    [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter
+    [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter,
+    [MAVERO_HOSTED_ADAPTER_ID_VIDARA]: createMaveroHostedAdapter(MAVERO_HOSTED_ADAPTER_ID_VIDARA),
+    [MAVERO_HOSTED_ADAPTER_ID_ABYSS]: createMaveroHostedAdapter(MAVERO_HOSTED_ADAPTER_ID_ABYSS),
   };
 }
 
