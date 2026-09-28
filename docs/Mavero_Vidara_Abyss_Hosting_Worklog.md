@@ -12,8 +12,8 @@ Current Phase: 1 (Phase 1 COMPLETE; awaiting user approval to start Phase 2)
 Status: COMPLETE
 Last Commit: b43914b09b6d04fc57b020baeefc8d9be6dde8dd
             (docs(hosting): record phase 0 and migration timestamp conventions)
-            + Phase 1 commit (SHA recorded after commit creation —
-              see Phase 1 Final Report below)
+            + Phase 1 commit 0111d7fb3340d5e8ce5f0cbf503dd1c848b68fa7
+              (refactor(hosting): retire obsolete mavero player branch)
 Next Task: Phase 2 — Hosting database foundation
 Blocking Issue: none
 Plan Revision: 1.2
@@ -1237,8 +1237,8 @@ push>
 
 Status: COMPLETE
 
-Commit: <recorded after commit creation — see Phase 1 Final Report
-        below for the actual SHA recorded by the implementing agent>
+Commit: 0111d7fb3340d5e8ce5f0cbf503dd1c848b68fa7
+        (refactor(hosting): retire obsolete mavero player branch)
 
 Date: 2026-09-28
 
@@ -1727,9 +1727,7 @@ DO NOT begin Phase 2 automatically. STOP and await user approval.
 
 ### Phase 1 Final Report
 
-Phase 1 commit SHA: <recorded after the Phase 1 commit is created
-via `git rev-parse HEAD` — see the new HEAD reported to the user
-after push>
+Phase 1 commit SHA: 0111d7fb3340d5e8ce5f0cbf503dd1c848b68fa7
 
 Commit message:
 
