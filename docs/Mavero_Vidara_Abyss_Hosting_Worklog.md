@@ -12,7 +12,7 @@ Current Phase: 4 (Phase 4 COMPLETE; awaiting user approval to start Phase 5)
 Status: COMPLETE
 Last Commit: 0fe1f29a79528f4330b2706473160dd1f7efb423
             (docs(hosting): record phase 3 commit SHA in worklog)
-            + Phase 4 commit 4791ecd75c932206c118c9967e97bf6e7b6362be
+            + Phase 4 commit fba957c
               (feat(hosting): register vidara and abyss sources)
 Next Task: Phase 5 — Canonical folder/media library service
 Blocking Issue: none
@@ -2853,7 +2853,7 @@ mock fetchers).
 
 Status: COMPLETE
 
-Commit: 4791ecd75c932206c118c9967e97bf6e7b6362be
+Commit: fba957c
         (feat(hosting): register vidara and abyss sources)
 
 Date: 2026-09-28
@@ -3018,7 +3018,7 @@ DO NOT begin Phase 5 automatically. STOP and await user approval.
 
 ### Phase 4 Final Report
 
-Phase 4 commit SHA: 4791ecd75c932206c118c9967e97bf6e7b6362be
+Phase 4 commit SHA: fba957c
 
 Files changed:
 -   `supabase/migrations/20260928213822_phase4_register_hosting_sources.sql`
