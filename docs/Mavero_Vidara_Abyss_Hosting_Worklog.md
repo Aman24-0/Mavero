@@ -8,12 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 2 (Phase 2 COMPLETE; awaiting user approval to start Phase 3)
+Current Phase: 2 (Phase 2 COMPLETE + Phase 2 post-audit correction COMPLETE;
+                  awaiting user approval to start Phase 3)
 Status: COMPLETE
-Last Commit: 5e20dab3755ff15706ca5ed283d32d18e6cc294e
-            (docs(hosting): record phase 1 commit SHA in worklog)
-            + Phase 2 commit 15ff93b9a68f7f1e0354e92900c4690a5e017e88
-              (feat(hosting): add hosting database foundation)
+Last Commit: 3ee7b5a51f6185e3e166d3e01db6886f587d0611
+            (docs(hosting): record phase 2 commit SHA in worklog)
+            + Phase 2 correction commit (SHA recorded after commit
+              creation — see Phase 2 Correction Final Report below)
 Next Task: Phase 3 — Vidara + Abyss provider adapters
 Blocking Issue: none
 Plan Revision: 1.2
@@ -2341,6 +2342,254 @@ Files changed (summary):
 7 new DB tables created. 0 existing tables modified. 0 migrations
 renamed or modified. 0 provider API calls implemented. 0 source
 code behavior changes.
+
+------------------------------------------------------------------------
+
+### Phase 2 Post-Audit Correction --- Align upload queue state with plan
+
+Status: COMPLETE
+
+Commit: <recorded after commit creation — see Phase 2 Correction
+        Final Report below>
+
+Date: 2026-09-28
+
+#### C1. Original mismatch
+
+The Phase 2 plan §7.2 + §Phase 6 defines the upload operation
+state machine as:
+
+``` text
+queued → uploading → uploaded → processing → ready
+                                                    ↘ failed
+                          ↳ cancelled (any state)
+```
+
+The Phase 2 implementation (`20260928200724_phase2_hosting_database_foundation.sql`)
+used `pending` instead of `queued` as the pre-upload state, on
+both:
+
+-   `media_upload_operations.status` (CHECK: `pending, uploading,
+    uploaded, processing, ready, failed, cancelled, deleted`;
+    default `'pending'`).
+-   `media_assets.status` (CHECK: `pending, uploading, uploaded,
+    processing, ready, failed, deleted`; default `'pending'`).
+
+`pending` was UNDOCUMENTED in the plan. Phase 3 will implement the
+real upload workflow and would have inherited the wrong state name,
+spreading the mismatch into the application layer.
+
+#### C2. Why it was corrected
+
+1.  **Plan adherence**: the plan explicitly names `queued` (§7.2 +
+    §Phase 6). Using `pending` was an undocumented deviation.
+2.  **Phase 3 readiness**: Phase 3 will implement the upload
+    service + admin UI. The state machine constants in code must
+    match the schema, and both must match the plan.
+3.  **API contract clarity**: future API responses that expose
+    `media_upload_operations.status` would leak the wrong state
+    name to clients if the mismatch persisted.
+4.  **No data migration risk**: production hosting tables were
+    EMPTY (verified before the corrective migration — 0 rows in
+    all 7 hosting tables). Only constraint + default updates were
+    needed.
+
+#### C3. Corrective migration
+
+-   **Filename**: `supabase/migrations/20260928204845_phase2_corrective_upload_status_queued.sql`
+-   **IST timestamp**: `20260928204845` (2026-09-28 20:48:45 IST /
+    UTC+05:30). Generated via `TZ=Asia/Kolkata date +%Y%m%d%H%M%S`.
+-   **Chronologically correct**: timestamp is greater than the
+    previous MAX ledger version (`20260928200724`).
+-   **8 SQL statements**: 4 per table (DROP CONSTRAINT IF EXISTS →
+    ADD CONSTRAINT → ALTER COLUMN DROP DEFAULT → ALTER COLUMN SET
+    DEFAULT).
+
+The historical Phase 2 migration
+(`20260928200724_phase2_hosting_database_foundation.sql`) was NOT
+modified — it is preserved verbatim per the established migration
+discipline (Phase 0 follow-up §F5). The schema drift is corrected
+here in a separate migration.
+
+#### C4. Exact schema change
+
+**`media_upload_operations.status`**:
+-   Before: `CHECK (status IN ('pending', 'uploading', 'uploaded',
+    'processing', 'ready', 'failed', 'cancelled', 'deleted'))`,
+    DEFAULT `'pending'`.
+-   After: `CHECK (status IN ('queued', 'uploading', 'uploaded',
+    'processing', 'ready', 'failed', 'cancelled', 'deleted'))`,
+    DEFAULT `'queued'`.
+
+**`media_assets.status`**:
+-   Before: `CHECK (status IN ('pending', 'uploading', 'uploaded',
+    'processing', 'ready', 'failed', 'deleted'))`,
+    DEFAULT `'pending'`.
+-   After: `CHECK (status IN ('queued', 'uploading', 'uploaded',
+    'processing', 'ready', 'failed', 'deleted'))`,
+    DEFAULT `'queued'`.
+
+**`deleted` state (kept, documented)**:
+-   `deleted` is NOT part of the plan's public upload lifecycle
+    (§7.2: `queued, uploading, uploaded, processing, ready, failed,
+    cancelled`). It is a Mavero-side administrative terminal state
+    for soft-delete workflows (admin marks an operation/asset as
+    deleted without physically removing the row).
+-   The plan's public upload lifecycle is unchanged:
+    `queued, uploading, uploaded, processing, ready, failed,
+    cancelled`.
+-   The Mavero-side administrative extension is: `+ deleted`
+    (terminal soft-delete).
+-   `media_assets.status` does NOT have `cancelled` because
+    cancellation belongs to the upload operation, not the asset.
+
+#### C5. Tests
+
+-   **Fixture test** (`scripts/phase2_fixture_test.mjs`, local
+    audit script — NOT committed to the repo): updated the 2 INSERT
+    statements that previously used `'pending'` to use `'queued'`.
+    All 26 checks pass:
+    -   Valid inserts with `'queued'` status succeed.
+    -   Invalid status (`'unknown'`) is still rejected by the
+        CHECK constraint on both `media_assets.status` and
+        `media_upload_operations.status`.
+    -   All other CHECK / UNIQUE / FK / trigger tests pass
+        unchanged.
+    -   Production tables cleaned up to 0 rows after the test.
+-   **pnpm check**: 0 errors, 0 warnings.
+-   **pnpm build**: PASS (Vite SSR + Netlify adapter clean).
+-   **git diff --check**: clean.
+-   **Live DB verification** (`scripts/phase2_corrective_verify.mjs`):
+    -   `media_upload_operations_status_check` now allows `queued`
+        (not `pending`).
+    -   `media_upload_operations.status` default is `'queued'`.
+    -   `media_assets_status_check` now allows `queued` (not
+        `pending`).
+    -   `media_assets.status` default is `'queued'`.
+    -   Total public table count: 34 (unchanged — no tables added
+        or removed).
+    -   All 7 hosting tables: 0 rows (unchanged — no data
+        migrated).
+    -   Migration ledger: 29 entries, MAX version
+        `20260928204845`.
+
+#### C6. Migration-engineering correction --- idempotency claim
+
+The Phase 2 migration's closing comment claimed:
+
+> "All DDL is idempotent (`IF NOT EXISTS`)"
+
+This was INACCURATE. The Phase 2 migration's
+`ALTER TABLE ... ADD CONSTRAINT` statements are NOT individually
+idempotent — a re-apply would fail with "constraint already
+exists". The migration was only idempotent at the MIGRATION
+LEDGER level (the `supabase_migrations.schema_migrations` ledger
+prevents a normal duplicate application via `ON CONFLICT (version)
+DO NOTHING`).
+
+Corrected understanding (documented here, NOT retroactively
+edited into the historical migration):
+
+-   The migration ledger (`schema_migrations`) prevents normal
+    duplicate application of a migration. This is the primary
+    idempotency mechanism.
+-   Individual `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF
+    NOT EXISTS` / `DROP POLICY IF EXISTS` / `DROP TRIGGER IF
+    EXISTS` statements ARE individually idempotent.
+-   `ALTER TABLE ... ADD CONSTRAINT` statements are NOT
+    individually idempotent (PostgreSQL does not support
+    `ADD CONSTRAINT IF NOT EXISTS` for CHECK constraints).
+    The Phase 2 migration used `DROP POLICY IF EXISTS` + `CREATE
+    POLICY` (idempotent) and `DROP TRIGGER IF EXISTS` + `CREATE
+    TRIGGER` (idempotent), but `ADD CONSTRAINT` without a prior
+    `DROP CONSTRAINT IF EXISTS` is NOT idempotent.
+-   Future corrective migrations (like this one) MUST be written
+    safely: `DROP CONSTRAINT IF EXISTS` first, then `ADD
+    CONSTRAINT`. This is the pattern used in
+    `20260928204845_phase2_corrective_upload_status_queued.sql`.
+-   The historical Phase 2 migration is NOT retroactively edited
+    to add `DROP CONSTRAINT IF EXISTS` — that would be silently
+    rewriting historical migration history, which violates the
+    established migration discipline.
+
+The inaccurate "All DDL is idempotent" claim is now documented as
+a migration-engineering correction in this worklog entry. The
+plan §28 (Engineering conventions) does NOT need to be updated
+because it does not make any idempotency claim — the inaccuracy
+was only in the Phase 2 migration file's closing comment.
+
+#### C7. Confirmation that no unrelated files/code changed
+
+Files changed by this correction:
+
+-   `supabase/migrations/20260928204845_phase2_corrective_upload_status_queued.sql`
+    (NEW corrective migration).
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
+    correction entry).
+
+Files NOT changed:
+
+-   `supabase/migrations/20260928200724_phase2_hosting_database_foundation.sql`
+    (historical Phase 2 migration — preserved verbatim).
+-   `src/lib/server/supabase/database.types.ts` (the `status`
+    fields are typed as `string`, not literal unions — no type
+    change needed; the previous Phase 2 type definition is still
+    correct).
+-   `src/lib/` / `src/routes/` / `src/lib/components/` /
+    `src/lib/client/` — NO source code touched.
+-   All 73 pre-Phase-2 migration files — untouched.
+-   All 27 pre-Phase-2 public tables — untouched.
+
+A repository-wide grep for `'pending'` / `"pending"` / `'queued'`
+/ `"queued"` confirmed that the ONLY hosting-domain references
+to `'pending'` were in:
+
+1.  The historical Phase 2 migration file (`pending` in the
+    original CHECK constraints + defaults — preserved verbatim).
+2.  The Phase 2 worklog entry (text describing the original
+    schema — preserved verbatim; the correction is documented in
+    THIS subsection).
+3.  The local fixture test script (`/home/z/my-project/scripts/phase2_fixture_test.mjs`
+    — NOT committed to the repo; updated locally to use `'queued'`).
+
+ALL OTHER `'pending'` references in the repository are in
+UNRELATED application domains (device_pairing_requests,
+discover-batch, progress/cloud sync, tv-login, etc.) and were
+correctly left untouched.
+
+#### C8. Plan revision
+
+This correction is a schema CLARIFICATION (aligning the
+implementation with the plan's documented state machine), NOT a
+material architectural change. The plan's §7.2 state machine is
+unchanged. The `deleted` terminal state is a documented Mavero-side
+administrative extension (NOT a plan change — it was already
+present in the Phase 2 implementation and is now documented).
+
+**No plan revision (§27 Revision History) is needed.** The plan
+remains at revision 1.2.
+
+#### C9. Phase 2 Correction Final Report
+
+Phase 2 correction commit SHA: <recorded after the corrective
+commit is created via `git rev-parse HEAD` — see the new HEAD
+reported to the user after push>
+
+Commit message:
+
+``` text
+fix(hosting): align upload queue state with plan
+```
+
+Files changed (summary):
+
+-   `supabase/migrations/20260928204845_phase2_corrective_upload_status_queued.sql`
+    (NEW corrective migration).
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
+    correction entry).
+
+0 data rows migrated. 0 historical migrations modified. 0 source
+code behavior changes. 0 provider API calls implemented.
 
 ------------------------------------------------------------------------
 
