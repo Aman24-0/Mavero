@@ -12,8 +12,8 @@ Current Phase: 6 (Phase 6 COMPLETE; awaiting user approval to start Phase 7)
 Status: COMPLETE
 Last Commit: 8f8ee3de9d2df7c5515e4ca30dcf00a43e838503
             (docs(hosting): record phase 5 commit SHA in worklog)
-            + Phase 6 commit (SHA recorded after commit creation —
-              see Phase 6 Final Report below)
+            + Phase 6 commit 9d388d18247fb5cd0f9fa2cd0c066b1b1bc67bab
+              (feat(hosting): add admin upload workflow)
 Next Task: Phase 7 — Playback resolver + automatic fallback
 Blocking Issue: none
 Plan Revision: 1.2
@@ -3235,8 +3235,8 @@ schema changes. No provider API calls. No admin UI.
 
 Status: COMPLETE
 
-Commit: <recorded after commit creation — see Phase 6 Final Report
-        below>
+Commit: 9d388d18247fb5cd0f9fa2cd0c066b1b1bc67bab
+        (feat(hosting): add admin upload workflow)
 
 Date: 2026-09-28
 
@@ -3414,9 +3414,7 @@ DO NOT begin Phase 7 automatically. STOP and await user approval.
 
 ### Phase 6 Final Report
 
-Phase 6 commit SHA: <recorded after the Phase 6 commit is created
-via `git rev-parse HEAD` — see the new HEAD reported to the user
-after push>
+Phase 6 commit SHA: 9d388d18247fb5cd0f9fa2cd0c066b1b1bc67bab
 
 Files changed:
 -   `src/lib/server/hosting/upload/service.ts` — NEW.
