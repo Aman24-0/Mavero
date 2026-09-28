@@ -1,0 +1,120 @@
+/**
+ * Phase 6 Completion — Vidara upload-server endpoint.
+ *
+ * POST /api/admin/media/upload/:id/upload-server
+ *
+ * Obtains the Vidara upload server URL using server-side credentials.
+ * Returns ONLY the upload server URL to the browser — NO API keys,
+ * NO permanent credentials.
+ *
+ * Security:
+ *   - Admin-only (requireAdmin)
+ *   - Verifies operation exists + belongs to Vidara
+ *   - Verifies operation is in 'queued' state
+ *   - Returns only the temporary upload server URL
+ */
+
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+import { requireAdmin } from '$lib/server/streaming/admin-auth';
+import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
+import { CanonicalMediaService } from '$lib/server/hosting/media/service';
+import { UploadService } from '$lib/server/hosting/upload/service';
+import { getHostingAdapter } from '$lib/server/hosting/registry';
+import { HostingProviderError } from '$lib/server/hosting/errors';
+import { NO_STORE } from '$lib/server/http/cache-headers';
+import { readJsonBody } from '$lib/server/http/body';
+
+const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
+
+export const POST: RequestHandler = async ({ params, request, locals }) => {
+  await requireAdmin(locals, { redirectTo: '/admin' });
+  const adminClient = createSupabaseAdminClient();
+  const mediaService = new CanonicalMediaService(adminClient);
+  const uploadService = new UploadService(adminClient, mediaService);
+
+  // 1. Get the operation.
+  const operation = await uploadService.getOperation(params.id);
+  if (!operation) {
+    return json({ ok: false, error: { code: 'NOT_FOUND', message: 'Upload operation not found.' } }, { status: 404, headers: NO_STORE_HEADERS });
+  }
+
+  // 2. Verify operation is in uploadable state.
+  if (operation.status !== 'queued') {
+    return json({ ok: false, error: { code: 'INVALID_STATE', message: `Operation is not queued (current: ${operation.status}).` } }, { status: 400, headers: NO_STORE_HEADERS });
+  }
+
+  // 3. Look up the provider adapter_id.
+  const { data: sourceRow } = await adminClient
+    .from('streaming_sources')
+    .select('provider_id')
+    .eq('id', operation.provider_source_id!)
+    .maybeSingle();
+
+  const { data: providerRow } = await adminClient
+    .from('streaming_providers')
+    .select('adapter_id')
+    .eq('id', sourceRow?.provider_id ?? '')
+    .maybeSingle();
+
+  const adapterId = providerRow?.adapter_id;
+  if (!adapterId) {
+    return json({ ok: false, error: { code: 'ADAPTER_NOT_FOUND', message: 'Provider adapter_id not found.' } }, { status: 400, headers: NO_STORE_HEADERS });
+  }
+
+  // 4. Get the hosting adapter.
+  const adapter = getHostingAdapter(adapterId);
+  if (!adapter) {
+    return json({ ok: false, error: { code: 'ADAPTER_NOT_FOUND', message: `No hosting adapter for ${adapterId}.` } }, { status: 400, headers: NO_STORE_HEADERS });
+  }
+
+  // 5. Verify adapter supports local upload.
+  const caps = adapter.getCapabilities();
+  if (!caps.localUpload) {
+    return json({ ok: false, error: { code: 'UNSUPPORTED', message: 'This provider does not support local file upload.' } }, { status: 400, headers: NO_STORE_HEADERS });
+  }
+
+  // 6. Update operation state: queued → uploading.
+  await uploadService.updateOperationState(params.id, 'uploading', { upload_started_at: new Date().toISOString() });
+
+  // 7. For Vidara: get the upload server URL.
+  // The Vidara adapter's uploadFile() does a two-step process:
+  //   1. GET /v1/upload/server → returns upload server URL
+  //   2. POST file to the upload server URL
+  // For browser-direct upload, we need to expose step 1's result.
+  // We use the adapter's HTTP client to call the Vidara API directly.
+  if (adapterId === 'vidara') {
+    try {
+      // Get the Vidara config to access the API key.
+      const { getVidaraConfigOrNull } = await import('$lib/server/hosting/vidara/config');
+      const config = getVidaraConfigOrNull();
+      if (!config) {
+        return json({ ok: false, error: { code: 'CONFIG_MISSING', message: 'Vidara API credentials are not configured.' } }, { status: 500, headers: NO_STORE_HEADERS });
+      }
+
+      // Call the Vidara API to get the upload server URL.
+      const { createHostingHttpFetcher } = await import('$lib/server/hosting/http-client');
+      const fetcher = createHostingHttpFetcher(`Bearer ${config.apiKey}`);
+      const res = await fetcher({
+        method: 'GET',
+        url: `${config.baseUrl}/v1/upload/server`,
+      });
+
+      // Extract the upload server URL from the response.
+      const { extractVidaraUploadServerUrl } = await import('$lib/server/hosting/vidara/normalize');
+      const uploadUrl = extractVidaraUploadServerUrl(res.json as Parameters<typeof extractVidaraUploadServerUrl>[0]);
+
+      // Return ONLY the upload URL — no API key, no credentials.
+      return json({ ok: true, uploadUrl }, { headers: NO_STORE_HEADERS });
+    } catch (error) {
+      const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
+      // Roll back to queued so the admin can retry.
+      await uploadService.updateOperationState(params.id, 'queued', {});
+      return json({ ok: false, error: { code: err.code, message: err.message } }, { status: 502, headers: NO_STORE_HEADERS });
+    }
+  }
+
+  // For Abyss: the server proxies the upload (no browser-direct flow).
+  // Return an error — Abyss local upload goes through a different path.
+  return json({ ok: false, error: { code: 'UNSUPPORTED', message: 'Browser-direct upload is not supported for this provider. Use the server-proxied upload route.' } }, { status: 400, headers: NO_STORE_HEADERS });
+};

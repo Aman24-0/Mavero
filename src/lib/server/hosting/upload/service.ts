@@ -474,7 +474,7 @@ export class UploadService {
 
   // --- Internal helpers ---
 
-  private async updateOperationState(operationId: string, status: string, extra?: Record<string, string | number | null>): Promise<void> {
+  async updateOperationState(operationId: string, status: string, extra?: Record<string, string | number | null>): Promise<void> {
     // Use `any` cast because the Supabase typed client rejects Record<string, ...>
     // for the update method due to excess property checking.
     const update = { status, ...extra } as Record<string, unknown>;

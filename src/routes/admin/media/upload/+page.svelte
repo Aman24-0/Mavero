@@ -64,6 +64,14 @@
   let progressPercent: number | null = null;
   let providerStatus: string | null = null;
 
+  // Subtitle state.
+  let subtitleFile: File | null = null;
+  let subtitleLanguage = '';
+  let subtitleLabel = '';
+  let subtitleUploading = false;
+  let subtitleResult: '' | 'success' | 'failed' = '';
+  let subtitleError = '';
+
   // --- Step 1: Search TMDB ---
   async function doSearch() {
     if (!searchQuery.trim()) return;
@@ -238,9 +246,34 @@
         step = 'done';
       }
     } else {
-      // Abyss: proxy through the server (body limit applies).
-      operationError = 'Abyss local upload through server proxy is not yet implemented for large files. Use remote URL upload when available.';
-      step = 'done';
+      // Abyss: server-proxied upload (limited by Netlify body size ~26MB).
+      // For larger files, the admin should use remote URL upload (not yet
+      // supported for Abyss — documented limitation).
+      try {
+        // Upload through the server proxy.
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('providerSourceId', selectedProviderSourceId);
+        formData.append('providerAdapterId', selectedProviderAdapterId);
+
+        const uploadRes = await fetch(`/api/admin/media/upload/${operationId}/proxy-upload`, {
+          method: 'POST',
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+
+        if (uploadData.ok) {
+          operationStatus = uploadData.operation?.status ?? 'processing';
+          step = 'processing';
+          startPolling();
+        } else {
+          operationError = uploadData.error?.message ?? 'Abyss upload failed.';
+          step = 'done';
+        }
+      } catch (err) {
+        operationError = err instanceof Error ? err.message : 'Abyss local upload failed. For files larger than 26MB, this is a known platform limitation.';
+        step = 'done';
+      }
     }
   }
 
@@ -306,6 +339,43 @@
       }
     } catch {
       // Ignore.
+    }
+  }
+
+  // --- Subtitle upload ---
+  async function uploadSubtitle() {
+    if (!subtitleFile || !subtitleLanguage.trim() || !operationId) return;
+    subtitleUploading = true;
+    subtitleResult = '';
+    subtitleError = '';
+    try {
+      const formData = new FormData();
+      formData.append('file', subtitleFile);
+      formData.append('language', subtitleLanguage.trim());
+      if (subtitleLabel.trim()) formData.append('label', subtitleLabel.trim());
+
+      const res = await fetch(`/api/admin/media/upload/${operationId}/subtitle`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        subtitleResult = 'success';
+      } else {
+        subtitleResult = 'failed';
+        subtitleError = data.error?.message ?? 'Subtitle upload failed.';
+      }
+    } catch {
+      subtitleResult = 'failed';
+      subtitleError = 'Network error during subtitle upload.';
+    }
+    subtitleUploading = false;
+  }
+
+  function onSubtitleFileSelect(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files[0]) {
+      subtitleFile = input.files[0];
     }
   }
 
@@ -528,6 +598,28 @@
           <button class="btn btn-secondary" onclick={reset}>New Upload</button>
           <button class="btn btn-secondary" onclick={() => goto('/admin')}>Back to Admin</button>
         </div>
+
+        <!-- Subtitle upload (available when upload is ready or processing) -->
+        {#if operationStatus === 'ready' || operationStatus === 'processing'}
+          <div class="subtitle-section">
+            <h3 class="subtitle-title">Subtitles</h3>
+            {#if subtitleResult === 'success'}
+              <p class="subtitle-success">Subtitle uploaded successfully.</p>
+            {:else if subtitleResult === 'failed'}
+              <p class="error">{subtitleError}</p>
+              <p class="hint">The media upload was NOT affected by this subtitle failure.</p>
+            {/if}
+            <label class="form-label">Subtitle File</label>
+            <input type="file" accept=".srt,.vtt,.ass" onchange={onSubtitleFileSelect} class="input" />
+            <label class="form-label">Language (e.g. en, hi)</label>
+            <input type="text" bind:value={subtitleLanguage} class="input" placeholder="en" />
+            <label class="form-label">Label (optional)</label>
+            <input type="text" bind:value={subtitleLabel} class="input" placeholder="English" />
+            <button class="btn btn-primary" onclick={uploadSubtitle} disabled={subtitleUploading || !subtitleFile || !subtitleLanguage.trim()}>
+              {subtitleUploading ? 'Uploading...' : 'Upload Subtitle'}
+            </button>
+          </div>
+        {/if}
       </div>
     </AdminFormSection>
   {/if}
@@ -567,4 +659,7 @@
   .review-list dd { margin: 0; }
   .status-block { padding: 1rem; text-align: center; }
   .status-label { margin-bottom: 0.5rem; }
+  .subtitle-section { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .subtitle-title { font-size: 1rem; margin-bottom: 0.5rem; }
+  .subtitle-success { color: var(--accent); font-size: 0.85rem; }
 </style>

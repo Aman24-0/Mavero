@@ -8,12 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 6 (Phase 6 COMPLETE; awaiting user approval to start Phase 7)
+Current Phase: 6 (Phase 6 COMPLETE + Completion/Refinement COMPLETE;
+                  awaiting user approval to start Phase 7)
 Status: COMPLETE
-Last Commit: 8f8ee3de9d2df7c5515e4ca30dcf00a43e838503
-            (docs(hosting): record phase 5 commit SHA in worklog)
-            + Phase 6 commit 9d388d18247fb5cd0f9fa2cd0c066b1b1bc67bab
-              (feat(hosting): add admin upload workflow)
+Last Commit: ebc12897f87c1428bdf68a0d0d722a2ab6faa42e
+            (docs(hosting): record phase 6 commit SHA in worklog)
+            + Phase 6 completion commit (SHA recorded after commit
+              creation — see Phase 6 Completion Final Report below)
 Next Task: Phase 7 — Playback resolver + automatic fallback
 Blocking Issue: none
 Plan Revision: 1.2
@@ -3428,6 +3429,165 @@ Files changed:
 -   `src/routes/admin/media/upload/+page.svelte` — NEW.
 -   `scripts/phase6_admin_upload_test.ts` — NEW test (60 checks).
 -   `package.json` — added Phase 6 test to `test` script.
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+
+No migrations created. No existing migrations modified. No live DB
+schema changes. No secrets exposed.
+
+------------------------------------------------------------------------
+
+### Phase 6 Completion / Refinement
+
+Status: COMPLETE
+
+Commit: <recorded after commit creation — see Phase 6 Completion
+        Final Report below>
+
+Date: 2026-09-28
+
+#### Original Phase 6 limitations
+
+1. Vidara browser-direct upload flow was incomplete —
+   `/api/admin/media/upload/:id/upload-server` and
+   `/api/admin/media/upload/:id/complete` routes were referenced by
+   the UI but not implemented.
+2. Subtitle upload was only partially wired — adapter capability
+   existed but the end-to-end subtitle upload/persistence flow was
+   incomplete.
+3. Abyss local upload was documented as "not yet implemented for
+   large files" — no actual upload path existed.
+
+#### Vidara direct upload implementation
+
+Two new API routes:
+
+- `POST /api/admin/media/upload/:id/upload-server` — Obtains the
+  Vidara upload server URL using server-side credentials. Returns
+  ONLY the upload URL — no API keys, no permanent credentials.
+  Verifies admin, operation exists, operation belongs to Vidara,
+  operation is in `queued` state, adapter supports localUpload.
+  Transitions operation to `uploading`.
+
+- `POST /api/admin/media/upload/:id/complete` — Accepts the
+  provider's upload result from the browser (after browser uploaded
+  directly to Vidara's upload server). Normalizes the result through
+  the Phase 3 adapter. Creates/updates `media_assets`. Transitions
+  operation to `uploaded` → `processing`.
+  Idempotent: if already uploaded/processing/ready, returns current
+  state. Rejects completion of cancelled/failed operations.
+
+Security:
+- No API keys exposed to browser.
+- Server derives media identity, provider, destination from the
+  operation record — does NOT trust browser-supplied identity.
+- Only accepts the provider's upload result (filecode, size, etc.).
+- Validates provider asset ID is present before marking uploaded.
+
+#### Abyss large-file architecture decision
+
+Abyss requires JWT auth — the browser cannot hold the JWT. Therefore:
+
+- **Server-proxied upload**: `POST /api/admin/media/upload/:id/proxy-upload`
+  accepts a file via multipart form data and proxies it to Abyss
+  through the server-side adapter. The Abyss JWT stays server-side.
+
+- **Platform limitation**: Netlify serverless functions have a body
+  limit (~26 MB). Files larger than this are rejected with a 413
+  error and a message suggesting remote URL upload (currently only
+  supported for Vidara).
+
+- **Documented limitation**: Abyss generic URL remote upload is NOT
+  API-verified (Phase 0 §3.2.1). Therefore large-file upload to
+  Abyss through remote URL is NOT available. The admin must either
+  use files under 26 MB or wait for a future Abyss direct-upload
+  mechanism.
+
+This is an honest, safe architecture — no insecure workarounds.
+
+#### Subtitle upload implementation
+
+New API route: `POST /api/admin/media/upload/:id/subtitle`
+
+- Accepts multipart form data: file + language + optional label.
+- Verifies admin, operation has a `media_asset_id` (upload completed).
+- Verifies adapter supports subtitles.
+- Uploads the subtitle through the Phase 3 adapter's
+  `uploadSubtitle()` method.
+- Records the subtitle operation in `media_operations` (action =
+  `subtitle_upload`, status = `success` or `failed`).
+- Updates `media_assets.has_subtitles = true` on success.
+- **Subtitle failure does NOT affect the main media upload state** —
+  the main operation remains in its current state (processing/ready).
+  The subtitle failure is recorded separately in `media_operations`.
+- Admin UI includes subtitle upload section on the "done" step
+  (available when upload is `ready` or `processing`).
+
+#### State machine integrity
+
+All routes use `queued` (NOT `pending`). Verified by test — no
+occurrence of `'pending'` in any upload service or API route source.
+
+#### Tests
+
+`scripts/phase6_completion_test.ts` — **81 checks, 0 failures**:
+- upload-server route (8): authorization, adapter, capability, state,
+  no secrets, returns only uploadUrl, cache headers.
+- complete route (10): authorization, accepts providerResult, uses
+  adapter normalizer, uses UploadService, idempotent, rejects invalid
+  state, validates providerAssetId, no secrets, cache headers.
+- subtitle route (10): authorization, uses uploadSubtitle(), checks
+  capability, records operation, updates has_subtitles, error does
+  NOT affect main upload, no secrets, cache headers.
+- proxy-upload route (10): authorization, file size limit, rejects
+  oversized, uses adapter, completes via UploadService, documents
+  limitation, no secrets, cache headers.
+- admin UI (10): uploadSubtitle function, subtitleFile/Language state,
+  subtitle section, calls /subtitle endpoint, NOT affected message,
+  Upload Subtitle button, calls upload-server, calls complete, calls
+  proxy-upload.
+- Abyss large-file architecture (5): 26 MB limit, platform constraints
+  documented, suggests remote URL, remoteUpload=false in adapter,
+  uploadRemote throws UNSUPPORTED.
+- security (12): no PAT/api_key/console.log in any route.
+- state machine (6): no 'pending' in any source file.
+- all routes authorized (9): every route has requireAdmin.
+
+#### Verification
+
+- `pnpm check`: 0 errors, 11 warnings (a11y — non-blocking).
+- `pnpm build`: PASS.
+- `pnpm exec tsx scripts/phase6_completion_test.ts`: 81 checks, 0 failures.
+- `git diff --check`: clean.
+- Live DB: all 7 hosting tables at 0 rows.
+- No secrets in source files or API routes.
+- No migration created. No existing migrations modified.
+
+#### Remaining limitations
+
+1. **Abyss large-file upload**: limited to 26 MB (Netlify body limit).
+   Remote URL upload is NOT available for Abyss (not API-verified).
+   This is a platform + provider limitation, not an implementation bug.
+2. **Vidara upload-server/complete routes for Abyss**: not applicable
+   — Abyss uses the proxy-upload route instead.
+3. **Subtitle retry**: the admin can retry subtitle upload by calling
+   the `/subtitle` endpoint again — but there is no explicit retry
+   UI button yet (the admin can re-submit the form).
+
+### Phase 6 Completion Final Report
+
+Phase 6 completion commit SHA: <recorded after the commit is created
+via `git rev-parse HEAD` — see the new HEAD reported to the user
+after push>
+
+Files changed:
+-   `src/routes/api/admin/media/upload/[id]/upload-server/+server.ts` — NEW.
+-   `src/routes/api/admin/media/upload/[id]/complete/+server.ts` — NEW.
+-   `src/routes/api/admin/media/upload/[id]/subtitle/+server.ts` — NEW.
+-   `src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts` — NEW.
+-   `src/lib/server/hosting/upload/service.ts` — `updateOperationState` made public.
+-   `src/routes/admin/media/upload/+page.svelte` — subtitle upload UI + Abyss proxy flow.
+-   `scripts/phase6_completion_test.ts` — NEW test (81 checks).
+-   `package.json` — added Phase 6 completion test to `test` script.
 -   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
 
 No migrations created. No existing migrations modified. No live DB
