@@ -53,3 +53,6 @@ export { AbyssAdapter } from './abyss/adapter';
 export type { AbyssAdapterOptions } from './abyss/adapter';
 export { createAbyssConfig, getAbyssConfigOrNull } from './abyss/config';
 export type { AbyssConfig } from './abyss/config';
+
+// Phase 4 — hosting adapter registry.
+export { getHostingAdapter, getHostingAdapterForProvider, getHostingAdapterKeys } from './registry';

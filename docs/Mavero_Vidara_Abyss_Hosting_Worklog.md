@@ -8,13 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 3 (Phase 3 COMPLETE; awaiting user approval to start Phase 4)
+Current Phase: 4 (Phase 4 COMPLETE; awaiting user approval to start Phase 5)
 Status: COMPLETE
-Last Commit: 8e8470ec584c3b3d63dc95709f17c9b3de5e3b91
-            (docs(hosting): record phase 2 correction commit SHA in worklog)
-            + Phase 3 commit c8e22dc469a0f1f7278c4cc40da01880111dcb50
-              (feat(hosting): add vidara and abyss provider adapters)
-Next Task: Phase 4 — Provider/source registry integration
+Last Commit: 0fe1f29a79528f4330b2706473160dd1f7efb423
+            (docs(hosting): record phase 3 commit SHA in worklog)
+            + Phase 4 commit 4791ecd75c932206c118c9967e97bf6e7b6362be
+              (feat(hosting): register vidara and abyss sources)
+Next Task: Phase 5 — Canonical folder/media library service
 Blocking Issue: none
 Plan Revision: 1.2
 ```
@@ -2851,29 +2851,186 @@ mock fetchers).
 
 ## Phase 4 --- Source Registry Integration
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: 4791ecd75c932206c118c9967e97bf6e7b6362be
+        (feat(hosting): register vidara and abyss sources)
 
-Date:
+Date: 2026-09-28
 
 ### Planned
 
--   [ ] Vidara provider.
--   [ ] Abyss provider.
--   [ ] Mavero 1 source.
--   [ ] Mavero 2 source.
--   [ ] Category assignment.
--   [ ] Public source config.
--   [ ] Source selector integration.
+-   [x] Vidara provider.
+-   [x] Abyss provider.
+-   [x] Mavero 1 source.
+-   [x] Mavero 2 source.
+-   [x] Category assignment.
+-   [x] Public source config.
+-   [x] Source selector integration (adapter registry).
 
-### Actual
+### Actual --- full Phase 4 implementation
 
-*To be filled by GLM.*
+#### 1. Startup audit
 
-### Verification
+-   HEAD at start: `0fe1f29a79528f4330b2706473160dd1f7efb423`.
+-   Working tree: clean. Branch: `main`.
+-   Confirmed Phase 3 commits exist (VidaraAdapter + AbyssAdapter).
+-   Audited live DB registry:
+    -   10 existing providers, 11 existing sources, 2 existing
+        categories, 11 existing source-category mappings.
+    -   NO existing Vidara/Abyss/Mavero 1/Mavero 2 entries (verified
+        via slug search — 0 results).
+    -   Categories: "Multi Audio" (slug=multi-audio) and "Org Audio"
+        (slug=org-audio).
+    -   All hosting tables: 0 rows. Migration ledger: 29 entries,
+        MAX `20260928204845`.
+-   Searched repository for existing Vidara/Abyss references: only
+    Phase 3 hosting adapter files (no registry entries).
 
-*To be filled by GLM.*
+#### 2. Migration
+
+-   **Filename**: `supabase/migrations/20260928213822_phase4_register_hosting_sources.sql`
+-   **IST timestamp**: `20260928213822` (2026-09-28 21:38:22 IST)
+-   **6 SQL statements**: 2 provider inserts + 2 source inserts + 2
+    category-mapping inserts. All use `ON CONFLICT DO NOTHING` for
+    idempotency.
+-   **Migration ledger**: 29 → 30 entries, MAX `20260928213822`.
+
+#### 3. Provider registry entries created
+
+| Provider | Slug | Status | Integration Type | Adapter ID | Category |
+|----------|------|--------|-----------------|------------|----------|
+| Vidara | vidara | experimental | custom | vidara | Multi Audio |
+| Abyss | abyss | experimental | custom | abyss | Org Audio |
+
+**Source semantics**: `integration_type = 'custom'` — the source is
+backed by a custom server-side adapter (HostingProviderAdapter from
+Phase 3), NOT a template URL. The `adapter_id` field links the
+provider to the hosting adapter key.
+
+**Capabilities JSON** includes only PUBLIC, non-secret metadata:
+- `result_type = 'embed'` (PLAYER URL, NOT raw direct stream)
+- `supports_direct = false` (these are NOT raw direct streams)
+- `allowed_embed_origins` (the provider's player URL origin)
+- `hosting_provider` (links to the Phase 3 adapter key)
+- `allow_experimental_playback = true`
+
+NO secrets stored: no API keys, no passwords, no JWTs in the database.
+
+#### 4. Source registry entries created
+
+| Source | Slug | Provider | Status | Visibility | Ordering |
+|--------|------|----------|--------|------------|----------|
+| Mavero 1 | mavero-1 | Vidara | experimental | public | 500 |
+| Mavero 2 | mavero-2 | Abyss | experimental | public | 501 |
+
+Sources are `experimental` + `public` so they appear in the source
+selector (visible to users) but at low priority (high ordering =
+low priority in the existing source selector sort).
+
+#### 5. Category mappings
+
+-   Mavero 1 → "Multi Audio" category (Vidara supports multi-audio,
+    plan §3.1). Ordering: 9 (next available in that category).
+-   Mavero 2 → "Org Audio" category (Abyss uses original/single
+    audio, plan §3.2). Ordering: 3 (next available in that category).
+
+#### 6. Existing registry counts before/after
+
+| Table | Before | After | Delta |
+|-------|--------|-------|-------|
+| streaming_providers | 10 | 12 | +2 (Vidara, Abyss) |
+| streaming_sources | 11 | 13 | +2 (Mavero 1, Mavero 2) |
+| streaming_categories | 2 | 2 | 0 (unchanged) |
+| streaming_source_categories | 11 | 13 | +2 (2 new mappings) |
+| streaming_default_sources | 2 | 2 | 0 (unchanged) |
+
+All existing rows preserved — 0 existing rows modified.
+
+#### 7. Application integration
+
+-   **`src/lib/server/hosting/registry.ts`** — NEW file. Maps
+    `adapter_id` (from `streaming_providers.adapter_id`) to the
+    corresponding HostingProviderAdapter instance:
+    -   `'vidara'` → `VidaraAdapter` (cached, credentials from env)
+    -   `'abyss'` → `AbyssAdapter` (cached, credentials from env)
+    -   Any other adapter_id → `null` (not a hosting provider)
+-   **`src/lib/server/hosting/index.ts`** — updated to export
+    `getHostingAdapter`, `getHostingAdapterForProvider`,
+    `getHostingAdapterKeys`.
+-   The existing resolver/selector architecture is UNCHANGED — the
+    hosting sources participate in the registry as normal
+    `streaming_sources` rows. The future playback resolver (Phase 7)
+    will use `getHostingAdapterForProvider(provider)` to check
+    `media_assets` availability and resolve the hosted playback URL.
+
+#### 8. Source semantics decision
+
+The providers return PLAYER/EMBED URLs (not raw media streams).
+`integration_type = 'custom'` + `result_type = 'embed'` in the
+capabilities JSON correctly represents this — the sources are
+embed-style (iframe player) backed by a custom adapter, not
+template-based URL substitution.
+
+Phase 4 does NOT:
+-   implement the actual playback resolver for hosted assets
+-   check `media_assets` availability
+-   implement automatic Vidara/Abyss fallback
+-   implement upload workflow, media library, sync, or provider health
+
+#### 9. Tests
+
+`scripts/phase4_registry_integration_test.ts` — **68 checks, 0 failures**:
+-   Migration file inspection (16 checks): slugs, idempotency, no
+    secrets, correct integration_type/adapter_id/status/visibility.
+-   Live DB: Vidara provider exists with correct fields.
+-   Live DB: Abyss provider exists with correct fields.
+-   Live DB: Mavero 1 source exists, linked to Vidara provider.
+-   Live DB: Mavero 2 source exists, linked to Abyss provider.
+-   Live DB: Category mappings correct (Mavero 1 → Multi Audio,
+    Mavero 2 → Org Audio).
+-   Live DB: Existing registry preserved (12 providers, 13 sources,
+    2 categories, 13 source-categories).
+-   Live DB: No duplicates.
+-   Live DB: Hosting tables still empty (0 rows).
+-   Live DB: No secrets in provider capabilities JSON.
+-   Live DB: Migration ledger has 30 entries, MAX `20260928213822`.
+-   Source code: registry links adapter_id to adapters.
+-   Source code: existing resolver architecture unchanged.
+
+#### 10. Verification
+
+-   `pnpm check`: 0 errors, 0 warnings.
+-   `pnpm build`: PASS.
+-   `pnpm exec tsx scripts/phase4_registry_integration_test.ts`: 68 checks, 0 failures.
+-   `git diff --check`: clean.
+-   Secret safety: no hardcoded credentials, no console.log, no secrets
+    in migration file, no secrets in capabilities JSON.
+
+### Next phase
+
+Phase 5 — Canonical folder/media library service. Implement the
+canonical Mavero folder hierarchy (Movies/Year/Movie,
+Series/Season/Episode, Anime hierarchy), provider folder mapping,
+and deterministic idempotent creation.
+
+DO NOT begin Phase 5 automatically. STOP and await user approval.
+
+### Phase 4 Final Report
+
+Phase 4 commit SHA: 4791ecd75c932206c118c9967e97bf6e7b6362be
+
+Files changed:
+-   `supabase/migrations/20260928213822_phase4_register_hosting_sources.sql`
+    (NEW migration, ~120 lines).
+-   `src/lib/server/hosting/registry.ts` — NEW adapter registry.
+-   `src/lib/server/hosting/index.ts` — updated barrel export.
+-   `scripts/phase4_registry_integration_test.ts` — NEW test (68 checks).
+-   `package.json` — added Phase 4 test to `test` script.
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+
+2 new providers, 2 new sources, 2 new category mappings. 0 existing
+rows modified. 0 secrets stored. 0 hosting media rows inserted.
 
 ------------------------------------------------------------------------
 
