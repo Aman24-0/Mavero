@@ -12,8 +12,8 @@ Current Phase: 3 (Phase 3 COMPLETE; awaiting user approval to start Phase 4)
 Status: COMPLETE
 Last Commit: 8e8470ec584c3b3d63dc95709f17c9b3de5e3b91
             (docs(hosting): record phase 2 correction commit SHA in worklog)
-            + Phase 3 commit (SHA recorded after commit creation —
-              see Phase 3 Final Report below)
+            + Phase 3 commit c8e22dc469a0f1f7278c4cc40da01880111dcb50
+              (feat(hosting): add vidara and abyss provider adapters)
 Next Task: Phase 4 — Provider/source registry integration
 Blocking Issue: none
 Plan Revision: 1.2
@@ -2594,8 +2594,8 @@ code behavior changes. 0 provider API calls implemented.
 
 Status: COMPLETE
 
-Commit: <recorded after commit creation — see Phase 3 Final Report
-        below>
+Commit: c8e22dc469a0f1f7278c4cc40da01880111dcb50
+        (feat(hosting): add vidara and abyss provider adapters)
 
 Date: 2026-09-28
 
@@ -2834,9 +2834,7 @@ DO NOT begin Phase 4 automatically. STOP and await user approval.
 
 ### Phase 3 Final Report
 
-Phase 3 commit SHA: <recorded after the Phase 3 commit is created
-via `git rev-parse HEAD` — see the new HEAD reported to the user
-after push>
+Phase 3 commit SHA: c8e22dc469a0f1f7278c4cc40da01880111dcb50
 
 Files changed:
 -   `src/lib/server/hosting/` — NEW directory (11 files).
