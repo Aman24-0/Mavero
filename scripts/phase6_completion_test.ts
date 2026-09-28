@@ -102,11 +102,13 @@ console.log('  ok — subtitle route (10 checks)');
   const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts'), 'utf8');
   ok(src.includes('requireAdmin'), 'Proxy-upload: has requireAdmin');
   ok(src.includes('MAX_PROXY_FILE_SIZE'), 'Proxy-upload: has file size limit');
-  ok(src.includes('26'), 'Proxy-upload: limit is ~26 MB');
+  // The limit was lowered from 26 MB to 5 MB (Netlify free/Starter plan
+  // body limit is 6 MB). See the comment in proxy-upload route.
+  ok(src.includes('5 * 1024 * 1024'), 'Proxy-upload: limit is 5 MB (Netlify default)');
   ok(src.includes('FILE_TOO_LARGE'), 'Proxy-upload: rejects oversized files');
   ok(src.includes('uploadFile'), 'Proxy-upload: uses adapter.uploadFile()');
   ok(src.includes('completeUploadFromResult'), 'Proxy-upload: completes via UploadService');
-  ok(src.includes('platform limitation'), 'Proxy-upload: documents platform limitation');
+  ok(src.includes('Netlify serverless function body limit'), 'Proxy-upload: documents Netlify limit');
   ok(!src.includes('api_key'), 'Proxy-upload: no api_key in source');
   ok(!src.includes('password'), 'Proxy-upload: no password in source');
   ok(src.includes('NO_STORE'), 'Proxy-upload: no-store cache headers');
@@ -136,9 +138,14 @@ console.log('  ok — admin UI (10 checks)');
 // ===========================================================================
 {
   const proxySrc = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts'), 'utf8');
-  ok(proxySrc.includes('26 * 1024 * 1024'), 'Abyss: max proxy size = 26 MB');
-  ok(proxySrc.includes('platform constraints'), 'Abyss: documents platform constraints');
-  ok(proxySrc.includes('remote URL upload'), 'Abyss: suggests remote URL for larger files');
+  // CRITICAL FIX: the limit was lowered from 26 MB to 5 MB because the
+  // actual Netlify Functions body limit on the free/Starter plan is 6 MB.
+  // The previous 26 MB value assumed Pro tier — an 8 MB file would be
+  // rejected by Netlify BEFORE the route handler ran, returning a non-JSON
+  // 413 that the frontend couldn't parse.
+  ok(proxySrc.includes('5 * 1024 * 1024'), 'Abyss: max proxy size = 5 MB (Netlify free/Starter plan limit)');
+  ok(proxySrc.includes('Netlify serverless function body limit'), 'Abyss: documents Netlify serverless function body limit');
+  ok(proxySrc.includes('remote URL upload') || proxySrc.includes('Vidara'), 'Abyss: suggests Vidara for larger files');
 
   // Abyss adapter: remoteUpload = false (not API-verified).
   const abyssSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/abyss/adapter.ts'), 'utf8');

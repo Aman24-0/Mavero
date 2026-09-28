@@ -247,7 +247,7 @@
         step = 'done';
       }
     } else {
-      // Abyss: server-proxied upload (limited by Netlify body size ~26MB).
+      // Abyss: server-proxied upload (limited by Netlify serverless function body limit).
       // For larger files, the admin should use remote URL upload (not yet
       // supported for Abyss — documented limitation).
       try {
@@ -262,15 +262,16 @@
           body: formData,
         });
 
-        // CRITICAL (Abyss fix §3): the proxy-upload route ALWAYS returns
-        // JSON — even on error. But if Netlify itself rejects the request
-        // (e.g. body too large → 413 with an HTML error page), or the
-        // serverless function times out (504 with no body), the response
-        // may NOT be JSON. We parse defensively: if the body is not JSON,
-        // we produce a meaningful error message that includes the HTTP
-        // status — NEVER "Unexpected end of JSON input".
+        // CRITICAL: the proxy-upload route ALWAYS returns structured
+        // JSON — even on error. The fixed safeJsonParse now parses the
+        // JSON body EVEN on error status codes, so the actual
+        // server-side error message (e.g. "File is 9.2 MB. Server-
+        // proxied upload is limited to 6 MB...") is surfaced to the
+        // user. If Netlify ITSELF rejects the request (before the route
+        // runs), the response will be non-JSON — safeJsonParse falls
+        // back to a status-specific message.
         const uploadData = await safeJsonParse(uploadRes, 'Abyss upload failed.', {
-          413: 'File is too large for server-proxied upload (Netlify body limit ~26MB). Use a smaller file or remote URL upload (Vidara only).',
+          413: 'The upload request was rejected because the file exceeds the platform request-body limit. Use a smaller file.',
           504: 'The upload request timed out. Try again with a smaller file.',
         });
 
@@ -295,12 +296,27 @@
    * errors. NEVER throws "Unexpected end of JSON input" — produces a
    * meaningful error message instead.
    *
+   * CRITICAL FIX: this function now parses the JSON body EVEN when the
+   * HTTP status is not 2xx. The previous version checked `!res.ok` first
+   * and returned a generic message WITHOUT parsing the body — this
+   * SWALLOWED the actual server-side error code/message that the route
+   * deliberately returned in its JSON body (e.g. { ok: false, error:
+   * { code: 'AUTHENTICATION', message: 'Provider authentication
+   * failed...' } }). The user saw "Failed to get upload server URL.
+   * (HTTP 502)" instead of the actual "Provider authentication failed."
+   * message.
+   *
+   * Now the function ALWAYS attempts to parse the JSON body first. If
+   * the body is valid JSON and contains `error.message`, that message is
+   * used. If the body is not JSON (e.g. Netlify's HTML error page for
+   * oversized requests), the status-specific fallback message is used.
+   *
    * @param res The fetch Response to parse.
    * @param fallbackMessage The error message to use when the response is not JSON or is empty.
    * @param statusMessages Optional status-code-specific messages (e.g. { 413: 'File too large' }).
    * @returns The parsed JSON object (may have { ok: false, error: { message } } on failure).
    */
-  async function safeJsonParse(res: Response, fallbackMessage: string, statusMessages?: Record<number, string>): Promise<{ ok: boolean; error?: { message: string }; [key: string]: unknown }> {
+  async function safeJsonParse(res: Response, fallbackMessage: string, statusMessages?: Record<number, string>): Promise<{ ok: boolean; error?: { message: string; code?: string }; [key: string]: unknown }> {
     let raw: string | null = null;
     try {
       raw = await res.text();
@@ -308,24 +324,41 @@
       // Body could not be read (network error, stream error).
     }
 
-    // If the HTTP status indicates an error, produce a status-specific message.
-    if (!res.ok) {
-      const statusMessage = statusMessages?.[res.status];
-      const message = statusMessage ?? `${fallbackMessage} (HTTP ${res.status})`;
-      return { ok: false, error: { message } };
-    }
-
-    // If the body is empty, return an error (never throw).
+    // If the body is empty AND the HTTP status is an error, produce a
+    // status-specific message. This handles the case where Netlify
+    // itself rejects the request (e.g. 413 for oversized body) and
+    // returns an empty or non-JSON response.
     if (!raw || !raw.trim()) {
+      if (!res.ok) {
+        const statusMessage = statusMessages?.[res.status];
+        const message = statusMessage ?? `${fallbackMessage} (HTTP ${res.status})`;
+        return { ok: false, error: { message } };
+      }
       return { ok: false, error: { message: `${fallbackMessage} (empty response body)` } };
     }
 
-    // Attempt JSON parse.
+    // Attempt JSON parse — EVEN on error status codes. The server
+    // deliberately returns structured JSON errors with HTTP error
+    // status codes (e.g. 502 with { ok: false, error: { code:
+    // 'AUTHENTICATION', message: '...' } }). We MUST parse the body
+    // to surface the actual error message instead of a generic
+    // "(HTTP xxx)" message.
     try {
-      return JSON.parse(raw) as { ok: boolean; error?: { message: string }; [key: string]: unknown };
+      const parsed = JSON.parse(raw) as { ok: boolean; error?: { message: string; code?: string }; [key: string]: unknown };
+      // If the parsed JSON has an error message, use it. This is the
+      // actual server-side error message — NOT a generic fallback.
+      if (!parsed.ok && parsed.error?.message) {
+        return parsed;
+      }
+      return parsed;
     } catch {
       // Non-JSON response (e.g. HTML error page from Netlify).
-      return { ok: false, error: { message: `${fallbackMessage} (non-JSON response, HTTP ${res.status})` } };
+      if (!res.ok) {
+        const statusMessage = statusMessages?.[res.status];
+        const message = statusMessage ?? `${fallbackMessage} (HTTP ${res.status})`;
+        return { ok: false, error: { message } };
+      }
+      return { ok: false, error: { message: `${fallbackMessage} (non-JSON response)` } };
     }
   }
 

@@ -110,6 +110,27 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
         url: buildVidaraUrl(config.baseUrl, '/v1/upload/server', null, config.apiKey),
       });
 
+      // CRITICAL FIX: handle null res.json (empty/non-JSON response from
+      // Vidara). The shared HTTP client captures the raw text + content
+      // type for ALL responses. If Vidara returns a 200 with an empty
+      // body or non-JSON content type, res.json is null — we must NOT
+      // call extractVidaraUploadServerUrl(null) because it would throw
+      // "Cannot read properties of null" which becomes a generic UNKNOWN
+      // error.
+      if (!res.json) {
+        // Roll back to queued so the admin can retry.
+        await uploadService.updateOperationState(params.id, 'queued', {});
+        return json({
+          ok: false,
+          error: {
+            code: 'INVALID_PROVIDER_RESPONSE',
+            message: res.text
+              ? `Vidara upload-server response was not valid JSON (content-type: ${res.contentType || 'missing'}).`
+              : 'Vidara upload-server response was empty. The upload server could not be obtained.',
+          },
+        }, { status: 502, headers: NO_STORE_HEADERS });
+      }
+
       // Extract the upload server URL from the response.
       const { extractVidaraUploadServerUrl } = await import('$lib/server/hosting/vidara/normalize');
       const uploadUrl = extractVidaraUploadServerUrl(res.json as Parameters<typeof extractVidaraUploadServerUrl>[0]);
@@ -123,7 +144,29 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
       // Roll back to queued so the admin can retry.
       await uploadService.updateOperationState(params.id, 'queued', {});
-      return json({ ok: false, error: { code: err.code, message: err.message } }, { status: 502, headers: NO_STORE_HEADERS });
+      // CRITICAL FIX: return the actual HTTP status code from the error
+      // instead of always returning 502. The previous version returned
+      // 502 for ALL errors — AUTHENTICATION (401), NETWORK, TRANSIENT
+      // (500/502/503), TIMEOUT — which was misleading and caused the
+      // frontend's safeJsonParse (before the fix) to show a generic
+      // "(HTTP 502)" message instead of the actual error code/message.
+      //
+      // Now the HTTP status reflects the actual error category:
+      //   AUTHENTICATION → 502 (provider auth failed — the route is a
+      //     proxy so we return 502 "bad gateway" when the upstream
+      //     rejects our credentials, not 401 which would imply the
+      //     ADMIN's credentials are wrong)
+      //   NETWORK → 502 (upstream unreachable)
+      //   TRANSIENT → 502 (upstream returned 5xx)
+      //   TIMEOUT → 504 (gateway timeout)
+      //   UNSUPPORTED/VALIDATION → 400 (client-side issue)
+      //   CONFIG_MISSING → 500 (server config issue)
+      //   UNKNOWN → 502 (fallback)
+      //
+      // The actual error CODE is always in the JSON body so the
+      // frontend can display it (after the safeJsonParse fix).
+      const httpStatus = err.httpStatus ?? (err.code === 'TIMEOUT' ? 504 : err.code === 'UNSUPPORTED' || err.code === 'VALIDATION' ? 400 : 502);
+      return json({ ok: false, error: { code: err.code, message: err.message } }, { status: httpStatus, headers: NO_STORE_HEADERS });
     }
   }
 

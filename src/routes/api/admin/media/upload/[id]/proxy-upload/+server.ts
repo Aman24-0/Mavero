@@ -30,7 +30,28 @@ import { HostingProviderError } from '$lib/server/hosting/errors';
 import { NO_STORE } from '$lib/server/http/cache-headers';
 
 const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
-const MAX_PROXY_FILE_SIZE = 26 * 1024 * 1024; // 26 MB — Netlify body limit.
+/**
+ * Maximum file size for server-proxied upload.
+ *
+ * CRITICAL FIX: the previous value was 26 MB (26 * 1024 * 1024), which
+ * assumed Netlify Pro tier. The ACTUAL Netlify Functions body limit on
+ * the free/Starter plan is 6 MB — Netlify itself rejects requests with
+ * a body > 6 MB BEFORE the function handler runs, returning a 413
+ * error that is NOT JSON (so the frontend's safeJsonParse could not
+ * extract the actual server-side error message).
+ *
+ * The new value (6 MB) ensures the route's own guard fires BEFORE
+ * Netlify rejects the request, so the error is returned as structured
+ * JSON with the actual file size and limit — the user sees a clear
+ * message instead of a platform rejection.
+ *
+ * The multipart form-data encoding adds overhead (boundary strings,
+ * content-disposition headers, etc.) — the actual request body for a
+ * 6 MB file is ~6.5 MB. To stay safely under the 6 MB platform limit,
+ * we use 5 MB as the route-level guard (conservative — accounts for
+ * multipart overhead).
+ */
+const MAX_PROXY_FILE_SIZE = 5 * 1024 * 1024; // 5 MB — conservative for Netlify's 6 MB limit.
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
@@ -58,7 +79,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 
   // 3. Check file size against platform limit.
   if (file.size > MAX_PROXY_FILE_SIZE) {
-    return json({ ok: false, error: { code: 'FILE_TOO_LARGE', message: `File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Server-proxied upload is limited to ${MAX_PROXY_FILE_SIZE / 1024 / 1024} MB due to platform constraints. For larger files, use remote URL upload (currently only supported for Vidara).` } }, { status: 413, headers: NO_STORE_HEADERS });
+    return json({ ok: false, error: { code: 'FILE_TOO_LARGE', message: `File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Server-proxied upload is limited to ${MAX_PROXY_FILE_SIZE / 1024 / 1024} MB due to the Netlify serverless function body limit. For larger files, use Vidara (browser-direct upload) or remote URL upload (Vidara only).` } }, { status: 413, headers: NO_STORE_HEADERS });
   }
 
   // 4. Look up the adapter.
