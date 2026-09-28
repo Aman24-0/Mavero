@@ -12,8 +12,8 @@ Current Phase: 5 (Phase 5 COMPLETE; awaiting user approval to start Phase 6)
 Status: COMPLETE
 Last Commit: 772aa8fd36f604b35626fbc96ee038628953a257
             (docs(hosting): record phase 4 commit SHA in worklog)
-            + Phase 5 commit (SHA recorded after commit creation —
-              see Phase 5 Final Report below)
+            + Phase 5 commit a295a77223c74e5f8691900c7c05ef3e245a31e9
+              (feat(hosting): add canonical media folder service)
 Next Task: Phase 6 — Admin upload workflow
 Blocking Issue: none
 Plan Revision: 1.2
@@ -3038,8 +3038,8 @@ rows modified. 0 secrets stored. 0 hosting media rows inserted.
 
 Status: COMPLETE
 
-Commit: <recorded after commit creation — see Phase 5 Final Report
-        below>
+Commit: a295a77223c74e5f8691900c7c05ef3e245a31e9
+        (feat(hosting): add canonical media folder service)
 
 Date: 2026-09-28
 
@@ -3214,9 +3214,7 @@ DO NOT begin Phase 6 automatically. STOP and await user approval.
 
 ### Phase 5 Final Report
 
-Phase 5 commit SHA: <recorded after the Phase 5 commit is created
-via `git rev-parse HEAD` — see the new HEAD reported to the user
-after push>
+Phase 5 commit SHA: a295a77223c74e5f8691900c7c05ef3e245a31e9
 
 Files changed:
 -   `src/lib/server/hosting/media/errors.ts` — NEW.
