@@ -13,8 +13,8 @@ Current Phase: 6 (Phase 6 COMPLETE + Completion/Refinement COMPLETE;
 Status: COMPLETE
 Last Commit: ebc12897f87c1428bdf68a0d0d722a2ab6faa42e
             (docs(hosting): record phase 6 commit SHA in worklog)
-            + Phase 6 completion commit (SHA recorded after commit
-              creation — see Phase 6 Completion Final Report below)
+            + Phase 6 completion commit 2b4f725adc3bbf1aab2feac772cffdd03f2c7a8b
+              (fix(hosting): complete phase 6 upload workflow)
 Next Task: Phase 7 — Playback resolver + automatic fallback
 Blocking Issue: none
 Plan Revision: 1.2
@@ -3440,8 +3440,8 @@ schema changes. No secrets exposed.
 
 Status: COMPLETE
 
-Commit: <recorded after commit creation — see Phase 6 Completion
-        Final Report below>
+Commit: 2b4f725adc3bbf1aab2feac772cffdd03f2c7a8b
+        (fix(hosting): complete phase 6 upload workflow)
 
 Date: 2026-09-28
 
@@ -3575,9 +3575,7 @@ occurrence of `'pending'` in any upload service or API route source.
 
 ### Phase 6 Completion Final Report
 
-Phase 6 completion commit SHA: <recorded after the commit is created
-via `git rev-parse HEAD` — see the new HEAD reported to the user
-after push>
+Phase 6 completion commit SHA: 2b4f725adc3bbf1aab2feac772cffdd03f2c7a8b
 
 Files changed:
 -   `src/routes/api/admin/media/upload/[id]/upload-server/+server.ts` — NEW.
