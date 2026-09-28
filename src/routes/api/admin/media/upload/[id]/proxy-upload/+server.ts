@@ -88,6 +88,13 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
   await uploadService.updateOperationState(params.id, 'uploading', { upload_started_at: new Date().toISOString() });
 
   // 6. Execute the upload through the adapter.
+  // The adapter's uploadFile() now:
+  //   - preserves the file MIME type (inferred from filename extension)
+  //   - handles null/empty/non-JSON provider responses with typed errors
+  //   - validates that the normalized result contains a non-empty
+  //     providerAssetId before returning success
+  // Any failure here is caught, marks the operation as 'failed', and
+  // returns a structured JSON error — NEVER a non-JSON response.
   try {
     const fileBuffer = await file.arrayBuffer();
     const result = await adapter.uploadFile({
@@ -96,7 +103,10 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
       providerFolderId: null,
     });
 
-    // 7. Complete the upload.
+    // 7. Complete the upload — creates the media_assets row + transitions
+    //    to 'processing'. If this throws (e.g. DB error), the operation
+    //    is marked as 'failed' and NO media_asset is persisted with an
+    //    invalid providerAssetId.
     const updatedOp = await uploadService.completeUploadFromResult(
       params.id,
       result,
@@ -110,6 +120,12 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
       error_code: err.code,
       error_message: err.message,
     });
+    // ALWAYS return a structured JSON error — the frontend relies on
+    // parsing the response as JSON. A non-JSON response would cause
+    // "Failed to execute 'json' on 'Response': Unexpected end of JSON
+    // input" in the browser. The HTTP status (502) signals the
+    // provider failure; the JSON body carries the typed error code +
+    // safe message.
     return json({ ok: false, error: { code: err.code, message: err.message } }, { status: 502, headers: NO_STORE_HEADERS });
   }
 };

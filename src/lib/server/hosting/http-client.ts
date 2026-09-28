@@ -41,8 +41,18 @@ export type HostingHttpRequest = {
 export type HostingHttpResponse = {
   status: number;
   ok: boolean;
-  /** Parsed JSON body (null when the response is not JSON or is empty). */
+  /** Parsed JSON body (null when the response is not JSON, is empty, or could not be parsed). */
   json: unknown | null;
+  /**
+   * The raw response body as text (null when the body could not be read).
+   * Captured for ALL responses (including non-JSON and error responses)
+   * so the caller can inspect it for diagnostic purposes. NEVER logged
+   * or returned to the client verbatim — it may contain provider-internal
+   * detail. The caller (adapter) decides whether to use it.
+   */
+  text: string | null;
+  /** The Content-Type header value (lowercased, may be empty). */
+  contentType: string;
   /** Raw response headers (lowercased keys). */
   headers: Record<string, string>;
 };
@@ -98,13 +108,53 @@ export function createHostingHttpFetcher(authorizationHeader: string | null): Ho
 
       const response = await fetch(request.url, init);
 
-      // Parse JSON if the response has a JSON content type.
-      const contentType = response.headers.get('content-type') ?? '';
+      // CRITICAL (Abyss fix): capture the raw text for ALL responses —
+      // success AND error — so that:
+      //   1. Empty successful responses do NOT cause "Unexpected end of
+      //      JSON input" exceptions. The text is captured; JSON parsing
+      //      is attempted only when the content type is JSON AND the
+      //      body is non-empty.
+      //   2. Provider error bodies are available for diagnostic purposes
+      //      (the caller can inspect `text` to produce a meaningful error
+      //      instead of a generic "Upload failed.").
+      //   3. Non-JSON responses (e.g. text/html from a misconfigured
+      //      proxy) do NOT cause JSON parse exceptions.
+      //
+      // The text is NEVER logged or returned to the client verbatim —
+      // it may contain provider-internal detail. The caller decides.
+      const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+      let text: string | null = null;
+      try {
+        text = await response.text();
+      } catch {
+        // Body could not be read (e.g. already consumed, stream error).
+        // Leave text null — caller handles.
+      }
+
       let json: unknown | null = null;
-      if (contentType.includes('application/json')) {
-        const text = await response.text();
-        if (text) {
-          try { json = JSON.parse(text); } catch { /* leave null — caller checks response.ok */ }
+      // Parse JSON ONLY when the content type declares JSON AND the body
+      // is non-empty. An empty body with content-type: application/json
+      // is NOT a parse error — it just means json stays null.
+      if (text && contentType.includes('application/json')) {
+        try {
+          json = JSON.parse(text);
+        } catch {
+          // Malformed JSON — leave json null. The caller checks response.ok
+          // and can inspect `text` for diagnostic purposes.
+        }
+      }
+      // ALSO attempt JSON parsing when the body LOOKS like JSON (starts
+      // with '{' or '[') even if the content type is missing or wrong.
+      // Some providers return JSON with content-type: text/html or no
+      // content-type at all. This is a defensive fallback.
+      if (text && json === null) {
+        const trimmed = text.trimStart();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          try {
+            json = JSON.parse(text);
+          } catch {
+            // Not valid JSON despite looking like it — leave null.
+          }
         }
       }
 
@@ -116,13 +166,19 @@ export function createHostingHttpFetcher(authorizationHeader: string | null): Ho
         const code = classifyHttpError(response.status);
         const retryAfter = headerMap['retry-after'];
         const retryAfterSeconds = retryAfter ? Math.min(60, Math.max(1, parseInt(retryAfter, 10) || 60)) : undefined;
+        // The error message is the SAFE curated message from the error
+        // model — it NEVER contains the response body or credentials.
+        // The raw `text` is available on the thrown error's `cause`
+        // chain ONLY if the caller explicitly attaches it (it is NOT
+        // attached by default to prevent leakage). The HTTP status is
+        // preserved via `httpStatus`.
         throw new HostingProviderError(code, {
           httpStatus: response.status,
           retryAfterSeconds,
         });
       }
 
-      return { status: response.status, ok: true, json, headers: headerMap };
+      return { status: response.status, ok: true, json, text, contentType, headers: headerMap };
     } catch (error) {
       if (error instanceof HostingProviderError) throw error;
       if (error instanceof DOMException && error.name === 'AbortError') {

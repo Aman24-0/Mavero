@@ -134,6 +134,21 @@ export class AbyssAdapter implements HostingProviderAdapter {
   private readonly config: AbyssConfig;
   private readonly http: HostingHttpFetcher;
   private tokenCache: TokenCache | null = null;
+  /**
+   * Concurrent login guard (Abyss fix §4). When multiple requests hit
+   * `ensureToken()` simultaneously with an expired/missing token, they
+   * all share the SAME in-flight login promise — so only ONE login
+   * HTTP request is made. Without this, N concurrent requests would
+   * trigger N logins (wasteful + can trigger rate limits).
+   */
+  private inflightLogin: Promise<string> | null = null;
+  /**
+   * Permanent auth-failure guard (Abyss fix §4). If login itself
+   * returns AUTHENTICATION (e.g. wrong credentials), we MUST NOT
+   * retry forever. This flag is set when login fails with AUTHENTICATION
+   * and prevents the `authedRequest` retry loop from re-attempting.
+   */
+  private loginPermanentlyFailed = false;
 
   constructor(options: AbyssAdapterOptions) {
     this.config = options.config;
@@ -152,23 +167,71 @@ export class AbyssAdapter implements HostingProviderAdapter {
    * Logs in to Abyss and caches the JWT token. Called lazily on the
    * first authenticated request. The token is NEVER returned to the
    * caller — it stays in the adapter instance.
+   *
+   * Robustness (Abyss fix §3/§4):
+   *   - Handles null/empty/non-JSON login responses without throwing
+   *     "Unexpected end of JSON input".
+   *   - Concurrent calls share a single in-flight login promise.
+   *   - Permanent auth failure (login itself returns 401) sets a flag
+   *     that prevents infinite retry loops in `authedRequest`.
    */
   private async ensureToken(): Promise<string> {
+    if (this.loginPermanentlyFailed) {
+      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss login is permanently failed. Check ABYSS_EMAIL / ABYSS_PASSWORD server-side credentials.' });
+    }
     if (this.tokenCache && this.tokenCache.expiresAt > Date.now()) {
       return this.tokenCache.token;
     }
 
+    // Concurrent login guard — if a login is already in flight, wait
+    // for it instead of starting a duplicate request.
+    if (this.inflightLogin) {
+      return this.inflightLogin;
+    }
+
+    this.inflightLogin = this.doLogin();
+    try {
+      return await this.inflightLogin;
+    } finally {
+      this.inflightLogin = null;
+    }
+  }
+
+  private async doLogin(): Promise<string> {
     // Login uses the unauthenticated fetcher (no JWT yet).
-    const res = await this.http({
-      method: 'POST',
-      url: `${this.config.baseUrl}/auth/login`,
-      body: { email: this.config.email, password: this.config.password },
-    });
+    // The shared HTTP client captures the raw text + content type for
+    // ALL responses, so a null `res.json` means the response was empty
+    // or non-JSON — NOT a parse exception.
+    let res;
+    try {
+      res = await this.http({
+        method: 'POST',
+        url: `${this.config.baseUrl}/auth/login`,
+        body: { email: this.config.email, password: this.config.password },
+      });
+    } catch (error) {
+      // If login itself returns 401/403, mark as permanently failed
+      // so we don't retry forever in authedRequest.
+      if (error instanceof HostingProviderError && error.code === 'AUTHENTICATION') {
+        this.loginPermanentlyFailed = true;
+      }
+      throw error;
+    }
+
+    // res.json may be null when:
+    //   - the response body is empty (Unexpected end of JSON input)
+    //   - the response is non-JSON (e.g. text/html from a misconfigured proxy)
+    //   - the JSON is malformed
+    // In ALL these cases, we throw a typed AUTHENTICATION error with a
+    // safe message — NEVER "Unexpected end of JSON input".
+    if (!res.json || typeof res.json !== 'object') {
+      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss login response was empty or non-JSON. Check server-side credentials and API base URL.' });
+    }
 
     const loginData = res.json as AbyssLoginResponse;
     const token = loginData.token ?? loginData.access_token ?? loginData.jwt;
     if (!token || typeof token !== 'string') {
-      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss login did not return a JWT token.' });
+      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss login did not return a JWT token. Check server-side credentials.' });
     }
 
     const expiresInMs = (loginData.expires_in ? loginData.expires_in * 1000 : TOKEN_TTL_MS);
@@ -180,7 +243,11 @@ export class AbyssAdapter implements HostingProviderAdapter {
    * Makes an authenticated request. Logs in (or reuses cached JWT)
    * before the request, then adds the Authorization header to the
    * request and delegates to the injected HTTP fetcher. If a 401 is
-   * received, clears the token cache and retries once.
+   * received, clears the token cache and retries ONCE.
+   *
+   * Permanent-auth-failure guard (Abyss fix §4): if login is
+   * permanently failed (login itself returned 401), the retry is
+   * skipped — we throw immediately to prevent an infinite loop.
    */
   private async authedRequest(request: Parameters<HostingHttpFetcher>[0]): Promise<Awaited<ReturnType<HostingHttpFetcher>>> {
     const token = await this.ensureToken();
@@ -191,7 +258,12 @@ export class AbyssAdapter implements HostingProviderAdapter {
     try {
       return await this.http(authedRequest);
     } catch (error) {
-      if (error instanceof HostingProviderError && error.code === 'AUTHENTICATION') {
+      // Only retry on AUTHENTICATION (401) AND when login is NOT
+      // permanently failed. This prevents infinite retry loops when
+      // the credentials are wrong (login succeeds with a token that
+      // is immediately rejected — we retry once, get 401 again, and
+      // if login still succeeds we'd loop forever without this guard).
+      if (error instanceof HostingProviderError && error.code === 'AUTHENTICATION' && !this.loginPermanentlyFailed) {
         // Token may have expired — clear cache and retry once.
         this.tokenCache = null;
         const newToken = await this.ensureToken();
@@ -209,6 +281,9 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
   async getAccountInfo(_deps?: HostingAdapterDeps): Promise<ProviderAccountInfo> {
     const res = await this.authedRequest({ method: 'GET', url: `${this.config.baseUrl}/v1/about` });
+    if (!res.json) {
+      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss account info response was empty or non-JSON.' });
+    }
     return normalizeAbyssAccount(res.json as AbyssAboutResponse);
   }
 
@@ -216,10 +291,12 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
   async getAsset(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo> {
     const res = await this.authedRequest({ method: 'GET', url: `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}` });
+    // res.json may be null when the response is empty or non-JSON (Abyss fix §3).
+    if (!res.json) {
+      throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response was empty or non-JSON.' });
+    }
     const file = (res.json as { data?: AbyssFile })?.data ?? res.json as AbyssFile;
     if (!file) throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response contained no file data.' });
-    // Reuse normalizeAbyssFile for consistency.
-    
     return normalizeAbyssFile(file);
   }
 
@@ -228,6 +305,7 @@ export class AbyssAdapter implements HostingProviderAdapter {
     if (providerFolderId) params.set('folder_id', providerFolderId);
     const url = `${this.config.baseUrl}/v1/resources${params.size ? `?${params}` : ''}`;
     const res = await this.authedRequest({ method: 'GET', url });
+    if (!res.json) return []; // Empty/non-JSON response → empty list (not an error).
     return normalizeAbyssFileList(res.json as AbyssFileListResponse);
   }
 
@@ -258,9 +336,39 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
   // --- Upload operations ---
 
+  /**
+   * Uploads a local file to Abyss via multipart form data.
+   *
+   * Robustness (Abyss fix §3/§5/§6):
+   *   - Preserves the MIME type from the Blob (when the caller passes a
+   *     Blob, which carries its own type). When the caller passes an
+   *     ArrayBuffer, we construct a Blob with the filename's inferred
+   *     MIME type (defaults to application/octet-stream).
+   *   - Handles null/empty/non-JSON upload responses by throwing a
+   *     typed VALIDATION error explaining that the upload identifier
+   *     was missing — NEVER "Unexpected end of JSON input".
+   *   - Validates that the normalized result contains a non-empty
+   *     providerAssetId before returning success. An empty asset ID
+   *     means the upload did not actually succeed and MUST NOT be
+   *     persisted as a media_asset.
+   */
   async uploadFile(params: UploadFileParams, _deps?: HostingAdapterDeps): Promise<ProviderUploadResult> {
     const formData = new FormData();
-    formData.append('file', params.content instanceof Blob ? params.content : new Blob([params.content]), params.filename);
+    // Preserve MIME type: if the caller passed a Blob, use it directly
+    // (Blob carries its own type). If the caller passed an ArrayBuffer
+    // (as the proxy-upload route does), construct a Blob with the
+    // filename's extension to infer a MIME type — defaulting to
+    // application/octet-stream. This ensures Abyss receives a proper
+    // content-type for the uploaded file.
+    let fileBlob: Blob;
+    if (params.content instanceof Blob) {
+      fileBlob = params.content;
+    } else {
+      // ArrayBuffer — infer MIME from filename extension.
+      const mimeType = inferMimeType(params.filename);
+      fileBlob = new Blob([params.content], { type: mimeType });
+    }
+    formData.append('file', fileBlob, params.filename);
     if (params.providerFolderId) formData.append('folder_id', params.providerFolderId);
     if (params.title) formData.append('title', params.title);
 
@@ -270,7 +378,36 @@ export class AbyssAdapter implements HostingProviderAdapter {
       formData,
       timeoutMs: 120_000, // uploads may take longer.
     });
-    return normalizeAbyssUploadResult(res.json as AbyssUploadResponse);
+
+    // CRITICAL (Abyss fix §3): res.json may be null when:
+    //   - the response body is empty (some providers return 200 with
+    //     no body for async upload acceptance)
+    //   - the response is non-JSON (text/html from a misconfigured proxy)
+    //   - the JSON is malformed
+    // In ALL these cases, we throw a typed VALIDATION error explaining
+    // that the upload identifier was missing — NEVER "Unexpected end of
+    // JSON input".
+    if (!res.json) {
+      throw new HostingProviderError('VALIDATION', {
+        message: res.text
+          ? `Abyss upload response was not valid JSON (content-type: ${res.contentType || 'missing'}). Upload may not have completed.`
+          : 'Abyss upload response was empty. The upload may not have completed — no provider asset ID was returned.',
+      });
+    }
+
+    const result = normalizeAbyssUploadResult(res.json as AbyssUploadResponse);
+
+    // CRITICAL (Abyss fix §6): do NOT accept an upload as successful
+    // when the provider asset identifier is missing. An empty
+    // providerAssetId means the upload did not actually produce a
+    // playable resource and MUST NOT be persisted as a media_asset.
+    if (!result.providerAssetId) {
+      throw new HostingProviderError('VALIDATION', {
+        message: 'Abyss upload response did not contain a provider asset ID (slug or file ID). The upload may not have completed.',
+      });
+    }
+
+    return result;
   }
 
   /**
@@ -300,6 +437,10 @@ export class AbyssAdapter implements HostingProviderAdapter {
       method: 'GET',
       url: `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}`,
     });
+    // res.json may be null when the response is empty or non-JSON (Abyss fix §3).
+    if (!res.json) {
+      throw new HostingProviderError('NOT_FOUND', { message: 'Abyss processing status response was empty or non-JSON.' });
+    }
     const file = (res.json as { data?: AbyssFile })?.data ?? res.json as AbyssFile;
     if (!file) throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response contained no file data.' });
     return normalizeAbyssProcessingStatus(file);
@@ -312,6 +453,7 @@ export class AbyssAdapter implements HostingProviderAdapter {
     if (parentFolderId) params.set('parent_id', parentFolderId);
     const url = `${this.config.baseUrl}/v1/folders${params.size ? `?${params}` : ''}`;
     const res = await this.authedRequest({ method: 'GET', url });
+    if (!res.json) return []; // Empty/non-JSON response → empty list (not an error).
     return normalizeAbyssFolderList(res.json as AbyssFolderListResponse);
   }
 
@@ -324,10 +466,12 @@ export class AbyssAdapter implements HostingProviderAdapter {
       url: `${this.config.baseUrl}/v1/folders`,
       body,
     });
+    if (!res.json) {
+      throw new HostingProviderError('VALIDATION', { message: 'Abyss folder create response was empty or non-JSON.' });
+    }
     const data = res.json as AbyssOperationResponse & { data?: AbyssFolder };
     const folder = data.data;
     if (!folder) throw new HostingProviderError('VALIDATION', { message: 'Abyss folder create did not return folder data.' });
-    
     return normalizeAbyssFolder(folder);
   }
 
@@ -337,10 +481,11 @@ export class AbyssAdapter implements HostingProviderAdapter {
       url: `${this.config.baseUrl}/v1/folders/${encodeURIComponent(providerFolderId)}`,
       body: { name: newName },
     });
+    // Some providers return empty 200 for successful rename — degrade gracefully.
+    if (!res.json) return { providerFolderId, name: newName, parentFolderId: null, childCount: null, raw: {} };
     const data = res.json as AbyssOperationResponse & { data?: AbyssFolder };
     const folder = data.data;
     if (!folder) return { providerFolderId, name: newName, parentFolderId: null, childCount: null, raw: data as Record<string, unknown> };
-    
     return normalizeAbyssFolder(folder);
   }
 
@@ -350,10 +495,10 @@ export class AbyssAdapter implements HostingProviderAdapter {
       url: `${this.config.baseUrl}/v1/folders/${encodeURIComponent(providerFolderId)}/move`,
       body: { parent_id: targetParentFolderId },
     });
+    if (!res.json) return { providerFolderId, name: '', parentFolderId: targetParentFolderId, childCount: null, raw: {} };
     const data = res.json as AbyssOperationResponse & { data?: AbyssFolder };
     const folder = data.data;
     if (!folder) return { providerFolderId, name: '', parentFolderId: targetParentFolderId, childCount: null, raw: data as Record<string, unknown> };
-    
     return normalizeAbyssFolder(folder);
   }
 
@@ -368,7 +513,15 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
   async uploadSubtitle(params: UploadSubtitleParams, _deps?: HostingAdapterDeps): Promise<void> {
     const formData = new FormData();
-    formData.append('file', new Blob([params.content]), params.filename);
+    // Preserve subtitle MIME type (Abyss fix §5 — same as uploadFile).
+    let subtitleBlob: Blob;
+    if (params.content instanceof Blob) {
+      subtitleBlob = params.content;
+    } else {
+      const mimeType = inferMimeType(params.filename);
+      subtitleBlob = new Blob([params.content], { type: mimeType });
+    }
+    formData.append('file', subtitleBlob, params.filename);
     formData.append('language', params.language);
     if (params.isDefault) formData.append('default', '1');
 
@@ -383,5 +536,40 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
   async uploadThumbnail(_providerAssetId: string, _thumbnailData: { url: string } | { base64: string }, _deps?: HostingAdapterDeps): Promise<void> {
     throw new HostingProviderError('UNSUPPORTED', { message: 'Abyss does not support thumbnail upload (not documented in the supplied API).' });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MIME type inference helper (Abyss fix §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Infers a MIME type from a filename's extension.
+ *
+ * Used by `uploadFile()` and `uploadSubtitle()` when the caller passes
+ * an ArrayBuffer (which carries no MIME type) instead of a Blob. Without
+ * this, the constructed Blob defaults to `application/octet-stream`,
+ * which some providers reject or misinterpret.
+ *
+ * Returns `application/octet-stream` for unknown extensions — a safe
+ * fallback that most providers accept.
+ *
+ * SECURITY: this function is pure and has no side effects. It only
+ * inspects the filename's extension — it does NOT read file content.
+ */
+export function inferMimeType(filename: string | undefined | null): string {
+  if (!filename) return 'application/octet-stream';
+  const ext = filename.toLowerCase().split('.').pop() ?? '';
+  switch (ext) {
+    case 'mp4': return 'video/mp4';
+    case 'mkv': return 'video/x-matroska';
+    case 'webm': return 'video/webm';
+    case 'mov': return 'video/quicktime';
+    case 'avi': return 'video/x-msvideo';
+    case 'm4v': return 'video/x-m4v';
+    case 'srt': return 'application/x-subrip';
+    case 'vtt': return 'text/vtt';
+    case 'ass': return 'text/plain';
+    default: return 'application/octet-stream';
   }
 }

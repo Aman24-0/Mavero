@@ -144,11 +144,22 @@ export function normalizeAbyssUploadResult(res: AbyssUploadResponse): ProviderUp
     size: res.file.size,
     status: res.file.status,
   } : {});
-  const slug = data.slug ?? String(data.id ?? '');
+  // CRITICAL (Abyss fix §6): if neither slug nor id is present, the
+  // upload did not actually produce a playable resource. We return
+  // providerAssetId as an empty string (the type requires `string`,
+  // not `string | null`) so the adapter's validation
+  // (`if (!result.providerAssetId)`) catches it and throws a typed
+  // VALIDATION error. Previously, `String(data.id ?? '')` also produced
+  // an empty string — but the adapter did NOT validate it, so the
+  // empty string was persisted as a media_asset with an empty
+  // provider_asset_id — violating the schema's CHECK constraint
+  // (length(trim(provider_asset_id)) >= 1) or creating invalid state.
+  const slug = data.slug ?? (data.id != null && data.id !== '' ? String(data.id) : '');
+  const hasValidSlug = slug.length > 0;
   return {
     providerAssetId: slug,
     providerVideoId: data.id != null ? String(data.id) : slug,
-    playbackUrl: slug ? (data.player_url ?? `${ABYSS_PLAYBACK_URL_BASE}${slug}`) : (data.player_url ?? null),
+    playbackUrl: hasValidSlug ? (data.player_url ?? `${ABYSS_PLAYBACK_URL_BASE}${slug}`) : (data.player_url ?? null),
     providerStatus: data.status ?? 'processing',
     status: abyssStatusMapper(data.status ?? 'processing'),
     sizeBytes: coerceNumber(data.size),

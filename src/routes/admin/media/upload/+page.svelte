@@ -215,15 +215,16 @@
       try {
         // Get the upload server URL via the admin API.
         const serverRes = await fetch(`/api/admin/media/upload/${operationId}/upload-server`, { method: 'POST' });
-        const serverData = await serverRes.json();
+        const serverData = await safeJsonParse(serverRes, 'Failed to get upload server URL.');
         if (!serverData.ok) throw new Error(serverData.error?.message ?? 'Failed to get upload server URL.');
-        const uploadUrl = serverData.uploadUrl;
+        const uploadUrl = serverData.uploadUrl as string | undefined;
+        if (!uploadUrl || typeof uploadUrl !== 'string') throw new Error('Upload server URL missing from response.');
 
         // Upload directly to Vidara's upload server.
         const formData = new FormData();
         formData.append('file', selectedFile);
         const uploadRes = await fetch(uploadUrl, { method: 'POST', body: formData });
-        const uploadData = await uploadRes.json();
+        const uploadData = await safeJsonParse(uploadRes, 'Vidara upload returned an unexpected response.');
 
         // Report the result back to the server.
         const completeRes = await fetch(`/api/admin/media/upload/${operationId}/complete`, {
@@ -231,10 +232,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ providerResult: uploadData }),
         });
-        const completeData = await completeRes.json();
+        const completeData = await safeJsonParse(completeRes, 'Upload completion returned an unexpected response.');
 
         if (completeData.ok) {
-          operationStatus = completeData.operation.status;
+          operationStatus = (completeData.operation as { status?: string } | undefined)?.status ?? 'processing';
           step = 'processing';
           startPolling();
         } else {
@@ -260,10 +261,21 @@
           method: 'POST',
           body: formData,
         });
-        const uploadData = await uploadRes.json();
+
+        // CRITICAL (Abyss fix §3): the proxy-upload route ALWAYS returns
+        // JSON — even on error. But if Netlify itself rejects the request
+        // (e.g. body too large → 413 with an HTML error page), or the
+        // serverless function times out (504 with no body), the response
+        // may NOT be JSON. We parse defensively: if the body is not JSON,
+        // we produce a meaningful error message that includes the HTTP
+        // status — NEVER "Unexpected end of JSON input".
+        const uploadData = await safeJsonParse(uploadRes, 'Abyss upload failed.', {
+          413: 'File is too large for server-proxied upload (Netlify body limit ~26MB). Use a smaller file or remote URL upload (Vidara only).',
+          504: 'The upload request timed out. Try again with a smaller file.',
+        });
 
         if (uploadData.ok) {
-          operationStatus = uploadData.operation?.status ?? 'processing';
+          operationStatus = (uploadData.operation as { status?: string } | undefined)?.status ?? 'processing';
           step = 'processing';
           startPolling();
         } else {
@@ -271,9 +283,49 @@
           step = 'done';
         }
       } catch (err) {
-        operationError = err instanceof Error ? err.message : 'Abyss local upload failed. For files larger than 26MB, this is a known platform limitation.';
+        operationError = err instanceof Error ? err.message : 'Abyss local upload failed.';
         step = 'done';
       }
+    }
+  }
+
+  /**
+   * Safely parses a fetch response as JSON, handling empty bodies,
+   * non-JSON responses (e.g. Netlify HTML error pages), and network
+   * errors. NEVER throws "Unexpected end of JSON input" — produces a
+   * meaningful error message instead.
+   *
+   * @param res The fetch Response to parse.
+   * @param fallbackMessage The error message to use when the response is not JSON or is empty.
+   * @param statusMessages Optional status-code-specific messages (e.g. { 413: 'File too large' }).
+   * @returns The parsed JSON object (may have { ok: false, error: { message } } on failure).
+   */
+  async function safeJsonParse(res: Response, fallbackMessage: string, statusMessages?: Record<number, string>): Promise<{ ok: boolean; error?: { message: string }; [key: string]: unknown }> {
+    let raw: string | null = null;
+    try {
+      raw = await res.text();
+    } catch {
+      // Body could not be read (network error, stream error).
+    }
+
+    // If the HTTP status indicates an error, produce a status-specific message.
+    if (!res.ok) {
+      const statusMessage = statusMessages?.[res.status];
+      const message = statusMessage ?? `${fallbackMessage} (HTTP ${res.status})`;
+      return { ok: false, error: { message } };
+    }
+
+    // If the body is empty, return an error (never throw).
+    if (!raw || !raw.trim()) {
+      return { ok: false, error: { message: `${fallbackMessage} (empty response body)` } };
+    }
+
+    // Attempt JSON parse.
+    try {
+      return JSON.parse(raw) as { ok: boolean; error?: { message: string }; [key: string]: unknown };
+    } catch {
+      // Non-JSON response (e.g. HTML error page from Netlify).
+      return { ok: false, error: { message: `${fallbackMessage} (non-JSON response, HTTP ${res.status})` } };
     }
   }
 
@@ -284,11 +336,12 @@
       if (!operationId) return;
       try {
         const res = await fetch(`/api/admin/media/upload/${operationId}/status`, { method: 'POST' });
-        const data = await res.json();
+        // Use safe JSON parsing — never throws on empty/non-JSON (Abyss fix §3).
+        const data = await safeJsonParse(res, 'Processing status check failed.');
         if (data.ok) {
-          operationStatus = data.status;
-          progressPercent = data.progressPercent;
-          providerStatus = data.providerStatus;
+          operationStatus = (data.status as string) ?? '';
+          progressPercent = (data.progressPercent as number | null) ?? null;
+          providerStatus = (data.providerStatus as string | null) ?? null;
           if (data.ready) {
             step = 'done';
             stopPolling();
