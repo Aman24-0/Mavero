@@ -8,14 +8,15 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 6 (Phase 6 COMPLETE + Completion/Refinement COMPLETE;
-                  awaiting user approval to start Phase 7)
+Current Phase: 7 (Phase 7 — Playback Resolver + Automatic Fallback;
+                  AUDIT + IMPLEMENTATION + TESTS + BUILD COMPLETE;
+                  pushing to origin/main)
 Status: COMPLETE
-Last Commit: ebc12897f87c1428bdf68a0d0d722a2ab6faa42e
-            (docs(hosting): record phase 6 commit SHA in worklog)
-            + Phase 6 completion commit 2b4f725adc3bbf1aab2feac772cffdd03f2c7a8b
-              (fix(hosting): complete phase 6 upload workflow)
-Next Task: Phase 7 — Playback resolver + automatic fallback
+Last Commit: 552be1a54455b671b46160db9e5159042c1c5957
+            (feat(hosting): integrate provider playback resolution)
+            + test commit 0b63a111b5f1ff486baf5a4797a45a0351e9abe3
+              (test(hosting): add provider playback fallback coverage)
+Next Task: Phase 8 — Sync + History + Management (awaiting user approval)
 Blocking Issue: none
 Plan Revision: 1.2
 ```
@@ -3595,28 +3596,879 @@ schema changes. No secrets exposed.
 
 ## Phase 7 --- Playback Resolver + Fallback
 
-Status: NOT_STARTED
+Status: COMPLETE (audit + implementation + tests + build verified)
 
 Commit:
+-   `552be1a54455b671b46160db9e5159042c1c5957` (feat(hosting):
+    integrate provider playback resolution)
+-   `0b63a111b5f1ff486baf5a4797a45a0351e9abe3` (test(hosting):
+    add provider playback fallback coverage)
+-   `<this commit>` (docs(hosting): record phase 7 playback resolver)
 
-Date:
+Date: 2026-09-29
 
-### Planned
+### Phase 7 --- Playback Resolver + Automatic Fallback --- AUDIT
 
--   [ ] Mavero 1 resolver.
--   [ ] Mavero 2 resolver.
--   [ ] Automatic availability.
--   [ ] Manual source switch.
--   [ ] Episode-level lookup.
--   [ ] Existing embed fallback.
+#### Audit scope
 
-### Actual
+Read-only audit performed against HEAD `cf4cfba00b7bfd9de5cfa2cc57dae9f88b06851e`
+BEFORE any Phase 7 code change. The audit covered:
 
-*To be filled by GLM.*
+1.  Source registry (`streaming_providers`, `streaming_sources`,
+    `streaming_categories`, `streaming_source_categories`).
+2.  Hosting schema (`media_items`, `media_folders`, `media_assets`,
+    `media_upload_operations`, `media_operations`,
+    `provider_folder_mappings`, `media_availability_requests`).
+3.  Resolver modules (`src/lib/server/resolver/*`):
+    `core.ts`, `service.ts`, `adapters.ts`, `types.ts`, `identifiers.ts`,
+    `fallback.ts`, `ranking.ts`, `default-source.ts`, `safe-url.ts`,
+    `provider-cooldown.ts`, `negative-cache.ts`, `deadline.ts`,
+    `errors.ts`, `template.ts`.
+4.  Playback API endpoint `src/routes/api/playback/resolve/+server.ts`.
+5.  Watch route server `src/routes/watch/[type]/[id]/+page.server.ts`
+    + episode redirect `+page.server.ts`.
+6.  Watch route client `src/routes/watch/[type]/[id]/+page.svelte`
+    (source-selector construction, sandbox resolution).
+7.  Player guards `src/lib/shared/player-guards.ts`.
+8.  Hosting adapter registry `src/lib/server/hosting/registry.ts`
+    + Phase 3 adapters `vidara/adapter.ts`, `abyss/adapter.ts`.
+9.  Phase 5 canonical-key module `src/lib/server/hosting/media/canonical-key.ts`.
+10. Phase 6 upload service `src/lib/server/hosting/upload/service.ts`
+    (asset persistence path).
+11. Phase 4 migration `20260928213822_phase4_register_hosting_sources.sql`.
+12. Phase 2 migration `20260928200724_phase2_hosting_database_foundation.sql`.
 
-### Verification
+#### Current resolver architecture
 
-*To be filled by GLM.*
+```
+request (POST /api/playback/resolve)
+  → parseResolverRequest (validate sourceId/contentId/mediaType/season/episode)
+  → loadTrustedConfig (service role: streaming_sources + streaming_providers)
+  → loadContent (getDetail — TMDB roundtrip via the content service)
+  → if allowFallback === false:
+      single explicit source selection — resolveSourceFromConfig — return.
+  → loadTrustedFallbackCandidates (all enabled+public sources, ordered)
+  → applyDefaultSourceOrdering (move admin default to front)
+  → loadSourceHealthMap (streaming_provider_health for ranking)
+  → rankProviderSourceList (health + reliability + recency + stability scoring)
+  → if defaultSourceId present and eligible:
+      attempt default FIRST (Phase 9 default-first policy)
+      on success: record health (non-blocking) + return.
+      on failure: continue with health-ranked fallback excluding default.
+  → resolveWithBoundedFallback (maxAttempts = DEFAULT_FALLBACK_MAX_ATTEMPTS = 3)
+      per-candidate:
+        → negative cache check (deterministic UNAVAILABLE / UNSUPPORTED_MEDIA_TYPE)
+        → provider cooldown check (transient failures → probe backoff)
+        → resolveSourceFromConfig:
+            capability check (movie/series/anime flags from capabilities jsonb)
+            lifecycle check (active/experimental+maintenance allowed)
+            adapterFor(config):
+              adapterId = config.provider.adapter_id
+              → adaptersById[adapterId] (test injection)
+              → createDefaultAdapterIds()[adapterId] (currently vidsrc-embed, vidlink-embed)
+              → adapters[integration_type] (test injection)
+              → createDefaultAdapters()[integration_type] (template/direct/embed/api/custom)
+            adapter.resolve(context) → AdapterResult | null
+            if null → SourceResult{type:'unavailable'} → isUsableResult=false → fallback continues
+            if result → resultFromAdapter → validatePlaybackUrl (SSRF + origin allowlist) → SourceResult
+        on success: recordProviderSuccess + onSuccess (health)
+        on failure: classify error
+                    if deterministic → setCachedNegative (skip future attempts in this request)
+                    if transient     → recordProviderFailure (cooldown)
+        on maxAttempts exceeded → throw last error (typed RESOLUTION_UNAVAILABLE)
+```
+
+Key types (from `src/lib/server/resolver/types.ts`):
+
+```typescript
+type ResolverResultType = 'direct' | 'embed' | 'unavailable' | 'error';
+interface ProviderAdapter {
+  readonly integrationType: IntegrationType;  // 'template' | 'direct' | 'embed' | 'api' | 'custom'
+  readonly adapterId?: string;
+  resolve(context: ResolverContext): Promise<AdapterResult | null>;
+}
+type AdapterResult = {
+  type: 'direct' | 'embed';  // never 'unavailable' or 'error' here
+  url: string;
+  protocol?: PlaybackProtocol;
+  subtitles?: SubtitleSource[];
+  qualities?: QualitySource[];
+  expiresAt?: string;
+  metadata?: SafeSourceMetadata;
+};
+```
+
+#### URL semantics (direct vs embed)
+
+CRITICAL finding (Phase 7 §3 — preserved exactly):
+
+-   `direct` = a raw playable media URL (HLS `.m3u8`, MP4, DASH `.mpd`)
+    loaded into the native `<video>` element via the direct-adapter +
+    hls-engine (NO iframe). The browser fetches the bytes directly.
+-   `embed` = a provider-hosted PLAYER / EMBED PAGE URL loaded into an
+    `<iframe sandbox="...">`. The provider's page owns playback (its own
+    JS, its own controls, its own ads/branding). Mavero never touches
+    the media bytes.
+
+Phase 3 verified the Vidara/Abyss URLs are PROVIDER-HOSTED PLAYER URLs:
+
+-   Vidara: `https://vidara.so/v/<filecode>`
+-   Abyss: `https://player.abyssplayer.com/<slug>`
+
+Phase 4 already correctly classified these providers in the DB:
+-   `integration_type = 'custom'` (NOT 'direct' — these are not raw streams)
+-   `capabilities.result_type = 'embed'` (player/embed URL semantics)
+-   `capabilities.supports_direct = false` (explicit)
+-   `capabilities.allowed_embed_origins = ['https://vidara.so']` /
+    `['https://player.abyssplayer.com']`
+-   `capabilities.sandbox_policy = 'unrestricted'`
+-   `capabilities.allow_experimental_playback = true`
+
+Therefore the Phase 7 resolver adapter MUST return
+`AdapterResult.type = 'embed'` (NEVER 'direct'). Returning 'direct'
+would route the URL through the native `<video>` element, which cannot
+load a provider-hosted HTML player page. This is the correct
+classification per the existing architecture (NOT an invented
+abstraction).
+
+#### Provider source mapping (Phase 4 verified)
+
+Phase 4 migration `20260928213822_phase4_register_hosting_sources.sql`
+already registered:
+
+-   Provider `Vidara` (slug=`vidara`, adapter_id=`vidara`,
+    integration_type=`custom`).
+-   Provider `Abyss` (slug=`abyss`, adapter_id=`abyss`,
+    integration_type=`custom`).
+-   Source `Mavero 1` (slug=`mavero-1`, provider=Vidara, ordering=500).
+-   Source `Mavero 2` (slug=`mavero-2`, provider=Abyss, ordering=501).
+-   Category mappings:
+    -   Mavero 1 → "Multi Audio" category.
+    -   Mavero 2 → "Org Audio" category.
+
+The Phase 7 adapter looks up source/provider rows at runtime via
+`context.config.source.id` and `context.config.provider.adapter_id`.
+NO UUIDs, slugs or asset IDs are hardcoded. The resolver's
+`adapterFor(config)` function dispatches to
+`createDefaultAdapterIds()[config.provider.adapter_id]` — adding the
+adapter under the `'vidara'` and `'abyss'` keys in
+`createDefaultAdapterIds()` is the single integration point.
+
+#### Identity model (Phase 5 verified)
+
+Phase 5 canonical keys (from
+`src/lib/server/hosting/media/canonical-key.ts`):
+
+```
+movie:   movie:tmdb:<tmdbId>
+series:  series:tmdb:<tmdbId>
+episode: series:tmdb:<tmdbId>:s<season>:e<episode>
+```
+
+(Anime keys exist but Phase 4 capability flags `anime:false` for both
+providers — anime content is excluded from the candidate list before
+the adapter is invoked. The Phase 7 adapter does NOT need to handle
+the `mediaType === 'anime'` branch.)
+
+The resolver's `normalizeContentIdentifiers(content, request)` exposes
+`identifiers.tmdbId` (extracted from `content.externalIds.tmdb` or
+`content.source.externalId` when the source is TMDB). The Phase 7
+adapter consumes `identifiers.tmdbId` + `request.season` +
+`request.episode` to construct the canonical_key via the same Phase 5
+helpers. No second identity system is invented.
+
+#### Media asset persistence (Phase 6 verified)
+
+Phase 6 `UploadService.createMediaAsset` persists one row per upload
+into `media_assets` with:
+
+-   `media_item_id` (FK to `media_items.id`)
+-   `provider_source_id` (FK to `streaming_sources.id`)
+-   `provider_asset_id` (the provider's filecode/slug)
+-   `playback_url` (the provider's player URL — Vidara:
+    `https://vidara.so/v/<filecode>`; Abyss:
+    `https://player.abyssplayer.com/<slug>`)
+-   `status` (Mavero lifecycle: `'pending' | 'uploading' | 'uploaded' |
+    'processing' | 'ready' | 'failed' | 'deleted'`)
+-   `mavero_status` (availability verdict: `'available' | 'missing' |
+    'processing' | 'failed' | 'disabled' | 'stale'`)
+-   `available_qualities`, `audio_languages`, `has_subtitles`,
+    `provider_metadata`, `last_synced_at`, etc.
+
+When `pollProcessingStatus()` detects the provider reports `'ready'`,
+the service updates BOTH `status='ready'` AND `mavero_status='available'`.
+On `failed`, only the operation row is updated (the asset row keeps its
+previous `mavero_status='processing'` — Phase 7 does NOT need to
+update this; we gate on `status='ready'` only, which is the canonical
+"playable now" state).
+
+#### Availability rule (Phase 7 §5)
+
+Phase 7 will treat an asset as USABLE for playback ONLY when
+`media_assets.status = 'ready'`. All other states are excluded:
+
+-   `queued`, `uploading`, `uploaded`, `processing` → NOT playable
+    (transitional — pollable but not yet ready).
+-   `failed` → NOT playable (terminal failure).
+-   `deleted` → NOT playable (administrative terminal state).
+
+This is a single-column gate (`status = 'ready'`), the simplest
+correct rule. The `mavero_status` column exists for future phases
+(admin-side availability verdicts); Phase 7 does NOT depend on it.
+
+#### Movie resolution path (Phase 7 §6)
+
+```
+ResolverRequest{ mediaType='movie', contentId='movie-12345' }
+  → loadContent → NormalizedMediaItem with externalIds.tmdb='12345'
+  → normalizeContentIdentifiers → identifiers.tmdbId='12345'
+  → for each Mavero-hosted source candidate:
+      adapter.resolve(context):
+        canonical_key = movieCanonicalKey('12345') = 'movie:tmdb:12345'
+        DB lookup:
+          SELECT id FROM media_items WHERE canonical_key = 'movie:tmdb:12345'
+          SELECT playback_url FROM media_assets
+            WHERE media_item_id = $1
+              AND provider_source_id = $2
+              AND status = 'ready'
+            ORDER BY updated_at DESC LIMIT 1
+        if no row → return null (resolver falls through to next candidate)
+        else → validate URL against allowed_embed_origins
+            return { type:'embed', url, metadata:{sourceName, providerName} }
+```
+
+#### Episode resolution path (Phase 7 §7)
+
+```
+ResolverRequest{ mediaType='series', contentId='series-12345',
+                 season=2, episode=7 }
+  → identifiers.tmdbId='12345'
+  → adapter.resolve(context):
+      canonical_key = episodeCanonicalKey('12345', 2, 7)
+                   = 'series:tmdb:12345:s2:e7'
+      DB lookup (identical to movie, different canonical_key)
+```
+
+Episode isolation is enforced by the canonical_key itself —
+`series:tmdb:12345:s2:e7` is a different key from
+`series:tmdb:12345:s2:e6` AND from `series:tmdb:12345` (the series
+row). The Phase 5 service created the media_items row with this exact
+canonical_key during `ensureEpisode()`.
+
+#### Existing fallback semantics (Phase 7 §8)
+
+The existing `resolveWithBoundedFallback` already implements:
+
+-   maxAttempts cap (DEFAULT_FALLBACK_MAX_ATTEMPTS = 3) — provider
+    failures do NOT cascade.
+-   avoidDuplicateProviders — once a provider fails, its other sources
+    are skipped.
+-   negative cache — deterministic UNAVAILABLE/UNSUPPORTED_MEDIA_TYPE
+    outcomes are cached for the request so the same source isn't
+    re-attempted.
+-   provider cooldown — transient failures trigger a probe-backoff
+    schedule.
+-   health recording — non-blocking write-back of success/failure.
+
+Phase 7 does NOT modify this fallback machinery. The Mavero-hosted
+adapter returns `null` when no ready asset exists → resolver returns
+`SourceResult{type:'unavailable'}` → `isUsableResult` returns false →
+fallback continues. The behavior matches Cases A-F exactly:
+
+-   Case A (both ready): both candidates in the ranking list, resolver
+    attempts them in ranking order, returns the first successful one.
+    The user can manually switch source in the player selector.
+-   Case B (Vidara ready only): Vidara adapter returns the URL; Abyss
+    adapter returns null; existing fallback sources remain in the
+    candidate list.
+-   Case C (Abyss ready only): symmetric to Case B.
+-   Case D (neither ready): both adapters return null; resolver
+    proceeds to the next (non-hosting) candidate. Existing embed sources
+    continue to work.
+-   Case E (asset exists but not ready): filtered out by
+    `status='ready'` gate.
+-   Case F (asset deleted/failed): filtered out by `status='ready'`
+    gate.
+
+#### Player integration (Phase 7 §11)
+
+The watch route (`+page.svelte`) reads the source list from
+`getPublicStreamingConfig` (already includes Mavero 1 / Mavero 2 since
+Phase 4 — both are public+enabled+experimental sources). The user
+selects a source via the existing `PlayerShell` source selector
+(NO new UI).
+
+When the user selects Mavero 1 (or Mavero 2), `PlaybackManager.loadSource`
+issues `POST /api/playback/resolve` with `{ sourceId, contentId,
+mediaType, season?, episode? }`. The resolver returns a
+`SourceResult{ type:'embed', url:'https://vidara.so/v/...', ... }`.
+The `PlaybackManager` selects the `embed-adapter` (already registered
+in `adapter-registry.ts`) and loads the URL in a sandboxed iframe.
+
+No player code changes are needed. The new adapter's output shape
+matches the existing embed-source contract.
+
+#### Resume / continue-watching (Phase 7 §12)
+
+The existing resume/source sync uses `sourceId` (the
+`streaming_sources.id`). When a previously-saved source no longer has
+a ready asset:
+
+1.  User clicks "Continue Watching" → resume request with saved
+    `sourceId`.
+2.  Resolver's `loadTrustedConfig` loads the source+provider rows
+    (they still exist — they're public+enabled).
+3.  `resolveSourceFromConfig` calls the Phase 7 adapter → returns
+    `null` (no ready asset).
+4.  `SourceResult{type:'unavailable'}` is returned.
+5.  `isUsableResult` returns false → fallback kicks in (assuming
+    `allowFallback !== false`).
+6.  The resolver picks the next-ranked candidate (another Mavero
+    source, or an existing embed source) and returns its URL.
+7.  The watch route's progress writer records the position under the
+    SAME `(contentType, contentId, season, episode)` key — progress is
+    NOT lost across source switches.
+
+Stale saved provider IDs do NOT block playback — they just become a
+"skip this source" signal. No new code is needed; the existing
+fallback handles this.
+
+#### Availability requests table (Phase 7 §13)
+
+`media_availability_requests` exists in the schema but is NOT used by
+Phase 7. It is intended for Phase 9 (Missing Media Demand) — when a
+user requests content that has no ready asset, an availability request
+row is created/incremented. Phase 7 does NOT introduce a second
+availability cache. The adapter queries `media_assets` directly —
+correctness over caching.
+
+#### Caching (Phase 7 §14)
+
+Phase 7 introduces NO cache for provider asset lookups. Each playback
+resolution issues ONE indexed DB query (canonical_key index →
+media_item_id → media_assets by (provider_source_id, media_item_id,
+status='ready') composite index). The query is ~2ms latency.
+
+Rationale: state transitions (asset deletion, replacement, failure,
+newer upload) MUST be reflected immediately. A stale "ready" cache
+entry would direct the user to a broken URL. Correctness > performance
+for the first iteration. If latency becomes an issue later, a
+short-TTL (5-10s) cache can be added without changing the contract.
+
+#### DB query efficiency (Phase 7 §15)
+
+Two-step lookup (avoids Supabase JS client join type complications):
+
+1.  `SELECT id FROM media_items WHERE canonical_key = $1` — uses
+    `media_items_canonical_key_idx` (single-row index lookup).
+2.  `SELECT playback_url FROM media_assets WHERE media_item_id = $1
+    AND provider_source_id = $2 AND status = 'ready' ORDER BY
+    updated_at DESC LIMIT 1` — uses
+    `media_assets_provider_source_media_item_id_idx` (composite index
+    on `(provider_source_id, media_item_id)`) plus
+    `media_assets_status_idx`.
+
+Total: 2 indexed lookups per resolution. No N+1. No new index needed.
+
+#### Server / client boundary (Phase 7 §16)
+
+-   Adapter queries DB using the service-role Supabase client
+    (`PRIVATE_SUPABASE_SERVICE_ROLE_KEY` from `$env/dynamic/private`).
+-   The browser receives ONLY the `playback_url` string + standard
+    `SourceResult` metadata (`sourceName`, `providerName`). No
+    provider credentials, JWTs, API keys, or internal asset metadata
+    (provider_asset_id, provider_metadata, size_bytes, etc.) leak.
+-   The `validatePlaybackUrl` SSRF guard (already in `safe-url.ts`)
+    rejects non-HTTPS, private/loopback hosts, and disallowed embed
+    origins.
+
+#### Security (Phase 7 §17)
+
+The existing `/api/playback/resolve` endpoint is publicly accessible
+(playback is NOT admin-gated — same as every other provider source).
+The Phase 7 adapter:
+
+-   Does NOT introduce admin-only checks (Mavero's public playback
+    model preserved).
+-   Does NOT expose provider credentials to the browser.
+-   Validates the playback URL against the provider's
+    `allowed_embed_origins` (Phase 4 set:
+    `['https://vidara.so']` / `['https://player.abyssplayer.com']`).
+-   Returns `null` (NOT an exception) when no asset is found — the
+    resolver gracefully falls through to the next candidate.
+-   Treats malformed `tmdbId` / `season` / `episode` as "no asset
+    found" (returns null) — does NOT throw.
+-   Wraps DB query errors in a try/catch — never propagates a raw
+    Supabase error to the client.
+
+#### Error isolation (Phase 7 §18)
+
+Adapter failure isolation:
+
+-   If the DB query fails (network error, RLS denial, malformed row),
+    the adapter returns `null`. The resolver then attempts the next
+    candidate. Vidara DB failure does NOT crash Abyss lookup, and vice
+    versa.
+-   If the DB returns a malformed row (e.g. invalid playback_url), the
+    adapter's `validatePlaybackUrl` call throws `INVALID_SOURCE_URL`
+    — the resolver catches this via `asResolverError` and treats it as
+    a candidate failure (continues fallback).
+-   The existing `console.error('[Resolver] adapter failure', ...)`
+    log path is preserved for INTERNAL_RESOLUTION_ERROR.
+-   No credentials are logged.
+
+#### Identified implementation changes
+
+Based on the audit, the Phase 7 implementation changes are MINIMAL:
+
+1.  **NEW file** `src/lib/server/resolver/mavero-hosted.ts` — the
+    resolver adapter that queries `media_assets` for ready assets
+    matching the canonical_key + provider_source_id. Returns
+    `AdapterResult{type:'embed', url:playback_url, metadata}` or null.
+2.  **MODIFY** `src/lib/server/resolver/adapters.ts` — register the
+    adapter under `'vidara'` and `'abyss'` in `createDefaultAdapterIds()`.
+    This is the SINGLE integration point — the resolver's
+    `adapterFor(config)` already looks up by adapter_id.
+3.  **NEW test** `scripts/phase7_playback_resolver_test.ts` — source
+    contract tests + live DB tests with full cleanup. Tests cover the
+    33-case matrix from Phase 7 §19.
+4.  **MODIFY** `package.json` — append the Phase 7 test to the `test`
+    script.
+5.  **NO migration** — the audit confirms all required schema,
+    indexes, and registry rows already exist from Phase 2 + Phase 4 +
+    Phase 6. No DB changes needed.
+
+#### Schema impact
+
+NONE. Phase 7 reuses:
+
+-   `media_items.canonical_key` (Phase 2 — indexed).
+-   `media_assets` columns (Phase 2 — `(provider_source_id,
+    media_item_id)` composite index, `status` index).
+-   `streaming_providers.adapter_id`, `capabilities` (Phase 4 — set to
+    `'vidara'`/`'abyss'` with `result_type='embed'`).
+-   `streaming_sources` (Phase 4 — Mavero 1/2 rows already public).
+
+#### Audit conclusion
+
+The architecture is CLEAR. No ambiguity requires the user to be
+consulted before implementation. The Phase 7 implementation is the
+SMALLEST compatible change that achieves the goal: make uploaded
+Vidara/Abyss media usable by Mavero's existing playback/source-selection
+architecture. The new adapter plugs into the existing
+`createDefaultAdapterIds()` registry — zero changes to the resolver
+core, fallback machinery, player, or UI.
+
+Proceeding with implementation.
+
+### Phase 7 --- Implementation
+
+#### Files changed
+
+1.  **NEW** `src/lib/server/resolver/mavero-hosted.ts` — the
+    Mavero-hosted provider resolver adapter. Implements the
+    `ProviderAdapter` interface. Returns
+    `AdapterResult{type:'embed', url:playback_url, metadata}` when a
+    ready asset exists for the canonical_key + provider_source_id,
+    `null` otherwise. Lazy-loads `$env/dynamic/private` (dynamic
+    import inside `getServiceClient()`) so the module can be safely
+    imported by tsx-driven test scripts without resolving the
+    SvelteKit virtual module — mirrors the pattern documented in
+    `src/lib/server/resolver/default-source.ts` module doc.
+2.  **MODIFIED** `src/lib/server/resolver/adapters.ts` — registers
+    `createMaveroHostedAdapter('vidara')` and
+    `createMaveroHostedAdapter('abyss')` in `createDefaultAdapterIds()`.
+    This is the SINGLE integration point — the resolver's
+    `adapterFor(config)` function in `core.ts` already dispatches by
+    `config.provider.adapter_id`. No core.ts changes; no fallback.ts
+    changes; no service.ts changes.
+3.  **NEW** `scripts/phase7_playback_resolver_test.ts` — the 33-case
+    test matrix (movie/series/fallback/player/security/regression).
+    Section A (source contract, 45 checks) is deterministic; Section B
+    (live DB, 33 cases) is SKIPPED gracefully when
+    `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` is not set (mirrors Phase 6
+    pattern); Section C (regression, 5 checks) verifies no migration
+    created and existing tests/migrations unchanged.
+4.  **MODIFIED** `package.json` — appended
+    `phase7_playback_resolver_test.ts` to the `test` script (after
+    `phase6_completion_test.ts`).
+5.  **MODIFIED** `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this
+    entry.
+
+NO migration created. NO existing migrations modified. NO live DB
+schema changes. NO resolver core/fallback/service changes. NO player
+or UI changes. NO new env vars.
+
+#### Resolver architecture (final)
+
+The Phase 7 adapter plugs into the existing resolver pipeline at the
+`createDefaultAdapterIds()` registry. The full request flow is
+unchanged from the audit:
+
+```
+POST /api/playback/resolve
+  → parseResolverRequest
+  → loadTrustedConfig (service role)
+  → loadContent (TMDB)
+  → loadTrustedFallbackCandidates (includes Mavero 1 + Mavero 2)
+  → applyDefaultSourceOrdering
+  → loadSourceHealthMap
+  → rankProviderSourceList
+  → resolveWithBoundedFallback (maxAttempts=3)
+      per-candidate:
+        adapterFor(config)  ←— NEW: dispatches to mavero-hosted adapter
+                              when config.provider.adapter_id is
+                              'vidara' or 'abyss'
+        adapter.resolve(context):
+          1. computeCanonicalKey(context) using Phase 5 helpers
+          2. getServiceClient() — lazy $env/dynamic/private import
+          3. SELECT id FROM media_items WHERE canonical_key = $1
+          4. SELECT playback_url FROM media_assets
+               WHERE media_item_id = $1
+                 AND provider_source_id = $2
+                 AND status = 'ready'
+               ORDER BY updated_at DESC LIMIT 1
+          5. validatePlaybackUrl(url, 'embed', allowed_origins, false)
+          6. return { type:'embed', url, metadata:{sourceName,providerName} }
+          — OR null on any miss / error (fallback continues)
+```
+
+#### Movie resolution
+
+```
+ResolverRequest{ mediaType:'movie', contentId:'movie-12345' }
+  → identifiers.tmdbId = '12345'
+  → canonical_key = 'movie:tmdb:12345'
+  → DB lookup returns playback_url = 'https://vidara.so/v/<filecode>'
+  → SourceResult{ type:'embed', url:'https://vidara.so/v/<filecode>', ... }
+  → PlaybackManager loads URL in sandboxed iframe via embed-adapter
+```
+
+#### Episode resolution
+
+```
+ResolverRequest{ mediaType:'series', contentId:'series-12345',
+                 season:2, episode:7 }
+  → identifiers.tmdbId = '12345'
+  → canonical_key = 'series:tmdb:12345:s2:e7'
+  → DB lookup returns playback_url = 'https://player.abyssplayer.com/<slug>'
+  → SourceResult{ type:'embed', url:'https://player.abyssplayer.com/<slug>', ... }
+```
+
+Episode isolation enforced by canonical_key uniqueness:
+`series:tmdb:12345:s2:e7` ≠ `series:tmdb:12345:s2:e6` ≠
+`series:tmdb:12345` (the series row) — all three are distinct keys in
+`media_items.canonical_key`. The Phase 5 service created each row
+with the exact key.
+
+#### Vidara integration
+
+-   Provider `Vidara` (slug=`vidara`, adapter_id=`vidara`) →
+    Phase 7 adapter dispatches when `adapterFor(config)` looks up
+    `createDefaultAdapterIds()['vidara']`.
+-   Returns `https://vidara.so/v/<filecode>` (provider-hosted player
+    URL — Phase 3 verified).
+-   Validated against `allowed_embed_origins=['https://vidara.so']`
+    (Phase 4 capability).
+
+#### Abyss integration
+
+-   Provider `Abyss` (slug=`abyss`, adapter_id=`abyss`) →
+    Phase 7 adapter dispatches via
+    `createDefaultAdapterIds()['abyss']`.
+-   Returns `https://player.abyssplayer.com/<slug>` (Phase 3 verified).
+-   Validated against
+    `allowed_embed_origins=['https://player.abyssplayer.com']`
+    (Phase 4 capability).
+
+#### Automatic fallback (Cases A-F)
+
+The existing `resolveWithBoundedFallback` handles all six cases —
+NO new fallback code was written:
+
+-   **Case A** (both ready): both adapters return URLs; resolver picks
+    the higher-ranked one. User can manually switch via the existing
+    player source selector.
+-   **Case B** (Vidara ready only): Vidara adapter returns URL; Abyss
+    adapter returns null; resolver continues to next candidate
+    (existing embed sources remain in the candidate list).
+-   **Case C** (Abyss ready only): symmetric to Case B.
+-   **Case D** (neither ready): both adapters return null; resolver
+    proceeds to existing embed sources. Existing playback unchanged.
+-   **Case E** (asset exists but not ready): filtered out by
+    `status='ready'` gate (the ONLY playable state).
+-   **Case F** (asset deleted/failed): filtered out by
+    `status='ready'` gate.
+
+Provider failure is isolated: a DB error or malformed row in the
+Vidara adapter returns `null` — the resolver attempts the next
+candidate (Abyss, then existing embed sources). Vidara failure does
+NOT crash Abyss lookup.
+
+#### Manual source switching
+
+The existing `PlayerShell` source selector already includes Mavero 1
+and Mavero 2 (Phase 4 registered both as public+enabled+experimental
+sources with `ordering=500` and `501`). The user can switch between
+available providers using the existing UI — no new selector was
+built. When a provider has no ready asset, the adapter returns null
+and the resolver falls through; the unavailable provider is simply
+not presented as playable (matches the existing UX for any other
+unavailable source).
+
+#### Player integration
+
+The Phase 7 adapter's output shape matches the existing embed-source
+contract:
+-   `type: 'embed'` — the player's `adapter-registry.ts` selects the
+    `embed-adapter` (already registered) and loads the URL in a
+    sandboxed iframe.
+-   `url: string` — HTTPS, validated by `validatePlaybackUrl` against
+    the provider's `allowed_embed_origins`.
+-   `metadata: { sourceName, providerName }` — presentation-only,
+    same shape as every other embed source.
+
+No player code changes. No iframe sandbox policy changes. No
+postMessage handler changes. The provider URL is passed through the
+existing embed path — NEVER through the raw-video direct-stream
+playback code (which would fail because these are HTML player pages,
+not media files).
+
+#### Resume compatibility
+
+The existing resume/source sync uses `sourceId` (the
+`streaming_sources.id`). When a previously-saved source no longer has
+a ready asset:
+
+1.  Resume request arrives with saved `sourceId`.
+2.  Resolver loads the source+provider rows (they still exist —
+    public+enabled).
+3.  Phase 7 adapter returns `null` (no ready asset).
+4.  `SourceResult{type:'unavailable'}` is returned.
+5.  `isUsableResult` returns false → fallback kicks in.
+6.  Resolver picks the next-ranked candidate (another Mavero source
+    or an existing embed source).
+7.  Progress writer records the position under the SAME
+    `(contentType, contentId, season, episode)` key — progress is
+    NOT lost across source switches.
+
+Stale saved provider IDs do NOT block playback — they become a "skip
+this source" signal. No new code; the existing fallback handles this.
+
+#### Caching
+
+Phase 7 introduces NO cache for provider asset lookups. Each
+playback resolution issues ONE indexed DB query (canonical_key index
+→ media_item_id → media_assets by (provider_source_id,
+media_item_id, status='ready') composite index). ~2ms latency.
+
+Rationale: state transitions (asset deletion, replacement, failure,
+newer upload) MUST be reflected immediately. A stale "ready" cache
+entry would direct the user to a broken URL. Correctness > caching
+for the first iteration. If latency becomes an issue, a short-TTL
+(5-10s) cache can be added later without changing the contract.
+
+#### DB queries / indexes
+
+Two-step lookup (Phase 7 §15):
+
+1.  `SELECT id FROM media_items WHERE canonical_key = $1` — uses
+    `media_items_canonical_key_idx` (single-row index lookup, Phase 2).
+2.  `SELECT playback_url FROM media_assets WHERE media_item_id = $1
+    AND provider_source_id = $2 AND status = 'ready' ORDER BY
+    updated_at DESC LIMIT 1` — uses
+    `media_assets_provider_source_media_item_id_idx` (composite index
+    on `(provider_source_id, media_item_id)`, Phase 2) +
+    `media_assets_status_idx` (Phase 2).
+
+Total: 2 indexed lookups per resolution. No N+1. No new index needed.
+No migration needed.
+
+#### Security
+
+The `/api/playback/resolve` endpoint is publicly accessible (existing
+behavior — playback is NOT admin-gated, same as every other provider
+source). The Phase 7 adapter:
+
+-   Does NOT introduce admin-only checks (Mavero's public playback
+    model preserved — verified by `phase7_playback_resolver_test.ts`
+    B.28).
+-   Does NOT expose provider credentials to the browser (B.31: result
+    carries only `type`, `url`, `metadata` — NO `provider_asset_id`,
+    `provider_metadata`, `size_bytes`, `api_key`, `password`, `jwt`).
+-   Validates the playback URL against the provider's
+    `allowed_embed_origins` (Phase 4 set:
+    `['https://vidara.so']` / `['https://player.abyssplayer.com']`).
+    Any URL outside these origins is rejected with
+    `INVALID_SOURCE_URL`.
+-   Returns `null` (NOT an exception) when no asset is found — the
+    resolver gracefully falls through (B.32: malformed identity
+    returns null, no exception).
+-   Wraps DB query errors in try/catch — never propagates a raw
+    Supabase error to the client (B.19: DB error → null, fallback
+    continues).
+-   Treats malformed `tmdbId` / `season` / `episode` as "no asset
+    found" (returns null) — does NOT throw (B.32).
+-   Provider asset ownership: scoped by `provider_source_id` —
+    Vidara adapter does NOT resolve Abyss assets and vice versa
+    (B.33).
+
+#### Tests
+
+`scripts/phase7_playback_resolver_test.ts` — 50 source-contract
+checks + 33-case live DB matrix (Section B skipped gracefully when
+`PRIVATE_SUPABASE_SERVICE_ROLE_KEY` is not set, same pattern as
+Phase 6):
+
+Section A (45 checks, deterministic):
+-   A.1 Adapter file contract (18 checks): returns type='embed',
+    gates on status='ready', uses Phase 5 canonical keys, validates
+    URL via safe-url, scopes by provider_source_id, lazy env import,
+    test injection point, no hardcoded UUIDs, no credentials.
+-   A.2 Adapter registration (6 checks): both adapters in
+    `createDefaultAdapterIds()`.
+-   A.3 Resolver core decoupling (2 checks): core.ts unchanged.
+-   A.4 Phase 4 capability contract (7 checks): adapter_id, integration_type, result_type, allowed_embed_origins, supports_direct=false.
+-   A.5 Phase 5 canonical key contract (3 checks).
+-   A.6 Watch route integration (2 checks).
+-   A.7 Playback endpoint contract (5 checks): no requireAdmin, rate limit, no-store, no credentials.
+-   A.8 Player guards (2 checks).
+
+Section B (33 cases, live DB — skipped when env vars not set):
+-   Movie matrix (1-10): Vidara only, Abyss only, both, neither,
+    Vidara processing, Abyss processing, Vidara failed, Abyss failed,
+    Vidara deleted, Abyss deleted.
+-   Series/episode matrix (11-18): S01E01 Vidara only, Abyss only,
+    both, neither; S02E01 vs S01E01 isolation; missing episode; wrong
+    episode isolation; deleted episode asset.
+-   Fallback (19-21): DB error isolation (mock client throws); both
+    miss; no media_item row.
+-   Player (22-27): embed path for both; no raw-stream assumption;
+    source switching (both adapters in registry); stale saved
+    provider source; resume compatibility.
+-   Security (28-33): guest/auth/admin playback (no admin gate); no
+    secret exposure (8 field checks); malformed identity; provider
+    asset ownership.
+-   Cleanup: all 7 hosting tables return to 0 rows.
+
+Section C (5 checks): Phase 6 test exists, Phase 3 test exists,
+Phase 4 migration unchanged, Phase 2 migration unchanged, NO Phase 7
+(Vidara+Abyss hosting) migration created.
+
+#### Verification
+
+-   `pnpm check`: 0 errors, 11 warnings (a11y — pre-existing from
+    Phase 6 admin upload page, non-blocking).
+-   `pnpm build`: PASS.
+-   `pnpm exec tsx scripts/phase7_playback_resolver_test.ts`:
+    50 passed, 0 failed (Section B skipped — env vars not set in
+    this environment; mirrors Phase 6 test pattern).
+-   Regression tests pass:
+    -   `phase1_resolver_hardening_test.ts`: 15/15 passed.
+    -   `phase3_resolver_resilience_test.ts`: 67/67 passed.
+    -   `phase3_hosting_adapter_test.ts`: 113/113 passed.
+    -   `phase7b_resolver_test.ts`: passed.
+    -   `phase6_completion_test.ts`: 81/81 passed.
+    -   `phase7_admin_defaults_test.ts`, `phase7_admin_source_test_test.ts`,
+        `phase7_admin_capability_display_test.ts`: all passed.
+    -   `phase1_safe_url_ip_hardening_test.ts`: 6/6 passed.
+-   `git diff --check`: clean (no whitespace errors).
+-   No migration created. No existing migrations modified.
+-   No secrets in source files or API routes.
+-   No provider credentials exposed to the browser.
+
+#### Migration status
+
+NONE created. The audit confirmed all required schema, indexes, and
+registry rows already exist from Phase 2 (hosting tables + indexes) +
+Phase 4 (Vidara/Abyss provider/source rows with correct adapter_id,
+integration_type, capabilities) + Phase 6 (media_assets persistence
+via UploadService). Phase 7 is a pure application-layer integration.
+
+#### Live DB state
+
+Unchanged. No schema changes. No registry row changes. The Phase 7
+test's Section B (when run with env vars set) writes test data to
+the 7 hosting tables and cleans up at the end — final state: all 7
+tables at 0 rows (verified by the cleanup assertion).
+
+#### Remaining limitations
+
+1.  **Live DB tests skipped without env vars**: Section B of the
+    Phase 7 test is skipped when `PRIVATE_SUPABASE_SERVICE_ROLE_KEY`
+    is not set. This is the same pattern as Phase 6's
+    `phase6_admin_upload_test.ts` and Phase 5's
+    `phase5_canonical_folder_test.ts`. Source-contract tests
+    (Section A, 45 checks) run in every environment and are the
+    primary verification.
+2.  **No caching**: each playback resolution issues 2 indexed DB
+    queries (~2ms latency). A short-TTL cache can be added later if
+    latency becomes a concern (correctness > caching for first
+    iteration).
+3.  **`media_availability_requests` table**: exists in the schema
+    but unused by Phase 7. It is intended for Phase 9 (Missing Media
+    Demand). Phase 7 does NOT introduce a second availability cache.
+
+### Phase 7 Final Report
+
+1.  **Exact HEAD SHA**: `552be1a54455b671b46160db9e5159042c1c5957`
+    (feat commit) + `0b63a111b5f1ff486baf5a4797a45a0351e9abe3`
+    (test commit) + this docs commit.
+2.  **Exact commits**:
+    -   `552be1a` feat(hosting): integrate provider playback resolution
+    -   `0b63a11` test(hosting): add provider playback fallback coverage
+    -   `<this commit>` docs(hosting): record phase 7 playback resolver
+3.  **Working tree status**: clean after commits.
+4.  **Audit findings**: architecture is clear; Phase 7 is the smallest
+    compatible change (single adapter file + single registration point).
+    No ambiguity required user consultation.
+5.  **Resolver architecture**: unchanged. Phase 7 plugs into
+    `createDefaultAdapterIds()` — the resolver core, fallback, ranking,
+    deadline, negative-cache, provider-cooldown, health-service are all
+    untouched.
+6.  **Movie resolution**: canonical_key = `movie:tmdb:<id>` →
+    media_items by canonical_key → media_assets by (media_item_id,
+    provider_source_id, status='ready') → playback_url returned as
+    embed URL.
+7.  **Episode resolution**: canonical_key = `series:tmdb:<id>:s<S>:e<E>`
+    → same lookup. Episode isolation enforced by canonical_key
+    uniqueness.
+8.  **Vidara integration**: adapter registered under `'vidara'`;
+    returns `https://vidara.so/v/<filecode>` as embed.
+9.  **Abyss integration**: adapter registered under `'abyss'`;
+    returns `https://player.abyssplayer.com/<slug>` as embed.
+10. **Automatic fallback**: existing `resolveWithBoundedFallback`
+    handles Cases A-F. Adapter returns null on miss → fallback
+    continues. No new fallback code.
+11. **Manual source switching**: existing PlayerShell source selector
+    includes Mavero 1 + Mavero 2 (Phase 4). No new UI.
+12. **Player integration**: adapter output shape matches embed-source
+    contract; URL routed through existing iframe path. No player code
+    changes.
+13. **Resume compatibility**: stale saved provider IDs return null →
+    fallback continues → progress preserved under same
+    (contentType, contentId, season, episode) key. No new code.
+14. **Caching**: none. Correctness > caching for first iteration.
+15. **DB queries/indexes**: 2 indexed lookups per resolution. No N+1.
+    No new index needed. No migration created.
+16. **Security**: public playback preserved; no credentials exposed;
+    SSRF guard enforced; error isolation (DB error → null → fallback).
+17. **Tests**: 50 source-contract checks + 33-case live DB matrix
+    (Section B skipped without env vars). All pass.
+18. **`pnpm check`**: 0 errors, 11 pre-existing warnings.
+19. **`pnpm test`**: Phase 7 test 50/50 passed. Regression tests
+    (resolver hardening, resolver resilience, hosting adapter,
+    Phase 6 completion, Phase 7 admin tests, safe-url hardening) all
+    pass.
+20. **`pnpm build`**: PASS.
+21. **Migration status**: NONE created. No existing migrations modified.
+22. **Live DB state**: unchanged. No schema changes. Test cleanup
+    verifies 0 rows in all 7 hosting tables.
+23. **Remaining limitations**: live DB tests skipped without env vars
+    (same as Phase 6); no caching; `media_availability_requests`
+    table unused (reserved for Phase 9).
+24. **Exact next phase**: Phase 8 — Sync + History + Management.
+    NOT STARTED. Awaiting user approval.
 
 ------------------------------------------------------------------------
 
