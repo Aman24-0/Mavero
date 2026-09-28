@@ -13,8 +13,8 @@ Current Phase: 2 (Phase 2 COMPLETE + Phase 2 post-audit correction COMPLETE;
 Status: COMPLETE
 Last Commit: 3ee7b5a51f6185e3e166d3e01db6886f587d0611
             (docs(hosting): record phase 2 commit SHA in worklog)
-            + Phase 2 correction commit (SHA recorded after commit
-              creation — see Phase 2 Correction Final Report below)
+            + Phase 2 correction commit 39f9b203007a020425a4c4ff0f48ef082534aa13
+              (fix(hosting): align upload queue state with plan)
 Next Task: Phase 3 — Vidara + Abyss provider adapters
 Blocking Issue: none
 Plan Revision: 1.2
@@ -2349,8 +2349,8 @@ code behavior changes.
 
 Status: COMPLETE
 
-Commit: <recorded after commit creation — see Phase 2 Correction
-        Final Report below>
+Commit: 39f9b203007a020425a4c4ff0f48ef082534aa13
+        (fix(hosting): align upload queue state with plan)
 
 Date: 2026-09-28
 
@@ -2571,9 +2571,7 @@ remains at revision 1.2.
 
 #### C9. Phase 2 Correction Final Report
 
-Phase 2 correction commit SHA: <recorded after the corrective
-commit is created via `git rev-parse HEAD` — see the new HEAD
-reported to the user after push>
+Phase 2 correction commit SHA: 39f9b203007a020425a4c4ff0f48ef082534aa13
 
 Commit message:
 
