@@ -82,22 +82,32 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
   //   1. GET /v1/upload/server → returns upload server URL
   //   2. POST file to the upload server URL
   // For browser-direct upload, we need to expose step 1's result.
-  // We use the adapter's HTTP client to call the Vidara API directly.
+  //
+  // IMPORTANT (Phase 7 fix): Vidara authenticates via `api_key` query
+  // parameter — NOT via a Bearer Authorization header. The previous
+  // implementation passed a Bearer header to the shared HTTP fetcher,
+  // which Vidara does not recognize, producing HTTP 401. The fix
+  // delegates URL construction to the Vidara adapter's authenticated
+  // URL builder (`buildVidaraUrl`) so the same auth scheme is used
+  // everywhere. The shared HTTP fetcher is constructed with `null`
+  // (no Authorization header) — matching the adapter.
   if (adapterId === 'vidara') {
     try {
-      // Get the Vidara config to access the API key.
+      // Get the Vidara config to access the API key + base URL.
       const { getVidaraConfigOrNull } = await import('$lib/server/hosting/vidara/config');
       const config = getVidaraConfigOrNull();
       if (!config) {
         return json({ ok: false, error: { code: 'CONFIG_MISSING', message: 'Vidara API credentials are not configured.' } }, { status: 500, headers: NO_STORE_HEADERS });
       }
 
-      // Call the Vidara API to get the upload server URL.
+      // Build the authenticated URL (api_key query parameter, NOT Bearer).
+      const { buildVidaraUrl } = await import('$lib/server/hosting/vidara/adapter');
       const { createHostingHttpFetcher } = await import('$lib/server/hosting/http-client');
-      const fetcher = createHostingHttpFetcher(`Bearer ${config.apiKey}`);
+      // `null` — no Authorization header. Vidara auth is in the URL query.
+      const fetcher = createHostingHttpFetcher(null);
       const res = await fetcher({
         method: 'GET',
-        url: `${config.baseUrl}/v1/upload/server`,
+        url: buildVidaraUrl(config.baseUrl, '/v1/upload/server', null, config.apiKey),
       });
 
       // Extract the upload server URL from the response.
@@ -105,6 +115,9 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
       const uploadUrl = extractVidaraUploadServerUrl(res.json as Parameters<typeof extractVidaraUploadServerUrl>[0]);
 
       // Return ONLY the upload URL — no API key, no credentials.
+      // The `api_key` query parameter is on the GET /v1/upload/server
+      // request above, NOT on the returned uploadUrl, so the browser
+      // never receives the API key.
       return json({ ok: true, uploadUrl }, { headers: NO_STORE_HEADERS });
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
