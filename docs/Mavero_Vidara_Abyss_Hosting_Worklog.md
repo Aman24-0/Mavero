@@ -8,13 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 4 (Phase 4 COMPLETE; awaiting user approval to start Phase 5)
+Current Phase: 5 (Phase 5 COMPLETE; awaiting user approval to start Phase 6)
 Status: COMPLETE
-Last Commit: 0fe1f29a79528f4330b2706473160dd1f7efb423
-            (docs(hosting): record phase 3 commit SHA in worklog)
-            + Phase 4 commit fba957c
-              (feat(hosting): register vidara and abyss sources)
-Next Task: Phase 5 — Canonical folder/media library service
+Last Commit: 772aa8fd36f604b35626fbc96ee038628953a257
+            (docs(hosting): record phase 4 commit SHA in worklog)
+            + Phase 5 commit (SHA recorded after commit creation —
+              see Phase 5 Final Report below)
+Next Task: Phase 6 — Admin upload workflow
 Blocking Issue: none
 Plan Revision: 1.2
 ```
@@ -3036,28 +3036,200 @@ rows modified. 0 secrets stored. 0 hosting media rows inserted.
 
 ## Phase 5 --- Canonical Media Library + Folders
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: <recorded after commit creation — see Phase 5 Final Report
+        below>
 
-Date:
+Date: 2026-09-28
 
 ### Planned
 
--   [ ] Movies hierarchy.
--   [ ] Series hierarchy.
--   [ ] Anime hierarchy.
--   [ ] Deterministic canonical keys.
--   [ ] Provider folder mapping.
--   [ ] Media library browsing/filtering.
+-   [x] Movies hierarchy.
+-   [x] Series hierarchy.
+-   [x] Anime hierarchy.
+-   [x] Deterministic canonical keys.
+-   [x] Provider folder mapping abstraction (canonical layer only).
+-   [x] Deterministic idempotent creation.
 
-### Actual
+### Actual --- full Phase 5 implementation
 
-*To be filled by GLM.*
+#### 1. Startup audit
 
-### Verification
+-   HEAD at start: `772aa8fd36f604b35626fbc96ee038628953a257`.
+-   Working tree: clean. Branch: `main`.
+-   Verified Phase 4 commits exist (fba957c + 772aa8f).
+-   Audited live DB schema: media_items, media_folders,
+    provider_folder_mappings — all constraints, FKs, indexes confirmed.
+    All 7 hosting tables at 0 rows. Migration ledger: 30 entries,
+    MAX `20260928213822`.
+-   Audited existing content types (ContentType = movie|series|anime),
+    TMDB adapter (externalIds.tmdb/imdb), existing slug conventions.
+-   No existing media folder service found (no duplicates).
 
-*To be filled by GLM.*
+#### 2. No migration created
+
+The Phase 2 schema already contains everything needed:
+- `media_items` with `canonical_key` uniqueness + `(content_type, tmdb_id,
+  season, episode)` uniqueness + `parent_media_id` self-FK.
+- `media_folders` with `canonical_key` uniqueness + self-referencing
+  `parent_id` + `kind` CHECK + `media_item_id` FK.
+- `provider_folder_mappings` with `(canonical_folder_id,
+  provider_source_id)` uniqueness.
+
+**No migration was created. No existing migrations modified.**
+
+#### 3. Service architecture
+
+```
+src/lib/server/hosting/media/
+  errors.ts        domain errors (MediaServiceError + 11 codes)
+  canonical-key.ts deterministic key generation for media_items + media_folders
+  slug.ts          folder name sanitization (slash/colon removal, unicode preserved)
+  service.ts       CanonicalMediaService — ensure* operations
+  index.ts         barrel export
+```
+
+The service accepts a `SupabaseClient<Database>` (same pattern as
+streaming/admin-service.ts). All operations are server-side.
+
+#### 4. Canonical hierarchy
+
+```
+Movies/
+  <Year>/
+    <Movie>/
+Series/
+  <Series>/
+    Season 01/
+      S01E01 - Episode Title
+Anime/
+  <Anime>/
+    Season 01/
+      S01E01 - Episode Title
+```
+
+Root folders (`root:movies`, `root:series`, `root:anime`) are
+deterministic singletons — repeated `ensureRootFolder()` returns
+the same UUID.
+
+#### 5. Canonical key formats
+
+media_items:
+- Movie: `movie:tmdb:<tmdb_id>`
+- Series: `series:tmdb:<tmdb_id>`
+- Episode: `series:tmdb:<tmdb_id>:s<season>:e<episode>`
+
+media_folders:
+- Root: `root:movies`, `root:series`, `root:anime`
+- Movie year: `movies:<year>`
+- Movie: `movies:<year>:tmdb-<tmdb_id>`
+- Series: `series:tmdb-<tmdb_id>`
+- Season: `series:tmdb-<tmdb_id>:season-<NN>`
+- Episode: `series:tmdb-<tmdb_id>:season-<NN>:episode-<NN>`
+- Anime: `anime:tmdb-<tmdb_id>`, `anime:tmdb-<tmdb_id>:season-<NN>`, etc.
+
+#### 6. Idempotency
+
+All `ensure*` operations use Supabase's `.upsert()` with
+`onConflict: 'canonical_key'`. Repeated calls with the same canonical
+identity return the same UUID (verified by test).
+
+- `ensureMovie()` called twice → same mediaItemId + same folderId.
+- `ensureEpisode()` called twice → same IDs.
+- `ensureAnime()` + `ensureAnimeEpisode()` → same IDs.
+- Different TMDB IDs → different IDs (no collision).
+- Same TMDB ID + different title → SAME media item (title is display-only).
+
+#### 7. Vidara flat-folder handling
+
+The canonical hierarchy is independent of Vidara's flat-folder limitation.
+`media_folders` represents the Mavero-side canonical tree (Movies/Year/Movie).
+`provider_folder_mappings` maps canonical folders to provider-specific
+folder IDs — this is a separate concern.
+
+Phase 5 does NOT call Vidara/Abyss APIs. Provider folder provisioning
+belongs to a later phase.
+
+#### 8. Slug/path sanitization
+
+`sanitizeFolderName()`:
+- Replaces `/` and `\` with `-`.
+- Replaces `:` with `-`.
+- Removes leading/trailing dots.
+- Collapses multiple spaces.
+- Truncates to 180 chars.
+- Preserves unicode (no transliteration).
+- Empty → "Untitled".
+
+The display title (`media_items.title`) is preserved verbatim —
+only the folder name (`media_folders.name`) is sanitized.
+
+#### 9. Validation
+
+- TMDB ID: must match `^[0-9]{1,20}$`.
+- IMDb ID: must match `^tt[0-9]{7,10}$` (optional).
+- Year: integer 1880–3000 (optional).
+- Season: integer 0–1000 (0 = Specials).
+- Episode: integer 1–10000.
+- Title: non-empty, ≤300 chars.
+- Episode requires parent series (throws PARENT_NOT_FOUND).
+
+#### 10. Tests
+
+`scripts/phase5_canonical_folder_test.ts` — **49 checks, 0 failures**:
+- Root folders: Movies/Series/Anime deterministic singletons.
+- Movie: year folder + movie folder + idempotency.
+- Series: series folder + idempotency.
+- Episode: parent relationship + idempotency + different episode → different IDs.
+- Anime: canonical hierarchy under Anime root (NOT Series root) + idempotency.
+- Identity: same TMDB ID → same media item; different TMDB → different; title alone does NOT merge.
+- Validation: invalid TMDB ID / year / season / episode / title / missing parent.
+- Naming: colon/slash sanitized, unicode preserved, long title truncated, null → Untitled.
+- Canonical key generation: deterministic format.
+- Cleanup: all test rows removed (verified via Management API SQL).
+
+All tests use the live DB (via service-role Supabase client) and
+clean up via Management API SQL DELETE. Production tables remain at 0 rows.
+
+#### 11. Verification
+
+- `pnpm check`: 0 errors, 0 warnings.
+- `pnpm build`: PASS.
+- `pnpm exec tsx scripts/phase5_canonical_folder_test.ts`: 49 checks, 0 failures.
+- `git diff --check`: clean.
+- Live DB: all 7 hosting tables at 0 rows after test cleanup.
+- No secrets in source files, no console.log in service code.
+- No migration created. No existing migrations modified.
+
+### Next phase
+
+Phase 6 — Admin upload workflow. Implement TMDB-first upload:
+TMDB search → select → IDs → provider → file → subtitles →
+destination → upload → processing → ready. Implement operation
+state machine (queued→uploading→uploaded→processing→ready/failed/cancelled).
+Add live polling/refresh + retry.
+
+DO NOT begin Phase 6 automatically. STOP and await user approval.
+
+### Phase 5 Final Report
+
+Phase 5 commit SHA: <recorded after the Phase 5 commit is created
+via `git rev-parse HEAD` — see the new HEAD reported to the user
+after push>
+
+Files changed:
+-   `src/lib/server/hosting/media/errors.ts` — NEW.
+-   `src/lib/server/hosting/media/canonical-key.ts` — NEW.
+-   `src/lib/server/hosting/media/slug.ts` — NEW.
+-   `src/lib/server/hosting/media/service.ts` — NEW.
+-   `src/lib/server/hosting/media/index.ts` — NEW.
+-   `scripts/phase5_canonical_folder_test.ts` — NEW test (49 checks).
+-   `package.json` — added Phase 5 test to `test` script.
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+
+No migrations created. No existing migrations modified. No live DB
+schema changes. No provider API calls. No admin UI.
 
 ------------------------------------------------------------------------
 
