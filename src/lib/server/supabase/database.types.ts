@@ -1109,6 +1109,556 @@ export type Database = {
         }
         Relationships: []
       }
+      // Added by 20260928200724_phase2_hosting_database_foundation.sql.
+      // Phase 2 — Vidara + Abyss hosting database foundation.
+      // 7 new tables for the canonical hosting domain. All are
+      // admin-only (RLS: is_admin() on all commands). Reuses the
+      // existing set_updated_at() trigger function and is_admin()
+      // authorization helper. No provider API calls implemented in
+      // Phase 2 — these tables are schema-foundation only.
+      media_items: {
+        Row: {
+          id: string
+          canonical_key: string
+          content_type: string
+          tmdb_id: string
+          imdb_id: string | null
+          title: string
+          year: number | null
+          season: number | null
+          episode: number | null
+          episode_title: string | null
+          parent_media_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          canonical_key: string
+          content_type: string
+          tmdb_id: string
+          imdb_id?: string | null
+          title: string
+          year?: number | null
+          season?: number | null
+          episode?: number | null
+          episode_title?: string | null
+          parent_media_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          canonical_key?: string
+          content_type?: string
+          tmdb_id?: string
+          imdb_id?: string | null
+          title?: string
+          year?: number | null
+          season?: number | null
+          episode?: number | null
+          episode_title?: string | null
+          parent_media_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'media_items_parent_media_id_fkey'
+            columns: ['parent_media_id']
+            isOneToOne: false
+            referencedRelation: 'media_items'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      media_folders: {
+        Row: {
+          id: string
+          parent_id: string | null
+          canonical_key: string
+          kind: string
+          name: string
+          content_type: string | null
+          tmdb_id: string | null
+          year: number | null
+          season: number | null
+          media_item_id: string | null
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          parent_id?: string | null
+          canonical_key: string
+          kind: string
+          name: string
+          content_type?: string | null
+          tmdb_id?: string | null
+          year?: number | null
+          season?: number | null
+          media_item_id?: string | null
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          parent_id?: string | null
+          canonical_key?: string
+          kind?: string
+          name?: string
+          content_type?: string | null
+          tmdb_id?: string | null
+          year?: number | null
+          season?: number | null
+          media_item_id?: string | null
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'media_folders_parent_id_fkey'
+            columns: ['parent_id']
+            isOneToOne: false
+            referencedRelation: 'media_folders'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_folders_media_item_id_fkey'
+            columns: ['media_item_id']
+            isOneToOne: false
+            referencedRelation: 'media_items'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      provider_folder_mappings: {
+        Row: {
+          id: string
+          canonical_folder_id: string
+          provider_source_id: string | null
+          provider_folder_id: string | null
+          provider_folder_path: string | null
+          provider_folder_metadata: Json
+          last_synced_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          canonical_folder_id: string
+          provider_source_id?: string | null
+          provider_folder_id?: string | null
+          provider_folder_path?: string | null
+          provider_folder_metadata?: Json
+          last_synced_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          canonical_folder_id?: string
+          provider_source_id?: string | null
+          provider_folder_id?: string | null
+          provider_folder_path?: string | null
+          provider_folder_metadata?: Json
+          last_synced_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'provider_folder_mappings_canonical_folder_id_fkey'
+            columns: ['canonical_folder_id']
+            isOneToOne: false
+            referencedRelation: 'media_folders'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'provider_folder_mappings_provider_source_id_fkey'
+            columns: ['provider_source_id']
+            isOneToOne: false
+            referencedRelation: 'streaming_sources'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      media_assets: {
+        Row: {
+          id: string
+          media_item_id: string
+          provider_source_id: string | null
+          provider_folder_mapping_id: string | null
+          provider_asset_id: string | null
+          provider_video_id: string | null
+          playback_url: string | null
+          filename: string | null
+          title: string | null
+          status: string
+          provider_status: string | null
+          mavero_status: string
+          source_quality: string | null
+          available_qualities: string[]
+          audio_languages: string[]
+          has_subtitles: boolean
+          duration_seconds: number | null
+          size_bytes: number | null
+          thumbnail_url: string | null
+          provider_metadata: Json
+          error_code: string | null
+          error_message: string | null
+          last_synced_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          media_item_id: string
+          provider_source_id?: string | null
+          provider_folder_mapping_id?: string | null
+          provider_asset_id?: string | null
+          provider_video_id?: string | null
+          playback_url?: string | null
+          filename?: string | null
+          title?: string | null
+          status?: string
+          provider_status?: string | null
+          mavero_status?: string
+          source_quality?: string | null
+          available_qualities?: string[]
+          audio_languages?: string[]
+          has_subtitles?: boolean
+          duration_seconds?: number | null
+          size_bytes?: number | null
+          thumbnail_url?: string | null
+          provider_metadata?: Json
+          error_code?: string | null
+          error_message?: string | null
+          last_synced_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          media_item_id?: string
+          provider_source_id?: string | null
+          provider_folder_mapping_id?: string | null
+          provider_asset_id?: string | null
+          provider_video_id?: string | null
+          playback_url?: string | null
+          filename?: string | null
+          title?: string | null
+          status?: string
+          provider_status?: string | null
+          mavero_status?: string
+          source_quality?: string | null
+          available_qualities?: string[]
+          audio_languages?: string[]
+          has_subtitles?: boolean
+          duration_seconds?: number | null
+          size_bytes?: number | null
+          thumbnail_url?: string | null
+          provider_metadata?: Json
+          error_code?: string | null
+          error_message?: string | null
+          last_synced_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'media_assets_media_item_id_fkey'
+            columns: ['media_item_id']
+            isOneToOne: false
+            referencedRelation: 'media_items'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_assets_provider_source_id_fkey'
+            columns: ['provider_source_id']
+            isOneToOne: false
+            referencedRelation: 'streaming_sources'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_assets_provider_folder_mapping_id_fkey'
+            columns: ['provider_folder_mapping_id']
+            isOneToOne: false
+            referencedRelation: 'provider_folder_mappings'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      media_upload_operations: {
+        Row: {
+          id: string
+          media_item_id: string
+          provider_source_id: string | null
+          media_asset_id: string | null
+          parent_operation_id: string | null
+          provider_asset_id: string | null
+          status: string
+          attempt_number: number
+          progress_percent: number | null
+          source_quality: string | null
+          source_filename: string | null
+          source_url: string | null
+          error_code: string | null
+          error_message: string | null
+          requested_by_user_id: string | null
+          queued_at: string
+          upload_started_at: string | null
+          uploaded_at: string | null
+          processing_started_at: string | null
+          ready_at: string | null
+          failed_at: string | null
+          cancelled_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          media_item_id: string
+          provider_source_id?: string | null
+          media_asset_id?: string | null
+          parent_operation_id?: string | null
+          provider_asset_id?: string | null
+          status?: string
+          attempt_number?: number
+          progress_percent?: number | null
+          source_quality?: string | null
+          source_filename?: string | null
+          source_url?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          requested_by_user_id?: string | null
+          queued_at?: string
+          upload_started_at?: string | null
+          uploaded_at?: string | null
+          processing_started_at?: string | null
+          ready_at?: string | null
+          failed_at?: string | null
+          cancelled_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          media_item_id?: string
+          provider_source_id?: string | null
+          media_asset_id?: string | null
+          parent_operation_id?: string | null
+          provider_asset_id?: string | null
+          status?: string
+          attempt_number?: number
+          progress_percent?: number | null
+          source_quality?: string | null
+          source_filename?: string | null
+          source_url?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          requested_by_user_id?: string | null
+          queued_at?: string
+          upload_started_at?: string | null
+          uploaded_at?: string | null
+          processing_started_at?: string | null
+          ready_at?: string | null
+          failed_at?: string | null
+          cancelled_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'media_upload_operations_media_item_id_fkey'
+            columns: ['media_item_id']
+            isOneToOne: false
+            referencedRelation: 'media_items'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_upload_operations_provider_source_id_fkey'
+            columns: ['provider_source_id']
+            isOneToOne: false
+            referencedRelation: 'streaming_sources'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_upload_operations_media_asset_id_fkey'
+            columns: ['media_asset_id']
+            isOneToOne: false
+            referencedRelation: 'media_assets'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_upload_operations_parent_operation_id_fkey'
+            columns: ['parent_operation_id']
+            isOneToOne: false
+            referencedRelation: 'media_upload_operations'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_upload_operations_requested_by_user_id_fkey'
+            columns: ['requested_by_user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      media_operations: {
+        Row: {
+          id: string
+          admin_user_id: string | null
+          media_item_id: string | null
+          media_asset_id: string | null
+          provider_source_id: string | null
+          upload_operation_id: string | null
+          action: string
+          status: string
+          details: Json
+          error_code: string | null
+          error_message: string | null
+          occurred_at: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          admin_user_id?: string | null
+          media_item_id?: string | null
+          media_asset_id?: string | null
+          provider_source_id?: string | null
+          upload_operation_id?: string | null
+          action: string
+          status?: string
+          details?: Json
+          error_code?: string | null
+          error_message?: string | null
+          occurred_at?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          admin_user_id?: string | null
+          media_item_id?: string | null
+          media_asset_id?: string | null
+          provider_source_id?: string | null
+          upload_operation_id?: string | null
+          action?: string
+          status?: string
+          details?: Json
+          error_code?: string | null
+          error_message?: string | null
+          occurred_at?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'media_operations_admin_user_id_fkey'
+            columns: ['admin_user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_operations_media_item_id_fkey'
+            columns: ['media_item_id']
+            isOneToOne: false
+            referencedRelation: 'media_items'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_operations_media_asset_id_fkey'
+            columns: ['media_asset_id']
+            isOneToOne: false
+            referencedRelation: 'media_assets'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_operations_provider_source_id_fkey'
+            columns: ['provider_source_id']
+            isOneToOne: false
+            referencedRelation: 'streaming_sources'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'media_operations_upload_operation_id_fkey'
+            columns: ['upload_operation_id']
+            isOneToOne: false
+            referencedRelation: 'media_upload_operations'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      media_availability_requests: {
+        Row: {
+          id: string
+          canonical_key: string
+          content_type: string
+          tmdb_id: string
+          imdb_id: string | null
+          season: number | null
+          episode: number | null
+          title_snapshot: string
+          episode_title_snapshot: string | null
+          year: number | null
+          request_count: number
+          first_requested_at: string
+          last_requested_at: string
+          last_user_kind: string
+          status: string
+          priority: number
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          canonical_key: string
+          content_type: string
+          tmdb_id: string
+          imdb_id?: string | null
+          season?: number | null
+          episode?: number | null
+          title_snapshot: string
+          episode_title_snapshot?: string | null
+          year?: number | null
+          request_count?: number
+          first_requested_at?: string
+          last_requested_at?: string
+          last_user_kind?: string
+          status?: string
+          priority?: number
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          canonical_key?: string
+          content_type?: string
+          tmdb_id?: string
+          imdb_id?: string | null
+          season?: number | null
+          episode?: number | null
+          title_snapshot?: string
+          episode_title_snapshot?: string | null
+          year?: number | null
+          request_count?: number
+          first_requested_at?: string
+          last_requested_at?: string
+          last_user_kind?: string
+          status?: string
+          priority?: number
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       // Added by 20260915000000_download_providers.sql.

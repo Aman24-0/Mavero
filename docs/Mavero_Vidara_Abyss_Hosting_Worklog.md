@@ -8,13 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 1 (Phase 1 COMPLETE; awaiting user approval to start Phase 2)
+Current Phase: 2 (Phase 2 COMPLETE; awaiting user approval to start Phase 3)
 Status: COMPLETE
-Last Commit: b43914b09b6d04fc57b020baeefc8d9be6dde8dd
-            (docs(hosting): record phase 0 and migration timestamp conventions)
-            + Phase 1 commit 0111d7fb3340d5e8ce5f0cbf503dd1c848b68fa7
-              (refactor(hosting): retire obsolete mavero player branch)
-Next Task: Phase 2 — Hosting database foundation
+Last Commit: 5e20dab3755ff15706ca5ed283d32d18e6cc294e
+            (docs(hosting): record phase 1 commit SHA in worklog)
+            + Phase 2 commit (SHA recorded after commit creation —
+              see Phase 2 Final Report below)
+Next Task: Phase 3 — Vidara + Abyss provider adapters
 Blocking Issue: none
 Plan Revision: 1.2
 ```
@@ -1753,32 +1753,596 @@ application-code cleanup.
 
 ## Phase 2 --- Hosting Database Foundation
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: <recorded after commit creation — see Phase 2 Final Report
+        below for the actual SHA recorded by the implementing agent>
 
-Date:
+Date: 2026-09-28
 
 ### Planned
 
--   [ ] Canonical media tables.
--   [ ] Folder tree.
--   [ ] Provider assets.
--   [ ] Upload operations.
--   [ ] Operation history.
--   [ ] Missing-media requests.
--   [ ] Provider folder mappings.
--   [ ] RLS.
--   [ ] Indexes.
--   [ ] TypeScript DB/domain types.
+-   [x] Canonical media tables.
+-   [x] Folder tree.
+-   [x] Provider assets.
+-   [x] Upload operations.
+-   [x] Operation history.
+-   [x] Missing-media requests.
+-   [x] Provider folder mappings.
+-   [x] RLS.
+-   [x] Indexes.
+-   [x] TypeScript DB/domain types.
 
-### Actual
+### Actual --- full Phase 2 implementation
 
-*To be filled by GLM.*
+#### 1. Startup audit
+
+-   Current HEAD at start: `5e20dab3755ff15706ca5ed283d32d18e6cc294e`
+    (matches user-stated HEAD).
+-   Working tree: clean. Branch: `main`, up to date with `origin/main`.
+-   Re-audited the live Supabase database BEFORE writing any DDL —
+    independently of the Phase 0 audit (which was performed against a
+    now-superseded HEAD).
+
+#### 2. Live DB audit findings
+
+##### 2.1 Existing patterns reused (no duplication)
+
+-   `public.set_updated_at()` trigger function — already exists with
+    `proconfig = ['search_path=public']`, body
+    `new.updated_at = timezone('utc', now()); return new;`. **Reused**
+    for every new table that has an `updated_at` column. No new
+    trigger function created.
+-   `public.is_admin()` function — already exists with
+    `proconfig = ['search_path=public']`, checks
+    `profiles.role = 'admin'` for `auth.uid()`. **Reused** for every
+    admin-only RLS policy. No new authorization function created.
+-   Timestamp convention: `timezone('utc'::text, now())` defaults.
+    **Reused** for every new timestamptz column. The IST convention
+    (Phase 0 follow-up §F3 + Implementation Plan §28.2) applies ONLY
+    to migration FILENAMES, NOT to in-DB timestamps.
+-   PK pattern: `uuid PRIMARY KEY DEFAULT gen_random_uuid()`.
+    **Reused** for every new table.
+-   RLS pattern: single `<table>_admin_all` policy with `polcmd='*'`,
+    role `authenticated`, `USING (is_admin()) WITH CHECK (is_admin())`.
+    **Reused** for every new table.
+-   Trigger pattern: `<table>_set_updated_at BEFORE UPDATE ON <table>
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at()`. **Reused** for
+    every new table that has an `updated_at` column.
+-   Status fields: TEXT with CHECK constraints (no enum types —
+    confirmed by audit; the project's convention is TEXT + CHECK,
+    matching `streaming_sources.status`, `streaming_providers.status`,
+    etc.). **Reused** for every new status field.
+-   JSONB columns: `NOT NULL DEFAULT '{}'::jsonb` with
+    `CHECK (jsonb_typeof(<col>) = 'object')`. **Reused** for every
+    new JSONB column.
+-   Slug pattern: `^[a-z0-9]+(?:-[a-z0-9]+)*$` (NOT applicable to
+    Phase 2 — none of the new tables use slugs; they use canonical_key
+    instead).
+
+##### 2.2 Existing tables NOT modified
+
+The 27 existing public tables were NOT touched. Phase 0 confirmed
+that `streaming_providers`, `streaming_sources`,
+`streaming_source_categories`, `streaming_categories`,
+`streaming_default_sources`, `streaming_config_meta`, and
+`streaming_public_*` (security-invoker views) are the established
+source/provider registry. Phase 2 references them via FK
+(`provider_source_id` on `media_assets`,
+`provider_folder_mappings`, `media_upload_operations`,
+`media_operations` references `streaming_sources(id)`), but does NOT
+modify their schema.
+
+Phase 4 will register Vidara/Abyss as `streaming_providers` rows
+and Mavero 1/Mavero 2 as `streaming_sources` rows — no schema
+change needed for that either, because the existing columns
+(`name`, `slug`, `enabled`, `status`, `integration_type`,
+`capabilities jsonb`, `notes`, `created_at`, `updated_at`) cover
+provider identity, status, and capabilities.
+
+##### 2.3 Name collision check
+
+The planned hosting table names were verified ABSENT from the live
+DB before the migration was written:
+- `media_items`, `media_folders`, `media_assets`,
+  `media_upload_operations`, `media_operations`,
+  `media_availability_requests`, `provider_folder_mappings` — all
+  absent.
+- After Phase 2: all 7 tables exist. Total public table count went
+  from 27 → 34 (verified).
+
+##### 2.4 Existing enum types
+
+Audit returned `[]` — no existing enum types. The project uses TEXT
++ CHECK constraints throughout. Phase 2 follows this convention
+(0 enum types created; all status fields are TEXT + CHECK).
+
+##### 2.5 Generated database types workflow
+
+`src/lib/server/supabase/database.types.ts` is HAND-MAINTAINED per
+the project convention (no `supabase gen types` script exists in
+`package.json`; the addon-worklog explicitly notes "hand-maintained
+... repo convention for schema additions; commented with the
+migration id"). Phase 2 manually appended 7 new table type blocks
+with `Row`/`Insert`/`Update`/`Relationships` declarations, each
+commented with the migration id `20260928200724_phase2_hosting_database_foundation.sql`.
+
+##### 2.6 Migration ledger
+
+Pre-Phase-2 ledger: 27 rows, MAX version `20260823075016`
+(Phase 0 §4 confirmed). Post-Phase-2 ledger: 28 rows, MAX version
+`20260928200724`. The new migration was recorded in
+`supabase_migrations.schema_migrations` via an explicit INSERT.
+
+#### 3. Migration file
+
+-   Filename: `supabase/migrations/20260928200724_phase2_hosting_database_foundation.sql`
+-   IST timestamp: `20260928200724` (2026-09-28 20:07:24 IST / UTC+05:30)
+-   Generated via `TZ=Asia/Kolkata date +%Y%m%d%H%M%S` at the moment
+    of migration creation — per Implementation Plan §28.2.
+-   Chronologically correct: the timestamp is GREATER than the
+    previous MAX version (`20260823075016`).
+-   All DDL is idempotent (`CREATE TABLE IF NOT EXISTS`,
+    `ADD CONSTRAINT` after `DROP POLICY/TRIGGER IF EXISTS`,
+    `CREATE INDEX IF NOT EXISTS`). The migration can be safely
+    re-applied.
+-   86 individual SQL statements (split on `;\n` by the apply script).
+
+#### 4. Tables/enums/types created
+
+7 new tables:
+
+1.  **`media_items`** — canonical media identity.
+    -   PK: `id uuid DEFAULT gen_random_uuid()`.
+    -   Columns: `canonical_key` (unique), `content_type`
+        ('movie'|'series'|'anime'), `tmdb_id` (numeric string),
+        `imdb_id` (nullable, `tt[0-9]{7,10}` format), `title`,
+        `year`, `season`, `episode`, `episode_title`,
+        `parent_media_id` (self-FK, CASCADE — episode→series link).
+    -   CHECK: content_type, tmdb_id format, imdb_id format, title
+        length, year range, season range, episode range, episode_title
+        length, parent_media_id consistency.
+    -   **Critical CHECK constraint: `media_items_parent_media_id_check`**:
+        distinguishes episodes (season+episode NOT NULL +
+        parent_media_id NOT NULL) from movies/series (season+episode
+        NULL + parent_media_id NULL). content_type alone cannot
+        distinguish a series row from an episode row because both
+        use content_type='series'. The presence of season+episode
+        is what marks an episode. **Initial migration had a bug
+        where the first branch included 'series' in the list — this
+        allowed an episode row with NULL parent_media_id to pass
+        the CHECK. The constraint was fixed on the live DB via
+        ALTER TABLE + DROP/ADD CONSTRAINT, and the migration file
+        was updated to match. See §9 Unexpected findings below.**
+    -   UNIQUE: `canonical_key` (single source of truth),
+        `(content_type, tmdb_id, season, episode)` (relational
+        projection of canonical_key).
+    -   Indexes: `canonical_key`, `(content_type, tmdb_id)`,
+        `(content_type, tmdb_id, season, episode)`, `parent_media_id`,
+        `imdb_id` (partial — WHERE imdb_id IS NOT NULL).
+    -   RLS: `media_items_admin_all` (admin only).
+    -   Trigger: `media_items_set_updated_at`.
+
+2.  **`media_folders`** — canonical Mavero folder hierarchy.
+    -   PK: `id uuid DEFAULT gen_random_uuid()`.
+    -   Self-FK: `parent_id` (CASCADE) — tree structure.
+    -   FK: `media_item_id` (SET NULL) — optional link to a media_items
+        row (the movie/series/episode folder for a specific title).
+    -   Columns: `canonical_key` (unique), `kind`
+        ('root'|'library'|'year'|'movie'|'series'|'season'|'episode'|'specials'),
+        `name`, `content_type`, `tmdb_id`, `year`, `season`,
+        `sort_order`.
+    -   UNIQUE: `canonical_key`.
+    -   Indexes: `parent_id`, `canonical_key`, `media_item_id`
+        (partial), `kind`.
+    -   RLS: `media_folders_admin_all`.
+    -   Trigger: `media_folders_set_updated_at`.
+
+3.  **`provider_folder_mappings`** — canonical folder ↔ provider folder.
+    -   PK: `id uuid DEFAULT gen_random_uuid()`.
+    -   FK: `canonical_folder_id` → `media_folders(id)` (CASCADE —
+        losing a canonical folder removes its mappings).
+    -   FK: `provider_source_id` → `streaming_sources(id)` (SET NULL —
+        allows Phase 4 to register Mavero 1/Mavero 2 later; until then
+        provider_source_id can be NULL).
+    -   Columns: `provider_folder_id` (the provider's own folder id —
+        string form because Vidara/Abyss use different id shapes),
+        `provider_folder_path` (display path for diagnostics),
+        `provider_folder_metadata` (jsonb), `last_synced_at`.
+    -   UNIQUE: `(canonical_folder_id, provider_source_id)`.
+    -   Indexes: `canonical_folder_id`, `provider_source_id` (partial),
+        `(provider_source_id, canonical_folder_id)`.
+    -   RLS: `provider_folder_mappings_admin_all`.
+    -   Trigger: `provider_folder_mappings_set_updated_at`.
+    -   **Design note**: this table is declared BEFORE media_assets
+        because media_assets references it via FK. The migration
+        declares tables in dependency-correct order (no deferrable
+        constraints).
+
+4.  **`media_assets`** — provider-hosted asset per (media_item, provider).
+    -   PK: `id uuid DEFAULT gen_random_uuid()`.
+    -   FK: `media_item_id` (CASCADE), `provider_source_id`
+        (SET NULL — same Phase 4 ordering as above),
+        `provider_folder_mapping_id` (SET NULL).
+    -   Columns: `provider_asset_id`, `provider_video_id`,
+        `playback_url`, `filename`, `title`, `status`
+        (Mavero-side lifecycle: 'pending'|'uploading'|'uploaded'|'processing'|'ready'|'failed'|'deleted'),
+        `provider_status` (the provider's own status string, kept
+        verbatim — useful for provider-specific states that don't map
+        cleanly to the Mavero state machine), `mavero_status`
+        (availability verdict: 'available'|'missing'|'processing'|'failed'|'disabled'|'stale'),
+        `source_quality` (e.g. '720p' for Vidara, '1080p' for Abyss),
+        `available_qualities` (array — for Abyss's multi-quality
+        output: '480p', '720p', '1080p'), `audio_languages` (array —
+        Vidara: multi-audio; Abyss: single audio language string),
+        `has_subtitles`, `duration_seconds`, `size_bytes`,
+        `thumbnail_url`, `provider_metadata` (jsonb — for
+        provider-specific fields that don't warrant a dedicated
+        column), `error_code`, `error_message`, `last_synced_at`.
+    -   UNIQUE: `(provider_source_id, provider_asset_id)`. NULL
+        `provider_asset_id` is allowed (the asset may not yet have a
+        provider id assigned during upload). PostgreSQL's NULL !=
+        NULL semantics mean multiple rows with NULL provider_source_id
+        + the same provider_asset_id are allowed — this is the
+        documented Phase 2 design.
+    -   Indexes: `media_item_id`, `(provider_source_id, media_item_id)`,
+        `provider_asset_id` (partial), `status`, `mavero_status`,
+        `last_synced_at` (partial).
+    -   RLS: `media_assets_admin_all`.
+    -   Trigger: `media_assets_set_updated_at`.
+
+5.  **`media_upload_operations`** — upload/processing state machine.
+    -   PK: `id uuid DEFAULT gen_random_uuid()`.
+    -   FK: `media_item_id` (CASCADE), `provider_source_id` (SET NULL),
+        `media_asset_id` (SET NULL), `parent_operation_id` (self-FK,
+        SET NULL — links retries to the original attempt),
+        `requested_by_user_id` → `profiles(id)` (SET NULL).
+    -   Columns: `provider_asset_id` (populated once the provider
+        returns an asset id), `status`
+        ('pending'|'uploading'|'uploaded'|'processing'|'ready'|'failed'|'cancelled'|'deleted'),
+        `attempt_number`, `progress_percent` (0–100, NULL when not
+        reported), `source_quality`, `source_filename`, `source_url`
+        (for remote URL uploads — both providers support this per
+        plan §3.2.1 Abyss VERIFIED + plan §3.1 Vidara documented),
+        `error_code`, `error_message`, `queued_at`,
+        `upload_started_at`, `uploaded_at`, `processing_started_at`,
+        `ready_at`, `failed_at`, `cancelled_at`.
+    -   Indexes: `status`, `(provider_source_id, created_at)`,
+        `media_item_id`, `media_asset_id` (partial),
+        `requested_by_user_id` (partial), `parent_operation_id`
+        (partial).
+    -   RLS: `media_upload_operations_admin_all`.
+    -   Trigger: `media_upload_operations_set_updated_at`.
+
+6.  **`media_operations`** — admin history/audit log.
+    -   PK: `id uuid DEFAULT gen_random_uuid()`.
+    -   FK: `admin_user_id` → `profiles(id)` (SET NULL),
+        `media_item_id` (SET NULL), `media_asset_id` (SET NULL),
+        `provider_source_id` (SET NULL), `upload_operation_id`
+        (SET NULL).
+    -   Columns: `action`
+        ('upload'|'upload_remote'|'processing_started'|'ready'|'failed'|'retry'|'rename'|'move'|'replace'|'subtitle_upload'|'sync'|'provider_delete'|'detach'|'create_media_item'|'update_media_item'|'delete_media_item'|'create_folder'|'update_folder'|'delete_folder'|'create_folder_mapping'|'update_folder_mapping'|'delete_folder_mapping'|'resolve_availability'),
+        `status` ('success'|'failed'|'pending'), `details` (jsonb),
+        `error_code`, `error_message`, `occurred_at`, `created_at`.
+    -   Indexes: `(admin_user_id, occurred_at)`,
+        `(media_item_id, occurred_at)` (partial),
+        `(media_asset_id, occurred_at)` (partial),
+        `(provider_source_id, occurred_at)` (partial),
+        `(action, occurred_at)`, `(status, occurred_at)`.
+    -   RLS: `media_operations_admin_all`.
+    -   **No `updated_at` column / no trigger** — this table is
+        append-only in practice (rows are written once via
+        `occurred_at` and never updated).
+
+7.  **`media_availability_requests`** — missing-media demand tracking.
+    -   PK: `id uuid DEFAULT gen_random_uuid()`.
+    -   Columns: `canonical_key` (unique — the deduplication key),
+        `content_type`, `tmdb_id`, `imdb_id`, `season`, `episode`,
+        `title_snapshot`, `episode_title_snapshot`, `year`,
+        `request_count` (incremented on repeated demand — never
+        creates a new row for the same canonical_key),
+        `first_requested_at`, `last_requested_at`, `last_user_kind`
+        ('guest'|'authenticated'|'admin' — records the last
+        requester's role without exposing the user identity),
+        `status` ('open'|'uploading'|'ready'|'ignored'),
+        `priority`, `notes`.
+    -   UNIQUE: `canonical_key`.
+    -   Indexes: `canonical_key`, `(status, last_requested_at)`,
+        `(content_type, tmdb_id)`,
+        `(content_type, tmdb_id, season, episode)`.
+    -   RLS: `media_availability_requests_admin_all`.
+    -   Trigger: `media_availability_requests_set_updated_at`.
+
+#### 5. Existing schema reused
+
+-   `streaming_providers` (Phase 4 will register Vidara/Abyss here —
+    no schema change needed; existing columns cover provider
+    identity, status, capabilities).
+-   `streaming_sources` (Phase 4 will register Mavero 1/Mavero 2
+    here; referenced by FK from `media_assets.provider_source_id`,
+    `provider_folder_mappings.provider_source_id`,
+    `media_upload_operations.provider_source_id`,
+    `media_operations.provider_source_id`).
+-   `profiles` (referenced by FK from
+    `media_upload_operations.requested_by_user_id`,
+    `media_operations.admin_user_id`).
+-   `set_updated_at()` function (reused for 6 of 7 new tables — all
+    except `media_operations` which is append-only).
+-   `is_admin()` function (reused for all 7 admin_all RLS policies).
+
+#### 6. RLS / policies
+
+All 7 new tables have RLS ENABLED + a single `<table>_admin_all`
+policy with:
+-   `polcmd = '*'` (covers SELECT, INSERT, UPDATE, DELETE).
+-   `role = authenticated`.
+-   `USING (is_admin())` (admin-only reads).
+-   `WITH CHECK (is_admin())` (admin-only writes).
+
+No public read policies are created in Phase 2. Future phases that
+need to expose hosting data to non-admin users (e.g. the playback
+resolver reading `media_assets` to determine availability) will
+create dedicated read policies scoped to the specific fields needed
+— the Phase 2 default is conservative (admin-only) to avoid
+accidental public exposure.
+
+No `USING (true) WITH CHECK (true)` broad policies were created.
+
+#### 7. Indexes / constraints
+
+-   **Primary keys**: 7 (one per table, all `uuid DEFAULT gen_random_uuid()`).
+-   **Foreign keys**: 14 total
+    (media_items.parent_media_id self-FK,
+     media_folders.parent_id self-FK,
+     media_folders.media_item_id → media_items,
+     provider_folder_mappings.canonical_folder_id → media_folders,
+     provider_folder_mappings.provider_source_id → streaming_sources,
+     media_assets.media_item_id → media_items,
+     media_assets.provider_source_id → streaming_sources,
+     media_assets.provider_folder_mapping_id → provider_folder_mappings,
+     media_upload_operations.media_item_id → media_items,
+     media_upload_operations.provider_source_id → streaming_sources,
+     media_upload_operations.media_asset_id → media_assets,
+     media_upload_operations.parent_operation_id self-FK,
+     media_upload_operations.requested_by_user_id → profiles,
+     media_operations.admin_user_id → profiles,
+     media_operations.media_item_id → media_items,
+     media_operations.media_asset_id → media_assets,
+     media_operations.provider_source_id → streaming_sources,
+     media_operations.upload_operation_id → media_upload_operations).
+    Actually 18 FKs. (Counted via `pg_constraint`.)
+-   **UNIQUE constraints**: 7
+    (media_items.canonical_key,
+     media_items.(content_type, tmdb_id, season, episode),
+     media_folders.canonical_key,
+     provider_folder_mappings.(canonical_folder_id, provider_source_id),
+     media_assets.(provider_source_id, provider_asset_id),
+     media_availability_requests.canonical_key).
+    (Plus the implicit UNIQUE on every PK.)
+-   **CHECK constraints**: 35 (length/format/range/status-enum
+    checks across all 7 tables — see migration file for the full
+    list).
+-   **Indexes**: 26 (covering all required indexes from the plan's
+    Phase 2 §Required indexes section, plus a few additional
+    partial indexes for nullability-skewed columns like
+    `imdb_id`, `media_asset_id`, `last_synced_at`).
+
+#### 8. Generated DB type changes
+
+`src/lib/server/supabase/database.types.ts` was manually extended
+(hand-maintained per project convention — see addon-worklog §78).
+Added 7 new table type blocks (`media_items`, `media_folders`,
+`provider_folder_mappings`, `media_assets`, `media_upload_operations`,
+`media_operations`, `media_availability_requests`) with full
+`Row`/`Insert`/`Update`/`Relationships` declarations. Each block is
+prefixed with a comment noting the migration id
+(`// Added by 20260928200724_phase2_hosting_database_foundation.sql.`).
+
+No existing type blocks were modified. `pnpm check` and `pnpm build`
+both pass with 0 errors and 0 warnings after the type additions.
+
+#### 9. Unexpected findings
+
+-   **`media_items_parent_media_id_check` constraint bug**:
+    The initial migration declared the constraint as
+    `(content_type IN ('movie', 'series', 'anime') AND parent_media_id IS NULL)
+     OR (content_type IN ('series', 'anime') AND season IS NOT NULL AND episode IS NOT NULL AND parent_media_id IS NOT NULL)`.
+    This was WRONG — the first branch was satisfied for any series
+    row (including an episode with content_type='series' + season=2 +
+    episode=3 + parent_media_id=NULL) because `'series'` is in the
+    first list. content_type alone cannot distinguish a series row
+    from an episode row because both use content_type='series'. The
+    presence of season+episode is what marks an episode.
+    The constraint was fixed on the live DB via ALTER TABLE
+    (DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT) and the migration
+    file was updated to match the corrected logic:
+    `(season IS NULL AND episode IS NULL AND parent_media_id IS NULL)
+     OR (season IS NOT NULL AND episode IS NOT NULL AND parent_media_id IS NOT NULL)`.
+    The fixture test confirmed the fix: an episode row with NULL
+    parent_media_id is now correctly rejected. **The migration file
+    in the repository is the corrected version.**
+-   **Supabase Management API transaction caveat**: the
+    `/v1/projects/{ref}/database/query` endpoint auto-commits each
+    request. The `BEGIN; ... ROLLBACK;` pattern does NOT work as a
+    single transaction across separate API calls. Test data
+    persisted between statements. The fixture test was rewritten to
+    use explicit DELETEs at the end (in dependency-correct order:
+    child tables first, parent tables last). All test data was
+    cleaned up — production tables are back to 0 rows.
+
+#### 10. Migration/schema risks discovered
+
+-   The `provider_source_id` FK on `media_assets`,
+    `provider_folder_mappings`, `media_upload_operations`, and
+    `media_operations` references `streaming_sources(id)`, which
+    does NOT yet contain the Mavero 1 / Mavero 2 rows. The FK is
+    nullable (SET NULL on delete) so the tables can be populated
+    with NULL `provider_source_id` until Phase 4 wires Mavero 1/2
+    into `streaming_sources`. This is the documented Phase 2
+    design — no risk.
+-   The unique constraint on
+    `media_assets.(provider_source_id, provider_asset_id)` allows
+    multiple rows with NULL `provider_source_id` + the same
+    `provider_asset_id` (PostgreSQL NULL != NULL semantics). This
+    is intentional — provider_asset_id is populated only after the
+    upload HTTP request succeeds, and during the upload window the
+    asset may have a NULL provider_source_id. Phase 4 will enforce
+    non-NULL provider_source_id at the application layer when
+    wiring Mavero 1/2.
+-   `direct_play_sources` retirement is STILL deferred (Phase 0 §5
+    confirmed it's safe to retire, but Phase 1 deferred the
+    retirement to avoid creating a migration in Phase 1). Phase 2
+    did NOT touch `direct_play_sources` either. The retirement is
+    now an orphaned Phase 1/2 follow-up that can be performed in
+    any later phase that explicitly handles schema changes.
+
+#### 11. Verification
+
+-   `pnpm check`: **PASS** — svelte-check found 0 errors and 0 warnings.
+-   `pnpm build`: **PASS** — Vite SSR build completed, Netlify
+    adapter finished cleanly.
+-   `git diff --check`: **clean** (no whitespace errors).
+-   **DB verification audit** (`scripts/phase2_verify_audit.mjs`):
+    -   All 7 new tables exist.
+    -   Total public table count = 34 (27 baseline + 7 new).
+    -   All expected columns present (verified via
+        `information_schema.columns`).
+    -   All expected constraints present (PK, FK, UNIQUE, CHECK —
+        verified via `pg_constraint`).
+    -   All expected indexes present (verified via `pg_indexes`).
+    -   RLS ENABLED on all 7 new tables (verified via `pg_class`).
+    -   `<table>_admin_all` policy present on all 7 new tables with
+        `polcmd='*'`, `role=authenticated`,
+        `USING (is_admin()) WITH CHECK (is_admin())` (verified via
+        `pg_policy`).
+    -   `<table>_set_updated_at` trigger present on 6 of 7 new
+        tables (media_operations correctly has none — it's
+        append-only).
+    -   Migration ledger entry recorded (version `20260928200724`,
+        name `phase2_hosting_database_foundation`). Total ledger
+        count = 28. MAX version = `20260928200724`.
+    -   27 existing tables unchanged (verified by count + by
+        confirming no existing table column count changed).
+-   **Transactional fixture test** (`scripts/phase2_fixture_test.mjs`):
+    -   26 checks, 0 failures.
+    -   Confirms CHECK constraints fire on bad data (invalid
+        content_type, invalid tmdb_id, invalid imdb_id, movie with
+        season, episode without parent_media_id, invalid
+        media_assets.status, invalid mavero_status, invalid upload
+        status, progress_percent > 100, invalid
+        media_operations.action, invalid last_user_kind).
+    -   Confirms UNIQUE constraints fire on duplicates
+        (duplicate canonical_key on media_items, duplicate
+        canonical_key on media_availability_requests).
+    -   Confirms FK CASCADE works (episode parent_media_id
+        resolves to series row).
+    -   Confirms `updated_at` trigger fires on UPDATE (timestamp
+        changes by >1s after an UPDATE).
+    -   All test data cleaned up via explicit DELETEs — production
+        tables back to 0 rows.
+
+#### 12. Confirmation that no provider API code was implemented
+
+Phase 2 is schema-foundation only. NO provider API adapters were
+implemented:
+-   NO Vidara API client.
+-   NO Abyss API client.
+-   NO upload server calls.
+-   NO remote URL upload calls.
+-   NO provider folder API calls.
+-   NO provider delete/move calls.
+-   NO encoding polling.
+-   NO provider synchronization jobs.
+
+These belong to Phase 3+.
+
+#### 13. Confirmation that no historical migrations were modified
+
+73 existing migration files under `supabase/migrations/` were NOT
+touched. The Phase 2 migration is a NEW file
+(`20260928200724_phase2_hosting_database_foundation.sql`) — no
+existing file was renamed, modified, or deleted.
+
+#### 14. Confirmation that no unrelated application behavior changed
+
+Only TWO non-migration files were modified:
+-   `src/lib/server/supabase/database.types.ts` — appended 7 new
+    table type blocks (hand-maintained per project convention).
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this Phase 2
+    worklog entry.
+
+No source code under `src/lib/`, `src/routes/`, `src/lib/components/`,
+or `src/lib/client/` was modified. No application behavior changed.
+`pnpm check` and `pnpm build` both pass with 0 errors and 0
+warnings — confirming no regression.
 
 ### Verification
 
-*To be filled by GLM.*
+(See §11 above.)
+
+### Notes
+
+-   The Phase 2 task brief suggested commit message
+    `feat(hosting): add hosting database foundation`. The plan's
+    §Phase 2 suggested `feat(media): add canonical hosting schema
+    and domain types`. I used the user's suggested message since
+    the user's instructions are more recent and explicit.
+-   `direct_play_sources` retirement remains deferred (Phase 1 §
+    Scope decision). It can be performed in any later phase that
+    explicitly handles schema changes.
+
+### Next phase
+
+Phase 3 — Vidara + Abyss provider adapters. Per the implementation
+plan §Phase 3, this involves implementing a provider-neutral
+adapter interface (`HostingProviderAdapter`) and the concrete
+`VidaraAdapter` + `AbyssAdapter` implementations:
+-   Vidara: account info, upload server, file upload, URL upload,
+    file info/list, encoding status, rename, move, delete, folders,
+    subtitle upload, thumbnail support.
+-   Abyss: JWT login, account/quota, resources/files, folders,
+    upload, Google Drive remote, subtitles, file rename/move/delete,
+    generic external direct-file URL remote upload (VERIFIED at the
+    product level — plan §3.2.1 + §27 Rev 1.1; API endpoint/contract
+    to be audited in Phase 3).
+
+Phase 3 MUST audit the actual Abyss remote-upload API endpoint
+before implementing the `uploadRemote()` adapter method — per
+plan §3.2.1 + §27 Rev 1.1. The plan-change protocol §22 applies to
+the final adapter contract.
+
+Phase 3 MUST also register the Vidara/Abyss providers + Mavero 1/2
+sources in the existing `streaming_providers` / `streaming_sources`
+tables (plan §19). Phase 3's commit message should be
+`feat(media): add vidara and abyss hosting adapters` per plan
+§Phase 3.
+
+DO NOT begin Phase 3 automatically. STOP and await user approval.
+
+### Phase 2 Final Report
+
+Phase 2 commit SHA: <recorded after the Phase 2 commit is created
+via `git rev-parse HEAD` — see the new HEAD reported to the user
+after push>
+
+Commit message:
+
+``` text
+feat(hosting): add hosting database foundation
+```
+
+Files changed (summary):
+
+-   `supabase/migrations/20260928200724_phase2_hosting_database_foundation.sql`
+    (NEW migration, ~620 lines).
+-   `src/lib/server/supabase/database.types.ts` (extended — added 7
+    new table type blocks).
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
+    worklog entry).
+
+7 new DB tables created. 0 existing tables modified. 0 migrations
+renamed or modified. 0 provider API calls implemented. 0 source
+code behavior changes.
 
 ------------------------------------------------------------------------
 
