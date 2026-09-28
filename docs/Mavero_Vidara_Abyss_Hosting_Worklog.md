@@ -8,14 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 2 (Phase 2 COMPLETE + Phase 2 post-audit correction COMPLETE;
-                  awaiting user approval to start Phase 3)
+Current Phase: 3 (Phase 3 COMPLETE; awaiting user approval to start Phase 4)
 Status: COMPLETE
-Last Commit: 3ee7b5a51f6185e3e166d3e01db6886f587d0611
-            (docs(hosting): record phase 2 commit SHA in worklog)
-            + Phase 2 correction commit 39f9b203007a020425a4c4ff0f48ef082534aa13
-              (fix(hosting): align upload queue state with plan)
-Next Task: Phase 3 — Vidara + Abyss provider adapters
+Last Commit: 8e8470ec584c3b3d63dc95709f17c9b3de5e3b91
+            (docs(hosting): record phase 2 correction commit SHA in worklog)
+            + Phase 3 commit (SHA recorded after commit creation —
+              see Phase 3 Final Report below)
+Next Task: Phase 4 — Provider/source registry integration
 Blocking Issue: none
 Plan Revision: 1.2
 ```
@@ -2593,30 +2592,262 @@ code behavior changes. 0 provider API calls implemented.
 
 ## Phase 3 --- Vidara + Abyss Provider Adapters
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: <recorded after commit creation — see Phase 3 Final Report
+        below>
 
-Date:
+Date: 2026-09-28
 
 ### Planned
 
--   [ ] Vidara adapter.
--   [ ] Abyss adapter.
--   [ ] Server-side credentials.
--   [ ] Upload.
--   [ ] File/folder management.
--   [ ] Processing status.
--   [ ] Subtitle operations.
--   [ ] Remote import where documented/verified.
+-   [x] Vidara adapter.
+-   [x] Abyss adapter.
+-   [x] Server-side credentials.
+-   [x] Upload.
+-   [x] File/folder management.
+-   [x] Processing status.
+-   [x] Subtitle operations.
+-   [x] Remote import where documented/verified.
+-   [x] Provider-neutral adapter interface + capability model + error model.
+-   [x] Direct-vs-player URL semantic decision documented.
+-   [x] Phase 3 tests (113 checks, all pass).
 
-### Actual
+### Actual --- full Phase 3 implementation
 
-*To be filled by GLM.*
+#### 1. Startup audit
+
+-   HEAD at start: `8e8470ec584c3b3d63dc95709f17c9b3de5e3b91`.
+-   Working tree: clean. Branch: `main`.
+-   Confirmed Phase 2 correction on live DB: `media_upload_operations.status`
+    and `media_assets.status` use `queued` (not `pending`). All 7 hosting
+    tables: 0 rows. Migration ledger: 29 entries, MAX `20260928204845`.
+-   Audited existing provider architecture via Explore agent (very thorough):
+    streaming types, resolver architecture, streaming services, Stremio addon
+    system, HTTP utilities, env conventions, downloader architecture,
+    Supabase admin client, content types, player provider adapters.
+-   Searched for existing Vidara/Abyss code: none found (only planning doc
+    references).
+
+#### 2. Verified API contracts
+
+##### Vidara (documented)
+
+-   Auth: API key (Bearer header).
+-   Account: GET /v1/account/info
+-   Upload server: GET /v1/upload/server → returns upload URL
+-   Multipart upload: POST to returned upload server URL
+-   Remote URL upload: POST /v1/upload/url (documented)
+-   File info: GET /v1/video/info?file_code=<code>
+-   File list: GET /v1/video/list
+-   Encoding status: GET /v1/video/encoding_status?file_code=<code>
+-   Rename: POST /v1/video/rename
+-   Move: POST /v1/video/move
+-   Delete: POST /v1/video/delete
+-   Folders: list/create/rename/delete (flat — documented)
+-   Subtitles: POST /v1/subtitle/upload
+-   Thumbnails: POST /v1/video/thumbnail
+-   Playback URL: `https://vidara.so/v/<filecode>` (PLAYER URL, NOT raw stream)
+
+##### Abyss (documented + product-verified)
+
+-   Auth: JWT login via POST /auth/login (email + password → JWT)
+-   Account: GET /v1/about
+-   Resources: GET /v1/resources
+-   File info: GET /v1/files/:id
+-   File rename: PUT /v1/files/:id
+-   File move: PATCH /v1/files/:id/move
+-   File delete: DELETE /v1/files/:id
+-   Folders: list/create/rename/move/delete (nested folders supported)
+-   Upload: POST /v1/upload (multipart)
+-   Google Drive import: documented
+-   Subtitles: POST /v1/files/:id/subtitles
+-   Playback URL: `https://player.abyssplayer.com/<slug>` (PLAYER URL, NOT raw stream)
+
+##### Abyss generic URL remote upload — UNSUPPORTED
+
+Phase 0 §3.2.1 confirmed that Abyss's DASHBOARD accepts a generic external
+direct-file URL (an .mp4 URL that was NOT Google Drive). However, the exact
+API endpoint/contract was NOT identified — the Phase 0 audit did not have
+provider API credentials to perform a live API call.
+
+`AbyssAdapter.uploadRemote()` throws `HostingProviderError('UNSUPPORTED')`
+with a message documenting WHY. Google Drive import IS documented and can
+be added as a separate method in a future phase when needed.
+
+#### 3. Provider capability matrix
+
+| Capability            | Vidara       | Abyss        |
+|-----------------------|-------------|-------------|
+| localUpload           | true         | true         |
+| remoteUpload          | true         | **false**    |
+| remoteUploadTypes     | ['direct-file'] | []        |
+| folderManagement      | true         | true         |
+| nestedFolders         | **false**    | true         |
+| subtitles             | true         | true         |
+| multiAudio            | true         | **false**    |
+| transcoding            | **false**    | true         |
+| qualityVariants       | **false**    | true         |
+| processingStatus      | true         | true         |
+| rename                | true         | true         |
+| move                  | true         | true         |
+| delete                | true         | true         |
+| thumbnails            | true         | **false**    |
+
+Bold = capability where the two providers differ materially.
+
+#### 4. Adapter architecture
+
+```
+src/lib/server/hosting/
+  index.ts              barrel export
+  types.ts              provider-neutral interface + capability model + response types
+  errors.ts             closed error vocabulary + retryable classification
+  http-client.ts        shared HTTP client (timeout, SSRF, error classification, retry)
+  vidara/
+    types.ts            Vidara API response types
+    config.ts           env config reader (VIDARA_API_KEY, VIDARA_API_BASE_URL)
+    adapter.ts          VidaraAdapter implementation
+    normalize.ts        response normalization
+  abyss/
+    types.ts            Abyss API response types
+    config.ts           env config reader (ABYSS_EMAIL, ABYSS_PASSWORD, ABYSS_API_BASE_URL)
+    adapter.ts          AbyssAdapter implementation
+    normalize.ts        response normalization
+```
+
+Design principles:
+-   **Server-side only**: all files under `src/lib/server/`. Credentials
+    read from `$env/dynamic/private` — SvelteKit guarantees these never
+    reach the client bundle.
+-   **Pure adapter**: the adapter talks to the provider API only. It does
+    NOT directly read/write the hosting DB tables. Higher-level services
+    will call the adapter, normalize responses, and persist to the DB.
+-   **Injectable HTTP**: the `HostingHttpFetcher` is injectable so tests
+    use mock fetchers without hitting the real provider API.
+-   **SSRF protection**: reuses `assertSafeManifestUrl` from
+    `streaming/stremio/ssrf.ts` — same hardened posture as the Stremio addon
+    fetcher.
+-   **Credential safety**: no `console.log` anywhere in the hosting module.
+    Error messages are fixed strings (no dynamic credentials).
+
+#### 5. Error/retry model
+
+11 error codes (closed vocabulary):
+`AUTHENTICATION, AUTHORIZATION, VALIDATION, NOT_FOUND, RATE_LIMITED,
+TRANSIENT, PROVIDER_PROCESSING, UNSUPPORTED, NETWORK, TIMEOUT, UNKNOWN`
+
+Retry classification:
+-   RETRYABLE: `RATE_LIMITED, TRANSIENT, NETWORK, TIMEOUT`
+-   PERMANENT (no retry): `AUTHENTICATION, AUTHORIZATION, VALIDATION,
+    NOT_FOUND, PROVIDER_PROCESSING, UNSUPPORTED, UNKNOWN`
+
+The `withRetry()` helper provides bounded retry with exponential backoff
++ jitter. It checks `isRetryable(error.code)` before retrying — permanent
+errors throw immediately.
+
+HTTP status classification:
+-   401/403 → AUTHENTICATION
+-   404 → NOT_FOUND
+-   422 → VALIDATION
+-   429 → RATE_LIMITED
+-   5xx → TRANSIENT
+-   other 4xx → VALIDATION
+
+#### 6. Direct-vs-player URL semantic decision
+
+The adapter distinguishes `playbackUrl` (a provider-hosted PLAYER/EMBED
+page) from a raw media stream URL. Phase 3 does NOT extract/scrape raw
+HLS/MP4 URLs from player pages.
+
+-   Vidara: `https://vidara.so/v/<filecode>` — stored as `playbackUrl`.
+-   Abyss: `https://player.abyssplayer.com/<slug>` — stored as `playbackUrl`.
+
+The future playback resolver (Phase 7) will decide how to consume these
+player URLs (embed iframe, redirect, or further resolution). Phase 3
+preserves them as-is.
+
+#### 7. Tests
+
+`scripts/phase3_hosting_adapter_test.ts` — 113 checks, 0 failures:
+-   Capability model: Vidara + Abyss capabilities verified.
+-   Error model: HTTP classification, retryable classification, error
+    wrapping, AbortError → TIMEOUT.
+-   Vidara adapter: account, asset, list, rename, move, delete, upload,
+    remote upload, processing status, folders, subtitles, thumbnails,
+    moveFolder throws UNSUPPORTED (flat folders).
+-   Abyss adapter: login, account, asset, list, rename, move, delete,
+    upload, processing status, folders, subtitles, uploadRemote throws
+    UNSUPPORTED, uploadThumbnail throws UNSUPPORTED.
+-   Security: no credential leakage in errors, responses, source code,
+    .env.example. No console.log in hosting module.
+-   Retry helper: permanent errors do not retry; transient errors retry
+    until success or exhaustion.
+
+All tests use mock HTTP fetchers — NO live provider API calls.
+
+#### 8. Migration status
+
+-   NO new migration created.
+-   NO existing migration modified.
+-   NO Phase 2 schema change.
+-   NO live DB impact (all hosting tables remain empty).
+
+#### 9. Environment variables
+
+Added to `.env.example` (commented-out, matching existing convention):
+```
+# Vidara:
+# VIDARA_API_KEY (set only in the deployment secret manager)
+# VIDARA_API_BASE_URL (defaults to https://api.vidara.so)
+# Abyss:
+# ABYSS_EMAIL (set only in the deployment secret manager)
+# ABYSS_PASSWORD (set only in the deployment secret manager)
+# ABYSS_API_BASE_URL (defaults to https://api.abyssplayer.com)
+```
+
+All credentials are read via `$env/dynamic/private` — SvelteKit strips
+them from client bundles. Missing credentials fail closed (throw typed
+error).
 
 ### Verification
 
-*To be filled by GLM.*
+-   `pnpm check`: 0 errors, 0 warnings.
+-   `pnpm build`: PASS.
+-   `pnpm exec tsx scripts/phase3_hosting_adapter_test.ts`: 113 checks, 0 failures.
+-   `git diff --check`: clean.
+-   Secret safety: no hardcoded credentials in source, no console.log,
+    .env.example has no values (only variable name references).
+-   No migrations created or modified.
+-   No live DB impact.
+-   No provider API calls implemented (adapters are API-client layers only;
+    no upload routes, no admin UI, no playback resolver).
+
+### Next phase
+
+Phase 4 — Provider/source registry integration. Register Vidara/Abyss
+as `streaming_providers` rows and Mavero 1/Mavero 2 as
+`streaming_sources` rows in the existing streaming registry. Wire
+category assignment, public source config, and the source selector.
+
+DO NOT begin Phase 4 automatically. STOP and await user approval.
+
+### Phase 3 Final Report
+
+Phase 3 commit SHA: <recorded after the Phase 3 commit is created
+via `git rev-parse HEAD` — see the new HEAD reported to the user
+after push>
+
+Files changed:
+-   `src/lib/server/hosting/` — NEW directory (11 files).
+-   `.env.example` — added VIDARA/ABYSS env var documentation.
+-   `scripts/phase3_hosting_adapter_test.ts` — NEW test (113 checks).
+-   `package.json` — added Phase 3 test to `test` script.
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+
+No migrations created. No existing migrations modified. No live DB
+schema changes. No provider API calls to live services (all tests use
+mock fetchers).
 
 ------------------------------------------------------------------------
 
