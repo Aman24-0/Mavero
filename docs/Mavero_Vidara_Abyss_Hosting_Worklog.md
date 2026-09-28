@@ -12,8 +12,8 @@ Current Phase: 2 (Phase 2 COMPLETE; awaiting user approval to start Phase 3)
 Status: COMPLETE
 Last Commit: 5e20dab3755ff15706ca5ed283d32d18e6cc294e
             (docs(hosting): record phase 1 commit SHA in worklog)
-            + Phase 2 commit (SHA recorded after commit creation —
-              see Phase 2 Final Report below)
+            + Phase 2 commit 15ff93b9a68f7f1e0354e92900c4690a5e017e88
+              (feat(hosting): add hosting database foundation)
 Next Task: Phase 3 — Vidara + Abyss provider adapters
 Blocking Issue: none
 Plan Revision: 1.2
@@ -1755,8 +1755,8 @@ application-code cleanup.
 
 Status: COMPLETE
 
-Commit: <recorded after commit creation — see Phase 2 Final Report
-        below for the actual SHA recorded by the implementing agent>
+Commit: 15ff93b9a68f7f1e0354e92900c4690a5e017e88
+        (feat(hosting): add hosting database foundation)
 
 Date: 2026-09-28
 
@@ -2321,9 +2321,7 @@ DO NOT begin Phase 3 automatically. STOP and await user approval.
 
 ### Phase 2 Final Report
 
-Phase 2 commit SHA: <recorded after the Phase 2 commit is created
-via `git rev-parse HEAD` — see the new HEAD reported to the user
-after push>
+Phase 2 commit SHA: 15ff93b9a68f7f1e0354e92900c4690a5e017e88
 
 Commit message:
 
