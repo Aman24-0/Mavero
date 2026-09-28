@@ -1,28 +1,19 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Clapperboard, Info, ListVideo, Maximize2, Menu, RotateCcw, Settings2, ShieldCheck, ShieldOff, Smartphone, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, Menu, RotateCcw, Settings2, ShieldCheck, ShieldOff, Smartphone, X } from 'lucide-svelte';
   // Task 13: safe source icon renderer + centralized badge labels for the
   // source selector (presentation metadata from the public streaming config).
   import SourceIcon from '$lib/components/source/SourceIcon.svelte';
   import { sourceBadgeLabel } from '$lib/shared/source-presentation';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
-  import MaveroStreamCard from './MaveroStreamCard.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerInternalQualityOption, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
-  import { MAVERO_PLAYER_SOURCE_ID, MAVERO_PLAYER_SOURCE_NAME } from '$lib/shared/mavero-player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
-  // Phase 6: MAVERO Player stream presentation (addon grouping, labels,
-  // dedupe, current-stream identity) — pure helpers, no second source model.
-  import { buildMaveroAddonTabs, dedupeMaveroStreams, defaultMaveroAddonTab, groupMaveroStreams, isMaveroAggregateSource, maveroStreamFormatLabel, maveroStreamQualityLabel, orderMaveroStreamsForSheet } from '$lib/client/player/mavero-streams';
   // Phase 9: robust pending-seek state machine (streaming VOD seeking) — pure,
   // unit-tested; the shell feeds it media snapshots and applies the result.
   import { applyPendingSeek, capturePendingSeek, createPendingSeek, type PendingSeekState } from '$lib/client/player/pending-seek';
-  // Phase 10: live per-addon resolution statuses (GOAL 3) — the streams
-  // sheet renders Loading/✓/Failed — Retry per session addon while results
-  // merge progressively into the aggregate.
-  import type { MaveroAddonStatus } from '$lib/client/player/mavero-progressive';
   // Phase 10 (GOAL 18): audio-track display — a LOCAL structural type so the
   // shell stays engine-library-name-free (same pattern as WakeLockSentinelHandle).
   type AudioTrackHandle = { id: number; lang?: string; name?: string; default?: boolean };
@@ -55,16 +46,10 @@
   // black-box embed providers that never post play/pause events never
   // acquire a wake lock — which is correct (iframe load ≠ actual playback).
   export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number; sourceId?: string } | null = null;
-  // Phase 10: live addon statuses for the MAVERO streams sheet (session
-  // order) + the retry hook — retrying ONE failed addon never restarts the
-  // video or the other addons (GOAL 6).
-  export let maveroAddons: MaveroAddonStatus[] = [];
-  export let onMaveroRetry: (addonKey: string) => void = () => {};
   export let resolving = false;
   export let resolutionError = '';
   export let resolutionMessage = '';
   export let resolutionKind: 'provider-error' | 'unsupported' | 'unavailable' = 'provider-error';
-
   let viewport: PlayerViewport;
   let videoElement: HTMLVideoElement | undefined;
   let iframeElement: HTMLIFrameElement | undefined;
@@ -161,22 +146,6 @@
   // closes.
   let sourceSheetTrigger: HTMLElement | null = null;
   let episodeSheetTrigger: HTMLElement | null = null;
-  // Phase 9: the dedicated MAVERO streams sheet (separate from the source
-  // sheet — provider selection and stream selection are different acts).
-  let streamsSheetOpen = false;
-  let streamsSheetTrigger: HTMLElement | null = null;
-  // True when the streams sheet was entered FROM the source sheet, so its
-  // back button returns there (GOAL 16 flow) instead of closing outright.
-  let streamsSheetReturnToSource = false;
-  // Phase 12 (GOAL G): the ACTIVE addon tab (addon display name) and
-  // whether the user pinned it manually. A manual tap never auto-switches.
-  let activeAddonTab: string | null = null;
-  let addonTabTouched = false;
-  // Phase 9: stream failure isolation — URLs that failed playback in THIS
-  // session. A failed stream never removes any other stream; its card shows
-  // a failed marker and every other card stays selectable.
-  let failedStreamUrls: string[] = [];
-
   // Phase 6: internal quality state of the ACTIVE engine-driven streaming source
   // (AUTO + manifest levels). Populated ONLY by the viewport's generic
   // `enginequality` events — the shell never sees engine-library types. `null` when the
@@ -214,58 +183,14 @@
   // (which the browser cannot decode). Cleared on any source/stream switch.
   $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
   $: statusNote = '';
-  // Phase 10 stale guard: a source object that no longer contains the
-  // selected stream (episode switch → fresh aggregate) invalidates any
-  // pending compatibility session. Live merges KEEP the playing stream
-  // (mergeMaveroResults pins it), so they never trigger this reset.
+  // Stale-guard: a source object that no longer contains the selected
+  // stream (e.g. after an episode switch clears the source) invalidates
+  // any pending quality selection so it cannot ride into the new source.
   $: if (source && source.sourceId === sourceIdentity && selectedQuality && !source.qualities?.some((quality) => quality.url === selectedQuality)) {
     
     
     selectedQuality = '';
   }
-  // Phase 6: MAVERO Player addon-stream presentation — derived ONLY when the
-  // active source IS the aggregate MAVERO Player source. Provider sources
-  // never enter this path (their UX is untouched), the resolver's
-  // deterministic order is preserved, and duplicates are removed at the
-  // presentation layer by stable URL identity.
-  $: maveroStreams = isMaveroAggregateSource(source) ? dedupeMaveroStreams(qualities) : [];
-  $: maveroStreamGroups = groupMaveroStreams(maveroStreams);
-  // Phase 12 (GOAL G): horizontal addon-tab model. ONE tab per session
-  // addon (`HdHub | PenguPlay | Pipe | DesiFlix`); the sheet body shows
-  // ONLY the selected addon's streams. Tabs update LIVE as later addon
-  // requests finish (Phase 10 parallel architecture — nothing serialized).
-  $: maveroTabs = buildMaveroAddonTabs(maveroAddons, maveroStreamGroups);
-  $: playingAddonName = maveroStreamGroups.find((group) => group.streams.some((stream) => stream.url === mediaUrl))?.addonName ?? null;
-  $: activeMaveroTab = maveroTabs.find((tab) => tab.name === activeAddonTab) ?? null;
-  $: activeMaveroTabGroup = activeAddonTab ? maveroStreamGroups.find((group) => group.addonName === activeAddonTab) ?? null : null;
-  // Auto-selection (reads ONLY the tab model + the raw selection — never
-  // `activeMaveroTab`, which would create a reactive cycle):
-  //   * on the FIRST render (no selection yet, or the selected addon
-  //     vanished from the session) pick the default — the addon the user
-  //     is watching, else the first tab with streams;
-  //   * while the user has NOT manually chosen a tab and the auto-selected
-  //     one has no streams yet, follow the first tab that DOES (the
-  //     "first playable addon stays selected" behavior) — a manual tap
-  //     pins the selection permanently.
-  $: if (streamsSheetOpen && maveroTabs.length) {
-    const current = maveroTabs.find((tab) => tab.name === activeAddonTab);
-    if (!activeAddonTab || !current) {
-      activeAddonTab = defaultMaveroAddonTab(maveroTabs, playingAddonName);
-      addonTabTouched = false;
-    } else if (!addonTabTouched && !current.hasStreams) {
-      const candidate = defaultMaveroAddonTab(maveroTabs, playingAddonName);
-      const candidateTab = maveroTabs.find((tab) => tab.name === candidate);
-      if (candidate && candidateTab?.hasStreams) activeAddonTab = candidate;
-    }
-  }
-  // Phase 12 (GOAL G): per-addon resolution state lives in the TAB model
-  // above (buildMaveroAddonTabs) — every session addon keeps exactly one
-  // visible tab (Loading / ✓ N / Failed + Retry / ✓ 0 streams), so a late
-  // or failed addon is never hidden and a completed EMPTY result is an
-  // honest "✓ Loaded — 0 streams" (GOAL 3 / C2 preserved).
-  // Phase 9: the MAVERO Player source option (provider selection) — the
-  // source sheet shows ONE "X Streams →" entry point for it.
-  $: maveroSourceOption = sourceOptions.find((option) => option.id === MAVERO_PLAYER_SOURCE_ID);
   // Category grouping: sources that have a categoryName are grouped under
   // a category header in the source selector. Sources without a category
   // appear under "Other" at the bottom. The order follows the source list
@@ -341,9 +266,6 @@
     // Phase 11 (GOAL B7): a pending compat POLL from the old session is
     // invalidated too — its result can never touch the new session.
     
-    // Phase 9: failure markers are per-source-session — a stream that failed
-    // for a previous source/aggregate must not mark the new one.
-    failedStreamUrls = [];
     // Phase 6: a genuinely new source session starts with the engine's
     // internal quality state cleared (the viewport re-dispatches fresh
     // levels once the new manifest is parsed). The AUTO default never
@@ -380,8 +302,6 @@
     // Phase 8: clear embed load timeout on episode switch — the new episode
     // will start its own timeout when its source loads.
     clearEmbedLoadTimeout();
-    // Phase 9: episode switch resets the per-session failure markers too.
-    failedStreamUrls = [];
     // Phase 6 audit fix 2: reset embed playback state on episode switch.
     embedPlaying = false;
     if (source?.sourceId) embedPlaybackSourceId = source.sourceId;
@@ -483,7 +403,7 @@
     };
     const handleKeydown = (event: KeyboardEvent) => {
       // Phase 8: sheet focus trap + Escape takes priority over player shortcuts.
-      if (sourceMenuOpen || episodeMenuOpen || streamsSheetOpen) {
+      if (sourceMenuOpen || episodeMenuOpen) {
         handleSheetKeydown(event);
         return;
       }
@@ -501,7 +421,7 @@
       else if (event.key === 'ArrowRight') { event.preventDefault(); seekBy(10); }
       else if (event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); }
       else if (event.key.toLowerCase() === 'f') { event.preventDefault(); void toggleFullscreen(); }
-      else if (event.key === 'Escape') { menuOpen = false; sourceMenuOpen = false; episodeMenuOpen = false; streamsSheetOpen = false; }
+      else if (event.key === 'Escape') { menuOpen = false; sourceMenuOpen = false; episodeMenuOpen = false; }
     };
     // Immersive redesign: ONE authoritative inactivity timer. All interaction
     // signals (pointer move, pointer down, touch) route through `revealControls`
@@ -665,23 +585,11 @@
     releaseWakeLock();
     syncMediaSessionPlaybackState('paused');
   }
-  // Phase 9: stream failure isolation. Inside the MAVERO aggregate the
-  // failed URL is marked (its card shows a failed marker in the streams
-  // sheet) while every other stream stays available. The message names the
-  // realistic browser-compatibility causes without exposing internals —
-  // no URLs, no stack, no addon detail.
-  const MAVERO_STREAM_FAILURE_MESSAGE =
-    'This stream could not be played. It may use a format your browser cannot play (for example MKV or HEVC), or its source may be expired or unavailable. Try another stream.';
 
   function handleMediaError() {
     playing = false;
     state = 'error';
-    if (isMaveroAggregateSource(source) && mediaUrl) {
-      failedStreamUrls = failedStreamUrls.includes(mediaUrl) ? failedStreamUrls : [...failedStreamUrls, mediaUrl];
-      errorMessage = MAVERO_STREAM_FAILURE_MESSAGE;
-    } else {
-      errorMessage = 'Playback could not be started. Try again or choose another source.';
-    }
+    errorMessage = 'Playback could not be started. Try again or choose another source.';
     revealControls();
     // Phase 6: release wake lock on error.
     releaseWakeLock();
@@ -794,7 +702,7 @@
     playing = false;
   }
 
-  // ----- Phase 6: MAVERO Player stream & internal-quality selection -----
+  // ----- Phase 6: engine internal-quality selection -----
 
   /**
    * Viewport `enginequality` event sink: the ONLY writer of `engineQuality`.
@@ -818,51 +726,6 @@
    */
   function setInternalQuality(id: string) {
     viewport?.selectEngineQuality(id);
-  }
-
-  /**
-   * Switch to another resolved addon stream WITHIN the same MAVERO Player
-   * source. The player view NEVER navigates away: this rides the existing
-   * quality-switch mechanism (`setQuality`) which captures the position
-   * into the pending-seek controller, keeps the player mounted and lets the
-   * existing generation/race protection invalidate the previous stream.
-   * Selecting the current stream is a no-op (sheet just closes).
-   *
-   * PHASE 10 — compatibility decision tree (GOALS 10/12/14):
-   *   1. runtime probe first (`checkMediaCompatibility` on addon-supplied
-   *      metadata): a browser that CAN decode the stream plays directly —
-   *      no conversion is ever forced on a capable device;
-   *   2. remux/transcode verdict + a SIGNED reference → request the
-   *      compatibility session ("Preparing compatible stream…"), then play
-   *      the worker-provided streaming url;
-   *   3. verdict without a reference (worker not provisioned for that
-   *      stream) → attempt direct anyway (uncertainty is honest), the
-   *      existing failure isolation catches the miss;
-   *   4. compat endpoint degradation → per-stream error state, every other
-   *      stream stays selectable (GOAL 8).
-   */
-  // Phase 11 (GOAL B7): compat sessions can now POLL for minutes (transcode
-  // preparation). A monotonic selection sequence invalidates superseded
-  // selections — the newest stream choice always wins, a slow prepare for an
-  // older stream can never hijack the newer one.
-  
-
-  function selectMaveroStream(stream: PlayerQualityOption) {
-    closeStreamsSheet();
-    if (!stream.url || stream.url === mediaUrl) return;
-    const sourceAtSelection = source;
-    void (async () => {
-      // Runtime capability refinement (never filename-only guessing).
-      let decision: MediaCompatibilityDecision;
-      try {
-        decision = await checkMediaCompatibility({ protocol: stream.protocol, container: stream.container, codec: stream.codec, filename: stream.filename, title: stream.title, description: stream.description });
-      } catch {
-        decision = { supported: true, needsRemux: false, needsTranscode: false, reason: 'probe-unavailable', tier: 'DIRECT_UNCERTAIN' };
-      }
-      // Direct playback only — no media worker/compat conversion path.
-      
-      setQuality(stream.url);
-    })();
   }
 
   type OrientationController = ScreenOrientation & { lock?: (value: 'landscape' | 'portrait' | 'any' | 'natural' | 'landscape-primary' | 'landscape-secondary' | 'portrait-primary' | 'portrait-secondary') => Promise<void>; unlock?: () => void };
@@ -973,9 +836,9 @@
     // applies to embed playback too. The provider iframe content itself is
     // NOT hidden — only the Mavero control overlay (which is irrelevant
     // while the embed is playing).
-    if ((playing || embedPlaying) && !menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
+    if ((playing || embedPlaying) && !menuOpen && !sourceMenuOpen && !episodeMenuOpen) {
       hideTimer = setTimeout(() => {
-        if (!menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) {
+        if (!menuOpen && !sourceMenuOpen && !episodeMenuOpen) {
           controlsVisible = false;
         }
       }, 10_000);
@@ -1088,7 +951,6 @@
   function openSourceSheet(trigger: HTMLElement) {
     sourceSheetTrigger = trigger;
     episodeMenuOpen = false; // only one sheet at a time
-    streamsSheetOpen = false;
     sourceMenuOpen = true;
     // Focus the close button after Svelte renders the sheet.
     setTimeout(() => focusSheetCloseButton('source'), 0);
@@ -1097,70 +959,14 @@
   function openEpisodeSheet(trigger: HTMLElement) {
     episodeSheetTrigger = trigger;
     sourceMenuOpen = false; // only one sheet at a time
-    streamsSheetOpen = false;
     episodeMenuOpen = true;
     setTimeout(() => focusSheetCloseButton('episode'), 0);
-  }
-
-  // ----- Phase 9: the dedicated MAVERO streams sheet -----
-  //
-  // Provider selection (source sheet) and MAVERO stream selection (this
-  // sheet) are SEPARATE acts. The source sheet stays a clean provider list
-  // with ONE "X Streams →" entry point; this sheet groups the streams by
-  // addon and can also be opened directly while a MAVERO source plays, so
-  // switching streams never forces a detour through the source sheet.
-
-  function openStreamsSheet(trigger: HTMLElement, fromSourceSheet = false) {
-    streamsSheetTrigger = trigger;
-    sourceMenuOpen = false; // only one sheet at a time
-    episodeMenuOpen = false;
-    streamsSheetReturnToSource = fromSourceSheet;
-    // Phase 12 (GOAL G): re-derive the default tab each open — the addon
-    // owning the playing stream, else the first tab with streams.
-    activeAddonTab = null;
-    addonTabTouched = false;
-    streamsSheetOpen = true;
-    setTimeout(() => focusSheetCloseButton('streams'), 0);
-  }
-
-  /** Phase 12 (GOAL G): pin ONE addon tab — its streams render alone. */
-  function selectAddonTab(name: string) {
-    addonTabTouched = true;
-    activeAddonTab = name;
-  }
-
-  /**
-   * Phase 12 (GOAL G): retry ONLY the failed addon of the active tab —
-   * the existing per-addon retry hook (no other addon is refetched, the
-   * video is untouched).
-   */
-  function retryActiveAddonTab() {
-    const key = activeMaveroTab?.key;
-    if (key) onMaveroRetry(key);
   }
 
   function closeSourceSheet() {
     sourceMenuOpen = false;
     restoreFocus(sourceSheetTrigger);
     sourceSheetTrigger = null;
-    // FAB auto-hide: closing a sheet restarts the 10s inactivity countdown.
-    revealControls();
-  }
-
-  function closeStreamsSheet() {
-    if (!streamsSheetOpen) return;
-    streamsSheetOpen = false;
-    if (streamsSheetReturnToSource) {
-      // GOAL 16 back navigation: entered from the source sheet → back
-      // reopens it (focus goes to its close button, not the dead trigger).
-      streamsSheetReturnToSource = false;
-      streamsSheetTrigger = null;
-      sourceMenuOpen = true;
-      setTimeout(() => focusSheetCloseButton('source'), 0);
-      return;
-    }
-    restoreFocus(streamsSheetTrigger);
-    streamsSheetTrigger = null;
     // FAB auto-hide: closing a sheet restarts the 10s inactivity countdown.
     revealControls();
   }
@@ -1179,8 +985,8 @@
     }
   }
 
-  function focusSheetCloseButton(which: 'source' | 'episode' | 'streams') {
-    const sheetClass = which === 'source' ? '.source-sheet' : which === 'episode' ? '.episode-sheet' : '.mavero-streams-sheet';
+  function focusSheetCloseButton(which: 'source' | 'episode') {
+    const sheetClass = which === 'source' ? '.source-sheet' : '.episode-sheet';
     const sheet = playerRoot?.querySelector(sheetClass);
     if (!sheet) return;
     const closeBtn = sheet.querySelector('.close-button');
@@ -1194,14 +1000,13 @@
   }
 
   function handleSheetKeydown(event: KeyboardEvent) {
-    // Phase 8/9: focus trap + Escape for all three sheets. Only active when
+    // Phase 8/9: focus trap + Escape for both sheets. Only active when
     // a sheet is open.
-    if (!sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen) return;
+    if (!sourceMenuOpen && !episodeMenuOpen) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       if (sourceMenuOpen) closeSourceSheet();
       else if (episodeMenuOpen) closeEpisodeSheet();
-      else if (streamsSheetOpen) closeStreamsSheet();
       return;
     }
     if (event.key !== 'Tab') return;
@@ -1209,9 +1014,7 @@
       ? playerRoot?.querySelector('.source-sheet')
       : episodeMenuOpen
         ? playerRoot?.querySelector('.episode-sheet')
-        : streamsSheetOpen
-          ? playerRoot?.querySelector('.mavero-streams-sheet')
-          : null;
+        : null;
     if (!activeSheet) return;
     const focusables = Array.from(activeSheet.querySelectorAll<HTMLElement>('button, a, input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((el) => el.offsetParent !== null);
     if (!focusables.length) {
@@ -1500,7 +1303,7 @@
   <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding). -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} streamCount={maveroStreams.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={openSourceFromMenu} onStreams={() => { if (streamsSheetOpen) closeStreamsSheet(); else openStreamsSheet(playerRoot ?? document.activeElement as HTMLElement); }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={openSourceFromMenu} />
     </div>
   {/if}
 
@@ -1525,12 +1328,6 @@
           <span class="fab-item-label">Episodes</span>
         </button>
       {/if}
-      {#if maveroStreams.length}
-        <button class="fab-item" style="--fab-delay: 150ms" type="button" aria-label={`Open ${maveroStreams.length} streams`} onclick={() => { closeMenu(); if (streamsSheetOpen) closeStreamsSheet(); else openStreamsSheet(playerRoot ?? document.activeElement as HTMLElement); }}>
-          <Clapperboard size={18} />
-          <span class="fab-item-label">{maveroStreams.length} Streams</span>
-        </button>
-      {/if}
       {#if source?.type === 'embed'}
         <button class="fab-item" style="--fab-delay: 200ms" type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={() => { toggleSandbox(); closeMenu(); }}>
           {#if effectiveSandboxEnabled}<ShieldCheck size={18} />{:else}<ShieldOff size={18} />{/if}
@@ -1550,86 +1347,7 @@
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark" class:selected={option.id === source?.sourceId}>{#if option.id === source?.sourceId}<Check size={14} />{:else}<SourceIcon icon={option.icon} size={15} />{/if}</span><span class="option-copy"><strong class="option-title"><span class="option-name">{option.name}</span>{#if option.badge}<span class="source-badge" data-badge={option.badge}>{sourceBadgeLabel(option.badge)}</span>{/if}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}{#if option.id === MAVERO_PLAYER_SOURCE_ID && maveroStreams.length}
-          <button class="streams-entry-button" type="button" aria-label={`Open the ${maveroStreams.length} MAVERO Player streams`} onclick={(e) => { e.stopPropagation(); openStreamsSheet(e.currentTarget as HTMLElement, true); }}><Clapperboard size={14} aria-hidden="true" /><strong>{maveroStreams.length} Stream{maveroStreams.length === 1 ? '' : 's'}</strong><ArrowRight size={14} aria-hidden="true" /></button>
-        {/if}</div>{/each}{/each}
-      </div>
-    </div>
-  {/if}
-
-  {#if streamsSheetOpen}
-    <div class="sheet-overlay" role="presentation" onclick={() => closeStreamsSheet()}></div>
-    <div class="mavero-streams-sheet" role="dialog" aria-modal="true" aria-label="MAVERO Player streams">
-      <div class="sheet-handle" aria-hidden="true"></div>
-      <div class="sheet-head">
-        <button class="close-button" type="button" aria-label="Back to source list" onclick={() => closeStreamsSheet()}><ArrowLeft size={17} /></button>
-        <span class="eyebrow streams-eyebrow"><Clapperboard size={13} aria-hidden="true" />{MAVERO_PLAYER_SOURCE_NAME} · {maveroStreams.length} stream{maveroStreams.length === 1 ? '' : 's'}</span>
-        <button class="close-button" type="button" aria-label="Close stream list" onclick={() => closeStreamsSheet()}><X size={17} /></button>
-      </div>
-      <div class="sheet-list streams-list">
-        {#if maveroTabs.length}
-          <div class="addon-tabs" role="tablist" aria-label="Addons">
-            {#each maveroTabs as tab (tab.name)}
-              <button class="addon-tab" class:active={tab.name === activeAddonTab} type="button" role="tab" aria-selected={tab.name === activeAddonTab} onclick={() => selectAddonTab(tab.name)}>
-                <span class="addon-tab-name">{tab.name}</span>
-                {#if tab.status === 'pending' || tab.status === 'loading'}
-                  <span class="addon-tab-state loading" role="status">Loading…</span>
-                {:else if tab.status === 'failed'}
-                  <span class="addon-tab-state failed" role="status">Failed</span>
-                {:else if tab.hasStreams}
-                  <span class="addon-tab-state ok" role="status">{tab.streamCount}</span>
-                {:else if tab.status === 'ok'}
-                  <span class="addon-tab-state" role="status">✓ 0</span>
-                {:else}
-                  <span class="addon-tab-state" role="status">—</span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-          {#if activeMaveroTab}
-            {#if activeMaveroTabGroup}
-              <div class="mavero-groups" role="listbox" aria-label={`${activeMaveroTab.name} streams`}>
-                <div class="mavero-group" role="group" aria-label={`${activeMaveroTabGroup.addonName} streams`}>
-                  {#each orderMaveroStreamsForSheet(activeMaveroTabGroup.streams, failedStreamUrls) as stream (stream.url)}
-                    <MaveroStreamCard {stream} selected={stream.url === mediaUrl} failed={failedStreamUrls.includes(stream.url)} onselect={selectMaveroStream} />
-                  {/each}
-                </div>
-              </div>
-            {:else if activeMaveroTab.status === 'pending' || activeMaveroTab.status === 'loading'}
-              <div class="mavero-addon-status" role="status"><span class="mavero-group-state loading">Loading {activeMaveroTab.name}…</span></div>
-            {:else if activeMaveroTab.status === 'failed'}
-              <div class="mavero-addon-status" role="status">
-                <span class="mavero-group-state failed">Failed to load {activeMaveroTab.name}</span>
-                <button class="mavero-retry" type="button" onclick={retryActiveAddonTab}>Retry</button>
-              </div>
-            {:else if activeMaveroTab.status === 'ok'}
-              <div class="mavero-addon-status" role="status">
-                <span class="mavero-group-state">✓ Loaded — 0 streams</span>
-                <span class="mavero-group-hint">Direct files from this addon are available in Mavero Downloader (Download sheet)</span>
-              </div>
-            {:else}
-              <div class="mavero-addon-status" role="status"><span class="mavero-group-state">Unavailable</span></div>
-            {/if}
-          {/if}
-          {#if engineQuality && engineQuality.audioTracks.length > 1}
-            <div class="variant-row mavero-quality-row" role="group" aria-label="Audio track">
-              <span class="mavero-quality-title">Audio</span>
-              {#each engineQuality.audioTracks as track (track.id)}
-                <button class="variant-button" class:active={engineQuality?.selectedAudioTrack === track.id} type="button" aria-pressed={engineQuality?.selectedAudioTrack === track.id} onclick={() => setAudioTrack(track.id)}>{audioTrackLabel(track)}</button>
-              {/each}
-            </div>
-          {/if}
-          {#if engineQuality && engineQuality.options.length > 1}
-            <div class="variant-row mavero-quality-row" role="group" aria-label="Playback quality">
-              <span class="mavero-quality-title">Quality</span>
-              {#each engineQuality.options as option (option.id)}
-                <button class="variant-button" class:active={engineQuality?.selected === option.id} type="button" aria-pressed={engineQuality?.selected === option.id} onclick={() => setInternalQuality(option.id)}>{option.label}</button>
-              {/each}
-            </div>
-          {/if}
-        {:else}
-          <div class="streams-empty" role="status">No streams are available right now.</div>
-        {/if}
+      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark" class:selected={option.id === source?.sourceId}>{#if option.id === source?.sourceId}<Check size={14} />{:else}<SourceIcon icon={option.icon} size={15} />{/if}</span><span class="option-copy"><strong class="option-title"><span class="option-name">{option.name}</span>{#if option.badge}<span class="source-badge" data-badge={option.badge}>{sourceBadgeLabel(option.badge)}</span>{/if}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}{/each}
       </div>
     </div>
   {/if}
@@ -1710,9 +1428,8 @@
      compact viewport → bottom sheet; wide viewport → right drawer.
      Based on actual viewport width (matchMedia), NOT landscapeMode. */
   .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.4); backdrop-filter: blur(2px); }
-  .source-sheet, .episode-sheet, .mavero-streams-sheet { position: absolute; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
+  .source-sheet, .episode-sheet { position: absolute; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
   .episode-sheet { max-height: 65dvh; }
-  .mavero-streams-sheet { max-height: 70dvh; }
   .sheet-handle { width: 36px; height: 4px; margin: 8px auto 4px; border-radius: 999px; background: var(--line-strong); }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 10px; }
   .sheet-head .eyebrow { color: var(--muted); }
@@ -1741,34 +1458,6 @@
   .source-badge { flex: 0 0 auto; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 7px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .48rem; font-weight: 700; letter-spacing: .08em; line-height: 1.5; text-transform: uppercase; }
   .source-badge[data-badge='ads'] { color: #ffb020; border-color: rgba(255, 176, 32, .35); }
   .source-badge[data-badge='ad-free'] { color: var(--accent); border-color: var(--accent-soft); }
-  .streams-entry-button { display: flex; align-items: center; gap: 8px; width: calc(100% - 24px); min-height: 44px; margin: 2px 12px 4px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 8px 12px; color: var(--ink-soft); background: rgba(255,255,255,.03); cursor: pointer; font: inherit; font-size: .62rem; }
-  .streams-entry-button strong { color: var(--ink); font-size: .66rem; }
-  .streams-entry-button:last-child { margin-left: auto; color: var(--muted); }
-  .streams-entry-button:hover, .streams-entry-button:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
-  .streams-eyebrow { display: inline-flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .streams-list { display: grid; gap: 6px; }
-  .addon-tabs { display: flex; gap: 6px; max-width: 100%; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-  .addon-tabs::-webkit-scrollbar { display: none; }
-  .addon-tab { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; max-width: 46%; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 13px; color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; }
-  .addon-tab:hover, .addon-tab:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
-  .addon-tab.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
-  .addon-tab-name { overflow: hidden; font-size: .64rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-  .addon-tab-state { flex: 0 0 auto; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }
-  .addon-tab-state.ok { color: var(--accent); }
-  .addon-tab-state.failed { color: #ffb020; }
-  .mavero-groups { display: grid; gap: 10px; }
-  .mavero-group { display: grid; gap: 2px; }
-  .mavero-addon-status { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 12px; }
-  .mavero-group-state { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
-  .mavero-addon-status .mavero-group-state { flex: 1 1 auto; margin-left: 0; }
-  .mavero-group-hint { flex: 1 1 100%; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; line-height: 1.5; }
-  .mavero-group-state.loading { color: var(--muted); }
-  .mavero-group-state.failed { color: #ffb020; }
-  .mavero-retry { flex: 0 0 auto; min-height: 26px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 2px 9px; color: var(--ink); background: transparent; cursor: pointer; font: inherit; font-size: .55rem; }
-  .mavero-retry:hover, .mavero-retry:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
-  .streams-empty { display: grid; place-items: center; min-height: 88px; color: var(--muted); font-size: .66rem; }
-  .mavero-quality-row { align-items: center; flex-wrap: wrap; margin-top: 4px; }
-  .mavero-quality-title { padding: 0 4px 0 12px; color: var(--muted); font-size: .58rem; }
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
@@ -1776,10 +1465,9 @@
   /* Wide viewport (landscape/desktop/TV): source/episode/streams sheets
      become right-edge drawers. Based on viewport width, NOT landscapeMode. */
   @media (min-width: 769px) {
-    .source-sheet, .episode-sheet, .mavero-streams-sheet { top: 0; right: 0; bottom: 0; left: auto; width: min(360px, 32vw); height: 100%; max-height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); animation: slide-right var(--motion-normal) var(--ease-out); }
-    .source-sheet .sheet-list, .episode-sheet .sheet-list, .mavero-streams-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+    .source-sheet, .episode-sheet { top: 0; right: 0; bottom: 0; left: auto; width: min(360px, 32vw); height: 100%; max-height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); animation: slide-right var(--motion-normal) var(--ease-out); }
+    .source-sheet .sheet-list, .episode-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
     .episode-sheet { width: min(380px, 34vw); }
-    .mavero-streams-sheet { width: min(420px, 38vw); }
     @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   }
 
@@ -1800,6 +1488,6 @@
     .loading-ring, :global(.spin) { animation: none; }
     .back-fab, .control-fab, .control-fab-group, .direct-controls-overlay { transition: none; }
     .fab-item { animation: none; opacity: 1; transform: none; }
-    .source-sheet, .episode-sheet, .mavero-streams-sheet { animation: none; }
+    .source-sheet, .episode-sheet { animation: none; }
   }
 </style>

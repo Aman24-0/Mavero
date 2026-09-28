@@ -31,8 +31,7 @@ function validMediaType(value: string | null): value is ContentType {
 
 /**
  * Season/episode bounds (Phase 1, audit API-17): positive integers with a
- * sensible upper bound, consistent with the existing route contract
- * (parseStremioPlaybackRequest accepts the same 1..10000 range). Previously
+ * sensible upper bound (the server validates 1..10000). Previously
  * season/episode <= 0 passed this endpoint and failed inside the service,
  * producing a misleading 503 instead of a client validation error.
  */

@@ -344,7 +344,7 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   const classifyPos = watch.indexOf('const detailPromise = getDetail(params.type, params.id)');
   const guardPos = watch.indexOf("detailVerdict(item.tags) === 'adult'");
   // The streamingConfig value is destructured from Promise.all AFTER the guard.
-  const dataPos = watch.indexOf('const [streamingConfig, maveroPlayerAvailable, seasonEpisodes] = await Promise.all');
+  const dataPos = watch.indexOf('const [streamingConfig, seasonEpisodes] = await Promise.all');
   assert.ok(classifyPos !== -1 && guardPos > classifyPos && dataPos > guardPos, 'classification -> authorization -> data order (Phase 2-E: streamingConfig value consumed after the guard; the promise is started concurrently with detail because it is independent of item.tags)');
   assert.doesNotMatch(watch, /url\.searchParams\.get\('(adult|include_adult|bypass)'\)/, 'no client adult flag exists on the watch route');
 

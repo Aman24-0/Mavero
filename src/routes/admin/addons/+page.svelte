@@ -130,7 +130,7 @@
     <AdminEmptyState
       icon={Puzzle}
       title="No Stremio addons configured"
-      message="Add a supported Stremio HTTP addon to make additional streams available through MAVERO Player."
+      message="Add a supported Stremio HTTP addon to make additional direct-file streams available in the Mavero Downloader."
     >
       {#snippet actions()}
         <button class="btn btn-primary" type="button" onclick={openAddSheet}>Add Stremio Addon</button>

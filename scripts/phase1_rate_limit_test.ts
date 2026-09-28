@@ -110,7 +110,6 @@ const endpoints: Array<[string, RegExp, RegExp]> = [
   ['src/routes/api/downloader/mavero/tabs/+server.ts', /checkRateLimit\('downloaderTabs'/, /status: 429/],
   ['src/routes/api/downloader/4k/+server.ts', /checkRateLimit\('downloader4k'/, /status: 429/],
   ['src/routes/api/content/search/+server.ts', /checkRateLimit\('search'/, /status: 429/],
-  ['src/routes/api/playback/stremio/session/+server.ts', /checkRateLimit\('stremioSession'/, /status: 429/],
 ];
 for (const [file, wiring, status] of endpoints) {
   const source = read(file);

@@ -1,7 +1,7 @@
 import type { PlayerQualityOption } from '$lib/shared/player';
 
 /**
- * MAVERO Player — stream-card actions (Phase 12, GOAL H).
+ * Direct stream-card actions (copy URL, download).
  *
  * Every HTTP/direct stream card carries two icon actions:
  *
@@ -10,7 +10,7 @@ import type { PlayerQualityOption } from '$lib/shared/player';
  *                   playback URL or a transformed HLS URL — those are
  *                   session artifacts, not shareable source addresses.
  *   [ Download ]  — opens/downloads the ORIGINAL addon URL through the
- *                   browser's own anchor mechanism. MAVERO builds NO
+ *                   browser's own anchor mechanism. Mavero builds NO
  *                   download proxy (cross-origin servers may ignore the
  *                   `download` attribute; the browser's native behavior
  *                   — open or save — is the honest outcome either way).

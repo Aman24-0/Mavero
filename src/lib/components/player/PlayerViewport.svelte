@@ -5,7 +5,6 @@
   import { iframeSandboxAttribute, type SandboxPolicy } from '$lib/shared/sandbox-policy';
   import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
-  import { sourceForStreamUrl } from '$lib/client/player/mavero-streams';
 
   export let source: PlayerSource | null = null;
   export let mediaUrl: string | null = null;
@@ -164,13 +163,10 @@
     }
     let mode: 'native' | 'hls-js';
     try {
-      // Phase 6: classify the SELECTED url, not the aggregate's primary
-      // stream. Mixed-protocol aggregates (e.g. an HLS-primary aggregate
-      // whose quality list also contains an MP4 stream) must route each
-      // stream by its own protocol — the per-option protocol (Phase 6
-      // additive field) wins, the aggregate metadata protocol stays the
-      // fallback. Single-protocol sources pass through unchanged.
-      mode = resolveDirectPlaybackMode(sourceForStreamUrl(currentSource, url), url, video);
+      // Phase 6: classify the SELECTED url. The source's metadata.protocol
+      // is the protocol of the currently selected stream — single-protocol
+      // direct sources pass through unchanged.
+      mode = resolveDirectPlaybackMode(currentSource, url, video);
     } catch {
       teardownHlsEngine();
       return;

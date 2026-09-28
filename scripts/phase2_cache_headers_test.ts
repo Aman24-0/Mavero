@@ -107,13 +107,9 @@ ok(!/PUBLIC_CATALOG_CACHE/.test(accountFavorites), '4c. /api/account/favorites d
 const playbackResolve = read('src/routes/api/playback/resolve/+server.ts');
 ok(/no-store/.test(playbackResolve), '5a. /api/playback/resolve keeps no-store (stream URLs)');
 
-const playbackStremio = read('src/routes/api/playback/stremio/+server.ts');
-ok(/no-store/.test(playbackStremio), '5b. /api/playback/stremio keeps no-store (stream URLs)');
-
-const playbackStremioSession = read('src/routes/api/playback/stremio/session/+server.ts');
-ok(/no-store/.test(playbackStremioSession), '5c. /api/playback/stremio/session keeps no-store (per-request tokens)');
-
-// 5d/5e: compat routes removed — no longer tested.
+// 5b/5c: the legacy /api/playback/stremio routes were removed in Phase 1 of
+// the Vidara+Abyss hosting implementation (the obsolete MAVERO Player
+// aggregate playback branch). No cache-header assertion needed for them.
 
 // ============================================================
 // 6. Downloader endpoints stay no-store (Adult Mode protected).

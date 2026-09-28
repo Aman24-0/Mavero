@@ -285,17 +285,7 @@ export class PlaybackManager {
 
     try {
       let safeSource: PlayerSource | null = null;
-      if (request.presetSource) {
-        // Phase 4 (MAVERO Player): the watch route already resolved this
-        // source server-side (Stremio addon streams via the dedicated
-        // endpoint). Skip the `/api/playback/resolve` fetch and run the
-        // supplied source through the SAME validation + adapter lifecycle
-        // below — session/abort/race guards, adapter picking and state
-        // transitions are unchanged.
-        if (!this.active || sessionId !== this.sessionId) return;
-        safeSource = normalizePlayerSource(request.presetSource);
-        if (!safeSource) throw new ResolverError('RESOLUTION_UNAVAILABLE', 'This source is currently unavailable.');
-      } else {
+      {
         const body: Record<string, unknown> = {
           sourceId: request.sourceId,
           contentId: request.contentId,
@@ -513,37 +503,6 @@ export class PlaybackManager {
     this.sessionId += 1; // Invalidate any in-flight session.
     void this.destroySession(this.sessionId);
     this.patch(this.sessionId, { ...INITIAL_STATE });
-  }
-
-  /**
-   * Phase 10 (MAVERO Player progressive loading): swaps the CURRENT
-   * preset-source payload for an EXTENDED one WITHOUT touching the adapter,
-   * the media element or the playback state — late addon results merge into
-   * the aggregate live while the video keeps playing (GOAL 2: "DO NOT
-   * restart playback merely because another addon finished resolving").
-   *
-   * Guards: only applies when (a) the manager is active, (b) the current
-   * session was loaded from a preset source (the MAVERO aggregate — provider
-   * sources are never rewritten) and (c) the supplied source keeps the SAME
-   * sourceId identity and passes the existing playable guard. A merge for a
-   * stale/different source is dropped (GOAL 5 stale protection at the
-   * manager layer, mirroring the watch route's generation guard).
-   *
-   * The resolved state stays 'ready' — this is not a resolution event.
-   */
-  updatePresetSource(next: PlayerSource): boolean {
-    if (!this.active) return false;
-    const session = this.session;
-    const current = this._state.source;
-    if (!current) return false;
-    if (current.sourceId !== next.sourceId || current.providerId !== next.providerId) return false;
-    const normalized = normalizePlayerSource(next);
-    if (!normalized || !isPlayablePlayerSource(normalized) || sourceIsExpired(normalized)) return false;
-    session.source = normalized;
-    // Keep the resolved-media bookkeeping consistent without flipping the
-    // playback state: duration/buffered/position belong to the element.
-    this.patch(this.sessionId, { source: normalized });
-    return true;
   }
 
   /**
@@ -807,17 +766,6 @@ export type ResolverRequest = {
    * anime resolver). Other adapters silently ignore it.
    */
   variant?: string;
-  /**
-   * Phase 4 (MAVERO Player): an ALREADY-RESOLVED source supplied by the
-   * watch route (resolved server-side via `/api/playback/stremio`). When
-   * present, the manager skips the `/api/playback/resolve` fetch entirely
-   * and runs THIS source through the exact same validation + adapter
-   * lifecycle below (same session/abort/race guards, same adapter
-   * picking, same state transitions). The manager itself never talks to
-   * the Stremio resolver — the client/server Stremio boundary lives in
-   * the watch route + dedicated endpoint.
-   */
-  presetSource?: PlayerSource;
 };
 
 export class ResolverError extends Error {

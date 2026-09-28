@@ -5,8 +5,6 @@ import { toMediaItem } from '$lib/server/content/presenter';
 import { isContentType, type Episode } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { detailVerdict } from '$lib/server/content/search-classify';
-import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
-import { hasStreamEligibleAddons } from '$lib/server/streaming/stremio/mavero-player-source';
 import type { PageServerLoad } from './$types';
 
 // Phase 2-E (audit PERF-005) — Watch page server load parallelization.
@@ -16,16 +14,21 @@ import type { PageServerLoad } from './$types';
 //   2. canAccessAdultContent(...)      [conditional, per-request]
 //   3. getSeriesSeason(id, season)     [conditional, TMDB roundtrip]
 //   4. getPublicStreamingConfig(supabase) [DB read]
-//   5. hasStreamEligibleAddons(admin)  [DB read]
 //
 // The only TRUE dependency is: detail must resolve before the adult
 // classification gate (because we need item.tags). The season fetch
 // depends on params.type (always known) and item.isAnime (rare movie
-// branch). The streaming config and addon eligibility are completely
-// independent of detail.
+// branch). The streaming config is completely independent of detail.
+//
+// (Phase 1 of the Vidara + Abyss hosting implementation removed the
+//  former server-gated addon-resolution availability check — the entire
+//  virtual MAVERO Player source branch was retired. The Stremio addon
+//  DOWNLOADER surface remains available through the Download sheet /
+//  external player / download flow, which does not require a watch-page
+//  server-load computation.)
 //
 // Parallelized flow:
-//   - Kick off detail, streamingConfig, addonEligibility in parallel.
+//   - Kick off detail + streamingConfig in parallel.
 //   - Wait for detail first.
 //   - Apply the adult gate.
 //   - AFTER the gate clears, kick off the season fetch (title-specific
@@ -40,7 +43,6 @@ import type { PageServerLoad } from './$types';
 //     (preserves the Phase 6 security contract — unauthorized requests
 //     never trigger episode metadata fetches).
 //   - Streaming config degrades to a safe empty default on failure.
-//   - maveroPlayerAvailable degrades to false on failure.
 //   - Episode fetch is still optional — failure is silently absorbed
 //     (the player falls back to item.seasonsData episodes).
 //   - No duplicate queries: the season fetch runs at most once.
@@ -87,11 +89,11 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   // SECURITY: the season fetch is TITLE-SPECIFIC episode data. We start it
   // AFTER the adult gate (below) — never speculatively before — so
   // unauthorized adult requests don't trigger unnecessary episode fetches.
-  // The streaming config + addon eligibility are NOT title-specific, so
-  // they CAN run in parallel with detail (no adult-gate dependency).
+  // The streaming config is NOT title-specific, so it CAN run in parallel
+  // with detail (no adult-gate dependency).
 
   // Kick off the INDEPENDENT work in parallel. Detail must resolve first
-  // (the adult gate depends on item.tags), but the other two are
+  // (the adult gate depends on item.tags), but the streaming config is
   // fully independent and can run concurrently with detail.
   const detailPromise = getDetail(params.type, params.id).catch(() => {
     // Fail-closed: an unresolvable title (including a failed classification
@@ -100,8 +102,6 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   });
   const streamingConfigPromise = getPublicStreamingConfig(locals.supabase)
     .catch(() => EMPTY_STREAMING_CONFIG);
-  const maveroPlayerAvailablePromise = hasStreamEligibleAddons(createSupabaseAdminClient())
-    .catch(() => false);
 
   // Await detail first — the adult gate depends on item.tags.
   const item = await detailPromise;
@@ -134,12 +134,11 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
     : Promise.resolve(null);
 
   try {
-    // Await all independent work in parallel. The streaming config + addon
-    // eligibility ran concurrently with detail + the adult gate; the season
-    // fetch started after the gate cleared. We collect all results here.
-    const [streamingConfig, maveroPlayerAvailable, seasonEpisodes] = await Promise.all([
+    // Await all independent work in parallel. The streaming config ran
+    // concurrently with detail + the adult gate; the season fetch started
+    // after the gate cleared. We collect all results here.
+    const [streamingConfig, seasonEpisodes] = await Promise.all([
       streamingConfigPromise,
-      maveroPlayerAvailablePromise,
       seasonPromise
     ]);
 
@@ -148,7 +147,7 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
       ? seasonEpisodes
       : fallbackEpisodes;
 
-    return { item: toMediaItem(item), streamingConfig, episodes, maveroPlayerAvailable };
+    return { item: toMediaItem(item), streamingConfig, episodes };
   } catch {
     throw error(404, 'Title not found');
   }

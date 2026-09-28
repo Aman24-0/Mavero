@@ -73,7 +73,6 @@ const apiRoutes = [
   '/api/downloader/mavero',
   '/api/settings/adult-mode',
   '/api/content/search',
-  '/api/playback/stremio/session',
 ];
 for (const route of apiRoutes) {
   assert.equal(isEnvironmentFreePath(route), false, `${route} must FAIL CLOSED when the environment is missing`);

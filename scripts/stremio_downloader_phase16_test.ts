@@ -546,13 +546,16 @@ function sectionS(): void {
 }
 
 // ---------------------------------------------------------------------------
-// T — MAVERO Player still NOT in the source selector (Phase 15 preserved)
+// T — MAVERO Player virtual source fully retired (Phase 1 of Vidara+Abyss
+//     hosting implementation removed the deep-link branch + identity module)
 // ---------------------------------------------------------------------------
 
 function sectionT(): void {
   const watchPage = read('src/routes/watch/[type]/[id]/+page.svelte');
   ok(!watchPage.includes('maveroPlayerSourceOption()'), 'T: the watch route does NOT append maveroPlayerSourceOption() to sourceOptions');
-  ok(!/\.\.\.\(data\.maveroPlayerAvailable\s*\?\s*\[maveroPlayerSourceOption\(\)\]/.test(watchPage), 'T: the conditional append is gone (Phase 15 preserved)');
+  ok(!/\.\.\.\(data\.maveroPlayerAvailable\s*\?\s*\[maveroPlayerSourceOption\(\)\]/.test(watchPage), 'T: the conditional append is gone');
+  ok(!watchPage.includes('isMaveroPlayerSourceId'), 'T: the deep-link isMaveroPlayerSourceId branch is gone (Phase 1 retirement)');
+  ok(!watchPage.includes('prepareMaveroPlayerSource'), 'T: the prepareMaveroPlayerSource function is gone (Phase 1 retirement)');
 }
 
 // ---------------------------------------------------------------------------

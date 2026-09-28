@@ -7,27 +7,30 @@ import path from 'node:path';
  * Phase 2-E (audit PERF-005) — Watch page server load parallelization.
  *
  * Problem: the watch page's +page.server.ts fetched detail, then season,
- * then streamingConfig, then maveroPlayerAvailable sequentially. Only
- * detail was a true dependency for the adult gate; the others could run
- * in parallel.
+ * then streamingConfig sequentially. Only detail was a true dependency for
+ * the adult gate; the others could run in parallel.
  *
- * Fix: Promise.all on the independent work. Detail + streamingConfig +
- * maveroPlayerAvailable run in parallel. After detail resolves, the
- * adult gate runs, then the season fetch (which is title-specific
- * episode data — never started before the gate clears, so unauthorized
- * adult requests don't trigger unnecessary episode fetches).
+ * Fix: Promise.all on the independent work. Detail + streamingConfig run
+ * in parallel. After detail resolves, the adult gate runs, then the
+ * season fetch (which is title-specific episode data — never started
+ * before the gate clears, so unauthorized adult requests don't trigger
+ * unnecessary episode fetches).
+ *
+ * Phase 1 (Vidara+Abyss hosting implementation) removed the former
+ * `maveroPlayerAvailable` server-gated addon-resolution availability check
+ * — the entire MAVERO Player virtual source branch was retired. The watch
+ * page server load now parallelizes only detail + streamingConfig.
  *
  * This is a static contract test — it verifies:
  *   1. The load function kicks off multiple promises concurrently.
  *   2. Detail is awaited BEFORE the adult gate (correctness preserved).
  *   3. The adult gate is still server-authoritative + non-disclosing.
  *   4. Streaming config degrades to a safe empty default on failure.
- *   5. maveroPlayerAvailable degrades to false on failure.
- *   6. Episode fetch is still optional (failure is silently absorbed).
- *   7. The season fetch starts AFTER the adult gate clears (security:
+ *   5. Episode fetch is still optional (failure is silently absorbed).
+ *   6. The season fetch starts AFTER the adult gate clears (security:
  *      unauthorized requests never trigger episode metadata fetches).
- *   8. The adult gate uses locals.user (Phase 2-A reuse).
- *   9. No duplicate queries — the season fetch runs at most once.
+ *   7. The adult gate uses locals.user (Phase 2-A reuse).
+ *   8. No duplicate queries — the season fetch runs at most once.
  *
  * Runtime measurement (timing) is NOT covered here — the audit explicitly
  * says "Only claim [runtime improvement] if actually measured." This test
@@ -51,7 +54,7 @@ const watch = read('src/routes/watch/[type]/[id]/+page.server.ts');
 // 1. The load function uses Promise.all to parallelize.
 // ============================================================
 ok(/Promise\.all\(/.test(watch), '1a. watch load uses Promise.all');
-ok(/streamingConfigPromise/.test(watch) && /maveroPlayerAvailablePromise/.test(watch) && /detailPromise/.test(watch), '1b. independent promises (detail, streamingConfig, maveroPlayerAvailable) are started concurrently before awaiting');
+ok(/streamingConfigPromise/.test(watch) && /detailPromise/.test(watch), '1b. independent promises (detail, streamingConfig) are started concurrently before awaiting');
 
 // ============================================================
 // 2. Detail is awaited first — the adult gate depends on item.tags.
@@ -73,9 +76,10 @@ ok(/providers:\s*\[\]/.test(watch) && /sources:\s*\[\]/.test(watch) && /categori
 ok(/getPublicStreamingConfig\(locals\.supabase\)\s*\.catch\(/.test(watch), '4c. streaming config failure is caught (no unhandled rejection)');
 
 // ============================================================
-// 5. maveroPlayerAvailable degrades to false on failure.
+// 5. The obsolete MAVERO Player availability check is GONE.
 // ============================================================
-ok(/hasStreamEligibleAddons\(createSupabaseAdminClient\(\)\)\s*\.catch\(\(\)\s*=>\s*false\)/.test(watch), '5a. maveroPlayerAvailable failure degrades to false');
+ok(!/maveroPlayerAvailable/.test(watch), '5a. maveroPlayerAvailable is no longer computed (Phase 1 retirement)');
+ok(!/hasStreamEligibleAddons/.test(watch), '5b. hasStreamEligibleAddons is no longer called from the watch route (Phase 1 retirement)');
 
 // ============================================================
 // 6. Episode fetch is still optional (failure is silently absorbed).

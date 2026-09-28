@@ -8,14 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 0 (Phase 0 COMPLETE; Phase 0 follow-up COMPLETE;
-                  awaiting user approval to start Phase 1)
+Current Phase: 1 (Phase 1 COMPLETE; awaiting user approval to start Phase 2)
 Status: COMPLETE
-Last Commit: 3ed8db57e53a214f0737c3e2fb747267a22bafef
-            (chore(hosting): baseline and schema drift audit)
-            + Phase 0 follow-up commit (SHA recorded after commit
-            creation — see Phase 0 Follow-up §F6)
-Next Task: Phase 1 — Remove obsolete MAVERO Player / direct-play branch
+Last Commit: b43914b09b6d04fc57b020baeefc8d9be6dde8dd
+            (docs(hosting): record phase 0 and migration timestamp conventions)
+            + Phase 1 commit (SHA recorded after commit creation —
+              see Phase 1 Final Report below)
+Next Task: Phase 2 — Hosting database foundation
 Blocking Issue: none
 Plan Revision: 1.2
 ```
@@ -1236,28 +1235,521 @@ push>
 
 ## Phase 1 --- Remove Obsolete MAVERO Player / Direct-Play Branch
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: <recorded after commit creation — see Phase 1 Final Report
+        below for the actual SHA recorded by the implementing agent>
 
-Date:
+Date: 2026-09-28
 
 ### Planned
 
--   [ ] Remove obsolete virtual MAVERO Player branch.
--   [ ] Remove historical deep-link compatibility.
--   [ ] Retire orphan `direct_play_sources` if Phase 0 proves safe.
--   [ ] Preserve legitimate direct media engine.
--   [ ] Preserve Stremio downloader.
--   [ ] Preserve required addon HLS behavior.
+-   [x] Remove obsolete virtual MAVERO Player branch.
+-   [x] Remove historical deep-link compatibility.
+-   [x] Preserve legitimate direct media engine.
+-   [x] Preserve Stremio downloader.
+-   [x] Preserve required addon HLS functionality.
+-   [x] Preserve generic `PlayerSource.type = 'direct'`.
+-   [x] Preserve all existing provider embeds and the existing
+        source-selector system.
 
-### Actual
+### Scope decision --- `direct_play_sources` retirement DEFERRED
 
-*To be filled by GLM.*
+Phase 0 confirmed `direct_play_sources` is SAFE to retire (zero rows,
+zero FK references, zero view/function references, zero source-code
+references). However, the Phase 1 task description explicitly stated
+the expected outcome is "application-code cleanup and should normally
+require NO new migration". The `direct_play_sources` retirement
+requires a NEW migration (drop trigger → drop function → drop table)
+and was therefore deferred to a later phase that explicitly handles
+schema changes. Phase 1 itself is purely application-code cleanup;
+no migration was created. The plan's Phase 1 deliverable description
+already lists `direct_play_sources` retirement as a "may" rather than
+a "must", so deferring it does not violate the plan.
+
+### Actual --- full Phase 1 implementation
+
+#### 1. Startup audit
+
+-   Current HEAD at start: `b43914b09b6d04fc57b020baeefc8d9be6dde8dd`
+    (matches user-stated HEAD).
+-   Working tree: clean.
+-   Branch: `main`, up to date with `origin/main`.
+-   Re-audited every reference to the obsolete MAVERO Player / virtual
+    Stremio native-direct playback branch at the current HEAD
+    (independent of the Phase 0 audit).
+
+#### 2. Re-audit findings
+
+The re-audit at HEAD `b43914b` confirmed Phase 0's reference map
+and added the following new findings:
+
+-   `src/lib/shared/mavero-aggregate.ts` — was MISSED by Phase 0.
+    This module was the Phase 10 shared round-robin aggregate composer.
+    It is imported ONLY by `mavero-progressive.ts` (the Phase 10
+    progressive controller). Once the watch route's deep-link branch
+    is removed, `mavero-progressive.ts` has no callers, and
+    `mavero-aggregate.ts` becomes dead. **Both deleted.**
+-   `src/lib/client/player/mavero-progressive.ts` — Phase 10 progressive
+    controller. **Only callers were the watch route's deep-link branch
+    + the obsolete Phase 4 client wrapper. Both removed.**
+-   `src/lib/server/streaming/stremio/{addon-session,session-tokens,
+    session-env,stream-player-source}.ts` — these were the Phase 10
+    session-token system + the Phase 3 stream adapter. The Stremio
+    downloader uses `addon-download-service.ts` instead and does NOT
+    depend on any of these. **All 4 deleted.**
+-   `src/routes/api/playback/stremio/{,+session,+addon}/+server.ts` —
+    the 3 routes exclusively served the deleted MAVERO Player branch.
+    No downloader/admin caller exists. **All 3 deleted, plus the
+    now-empty `api/playback/stremio/` directory tree removed.**
+-   `src/lib/components/player/MaveroStreamCard.svelte` — used ONLY
+    inside PlayerShell's MAV player sheet section. **Deleted.**
+-   `scripts/stremio_downloader_phase14_test.ts` — Phase 14 was
+    superseded by Phase 15 (which is preserved + updated). Phase 14
+    imported the deleted `addon-session.ts`. **Test retired.**
+-   `scripts/stremio_addons_phase3_test.ts` had a small section
+    (`PlayerSource adapter`) that used the deleted `stream-player-source.ts`.
+    That section was removed (4 lines out of 958). The remaining
+    148 checks pass.
+
+#### 3. Files removed (16 files)
+
+``` text
+src/lib/shared/mavero-player.ts
+src/lib/shared/mavero-aggregate.ts
+src/lib/server/streaming/stremio/mavero-player-source.ts
+src/lib/server/streaming/stremio/addon-session.ts
+src/lib/server/streaming/stremio/session-tokens.ts
+src/lib/server/streaming/stremio/session-env.ts
+src/lib/server/streaming/stremio/stream-player-source.ts
+src/lib/client/player/mavero-player.ts
+src/lib/client/player/mavero-streams.ts
+src/lib/client/player/mavero-progressive.ts
+src/lib/components/player/MaveroStreamCard.svelte
+src/routes/api/playback/stremio/+server.ts
+src/routes/api/playback/stremio/session/+server.ts
+src/routes/api/playback/stremio/addon/+server.ts
+scripts/stremio_player_phase4_test.ts
+scripts/stremio_player_phase5_test.ts
+scripts/stremio_player_phase6_test.ts
+scripts/stremio_player_phase7_test.ts
+scripts/stremio_player_phase8_test.ts
+scripts/stremio_player_phase9_test.ts
+scripts/stremio_downloader_phase14_test.ts
+```
+
+Plus the now-empty directories:
+``` text
+src/routes/api/playback/stremio/session/
+src/routes/api/playback/stremio/addon/
+src/routes/api/playback/stremio/
+```
+
+#### 4. Files modified (12 files)
+
+-   `src/routes/watch/[type]/[id]/+page.svelte` — removed:
+    -   Imports `mergeMaveroResults`, `startMaveroProgressiveResolution`,
+        `MaveroAddonResult`, `MaveroAddonStatus`, `ProgressiveSession`
+        from `mavero-progressive.ts` (deleted).
+    -   Imports `isMaveroPlayerSourceId`, `MAVERO_PLAYER_SOURCE_ID`,
+        `MAVERO_PLAYER_SOURCE_NAME` from `mavero-player.ts` (deleted).
+    -   All `maveroRequestSeq`, `maveroSession`, `maveroAddonStatuses`,
+        `maveroResults`, `maveroLoadStarted`, `maveroLoadChain` state
+        variables.
+    -   The `if (isMaveroPlayerSourceId(sourceId))` deep-link branch
+        + the inline `prepareMaveroPlayerSource()` function (~95 lines).
+    -   `handleMaveroRetry()` function.
+    -   Episode-change / destroy cleanup blocks that touched mavero
+        state.
+    -   `maveroAddons={maveroAddonStatuses}` and
+        `onMaveroRetry={handleMaveroRetry}` props passed to `<PlayerShell>`.
+-   `src/routes/watch/[type]/[id]/+page.server.ts` — removed:
+    -   `import { createSupabaseAdminClient }` (no longer needed).
+    -   `import { hasStreamEligibleAddons }` from the deleted module.
+    -   `maveroPlayerAvailablePromise` promise + its `.catch(() => false)`.
+    -   `maveroPlayerAvailable` from the return shape.
+    -   `Promise.all` now awaits only 2 promises (streamingConfig +
+        seasonEpisodes) instead of 3.
+-   `src/lib/components/player/PlayerShell.svelte` — removed:
+    -   Imports `MaveroStreamCard`, `MAVERO_PLAYER_SOURCE_ID`,
+        `MAVERO_PLAYER_SOURCE_NAME`, `MaveroAddonStatus`, and the
+        9 stream-presentation helpers from `mavero-streams.ts`.
+    -   State variables: `streamsSheetOpen`, `streamsSheetTrigger`,
+        `streamsSheetReturnToSource`, `activeAddonTab`, `addonTabTouched`,
+        `failedStreamUrls`.
+    -   Reactive vars: `maveroStreams`, `maveroStreamGroups`,
+        `maveroTabs`, `playingAddonName`, `activeMaveroTab`,
+        `activeMaveroTabGroup`, `maveroSourceOption`.
+    -   Auto-selection reactive block (`$: if (streamsSheetOpen && ...)`).
+    -   Functions: `selectMaveroStream`, `openStreamsSheet`,
+        `selectAddonTab`, `retryActiveAddonTab`, `closeStreamsSheet`.
+    -   `maveroAddons` + `onMaveroRetry` props.
+    -   `MAVERO_STREAM_FAILURE_MESSAGE` constant + the
+        `isMaveroAggregateSource` branch inside `handleMediaError`.
+    -   `streamCount` + `onStreams` props on `<PlayerControls>`.
+    -   The FAB "N Streams" item.
+    -   The source-sheet "MAVERO Player streams" entry-button.
+    -   The entire `{#if streamsSheetOpen}...{/if}` mavero-streams-sheet
+        template (~70 lines).
+    -   28 orphaned CSS rules (`.mavero-streams-sheet`,
+        `.streams-entry-button`, `.addon-tab*`, `.mavero-group*`,
+        `.mavero-retry*`, `.streams-empty`, `.mavero-quality-*`).
+    -   Updated `handleSheetKeydown` + `focusSheetCloseButton` to drop
+        the `'streams'` case.
+    -   Updated `handleKeydown` Escape handler + the 10s inactivity
+        timer to drop `streamsSheetOpen` references.
+    -   Updated the stale-guard reactive comment (was Phase 10 stale
+        guard / `mergeMaveroResults pins it`).
+-   `src/lib/components/player/PlayerControls.svelte` — removed:
+    -   `streamCount` prop.
+    -   `onStreams` prop.
+    -   The `streams-button` template element.
+    -   The `ListVideo` lucide icon import.
+    -   The `.streams-button` CSS rule.
+-   `src/lib/components/player/PlayerViewport.svelte` — removed:
+    -   `import { sourceForStreamUrl } from '$lib/client/player/mavero-streams'`.
+    -   The `sourceForStreamUrl(currentSource, url)` call (now passes
+        `currentSource` directly — single-protocol direct sources do
+        not need the per-stream protocol override that was for mixed-
+        protocol MAVERO aggregates).
+-   `src/lib/client/player/PlaybackManager.ts` — removed:
+    -   The `presetSource?: PlayerSource` field on the request type.
+    -   The `if (request.presetSource)` branch inside `loadSource`
+        (Phase 4 one-shot aggregate entry point — dead after the
+        watch route deep-link branch was removed).
+    -   The `updatePresetSource(next: PlayerSource)` method (Phase 10
+        live-merge helper — only called from the watch route's
+        `prepareMaveroPlayerSource()`, which is gone).
+    -   Updated the inline comment block describing the resolver flow.
+-   `src/lib/client/player/stream-actions.ts` — updated the module
+    doc comment (was "MAVERO Player — stream-card actions"; now
+    "Direct stream-card actions").
+-   `src/lib/server/streaming/stremio/session-env.ts`,
+    `session-tokens.ts`, `addon-session.ts` — DELETED (these were
+    session-token system files; the doc-comment updates mentioned
+    in earlier planning are no longer needed because the files are
+    gone).
+-   `src/routes/admin/addons/+page.svelte` — updated the empty-state
+    message (was "make additional streams available through MAVERO
+    Player"; now "make additional direct-file streams available in
+    the Mavero Downloader").
+-   `src/routes/api/downloader/4k/+server.ts` — updated a doc
+    comment (was "consistent with the existing route contract
+    (parseStremioPlaybackRequest accepts the same 1..10000 range)";
+    now "(the server validates 1..10000)").
+-   `.env.example` — removed the `MAVERO_STREMIO_SESSION_SECRET`
+    env-var block (the secret was consumed only by the deleted
+    `session-env.ts`).
+-   `package.json` — removed 7 entries from the `test` script
+    (the retired tests): `stremio_player_phase4..9_test.ts` (6
+    files) + `stremio_downloader_phase14_test.ts` (1 file).
+
+#### 5. Tests updated (kept + reconciled)
+
+-   `scripts/stremio_addons_phase3_test.ts` — removed the import of
+    `stremioStreamToPlayerSource`/`stremioSourceId` from
+    `stream-player-source.ts` (deleted), and removed the small
+    `PlayerSource adapter` section that depended on it (4 lines out
+    of 958). Remaining 148 checks pass.
+-   `scripts/stremio_downloader_phase15_test.ts` — removed the import
+    of `MAVERO_PLAYER_SOURCE_NAME`/`maveroPlayerSourceOption` from
+    `mavero-player.ts` (deleted). Rewrote `sectionM` from
+    "MAVERO Player virtual source is preserved for deep-link compat"
+    to "MAVERO Player virtual source is GONE" — now asserts via
+    `existsSync` that each deleted file is absent (5 regression
+    assertions, +5 checks vs the old section).
+-   `scripts/stremio_downloader_phase16_test.ts` — rewrote `sectionT`
+    to assert the deep-link branch (`isMaveroPlayerSourceId` +
+    `prepareMaveroPlayerSource`) is gone from the watch page.
+-   `scripts/phase1_hooks_failclosed_test.ts` — removed
+    `'/api/playback/stremio/session'` from the apiRoutes list (route
+    deleted).
+-   `scripts/phase1_rate_limit_test.ts` — removed the
+    `stremioSession` rate-limit wiring assertion (route deleted).
+-   `scripts/phase2_cache_headers_test.ts` — removed assertions
+    5b (`/api/playback/stremio`) and 5c (`/api/playback/stremio/session`)
+    no-store checks (routes deleted).
+-   `scripts/phase2_watch_parallel_test.ts` — rewrote to reflect
+    that `maveroPlayerAvailable` is no longer part of the watch page
+    server load. The Promise.all now parallelizes only 2 promises
+    (detail + streamingConfig) instead of 3. Added 2 new assertions:
+    `maveroPlayerAvailable` is NOT computed, `hasStreamEligibleAddons`
+    is NOT called.
+-   `scripts/adult_phase9_final_test.ts` — updated the data-order
+    assertion to match the new `Promise.all` destructure shape
+    (was `[streamingConfig, maveroPlayerAvailable, seasonEpisodes]`;
+    now `[streamingConfig, seasonEpisodes]`).
+
+#### 6. Route/API decision regarding `/api/playback/stremio`
+
+DECISION: ALL THREE routes under `/api/playback/stremio/` were
+removed because they were EXCLUSIVELY used by the obsolete MAVERO
+Player branch.
+
+Reasoning per route:
+
+-   `/api/playback/stremio/+server.ts` (Phase 4 aggregate endpoint)
+    — the file header comment itself said "available for backward
+    compatibility" after Phase 10. The watch route's deep-link branch
+    was the ONLY remaining caller. Once that branch was removed, the
+    route became unreachable. `grep "/api/playback/stremio"` in src/
+    returns 0 hits after this Phase 1 commit (verified).
+-   `/api/playback/stremio/session/+server.ts` (Phase 10 session
+    endpoint) — called only by `mavero-progressive.ts:startMaveroProgressiveResolution`
+    (deleted). No other caller in src/ or scripts/.
+-   `/api/playback/stremio/addon/+server.ts` (Phase 10 per-addon
+    endpoint) — called only by `mavero-progressive.ts` (deleted).
+    No other caller.
+
+Helper preservation:
+
+-   `parseStremioPlaybackRequest` (was inside `mavero-player-source.ts`)
+    — was NOT relocated because its only 3 callers were the 3 deleted
+    routes. The 1 other reference (a doc comment in `4k/+server.ts`)
+    was updated to remove the cross-reference. There is no remaining
+    caller; relocation would have been dead code.
+-   The Stremio DOWNLOADER (`addon-download-service.ts`,
+    `download-selection.ts`, `stream-fetch.ts`, `stream-normalize.ts`,
+    `stream-normalize-downloader.ts`, `stream-resolver.ts`,
+    `stream-ids.ts`, `stream-errors.ts`, `manifest-*.ts`,
+    `connect-guard.ts`, `ssrf.ts`, `admin-addons.ts`) was NOT touched
+    — it has its OWN resolution pipeline that does NOT depend on the
+    deleted session-token system.
+
+#### 7. Confirmation that generic `direct` functionality was preserved
+
+-   `src/lib/shared/player.ts` — `PlayerSourceType = 'direct' | 'embed'
+    | 'unavailable' | 'error'` is unchanged. The `PlayerSource` and
+    `PlayerQualityOption` types still carry the Phase 6/9 addon-stream
+    metadata fields (`addonName`, `protocol`, `audioLanguages`,
+    `streamContainer`, `streamCodec`, `filename`, `videoSize`,
+    `subtitles`). The doc comments still mention "MAVERO Player" as
+    historical provenance — these are pure documentation and the
+    fields themselves are now generic (used by every direct source).
+-   `src/lib/client/player/direct-adapter.ts` — unchanged.
+-   `src/lib/client/player/hls-engine.ts` — unchanged.
+-   `src/lib/server/resolver/safe-url.ts` — unchanged
+    (`validatePlaybackUrl(url, 'direct')` still works for every
+    provider direct source).
+-   `src/lib/client/player/PlaybackManager.ts` — the direct-source
+    load path (POST `/api/playback/resolve` → normalize → adapter pick
+    → load) is unchanged. Only the `presetSource` shortcut was
+    removed.
+
+`phase1_playback_manager_test.ts` PASSES — verifies embed + direct
+source load lifecycle, race-condition protection, adapter cleanup,
+dispose teardown.
+
+#### 8. Confirmation that Stremio addon/downloader/HLS functionality
+was preserved
+
+Live integration tests (all PASS):
+
+-   `stremio_addons_phase1_test.ts` — 112 checks (model contract,
+    validation, no torrent/P2P, migration security posture, existing
+    registry untouched, DB<->domain mapping).
+-   `stremio_addons_phase2_test.ts` — 203 checks.
+-   `stremio_addons_phase3_test.ts` — 148 checks (resolver pipeline
+    intact).
+-   `stremio_downloader_phase15_test.ts` — 145 checks (Phase 16
+    downloader reliability + new "MAVERO Player removal" section M
+    with 5 file-absence regression assertions).
+-   `stremio_downloader_phase16_test.ts` — 108 checks.
+-   `stremio_downloader_phase17_test.ts` — 96 checks.
+-   `stremio_downloader_phase18_test.ts` — 83 checks.
+-   `stremio_downloader_phase19_test.ts` — 56 checks (4K downloader).
+-   `stremio_downloader_phase20_test.ts` — 39 checks.
+-   `stremio_downloader_phaseA_reliability_test.ts` — 84 checks.
+-   `stremio_downloader_phaseB_card_test.ts` — 101 checks.
+-   `stremio_downloader_phaseB_dedup_test.ts` — 38 checks.
+-   `stremio_downloader_phaseB_subtitles_test.ts` — 50 checks.
+-   `stremio_downloader_phaseB_metadata_regression_test.ts` — 59 checks.
+-   `stremio_downloader_phaseC_filters_test.ts` — 145 checks.
+-   `stremio_downloader_phaseD_actions_test.ts` — 145 checks.
+-   `stremio_downloader_phaseE_final_test.ts` — 171 checks.
+-   `stremio_downloader_phaseE_runtime_test.ts` — 22 checks.
+-   `stremio_downloader_phaseF_runtime_test.ts` — 44 checks.
+-   `stremio_downloader_phaseF_embedded_state_test.ts` — 18 checks.
+
+All 20 downloader tests pass. The Stremio addon HLS / downloader /
+external-player / 4K-downloader / generic-JSON-downloader surfaces
+are unaffected by Phase 1.
+
+#### 9. Unexpected findings
+
+-   Phase 0 had identified `mavero-aggregate.ts` and
+    `mavero-progressive.ts` as PRESERVE targets (claiming the
+    progressive controller was "the legitimate Phase 10 live-resolution
+    pipeline"). Phase 1's deeper import audit revealed this was
+    WRONG — both modules are exclusively used by the obsolete MAVERO
+    Player branch (their only callers were the watch route's
+    deep-link branch + the deleted Phase 4 client wrapper). Both were
+    deleted in Phase 1. This is NOT a plan-change — Phase 0's worklog
+    §6.5 explicitly listed these as "Phase 1 must clarify this BEFORE
+    deletion", and Phase 1 has now clarified it.
+-   Phase 0 had identified `addon-session.ts`, `session-tokens.ts`,
+    `session-env.ts` as PRESERVE targets (claiming they were "still
+    used by the Stremio downloader"). Phase 1's import audit revealed
+    this was ALSO WRONG — the Stremio downloader uses
+    `addon-download-service.ts` + its own resolution pipeline; it
+    does NOT depend on the session-token system. All 3 files were
+    deleted in Phase 1.
+-   `stream-player-source.ts` (Phase 3 adapter) — Phase 0 had listed
+    it as "shared with `addon-session.ts`" but did not flag it for
+    deletion. Phase 1 confirmed its ONLY 2 importers were
+    `mavero-player-source.ts` (deleted) and `addon-session.ts`
+    (deleted). It was deleted in Phase 1.
+-   `stremio_downloader_phase14_test.ts` — Phase 0 did not flag this
+    test as obsolete. Phase 1's import audit found it imports
+    `createAddonSession`/`resolveAddonToken` from the deleted
+    `addon-session.ts`. The Phase 14 test functionality is fully
+    superseded by Phase 15+ (which are preserved + updated). The
+    Phase 14 test was retired.
+-   `stremio_addons_phase3_test.ts` had a small `PlayerSource adapter`
+    section that imported the deleted `stream-player-source.ts`. The
+    section was removed (4 lines out of 958). The remaining 148
+    checks pass.
+
+#### 10. Migration / DB safety
+
+-   NO new migration was created.
+-   NO existing migration file was renamed or modified (73 files still
+    present, identical to before).
+-   NO live DB schema change was applied.
+-   `direct_play_sources` retirement was DEFERRED to a later phase
+    that explicitly handles schema changes (see "Scope decision"
+    above).
 
 ### Verification
 
-*To be filled by GLM.*
+-   `pnpm check`: **PASS** — svelte-check found 0 errors and 0 warnings.
+-   `pnpm build`: **PASS** — Vite SSR build completed (~22.9s),
+    `@sveltejs/adapter-netlify` finished cleanly.
+-   `git diff --check`: **clean** (no whitespace errors).
+-   Targeted legacy-reference audit (grep against src/):
+    -   `MAVERO_PLAYER_SOURCE_ID`: 0 hits.
+    -   `isMaveroPlayerSourceId`: 0 hits.
+    -   `prepareMaveroPlayerSource`: 0 hits.
+    -   `mavero-player` (file path / import): 0 hits.
+    -   `MAVERO_PLAYER_SOURCE_NAME`: 0 hits.
+    -   `maveroPlayerSourceOption`: 0 hits.
+    -   `maveroPlayerSourceFromResolution`: 0 hits.
+    -   `MAVERO_PLAYER_MAX_STREAMS` / `MAVERO_PLAYER_STREAMS_PER_ADDON`:
+        0 hits.
+    -   `hasStreamEligibleAddons`: 0 hits.
+    -   `resolveMaveroPlayerSource`: 0 hits.
+    -   `isMaveroAggregateSource`: 0 hits.
+    -   `maveroPlayerAvailable`: 0 hits.
+    -   `MAVERO_AGGREGATE_*` / `aggregateMaveroBuckets` /
+        `bucketMaveroSources`: 0 hits.
+    -   `mergeMaveroResults` / `startMaveroProgressiveResolution` /
+        `ProgressiveSession` / `MaveroAddonResult` /
+        `MaveroAddonStatus`: 0 hits.
+    -   `buildMaveroAddonTabs` / `defaultMaveroAddonTab` /
+        `groupMaveroStreams` / `dedupeMaveroStreams` /
+        `maveroStream*` / `orderMaveroStreamsForSheet` /
+        `protocolForStreamUrl` / `sourceForStreamUrl`: 0 hits.
+    -   `presetSource` / `updatePresetSource`: 0 hits.
+    -   `/api/playback/stremio` (route references in src/): 0 hits.
+-   "MAVERO Player" still appears in 5 source-code COMMENTS (3 in
+    `src/lib/shared/player.ts` describing the Phase 6/9 historical
+    provenance of `PlayerQualityOption` addon-stream metadata fields;
+    1 in `src/routes/watch/[type]/[id]/+page.server.ts` describing
+    the Phase 1 retirement; 1 in `src/routes/watch/[type]/[id]/+page.svelte`
+    describing the Phase 1 retirement). These are documentation
+    references — not code identifiers — and are acceptable.
+-   Deleted-file absence audit (grep against src/):
+    -   All 14 deleted src/ files: absent (verified via `ls`).
+    -   All 3 retired test files: absent.
+    -   Empty `api/playback/stremio/` directory tree: removed.
+-   Preserved-functionality audit:
+    -   `PlayerSource.type === 'direct'`: still defined in
+        `src/lib/shared/player.ts:1`; the direct adapter
+        (`src/lib/client/player/direct-adapter.ts`) still works.
+    -   Stremio addon module: `addon-download-service.ts`,
+        `stream-resolver.ts`, `stream-fetch.ts`,
+        `download-selection.ts`, `stream-normalize.ts`,
+        `stream-normalize-downloader.ts`, `stream-ids.ts`,
+        `stream-errors.ts`, `manifest-*.ts`, `connect-guard.ts`,
+        `ssrf.ts`, `admin-addons.ts` — all preserved unchanged.
+    -   Stremio downloader route: `/api/downloader/mavero/addon/+server.ts`
+        — preserved unchanged.
+    -   Stremio admin addons page: `/routes/admin/addons/+page.{svelte,server.ts}`
+        — preserved (only the empty-state message string was updated).
+    -   Manifest services: `manifest-cache.ts`, `manifest-fetch.ts`,
+        `manifest-normalize.ts`, `manifest-service.ts` — preserved
+        unchanged.
+    -   Addon `MaveroAddonDownload.svelte` component: preserved
+        unchanged.
+-   Targeted regression tests (all PASS, listed in §8 above):
+    20 stremio downloader tests + 1 PlaybackManager test + 3 phase1
+    contract tests + 1 phase2 watch-parallel test + 1 phase2
+    cache-headers test + 1 adult-phase9 cross-phase test = 28 tests.
+
+### Notes
+
+-   `direct_play_sources` retirement is deferred — it requires a new
+    migration and the Phase 1 task description explicitly preferred
+    no migration. A later phase that explicitly handles schema changes
+    can perform the retirement (drop trigger → drop function → drop
+    table). The table is provably orphaned (Phase 0 §5).
+-   The `MAVERO_STREMIO_SESSION_SECRET` env var is no longer consumed
+    by any source code (its consumer `session-env.ts` was deleted).
+    Deployments can safely remove this env var from their secret
+    manager. The `.env.example` block was removed.
+-   The 3 deleted `/api/playback/stremio/*` routes had rate-limit
+    wiring (`stremioSession` rule). The rate-limit infrastructure
+    itself is unchanged; only the consumer route was removed. The
+    `stremioSession` rule definition is no longer exercised but
+    remains as dead config in `src/lib/server/http/rate-limit.ts` —
+    leaving it in place is harmless and avoids an unnecessary change
+    to a shared infrastructure file. A later cleanup phase can prune
+    the unused rule definition.
+
+### Next phase
+
+Phase 2 — Hosting database foundation. Per the implementation plan
+§Phase 2, this involves creating new migrations for the hosting
+domain (`media_items`, `media_folders`, `media_assets`,
+`media_upload_operations`, `media_operations`, `provider_folder_mappings`,
+`media_availability_requests`) with PK/FK constraints, unique canonical
+keys, indexes, admin-only management policies, RLS, updated-at triggers,
+and CHECK constraints on status enums. Phase 2 also adds TypeScript
+domain types/mappers and updates `database.types.ts`.
+
+CRITICAL for Phase 2: the migration drift confirmed in Phase 0 §4
+means new migrations MUST use idempotent `IF NOT EXISTS` guards and
+MUST be applied through the same out-of-band process used for the
+46 drifted migrations. They MUST follow the IST timestamp convention
+(see Phase 0 follow-up §F3 + Implementation Plan §28.2).
+
+DO NOT begin Phase 2 automatically. STOP and await user approval.
+
+### Phase 1 Final Report
+
+Phase 1 commit SHA: <recorded after the Phase 1 commit is created
+via `git rev-parse HEAD` — see the new HEAD reported to the user
+after push>
+
+Commit message:
+
+``` text
+refactor(hosting): retire obsolete mavero player branch
+```
+
+Files changed (summary):
+
+-   16 src/ files deleted (listed in §3 above).
+-   7 test files retired (6 stremio_player_phase{4..9} +
+    1 stremio_downloader_phase14).
+-   12 src/ files modified (listed in §4 above).
+-   7 test files updated (listed in §5 above).
+-   `package.json` — 7 entries removed from the `test` script.
+-   `.env.example` — `MAVERO_STREMIO_SESSION_SECRET` block removed.
+-   3 empty route directories removed.
+
+No migrations added. No live DB schema changes. Phase 1 is purely
+application-code cleanup.
 
 ------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { StreamingAddon } from '$lib/shared/streaming-addons';
@@ -23,7 +23,6 @@ import {
   type ContentLookup,
 } from '$lib/server/streaming/stremio/addon-download-service';
 import { externalPlayerHint, externalPlayerLaunchFor, MPV_ANDROID_PACKAGE } from '$lib/shared/external-player';
-import { MAVERO_PLAYER_SOURCE_NAME, maveroPlayerSourceOption } from '$lib/shared/mavero-player';
 
 /**
  * Phase 15 test suite — Downloader Reliability + Source Expansion + 10-Link Selection.
@@ -700,12 +699,20 @@ function sectionL(): void {
 // ---------------------------------------------------------------------------
 
 function sectionM(): void {
+  // Phase 1 (Vidara+Abyss hosting implementation) retired the obsolete
+  // MAVERO Player virtual source branch entirely. The watch route no longer
+  // appends maveroPlayerSourceOption() to sourceOptions, AND the source
+  // identity module itself is gone.
   const watchPage = read('src/routes/watch/[type]/[id]/+page.svelte');
-  ok(!watchPage.includes('maveroPlayerSourceOption()'), 'M: the watch route no longer appends maveroPlayerSourceOption() to sourceOptions');
+  ok(!watchPage.includes('maveroPlayerSourceOption()'), 'M: the watch route does NOT append maveroPlayerSourceOption() to sourceOptions');
   ok(!/\.\.\.\(data\.maveroPlayerAvailable\s*\?\s*\[maveroPlayerSourceOption\(\)\]/.test(watchPage), 'M: the conditional append of the virtual option is gone');
-  const shared = read('src/lib/shared/mavero-player.ts');
-  ok(shared.includes(MAVERO_PLAYER_SOURCE_NAME), 'M: the MAVERO Player display name is preserved (deep-link backward compat)');
-  ok(maveroPlayerSourceOption().name === MAVERO_PLAYER_SOURCE_NAME, 'M: the maveroPlayerSourceOption() helper still works (it is just no longer appended to the source selector)');
+  ok(!watchPage.includes('isMaveroPlayerSourceId'), 'M: the deep-link isMaveroPlayerSourceId branch is gone');
+  ok(!watchPage.includes('prepareMaveroPlayerSource'), 'M: the prepareMaveroPlayerSource function is gone');
+  ok(!existsSync(path.resolve(REPO_ROOT, 'src/lib/shared/mavero-player.ts')), 'M: src/lib/shared/mavero-player.ts is removed');
+  ok(!existsSync(path.resolve(REPO_ROOT, 'src/lib/server/streaming/stremio/mavero-player-source.ts')), 'M: src/lib/server/streaming/stremio/mavero-player-source.ts is removed');
+  ok(!existsSync(path.resolve(REPO_ROOT, 'src/lib/client/player/mavero-player.ts')), 'M: src/lib/client/player/mavero-player.ts is removed');
+  ok(!existsSync(path.resolve(REPO_ROOT, 'src/lib/client/player/mavero-streams.ts')), 'M: src/lib/client/player/mavero-streams.ts is removed');
+  ok(!existsSync(path.resolve(REPO_ROOT, 'src/routes/api/playback/stremio/+server.ts')), 'M: src/routes/api/playback/stremio/+server.ts (aggregate endpoint) is removed');
 }
 
 // ---------------------------------------------------------------------------

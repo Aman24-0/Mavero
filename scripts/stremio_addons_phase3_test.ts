@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { resolveStremioStreams, STREAM_RESOLUTION_CONCURRENCY, STREAM_RESOLUTION_TIMEOUT_MS, type StremioStreamResolution } from '$lib/server/streaming/stremio/stream-resolver';
-import { stremioStreamToPlayerSource, stremioSourceId } from '$lib/server/streaming/stremio/stream-player-source';
 import { buildStremioStreamUrl, planAddonStreamRequest, resolveAddonIdProperty, stremioStreamTypeFor } from '$lib/server/streaming/stremio/stream-ids';
 import { normalizeStremioStreamResponse, type NormalizedStremioStream } from '$lib/server/streaming/stremio/stream-normalize';
 import { fetchStremioStreamResponse, STREAM_MAX_BYTES, STREAM_REQUEST_TIMEOUT_MS } from '$lib/server/streaming/stremio/stream-fetch';
@@ -741,8 +740,7 @@ function failedWith(resolution: StremioStreamResolution, addonId: string, errorC
   const source = resolution.sources[0];
   ok(source.streamName === '[EN] Example', 'AH: stream name preserved verbatim for later UI');
   ok(source.streamTitle === 'Example 1080p English (Multi Audio)', 'AH: stream title preserved verbatim (language info kept raw, no NLP guessing)');
-  const playerSource = stremioStreamToPlayerSource(source);
-  ok(playerSource.metadata?.title === 'Example 1080p English (Multi Audio)', 'AH: language-bearing title flows into PlayerSource metadata');
+  ok(source.streamTitle === 'Example 1080p English (Multi Audio)', 'AH: language-bearing title preserved on the resolved Stremio stream (downloader surfaces it verbatim)');
 }
 
 // ---------------------------------------------------------------------------
@@ -933,26 +931,6 @@ function failedWith(resolution: StremioStreamResolution, addonId: string, errorC
   // Raw addon responses are never copied into the result (normalized fields only).
   const resolutionJson = JSON.stringify(resolution);
   ok(!resolutionJson.includes('"streams"'), 'Security: raw addon response shape never leaks into the result');
-}
-
-// ---------------------------------------------------------------------------
-// PlayerSource adapter (Phase 3 output shape, nothing wired into the player)
-// ---------------------------------------------------------------------------
-{
-  const fetcher = createFetcher({ 'https://addon.example/stream/movie/tt1234567.json': streamRoute([streamFixture()]) }, []);
-  const { client } = fakeAddonClient([addonRowFixture()]);
-  const resolution = await resolveStremioStreams(client, movieRequest, { fetcher, dnsResolver: publicResolver });
-  const playerSource = stremioStreamToPlayerSource(resolution.sources[0]);
-  ok(playerSource.type === 'direct', 'Adapter: Stremio streams map to the direct PlayerSource type');
-  ok(playerSource.url === resolution.sources[0].url, 'Adapter: URL preserved verbatim');
-  ok(playerSource.providerId === resolution.sources[0].addonId, 'Adapter: providerId is the real streaming_addons id (no fake uuid invented)');
-  ok(playerSource.sourceId === stremioSourceId('example-http-addon', 0) && playerSource.sourceId === 'stremio:example-http-addon:0', 'Adapter: deterministic synthetic source key');
-  ok(playerSource.mediaType === 'movie', 'Adapter: media type mapped');
-  ok(playerSource.metadata?.protocol === 'hls' && playerSource.metadata?.sourceName === 'Example HTTP Addon', 'Adapter: protocol + addon identity in metadata');
-  ok(playerSource.qualities?.length === 1 && playerSource.qualities[0].label === '1080p', 'Adapter: quality option populated');
-  ok(playerSource.headers === undefined, 'Adapter: headers never populated (header-dependent streams excluded upstream)');
-  ok(playerSource.sandboxPolicy === undefined, 'Adapter: sandbox policy not fabricated for direct streams');
-  ok(JSON.stringify(playerSource).toLowerCase().includes('m3u8') === true, 'Adapter: playable URL present for the future player consumption');
 }
 
 console.log(`stremio_addons_phase3_test: ${passed} checks passed`);
