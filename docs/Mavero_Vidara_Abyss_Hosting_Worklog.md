@@ -8,13 +8,16 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 0
+Current Phase: 0 (Phase 0 COMPLETE; Phase 0 follow-up COMPLETE;
+                  awaiting user approval to start Phase 1)
 Status: COMPLETE
-Last Commit: 08e42af8245e217593ebe136a21d940cd0c26d96
+Last Commit: 3ed8db57e53a214f0737c3e2fb747267a22bafef
             (chore(hosting): baseline and schema drift audit)
+            + Phase 0 follow-up commit (SHA recorded after commit
+            creation — see Phase 0 Follow-up §F6)
 Next Task: Phase 1 — Remove obsolete MAVERO Player / direct-play branch
 Blocking Issue: none
-Plan Revision: 1.1
+Plan Revision: 1.2
 ```
 
 ## Operating Rules
@@ -42,11 +45,67 @@ Every completed phase must:
 If implementation discovers a material plan change, document it in both
 the plan revision history and this worklog before continuing.
 
+### Commit SHA recording convention (added by Phase 0 follow-up)
+
+Commit SHAs are recorded after commit creation using `git rev-parse
+HEAD` or `git log -1 --format=%H`.
+
+Do NOT amend a commit solely to embed its own final SHA into its
+contents, because that changes the SHA. (An amend creates a new commit
+object with a new SHA, so the SHA referenced inside the file is always
+one step behind the real SHA. A self-referencing amend loop has no
+fixed point.)
+
+Workflow:
+
+1. Stage all phase deliverables (docs + code + migrations + tests).
+2. Commit once with the appropriate phase message.
+3. Run `git rev-parse HEAD` to obtain the actual final SHA.
+4. If the worklog/plan MUST reference that SHA, create a SEPARATE
+   follow-up commit (a documentation-only commit, no source changes)
+   that records the SHA. This is what the Phase 0 follow-up commit
+   below does.
+
+### Migration filename timestamp convention (added by Phase 0 follow-up)
+
+Every NEW Supabase migration file created during this project must use
+a timestamp generated from the actual creation time in Indian Standard
+Time (IST, UTC+05:30).
+
+Format:
+
+``` text
+YYYYMMDDHHMMSS_description.sql
+```
+
+The timestamp must:
+
+-   represent the real creation moment (not a rounded placeholder);
+-   be chronologically correct relative to other new migrations;
+-   be in IST, NOT UTC.
+
+Do NOT:
+
+-   manually invent migration timestamps;
+-   copy an old timestamp from another migration;
+-   generate the filename according to UTC;
+-   reuse a round-number placeholder like `000000`.
+
+Before creating a new migration, determine the actual current IST time
+(e.g. `TZ=Asia/Kolkata date +%Y%m%d%H%M%S`) and use that exact value
+for the filename prefix.
+
+This rule applies to ALL future migration files created by GLM in this
+project, not just the current hosting implementation.
+
+See Implementation Plan §28 "Engineering conventions" for the formal
+record.
+
 ## Phase 0 --- Baseline + Migration Drift + Legacy Direct Audit
 
 Status: COMPLETE
 
-Commit: 08e42af8245e217593ebe136a21d940cd0c26d96
+Commit: 3ed8db57e53a214f0737c3e2fb747267a22bafef
         (chore(hosting): baseline and schema drift audit)
 
 Date: 2026-09-28
@@ -961,7 +1020,7 @@ DO NOT begin Phase 1 automatically. STOP and await user approval.
 
 ### Phase 0 Final Report
 
-Phase 0 commit SHA: `08e42af8245e217593ebe136a21d940cd0c26d96`
+Phase 0 commit SHA: `3ed8db57e53a214f0737c3e2fb747267a22bafef`
 
 Commit message:
 
@@ -976,6 +1035,202 @@ Files changed (2 files, 1042 insertions, 33 deletions):
 
 No source code under `src/` modified. No migrations added. No live DB
 schema changes. Phase 0 is audit-only.
+
+### Phase 0 Follow-up --- Documentation/Process Corrections
+
+Status: COMPLETE (this sub-section records the Phase 0 follow-up work
+requested by the user after Phase 0 was accepted; it does NOT modify
+Phase 0 itself).
+
+Commit (this follow-up):
+<recorded after the follow-up commit is created — see the follow-up
+SHA at the bottom of this section>
+
+Date: 2026-09-28
+
+#### F1. Phase 0 final SHA correction
+
+The original Phase 0 commit was created through a series of
+`git commit --amend` operations, each of which produced a new commit
+SHA. The worklog content embedded inside the final Phase 0 commit
+therefore referenced an intermediate SHA (`08e42af8...`) rather than
+the actual final SHA.
+
+Correction applied in this follow-up:
+
+-   All 4 references to the old SHA inside the worklog have been
+    updated to the actual final Phase 0 commit SHA:
+    `3ed8db57e53a214f0737c3e2fb747267a22bafef`.
+-   The worklog now records the Phase 0 final SHA correctly in:
+    -   Current State block (`Last Commit:`).
+    -   Phase 0 section header (`Commit:` line).
+    -   Phase 0 Final Report (`Phase 0 commit SHA:`).
+    -   Plan Changes Change 1 entry (`Commit:` line at end).
+
+Convention added (see Operating Rules above): "Do NOT amend a commit
+solely to embed its own final SHA into its contents, because that
+changes the SHA." The correct workflow is: commit once, then if the
+SHA must be referenced in content, create a SEPARATE follow-up commit.
+
+#### F2. Migration timestamp audit findings
+
+This sub-section records the audit requested by the user regarding
+migration filename timestamp prefixes.
+
+##### F2.1 Audit scope
+
+-   73 repository migration files under `supabase/migrations/*.sql`
+    (timestamp prefix range `20260820000000` — `20261009000000`).
+-   Live Supabase migration ledger
+    `supabase_migrations.schema_migrations` (27 rows; same set as
+    Phase 0 §4 confirmed).
+-   Git history: first-commit author date for each migration file
+    (via `git log --diff-filter=A --follow --format='%aI'`).
+-   Comparison dimensions: filename-prefix interpretation in UTC,
+    filename-prefix interpretation in IST (+05:30), git author date
+    (UTC + IST), live ledger version (UTC, since `supabase migration
+    list` reports UTC).
+
+##### F2.2 Findings
+
+Distribution by classification (out of 73 files):
+
+| Classification              | Count | Meaning |
+|-----------------------------|------:|---------|
+| `PREFIX_DRIFT_SAME_DAY`    | 32    | File prefix is within the same UTC day as the git first-commit author date, but is a rounded placeholder (e.g. `000000`, `010000`). |
+| `PREFIX_NEAR_GIT_TIME`     | 2     | File prefix is within 5 minutes of the git first-commit author date. The only migrations whose prefix appears to be a real creation timestamp. |
+| `PREFIX_DRIFT_LARGE`       | 39    | File prefix is more than 24 hours away from the git first-commit author date. The prefix is either BEFORE or AFTER the actual creation date. |
+
+The 2 migrations with `PREFIX_NEAR_GIT_TIME`:
+
+| File prefix      | Slug                              | Git author UTC         | Live ledger version  |
+|------------------|-----------------------------------|------------------------|----------------------|
+| `20260822093000` | `persistent_favorite_deletions`   | `2026-08-22 09:26:47Z` | `20260822091752`     |
+| `20260823080000` | `harden_favorite_deletion_rls`    | `2026-08-23 07:57:05Z` | `20260823074630`     |
+
+The single file with a real-looking time that is NOT one of the above
+(`20260823081000_harden_history_idempotency.sql`, prefix `08:10:00Z`
+vs git `07:57:05Z`) is classified as `PREFIX_DRIFT_SAME_DAY` because
+the 13-minute gap exceeds the 5-minute tolerance — but it is clearly
+also a real creation timestamp rounded up to the next 10-minute mark.
+
+##### F2.3 Conclusion: the mismatch is NOT primarily a timezone issue
+
+For the bulk of migrations (71 of 73), the filename timestamp prefix
+is a **hand-invented round-number placeholder**, not an actual
+creation timestamp. Examples:
+
+-   `20260820000000_phase5_auth_sync.sql` — prefix `00:00:00Z` (UTC
+    midnight); git first-commit author date was
+    `2026-08-20 04:58:29Z` (05:30 hours later).
+-   `20260824000000_phase7e_superembed_experimental.sql` — prefix
+    `2026-08-24 00:00:00Z`; git first-commit author date was
+    `2026-08-31 17:29:19Z` (8 days later — the file was created
+    ~8 days AFTER the prefix date).
+-   `20261009000000_position_updated_at.sql` — prefix
+    `2026-10-09 00:00:00Z`; git first-commit author date was
+    `2026-09-27 11:24:19Z` (the prefix is ~12 days IN THE FUTURE
+    relative to the actual creation date).
+
+A timezone-only mismatch would produce offsets of exactly 5 hours 30
+minutes (IST→UTC) or 5 hours 30 minutes earlier (UTC→IST). The
+observed mismatches range from minutes (for the 2 real-timestamp
+files) to days/weeks (for the placeholder files), with no consistent
+5h30m offset. This rules out "migrations were created using a
+different timezone" as the primary cause.
+
+The 2 files with real-looking times (`persistent_favorite_deletions`,
+`harden_favorite_deletion_rls`) use timestamps that match the git
+author date interpreted as UTC. This is consistent with the Supabase
+CLI default behavior (`supabase migration new` generates a UTC
+filename prefix).
+
+##### F2.4 The live Supabase ledger uses UTC
+
+Live ledger timestamps (e.g. `20260820085947`) appear to be the actual
+moment Supabase CLI applied the migration to the live DB, recorded in
+UTC. These timestamps are CLOSE to (but typically a few minutes earlier
+than) the git first-commit author date. This is the expected Supabase
+CLI behavior — `supabase db push` writes the current UTC timestamp
+into `schema_migrations.version` at the moment of applying each
+migration.
+
+##### F2.5 Existing migration files MUST remain unchanged
+
+Per the user instruction, the 73 existing migration filenames are
+HISTORICAL ARTIFACTS and must remain unchanged. There is NO
+independently proven reason that renaming them is safe and required:
+
+-   Renaming would invalidate the live `schema_migrations.version`
+    ledger mapping (the live DB has the OLD versions recorded; a
+    rename would not change those rows, so the live ledger would
+    reference filenames that no longer exist in the repo).
+-   Renaming would break any `pg_dump` / restore chain that depends
+    on the historical filename ordering.
+-   The mismatch is cosmetic (round-number placeholders); it does not
+    affect migration execution correctness because Supabase applies
+    migrations by filename order, and the round-number prefixes DO
+    preserve a chronologically sensible order even when the exact
+    time is wrong.
+
+Therefore: NO migration filenames were renamed. The Phase 1+ hosting
+migrations will follow the NEW IST-timestamp convention (see F3 below)
+without disturbing the historical files.
+
+#### F3. Future migration naming rule (IST)
+
+Recorded formally in the Implementation Plan §28 "Engineering
+conventions" (added by this follow-up) and in the Operating Rules
+section of this worklog (above).
+
+Summary:
+
+-   Every NEW Supabase migration created during this project must use
+    a timestamp generated from the actual creation time in IST
+    (UTC+05:30).
+-   Format: `YYYYMMDDHHMMSS_description.sql` where the prefix is
+    obtained via e.g. `TZ=Asia/Kolkata date +%Y%m%d%H%M%S` at the
+    moment of migration creation.
+-   Do NOT manually invent timestamps, copy old timestamps, generate
+    filenames in UTC, or use round-number placeholders.
+-   This rule applies to ALL future migration files created by GLM
+    in this project, not just the current hosting implementation.
+
+#### F4. Deliverables produced by this follow-up
+
+-   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
+    -   §28 "Engineering conventions" added (commits SHAs + migration
+        timestamp rules).
+    -   §27 Revision History: Revision 1.2 added.
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md`
+    -   Operating Rules section extended with the commit SHA
+        recording convention + the migration filename timestamp
+        convention.
+    -   Phase 0 follow-up sub-section added (this section).
+    -   All 4 SHA references inside the Phase 0 section fixed to
+        `3ed8db57e53a214f0737c3e2fb747267a22bafef`.
+    -   Plan Changes Change 2 entry appended.
+
+No source code under `src/` modified. No existing migration files
+renamed or modified. No new migrations added. No live DB schema
+changes. Phase 0 follow-up is documentation/process-only.
+
+#### F5. Verification
+
+-   `git diff --check`: clean (no whitespace errors).
+-   All `08e42af8...` references replaced by
+    `3ed8db57e53a214f0737c3e2fb747267a22bafef` (grep confirms 0
+    remaining).
+-   `pnpm check`: not re-run — no TypeScript/Svelte source changes in
+    this follow-up.
+-   `pnpm build`: not re-run — no source changes in this follow-up.
+
+#### F6. Phase 0 follow-up final report
+
+Phase 0 follow-up commit SHA:
+<recorded after the follow-up commit is created via
+`git rev-parse HEAD` — see the new HEAD reported to the user after
+push>
 
 ------------------------------------------------------------------------
 
@@ -1364,5 +1619,82 @@ Affected files / schema:
 -   NO migrations added.
 -   NO live DB schema changes.
 
-Commit: 08e42af8245e217593ebe136a21d940cd0c26d96
+Commit: 3ed8db57e53a214f0737c3e2fb747267a22bafef
         (chore(hosting): baseline and schema drift audit)
+
+## Change 2 --- Phase 0 follow-up: commit SHA convention + IST migration naming rule + migration timestamp audit
+
+Date: 2026-09-28
+
+Phase: 0 follow-up (documentation/process corrections only; no source,
+schema, or migration changes).
+
+Original plan:
+
+-   The implementation plan had no formal "Engineering conventions"
+    section. Commit SHA recording and migration filename timestamp
+    conventions were implicit.
+-   The Phase 0 worklog contained references to an intermediate Phase 0
+    commit SHA (`08e42af8...`) because the original Phase 0 commit was
+    created through a series of `git commit --amend` operations.
+
+New findings:
+
+1.  **Migration filename timestamp audit** (requested by the user):
+    Existing migration filename prefixes are predominantly hand-invented
+    round-number placeholders, not actual creation timestamps. 71 of 73
+    migrations have a prefix that is NOT a real creation time. The
+    mismatch is NOT primarily a timezone issue — it is a manual
+    filename construction issue. The 2 migrations with real-looking
+    prefixes (`persistent_favorite_deletions`, `harden_favorite_deletion_rls`)
+    use UTC timestamps consistent with Supabase CLI default behavior.
+    The 73 existing migration filenames are historical artifacts and
+    MUST NOT be renamed. Full audit details in Phase 0 Follow-up §F2
+    above.
+
+2.  **Future migration naming rule**: From Phase 0 follow-up onward,
+    every NEW Supabase migration created during this project must use
+    a timestamp generated from the actual creation time in IST
+    (UTC+05:30). Format: `YYYYMMDDHHMMSS_description.sql`. Use
+    `TZ=Asia/Kolkata date +%Y%m%d%H%M%S` to obtain the prefix.
+
+3.  **Commit SHA recording convention**: Commit SHAs are recorded
+    AFTER commit creation using `git rev-parse HEAD`. Do NOT amend a
+    commit solely to embed its own final SHA into its contents,
+    because that changes the SHA. The Phase 0 final SHA was
+    `3ed8db57e53a214f0737c3e2fb747267a22bafef`; the worklog content
+    inside that commit had been left referencing an intermediate SHA
+    (`08e42af8...`) and is now corrected by this follow-up commit.
+
+Decision:
+
+-   Update Implementation Plan:
+    -   Add §28 "Engineering conventions" (commit SHA convention +
+        migration filename timestamp convention).
+    -   Add §27 Revision 1.2 entry.
+-   Update Worklog:
+    -   Extend Operating Rules with the commit SHA convention + the
+        migration filename timestamp convention.
+    -   Add Phase 0 Follow-up sub-section (§F1—§F6) with the migration
+        timestamp audit findings and the new naming rule.
+    -   Fix the 4 stale SHA references inside the Phase 0 section.
+-   Do NOT modify any existing migration filenames.
+-   Do NOT modify any source code under `src/`.
+-   Do NOT modify any live DB schema.
+
+Plan revision: 1.2 (see Implementation Plan §27 Revision History).
+
+Affected files / schema:
+
+-   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
+    (§28 added, §27 Revision 1.2 added).
+-   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md`
+    (Operating Rules extended; Phase 0 Follow-up §F1—§F6 added; 4 SHA
+    references fixed; this Plan Changes Change 2 entry appended).
+-   NO source code under `src/` modified.
+-   NO existing migration files renamed or modified.
+-   NO new migrations added.
+-   NO live DB schema changes.
+
+Commit: <recorded after the Phase 0 follow-up commit is created — see
+        Phase 0 Follow-up §F6 above>

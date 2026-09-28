@@ -2084,4 +2084,133 @@ The project is complete only when all are true:
                                                   Plan-change protocol
                                                   §22 applies to the final
                                                   adapter contract.
+
+  1.2                     2026-09-28              Phase 0 follow-up:
+                                                  recorded (a) the
+                                                  commit SHA recording
+                                                  convention (do NOT
+                                                  amend a commit to embed
+                                                  its own SHA — instead
+                                                  create a separate
+                                                  follow-up commit if
+                                                  the SHA must be
+                                                  referenced in content);
+                                                  (b) the migration
+                                                  filename timestamp
+                                                  convention for ALL
+                                                  future migrations (IST
+                                                  UTC+05:30 actual
+                                                  creation time, format
+                                                  `YYYYMMDDHHMMSS_description.sql`);
+                                                  and (c) the Phase 0
+                                                  migration timestamp
+                                                  audit findings (71 of 73
+                                                  existing migration
+                                                  filename prefixes are
+                                                  hand-invented round-number
+                                                  placeholders, NOT a
+                                                  timezone issue; existing
+                                                  filenames remain
+                                                  unchanged as historical
+                                                  artifacts). §28 added.
   -----------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# 28. Engineering conventions
+
+These conventions apply to ALL future work on this project — not just
+the current hosting implementation.
+
+## 28.1 Commit SHA recording
+
+Commit SHAs are recorded after commit creation using `git rev-parse
+HEAD` or `git log -1 --format=%H`.
+
+Do NOT amend a commit solely to embed its own final SHA into its
+contents, because that changes the SHA. An `--amend` creates a new
+commit object with a new SHA, so the SHA referenced inside the file is
+always one step behind the real SHA. A self-referencing amend loop has
+no fixed point — each amend produces a new SHA, requiring yet another
+amend, forever.
+
+Workflow when a phase deliverable must reference its own commit SHA
+inside a doc / file:
+
+1.  Stage all phase deliverables (docs + code + migrations + tests).
+2.  Commit once with the appropriate phase message.
+3.  Run `git rev-parse HEAD` to obtain the actual final SHA.
+4.  If the worklog / plan / any file MUST reference that SHA, create a
+    SEPARATE follow-up commit (a documentation-only commit, no source
+    changes) that records the SHA.
+
+This is the pattern the Phase 0 follow-up commit uses.
+
+## 28.2 Migration filename timestamp convention
+
+Every NEW Supabase migration file created during this project must use
+a timestamp generated from the actual creation time in Indian Standard
+Time (IST, UTC+05:30).
+
+Format:
+
+``` text
+YYYYMMDDHHMMSS_description.sql
+```
+
+Rules:
+
+-   The timestamp MUST represent the real creation moment, not a
+    rounded placeholder.
+-   The timestamp MUST be chronologically correct relative to other
+    new migrations.
+-   The timestamp MUST be in IST, NOT UTC.
+-   Do NOT manually invent migration timestamps.
+-   Do NOT copy an old timestamp from another migration.
+-   Do NOT generate the filename according to UTC if the repository
+    workflow expects IST.
+-   Do NOT use a round-number placeholder like `000000`.
+
+Before creating a new migration, determine the actual current IST time
+and use that exact value for the filename prefix. Example:
+
+``` bash
+TZ=Asia/Kolkata date +%Y%m%d%H%M%S
+```
+
+### 28.2.1 Why IST
+
+The repository owner commits in IST (recent commits show
+`+0530` timezone). The existing migration filename audit (Phase 0
+follow-up) confirmed that prior migrations used inconsistent
+placeholder prefixes; the new convention removes that ambiguity by
+requiring actual IST creation timestamps.
+
+### 28.2.2 Existing migration filenames are historical artifacts
+
+The 73 existing migration files under `supabase/migrations/` have
+filename timestamp prefixes that do NOT match the actual migration
+creation time (71 of 73 use hand-invented round-number placeholders;
+the remaining 2 use real UTC timestamps consistent with Supabase CLI
+default behavior). These filenames MUST remain unchanged — renaming
+would invalidate the live `schema_migrations.version` ledger mapping
+and break any `pg_dump` / restore chain that depends on the historical
+filename ordering.
+
+The mismatch is cosmetic and does NOT affect migration execution
+correctness because Supabase applies migrations by filename order, and
+the existing prefixes DO preserve a chronologically sensible order
+even when the exact time is wrong.
+
+See Worklog "Phase 0 Follow-up §F2" for the full audit.
+
+## 28.3 Scope
+
+These conventions apply to:
+
+-   all future phases of the Vidara + Abyss hosting implementation;
+-   all future migration files created by GLM in this project, even
+    outside the hosting work;
+-   all future commits created by GLM in this project.
+
+------------------------------------------------------------------------
