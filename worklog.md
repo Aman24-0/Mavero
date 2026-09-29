@@ -651,3 +651,254 @@ Mobile (<1024px):
 - Implement progress, processing, success/failure states with the new Admin 2.0 visual system.
 - Implement subtitle flow using existing backend services.
 - Migrate the upload page from legacy `AdminPageHeader` to the new `AdminPage` framework.
+
+---
+
+## Phase D — Upload / Import
+
+**Date:** 2026-09-30
+**Commit:** `361dbdd`
+**Objective:** Transform the existing 755-line upload wizard into a proper Admin 2.0 contextual Upload / Import workflow — guided, capability-driven, mobile-native, with proper polling, retry, and subtitle isolation.
+
+### Audit Findings (Phase D fresh audit)
+
+A complete read-only audit of the entire upload subsystem was performed before any code was written. Key findings:
+
+**Existing wizard bugs + gaps:**
+1. **Dead `select` step** — declared in the `Step` type but never rendered. The step indicator highlighted "Select" as a step but it never appeared.
+2. **Broken step indicator** — active state was computed via string matching against label text, which produced wrong highlights.
+3. **No URL state** — refreshing the page lost all progress. Deep-link params (`?tmdbId=&contentType=&season=&episode=`) from Media Library and Missing Media were silently ignored.
+4. **Hardcoded Vidara/Abyss branches** — `if (selectedProviderAdapterId === 'vidara')` appeared in multiple places instead of capability-driven UI.
+5. **No provider capability display** — the wizard showed the adapter ID next to the provider name but never displayed multi-audio, subtitles, transcoding, quality-variants, remote-upload, or local-upload capabilities.
+6. **IMDb ID never captured** — `selectedImdbId` was declared but never set. The TMDB search response includes `externalIds.imdb` but the wizard ignored it.
+7. **`onDestroy` lifecycle bug** — `onDestroy` was defined as a regular function, not the Svelte lifecycle hook. The polling interval leaked on unmount.
+8. **No polling cap** — the client polled indefinitely every 10 seconds. The service's `POLL_MAX_ATTEMPTS = 60` was exported but the client never respected it.
+9. **Silent polling errors** — network errors during polling were swallowed in a `catch {}` block with no user-visible indication.
+10. **Broken retry flow** — the client called `createOperation()` after `retryOperation()` returned, creating a third orphan operation.
+11. **`retryOperation` wiped source info** — `source_url`, `source_filename`, `source_quality` were set to `null` on retry, making remote-URL retries impossible.
+12. **`completeUploadFromResult` had no state guard** — accepted any operation regardless of current state. A cancelled or failed operation could be resurrected by a stray `/complete` call.
+13. **Redundant `providerAdapterId`** — the API required both `providerSourceId` AND `providerAdapterId` in the request body, even though the adapter ID is derivable from the source via DB query.
+14. **No mobile-native composition** — single-column form, no bottom sheet, no sticky action bar, no touch-target sizing.
+15. **Subtitle UI crammed into "done" step** — not its own step despite the module doc claiming it was.
+16. **Legacy components** — used `AdminPageHeader`, `AdminFormSection`, `AdminStatusBadge` (Admin 1.0) instead of the Phase A-C `AdminPage`, `AdminStatus`, `AdminAssetStatus`.
+17. **`sourceQuality` placeholder bug** — the remote-upload "Filename (optional)" field used `placeholder="e.g. 720p"` (copy bug).
+
+### Design Decisions
+
+**Architecture:**
+- New `AdminUploadFlow.svelte` orchestrator component (~1100 lines) replaces the 755-line wizard.
+- The `+page.svelte` is now a thin wrapper (~40 lines) that delegates to `AdminUploadFlow`.
+- The `+page.server.ts` reads URL params + fetches provider capabilities server-side (no N+1 client-side).
+
+**Step state machine (8 steps):**
+```
+search → metadata → provider → source → review → uploading → processing → done
+                                                                          ↘ failed
+```
+- Removed the dead `select` step.
+- Added a `review` step (was implicit before).
+- Step indicator uses `aria-current="step"` for accessibility.
+- Backward navigation preserves completed data; downstream state is invalidated when a dependency changes.
+
+**Capability-driven UI:**
+- Provider selection shows capability badges (Multi-Audio, Subtitles, Transcoding, Quality Variants, Local Upload, Remote URL, Processing Status).
+- Upload-source radio options are filtered by capability — if `!caps.remoteUpload`, the remote-URL radio is hidden (no more hardcoded `if (adapterId === 'vidara')`).
+- Server loader returns `capabilities` per source via `getHostingAdapter(adapterId).getCapabilities()` — no client-side N+1.
+
+**URL state + deep linking:**
+- `?tmdbId=&contentType=&season=&episode=` — fully shareable/bookmarkable.
+- Uses `replaceState: true` to avoid spamming browser history.
+- Server loader reads params + fetches TMDB detail via `/api/content/[type]/[id]` to prefill the title, year, poster, and IMDb ID.
+- Deep links from Media Library detail drawer and Missing Media now land the user in the correct wizard step with prefilled context.
+
+**Polling with POLL_MAX_ATTEMPTS cap:**
+- Client respects `POLL_MAX_ATTEMPTS = 60` (~10 min cap).
+- After cap, sets `pollStale = true` and shows "Processing is taking longer than expected" UI with cancel option.
+- Network errors during polling are surfaced via `pollError` state (no silent swallowing).
+- `onDestroy` lifecycle hook (properly imported from `'svelte'`) cleans up the interval.
+
+**Retry flow fix:**
+- The client calls `/retry` directly — no duplicate `createOperation()` call.
+- Backend `retryOperation` now preserves `source_url`, `source_filename`, `source_quality` from the parent operation, so the same upload can be re-attempted without re-entering the URL or file info.
+- For remote-URL retries, the client re-submits via `createOperation` (pragmatic Phase D fix — a future phase should add a dedicated `/execute-remote` endpoint to avoid re-creating the operation).
+
+**Subtitle sub-flow:**
+- Moved from the "done" step to a separate bottom sheet.
+- `subtitleResult` tracks success/failure independently of `operationStatus` — subtitle failure does NOT mark the main upload as failed.
+- Sheet has its own focus management + close button.
+
+**Mobile-native composition:**
+- Desktop: split layout (main content + contextual side panel).
+- Mobile (<1024px): side panel hidden, controls stack vertically, sticky action bar at bottom.
+- Mobile narrow (<640px): search controls stack, metadata card becomes vertical, step labels hidden (icons only).
+
+**IMDb ID capture:**
+- On deep-link: server loader fetches TMDB detail, which includes `externalIds.imdb`.
+- On search: the flow reads `externalIds?.imdb` from the search result (when available).
+- The IMDb ID is passed to `/api/admin/media/upload` so the canonical media item gets it.
+
+### Backend Fixes (3 critical)
+
+1. **`retryOperation` preserves source info** — `source_url`, `source_filename`, `source_quality` are now copied from the parent operation instead of wiped to `null`. This makes remote-URL retries possible.
+
+2. **`completeUploadFromResult` state guard** — now rejects operations that are NOT in the `uploading` state. Idempotency is preserved for already-completed operations (returns current state). Defense-in-depth: the route handler already guards this, but the service must too.
+
+3. **`providerAdapterId` is optional** — `CreateUploadOperationInput.providerAdapterId` is now optional. The API route derives it from `providerSourceId` via a DB lookup when not provided. Eliminates the redundant field the client previously had to send. Backward compat: callers that still send it are accepted as-is.
+
+### Files Changed
+
+**New UI component:**
+1. `src/lib/components/admin2/AdminUploadFlow.svelte` (NEW) — the orchestrator (~1100 lines).
+
+**Modified backend:**
+2. `src/lib/server/hosting/upload/service.ts` — `retryOperation` preserves source info; `completeUploadFromResult` has state guard; `CreateUploadOperationInput.providerAdapterId` is optional.
+3. `src/routes/api/admin/media/upload/+server.ts` — `providerAdapterId` is optional; derived from source when not provided.
+
+**Modified pages:**
+4. `src/routes/admin/media/upload/+page.svelte` — replaced 755-line wizard with thin wrapper around `AdminUploadFlow`.
+5. `src/routes/admin/media/upload/+page.server.ts` — reads URL params + fetches provider capabilities + TMDB detail for deep links.
+
+**Tests:**
+6. `scripts/phase6_completion_test.ts` — updated UI checks to read from `AdminUploadFlow.svelte` instead of `+page.svelte`.
+7. `scripts/phase7_abyss_upload_fix_test.ts` — updated A.5 section to reflect Phase D's try/catch error handling (replaces inline `safeJsonParse`).
+8. `scripts/phase7_live_upload_fix_test.ts` — updated Section A to reflect Phase D's try/catch error handling.
+9. `scripts/admin2_phaseD_test.ts` (NEW) — 45 contract checks for Phase D.
+
+**Build config:**
+10. `package.json` — added `admin2_phaseD_test.ts` to the `test` script chain.
+
+### Backend/API Changes
+
+**No new endpoints.** Phase D reuses all 8 existing upload endpoints as-is.
+
+**3 backend fixes:**
+- `retryOperation` preserves source info (fixes broken remote-URL retries).
+- `completeUploadFromResult` has state guard (defense-in-depth).
+- `providerAdapterId` is optional (eliminates redundant field).
+
+### Issues Discovered + Fixed in Phase D
+
+1. **Dead `select` step** (FIXED) — removed from the step type.
+2. **Broken step indicator** (FIXED) — uses `aria-current="step"` and proper index mapping.
+3. **No URL state** (FIXED) — full URL sync with `replaceState`.
+4. **Hardcoded Vidara/Abyss branches** (FIXED) — capability-driven UI.
+5. **No provider capability display** (FIXED) — capability badges in selection.
+6. **IMDb ID never captured** (FIXED) — captured from TMDB detail + search.
+7. **`onDestroy` lifecycle bug** (FIXED) — properly imported from `'svelte'`.
+8. **No polling cap** (FIXED) — respects `POLL_MAX_ATTEMPTS`.
+9. **Silent polling errors** (FIXED) — surfaced via `pollError` + `pollStale`.
+10. **Broken retry flow** (FIXED) — no duplicate `createOperation()` call.
+11. **`retryOperation` wiped source info** (FIXED) — preserves source info.
+12. **`completeUploadFromResult` no state guard** (FIXED) — state guard added.
+13. **Redundant `providerAdapterId`** (FIXED) — optional + derived.
+14. **No mobile-native composition** (FIXED) — split layout + sticky action bar + mobile breakpoints.
+15. **Subtitle UI crammed into "done"** (FIXED) — separate bottom sheet.
+16. **Legacy components** (FIXED) — migrated to `AdminPage` + `AdminStatus`.
+17. **`sourceQuality` placeholder bug** (FIXED) — proper labels.
+
+### Issues Deferred to Later Phases
+
+#### Phase E — Hosting Control
+- **Provider folder mapping**: `providerFolderId` is still `null` everywhere. The upload flow does not assign assets to provider folders. Phase E will implement folder mapping.
+- **Rename/move/detach/delete/reconcile UI**: these operations belong to Phase E. The upload flow does not add action buttons for them.
+
+#### Phase F — Operations Center
+- **Operations Jobs/History/Attention UI**: the upload flow shows the current operation's status but does not provide a full operations management UI. Phase F will build that.
+- **Missing Media page reactive updates**: the Missing Media page still uses `window.location.reload()` after PATCH. Phase F will adopt reactive updates.
+- **Missing Media pagination**: limit 200 max. Phase F will add pagination.
+- **Nav count badges**: Missing Media count, Stale Operations count, Failed Operations count are NOT surfaced in the sidebar. Phase F will add this.
+
+#### Future (no phase assigned)
+- **Dedicated `/execute-remote` endpoint**: for remote-URL retries, the client currently re-submits via `createOperation` (pragmatic fix). A future phase should add a dedicated endpoint to avoid re-creating the operation.
+- **Abyss remote URL upload**: provider API not verified. Phase E or later.
+- **Abyss large-file upload**: Netlify 6 MB body limit. Phase E or later (possibly direct-to-Abyss upload flow).
+- **TMDB metadata caching**: language, country, industry, genres are NOT stored on `media_items` today. Future phase.
+- **Trigram index on `media_items.title`**: Phase C accepts sequential ILIKE scan. Future phase if catalog grows.
+- **Atomic increment RPC for `media_availability_requests.request_count`**: not blocking for Phase D.
+- **`mavero_status='stale'` activation**: stub column, never set. Future phase.
+- **`media_operations.action='replace'`**: in CHECK constraint but no service method. Future phase.
+- **`GET /api/admin/media/unlinked` side-effecting GET**: violates HTTP semantics. Phase E refactor.
+- **`PATCH /api/admin/media/missing` path param**: uses body for id. Phase F refactor.
+
+### Tests
+
+- `pnpm check`: 0 errors, 2 warnings (1 pre-existing Phase C "initial value capture" + 1 CSS line-clamp compat — both harmless)
+- `pnpm build`: PASS (29.27s)
+- Phase B test: 30 checks pass
+- Phase C test: 56 checks pass
+- Phase D test: 45 checks pass
+- All admin tests pass (13 test files)
+- All hosting tests pass:
+  - phase6_completion_test: 85 checks (updated for Phase D)
+  - phase7_vidara_auth_fix_test: 106 passed
+  - phase7_abyss_upload_fix_test: 152 passed (updated for Phase D)
+  - phase7_live_upload_fix_test: 54 passed (updated for Phase D)
+  - phase8_9_management_demand_test: 102 passed
+  - phase10_11_retry_verification_test: 84 passed
+  - phase8_sync_history_test: 51 passed
+  - phase10_hardening_test: 74 passed
+  - phase7_playback_resolver_test: 50 passed
+- Total: 688+ checks pass
+
+### Security Verification
+
+- All upload endpoints still use `requireAdmin()` — admin-only.
+- No credentials introduced — the flow uses the existing `/upload-server` endpoint which returns an authenticated URL (api_key appended server-side).
+- No secrets in any new source file (verified by Phase D test §20b).
+- The flow does NOT hardcode api_key, password, or JWT.
+- Browser-direct upload to Vidara uses the server-issued authenticated URL (api_key is transient — used once for the fetch, not stored in client state, not logged).
+- Abyss upload is server-proxied — apiKey never leaves the server.
+- File size validation preserved (5 MB limit on Abyss proxy-upload).
+- `providerAdapterId` derivation is server-side — no client-controlled adapter selection.
+
+### Responsive Verification
+
+- Desktop wide (≥1920px): split layout (main + 280px side panel), step indicator with all labels.
+- Desktop standard (1024-1919px): split layout, step indicator with all labels.
+- Tablet/mobile (<1024px): side panel hidden, controls stack, sticky action bar.
+- Mobile narrow (<640px): search controls stack vertically, metadata card vertical, step labels hidden (icons only), subtitle sheet full-width.
+- At each width: no clipping, no unusable horizontal overflow, all actions reachable.
+
+### Accessibility Verification
+
+- Keyboard navigation: file dropzone is `tabindex="0"` with Enter/Space activation.
+- Step indicator: `aria-current="step"` on active step, `role="tab"` on each step.
+- Subtitle sheet: `role="dialog"`, `aria-modal="true"`, `aria-label`.
+- Search type toggle: `role="radiogroup"`, `role="radio"`, `aria-checked`.
+- All interactive elements use `<button>` (no fake-click divs).
+- Reduced motion: all animations respect `prefers-reduced-motion`.
+- Touch targets: buttons ≥32px, file dropzone ≥120px tall.
+
+### Performance Verification
+
+- **No N+1**: provider capabilities are fetched server-side via `getHostingAdapter()` (module-level singleton, no DB query).
+- **Debounced search**: 300ms debounce on TMDB search input.
+- **URL state sync uses replaceState**: avoids spamming browser history.
+- **Polling respects cap**: stops after 60 attempts (~10 min).
+- **No live provider API calls per step**: the flow reads from the existing backend services.
+- **Lazy TMDB detail fetch**: only on deep-link initialization.
+
+### Commit SHA
+
+`361dbdd`
+
+### Deployment Notes
+
+- No env vars added or removed.
+- No migrations required.
+- No new API endpoints (3 backend fixes to existing endpoints).
+- 1 new UI component (`AdminUploadFlow`).
+- No new dependencies (lucide-svelte already present).
+- Build size impact: replaced 755-line wizard chunk with ~1100-line flow chunk (net +345 lines, but better code-splitting).
+- All admin routes continue to render server-side via existing SvelteKit adapter.
+- All admin routes continue to require admin auth via existing hooks.server.ts logic.
+
+### Next Phase
+
+**Phase E — Hosting Control:**
+- Implement Providers, Assets, Sync workspaces.
+- Add rename/move/detach/delete/reconcile UI (the backend APIs already exist).
+- Add provider health UI.
+- Add unlinked assets UI.
+- Add provider folder mapping (currently `providerFolderId: null` everywhere).
+- Replace the Phase B placeholder pages at `/admin/media/assets` and `/admin/media/sync` with full implementations.

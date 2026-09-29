@@ -67,7 +67,17 @@ export type CreateUploadOperationInput = {
   episodeTitle?: string | null;
   /** Provider selection */
   providerSourceId: string;
-  providerAdapterId: string;
+  /**
+   * Provider adapter id ('vidara' | 'abyss' | ...).
+   *
+   * Phase D §H: this field is now OPTIONAL. When omitted, the service
+   * derives it from `providerSourceId` via a DB lookup against
+   * `streaming_sources` → `streaming_providers.adapter_id`. This
+   * eliminates the redundant field that the client previously had to
+   * send (worklog §556). Backward compat: callers that still send
+   * `providerAdapterId` are accepted as-is.
+   */
+  providerAdapterId?: string;
   /** Upload source */
   uploadSource: UploadSource;
   /** For remote upload: the URL the provider should fetch */
@@ -326,15 +336,33 @@ export class UploadService {
   /**
    * Completes an upload from a provider result (used after browser-direct
    * upload to Vidara's upload server, or after a server-proxied upload).
+   *
+   * Phase D §H (state guard): reject operations that are NOT in the
+   * `uploading` state. Previously, this method had no state guard —
+   * a cancelled or failed operation could be resurrected by a stray
+   * /complete call. The route handler guards this, but defense-in-depth
+   * requires the service to guard it too. Idempotency for already-
+   * completed operations is preserved (returns the current state).
    */
   async completeUploadFromResult(operationId: string, providerResult: ProviderUploadResult, adapterId: string): Promise<UploadOperation> {
     const op = await this.getOperation(operationId);
     if (!op) throw new Error('Upload operation not found.');
 
+    // Idempotency: if the operation is already past the uploading state,
+    // return the current state without re-completing.
+    if (op.status === 'uploaded' || op.status === 'processing' || op.status === 'ready') {
+      return op;
+    }
+
+    // State guard: only `uploading` is a valid entry state for completion.
+    if (op.status !== 'uploading') {
+      throw new Error(`Cannot complete operation in ${op.status} state (must be uploading).`);
+    }
+
     const adapter = getHostingAdapter(adapterId);
     if (!adapter) throw new Error(`No hosting adapter found for adapter_id: ${adapterId}`);
 
-    // Update state: → uploaded
+    // Update state: uploading → uploaded
     await this.updateOperationState(operationId, 'uploaded', { uploaded_at: new Date().toISOString() });
 
     // Create media_assets row.
@@ -502,6 +530,16 @@ export class UploadService {
     if (op.status !== 'failed') throw new Error(`Cannot retry operation in ${op.status} state (must be failed).`);
 
     // Create a new operation linked to the original.
+    //
+    // Phase D §G (retry flow fix): preserve source_url / source_filename /
+    // source_quality from the parent operation so the same upload can be
+    // re-attempted without the client re-entering the URL or file info.
+    // Previously these were wiped to null, which made remote-URL retries
+    // impossible (the new operation had no URL to retry with) and forced
+    // the client to call createOperation() again — creating a third
+    // orphan operation. Now the retry is self-contained: the new
+    // operation carries the original source info, ready for the client
+    // to drive the upload again.
     const { data, error } = await this.client
       .from('media_upload_operations')
       .insert({
@@ -510,9 +548,9 @@ export class UploadService {
         status: 'queued',
         attempt_number: op.attempt_number + 1,
         parent_operation_id: operationId,
-        source_quality: null,
-        source_filename: null,
-        source_url: null,
+        source_quality: op.source_quality,
+        source_filename: op.source_filename,
+        source_url: op.source_url,
         requested_by_user_id: op.requested_by_user_id,
       })
       .select('*')

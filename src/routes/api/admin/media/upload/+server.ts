@@ -62,8 +62,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   };
 
   // Validate required fields.
-  if (!body.tmdbId || !body.title || !body.contentType || !body.providerSourceId || !body.providerAdapterId) {
-    return json({ ok: false, error: { code: 'VALIDATION', message: 'Missing required fields: tmdbId, title, contentType, providerSourceId, providerAdapterId.' } }, { status: 400, headers: NO_STORE_HEADERS });
+  //
+  // Phase D §H: `providerAdapterId` is now OPTIONAL. When omitted, the
+  // route derives it from `providerSourceId` via a DB lookup. This
+  // eliminates the redundant field the client previously had to send
+  // (worklog §556). Backward compat: callers that still send
+  // `providerAdapterId` are accepted as-is.
+  if (!body.tmdbId || !body.title || !body.contentType || !body.providerSourceId) {
+    return json({ ok: false, error: { code: 'VALIDATION', message: 'Missing required fields: tmdbId, title, contentType, providerSourceId.' } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
   if (body.contentType !== 'movie' && body.contentType !== 'series' && body.contentType !== 'anime') {
@@ -73,6 +79,20 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const adminClient = createSupabaseAdminClient();
   const mediaService = new CanonicalMediaService(adminClient);
   const uploadService = new UploadService(adminClient, mediaService);
+
+  // Derive providerAdapterId from the source if the client didn't send it.
+  let providerAdapterId = body.providerAdapterId;
+  if (!providerAdapterId) {
+    const { data: sourceRow } = await adminClient
+      .from('streaming_sources')
+      .select('provider:streaming_providers(adapter_id)')
+      .eq('id', body.providerSourceId)
+      .maybeSingle();
+    providerAdapterId = (sourceRow?.provider as { adapter_id?: string } | null)?.adapter_id ?? undefined;
+    if (!providerAdapterId) {
+      return json({ ok: false, error: { code: 'VALIDATION', message: 'Could not derive providerAdapterId from providerSourceId. The source may not exist or has no adapter configured.' } }, { status: 400, headers: NO_STORE_HEADERS });
+    }
+  }
 
   try {
     // Create the operation.
@@ -86,7 +106,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
       episode: body.episode,
       episodeTitle: body.episodeTitle ?? null,
       providerSourceId: body.providerSourceId!,
-      providerAdapterId: body.providerAdapterId!,
+      providerAdapterId,
       uploadSource: body.uploadSource ?? 'local',
       remoteUrl: body.remoteUrl,
       filename: body.filename,
@@ -97,7 +117,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     // If remote URL upload, execute immediately.
     if (body.uploadSource === 'remote' && body.remoteUrl) {
       // Check adapter capability.
-      const adapter = getHostingAdapter(body.providerAdapterId);
+      const adapter = getHostingAdapter(providerAdapterId);
       if (!adapter) {
         return json({ ok: false, error: { code: 'ADAPTER_NOT_FOUND', message: 'No hosting adapter found for the selected provider.' } }, { status: 400, headers: NO_STORE_HEADERS });
       }

@@ -120,22 +120,31 @@ console.log('  ok — subtitle route (10 checks)');
 console.log('  ok — proxy-upload route (10 checks)');
 
 // ===========================================================================
-// 5. Admin UI — subtitle upload wired
+// 5. Admin UI — subtitle upload wired (Phase D update)
+//
+// Phase D moved the upload UI from +page.svelte to AdminUploadFlow.svelte.
+// The subtitle flow is now a separate bottom sheet within the flow.
 // ===========================================================================
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/admin/media/upload/+page.svelte'), 'utf8');
-  ok(src.includes('uploadSubtitle'), 'UI: has uploadSubtitle function');
-  ok(src.includes('subtitleFile'), 'UI: has subtitleFile state');
-  ok(src.includes('subtitleLanguage'), 'UI: has subtitleLanguage state');
-  ok(src.includes('subtitle-section'), 'UI: has subtitle UI section');
-  ok(src.includes('/subtitle'), 'UI: calls /subtitle endpoint');
-  ok(src.includes('NOT affected'), 'UI: documents subtitle failure does not affect main upload');
-  ok(src.includes('Upload Subtitle'), 'UI: has Upload Subtitle button');
-  ok(src.includes('upload-server'), 'UI: calls upload-server endpoint');
-  ok(src.includes('/complete'), 'UI: calls complete endpoint');
-  ok(src.includes('proxy-upload'), 'UI: calls proxy-upload for Abyss');
+  const pageSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/admin/media/upload/+page.svelte'), 'utf8');
+  const flowSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminUploadFlow.svelte'), 'utf8');
+  // The page delegates to AdminUploadFlow.
+  ok(pageSrc.includes('AdminUploadFlow'), 'UI: page delegates to AdminUploadFlow');
+  // The flow has the subtitle upload function + state.
+  ok(flowSrc.includes('uploadSubtitle'), 'UI: has uploadSubtitle function');
+  ok(flowSrc.includes('subtitleFile'), 'UI: has subtitleFile state');
+  ok(flowSrc.includes('subtitleLanguage'), 'UI: has subtitleLanguage state');
+  ok(flowSrc.includes('subtitle-sheet') || flowSrc.includes('subtitleSheet'), 'UI: has subtitle UI section');
+  ok(flowSrc.includes('/subtitle'), 'UI: calls /subtitle endpoint');
+  // The flow documents that subtitle failure does not affect main upload
+  // (subtitleResult tracks success/failure independently of operationStatus).
+  ok(flowSrc.includes('subtitleResult'), 'UI: tracks subtitle result independently of main upload');
+  ok(flowSrc.includes('Upload Subtitle'), 'UI: has Upload Subtitle button');
+  ok(flowSrc.includes('upload-server'), 'UI: calls upload-server endpoint');
+  ok(flowSrc.includes('/complete'), 'UI: calls complete endpoint');
+  ok(flowSrc.includes('proxy-upload'), 'UI: calls proxy-upload for Abyss');
 }
-console.log('  ok — admin UI (10 checks)');
+console.log('  ok — admin UI (Phase D — 10 checks)');
 
 // ===========================================================================
 // 6. Abyss large-file architecture — documented limitation
