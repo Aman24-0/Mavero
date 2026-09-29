@@ -160,14 +160,14 @@ async function testVidaraAdapter(): Promise<void> {
     { status: 200, json: { result: [{ file_code: 'abc123', title: 'Renamed Movie', status: 1 }] } },
     // deleteAsset (operation response)
     { status: 200, json: { result: true } },
-    // uploadFile — step 1: get upload server
-    { status: 200, json: { result: { server: 'https://upload.vidara.so/upload' } } },
-    // uploadFile — step 2: multipart POST result
-    { status: 200, json: { data: { filecode: 'new123', size: 104857600 } } },
-    // uploadRemote
-    { status: 200, json: { data: { filecode: 'remote456' } } },
-    // getProcessingStatus
-    { status: 200, json: { data: { status: 2, status_text: 'encoding', progress: 35 } } },
+    // uploadFile — step 1: get upload server (VERIFIED: field is upload_server)
+    { status: 200, json: { result: { upload_server: 'https://upload.vidara.so/upload' } } },
+    // uploadFile — step 2: multipart POST result (VERIFIED: filecode at top level)
+    { status: 200, json: { filecode: 'new123', video_id: 123, title: 'test' } },
+    // uploadRemote (VERIFIED: GET /v1/upload/url returns data.filecode)
+    { status: 200, json: { data: { filecode: 'remote456', link: 'https://vidara.to/remote456', size: 1024 } } },
+    // getProcessingStatus (VERIFIED: now uses /v1/video/info, returns result array with status string)
+    { status: 200, json: { result: [{ status: 'processing', filecode: 'abc123', link: 'https://vidara.to/abc123' }] } },
     // listFolders
     { status: 200, json: { result: { folders: [{ folder_id: 'f1', name: 'Movies' }] } } },
     // createFolder (operation)
@@ -239,10 +239,11 @@ async function testVidaraAdapter(): Promise<void> {
   });
   ok(remoteResult.providerAssetId === 'remote456', 'Vidara: uploadRemote returns providerAssetId');
 
-  // getProcessingStatus
+  // getProcessingStatus (VERIFIED: now uses /v1/video/info, status is a string)
   const procStatus = await adapter.getProcessingStatus('abc123');
-  ok(procStatus.status === 'processing', 'Vidara: encoding status 2 → processing');
-  ok(procStatus.progressPercent === 35, 'Vidara: progress preserved');
+  ok(procStatus.status === 'processing', 'Vidara: status "processing" → processing');
+  // /v1/video/info does NOT report progress percentage — null is expected.
+  ok(procStatus.progressPercent === null, 'Vidara: progressPercent null (video/info does not report progress)');
 
   // listFolders
   const folders = await adapter.listFolders(null);

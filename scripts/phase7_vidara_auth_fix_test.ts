@@ -143,24 +143,24 @@ console.log('--- Section B: buildVidaraUrl unit tests ---\n');
 
   // B.2 Path with existing query params — api_key appended with &
   {
-    const url = buildVidaraUrl('https://api.vidara.so', '/v1/video/info', { file_code: 'abc123' }, 'test-key-456');
+    const url = buildVidaraUrl('https://api.vidara.so', '/v1/video/info', { filecode: 'abc123' }, 'test-key-456');
     ok(url.includes('/v1/video/info'), 'B.2.1 URL preserves path');
-    ok(url.includes('file_code=abc123'), 'B.2.2 existing query param preserved');
+    ok(url.includes('filecode=abc123'), 'B.2.2 existing query param preserved');
     ok(url.includes('api_key=test-key-456'), 'B.2.3 api_key appended alongside existing query param');
     ok(url.includes('&api_key='), 'B.2.4 api_key appended with & (not ?)');
     // Order: file_code first, api_key second (deterministic).
-    ok(url.indexOf('file_code=') < url.indexOf('api_key='), 'B.2.5 api_key appended AFTER existing query params');
+    ok(url.indexOf('filecode=') < url.indexOf('api_key='), 'B.2.5 api_key appended AFTER existing query params');
   }
   console.log('  ok — B.2 path with existing query (5 checks)');
 
-  // B.3 Special characters in file_code — URL-encoded correctly
+  // B.3 Special characters in query params — URL-encoded correctly
   {
-    const url = buildVidaraUrl('https://api.vidara.so', '/v1/video/info', { file_code: 'abc 123/456' }, 'test-key');
+    const url = buildVidaraUrl('https://api.vidara.so', '/v1/video/info', { filecode: 'abc 123/456' }, 'test-key');
     // URLSearchParams encodes spaces as '+' (form-encoding) — both
     // '+' and '%20' are valid encodings for a space in a query string
     // and Vidara's API accepts either. We check the space is encoded
     // (not literal) and the slash is encoded as %2F.
-    ok(url.includes('file_code=abc+123%2F456') || url.includes('file_code=abc%20123%2F456'), 'B.3.1 file_code URL-encoded (space → + or %20, slash → %2F)');
+    ok(url.includes('filecode=abc+123%2F456') || url.includes('filecode=abc%20123%2F456'), 'B.3.1 filecode URL-encoded (space → + or %20, slash → %2F)');
     ok(url.includes('api_key=test-key'), 'B.3.2 api_key preserved alongside encoded params');
   }
   console.log('  ok — B.3 URL encoding (2 checks)');
@@ -264,9 +264,9 @@ console.log('--- Section C: Vidara adapter mock fetcher tests ---\n');
     eq(captured.length, 1, 'C.2.1 exactly one request');
     const url = captured[0].url;
     ok(url.includes('/v1/video/info'), 'C.2.2 path is /v1/video/info');
-    ok(url.includes('file_code=abc123'), 'C.2.3 file_code query param present');
+    ok(url.includes('filecode=abc123'), 'C.2.3 filecode query param present (VERIFIED: not file_code)');
     ok(url.includes('api_key=test-key-asset'), 'C.2.4 api_key query param present');
-    ok(url.indexOf('file_code=') < url.indexOf('api_key='), 'C.2.5 api_key appended after file_code');
+    ok(url.indexOf('filecode=') < url.indexOf('api_key='), 'C.2.5 api_key appended after filecode');
     eq(captured[0].headers.authorization ?? null, null, 'C.2.6 NO Authorization header');
   }
   console.log('  ok — C.2 getAsset auth (6 checks)');
@@ -333,10 +333,10 @@ console.log('--- Section C: Vidara adapter mock fetcher tests ---\n');
   }
   console.log('  ok — C.4 uploadRemote auth (6 checks)');
 
-  // C.5 getProcessingStatus — GET /v1/video/encoding_status authenticates via api_key
+  // C.5 getProcessingStatus — VERIFIED: uses /v1/video/info (NOT /v1/video/encoding_status which returns 404)
   {
     const { fetcher, captured } = createCapturingFetcher([
-      { status: 200, json: { data: { status: 2, status_text: 'encoding', progress: 35 } } },
+      { status: 200, json: { result: [{ status: 'active', filecode: 'abc123' }] } },
     ]);
     const adapter = new VidaraAdapter({
       config: { apiKey: 'test-key-status', baseUrl: 'https://api.vidara.so' },
@@ -344,8 +344,8 @@ console.log('--- Section C: Vidara adapter mock fetcher tests ---\n');
     });
     await adapter.getProcessingStatus('abc123');
     eq(captured.length, 1, 'C.5.1 exactly one request');
-    ok(captured[0].url.includes('/v1/video/encoding_status'), 'C.5.2 path is /v1/video/encoding_status');
-    ok(captured[0].url.includes('file_code=abc123'), 'C.5.3 file_code query param present');
+    ok(captured[0].url.includes('/v1/video/info'), 'C.5.2 path is /v1/video/info (VERIFIED: not encoding_status)');
+    ok(captured[0].url.includes('filecode=abc123'), 'C.5.3 filecode query param present (VERIFIED: not file_code)');
     ok(captured[0].url.includes('api_key=test-key-status'), 'C.5.4 api_key query param present');
     eq(captured[0].headers.authorization ?? null, null, 'C.5.5 NO Authorization header');
   }

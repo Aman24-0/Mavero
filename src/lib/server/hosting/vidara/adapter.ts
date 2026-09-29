@@ -66,6 +66,7 @@ import {
   normalizeVidaraFolderList,
   normalizeVidaraUploadResult,
   normalizeVidaraEncodingStatus,
+  normalizeVidaraProcessingStatus,
   extractVidaraUploadServerUrl,
 } from './normalize';
 
@@ -200,7 +201,10 @@ export class VidaraAdapter implements HostingProviderAdapter {
   // --- File / asset operations ---
 
   async getAsset(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo> {
-    const url = this.url('/v1/video/info', { file_code: providerAssetId });
+    // VERIFIED (live API): the parameter name is `filecode` (NOT `file_code`).
+    // GET /v1/video/info?filecode=<code>&api_key=<key> → { result: [{ status, filecode, link, ... }] }
+    // The previous implementation used `file_code` — Vidara returned 400 "missing filecode or vid".
+    const url = this.url('/v1/video/info', { filecode: providerAssetId });
     const res = await this.http({ method: 'GET', url });
     return normalizeVidaraFileInfo(res.json as VidaraFileInfoResponse);
   }
@@ -314,12 +318,49 @@ export class VidaraAdapter implements HostingProviderAdapter {
 
   // --- Processing status ---
 
+  /**
+   * Gets the processing status of a Vidara asset.
+   *
+   * VERIFIED CONTRACT (live API, 2026-09-29):
+   *   GET /v1/video/info?filecode=<code>&api_key=<key> →
+   *   {
+   *     "result": [
+   *       {
+   *         "status": "active" | "pending" | ...,
+   *         "filecode": "<code>",
+   *         "link": "https://vidara.to/<code>",
+   *         "file_active": 1 | 0,
+   *         "video_length": "00:01:30",
+   *         "video_title": "...",
+   *         ...
+   *       }
+   *     ]
+   *   }
+   *
+   * The endpoint `/v1/video/encoding_status` returns 404 — it does NOT
+   * exist on the current Vidara API. The status is obtained from
+   * `/v1/video/info` which returns the `status` field as a STRING
+   * ("active", "pending", etc.) and `file_active` as a number (1=active, 0=inactive).
+   *
+   * The previous implementation used `/v1/video/encoding_status` — this
+   * was the root cause of the Vidara remote upload being stuck in
+   * PROCESSING: the polling endpoint returned 404, the error was caught,
+   * and the operation never transitioned to ready.
+   *
+   * We now use `/v1/video/info` and normalize the result through
+   * `normalizeVidaraFileInfo` → `normalizeVidaraFile` → `vidaraStatusMapper`.
+   */
   async getProcessingStatus(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderProcessingStatus> {
     const res = await this.http({
       method: 'GET',
-      url: this.url('/v1/video/encoding_status', { file_code: providerAssetId }),
+      url: this.url('/v1/video/info', { filecode: providerAssetId }),
     });
-    return normalizeVidaraEncodingStatus(res.json as VidaraEncodingStatusResponse);
+    if (!res.json) {
+      throw new HostingProviderError('NOT_FOUND', { message: 'Vidara processing status response was empty or non-JSON.' });
+    }
+    // Reuse normalizeVidaraFileInfo to extract the file from the response.
+    const assetInfo = normalizeVidaraFileInfo(res.json as VidaraFileInfoResponse);
+    return normalizeVidaraProcessingStatus(assetInfo);
   }
 
   // --- Folder operations ---

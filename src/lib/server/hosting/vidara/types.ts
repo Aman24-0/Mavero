@@ -32,32 +32,43 @@ export type VidaraFile = {
   title?: string;
   name?: string;
   filename?: string;
+  video_title?: string;
   size?: number | string;
   length?: number | string;
   duration?: number | string;
+  video_length?: string;
   status?: number | string;
   status_text?: string;
   single_img?: string;
   thumb?: string;
   thumbnail?: string;
+  player_img?: string;
   splash?: string;
   folder_id?: string | number;
   uploads?: number | string;
   views?: number | string;
+  video_views?: number | string;
   last_modified?: string;
   updated_at?: string;
+  video_created?: string;
+  uploaded?: string;
+  uploaded_at?: string;
   quality?: string;
   audio?: string | string[];
   subtitles?: number | string | boolean;
+  link?: string;
+  file_active?: number | string;
+  vid_id?: number | string;
   [k: string]: unknown;
 };
 
 /** Vidara file list response. */
 export type VidaraFileListResponse = {
-  result?: boolean | { files?: VidaraFile[]; total?: number; pages?: number; [k: string]: unknown };
+  result?: boolean | { files?: VidaraFile[]; videos?: VidaraFile[]; total?: number; pages?: number; [k: string]: unknown };
   status?: number;
   msg?: string | { msg?: string };
   files?: VidaraFile[];
+  videos?: VidaraFile[];
   [k: string]: unknown;
 };
 
@@ -103,10 +114,18 @@ export type VidaraUploadResultResponse = {
   result?: boolean;
   status?: number;
   msg?: string | { msg?: string };
+  /** VERIFIED (live API): local upload returns filecode at the TOP LEVEL
+   * as a full URL (e.g. "https://vidara.to/e/Vw0hY4n13k83Y").
+   * Remote URL upload returns it nested in data.filecode as a short code.
+   */
+  filecode?: string;
+  video_id?: number;
+  title?: string;
   data?: {
     filecode?: string;
     file_code?: string;
     download_url?: string;
+    link?: string;
     size?: number | string;
     [k: string]: unknown;
   };

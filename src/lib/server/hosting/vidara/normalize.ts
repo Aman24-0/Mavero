@@ -80,18 +80,44 @@ export function normalizeVidaraAccount(res: VidaraAccountResponse): ProviderAcco
 }
 
 export function normalizeVidaraFile(file: VidaraFile): ProviderAssetInfo {
+  // VERIFIED (live API, 2026-09-29): /v1/video/info returns:
+  //   {
+  //     "player_img": "https://...thumbnail...",
+  //     "status": "active" | "pending" | ...,
+  //     "filecode": "<code>",
+  //     "link": "https://vidara.to/<code>",
+  //     "video_length": "00:01:30",
+  //     "video_title": "...",
+  //     "video_views": 0,
+  //     "video_created": "2026-09-29",
+  //     "file_active": 1 | 0,
+  //     "vid_id": 4006148
+  //   }
+  // /v1/video/list returns:
+  //   {
+  //     "vid_id": 4006148,
+  //     "filecode": "<code>",
+  //     "title": "...",
+  //     "thumbnail": null,
+  //     "length": null,
+  //     "link": "https://vidara.to/<code>",
+  //     "views": 0,
+  //     "uploaded": "2026-09-29",
+  //     "status": "active" | "pending" | ...,
+  //     "file_active": 1 | 0
+  //   }
   const filecode = file.file_code ?? file.filecode ?? '';
-  const title = file.title ?? file.name ?? file.filename ?? null;
+  const title = file.title ?? file.video_title ?? file.name ?? file.filename ?? null;
   const providerStatus = file.status_text ?? String(file.status ?? 'unknown');
   return {
     providerAssetId: filecode,
-    providerVideoId: filecode ? filecode : null, // Vidara uses filecode as the video id.
+    providerVideoId: (file.vid_id != null ? String(file.vid_id) : null) ?? (filecode ? filecode : null),
     filename: file.filename ?? file.name ?? null,
     title,
-    playbackUrl: filecode ? `${VIDARA_PLAYBACK_URL_BASE}${filecode}` : null,
-    thumbnailUrl: file.single_img ?? file.thumb ?? file.thumbnail ?? file.splash ?? null,
+    playbackUrl: file.link ?? (filecode ? `${VIDARA_PLAYBACK_URL_BASE}${filecode}` : null),
+    thumbnailUrl: file.player_img ?? file.single_img ?? file.thumb ?? file.thumbnail ?? file.splash ?? null,
     sizeBytes: coerceNumber(file.size),
-    durationSeconds: coerceNumber(file.length ?? file.duration),
+    durationSeconds: coerceNumber(file.length ?? file.duration ?? file.video_length),
     sourceQuality: file.quality ?? null,
     availableQualities: file.quality ? [String(file.quality)] : [],
     audioLanguages: normalizeAudioLanguages(file.audio),
@@ -99,14 +125,19 @@ export function normalizeVidaraFile(file: VidaraFile): ProviderAssetInfo {
     providerStatus,
     status: vidaraStatusMapper(file.status),
     providerFolderId: file.folder_id != null ? String(file.folder_id) : null,
-    providerUpdatedAt: file.last_modified ?? file.updated_at ?? null,
+    providerUpdatedAt: file.last_modified ?? file.updated_at ?? file.video_created ?? file.uploaded ?? file.uploaded_at ?? null,
     raw: file as Record<string, unknown>,
   };
 }
 
 export function normalizeVidaraFileList(res: VidaraFileListResponse): ProviderAssetInfo[] {
+  // VERIFIED (live API): /v1/video/list returns { result: { videos: [...] } }
+  // The previous implementation looked for result.files — but the actual
+  // field is result.videos. We check both for backward compatibility.
   const result = res.result;
-  const files = (typeof result === 'object' && result !== null && !Array.isArray(result) ? result.files : undefined) ?? res.files ?? [];
+  const files = (typeof result === 'object' && result !== null && !Array.isArray(result)
+    ? (result.videos ?? result.files)
+    : undefined) ?? res.videos ?? res.files ?? [];
   if (!Array.isArray(files)) return [];
   return files.map(normalizeVidaraFile);
 }
@@ -137,16 +168,66 @@ export function normalizeVidaraFolder(folder: VidaraFolder): ProviderFolderInfo 
 }
 
 export function normalizeVidaraUploadResult(res: VidaraUploadResultResponse): ProviderUploadResult {
-  const data = res.data ?? res.result_data ?? {};
-  const filecode = data.filecode ?? data.file_code ?? '';
+  // VERIFIED CONTRACT (live API, 2026-09-29):
+  //
+  // LOCAL upload response (from the upload server, POST /api/upload?api_key=...):
+  //   {
+  //     "filecode": "https://vidara.to/e/Vw0hY4n13k83Y",  ← TOP LEVEL (full URL)
+  //     "video_id": 4006148,
+  //     "title": "test_video"
+  //   }
+  //   The filecode is a FULL URL like "https://vidara.to/e/<code>".
+  //   The short code is the last path segment: "Vw0hY4n13k83Y".
+  //
+  // REMOTE URL upload response (from GET /v1/upload/url?api_key=...&url=...):
+  //   {
+  //     "data": {
+  //       "filecode": "28ef362466ac",        ← nested in data (short code)
+  //       "link": "https://vidara.to/28ef362466ac",
+  //       "size": 469771811,
+  //       "title": "imiebcpikd"
+  //     },
+  //     "msg": "OK",
+  //     "server_time": "...",
+  //     "status": 200
+  //   }
+  //   The filecode is a SHORT CODE (not a URL).
+  //
+  // The previous implementation only checked res.data.filecode and
+  // res.result_data.filecode — it MISSED the top-level filecode from
+  // the local upload response. This was the root cause of the
+  // "Provider upload result does not contain a provider asset ID" error.
+  //
+  // We now check ALL possible locations:
+  //   1. Top-level filecode (local upload)
+  //   2. res.data.filecode (remote URL upload)
+  //   3. res.data.file_code (alternative field name)
+  //   4. res.result_data.filecode (legacy)
+  //
+  // For the filecode, if it's a full URL (starts with http), we extract
+  // the last path segment as the short code — this is what Vidara uses
+  // for the player URL (https://vidara.so/v/<short_code>).
+  const rawFilecode = (res.filecode as string | undefined)
+    ?? (res.data?.filecode as string | undefined)
+    ?? (res.data?.file_code as string | undefined)
+    ?? (res.result_data?.filecode as string | undefined)
+    ?? (res.result_data?.file_code as string | undefined)
+    ?? '';
+
+  // If the filecode is a full URL (e.g. "https://vidara.to/e/Vw0hY4n13k83Y"),
+  // extract the last path segment as the short code.
+  const filecode = rawFilecode.startsWith('http')
+    ? rawFilecode.split('/').pop() ?? ''
+    : rawFilecode;
+
   return {
     providerAssetId: filecode,
     providerVideoId: filecode || null,
     playbackUrl: filecode ? `${VIDARA_PLAYBACK_URL_BASE}${filecode}` : null,
     providerStatus: 'uploaded',
     status: 'uploaded',
-    sizeBytes: coerceNumber(data.size),
-    raw: data as Record<string, unknown>,
+    sizeBytes: coerceNumber(res.data?.size),
+    raw: res as Record<string, unknown>,
   };
 }
 
@@ -163,6 +244,29 @@ export function normalizeVidaraEncodingStatus(res: VidaraEncodingStatusResponse)
       : [],
     providerErrorCode: hasError ? 'provider_error' : null,
     providerErrorMessage: hasError ? String(data.error) : null,
+  };
+}
+
+/**
+ * Converts a ProviderAssetInfo (from /v1/video/info) into a
+ * ProviderProcessingStatus. Used by getProcessingStatus which now
+ * polls /v1/video/info instead of the non-existent /v1/video/encoding_status.
+ *
+ * VERIFIED (live API): the status field is a STRING: "active", "pending", etc.
+ * The vidaraStatusMapper already handles these string values:
+ *   "active" → ready, "pending"/"queued" → queued, "encoding"/"processing" → processing,
+ *   "error"/"failed" → failed
+ */
+export function normalizeVidaraProcessingStatus(asset: ProviderAssetInfo): ProviderProcessingStatus {
+  const providerStatus = asset.providerStatus ?? 'unknown';
+  const isError = providerStatus.toLowerCase().includes('error') || providerStatus.toLowerCase().includes('fail');
+  return {
+    status: isError ? 'failed' : asset.status,
+    providerStatus,
+    progressPercent: null, // Vidara /v1/video/info does not report progress percentage.
+    availableQualities: asset.availableQualities,
+    providerErrorCode: isError ? 'provider_error' : null,
+    providerErrorMessage: isError ? providerStatus : null,
   };
 }
 
