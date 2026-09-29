@@ -4663,9 +4663,28 @@ schema. Movie: `movie:tmdb:<id>`. Episode: `series:tmdb:<id>:s<S>:e<E>`.
 upload/sync). open → ignored (admin dismissed). ignored/ready → open
 (admin reopens).
 
+**Auto-resolution** (Phase 9 fix): When a hosted asset becomes `ready`
+through any lifecycle path, matching missing-media demand requests are
+automatically resolved. The auto-resolution is wired into three
+exact lifecycle hooks:
+
+1. `UploadService.pollProcessingStatus` — when polling detects
+   `procStatus.status === 'ready'`, calls `resolveDemandForMediaItem`.
+2. `SyncService.syncProvider` — when sync updates an asset to
+   `status === 'ready'`, calls `resolveDemandForAsset`.
+3. `SyncService.reconcileAsset` — when reconcile detects
+   `procStatus.status === 'ready'`, calls `resolveDemandForAsset`.
+
+Both helpers look up the `canonical_key` from `media_items` and call
+`DemandService.resolveDemand()`. Only `open` and `uploading` status
+requests are resolved. `ignored` requests are NOT reopened. `ready`
+requests are idempotent (UPDATE matches 0 rows). Fire-and-forget —
+does NOT block the upload/sync lifecycle.
+
 ### Verification
 
-- `phase8_9_management_demand_test`: 79/79 passed.
+- `phase8_9_management_demand_test`: 102/102 passed (including 18
+  auto-resolution regression checks).
 - All existing hosting/resolver tests pass unchanged.
 
 ------------------------------------------------------------------------

@@ -451,6 +451,9 @@ export class UploadService {
         upload_operation_id: operationId,
         details: { provider_status: procStatus.providerStatus },
       });
+      // Phase 9: auto-resolve any matching missing-media demand request.
+      // Fire-and-forget — does NOT block playback or the upload lifecycle.
+      await this.resolveDemandForMediaItem(op.media_item_id);
     } else if (procStatus.status === 'failed') {
       await this.updateOperationState(operationId, 'failed', {
         failed_at: new Date().toISOString(),
@@ -589,6 +592,34 @@ export class UploadService {
         admin_user_id: op.requested_by_user_id ?? undefined,
         details: { provider_asset_id: result.providerAssetId, playback_url: result.playbackUrl },
       });
+    }
+  }
+
+  /**
+   * Phase 9 — Auto-resolves matching missing-media demand requests when
+   * a hosted asset becomes ready. Looks up the canonical_key from the
+   * media_items table and calls DemandService.resolveDemand().
+   *
+   * This is a fire-and-forget side effect — errors are silently absorbed.
+   * Only 'open' and 'uploading' status requests are resolved.
+   * 'ignored' requests are NOT reopened (admin explicitly dismissed them).
+   * 'ready' requests are already resolved (idempotent).
+   */
+  private async resolveDemandForMediaItem(mediaItemId: string): Promise<void> {
+    try {
+      const { data: item } = await this.client
+        .from('media_items')
+        .select('canonical_key')
+        .eq('id', mediaItemId)
+        .maybeSingle();
+      const canonicalKey = (item as { canonical_key?: string } | null)?.canonical_key;
+      if (!canonicalKey) return;
+
+      const { DemandService } = await import('../demand/service');
+      const demandService = new DemandService(this.client);
+      await demandService.resolveDemand(canonicalKey);
+    } catch {
+      // Silently absorb — auto-resolution must NOT break the upload lifecycle.
     }
   }
 

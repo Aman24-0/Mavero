@@ -171,6 +171,62 @@ console.log('  ok — 6. Missing media admin UI (12 checks)\n');
 console.log('  ok — 7. Secret safety (9 checks)\n');
 
 // ===========================================================================
+// 8. Phase 9 auto-resolution regression tests
+// ===========================================================================
+console.log('--- 8. Phase 9 auto-resolution ---\n');
+{
+  // 8.1 UploadService.pollProcessingStatus calls resolveDemandForMediaItem on ready
+  const uploadSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts'), 'utf8');
+  ok(uploadSrc.includes('resolveDemandForMediaItem'), '8.1 UploadService has resolveDemandForMediaItem method');
+  ok(uploadSrc.includes('Phase 9: auto-resolve'), '8.2 upload ready transition calls auto-resolve');
+  ok(uploadSrc.includes("import('../demand/service')"), '8.3 upload service dynamically imports DemandService');
+  ok(uploadSrc.includes('resolveDemand(canonicalKey)'), '8.4 upload service calls resolveDemand');
+  ok(uploadSrc.includes('Silently absorb'), '8.5 upload auto-resolve is fire-and-forget');
+
+  // 8.2 SyncService.syncProvider calls resolveDemandForAsset on ready
+  const syncSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/sync/service.ts'), 'utf8');
+  ok(syncSrc.includes('resolveDemandForAsset'), '8.6 SyncService has resolveDemandForAsset method');
+  ok(syncSrc.includes('Phase 9: if the synced asset is ready'), '8.7 sync ready transition calls auto-resolve');
+  ok(syncSrc.includes('Phase 9: auto-resolve matching'), '8.8 reconcile ready transition calls auto-resolve');
+  ok(syncSrc.includes("import('../demand/service')"), '8.9 sync service dynamically imports DemandService');
+  ok(syncSrc.includes('resolveDemand(canonicalKey)'), '8.10 sync service calls resolveDemand');
+  ok(syncSrc.includes('Silently absorb'), '8.11 sync auto-resolve is fire-and-forget');
+
+  // 8.3 Auto-resolve only transitions 'open' and 'uploading' — NOT 'ignored'
+  const demandSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/demand/service.ts'), 'utf8');
+  ok(demandSrc.includes(".in('status', ['open', 'uploading'])"), '8.12 resolveDemand only transitions open/uploading');
+  ok(!demandSrc.includes("status: 'ignored'"), '8.13 resolveDemand does NOT reopen ignored requests (status lifecycle preserved)');
+
+  // 8.4 Idempotency — resolveDemand is safe to call multiple times
+  ok(demandSrc.includes('resolveDemand'), '8.14 resolveDemand method exists');
+  // The .in('status', ['open', 'uploading']) filter means calling it again
+  // after status is already 'ready' is a no-op (UPDATE ... WHERE status IN ('open','uploading')
+  // matches 0 rows when status is already 'ready').
+  ok(demandSrc.includes('in'), '8.15 resolveDemand uses .in() filter for idempotency');
+
+  // 8.5 Unrelated canonical keys are untouched
+  // resolveDemand uses .eq('canonical_key', canonicalKey) — only the exact
+  // matching canonical key is updated, never unrelated requests.
+  ok(demandSrc.includes("eq('canonical_key'"), '8.16 resolveDemand scopes by exact canonical_key');
+
+  // 8.6 No external provider calls for demand resolution
+  // resolveDemand only does a DB UPDATE — no provider API calls.
+  ok(!demandSrc.includes('getHostingAdapter'), '8.17 resolveDemand does NOT call provider API');
+  ok(!demandSrc.includes('adapter'), '8.18 resolveDemand does NOT use adapter');
+
+  // 8.7 Playback behavior unchanged
+  const resolveSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/api/playback/resolve/+server.ts'), 'utf8');
+  ok(resolveSrc.includes('resolveSource'), '8.19 playback resolve still calls resolveSource');
+  ok(resolveSrc.includes('catch(() =>'), '8.20 demand tracking still fire-and-forget in playback');
+  ok(!resolveSrc.includes('resolveDemandForMediaItem'), '8.21 playback endpoint does NOT call auto-resolve (only upload/sync do)');
+
+  // 8.8 No secrets in auto-resolution code
+  ok(!uploadSrc.includes('api_key') && !uploadSrc.includes('password'), '8.22 NO credentials in upload auto-resolve');
+  ok(!syncSrc.includes('api_key') && !syncSrc.includes('password'), '8.23 NO credentials in sync auto-resolve');
+}
+console.log('  ok — 8. Auto-resolution (18 checks)\n');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('====================================');

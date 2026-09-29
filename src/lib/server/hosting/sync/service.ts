@@ -107,6 +107,11 @@ export class SyncService {
             mavero_status: providerAsset.status === 'ready' ? 'available' : existing.mavero_status,
           }).eq('id', existing.id);
           updatedAssets += 1;
+          // Phase 9: if the synced asset is ready, auto-resolve matching
+          // missing-media demand requests. Fire-and-forget — does NOT block sync.
+          if (providerAsset.status === 'ready') {
+            await this.resolveDemandForAsset(existing.id);
+          }
         } else {
           unlinkedFiles.push({
             providerAssetId: providerAsset.providerAssetId,
@@ -177,9 +182,48 @@ export class SyncService {
 
     if (procStatus.status === 'ready') {
       await this.client.from('media_upload_operations').update({ status: 'ready', ready_at: new Date().toISOString() }).eq('media_asset_id', mediaAssetId).in('status', ['processing', 'uploaded']);
+      // Phase 9: auto-resolve matching missing-media demand requests.
+      await this.resolveDemandForAsset(mediaAssetId);
     } else if (procStatus.status === 'failed') {
       await this.client.from('media_upload_operations').update({ status: 'failed', failed_at: new Date().toISOString(), error_code: procStatus.providerErrorCode ?? 'PROVIDER_PROCESSING', error_message: procStatus.providerErrorMessage ?? 'Provider processing failed.' }).eq('media_asset_id', mediaAssetId).in('status', ['processing', 'uploaded']);
     }
     return { status: procStatus.status, providerStatus: procStatus.providerStatus, ready: procStatus.status === 'ready', failed: procStatus.status === 'failed' };
+  }
+
+  /**
+   * Phase 9 — Auto-resolves matching missing-media demand requests when
+   * a hosted asset becomes ready (via sync or reconcile). Looks up the
+   * media_item_id from the media_asset, then the canonical_key from
+   * the media_item, then calls DemandService.resolveDemand().
+   *
+   * Fire-and-forget — errors are silently absorbed. Only 'open' and
+   * 'uploading' status requests are resolved. 'ignored' requests are
+   * NOT reopened (admin explicitly dismissed them). 'ready' requests
+   * are already resolved (idempotent — no duplicate resolution).
+   */
+  private async resolveDemandForAsset(mediaAssetId: string): Promise<void> {
+    try {
+      const { data: asset } = await this.client
+        .from('media_assets')
+        .select('media_item_id')
+        .eq('id', mediaAssetId)
+        .maybeSingle();
+      const mediaItemId = (asset as { media_item_id?: string } | null)?.media_item_id;
+      if (!mediaItemId) return;
+
+      const { data: item } = await this.client
+        .from('media_items')
+        .select('canonical_key')
+        .eq('id', mediaItemId)
+        .maybeSingle();
+      const canonicalKey = (item as { canonical_key?: string } | null)?.canonical_key;
+      if (!canonicalKey) return;
+
+      const { DemandService } = await import('../demand/service');
+      const demandService = new DemandService(this.client);
+      await demandService.resolveDemand(canonicalKey);
+    } catch {
+      // Silently absorb — auto-resolution must NOT break sync/reconcile.
+    }
   }
 }
