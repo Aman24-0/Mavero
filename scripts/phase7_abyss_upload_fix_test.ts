@@ -280,12 +280,12 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { email: 'test@abyss' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 'test@abyss', password: 'pass' },
+      config: { baseUrl: 'https://api.abyss.to', email: 'test@abyss', password: 'pass', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const account = await adapter.getAccountInfo();
     eq(account.accountId, 'test@abyss', '1.1 account email normalized');
-    eq(captured[0].url, 'https://api.abyssplayer.com/auth/login', '1.2 login URL correct');
+    eq(captured[0].url, 'https://api.abyss.to/auth/login', '1.2 login URL correct');
     eq(captured[1].headers.authorization, 'Bearer jwt-123', '1.3 authed request uses Bearer JWT');
   }
   console.log('  ok — 1. successful login (3 checks)');
@@ -296,7 +296,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { user: 'test@abyss' } }, // no token field
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -316,7 +316,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: 'not-an-object', contentType: 'application/json' },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -336,7 +336,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, text: '<html>error</html>', contentType: 'text/html' },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -360,7 +360,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, text: '', contentType: 'application/json' },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -384,7 +384,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 401, json: { error: 'Invalid credentials' } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 'wrong@abyss', password: 'wrong' },
+      config: { baseUrl: 'https://api.abyss.to', email: 'wrong@abyss', password: 'wrong', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -411,7 +411,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { email: 'test@abyss' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const account = await adapter.getAccountInfo();
@@ -429,7 +429,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       return { status: 200, json: {} };
     });
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     await adapter.getAccountInfo();
@@ -454,7 +454,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { email: 'ok' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     await adapter.getAccountInfo();
@@ -471,7 +471,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 401, json: { error: 'Invalid credentials' } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 'bad@abyss', password: 'bad' },
+      config: { baseUrl: 'https://api.abyss.to', email: 'bad@abyss', password: 'bad', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -488,13 +488,15 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   console.log('  --- UPLOAD tests (11-20) ---');
 
   // 11. valid multipart upload
+  // VERIFIED: uploadFile now calls this.http() directly (NOT authedRequest)
+  // because the upload endpoint uses apiKey in the URL path, NOT JWT Bearer.
+  // So the mock fetcher only gets ONE request (the upload), not two.
   {
     const { fetcher, captured } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
-      { status: 200, json: { data: { slug: 'abc123', id: 42, size: 1024 } } },
+      { status: 200, json: { slug: 'abc123' } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const result = await adapter.uploadFile({
@@ -502,21 +504,19 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       filename: 'test.mp4',
       providerFolderId: null,
     });
-    eq(result.providerAssetId, 'abc123', '11.1 providerAssetId normalized');
-    eq(result.providerVideoId, '42', '11.2 providerVideoId normalized');
-    ok(result.playbackUrl!.includes('player.abyssplayer.com/abc123'), '11.3 playbackUrl constructed');
-    ok(captured[1].formData instanceof FormData, '11.4 multipart FormData used');
+    eq(result.providerAssetId, 'abc123', '11.1 providerAssetId normalized from top-level slug');
+    ok(captured[0].formData instanceof FormData, '11.4 multipart FormData used');
+    ok(captured[0].url.includes('up.abyss.to/test-api-key'), '11.5 upload URL is up.abyss.to/:apiKey');
   }
-  console.log('  ok — 11. valid multipart upload (4 checks)');
+  console.log('  ok — 11. valid multipart upload (3 checks)');
 
   // 12. successful JSON upload response
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 200, json: { data: { slug: 'vid-slug', id: 99 } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const result = await adapter.uploadFile({
@@ -531,11 +531,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 13. successful response with alternate shape (file at top level, not in data)
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 200, json: { file: { slug: 'alt-slug', id: 7, size: 2048 } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const result = await adapter.uploadFile({
@@ -551,11 +550,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 14. empty successful response
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 200, text: '', contentType: 'application/json' },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -582,11 +580,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 15. non-JSON successful response
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 200, text: '<html>ok</html>', contentType: 'text/html' },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -613,11 +610,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 16. malformed JSON response
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 200, text: '{invalid json', contentType: 'application/json' },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -640,11 +636,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 17. HTTP 4xx upload failure
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 422, json: { error: 'Invalid file' } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -667,11 +662,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 18. HTTP 5xx upload failure
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 500, json: { error: 'Server error' } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -694,11 +688,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 19. missing provider asset ID (empty data object)
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 200, json: { data: {} } }, // no slug, no id
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -724,11 +717,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 20. provider asset ID successfully normalized (slug preferred over id)
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
       { status: 200, json: { data: { slug: 'my-slug', id: 42, player_url: 'https://player.abyssplayer.com/custom' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const result = await adapter.uploadFile({
@@ -754,7 +746,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { slug: 'vid', status: 'uploaded' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const status = await adapter.getProcessingStatus('vid');
@@ -771,7 +763,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { slug: 'vid', status: 'processing' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const status = await adapter.getProcessingStatus('vid');
@@ -786,7 +778,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { slug: 'vid', status: 'active', qualities: ['480p', '720p', '1080p'] } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const status = await adapter.getProcessingStatus('vid');
@@ -801,7 +793,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { slug: 'vid', status: 'failed' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const status = await adapter.getProcessingStatus('vid');
@@ -818,7 +810,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { slug: 'vid', status: 'active', qualities: ['480p', '720p', '1080p'] } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const status = await adapter.getProcessingStatus('vid');
@@ -834,7 +826,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, text: '', contentType: 'application/json' }, // empty
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     let threw = false;
@@ -856,11 +848,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 38. credentials never appear in client-visible result
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'jwt', expires_in: 3600 } },
-      { status: 200, json: { data: { slug: 'vid', id: 1 } } },
+      { status: 200, json: { slug: 'vid' } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 'SECRET-EMAIL@abyss', password: 'SECRET-PASSWORD' },
+      config: { baseUrl: 'https://api.abyss.to', email: 'SECRET-EMAIL@abyss', password: 'SECRET-PASSWORD', apiKey: 'SECRET-API-KEY' },
       httpFetcher: fetcher,
     });
     const result = await adapter.uploadFile({
@@ -878,11 +869,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 39. JWT never appears in client-visible result
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'SECRET-JWT-TOKEN', expires_in: 3600 } },
-      { status: 200, json: { data: { slug: 'vid', id: 1 } } },
+      { status: 200, json: { slug: 'vid' } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     const result = await adapter.uploadFile({
@@ -898,11 +888,10 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // 40. secrets never appear in thrown error messages
   {
     const { fetcher } = createCapturingFetcher([
-      { status: 200, json: { token: 'SECRET-JWT', expires_in: 3600 } },
       { status: 200, text: '', contentType: 'application/json' }, // empty upload response
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 'SECRET-EMAIL', password: 'SECRET-PASS' },
+      config: { baseUrl: 'https://api.abyss.to', email: 'SECRET-EMAIL', password: 'SECRET-PASS', apiKey: 'SECRET-API-KEY' },
       httpFetcher: fetcher,
     });
     let errorMsg = '';
@@ -918,7 +907,8 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
     ok(!errorMsg.includes('SECRET-EMAIL'), '40.1 email not in error message');
     ok(!errorMsg.includes('SECRET-PASS'), '40.2 password not in error message');
     ok(!errorMsg.includes('SECRET-JWT'), '40.3 JWT not in error message');
-    ok(!errorMsg.includes('Unexpected end of JSON'), '40.4 NO "Unexpected end of JSON input"');
+    ok(!errorMsg.includes('SECRET-API-KEY'), '40.4 apiKey not in error message');
+    ok(!errorMsg.includes('Unexpected end of JSON'), '40.5 NO "Unexpected end of JSON input"');
   }
   console.log('  ok — 40. secrets not in errors (4 checks)');
 
@@ -999,7 +989,7 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
       { status: 200, json: { data: { email: 'ok' } } },
     ]);
     const adapter = new AbyssAdapter({
-      config: { baseUrl: 'https://api.abyssplayer.com', email: 't@t', password: 'p' },
+      config: { baseUrl: 'https://api.abyss.to', email: 't@t', password: 'p', apiKey: 'test-api-key' },
       httpFetcher: fetcher,
     });
     // Fire two concurrent requests — they should share ONE login.

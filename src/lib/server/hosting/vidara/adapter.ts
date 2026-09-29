@@ -256,6 +256,15 @@ export class VidaraAdapter implements HostingProviderAdapter {
     const uploadUrl = extractVidaraUploadServerUrl(serverRes.json as VidaraUploadServerResponse);
 
     // Step 2: multipart POST to the upload server.
+    // VERIFIED CONTRACT (live API, 2026-09-29): the upload server
+    // (e.g. https://upl4.s1q2105.com/api/upload) REQUIRES the api_key
+    // as a query parameter. Without it, the upload server returns 401
+    // "Missing API key". The previous implementation did NOT append
+    // api_key to the upload URL — this was the second root cause of
+    // the Vidara local upload failure (the browser-direct upload got
+    // 401 from the upload server).
+    const authenticatedUploadUrl = buildVidaraUrl(uploadUrl, '', null, this.config.apiKey);
+
     const formData = new FormData();
     formData.append('file', params.content instanceof Blob ? params.content : new Blob([params.content]), params.filename);
     if (params.title) formData.append('title', params.title);
@@ -263,23 +272,42 @@ export class VidaraAdapter implements HostingProviderAdapter {
 
     const uploadRes = await this.http({
       method: 'POST',
-      url: uploadUrl,
+      url: authenticatedUploadUrl,
       formData,
       timeoutMs: 120_000, // uploads may take longer.
     });
     return normalizeVidaraUploadResult(uploadRes.json as VidaraUploadResultResponse);
   }
 
+  /**
+   * Remote URL upload — asks Vidara to fetch a URL.
+   *
+   * VERIFIED CONTRACT (live API, 2026-09-29):
+   *   GET /v1/upload/url?api_key=<key>&url=<remote_url> →
+   *   {
+   *     "data": {
+   *       "filecode": "70c79656afdf",
+   *       "link": "https://vidara.to/70c79656afdf",
+   *       "size": 469771811,
+   *       "title": "..."
+   *     },
+   *     "msg": "OK",
+   *     "status": 200
+   *   }
+   *
+   * The method is **GET** (NOT POST), and the URL is a **query parameter**
+   * (NOT in the request body). The previous implementation used POST with
+   * a JSON body — Vidara returned 400 "missing url parameter". This was
+   * the root cause of the Vidara remote URL upload failure.
+   *
+   * The Sootio URL that the user tested works via the Vidara dashboard
+   * because the dashboard uses this same GET endpoint. The previous
+   * Mavero implementation used the wrong HTTP method.
+   */
   async uploadRemote(params: UploadRemoteParams, _deps?: HostingAdapterDeps): Promise<ProviderUploadResult> {
     const res = await this.http({
-      method: 'POST',
-      url: this.url('/v1/upload/url'),
-      body: {
-        url: params.url,
-        folder_id: params.providerFolderId ?? '',
-        filename: params.filename ?? '',
-        title: params.title ?? '',
-      },
+      method: 'GET',
+      url: this.url('/v1/upload/url', { url: params.url }),
     });
     return normalizeVidaraUploadResult(res.json as VidaraUploadResultResponse);
   }

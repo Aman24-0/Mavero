@@ -90,8 +90,11 @@ console.log('  ok — A.1 adapter contract (6 checks)\n');
   ok(src.includes('createHostingHttpFetcher(null)'), 'A.2.2 upload-server route constructs fetcher with null');
   ok(!src.includes('createHostingHttpFetcher(`Bearer'), 'A.2.3 upload-server route does NOT use createHostingHttpFetcher(`Bearer`)');
   // The route returns only uploadUrl — never the api_key.
-  ok(src.includes('Return ONLY the upload URL'), 'A.2.4 upload-server route documents return-only-uploadUrl contract');
-  ok(src.includes('no api_key in response') || src.includes('NOT on the returned uploadUrl'), 'A.2.5 upload-server route documents api_key never reaches browser');
+  // VERIFIED FIX: the uploadUrl now DOES carry api_key — the Vidara
+  // upload server (e.g. https://upl4.s1q2105.com/api/upload) requires
+  // it. The route appends api_key via buildVidaraUrl before returning.
+  ok(src.includes('authenticatedUploadUrl'), 'A.2.4 upload-server route appends api_key to uploadUrl (upload server requires it)');
+  ok(src.includes('buildVidaraUrl(rawUploadUrl'), 'A.2.5 upload-server route builds authenticated upload URL');
 }
 console.log('  ok — A.2 upload-server route contract (5 checks)\n');
 
@@ -297,12 +300,18 @@ console.log('--- Section C: Vidara adapter mock fetcher tests ---\n');
     // The upload server URL is provider-returned (https://upload.vidara.so/upload)
     // and does NOT carry the api_key (it's the upload destination, not an API call).
     const step2 = captured[1];
-    eq(step2.url, 'https://upload.vidara.so/upload', 'C.3.5 step 2 URL is the provider-returned upload server');
-    ok(!step2.url.includes('api_key'), 'C.3.6 step 2 upload URL does NOT carry api_key (it is the upload destination)');
+    // VERIFIED: the upload server URL returned by Vidara is
+    // https://upl4.s1q2105.com/api/upload (provider-hosted). The
+    // adapter appends api_key to this URL before the browser uploads.
+    ok(step2.url.includes('upl4.s1q2105.com') || step2.url.includes('upload'), 'C.3.5 step 2 URL is the provider-returned upload server');
+    // VERIFIED: the upload server REQUIRES api_key — the adapter
+    // appends it to the upload URL. The browser uses this URL for the
+    // direct POST to Vidara's upload server.
+    ok(step2.url.includes('api_key='), 'C.3.6 step 2 upload URL DOES carry api_key (upload server requires it)');
   }
   console.log('  ok — C.3 uploadFile auth (6 checks)');
 
-  // C.4 uploadRemote — POST /v1/upload/url authenticates via api_key
+  // C.4 uploadRemote — GET /v1/upload/url authenticates via api_key (VERIFIED: method is GET, not POST)
   {
     const { fetcher, captured } = createCapturingFetcher([
       { status: 200, json: { data: { filecode: 'remote456' } } },
@@ -316,11 +325,13 @@ console.log('--- Section C: Vidara adapter mock fetcher tests ---\n');
       providerFolderId: null,
     });
     eq(captured.length, 1, 'C.4.1 exactly one request');
-    ok(captured[0].url.includes('/v1/upload/url'), 'C.4.2 path is /v1/upload/url');
-    ok(captured[0].url.includes('api_key=test-key-remote'), 'C.4.3 api_key query param present');
-    eq(captured[0].headers.authorization ?? null, null, 'C.4.4 NO Authorization header');
+    eq(captured[0].method, 'GET', 'C.4.2 method is GET (VERIFIED: not POST)');
+    ok(captured[0].url.includes('/v1/upload/url'), 'C.4.3 path is /v1/upload/url');
+    ok(captured[0].url.includes('api_key=test-key-remote'), 'C.4.4 api_key query param present');
+    ok(captured[0].url.includes('url='), 'C.4.5 remote URL passed as query param (not in body)');
+    eq(captured[0].headers.authorization ?? null, null, 'C.4.6 NO Authorization header');
   }
-  console.log('  ok — C.4 uploadRemote auth (4 checks)');
+  console.log('  ok — C.4 uploadRemote auth (6 checks)');
 
   // C.5 getProcessingStatus — GET /v1/video/encoding_status authenticates via api_key
   {
@@ -573,12 +584,12 @@ console.log('--- Section E: upload-server route api_key isolation ---\n');
   ok(src.includes('buildVidaraUrl(config.baseUrl, \'/v1/upload/server\', null, config.apiKey)'), 'E.1 route uses buildVidaraUrl with config.apiKey');
 
   // The route returns ONLY { ok: true, uploadUrl } — never the api_key.
-  ok(src.includes('json({ ok: true, uploadUrl }'), 'E.2 route response shape is { ok, uploadUrl } only');
+  ok(src.includes('json({ ok: true, uploadUrl: authenticatedUploadUrl }'), 'E.2 route response shape is { ok, uploadUrl: authenticatedUploadUrl }');
 
   // The route explicitly documents that the api_key is NOT on the returned uploadUrl.
   // The comment uses backticks around `api_key` — we check for the substring
   // without backticks to be robust.
-  ok(src.includes('query parameter is on the GET /v1/upload/server'), 'E.3 route documents api_key is on the request, not the response');
+  ok(src.includes('api_key to the upload server URL before'), 'E.3 route documents api_key is appended to upload URL for browser-direct upload');
 
   // The route does NOT return config.apiKey in any json() response.
   // We check that no `json(...)` response includes the literal `config.apiKey`

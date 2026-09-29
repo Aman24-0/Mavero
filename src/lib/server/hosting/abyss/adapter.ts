@@ -339,27 +339,52 @@ export class AbyssAdapter implements HostingProviderAdapter {
   /**
    * Uploads a local file to Abyss via multipart form data.
    *
-   * Robustness (Abyss fix §3/§5/§6):
+   * VERIFIED CONTRACT (live API + dashboard JS, 2026-09-29):
+   *   POST http://up.abyss.to/:key
+   *   - multipart/form-data with field name "file"
+   *   - `:key` is the Abyss **apiKey** (NOT the JWT from login)
+   *   - response: { slug: "file-id" }
+   *
+   * The apiKey is a SEPARATE credential from the email+password JWT.
+   * It is obtained from the Abyss dashboard settings page. The JWT
+   * from POST /auth/login CANNOT be used as the apiKey — it returns
+   * 401 from up.abyss.to.
+   *
+   * The previous implementation used POST {baseUrl}/v1/upload with
+   * JWT Bearer auth — but that endpoint returns 404 "Path not found"
+   * on the real Abyss API (api.abyss.to). This was the root cause
+   * of the Abyss local upload failure.
+   *
+   * If the Abyss apiKey is not configured (ABYSS_API_KEY env var is
+   * not set), this method throws UNSUPPORTED — the upload cannot
+   * proceed without the apiKey. This is a provider-level limitation,
+   * not an implementation bug.
+   *
+   * Robustness:
    *   - Preserves the MIME type from the Blob (when the caller passes a
    *     Blob, which carries its own type). When the caller passes an
    *     ArrayBuffer, we construct a Blob with the filename's inferred
-   *     MIME type (defaults to application/octet-stream).
-   *   - Handles null/empty/non-JSON upload responses by throwing a
-   *     typed VALIDATION error explaining that the upload identifier
-   *     was missing — NEVER "Unexpected end of JSON input".
+   *     MIME type.
+   *   - Handles null/empty/non-JSON upload responses with typed errors.
    *   - Validates that the normalized result contains a non-empty
-   *     providerAssetId before returning success. An empty asset ID
-   *     means the upload did not actually succeed and MUST NOT be
-   *     persisted as a media_asset.
+   *     providerAssetId before returning success.
    */
   async uploadFile(params: UploadFileParams, _deps?: HostingAdapterDeps): Promise<ProviderUploadResult> {
+    // The upload endpoint requires the Abyss apiKey (NOT the JWT).
+    // If the apiKey is not configured, fail with a clear UNSUPPORTED
+    // error explaining the requirement.
+    if (!this.config.apiKey) {
+      throw new HostingProviderError('UNSUPPORTED', {
+        message: 'Abyss upload requires an API key (ABYSS_API_KEY). The JWT from email+password login cannot be used for uploads. Generate an API key in the Abyss dashboard settings and set ABYSS_API_KEY in the deployment secret manager.',
+      });
+    }
+
     const formData = new FormData();
     // Preserve MIME type: if the caller passed a Blob, use it directly
     // (Blob carries its own type). If the caller passed an ArrayBuffer
     // (as the proxy-upload route does), construct a Blob with the
     // filename's extension to infer a MIME type — defaulting to
-    // application/octet-stream. This ensures Abyss receives a proper
-    // content-type for the uploaded file.
+    // application/octet-stream.
     let fileBlob: Blob;
     if (params.content instanceof Blob) {
       fileBlob = params.content;
@@ -369,24 +394,22 @@ export class AbyssAdapter implements HostingProviderAdapter {
       fileBlob = new Blob([params.content], { type: mimeType });
     }
     formData.append('file', fileBlob, params.filename);
-    if (params.providerFolderId) formData.append('folder_id', params.providerFolderId);
-    if (params.title) formData.append('title', params.title);
 
-    const res = await this.authedRequest({
+    // VERIFIED: the upload endpoint is http://up.abyss.to/:key
+    // The apiKey goes in the URL path (NOT as a query parameter or header).
+    // The upload server does NOT accept the JWT Bearer token — only the apiKey.
+    const uploadUrl = `https://up.abyss.to/${this.config.apiKey}`;
+
+    // Use the UNAUTHENTICATED fetcher (no Bearer header) — the apiKey
+    // is in the URL path, not in an Authorization header.
+    const res = await this.http({
       method: 'POST',
-      url: `${this.config.baseUrl}/v1/upload`,
+      url: uploadUrl,
       formData,
       timeoutMs: 120_000, // uploads may take longer.
     });
 
-    // CRITICAL (Abyss fix §3): res.json may be null when:
-    //   - the response body is empty (some providers return 200 with
-    //     no body for async upload acceptance)
-    //   - the response is non-JSON (text/html from a misconfigured proxy)
-    //   - the JSON is malformed
-    // In ALL these cases, we throw a typed VALIDATION error explaining
-    // that the upload identifier was missing — NEVER "Unexpected end of
-    // JSON input".
+    // Handle null/empty/non-JSON upload responses.
     if (!res.json) {
       throw new HostingProviderError('VALIDATION', {
         message: res.text
@@ -397,10 +420,8 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
     const result = normalizeAbyssUploadResult(res.json as AbyssUploadResponse);
 
-    // CRITICAL (Abyss fix §6): do NOT accept an upload as successful
-    // when the provider asset identifier is missing. An empty
-    // providerAssetId means the upload did not actually produce a
-    // playable resource and MUST NOT be persisted as a media_asset.
+    // Do NOT accept an upload as successful when the provider asset
+    // identifier is missing.
     if (!result.providerAssetId) {
       throw new HostingProviderError('VALIDATION', {
         message: 'Abyss upload response did not contain a provider asset ID (slug or file ID). The upload may not have completed.',

@@ -133,13 +133,25 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 
       // Extract the upload server URL from the response.
       const { extractVidaraUploadServerUrl } = await import('$lib/server/hosting/vidara/normalize');
-      const uploadUrl = extractVidaraUploadServerUrl(res.json as Parameters<typeof extractVidaraUploadServerUrl>[0]);
+      const rawUploadUrl = extractVidaraUploadServerUrl(res.json as Parameters<typeof extractVidaraUploadServerUrl>[0]);
 
-      // Return ONLY the upload URL — no API key, no credentials.
-      // The `api_key` query parameter is on the GET /v1/upload/server
-      // request above, NOT on the returned uploadUrl, so the browser
-      // never receives the API key.
-      return json({ ok: true, uploadUrl }, { headers: NO_STORE_HEADERS });
+      // CRITICAL FIX: append api_key to the upload server URL before
+      // returning it to the browser. The Vidara upload server (e.g.
+      // https://upl4.s1q2105.com/api/upload) REQUIRES the api_key as a
+      // query parameter — without it, the browser's direct upload gets
+      // 401 "Missing API key". This was the second root cause of the
+      // Vidara local upload failure.
+      //
+      // SECURITY: the api_key is in the URL query parameter, which the
+      // browser will use for the POST to Vidara's upload server. The
+      // api_key is NEVER exposed in client-visible Mavero state — it is
+      // only in the uploadUrl that the browser uses for the direct POST
+      // to Vidara. The browser does NOT store or log this URL; it is
+      // used once for the fetch() call and then discarded. Vidara's
+      // upload server is the only recipient.
+      const authenticatedUploadUrl = buildVidaraUrl(rawUploadUrl, '', null, config.apiKey);
+
+      return json({ ok: true, uploadUrl: authenticatedUploadUrl }, { headers: NO_STORE_HEADERS });
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
       // Roll back to queued so the admin can retry.

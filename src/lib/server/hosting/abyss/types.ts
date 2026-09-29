@@ -105,6 +105,8 @@ export type AbyssFolderListResponse = {
 
 /** Abyss upload response. */
 export type AbyssUploadResponse = {
+  /** VERIFIED (live API): the upload endpoint returns { slug: "file-id" } at the top level. */
+  slug?: string;
   data?: {
     id?: string | number;
     slug?: string;

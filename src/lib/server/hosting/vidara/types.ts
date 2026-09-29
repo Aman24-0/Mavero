@@ -89,11 +89,12 @@ export type VidaraFolderListResponse = {
 
 /** Vidara upload server response. */
 export type VidaraUploadServerResponse = {
-  result?: boolean | { server?: string; url?: string; session?: string; [k: string]: unknown };
+  result?: boolean | { server?: string; url?: string; upload_server?: string; session?: string; [k: string]: unknown };
   status?: number;
   msg?: string | { msg?: string };
   server?: string;
   url?: string;
+  upload_server?: string;
   [k: string]: unknown;
 };
 

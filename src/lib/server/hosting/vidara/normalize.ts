@@ -186,9 +186,34 @@ function normalizeAudioLanguages(audio: unknown): string[] {
 // Vidara upload server URL extraction
 // ---------------------------------------------------------------------------
 
+/**
+ * Extracts the upload server URL from Vidara's /v1/upload/server response.
+ *
+ * VERIFIED CONTRACT (live API, 2026-09-29):
+ *   GET /v1/upload/server?api_key=<key> →
+ *   {
+ *     "msg": "OK",
+ *     "status": 200,
+ *     "result": {
+ *       "upload_server": "https://upl4.s1q2105.com/api/upload"
+ *     }
+ *   }
+ *
+ * The field is `result.upload_server` (NOT `result.server` or `result.url`).
+ * The previous implementation looked for `result.server` / `result.url` and
+ * threw "did not contain a server URL" — this was the root cause of the
+ * Vidara local upload failure.
+ *
+ * We now check `upload_server` first (verified field), then fall back to
+ * `server` / `url` for backward compatibility with any older Vidara API
+ * version.
+ */
 export function extractVidaraUploadServerUrl(res: VidaraUploadServerResponse): string {
   const result = res.result;
-  const url = (typeof result === 'object' && result !== null ? (result.server ?? result.url) : undefined) ?? res.server ?? res.url;
+  const url = (typeof result === 'object' && result !== null
+    ? (result.upload_server ?? result.server ?? result.url)
+    : undefined
+  ) ?? res.server ?? res.url;
   if (typeof url !== 'string' || !url) throw new Error('Vidara upload server response did not contain a server URL.');
   return url;
 }

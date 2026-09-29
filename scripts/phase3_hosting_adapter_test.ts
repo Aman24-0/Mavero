@@ -63,7 +63,7 @@ function createMockFetcher(responses: MockResponse[] | MockResponse | ((request:
 
 function testCapabilities(): void {
   const vidara = new VidaraAdapter({ config: { apiKey: 'test-key', baseUrl: 'https://api.test.vidara' } });
-  const abyss = new AbyssAdapter({ config: { baseUrl: 'https://api.test.abyss', email: 'test@abyss', password: 'test-pass' } });
+  const abyss = new AbyssAdapter({ config: { baseUrl: 'https://api.test.abyss', email: 'test@abyss', password: 'test-pass', apiKey: 'test-api-key' } });
 
   const vcaps = vidara.getCapabilities();
   const acaps = abyss.getCapabilities();
@@ -309,8 +309,8 @@ async function testAbyssAdapter(): Promise<void> {
     { status: 200, json: { data: { id: 42, slug: 'test-slug', name: 'Renamed', status: 'active' } } },
     // 9. deleteAsset (DELETE)
     { status: 200, json: { success: true } },
-    // 10. uploadFile (POST /v1/upload)
-    { status: 200, json: { data: { id: 99, slug: 'new-upload', status: 'processing' } } },
+    // 10. uploadFile (POST up.abyss.to/:key) — verified: returns { slug: 'file-id' } at top level
+    { status: 200, json: { slug: 'new-upload' } },
     // 11. getProcessingStatus (GET /v1/files/:id)
     { status: 200, json: { data: { id: 42, slug: 'test-slug', status: 'processing', qualities: ['480p', '720p'] } } },
     // 12. listFolders
@@ -328,7 +328,7 @@ async function testAbyssAdapter(): Promise<void> {
   ]);
 
   const adapter = new AbyssAdapter({
-    config: { baseUrl: 'https://api.test.abyss', email: 'test@abyss', password: 'test-pass' },
+    config: { baseUrl: 'https://api.test.abyss', email: 'test@abyss', password: 'test-pass', apiKey: 'test-api-key' },
     httpFetcher: mockFetcher,
   });
 

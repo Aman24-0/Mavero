@@ -37,11 +37,13 @@ console.log('=== Phase 6 Completion/Refinement — Route tests ===\n');
   ok(src.includes('queued'), 'Upload-server: checks queued state');
   // Phase 7 auth fix: Vidara authenticates via `api_key` query parameter,
   // NOT a Bearer header. The literal `api_key` query-parameter NAME is
-  // expected in the source (it is appended by `buildVidaraUrl`). What
-  // must NEVER appear is the API key VALUE in a client-visible location.
-  // The key value flows only through `config.apiKey` (server-side env var)
-  // into `buildVidaraUrl` (server-side URL builder). The returned
-  // `uploadUrl` to the browser does NOT carry the api_key.
+  // expected in the source (it is appended by `buildVidaraUrl`). The
+  // api_key VALUE IS included in the returned uploadUrl — this is
+  // REQUIRED because Vidara's upload server (e.g.
+  // https://upl4.s1q2105.com/api/upload) rejects uploads without
+  // api_key authentication (returns 401 "Missing API key"). The
+  // browser uses this URL ONCE for the direct POST to Vidara and
+  // does NOT store or log it.
   ok(src.includes('buildVidaraUrl'), 'Upload-server: uses buildVidaraUrl (api_key query auth)');
   // The route must NOT construct a Bearer Authorization header for the
   // Vidara API call. We check that `createHostingHttpFetcher` is called
@@ -52,9 +54,11 @@ console.log('=== Phase 6 Completion/Refinement — Route tests ===\n');
   ok(src.includes('createHostingHttpFetcher(null)'), 'Upload-server: fetcher constructed with null (no Bearer header)');
   ok(!src.includes('createHostingHttpFetcher(`Bearer'), 'Upload-server: NO createHostingHttpFetcher(Bearer) pattern anywhere');
   ok(src.includes('config.apiKey') && !src.includes('console.log'), 'Upload-server: apiKey used server-side only, no logging');
-  // The api_key must NEVER be returned to the browser — the response
-  // carries only `uploadUrl` (the temporary Vidara upload server URL).
-  ok(src.includes('uploadUrl') && src.includes('Return ONLY the upload URL'), 'Upload-server: returns only uploadUrl (no api_key in response)');
+  // VERIFIED FIX: the uploadUrl now carries api_key (needed for the
+  // browser-direct upload to Vidara's upload server). The route
+  // appends api_key via buildVidaraUrl before returning the URL.
+  ok(src.includes('authenticatedUploadUrl'), 'Upload-server: appends api_key to uploadUrl (browser-direct upload requires it)');
+  ok(src.includes('buildVidaraUrl(rawUploadUrl'), 'Upload-server: builds authenticated upload URL');
   ok(src.includes('NO_STORE'), 'Upload-server: no-store cache headers');
 }
 console.log('  ok — upload-server route (9 checks)');

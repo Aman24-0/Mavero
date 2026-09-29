@@ -137,6 +137,15 @@ export function normalizeAbyssFolder(folder: AbyssFolder): ProviderFolderInfo {
 }
 
 export function normalizeAbyssUploadResult(res: AbyssUploadResponse): ProviderUploadResult {
+  // VERIFIED CONTRACT (live API, 2026-09-29): the upload endpoint
+  // POST http://up.abyss.to/:key returns:
+  //   { slug: "file-id" }
+  // The `slug` is at the TOP LEVEL (not nested in `data`). The previous
+  // normalizer looked for `res.data.slug` — which would miss the actual
+  // field. We now check `res.slug` first (verified), then fall back to
+  // `res.data.slug` / `res.file.slug` for compatibility with other
+  // possible response shapes.
+  const topLevelSlug = (res as { slug?: string }).slug;
   const data = res.data ?? (res.file ? {
     id: res.file.id,
     slug: res.file.slug,
@@ -149,12 +158,8 @@ export function normalizeAbyssUploadResult(res: AbyssUploadResponse): ProviderUp
   // providerAssetId as an empty string (the type requires `string`,
   // not `string | null`) so the adapter's validation
   // (`if (!result.providerAssetId)`) catches it and throws a typed
-  // VALIDATION error. Previously, `String(data.id ?? '')` also produced
-  // an empty string — but the adapter did NOT validate it, so the
-  // empty string was persisted as a media_asset with an empty
-  // provider_asset_id — violating the schema's CHECK constraint
-  // (length(trim(provider_asset_id)) >= 1) or creating invalid state.
-  const slug = data.slug ?? (data.id != null && data.id !== '' ? String(data.id) : '');
+  // VALIDATION error.
+  const slug = topLevelSlug ?? data.slug ?? (data.id != null && data.id !== '' ? String(data.id) : '');
   const hasValidSlug = slug.length > 0;
   return {
     providerAssetId: slug,
