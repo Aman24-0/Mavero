@@ -1,14 +1,24 @@
 <script lang="ts">
   /**
-   * Admin 2.0 — Overview (Phase A)
-   * Redesigned with the new AdminAppShell, AdminPageHeader, and AdminStatus.
-   * Uses the new design tokens and layered surface system.
+   * Admin 2.0 — Overview (Phase B)
+   *
+   * Operational dashboard answering: "What is happening in Mavero right
+   * now, and what requires my attention?"
+   *
+   * Phase B: migrated to the new AdminPage framework (header + body
+   * slots), with a refined navigation that no longer needs an explicit
+   * `active` prop — AdminAppShell now derives the active item from the
+   * route via `page.url.pathname`.
+   *
+   * Sections:
+   *   - SYSTEM STATUS — quick health overview
+   *   - HOSTING & MEDIA — quick links to media/hosting management
+   *   - INTEGRATIONS — secondary metric cards
    */
-  import { Database, Download, Layers3, Puzzle, ShieldCheck, SlidersHorizontal, Wifi, Server, HardDrive, Activity } from 'lucide-svelte';
+  import { Database, Download, Layers3, Puzzle, ShieldCheck, SlidersHorizontal, Wifi, Server, HardDrive, Activity, ArrowRight } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
-  import AdminPageHeader from '$lib/components/admin2/AdminPageHeader.svelte';
+  import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
-  import AdminMetricCard from '$lib/components/admin/AdminMetricCard.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -19,112 +29,123 @@
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
-<AdminAppShell active="overview">
-  <AdminPageHeader eyebrow="Mavero / Control" title="Overview" accent="cyan" />
+<AdminAppShell>
+  <AdminPage eyebrow="Mavero / Control" title="Overview" accent="cyan">
+    {#snippet description()}
+      <p>
+        Real-time operational view of Mavero — provider health, hosting
+        activity, content inventory, and integration status at a glance.
+      </p>
+    {/snippet}
 
-  <!-- ============================================================
-       SYSTEM STATUS — quick health overview
-       ============================================================ -->
-  <section class="a2-section">
-    <div class="a2-section-head">
-      <h2 class="a2-section-title">System Status</h2>
-      <AdminStatus label="Operational" tone="green" />
-    </div>
-    <div class="a2-metric-grid">
-      <a class="a2-metric-card" href="/admin/providers">
-        <div class="a2-metric-icon"><ShieldCheck size={18} /></div>
-        <div class="a2-metric-value">{data.overview.providerCount}</div>
-        <div class="a2-metric-label">Providers</div>
-        <div class="a2-metric-status">{data.overview.activeProviderCount} enabled</div>
-      </a>
-      <a class="a2-metric-card" href="/admin/sources">
-        <div class="a2-metric-icon"><Wifi size={18} /></div>
-        <div class="a2-metric-value">{data.overview.sourceCount}</div>
-        <div class="a2-metric-label">Sources</div>
-        <div class="a2-metric-status">{data.overview.activeSourceCount} enabled</div>
-      </a>
-      <a class="a2-metric-card" href="/admin/categories">
-        <div class="a2-metric-icon"><Layers3 size={18} /></div>
-        <div class="a2-metric-value">{data.overview.categoryCount}</div>
-        <div class="a2-metric-label">Categories</div>
-        <div class="a2-metric-status">Custom ordering</div>
-      </a>
-      <div class="a2-metric-card">
-        <div class="a2-metric-icon"><Database size={18} /></div>
-        <div class="a2-metric-value">v{data.overview.configVersion}</div>
-        <div class="a2-metric-label">Config Version</div>
-        <div class="a2-metric-status">Invalidates on mutation</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============================================================
-       HOSTING — quick links to media/hosting management
-       ============================================================ -->
-  <section class="a2-section">
-    <div class="a2-section-head">
-      <h2 class="a2-section-title">Hosting & Media</h2>
-    </div>
-    <div class="a2-quick-grid">
-      <a class="a2-quick-card" href="/admin/media/upload">
-        <div class="a2-quick-icon"><HardDrive size={20} /></div>
-        <div class="a2-quick-text">
-          <div class="a2-quick-title">Upload Media</div>
-          <div class="a2-quick-desc">Add content to Vidara or Abyss</div>
-        </div>
-      </a>
-      <a class="a2-quick-card" href="/admin/media/missing">
-        <div class="a2-quick-icon"><Activity size={20} /></div>
-        <div class="a2-quick-text">
-          <div class="a2-quick-title">Missing Media</div>
-          <div class="a2-quick-desc">Demand requests from playback</div>
-        </div>
-      </a>
-      <a class="a2-quick-card" href="/admin/providers">
-        <div class="a2-quick-icon"><Server size={20} /></div>
-        <div class="a2-quick-text">
-          <div class="a2-quick-title">Providers</div>
-          <div class="a2-quick-desc">Vidara & Abyss management</div>
-        </div>
-      </a>
-      <a class="a2-quick-card" href="/admin/media/operations">
-        <div class="a2-quick-icon"><Activity size={20} /></div>
-        <div class="a2-quick-text">
-          <div class="a2-quick-title">Operations</div>
-          <div class="a2-quick-desc">Upload/processing history</div>
-        </div>
-      </a>
-    </div>
-  </section>
-
-  <!-- ============================================================
-       SECONDARY METRICS
-       ============================================================ -->
-  {#if data.downloadersOverview || data.addonsOverview}
+    <!-- ============================================================
+         SYSTEM STATUS — quick health overview
+         ============================================================ -->
     <section class="a2-section">
       <div class="a2-section-head">
-        <h2 class="a2-section-title">Integrations</h2>
+        <h2 class="a2-section-title">System Status</h2>
+        <AdminStatus label="Operational" tone="green" />
       </div>
-      <div class="a2-metric-grid a2-secondary">
-        {#if data.downloadersOverview}
-          <a class="a2-metric-card" href="/admin/downloaders">
-            <div class="a2-metric-icon"><Download size={18} /></div>
-            <div class="a2-metric-value">{data.downloadersOverview.providerCount}</div>
-            <div class="a2-metric-label">Downloaders</div>
-            <div class="a2-metric-status">{data.downloadersOverview.enabledCount} enabled · {data.downloadersOverview.defaultCount} default</div>
-          </a>
-        {/if}
-        {#if data.addonsOverview}
-          <a class="a2-metric-card" href="/admin/addons">
-            <div class="a2-metric-icon"><Puzzle size={18} /></div>
-            <div class="a2-metric-value">{data.addonsOverview.addonCount}</div>
-            <div class="a2-metric-label">Stremio Addons</div>
-            <div class="a2-metric-status">{data.addonsOverview.enabledCount} enabled</div>
-          </a>
-        {/if}
+      <div class="a2-metric-grid">
+        <a class="a2-metric-card" href="/admin/providers">
+          <div class="a2-metric-icon"><ShieldCheck size={18} /></div>
+          <div class="a2-metric-value">{data.overview.providerCount}</div>
+          <div class="a2-metric-label">Providers</div>
+          <div class="a2-metric-status">{data.overview.activeProviderCount} enabled</div>
+        </a>
+        <a class="a2-metric-card" href="/admin/sources">
+          <div class="a2-metric-icon"><Wifi size={18} /></div>
+          <div class="a2-metric-value">{data.overview.sourceCount}</div>
+          <div class="a2-metric-label">Sources</div>
+          <div class="a2-metric-status">{data.overview.activeSourceCount} enabled</div>
+        </a>
+        <a class="a2-metric-card" href="/admin/categories">
+          <div class="a2-metric-icon"><Layers3 size={18} /></div>
+          <div class="a2-metric-value">{data.overview.categoryCount}</div>
+          <div class="a2-metric-label">Categories</div>
+          <div class="a2-metric-status">Custom ordering</div>
+        </a>
+        <div class="a2-metric-card">
+          <div class="a2-metric-icon"><Database size={18} /></div>
+          <div class="a2-metric-value">v{data.overview.configVersion}</div>
+          <div class="a2-metric-label">Config Version</div>
+          <div class="a2-metric-status">Invalidates on mutation</div>
+        </div>
       </div>
     </section>
-  {/if}
+
+    <!-- ============================================================
+         HOSTING & MEDIA — quick links
+         ============================================================ -->
+    <section class="a2-section">
+      <div class="a2-section-head">
+        <h2 class="a2-section-title">Hosting & Media</h2>
+      </div>
+      <div class="a2-quick-grid">
+        <a class="a2-quick-card" href="/admin/media/upload">
+          <div class="a2-quick-icon"><HardDrive size={20} /></div>
+          <div class="a2-quick-text">
+            <div class="a2-quick-title">Upload Media</div>
+            <div class="a2-quick-desc">Add content to Vidara or Abyss</div>
+          </div>
+          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
+        </a>
+        <a class="a2-quick-card" href="/admin/media/missing">
+          <div class="a2-quick-icon"><Activity size={20} /></div>
+          <div class="a2-quick-text">
+            <div class="a2-quick-title">Missing Media</div>
+            <div class="a2-quick-desc">Demand requests from playback</div>
+          </div>
+          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
+        </a>
+        <a class="a2-quick-card" href="/admin/providers">
+          <div class="a2-quick-icon"><Server size={20} /></div>
+          <div class="a2-quick-text">
+            <div class="a2-quick-title">Providers</div>
+            <div class="a2-quick-desc">Vidara & Abyss management</div>
+          </div>
+          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
+        </a>
+        <a class="a2-quick-card" href="/admin/media/operations">
+          <div class="a2-quick-icon"><Activity size={20} /></div>
+          <div class="a2-quick-text">
+            <div class="a2-quick-title">Operations</div>
+            <div class="a2-quick-desc">Upload / processing history</div>
+          </div>
+          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
+        </a>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         INTEGRATIONS — secondary metrics
+         ============================================================ -->
+    {#if data.downloadersOverview || data.addonsOverview}
+      <section class="a2-section">
+        <div class="a2-section-head">
+          <h2 class="a2-section-title">Integrations</h2>
+        </div>
+        <div class="a2-metric-grid a2-secondary">
+          {#if data.downloadersOverview}
+            <a class="a2-metric-card" href="/admin/downloaders">
+              <div class="a2-metric-icon"><Download size={18} /></div>
+              <div class="a2-metric-value">{data.downloadersOverview.providerCount}</div>
+              <div class="a2-metric-label">Downloaders</div>
+              <div class="a2-metric-status">{data.downloadersOverview.enabledCount} enabled · {data.downloadersOverview.defaultCount} default</div>
+            </a>
+          {/if}
+          {#if data.addonsOverview}
+            <a class="a2-metric-card" href="/admin/addons">
+              <div class="a2-metric-icon"><Puzzle size={18} /></div>
+              <div class="a2-metric-value">{data.addonsOverview.addonCount}</div>
+              <div class="a2-metric-label">Stremio Addons</div>
+              <div class="a2-metric-status">{data.addonsOverview.enabledCount} enabled</div>
+            </a>
+          {/if}
+        </div>
+      </section>
+    {/if}
+  </AdminPage>
 </AdminAppShell>
 
 <style>
@@ -248,6 +269,11 @@
     flex-shrink: 0;
   }
 
+  .a2-quick-text {
+    flex: 1;
+    min-width: 0;
+  }
+
   .a2-quick-title {
     font-size: var(--a2-text-sm);
     font-weight: 600;
@@ -258,6 +284,19 @@
     font-size: var(--a2-text-xs);
     color: var(--a2-text-dim);
     margin-top: 2px;
+  }
+
+  .a2-quick-arrow {
+    display: inline-flex;
+    align-items: center;
+    color: var(--a2-text-dim);
+    flex-shrink: 0;
+    transition: color var(--a2-motion-micro) var(--a2-ease-out),
+                transform var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-quick-card:hover .a2-quick-arrow {
+    color: var(--a2-cyan);
+    transform: translateX(2px);
   }
 
   /* Responsive */
@@ -276,5 +315,9 @@
   @media (min-width: 1920px) {
     .a2-metric-grid { gap: var(--a2-space-4); }
     .a2-quick-grid { gap: var(--a2-space-4); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .a2-quick-arrow { transition: none; }
   }
 </style>

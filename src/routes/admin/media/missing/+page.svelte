@@ -1,5 +1,6 @@
 <script lang="ts">
   /** Phase 9 — Missing Media admin page. */
+  import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import type { PageData } from './$types';
@@ -45,9 +46,10 @@
 
 <svelte:head><title>Missing Media — Mavero Admin</title></svelte:head>
 
-<AdminPageHeader eyebrow="Hosting" title="Missing Media" description="Track demand for media not yet hosted on Mavero providers" />
+<AdminAppShell active="missing-media">
+  <AdminPageHeader eyebrow="Hosting" title="Missing Media" description="Track demand for media not yet hosted on Mavero providers" />
 
-<div class="admin-content" role="main">
+  <div class="admin-content" role="main">
   {#if data.requests.length === 0}
     <p class="empty">No missing media requests with status "{data.statusFilter}".</p>
   {:else}
@@ -94,3 +96,4 @@
     </table>
   {/if}
 </div>
+</AdminAppShell>

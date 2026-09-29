@@ -1,33 +1,40 @@
 <script lang="ts">
   /**
-   * Admin 2.0 — AdminAppShell
+   * Admin 2.0 — AdminAppShell (Phase B)
    *
    * The Neon Noir Control System shell. Replaces AdminShell.svelte
    * with a new architecture:
    *
    * Desktop (≥1024px):
-   *   - Top context bar (brand + workspace + search + back-to-app)
-   *   - Collapsible sidebar with 5 workflow groups
+   *   - Top context bar (brand + workspace + ⌘K command trigger + Configure + exit)
+   *   - Collapsible sidebar with 6 workflow groups
    *   - Independent main scroll container
    *   - Ambient atmospheric lighting layer
+   *   - Workspace fade transition on route change
    *
    * Mobile (<1024px):
-   *   - Compact header (brand + workspace)
+   *   - Compact header (brand + workspace + ⌘K trigger)
    *   - Main content (full width)
    *   - Bottom navigation bar (5 primary destinations)
-   *   - Secondary navigation via "More" sheet
+   *   - Secondary navigation via "More" sheet (all nav + configuration)
    *
    * The navigation groups follow the approved Admin 2.0 IA:
    *   COMMAND   → Overview
-   *   CONTENT   → Media Library, Upload, Missing Media
+   *   CONTENT   → Media Library, Upload/Import, Missing Media
    *   HOSTING   → Providers, Assets, Sync
    *   OPERATIONS → Jobs, History, Attention
    *   SYSTEM    → API & Sources, Content Rules, Downloads, Integrations
    *   PEOPLE    → Analytics
    *
-   * Existing routes that don't yet have Admin 2.0 pages are included
-   * in the nav but point to their current URLs — the shell doesn't
-   * break existing functionality.
+   * Phase B additions:
+   *   - Route-aware active state (no fragile substring checks).
+   *   - Active state survives direct nav, refresh, nested routes,
+   *     query parameters, and dynamic route segments.
+   *   - Command palette (⌘K / Ctrl+K) integrated in topbar.
+   *   - "Configure" dropdown surfaces Defaults + Feature Control
+   *     without polluting the primary SYSTEM nav.
+   *   - Workspace transition (fade-in) on route change.
+   *   - Mobile "More" sheet shows all groups + configuration.
    */
 
   import { onMount, onDestroy } from 'svelte';
@@ -37,9 +44,10 @@
   import {
     LayoutGrid, Library, Upload, AlertCircle, Server, HardDrive, RefreshCw,
     Activity, History, TriangleAlert, Settings, Layers, Download, Puzzle,
-    BarChart3, PanelLeftClose, PanelLeft, Menu, X, ArrowLeft, MoreHorizontal,
-    ChevronRight
+    BarChart3, PanelLeftClose, PanelLeft, X, ArrowLeft, MoreHorizontal,
+    ChevronRight, Search, Command, Cog, ArrowRight
   } from 'lucide-svelte';
+  import AdminCommandMenu from './AdminCommandMenu.svelte';
 
   type NavGroup = {
     id: string;
@@ -52,20 +60,44 @@
     label: string;
     href: string;
     icon: typeof LayoutGrid;
-    badge?: string;
-    active?: boolean;
+    /** Phase tag for placeholder destinations (e.g. "Phase C"). */
+    phase?: string;
+    /**
+     * Optional route prefix used for active-state detection.
+     * Defaults to `href`. Use this when a single nav item should
+     * stay active across multiple sibling routes — e.g. "Analytics"
+     * covers /admin/users/overview AND /admin/users/[id].
+     */
+    matchPrefix?: string;
+    /** Marks placeholder destinations not yet implemented. */
+    placeholder?: boolean;
+  };
+
+  type ConfigItem = {
+    id: string;
+    label: string;
+    href: string;
+    description: string;
   };
 
   let {
     active = '' as string,
     children
   }: {
+    /** Optional override for the active nav item id. When empty, route-aware detection is used. */
     active?: string;
     children: Snippet;
   } = $props();
 
   // ============================================================
-  // NAVIGATION — Admin 2.0 Information Architecture
+  // NAVIGATION — Admin 2.0 Information Architecture (Phase B)
+  //
+  // System group consolidates Defaults + Feature Control out of the
+  // primary nav. They remain accessible via the topbar "Configure"
+  // dropdown AND the mobile "More" sheet's Configuration section.
+  // Phase G will fold them into API & Sources / Content Rules as
+  // contextual tabs / sheets, at which point the Configure dropdown
+  // will be retired.
   // ============================================================
 
   const navGroups: NavGroup[] = [
@@ -80,7 +112,7 @@
       id: 'content',
       label: 'Content',
       items: [
-        { id: 'media-library', label: 'Media Library', href: '/admin/media/library', icon: Library },
+        { id: 'media-library', label: 'Media Library', href: '/admin/media/library', icon: Library, phase: 'C', placeholder: true },
         { id: 'upload', label: 'Upload / Import', href: '/admin/media/upload', icon: Upload },
         { id: 'missing-media', label: 'Missing Media', href: '/admin/media/missing', icon: AlertCircle },
       ]
@@ -90,38 +122,49 @@
       label: 'Hosting',
       items: [
         { id: 'providers', label: 'Providers', href: '/admin/providers', icon: Server },
-        { id: 'assets', label: 'Assets', href: '/admin/media/assets', icon: HardDrive },
-        { id: 'sync', label: 'Sync', href: '/admin/media/sync', icon: RefreshCw },
+        { id: 'assets', label: 'Assets', href: '/admin/media/assets', icon: HardDrive, phase: 'E', placeholder: true },
+        { id: 'sync', label: 'Sync', href: '/admin/media/sync', icon: RefreshCw, phase: 'E', placeholder: true },
       ]
     },
     {
       id: 'operations',
       label: 'Operations',
       items: [
-        { id: 'jobs', label: 'Jobs', href: '/admin/media/operations', icon: Activity },
-        { id: 'history', label: 'History', href: '/admin/media/history', icon: History },
-        { id: 'attention', label: 'Attention', href: '/admin/media/stale', icon: TriangleAlert },
+        { id: 'jobs', label: 'Jobs', href: '/admin/media/operations', icon: Activity, phase: 'F', placeholder: true },
+        { id: 'history', label: 'History', href: '/admin/media/history', icon: History, phase: 'F', placeholder: true },
+        { id: 'attention', label: 'Attention', href: '/admin/media/stale', icon: TriangleAlert, phase: 'F', placeholder: true },
       ]
     },
     {
       id: 'system',
       label: 'System',
       items: [
-        { id: 'sources', label: 'API & Sources', href: '/admin/sources', icon: Settings },
-        { id: 'categories', label: 'Content Rules', href: '/admin/categories', icon: Layers },
-        { id: 'downloaders', label: 'Downloads', href: '/admin/downloaders', icon: Download },
-        { id: 'addons', label: 'Integrations', href: '/admin/addons', icon: Puzzle },
-        { id: 'defaults', label: 'Defaults', href: '/admin/defaults', icon: Settings },
-        { id: 'feature-control', label: 'Feature Control', href: '/admin/feature-control', icon: Settings },
+        { id: 'sources', label: 'API & Sources', href: '/admin/sources', icon: Settings, matchPrefix: '/admin/sources' },
+        { id: 'categories', label: 'Content Rules', href: '/admin/categories', icon: Layers, matchPrefix: '/admin/categories' },
+        { id: 'downloaders', label: 'Downloads', href: '/admin/downloaders', icon: Download, matchPrefix: '/admin/downloaders' },
+        { id: 'addons', label: 'Integrations', href: '/admin/addons', icon: Puzzle, matchPrefix: '/admin/addons' },
       ]
     },
     {
       id: 'people',
       label: 'People',
       items: [
-        { id: 'analytics', label: 'Analytics', href: '/admin/users/overview', icon: BarChart3 },
+        {
+          id: 'analytics',
+          label: 'Analytics',
+          href: '/admin/users/overview',
+          icon: BarChart3,
+          matchPrefix: '/admin/users',
+        },
       ]
     },
+  ];
+
+  // Secondary configuration routes — surfaced via topbar dropdown + mobile More sheet.
+  // Phase G will fold these into API & Sources / Content Rules as contextual tabs.
+  const configItems: ConfigItem[] = [
+    { id: 'defaults', label: 'Defaults', href: '/admin/defaults', description: 'Default source, fallback, category ordering' },
+    { id: 'feature-control', label: 'Feature Control', href: '/admin/feature-control', description: 'Toggle platform features on/off' },
   ];
 
   // Mobile bottom nav: 5 primary destinations
@@ -129,9 +172,57 @@
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
     { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library },
     { id: 'upload', label: 'Upload', href: '/admin/media/upload', icon: Upload },
-    { id: 'jobs', label: 'Jobs', href: '/admin/media/operations', icon: Activity },
+    { id: 'analytics', label: 'Analytics', href: '/admin/users/overview', icon: BarChart3, matchPrefix: '/admin/users' },
     { id: 'more', label: 'More', href: '#more', icon: MoreHorizontal },
   ];
+
+  // ============================================================
+  // ROUTE-AWARE ACTIVE STATE
+  //
+  // Uses `page.url.pathname` from `$app/state` for reactive,
+  // SSR-safe route detection. No fragile substring checks —
+  // we use proper route-relationship matching:
+  //
+  //   - Exact match for /admin (overview)
+  //   - Equal OR child-of-prefix for everything else
+  //   - matchPrefix override (e.g. Analytics covers /admin/users/*)
+  //
+  // Survives: direct nav, refresh, nested routes, query params,
+  // dynamic route segments (e.g. /admin/users/[userId]).
+  // ============================================================
+
+  function isItemActive(item: NavItem, pathname: string): boolean {
+    const prefix = item.matchPrefix ?? item.href;
+    // Overview is exact-match only — /admin/foo must NOT highlight Overview.
+    if (prefix === '/admin') {
+      return pathname === '/admin';
+    }
+    // Equal, or proper child path (prefix + '/').
+    return pathname === prefix || pathname.startsWith(prefix + '/');
+  }
+
+  const activeItemId = $derived.by(() => {
+    // Explicit override (rare — used by overview page to disambiguate).
+    if (active) {
+      for (const g of navGroups) {
+        for (const item of g.items) {
+          if (item.id === active) return item.id;
+        }
+      }
+    }
+    // Route-aware detection.
+    const pathname = page.url.pathname;
+    for (const g of navGroups) {
+      for (const item of g.items) {
+        if (isItemActive(item, pathname)) return item.id;
+      }
+    }
+    return '';
+  });
+
+  const activeGroup = $derived(
+    navGroups.find(g => g.items.some(i => i.id === activeItemId))?.label ?? ''
+  );
 
   // ============================================================
   // SIDEBAR COLLAPSE — persisted in localStorage
@@ -142,16 +233,33 @@
   let mobileMoreOpen = $state(false);
   let mobileMoreTrigger: HTMLElement | null = null;
   let mobileMoreEl = $state<HTMLElement | undefined>(undefined);
+  let configOpen = $state(false);
+  let configTrigger: HTMLElement | null = null;
+  let configEl = $state<HTMLElement | undefined>(undefined);
+  let commandOpen = $state(false);
+  let commandTrigger: HTMLElement | null = null;
 
   onMount(() => {
     try {
       sidebarCollapsed = localStorage.getItem(STORAGE_KEY) === 'true';
     } catch { /* SSR / no access */ }
+    // ⌘K / Ctrl+K command palette
+    window.addEventListener('keydown', handleGlobalKeydown);
   });
 
   onDestroy(() => {
     unlockBodyScroll();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', handleGlobalKeydown);
+    }
   });
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+      event.preventDefault();
+      commandOpen = true;
+    }
+  }
 
   function toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
@@ -185,7 +293,6 @@
 
   function openMobileMore(event: Event) {
     if (mobileNav[4]?.id === 'more') {
-      // Prevent the href="#more" from navigating
       event.preventDefault();
     }
     mobileMoreTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
@@ -224,8 +331,68 @@
     }
   }
 
-  // Close mobile "More" on route change
+  // ============================================================
+  // CONFIGURE DROPDOWN (desktop topbar)
+  // ============================================================
+
+  function toggleConfig(event: Event) {
+    event.preventDefault();
+    configTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    configOpen = !configOpen;
+    if (configOpen) {
+      void tick().then(() => {
+        configEl?.querySelector<HTMLElement>('a[href]')?.focus();
+      });
+    }
+  }
+
+  function closeConfig() {
+    configOpen = false;
+    configTrigger?.focus();
+    configTrigger = null;
+  }
+
+  function handleConfigKeydown(event: KeyboardEvent) {
+    if (!configOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeConfig();
+      return;
+    }
+    if (event.key !== 'Tab' || !configEl) return;
+    const focusable = [...configEl.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  // ============================================================
+  // COMMAND PALETTE (⌘K)
+  // ============================================================
+
+  function openCommand(event?: Event) {
+    if (event) event.preventDefault();
+    commandOpen = true;
+  }
+
+  function closeCommand() {
+    commandOpen = false;
+  }
+
+  // ============================================================
+  // ROUTE-CHANGE EFFECTS — close overlays + workspace transition
+  // ============================================================
+
   let lastPathname = typeof location !== 'undefined' ? location.pathname : '';
+  let workspaceKey = $state(0);
+
   $effect(() => {
     const current = page.url.pathname;
     if (current !== lastPathname) {
@@ -235,13 +402,14 @@
         unlockBodyScroll();
         mobileMoreTrigger = null;
       }
+      if (configOpen) {
+        configOpen = false;
+        configTrigger = null;
+      }
+      // Bump key to retrigger workspace fade-in transition.
+      workspaceKey += 1;
     }
   });
-
-  // Determine active group for the top context bar
-  const activeGroup = $derived(
-    navGroups.find(g => g.items.some(i => i.id === active))?.label ?? ''
-  );
 </script>
 
 <div class="a2-shell">
@@ -268,6 +436,50 @@
       </div>
     </div>
     <div class="a2-topbar-right">
+      <button
+        class="a2-cmd-trigger"
+        type="button"
+        onclick={openCommand}
+        aria-label="Open command palette"
+      >
+        <Search size={14} />
+        <span class="a2-cmd-trigger-text">Search</span>
+        <kbd class="a2-kbd">⌘K</kbd>
+      </button>
+
+      <!-- Configure dropdown: surfaces Defaults + Feature Control without polluting primary nav -->
+      <div class="a2-config-wrap">
+        <button
+          class="a2-config-btn"
+          type="button"
+          onclick={toggleConfig}
+          aria-label="Configure"
+          aria-expanded={configOpen}
+          aria-haspopup="true"
+        >
+          <Cog size={14} />
+        </button>
+        {#if configOpen}
+          <div class="a2-config-overlay" onclick={closeConfig} onkeydown={handleConfigKeydown} aria-hidden="true"></div>
+          <div
+            class="a2-config-pop"
+            bind:this={configEl}
+            role="menu"
+            tabindex="-1"
+            aria-label="Configuration"
+            onkeydown={handleConfigKeydown}
+          >
+            <div class="a2-config-head">Configuration</div>
+            {#each configItems as item}
+              <a class="a2-config-link" href={item.href} onclick={closeConfig} role="menuitem">
+                <div class="a2-config-link-title">{item.label}</div>
+                <div class="a2-config-link-desc">{item.description}</div>
+              </a>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
       <a class="a2-back-link" href="/discover" title="Back to Mavero">
         <ArrowLeft size={14} />
         <span>Exit</span>
@@ -289,13 +501,18 @@
             {@const Icon = item.icon}
             <a
               class="a2-nav-link"
-              class:active={active === item.id}
+              class:active={activeItemId === item.id}
               href={item.href}
-              aria-current={active === item.id ? 'page' : undefined}
+              aria-current={activeItemId === item.id ? 'page' : undefined}
               title={sidebarCollapsed ? item.label : undefined}
             >
-              <span class="a2-nav-icon"><Icon size={16} strokeWidth={active === item.id ? 2.2 : 1.7} /></span>
-              {#if !sidebarCollapsed}<span class="a2-nav-text">{item.label}</span>{/if}
+              <span class="a2-nav-icon"><Icon size={16} strokeWidth={activeItemId === item.id ? 2.2 : 1.7} /></span>
+              {#if !sidebarCollapsed}
+                <span class="a2-nav-text">{item.label}</span>
+                {#if item.phase}
+                  <span class="a2-nav-phase" title="Arrives in Phase {item.phase}">{item.phase}</span>
+                {/if}
+              {/if}
             </a>
           {/each}
         </div>
@@ -320,9 +537,19 @@
       <span class="a2-brand-sep">/</span>
       <span class="a2-brand-context">{activeGroup || 'Admin'}</span>
     </div>
-    <a class="a2-mobile-exit" href="/discover" aria-label="Back to Mavero">
-      <ArrowLeft size={16} />
-    </a>
+    <div class="a2-mobile-actions">
+      <button
+        class="a2-mobile-cmd"
+        type="button"
+        onclick={openCommand}
+        aria-label="Open command palette"
+      >
+        <Search size={16} />
+      </button>
+      <a class="a2-mobile-exit" href="/discover" aria-label="Back to Mavero">
+        <ArrowLeft size={16} />
+      </a>
+    </div>
   </header>
 
   <!-- ============================================================
@@ -355,18 +582,32 @@
               {@const Icon = item.icon}
               <a
                 class="a2-more-link"
-                class:active={active === item.id}
+                class:active={activeItemId === item.id}
                 href={item.href}
-                aria-current={active === item.id ? 'page' : undefined}
+                aria-current={activeItemId === item.id ? 'page' : undefined}
                 onclick={closeMobileMore}
               >
                 <span class="a2-nav-icon"><Icon size={16} /></span>
-                <span>{item.label}</span>
-                <ChevronRight size={14} class="a2-more-chevron" />
+                <span class="a2-more-link-text">{item.label}</span>
+                {#if item.phase}
+                  <span class="a2-nav-phase">{item.phase}</span>
+                {/if}
+                <span class="a2-more-chevron"><ChevronRight size={14} /></span>
               </a>
             {/each}
           </div>
         {/each}
+
+        <div class="a2-more-group">
+          <div class="a2-nav-label">Configuration</div>
+          {#each configItems as item}
+            <a class="a2-more-link" href={item.href} onclick={closeMobileMore}>
+              <span class="a2-nav-icon"><Cog size={16} /></span>
+              <span class="a2-more-link-text">{item.label}</span>
+              <span class="a2-more-chevron"><ChevronRight size={14} /></span>
+            </a>
+          {/each}
+        </div>
       </nav>
     </div>
   {/if}
@@ -375,7 +616,7 @@
        MAIN WORKSPACE
        ============================================================ -->
   <main class="a2-main a2-scroll">
-    <div class="a2-workspace">
+    <div class="a2-workspace" data-key={workspaceKey}>
       {@render children()}
     </div>
   </main>
@@ -400,9 +641,9 @@
       {:else}
         <a
           class="a2-bottom-item"
-          class:active={active === item.id || (item.id === 'overview' && active === '')}
+          class:active={activeItemId === item.id || (item.id === 'overview' && activeItemId === '')}
           href={item.href}
-          aria-current={active === item.id || (item.id === 'overview' && active === '') ? 'page' : undefined}
+          aria-current={activeItemId === item.id || (item.id === 'overview' && activeItemId === '') ? 'page' : undefined}
         >
           <span class="a2-bottom-icon"><Icon size={20} /></span>
           <span class="a2-bottom-label">{item.label}</span>
@@ -410,6 +651,16 @@
       {/if}
     {/each}
   </nav>
+
+  <!-- ============================================================
+       COMMAND PALETTE (⌘K)
+       ============================================================ -->
+  <AdminCommandMenu
+    bind:open={commandOpen}
+    {navGroups}
+    {configItems}
+    onclose={closeCommand}
+  />
 </div>
 
 <style>
@@ -441,6 +692,12 @@
     display: flex;
     align-items: center;
     gap: var(--a2-space-3);
+  }
+
+  .a2-topbar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--a2-space-2);
   }
 
   .a2-sidebar-toggle {
@@ -482,6 +739,121 @@
     font-weight: 500;
     font-size: var(--a2-text-sm);
     color: var(--a2-cyan);
+  }
+
+  /* ---- Command palette trigger ---- */
+  .a2-cmd-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--a2-space-2);
+    padding: 5px var(--a2-space-2) 5px var(--a2-space-3);
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-surface-2);
+    color: var(--a2-text-muted);
+    font-size: var(--a2-text-xs);
+    font-weight: 500;
+    cursor: pointer;
+    transition: color var(--a2-motion-micro) var(--a2-ease-out),
+                border-color var(--a2-motion-micro) var(--a2-ease-out),
+                background var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-cmd-trigger:hover {
+    color: var(--a2-cyan);
+    border-color: var(--a2-cyan-border);
+    background: var(--a2-cyan-soft);
+  }
+  .a2-cmd-trigger-text {
+    color: var(--a2-text-muted);
+  }
+  .a2-kbd {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border: 1px solid var(--a2-border-strong);
+    border-radius: var(--a2-radius-xs);
+    background: var(--a2-surface-3);
+    color: var(--a2-text-dim);
+    font-family: var(--a2-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  /* ---- Configure dropdown ---- */
+  .a2-config-wrap {
+    position: relative;
+  }
+  .a2-config-btn {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-surface-2);
+    color: var(--a2-text-muted);
+    cursor: pointer;
+    transition: color var(--a2-motion-micro) var(--a2-ease-out),
+                border-color var(--a2-motion-micro) var(--a2-ease-out),
+                background var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-config-btn:hover,
+  .a2-config-btn[aria-expanded="true"] {
+    color: var(--a2-cyan);
+    border-color: var(--a2-cyan-border);
+    background: var(--a2-cyan-soft);
+  }
+  .a2-config-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: transparent;
+  }
+  .a2-config-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 61;
+    min-width: 240px;
+    background: var(--a2-surface-3);
+    border: 1px solid var(--a2-border-strong);
+    border-radius: var(--a2-radius-md);
+    box-shadow: var(--a2-shadow-md);
+    padding: var(--a2-space-2);
+    animation: a2-pop-in var(--a2-motion-fast) var(--a2-ease-out);
+  }
+  @keyframes a2-pop-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .a2-config-head {
+    padding: var(--a2-space-1) var(--a2-space-2) var(--a2-space-2);
+    font-size: var(--a2-text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--a2-text-dim);
+  }
+  .a2-config-link {
+    display: block;
+    padding: var(--a2-space-2) var(--a2-space-3);
+    border-radius: var(--a2-radius-sm);
+    text-decoration: none;
+    color: var(--a2-text);
+    transition: background var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-config-link:hover {
+    background: var(--a2-surface-4);
+  }
+  .a2-config-link-title {
+    font-size: var(--a2-text-sm);
+    font-weight: 600;
+  }
+  .a2-config-link-desc {
+    font-size: var(--a2-text-2xs);
+    color: var(--a2-text-dim);
+    margin-top: 2px;
   }
 
   .a2-back-link {
@@ -583,11 +955,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
   }
-
-  /* Collapsed: center icons */
-  .a2-sidebar:has(~ .a2-topbar .a2-sidebar-toggle) .a2-nav-text {
-    display: none;
+  .a2-nav-phase {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    padding: 1px 5px;
+    border-radius: var(--a2-radius-xs);
+    background: var(--a2-surface-3);
+    border: 1px solid var(--a2-border-strong);
+    color: var(--a2-text-dim);
+    font-family: var(--a2-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+  .a2-nav-link.active .a2-nav-phase {
+    color: var(--a2-cyan);
+    border-color: var(--a2-cyan-border);
+    background: var(--a2-cyan-soft);
   }
 
   .a2-sidebar-foot {
@@ -645,6 +1034,28 @@
     display: flex;
     align-items: center;
     gap: var(--a2-space-2);
+  }
+  .a2-mobile-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--a2-space-2);
+  }
+  .a2-mobile-cmd {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--a2-radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--a2-text-muted);
+    cursor: pointer;
+    transition: color var(--a2-motion-micro) var(--a2-ease-out),
+                background var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-mobile-cmd:hover {
+    color: var(--a2-cyan);
+    background: var(--a2-cyan-soft);
   }
   .a2-mobile-exit {
     display: grid;
@@ -736,6 +1147,9 @@
     color: var(--a2-cyan);
     background: var(--a2-cyan-soft);
   }
+  .a2-more-link-text {
+    flex: 1;
+  }
   .a2-more-chevron {
     margin-left: auto;
     opacity: 0.4;
@@ -757,6 +1171,11 @@
   .a2-workspace {
     padding: var(--a2-space-6);
     min-height: calc(100dvh - var(--a2-topbar-h));
+    animation: a2-workspace-in var(--a2-motion-normal) var(--a2-ease-out);
+  }
+  @keyframes a2-workspace-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   /* ============================================================
@@ -838,11 +1257,15 @@
   @media (max-width: 640px) {
     .a2-workspace { padding: var(--a2-space-3); }
     .a2-brand-context { font-size: var(--a2-text-xs); }
+    .a2-cmd-trigger-text { display: none; }
+    .a2-cmd-trigger { padding: 5px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .a2-more-sheet { animation: none; }
-    .a2-more-overlay { animation: none; }
+    .a2-more-sheet,
+    .a2-more-overlay,
+    .a2-config-pop,
+    .a2-workspace { animation: none; }
     .a2-status-dot { animation: none; }
     .a2-sidebar, .a2-topbar, .a2-main { transition: none; }
   }

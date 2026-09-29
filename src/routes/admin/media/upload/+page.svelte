@@ -16,6 +16,7 @@
    */
 
   import { goto } from '$app/navigation';
+  import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
   import AdminFormSection from '$lib/components/admin/AdminFormSection.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
@@ -497,9 +498,10 @@
 
 <svelte:head><title>Upload — Mavero Admin</title></svelte:head>
 
-<AdminPageHeader eyebrow="Hosting" title="Upload Media" description="TMDB-first upload to Vidara or Abyss" />
+<AdminAppShell active="upload">
+  <AdminPageHeader eyebrow="Hosting" title="Upload Media" description="TMDB-first upload to Vidara or Abyss" />
 
-<div class="upload-wizard" role="main">
+  <div class="upload-wizard" role="main">
   <!-- Step indicator -->
   <div class="step-indicator" aria-hidden="true">
     {#each ['Search', 'Select', 'Details', 'Provider', 'Source', 'Review', 'Upload'] as label, i}
@@ -710,6 +712,7 @@
     </AdminFormSection>
   {/if}
 </div>
+</AdminAppShell>
 
 <style>
   .upload-wizard { max-width: 800px; margin: 0 auto; padding: 1rem; }

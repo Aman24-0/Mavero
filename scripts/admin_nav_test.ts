@@ -43,9 +43,17 @@ assert.match(elseBranch, /showMobileNav=\{!page\.url\.pathname\.startsWith\('\/s
 ok('1. root layout: /admin/* renders bare; consumer pages keep AppShell exactly as before');
 
 // ============================================================
-// 2. Admin pages keep their own AdminShell navigation
+// 2. Admin pages keep their own shell navigation
+//
+// Phase A migrated /admin (overview) to the new AdminAppShell.
+// Phase B keeps every other admin page on the legacy AdminShell.
+// The contract herefore accepts EITHER shell on the overview page
+// (so the migration is forward-compatible) but pins AdminShell on
+// the four pages that still belong to Phase G's consolidation
+// work (providers/sources/defaults/categories).
 // ============================================================
-for (const [name, content] of [['overview', adminIndex], ['providers', providersPage], ['sources', sourcesPage], ['defaults', defaultsPage], ['categories', categoriesPage]] as const) {
+assert.match(adminIndex, /<(AdminAppShell|AdminShell)(\s+active="overview")?\s*>/, 'overview page wraps in either AdminAppShell (Phase B+ — route-aware active state) or AdminShell');
+for (const [name, content] of [['providers', providersPage], ['sources', sourcesPage], ['defaults', defaultsPage], ['categories', categoriesPage]] as const) {
   assert.match(content, /<AdminShell active="/, `${name} admin page renders its own AdminShell`);
 }
 // AdminShell defines its own nav links (Overview/Providers/Sources/
