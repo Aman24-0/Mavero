@@ -8,11 +8,11 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 9 (Phase 9 — Missing Media Demand;
-                  COMPLETE — demand tracking + admin API + UI)
+Current Phase: 10 (Phase 10 — Production Hardening + Provider Health;
+                  COMPLETE — health service + stale detection + error/retry audit)
 Status: COMPLETE
 Last Commit: <this commit>
-Next Task: Phase 10 — Hardening + Provider Health (awaiting user approval)
+Next Task: Phase 11 — End-to-end Verification (awaiting user approval)
 Blocking Issue: none
 Plan Revision: 1.3
 ```
@@ -4691,30 +4691,94 @@ does NOT block the upload/sync lifecycle.
 
 ## Phase 10 --- Hardening + Provider Health
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: `<this commit>`
 
-Date:
+Date: 2026-09-30
 
 ### Planned
 
--   [ ] Quota handling.
--   [ ] Rate limits.
--   [ ] Retries.
--   [ ] Stale assets.
--   [ ] Structured errors.
--   [ ] Secret-safe logs.
--   [ ] Operation idempotency.
--   [ ] Provider health.
+-   [x] Quota handling (ProviderHealthService reports quota where available).
+-   [x] Rate limits (existing error model: HTTP 429 → RATE_LIMITED + Retry-After).
+-   [x] Retries (existing withRetry: bounded exponential backoff + jitter; permanent errors not retried).
+-   [x] Stale assets/operations (stale detection API + cleanup API).
+-   [x] Structured errors (existing HostingErrorCode closed vocabulary with safe messages).
+-   [x] Secret-safe logs (curated messages; no credentials in error/details/responses).
+-   [x] Operation idempotency (stale cleanup only targets non-terminal states; sync is idempotent).
+-   [x] Provider health (ProviderHealthService + admin API).
 
-### Actual
+### Audit Findings
 
-*To be filled by GLM.*
+**Already implemented (Phase 3/7/8):**
+- Error model: HostingErrorCode with 11 codes, safe curated messages, isRetryable(), classifyHttpError().
+- withRetry(): bounded exponential backoff with jitter. Permanent errors not retried.
+- HTTP client: SSRF guard, timeout, JSON parsing, 429 → RATE_LIMITED + retryAfterSeconds.
+- Abyss: concurrent login guard, permanent auth-failure guard, 401-retry-once in authedRequest().
+- Stale operations: auto-fail for processing with missing media_asset_id/provider_asset_id.
+- Operation history: recordOperation() for audit trail.
+- Secret-safe errors: no response bodies in error messages.
+
+**Missing (implemented in Phase 10):**
+- Provider health service (no health check, no quota visibility).
+- Provider health admin API.
+- Stale operation detection by age + cleanup API.
+
+**Provider-specific:**
+- Vidara: /v1/account/info returns 404 — health check uses /v1/video/list (verified working). Quota: unknown (not available from /v1/video/list).
+- Abyss: /v1/about works — health check uses getAccountInfo (returns quota). Upload: degraded if ABYSS_API_KEY not set.
+
+### Implementation
+
+**Files changed:**
+
+1. `src/lib/server/hosting/health/service.ts` (NEW):
+   - ProviderHealthService: checkProvider(adapterId), checkAll().
+   - Health states: healthy, degraded, unavailable, misconfigured, unknown.
+   - Reports: status, configured, latencyMs, quota, lastError, checkedAt.
+   - Vidara: uses listAssets as lightweight check; quota = unknown.
+   - Abyss: uses getAccountInfo (/v1/about); reports storageUsed, storageLimit, maxUploadSize.
+   - Abyss upload: degraded if apiKey not configured.
+
+2. `src/routes/api/admin/media/health/+server.ts` (NEW):
+   - GET /api/admin/media/health?provider=vidara|abyss
+   - Admin-only. No credentials exposed.
+
+3. `src/routes/api/admin/media/stale/+server.ts` (NEW):
+   - GET /api/admin/media/stale: lists stale operations (uploading/uploaded/processing older than 60 min).
+   - POST /api/admin/media/stale: cleanup (single operationId or markAllStale=true).
+   - Marks stale as failed with STALE_OPERATION error_code.
+   - Does NOT touch terminal states (ready/failed/cancelled/deleted).
+
+4. `scripts/phase10_hardening_test.ts` (NEW): 74 checks.
+5. `package.json`: added Phase 10 test to script.
+
+### No migration created
+
+The existing schema supports all Phase 10 requirements. No new tables or columns needed.
 
 ### Verification
 
-*To be filled by GLM.*
+- `phase10_hardening_test`: 74/74 passed.
+- `phase8_sync_history_test`: 51/51 passed.
+- `phase8_9_management_demand_test`: 102/102 passed.
+- `phase3_hosting_adapter_test`: 113/113 passed.
+- `phase6_completion_test`: 84/84 passed.
+- `phase7_playback_resolver_test`: 50/50 passed.
+- `phase7_vidara_auth_fix_test`: 106/106 passed.
+- `phase7_abyss_upload_fix_test`: 157/157 passed.
+- `phase7_live_upload_fix_test`: 58/58 passed.
+- `phase1_resolver_hardening_test`: 15/15 passed.
+- `phase3_resolver_resilience_test`: 67/67 passed.
+- `pnpm check`: 0 errors, 11 pre-existing a11y warnings.
+- `pnpm build`: PASS.
+
+### Known Limitations
+
+1. Vidara quota: not available from the current API (/v1/account/info returns 404). Reported as `unknown`.
+2. Abyss upload: requires ABYSS_API_KEY (not configured). Health reports `degraded` when apiKey is missing.
+3. withRetry is available but not systematically applied to every adapter method — the existing error model classifies retryability, and callers can wrap operations in withRetry when needed. Systematic application would require changing every adapter method signature, which is out of scope for Phase 10.
+4. No automatic scheduled stale cleanup — admin must manually trigger via API. A scheduled job would require infrastructure (cron/queue) that is not part of the current Netlify serverless architecture.
 
 ------------------------------------------------------------------------
 
