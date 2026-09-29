@@ -207,8 +207,13 @@ ok('6g. /admin/media/stale placeholder exists (Phase F destination)');
 
 // ============================================================
 // 7. Orphaned pages (upload, missing) now wrapped in AdminAppShell
+//
+// Phase D refactor: the upload page no longer passes an explicit
+// `active="upload"` prop — it relies on Phase B's route-aware active
+// state detection (derived from `page.url.pathname`). The Missing
+// Media page still passes the explicit prop. Both patterns are valid.
 // ============================================================
-assert.match(uploadPage, /<AdminAppShell active="upload">/, 'upload wizard wraps in AdminAppShell');
+assert.match(uploadPage, /<AdminAppShell>/, 'upload wizard wraps in AdminAppShell');
 assert.match(missingPage, /<AdminAppShell active="missing-media">/, 'missing media page wraps in AdminAppShell');
 ok('7a. Upload wizard + Missing media page now wrap in AdminAppShell (no longer orphaned)');
 
