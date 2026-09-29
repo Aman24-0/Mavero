@@ -355,3 +355,148 @@ img { max-width: 100%; }
 html[data-admin-drawer-open] body,
 html[data-admin-sheet-open] body { overflow: hidden; }
 html[data-admin-sheet-open] body { touch-action: none; }
+
+/* ============================================================
+   ADMIN 2.0 — NEON NOIR CONTROL SYSTEM
+   Phase A: Design Foundation
+   ============================================================
+
+   Layered architectural surfaces with cinematic depth.
+   Blade Runner 2049-inspired atmosphere: controlled neon against
+   dark architectural layers. Premium software, not cyberpunk kitsch.
+
+   Surface hierarchy:
+     Background     #050608  (atmospheric base)
+     Surface 1      #080B0F  (shell/sidebar)
+     Surface 2      #0B0F14  (workspace)
+     Surface 3      #10151B  (cards/panels)
+     Surface 4      #161D26  (elevated cards/hover)
+
+   Semantic accents:
+     Cyan/Teal      #00d9ff  (navigation, system intelligence)
+     Acid Green     #00ff9c  (primary, success, ready, healthy)
+     Electric Blue  #3b82f6  (information, provider metadata)
+     Amber          #f59e0b  (processing, queued, warning)
+     Hot Orange     #ff4d6d  (failed, critical, destructive)
+   ============================================================ */
+
+:root {
+  /* ---- Admin 2.0 layered surfaces ---- */
+  --a2-bg: #050608;
+  --a2-surface-1: #080B0F;
+  --a2-surface-2: #0B0F14;
+  --a2-surface-3: #10151B;
+  --a2-surface-4: #161D26;
+  --a2-glass: rgba(11, 15, 20, 0.72);
+  --a2-glass-border: rgba(0, 217, 255, 0.10);
+
+  /* ---- Admin 2.0 text ---- */
+  --a2-text: #e6edf0;
+  --a2-text-muted: #7a8a92;
+  --a2-text-dim: #4a5862;
+  --a2-text-bright: #f0f6f8;
+
+  /* ---- Admin 2.0 semantic accents ---- */
+  --a2-cyan: #00d9ff;
+  --a2-cyan-soft: rgba(0, 217, 255, 0.08);
+  --a2-cyan-border: rgba(0, 217, 255, 0.18);
+  --a2-green: #00ff9c;
+  --a2-green-soft: rgba(0, 255, 156, 0.06);
+  --a2-green-border: rgba(0, 255, 156, 0.15);
+  --a2-blue: #3b82f6;
+  --a2-blue-soft: rgba(59, 130, 246, 0.08);
+  --a2-amber: #f59e0b;
+  --a2-amber-soft: rgba(245, 158, 11, 0.08);
+  --a2-amber-border: rgba(245, 158, 11, 0.15);
+  --a2-red: #ff4d6d;
+  --a2-red-soft: rgba(255, 77, 109, 0.06);
+  --a2-red-border: rgba(255, 77, 109, 0.15);
+
+  /* ---- Admin 2.0 borders ---- */
+  --a2-border: rgba(255, 255, 255, 0.05);
+  --a2-border-strong: rgba(255, 255, 255, 0.10);
+  --a2-border-focus: var(--a2-cyan);
+
+  /* ---- Admin 2.0 glow/bloom ---- */
+  --a2-glow-cyan: 0 0 24px rgba(0, 217, 255, 0.10);
+  --a2-glow-green: 0 0 24px rgba(0, 255, 156, 0.08);
+  --a2-glow-amber: 0 0 20px rgba(245, 158, 11, 0.08);
+  --a2-glow-red: 0 0 20px rgba(255, 77, 109, 0.08);
+
+  /* ---- Admin 2.0 shadows ---- */
+  --a2-shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --a2-shadow-md: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --a2-shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+
+  /* ---- Admin 2.0 radii ---- */
+  --a2-radius-xs: 4px;
+  --a2-radius-sm: 6px;
+  --a2-radius-md: 10px;
+  --a2-radius-lg: 14px;
+  --a2-radius-xl: 20px;
+
+  /* ---- Admin 2.0 spacing ---- */
+  --a2-space-1: 4px;
+  --a2-space-2: 8px;
+  --a2-space-3: 12px;
+  --a2-space-4: 16px;
+  --a2-space-5: 20px;
+  --a2-space-6: 24px;
+  --a2-space-8: 32px;
+  --a2-space-10: 40px;
+  --a2-space-12: 48px;
+
+  /* ---- Admin 2.0 typography ---- */
+  --a2-font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --a2-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --a2-text-2xl: 1.5rem;
+  --a2-text-xl: 1.25rem;
+  --a2-text-lg: 1.1rem;
+  --a2-text-base: 0.95rem;
+  --a2-text-sm: 0.85rem;
+  --a2-text-xs: 0.75rem;
+  --a2-text-2xs: 0.65rem;
+
+  /* ---- Admin 2.0 motion ---- */
+  --a2-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --a2-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --a2-motion-micro: 140ms;
+  --a2-motion-fast: 180ms;
+  --a2-motion-normal: 240ms;
+  --a2-motion-slow: 320ms;
+  --a2-motion-ambient: 6s;
+
+  /* ---- Admin 2.0 sidebar ---- */
+  --a2-sidebar-w: 256px;
+  --a2-sidebar-collapsed: 64px;
+  --a2-sidebar-current: var(--a2-sidebar-w);
+  --a2-topbar-h: 52px;
+  --a2-topbar-h-safe: calc(var(--a2-topbar-h) + env(safe-area-inset-top, 0px));
+  --a2-mobile-nav-h: 56px;
+  --a2-mobile-nav-h-safe: calc(var(--a2-mobile-nav-h) + env(safe-area-inset-bottom, 0px));
+}
+
+/* ---- Admin 2.0 ambient atmosphere ---- */
+.a2-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0, 217, 255, 0.04), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 80%, rgba(0, 255, 156, 0.02), transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a2-ambient { animation: none; }
+}
+
+/* ---- Admin 2.0 scrollbar ---- */
+.a2-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+.a2-scroll::-webkit-scrollbar-track { background: transparent; }
+.a2-scroll::-webkit-scrollbar-thumb { background: var(--a2-border-strong); border-radius: 4px; }
+.a2-scroll::-webkit-scrollbar-thumb:hover { background: var(--a2-text-dim); }
+
+/* ---- Admin 2.0 body scroll lock (additional) ---- */
+html[data-a2-drawer-open] body { overflow: hidden; }
+html[data-a2-sheet-open] body { overflow: hidden; touch-action: none; }
