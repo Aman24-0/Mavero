@@ -65,7 +65,7 @@ import type {
 } from '../types';
 import { HostingProviderError } from '../errors';
 import type { HostingHttpFetcher } from '../http-client';
-import { createHostingHttpFetcher } from '../http-client';
+import { createHostingHttpFetcher, withRetry } from '../http-client';
 import type { AbyssConfig } from './config';
 import type {
   AbyssLoginResponse,
@@ -155,6 +155,27 @@ export class AbyssAdapter implements HostingProviderAdapter {
     // Initial fetcher has no auth — login will produce a JWT and
     // the adapter will create a new authenticated fetcher.
     this.http = options.httpFetcher ?? createHostingHttpFetcher(null);
+  }
+
+  /**
+   * Bounded retry wrapper for read-only provider operations.
+   * Retries transient failures (5xx, network, timeout, rate limit) up to
+   * 3 attempts with exponential backoff + jitter. Does NOT retry permanent
+   * errors (AUTHENTICATION, VALIDATION, NOT_FOUND, UNSUPPORTED).
+   *
+   * This is the SINGLE retry boundary for Abyss read operations. The Abyss
+   * `authedRequest` 401-retry-once for JWT refresh is NOT a `withRetry`
+   * call — it's explicit single-retry logic that fires only on AUTHENTICATION
+   * errors (which `withRetry` does NOT retry). So there is NO retry
+   * amplification: withRetry handles transient retries, authedRequest
+   * handles token refresh.
+   *
+   * Write operations (upload, rename, move, delete) are NOT retried because
+   * they have side effects and repeating them could create duplicates or
+   * corrupt provider state.
+   */
+  private async withReadRetry<T>(fn: () => Promise<T>): Promise<T> {
+    return withRetry(fn, 3, 500, 5_000);
   }
 
   getCapabilities(): ProviderCapabilities {
@@ -280,33 +301,38 @@ export class AbyssAdapter implements HostingProviderAdapter {
   // --- Account ---
 
   async getAccountInfo(_deps?: HostingAdapterDeps): Promise<ProviderAccountInfo> {
-    const res = await this.authedRequest({ method: 'GET', url: `${this.config.baseUrl}/v1/about` });
-    if (!res.json) {
-      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss account info response was empty or non-JSON.' });
-    }
-    return normalizeAbyssAccount(res.json as AbyssAboutResponse);
+    return this.withReadRetry(async () => {
+      const res = await this.authedRequest({ method: 'GET', url: `${this.config.baseUrl}/v1/about` });
+      if (!res.json) {
+        throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss account info response was empty or non-JSON.' });
+      }
+      return normalizeAbyssAccount(res.json as AbyssAboutResponse);
+    });
   }
 
   // --- File / asset operations ---
 
   async getAsset(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo> {
-    const res = await this.authedRequest({ method: 'GET', url: `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}` });
-    // res.json may be null when the response is empty or non-JSON (Abyss fix §3).
-    if (!res.json) {
-      throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response was empty or non-JSON.' });
-    }
-    const file = (res.json as { data?: AbyssFile })?.data ?? res.json as AbyssFile;
-    if (!file) throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response contained no file data.' });
-    return normalizeAbyssFile(file);
+    return this.withReadRetry(async () => {
+      const res = await this.authedRequest({ method: 'GET', url: `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}` });
+      if (!res.json) {
+        throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response was empty or non-JSON.' });
+      }
+      const file = (res.json as { data?: AbyssFile })?.data ?? res.json as AbyssFile;
+      if (!file) throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response contained no file data.' });
+      return normalizeAbyssFile(file);
+    });
   }
 
   async listAssets(providerFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo[]> {
-    const params = new URLSearchParams();
-    if (providerFolderId) params.set('folder_id', providerFolderId);
-    const url = `${this.config.baseUrl}/v1/resources${params.size ? `?${params}` : ''}`;
-    const res = await this.authedRequest({ method: 'GET', url });
-    if (!res.json) return []; // Empty/non-JSON response → empty list (not an error).
-    return normalizeAbyssFileList(res.json as AbyssFileListResponse);
+    return this.withReadRetry(async () => {
+      const params = new URLSearchParams();
+      if (providerFolderId) params.set('folder_id', providerFolderId);
+      const url = `${this.config.baseUrl}/v1/resources${params.size ? `?${params}` : ''}`;
+      const res = await this.authedRequest({ method: 'GET', url });
+      if (!res.json) return [];
+      return normalizeAbyssFileList(res.json as AbyssFileListResponse);
+    });
   }
 
   async renameAsset(providerAssetId: string, newName: string, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo> {
@@ -454,28 +480,31 @@ export class AbyssAdapter implements HostingProviderAdapter {
   // --- Processing status ---
 
   async getProcessingStatus(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderProcessingStatus> {
-    const res = await this.authedRequest({
-      method: 'GET',
-      url: `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}`,
+    return this.withReadRetry(async () => {
+      const res = await this.authedRequest({
+        method: 'GET',
+        url: `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}`,
+      });
+      if (!res.json) {
+        throw new HostingProviderError('NOT_FOUND', { message: 'Abyss processing status response was empty or non-JSON.' });
+      }
+      const file = (res.json as { data?: AbyssFile })?.data ?? res.json as AbyssFile;
+      if (!file) throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response contained no file data.' });
+      return normalizeAbyssProcessingStatus(file);
     });
-    // res.json may be null when the response is empty or non-JSON (Abyss fix §3).
-    if (!res.json) {
-      throw new HostingProviderError('NOT_FOUND', { message: 'Abyss processing status response was empty or non-JSON.' });
-    }
-    const file = (res.json as { data?: AbyssFile })?.data ?? res.json as AbyssFile;
-    if (!file) throw new HostingProviderError('NOT_FOUND', { message: 'Abyss file info response contained no file data.' });
-    return normalizeAbyssProcessingStatus(file);
   }
 
   // --- Folder operations ---
 
   async listFolders(parentFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderFolderInfo[]> {
-    const params = new URLSearchParams();
-    if (parentFolderId) params.set('parent_id', parentFolderId);
-    const url = `${this.config.baseUrl}/v1/folders${params.size ? `?${params}` : ''}`;
-    const res = await this.authedRequest({ method: 'GET', url });
-    if (!res.json) return []; // Empty/non-JSON response → empty list (not an error).
-    return normalizeAbyssFolderList(res.json as AbyssFolderListResponse);
+    return this.withReadRetry(async () => {
+      const params = new URLSearchParams();
+      if (parentFolderId) params.set('parent_id', parentFolderId);
+      const url = `${this.config.baseUrl}/v1/folders${params.size ? `?${params}` : ''}`;
+      const res = await this.authedRequest({ method: 'GET', url });
+      if (!res.json) return [];
+      return normalizeAbyssFolderList(res.json as AbyssFolderListResponse);
+    });
   }
 
   async createFolder(params: CreateFolderParams, _deps?: HostingAdapterDeps): Promise<ProviderFolderInfo> {

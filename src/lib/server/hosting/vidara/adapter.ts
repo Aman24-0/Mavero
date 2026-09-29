@@ -47,7 +47,7 @@ import type {
 } from '../types';
 import { HostingProviderError } from '../errors';
 import type { HostingHttpFetcher } from '../http-client';
-import { createHostingHttpFetcher } from '../http-client';
+import { createHostingHttpFetcher, withRetry } from '../http-client';
 import type { VidaraConfig } from './config';
 import type {
   VidaraAccountResponse,
@@ -179,6 +179,21 @@ export class VidaraAdapter implements HostingProviderAdapter {
   }
 
   /**
+   * Bounded retry wrapper for read-only provider operations.
+   * Retries transient failures (5xx, network, timeout, rate limit) up to
+   * 3 attempts with exponential backoff + jitter. Does NOT retry permanent
+   * errors (AUTHENTICATION, VALIDATION, NOT_FOUND, UNSUPPORTED).
+   *
+   * This is the SINGLE retry boundary for Vidara read operations. Write
+   * operations (upload, rename, move, delete) are NOT retried because they
+   * have side effects and repeating them could create duplicates or corrupt
+   * provider state.
+   */
+  private async withReadRetry<T>(fn: () => Promise<T>): Promise<T> {
+    return withRetry(fn, 3, 500, 5_000);
+  }
+
+  /**
    * Builds a fully-authenticated Vidara API URL for the given path.
    * Centralizes the `api_key` query parameter so every endpoint uses
    * the same auth scheme (single source of truth).
@@ -194,26 +209,29 @@ export class VidaraAdapter implements HostingProviderAdapter {
   // --- Account ---
 
   async getAccountInfo(_deps?: HostingAdapterDeps): Promise<ProviderAccountInfo> {
-    const res = await this.http({ method: 'GET', url: this.url('/v1/account/info') });
-    return normalizeVidaraAccount(res.json as VidaraAccountResponse);
+    return this.withReadRetry(async () => {
+      const res = await this.http({ method: 'GET', url: this.url('/v1/account/info') });
+      return normalizeVidaraAccount(res.json as VidaraAccountResponse);
+    });
   }
 
   // --- File / asset operations ---
 
   async getAsset(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo> {
-    // VERIFIED (live API): the parameter name is `filecode` (NOT `file_code`).
-    // GET /v1/video/info?filecode=<code>&api_key=<key> → { result: [{ status, filecode, link, ... }] }
-    // The previous implementation used `file_code` — Vidara returned 400 "missing filecode or vid".
-    const url = this.url('/v1/video/info', { filecode: providerAssetId });
-    const res = await this.http({ method: 'GET', url });
-    return normalizeVidaraFileInfo(res.json as VidaraFileInfoResponse);
+    return this.withReadRetry(async () => {
+      const url = this.url('/v1/video/info', { filecode: providerAssetId });
+      const res = await this.http({ method: 'GET', url });
+      return normalizeVidaraFileInfo(res.json as VidaraFileInfoResponse);
+    });
   }
 
   async listAssets(providerFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo[]> {
-    const extraQuery = providerFolderId ? { folder_id: providerFolderId } : null;
-    const url = this.url('/v1/video/list', extraQuery);
-    const res = await this.http({ method: 'GET', url });
-    return normalizeVidaraFileList(res.json as VidaraFileListResponse);
+    return this.withReadRetry(async () => {
+      const extraQuery = providerFolderId ? { folder_id: providerFolderId } : null;
+      const url = this.url('/v1/video/list', extraQuery);
+      const res = await this.http({ method: 'GET', url });
+      return normalizeVidaraFileList(res.json as VidaraFileListResponse);
+    });
   }
 
   async renameAsset(providerAssetId: string, newName: string, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo> {
@@ -351,24 +369,26 @@ export class VidaraAdapter implements HostingProviderAdapter {
    * `normalizeVidaraFileInfo` → `normalizeVidaraFile` → `vidaraStatusMapper`.
    */
   async getProcessingStatus(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderProcessingStatus> {
-    const res = await this.http({
-      method: 'GET',
-      url: this.url('/v1/video/info', { filecode: providerAssetId }),
+    return this.withReadRetry(async () => {
+      const res = await this.http({
+        method: 'GET',
+        url: this.url('/v1/video/info', { filecode: providerAssetId }),
+      });
+      if (!res.json) {
+        throw new HostingProviderError('NOT_FOUND', { message: 'Vidara processing status response was empty or non-JSON.' });
+      }
+      const assetInfo = normalizeVidaraFileInfo(res.json as VidaraFileInfoResponse);
+      return normalizeVidaraProcessingStatus(assetInfo);
     });
-    if (!res.json) {
-      throw new HostingProviderError('NOT_FOUND', { message: 'Vidara processing status response was empty or non-JSON.' });
-    }
-    // Reuse normalizeVidaraFileInfo to extract the file from the response.
-    const assetInfo = normalizeVidaraFileInfo(res.json as VidaraFileInfoResponse);
-    return normalizeVidaraProcessingStatus(assetInfo);
   }
 
   // --- Folder operations ---
 
   async listFolders(parentFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderFolderInfo[]> {
-    // Vidara folders are flat — parentFolderId is ignored.
-    const res = await this.http({ method: 'GET', url: this.url('/v1/folder/list') });
-    return normalizeVidaraFolderList(res.json as VidaraFolderListResponse);
+    return this.withReadRetry(async () => {
+      const res = await this.http({ method: 'GET', url: this.url('/v1/folder/list') });
+      return normalizeVidaraFolderList(res.json as VidaraFolderListResponse);
+    });
   }
 
   async createFolder(params: CreateFolderParams, _deps?: HostingAdapterDeps): Promise<ProviderFolderInfo> {

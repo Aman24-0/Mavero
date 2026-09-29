@@ -8,13 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 10 (Phase 10 — Production Hardening + Provider Health;
-                  COMPLETE — health service + stale detection + error/retry audit)
+Current Phase: 11 (Phase 11 — Final Verification;
+                  COMPLETE — retry hardening + full verification)
 Status: COMPLETE
 Last Commit: <this commit>
-Next Task: Phase 11 — End-to-end Verification (awaiting user approval)
+Next Task: None — hosting integration complete. Future: Admin Panel 2.0 redesign (separate phase, not started).
 Blocking Issue: none
-Plan Revision: 1.3
+Plan Revision: 1.4
 ```
 
 ## Operating Rules
@@ -4777,20 +4777,68 @@ The existing schema supports all Phase 10 requirements. No new tables or columns
 
 1. Vidara quota: not available from the current API (/v1/account/info returns 404). Reported as `unknown`.
 2. Abyss upload: requires ABYSS_API_KEY (not configured). Health reports `degraded` when apiKey is missing.
-3. withRetry is available but not systematically applied to every adapter method — the existing error model classifies retryability, and callers can wrap operations in withRetry when needed. Systematic application would require changing every adapter method signature, which is out of scope for Phase 10.
+3. withRetry is now systematically applied to read-only adapter operations (getAsset, listAssets, getAccountInfo, getProcessingStatus, listFolders) in both Vidara and Abyss adapters. Write operations (upload, rename, move, delete, subtitle upload) are NOT retried because they have side effects. The retry boundary is at the adapter method level — one bounded retry policy per read operation (3 attempts, 500ms base, 5s max). No nested retry amplification: Abyss authedRequest 401-retry-once is NOT a withRetry call.
 4. No automatic scheduled stale cleanup — admin must manually trigger via API. A scheduled job would require infrastructure (cron/queue) that is not part of the current Netlify serverless architecture.
 
 ------------------------------------------------------------------------
 
 ## Phase 11 --- Final Verification
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: `<this commit>`
 
-Date:
+Date: 2026-09-30
 
-### Planned
+### Phase 10 Retry Follow-up
+
+**Audit finding:** `withRetry()` existed but was NOT applied to any adapter methods. All provider API calls had zero retry — a single transient 5xx or network error would immediately fail the operation.
+
+**Retry boundary selected:** Adapter method level for read-only operations. This is the single retry boundary — no nested retry at HTTP client or service level.
+
+**Operations covered (with withRetry, 3 attempts, 500ms base, 5s max):**
+- Vidara: getAccountInfo, getAsset, listAssets, getProcessingStatus, listFolders
+- Abyss: getAccountInfo, getAsset, listAssets, getProcessingStatus, listFolders
+
+**Operations intentionally NOT retried:**
+- uploadFile, uploadRemote (side effects — duplicate uploads)
+- renameAsset, moveAsset, deleteAsset (side effects — duplicate mutations)
+- uploadSubtitle, uploadThumbnail (side effects)
+- createFolder, renameFolder, moveFolder, deleteFolder (side effects)
+- Abyss authedRequest 401-retry-once (already handled explicitly — NOT a withRetry call, no amplification)
+
+**No nested retry amplification:** The Abyss adapter's `authedRequest` does a single 401-retry-once for JWT refresh. This is explicit single-retry logic, NOT `withRetry`. Since `withRetry` does NOT retry AUTHENTICATION errors, and `authedRequest` only retries on AUTHENTICATION, the two mechanisms are orthogonal — no amplification.
+
+### Phase 11 Verification
+
+**Automated tests (all pass):**
+- phase10_11_retry_verification_test: 84/84
+- phase10_hardening_test: 74/74
+- phase8_9_management_demand_test: 102/102
+- phase8_sync_history_test: 51/51
+- phase3_hosting_adapter_test: 113/113
+- phase6_completion_test: 84/84
+- phase7_playback_resolver_test: 50/50
+- phase7_vidara_auth_fix_test: 106/106
+- phase7_abyss_upload_fix_test: 157/157
+- phase7_live_upload_fix_test: 58/58
+- phase1_resolver_hardening_test: 15/15
+- phase3_resolver_resilience_test: 67/67
+
+**pnpm check:** 0 errors, 11 pre-existing a11y warnings.
+**pnpm build:** PASS.
+
+**Security verification:**
+- All 18 admin media routes have requireAdmin.
+- No credential values in any hosting source file (secret scan: 0 hits).
+- No console.log in hosting source files (1 in playback resolve — logs only error code, no secrets).
+- No accidental migrations created in Phase 10/11.
+- No duplicate services or dead code.
+- Resolver unchanged: only ready assets playable, embed type only.
+
+**Live verification:** NOT VERIFIED — requires deployment. Automated tests verify source contracts and behavioral correctness but cannot verify live provider API responses without deployment + credentials.
+
+**Deployment readiness:** Repository is clean. No secrets, debug code, dead code, duplicate services, or accidental migrations. All tests pass. Build succeeds.
 
 -   [ ] Movie matrix.
 -   [ ] Series/episode matrix.
