@@ -140,7 +140,7 @@ None.
 ## Phase B — Global Workspace Architecture
 
 **Date:** 2026-09-30
-**Commit:** `322b977`
+**Commit:** `65f5982`
 **Objective:** Complete the global Admin 2.0 workspace architecture on top of the Phase A shell — final navigation groups, route-aware active state, page framework, command center foundation, mobile More refinement, workspace transitions, shared header/actions.
 
 ### Audit Findings (Phase B fresh audit)
@@ -156,7 +156,7 @@ None.
    - `/admin/media/operations` — listed under OPERATIONS → Jobs
    - `/admin/media/history` — listed under OPERATIONS → History
    - `/admin/media/stale` — listed under OPERATIONS → Attention
-   
+
    Phase B created intentional placeholder pages for each. The placeholders make the destination's state explicit — they don't pretend the feature is complete. Each placeholder:
    - Tags the phase it belongs to (Phase C/E/F)
    - Lists the planned capabilities
@@ -287,135 +287,367 @@ None. Phase B is purely a frontend architecture phase.
 
 - `pnpm check`: 0 errors, 11 warnings (all pre-existing upload-page form-label a11y warnings)
 - `pnpm build`: PASS (28.23s)
-- All existing admin tests pass (13 test files):
-  - admin_nav_test: 4 checks
-  - admin_reorder_test: pass
-  - admin_ux_followup_test: pass
-  - phase7_admin_capability_display_test: 21+ checks
-  - phase7_admin_defaults_test: 3+ checks
-  - phase7_admin_source_test_test: 28+ checks
-  - phase2_overview_dashboard_test: 89 checks
-  - phase3_user_management_test: 101 checks
-  - phase4_viewing_discovery_test: 53 checks
-  - phase5_provider_analytics_test: 48 checks
-  - phase6_retention_cohorts_test: 60 checks
-  - download_providers_test: 68 checks
-- All hosting tests pass:
-  - phase8_sync_history_test: 51 passed
-  - phase8_9_management_demand_test: 102 passed
-  - phase10_hardening_test: 74 passed
-  - phase10_11_retry_verification_test: 84 passed
-  - phase7_playback_resolver_test: 50 passed
-- Phase B test (`admin2_phaseB_test.ts`): 30 checks pass
+- All admin tests pass (13 test files)
+- All hosting tests pass (361 checks across 5 test files)
+- Phase B test: 30 checks pass
 
-### Security Verification
+### Commit SHA
 
-- No credentials introduced
-- No secrets in any new source file
-- No backend changes
-- No route authorization changes
-- All existing requireAdmin protections preserved
-- Placeholder pages render without privileged data — no API calls
-- Command palette only navigates; it does not perform privileged actions
+`65f5982`
 
-### Responsive Verification
+### Next Phase
 
-- Desktop wide (≥1920px): sidebar full width, 4-column metric grid, 4-column quick grid, ⌘K trigger shows "Search" text + ⌘K kbd
-- Desktop standard (1024-1919px): sidebar full width, 4-column metric grid, ⌘K trigger shows full text
-- Tablet/mobile (<1024px): sidebar hidden, mobile header + bottom nav active, 2-column metric grid, ⌘K trigger on mobile header (icon-only)
-- Mobile narrow (<640px): compact spacing, 2-column metric grid, ⌘K trigger icon-only, command palette takes 80dvh max
-- Bottom nav: Home, Media, Upload, Analytics, More (5 primary destinations)
-- Mobile More sheet: All nav groups + Configuration section, with active state propagation
+**Phase C — Media Library:** Implement the full Media Library workspace.
 
-### Regression Verification
+---
 
-- All hosting tests pass (no backend changes — only verified nothing was disturbed)
-- All admin tests pass (Phase B doesn't touch legacy AdminShell contracts)
-- All admin pages using legacy AdminShell continue to work (providers, sources, categories, defaults, feature-control, downloaders, addons, users/* — 13 pages)
-- Upload wizard preserves all functionality (internal content unchanged, just wrapped in AdminAppShell)
-- Missing media page preserves all functionality
-- All 22 hosting API endpoints preserved unchanged
+## Phase C — Media Library
+
+**Date:** 2026-09-30
+**Commit:** `41fd3de`
+**Objective:** Replace the Phase B Media Library placeholder with the real implementation — a complete, premium, responsive media-management workspace built around the approved Admin 2.0 architecture.
+
+### Audit Findings (Phase C fresh audit)
+
+A complete read-only audit of the existing media/hosting backend was performed before any code was written. Key findings:
+
+**Database schema (fully complete, no migrations needed for Phase C):**
+- `media_items` — canonical media identity (movie/series/anime/episode). Has indexes on (canonical_key), (content_type, tmdb_id), (content_type, tmdb_id, season, episode), (parent_media_id), (imdb_id) partial.
+- `media_assets` — provider-hosted asset per (media_item, provider). Has `status` (provider lifecycle) AND `mavero_status` (admin lifecycle) columns. Indexes on (media_item_id), (provider_source_id, media_item_id), (provider_asset_id) partial, (status), (mavero_status), (last_synced_at) partial.
+- `media_folders` — canonical Mavero folder hierarchy. NOT used by Phase C (folder summary is computed directly from media_items — simpler + avoids the parent_id traversal).
+- `media_upload_operations` — upload state machine.
+- `media_operations` — admin audit log (append-only).
+- `media_availability_requests` — missing-media demand (deduplication by canonical_key).
+- `streaming_provider_health` — runtime provider health (separate from enabled state).
+
+**Services (all server-side, credentials never leak):**
+- `CanonicalMediaService` — ensures media_items + media_folders exist. Phase C does NOT need this (read-only).
+- `UploadService` — upload state machine. Phase C does NOT need this (Phase D territory).
+- `SyncService` — provider sync. Phase C links to it but doesn't trigger it.
+- `ManagementService` — rename/move/detach/delete/reconcile. Phase C links to these APIs but the UI is deferred to Phase E.
+- `DemandService` — demand tracking. Phase C reads demand rows for context.
+- `ProviderHealthService` — provider health. Phase C links to it but doesn't trigger checks.
+
+**Existing APIs (22 endpoints, all admin-gated, consistent shape):**
+- All return `{ ok, ... | error: { code, message } }` and use `cache-control: no-store`.
+- All use `requireAdmin()` from `$lib/server/streaming/admin-auth`.
+- All use `createSupabaseAdminClient()` (service-role, bypasses RLS).
+- No `GET /api/admin/media/library` or `GET /api/admin/media/assets` endpoint existed — Phase C adds these.
+
+**Resolver integration (Phase C critical bug found + fixed):**
+- `mavero-hosted.ts` was gating ONLY on `status='ready'`. The `mavero_status` column (which `ManagementService.detachAsset` sets to `'missing'`) was NOT consulted. This meant a "detached" asset would still be served by the resolver.
+- **Fix applied in Phase C:** Resolver now gates on BOTH `status='ready'` AND `mavero_status='available'`. The schema explicitly has `mavero_status` for this purpose — `mavero_status` is the admin's lever, `status` is the provider's lever. Both must be green.
+- Phase 7 test fixture already sets `mavero_status='available'` for ready assets, so the existing test passes unchanged.
+
+**Quality/audio/subtitle model verified per provider:**
+- Vidara: single source_quality (no transcoding), multi-audio array, has_subtitles boolean.
+- Abyss: multi-quality variants (transcoded 480p/720p/1080p), single audio language, has_subtitles boolean.
+- Neither reports progressPercent — Phase C UI uses indeterminate states, not progress bars.
+
+### Design Decisions
+
+**Media Library architecture:**
+```
+Desktop (≥1024px):
+  ┌─────────────────────┬───────────────────────────────────┐
+  │ Content Navigator   │ Search · Filters · Sort           │
+  │ (AdminMediaTree)    │ ───────────────────────────────── │
+  │                     │ Media Results (AdminMediaTable)  │
+  │                     │ [Detail drawer slides in on click]│
+  └─────────────────────┴───────────────────────────────────┘
+
+Mobile (<1024px):
+  Top header → Breadcrumb → Search → Filter button → Card list
+  Tap card → full-screen detail sheet
+```
+
+**Read model (`MediaLibraryService`):**
+- Single, server-side aggregated read over `media_items` LEFT JOIN `media_assets` (+ optional `media_availability_requests` for missing-demand context).
+- `list()` performs exactly 3 DB queries: items (paginated), assets (batch by media_item_id — avoids N+1), demand (batch by canonical_key — avoids N+1).
+- `detail()` parallelizes 3 fetches via `Promise.all`: assets, demand, recent_operations.
+- `folderSummary()` returns movies grouped by year, series/anime listed with season/episode counts.
+- Filter by provider / asset-status is done in JS after fetch (these are media_assets filters, not media_items filters).
+- Search supports title (ILIKE), TMDB ID (numeric → eq), IMDb ID (tt-prefix → eq), canonical key (contains ':' → eq).
+- Pagination: range(offset, offset + limit - 1), max 100 per page.
+- Sorting: 5 options (recently_updated, recently_added, title, year, status).
+
+**API endpoints (3 new):**
+- `GET /api/admin/media/library` — paginated, filtered, joined list.
+- `GET /api/admin/media/library/[id]` — single media detail with assets + recent operations.
+- `GET /api/admin/media/library/folders` — content-tree summary for sidebar.
+- All three are admin-gated, use service-role client, return `no-store` cache header, and validate query params against closed vocabularies.
+
+**Page server loader:**
+- Preloads page 1 + folder summary + hosting sources in parallel via `Promise.allSettled`.
+- Partial failure: if folderSummary fails, the tree shows an error but the table still renders. If the list fails, the page throws (fatal). If hosting sources fail, the provider filter just shows fewer options.
+- Parses URL state server-side so deep links render correctly.
+
+**URL state:**
+- `?q=&type=&year=&provider=&status=&sort=&page=&selected=`
+- All state is URL-driven and shareable/bookmarkable.
+- Uses `replaceState: true` to avoid spamming browser history on every filter keystroke.
+- `?selected=<id>` deep-links the detail drawer (opens on mount).
+
+**Detail drawer (AdminMediaDetailDrawer):**
+- Right-side on desktop (480px), full-screen on mobile.
+- 6 sections: Identity, Provider Availability, Missing Demand, Metadata, Recent Operations, Actions.
+- Dialog semantics: `role="dialog"`, `aria-modal`, focus trap, focus restore, Escape to close.
+- Partial failure: if detail fetch fails, drawer shows inline error but list selection is preserved.
+- Optimistic render: shows list-item data immediately, fetches full detail (with operations) in background.
+- Provider availability per asset: status pill, quality, audio (with multi-audio indicator for Vidara), subtitles, duration, size, last sync.
+- Operations: action, status, timestamp, admin email, error message.
+- Actions: links to upload wizard (prefilled with tmdbId/contentType/season/episode), links to missing media page.
+- Explicitly documents Phase E/F deferrals — no fake action buttons for rename/move/detach/delete/reconcile/sync.
+
+**Content tree (AdminMediaTree):**
+- Movies grouped by year (with counts).
+- Series listed with season_count + episode_count.
+- Anime listed with season_count + episode_count.
+- Expandable groups with `aria-expanded`.
+- Skeleton loading + error state + empty state.
+- Selection triggers filter callback with type/year/seriesTmdb.
+
+**Results table (AdminMediaTable) — desktop:**
+- Columns: Type, Title, Year, Vidara, Abyss, Quality, Audio, Updated, Arrow.
+- Per-row provider availability pills (AdminAssetStatus).
+- Episode code (S01E05) for episodes.
+- Demand badge for items with open missing-media requests.
+- Skeleton loading + empty state.
+- Row click opens detail drawer.
+- Keyboard accessible (Enter/Space).
+
+**Results cards (AdminMediaCard) — mobile:**
+- Stacked card layout.
+- Type pill + episode code + year + chevron.
+- Title + episode title.
+- Per-provider availability rows (AdminAssetStatus).
+- Demand badge.
+- Skeleton loading + empty state.
+- Tap opens full-screen detail sheet.
+
+**Asset status (AdminAssetStatus):**
+- Maps asset lifecycle (queued/uploading/uploaded/processing/ready/failed/deleted) + mavero_status (available/missing/disabled/stale) to the Admin 2.0 semantic color system.
+- Special cases: "Detached" (status=ready + mavero_status=missing), "Disabled" (mavero_status=disabled), "Stale" (mavero_status=stale), "Not Linked" (no asset at all).
+
+**Filters (AdminMediaFilters):**
+- Desktop: inline in toolbar (search + 4 selects + clear button).
+- Mobile: bottom-sheet with labeled fields.
+- Filter state: q, type, status, provider, sort.
+- Provider filter: All / Vidara / Abyss / Unlinked Only.
+- Clear-all + active-filter tracking.
+
+### Architecture Decisions
+
+1. **Phase C does NOT migrate any legacy AdminShell page.** Only `/admin/media/library` (the Phase B placeholder) is replaced. All other admin pages keep their Phase A/B state.
+
+2. **Phase C adds a new read model (`MediaLibraryService`)** rather than reusing existing endpoints. The approved plan §28 explicitly greenlights this: "The Media Library may need a dedicated efficient read model. Potential API: `GET /api/admin/media/library`."
+
+3. **Phase C does NOT add any new database migrations.** The schema is complete. No new indexes are added (Phase C accepts sequential ILIKE scan for the typical admin-catalog size of <10k rows — a trigram index migration can be added later if performance demands it).
+
+4. **Phase C does NOT expose `provider_metadata` jsonb or `playback_url`** in the library read model. `provider_metadata` may contain provider-internal fields; `playback_url` is resolver-only data. Both are excluded by design.
+
+5. **Phase C does NOT implement the rename/move/detach/delete/reconcile/sync UI.** These belong to Phase E (Hosting Control). The drawer explicitly documents this deferral — no fake action buttons.
+
+6. **Phase C does NOT cache TMDB metadata** (language, country, industry, genres) locally. These fields are NOT stored on `media_items` today. The drawer's Metadata section notes this and points to the worklog. A future phase may add a `media_metadata` table or fetch from TMDB on demand.
+
+7. **Phase C fixed the resolver gating bug** (mavero_status not consulted). This was necessary for Media Library correctness — without it, an admin who detaches an asset would still see it served by the resolver, which would be a confusing inconsistency between the library UI and the actual playback behavior.
+
+### Files Changed
+
+**New backend service:**
+1. `src/lib/server/hosting/library/service.ts` (NEW) — `MediaLibraryService` with `list()`, `detail()`, `folderSummary()` methods. ~470 lines.
+
+**New API endpoints:**
+2. `src/routes/api/admin/media/library/+server.ts` (NEW) — `GET /api/admin/media/library` (paginated, filtered, joined list).
+3. `src/routes/api/admin/media/library/[id]/+server.ts` (NEW) — `GET /api/admin/media/library/[id]` (single media detail).
+4. `src/routes/api/admin/media/library/folders/+server.ts` (NEW) — `GET /api/admin/media/library/folders` (content-tree summary).
+
+**New UI components:**
+5. `src/lib/components/admin2/AdminAssetStatus.svelte` (NEW) — per-asset semantic status pill.
+6. `src/lib/components/admin2/AdminMediaTree.svelte` (NEW) — content-tree sidebar.
+7. `src/lib/components/admin2/AdminMediaTable.svelte` (NEW) — desktop results table.
+8. `src/lib/components/admin2/AdminMediaCard.svelte` (NEW) — mobile results card list.
+9. `src/lib/components/admin2/AdminMediaDetailDrawer.svelte` (NEW) — right-side detail drawer.
+10. `src/lib/components/admin2/AdminMediaFilters.svelte` (NEW) — filter bar + mobile sheet.
+
+**Modified pages:**
+11. `src/routes/admin/media/library/+page.svelte` — Replaced Phase B placeholder with full Media Library implementation (~690 lines).
+12. `src/routes/admin/media/library/+page.server.ts` (NEW) — Server loader that preloads page 1 + folder summary + hosting sources.
+
+**Backend fix:**
+13. `src/lib/server/resolver/mavero-hosted.ts` — Fixed critical gating bug: resolver now gates on BOTH `status='ready'` AND `mavero_status='available'` (was only gating on `status='ready'`).
+
+**Tests:**
+14. `scripts/admin2_phaseB_test.ts` — Updated to reflect that `/admin/media/library` is no longer a placeholder (Phase C replaced it).
+15. `scripts/admin2_phaseC_test.ts` (NEW) — 56 contract checks for Phase C.
+
+**Build config:**
+16. `package.json` — Added `admin2_phaseC_test.ts` to the `test` script chain.
+
+### Backend/API Changes
+
+**New endpoints (3):**
+- `GET /api/admin/media/library` — paginated, filtered, joined read of `media_items` + `media_assets` + `media_availability_requests`.
+- `GET /api/admin/media/library/[id]` — single media item detail with assets + recent operations.
+- `GET /api/admin/media/library/folders` — content-tree summary for the sidebar.
+
+**New service:**
+- `MediaLibraryService` — read-only service with `list()`, `detail()`, `folderSummary()` methods. Uses the service-role client. Does NOT expose `provider_metadata` or `playback_url`.
+
+**Resolver fix:**
+- `mavero-hosted.ts` now gates on `mavero_status='available'` in addition to `status='ready'`. This is a behavioral change — previously detached assets (mavero_status='missing') would still be served. Now they are correctly excluded.
+
+**No migrations.** Schema is complete. No new tables, no new columns, no new indexes.
+
+### Issues Discovered + Fixed in Phase C
+
+1. **Resolver gating bug (FIXED).** `mavero-hosted.ts` was gating only on `status='ready'`, ignoring `mavero_status`. `ManagementService.detachAsset` sets `mavero_status='missing'` but leaves `status='ready'` — so a detached asset would still be served by the resolver. Fixed by adding `.eq('mavero_status', 'available')` to the resolver query.
+
+2. **Phase B test asserted `/admin/media/library` was a placeholder (FIXED).** Phase C replaced the placeholder with the real implementation. Updated `admin2_phaseB_test.ts` to reflect that the page now exists as the real Media Library (no longer a Phase C destination placeholder).
 
 ### Issues Deferred to Later Phases
-
-The following issues were identified during the Phase B audit but are deferred to later phases (per approved plan §33):
-
-#### Phase C — Media Library
-- **Media Library full implementation**: hierarchy, search, filters, master-detail, detail drawer, provider availability, contextual actions (rename/move/detach/delete/reconcile/sync).
-- **Affected routes**: `/admin/media/library` (placeholder exists; full implementation in Phase C).
-- **Affected APIs**: `/api/admin/media/search` (already exists, used by upload wizard), `/api/admin/media/missing` (already exists, used by missing media page), `/api/admin/media/unlinked`, `/api/admin/media/health`, `/api/admin/media/operations`, `/api/admin/media/stale`, `/api/admin/media/sync`, `/api/admin/media/assets/[id]/{rename,move,detach,delete,reconcile}`.
-- **Why deferred**: Per approved plan §33, Phase C is the dedicated phase for Media Library.
-- **Phase B mitigation**: Placeholder page exists at `/admin/media/library` documenting all planned capabilities and backend API surface, plus links to working pages.
 
 #### Phase D — Upload / Import
 - **Upload workflow redesign**: contextual entry points, refined TMDB workflow, metadata confirmation, provider selection, local/remote upload, progress, processing, success/failure.
 - **Affected routes**: `/admin/media/upload` (Phase B wraps it in AdminAppShell but internal content unchanged).
-- **Why deferred**: Per approved plan §33, Phase D is the dedicated phase for Upload.
+- **Phase C integration**: Media Library's "Upload / Import" action links to the existing upload wizard with prefilled params (tmdbId, contentType, season, episode). Phase D will redesign the wizard itself.
 
 #### Phase E — Hosting Control
 - **Hosting Assets full UI**: rename, move, detach, delete, reconcile, unlinked assets, link to media.
+- **Hosting Sync full UI**: trigger sync, view discovered/deleted assets, reconcile state.
 - **Affected routes**: `/admin/media/assets` (placeholder exists), `/admin/media/sync` (placeholder exists).
 - **Affected APIs**: `/api/admin/media/assets/[id]/{rename,move,detach,delete,reconcile}`, `/api/admin/media/unlinked`, `/api/admin/media/sync`, `/api/admin/media/health`.
-- **Why deferred**: Per approved plan §33, Phase E is the dedicated phase for Hosting Control.
-- **Phase B mitigation**: Placeholder pages exist documenting all planned capabilities and backend API surface.
+- **Phase C integration**: Media Library's detail drawer links to these future workspaces but does NOT add action buttons for rename/move/detach/delete/reconcile/sync. The drawer explicitly documents this deferral.
 
 #### Phase F — Operations Center
 - **Operations Jobs full UI**: live job list, filters, cancel/retry actions, detail drawer.
 - **Operations History full UI**: timeline of all operations with filters.
 - **Operations Attention full UI**: aggregated queue of failed/stale/missing/provider-health issues.
 - **Affected routes**: `/admin/media/operations` (placeholder exists), `/admin/media/history` (placeholder exists), `/admin/media/stale` (placeholder exists).
-- **Affected APIs**: `/api/admin/media/operations`, `/api/admin/media/stale`, `/api/admin/media/missing`, `/api/admin/media/health`, `/api/admin/media/upload/[id]/{cancel,retry,status}`.
-- **Why deferred**: Per approved plan §33, Phase F is the dedicated phase for Operations Center.
-- **Phase B mitigation**: Placeholder pages exist documenting all planned capabilities and backend API surface.
+- **Phase C integration**: Media Library's detail drawer shows the 20 most recent operations on the selected item (read-only). Full operations management UI is Phase F.
 
 #### Phase G — System / Configuration Consolidation
-- **API & Sources contextual tabs**: Providers + Sources as tabs in one workspace (currently two separate routes).
-- **Defaults sheet**: Defaults opens as a right-side sheet from API & Sources (currently a separate route, surfaced via Configure dropdown in Phase B).
-- **Content Rules contextual tabs**: Categories + Feature Control as tabs in one workspace (currently two separate routes).
+- **API & Sources contextual tabs**: Providers + Sources as tabs in one workspace.
+- **Defaults sheet**: Defaults opens as a right-side sheet from API & Sources.
+- **Content Rules contextual tabs**: Categories + Feature Control as tabs in one workspace.
 - **Affected routes**: `/admin/sources`, `/admin/providers`, `/admin/defaults`, `/admin/categories`, `/admin/feature-control` (all currently use legacy AdminShell).
-- **Migration**: All five pages will migrate from AdminShell to AdminAppShell during Phase G.
-- **Test impact**: Several test-locked contracts pin AdminShell usage on these pages (admin_nav_test, download_providers_test, phase2_overview_dashboard_test, phase3_user_management_test, phase4_viewing_discovery_test, phase5_provider_analytics_test, phase6_retention_cohorts_test). Phase G will update those tests when migration occurs.
-- **Why deferred**: Per approved plan §33, Phase G is the dedicated phase for System consolidation.
-- **Phase B mitigation**: Configure dropdown + mobile More Configuration section surface Defaults + Feature Control without polluting the primary nav.
+- **Phase C impact**: None. Media Library does not touch these routes.
 
 #### Phase H — Analytics Redesign
-- **Analytics pages migration**: Overview, Users, Viewing, Providers, Retention — apply Admin 2.0 architecture and visual system.
-- **Affected routes**: `/admin/users/overview`, `/admin/users`, `/admin/users/viewing`, `/admin/users/providers`, `/admin/users/retention`, `/admin/users/[userId]` (all currently use legacy AdminShell).
-- **Why deferred**: Per approved plan §33, Phase H is the dedicated phase for Analytics redesign.
-- **Phase B mitigation**: New nav IA groups all analytics under PEOPLE → Analytics (with `matchPrefix` covering `/admin/users/*`). The Analytics item stays active across all five analytics sub-routes + user detail.
+- **Analytics pages migration**: Overview, Users, Viewing, Providers, Retention — apply Admin 2.0 architecture.
+- **Affected routes**: `/admin/users/*` (all currently use legacy AdminShell).
+- **Phase C impact**: None. Media Library does not touch these routes.
 
 #### Phase I — Mobile-Native Admin
 - **Mobile-specific pass**: dedicated mobile composition for navigation, sheets, tables, filters, details, uploads, hosting, operations, analytics.
-- **Why deferred**: Per approved plan §33, Phase I is the dedicated phase for mobile-native admin.
+- **Phase C integration**: Media Library already has a mobile-native composition (card list + full-screen detail sheet + bottom-sheet filters). Phase I will refine it further alongside the other workspaces.
 
 #### Phase J — Cinematic Polish
 - **Final polish**: ambient lighting, micro-interactions, transitions, loading states, focus/hover states, active indicators, skeletons, empty states, density, typography, responsive polish.
-- **Why deferred**: Per approved plan §33, Phase J is the final polish phase.
+- **Phase C integration**: Media Library has skeleton loading, fade transitions, and reduced-motion support. Phase J will add ambient lighting + micro-interactions across all workspaces.
+
+#### Future (no phase assigned)
+- **TMDB metadata caching**: language, country, industry, genres are NOT stored on `media_items` today. The Media Library's Metadata section notes this. A future phase may add a `media_metadata` table or fetch from TMDB on demand.
+- **Trigram index on `media_items.title`**: Phase C accepts sequential ILIKE scan for the typical admin-catalog size. If the catalog grows beyond ~10k rows, a `pg_trgm` extension + index would be appropriate.
+- **Atomic increment RPC for `media_availability_requests.request_count`**: The current `recordDemand` uses a read-then-update pattern. Concurrent requests for the same canonical_key can lose increments. Same atomicity bug that provider_health had before Phase 6.1 added RPCs. Not blocking for Phase C (Media Library reads demand; it doesn't write it).
+- **`mavero_status='stale'` is in the CHECK constraint but NEVER set by any code path** — the column is a stub for future phases.
+- **`media_operations.action='replace'`** is in the CHECK constraint but no service method exists. Plan §15 lists `replace` as a Media Detail operation, but the backend doesn't implement it. Omitted from Phase C UI.
+- **`GET /api/admin/media/unlinked` is a side-effecting GET** (runs a full sync via `SyncService.syncProvider`). This violates HTTP semantics. Phase E should refactor to `POST /api/admin/media/sync` returning unlinked files.
+- **`POST /api/admin/media/upload` requires both `providerSourceId` AND `providerAdapterId`** — the adapter_id is derivable from the source via DB query. The duplicate field is redundant. Phase D should remove it.
+- **`PATCH /api/admin/media/missing` uses request body for the id** instead of a path parameter. Inconsistent with REST conventions. Phase F should refactor to `PATCH /api/admin/media/missing/[id]`.
+- **Missing Media page uses `window.location.reload()`** after PATCH — poor UX. Phase F should adopt reactive updates.
+- **Missing Media page does NOT support pagination** — limit 200 max. Phase F should add pagination.
+- **No "count badge" system on nav items** — Missing Media count, Stale Operations count, Failed Operations count are NOT surfaced in the sidebar. Phase F should add this.
+- **Upload wizard is 755 lines in one Svelte file** — Phase D should decompose into per-step components.
+- **Upload wizard hardcodes Vidara/Abyss differences** — Phase D should encapsulate provider-specific upload flows.
+- **Demand `recordDemand` uses a read-then-update pattern** — concurrent requests can lose increments. Same atomicity bug that provider_health had before Phase 6.1 added RPCs. Not blocking for Phase C.
+- **`ManagementService.detachAsset` comment claims it sets `media_item_id=null` but the code only updates `mavero_status='missing'`** — the asset retains its `media_item_id` link. Phase C UI reflects this: detach makes the resolver ignore the asset (after the Phase C resolver fix), but the link remains for audit history.
+- **Abyss upload endpoint uses HTTP not HTTPS** (`http://up.abyss.to/<key>`) — the SSRF guard in `http-client.ts` must allow this; worth verifying in Phase E.
+- **Vidara's `/v1/account/info` endpoint 404s on the current API** — `getAccountInfo()` is broken. The health service works around this by using `listAssets` instead. Phase C/E UI must NOT call `getAccountInfo` for Vidara.
+- **`progressPercent` is always null for both providers** — neither Vidara nor Abyss reports encoding progress percentage. Phase C UI uses indeterminate states, not progress bars.
+
+### Tests
+
+- `pnpm check`: 0 errors, 12 warnings (11 pre-existing upload-page form-label a11y warnings + 1 harmless "initial value capture" warning that is intentional)
+- `pnpm build`: PASS (28.80s)
+- Phase B test (`admin2_phaseB_test.ts`): 30 checks pass (updated to reflect Phase C replacement of placeholder)
+- Phase C test (`admin2_phaseC_test.ts`): 56 checks pass
+- All admin tests pass (13 test files)
+- All hosting tests pass:
+  - phase7_playback_resolver_test: 50 passed (resolver gating fix doesn't break it)
+  - phase8_sync_history_test: 51 passed
+  - phase8_9_management_demand_test: 102 passed
+  - phase10_hardening_test: 74 passed
+  - phase10_11_retry_verification_test: 84 passed
+- Total: 361 hosting checks + 30 Phase B checks + 56 Phase C checks = 447 checks pass
+
+### Security Verification
+
+- All 3 new API endpoints use `requireAdmin()` — admin-only.
+- All 3 new API endpoints use `createSupabaseAdminClient()` (service-role, bypasses RLS by design).
+- All 3 new API endpoints return `cache-control: no-store`.
+- All 3 new API endpoints validate query params against closed vocabularies (VALID_TYPES, VALID_STATUSES, VALID_SORTS, year range 1880-3000).
+- `MediaLibraryService` does NOT expose `provider_metadata` jsonb (may contain provider-internal fields).
+- `MediaLibraryService` does NOT expose `playback_url` (resolver-only data).
+- No credentials introduced.
+- No secrets in any new source file.
+- No backend authorization changes — `requireAdmin` pattern preserved.
+- Resolver fix (mavero_status gating) is a tightening of security, not a loosening — detached assets are now correctly excluded from playback.
+
+### Responsive Verification
+
+- Desktop wide (≥1920px): split layout (240px tree + main), table with all columns visible, drawer at 480px.
+- Desktop standard (1024-1919px): split layout, table with all columns, drawer at 480px.
+- Tablet/mobile (<1024px): tree hidden, mobile header + bottom nav, card list, full-screen drawer, mobile filter sheet.
+- Mobile narrow (<640px): compact spacing, card list, full-screen drawer, mobile filter sheet.
+- At each width: no clipping, no unusable horizontal overflow, search works, filters work, tree works (or hidden on mobile), detail works, actions remain reachable, status information remains understandable.
+
+### Accessibility Verification
+
+- Keyboard navigation: table rows are focusable (tabindex=0) with Enter/Space activation.
+- Drawer focus trap: Tab cycles within drawer, Escape closes, focus restores to trigger.
+- ARIA: `role="dialog"`, `aria-modal="true"`, `aria-label` on all interactive elements, `aria-expanded` on tree groups, `aria-current="page"` on active nav items.
+- Semantic buttons: all interactive elements use `<button>` or `<a>` (no fake-click divs).
+- Status semantics: AdminAssetStatus uses color + text (never color alone).
+- Reduced motion: all animations respect `prefers-reduced-motion`.
+- Contrast: text colors meet WCAG AA against the dark surfaces.
+- Touch target sizes: mobile buttons are ≥32px, cards are ≥110px tall.
+
+### Performance Verification
+
+- **No N+1:** `list()` performs exactly 3 DB queries (items, assets batch, demand batch) regardless of page size.
+- **Parallel fetches:** `detail()` uses `Promise.all` to fetch assets + demand + operations concurrently.
+- **Server-side aggregation:** provider availability is precomputed server-side — the client receives a single joined payload, no follow-up requests.
+- **Bounded result sizes:** max 100 items per page, max 20 operations in detail.
+- **Lazy loading:** folder summary is fetched once on page load; subsequent page fetches only fetch the list endpoint.
+- **Skeleton states:** every async surface (tree, table, card list, drawer) has a skeleton loading state.
+- **No live provider API calls:** the library reads only from the Mavero/Supabase asset model. Provider APIs are NOT called for every row — provider availability is read from `media_assets` (synced separately by `SyncService`).
+- **URL state sync uses replaceState:** avoids spamming browser history on every filter keystroke.
 
 ### Commit SHA
 
-`322b977`
+`41fd3de`
 
 ### Deployment Notes
 
-- No env vars added or removed
-- No migrations required
-- No new API endpoints
-- No new dependencies (lucide-svelte already present)
-- Build size impact: +35KB for AdminAppShell chunk (server-side rendered, code-split per route)
-- All admin routes continue to render server-side via existing SvelteKit adapter
-- All admin routes continue to require admin auth via existing hooks.server.ts logic
+- No env vars added or removed.
+- No migrations required.
+- 3 new API endpoints added (`/api/admin/media/library`, `/api/admin/media/library/[id]`, `/api/admin/media/library/folders`).
+- 1 new backend service (`MediaLibraryService`).
+- 6 new UI components (`AdminAssetStatus`, `AdminMediaTree`, `AdminMediaTable`, `AdminMediaCard`, `AdminMediaDetailDrawer`, `AdminMediaFilters`).
+- 1 backend fix (resolver gating).
+- No new dependencies (lucide-svelte already present).
+- Build size impact: +75KB for the library page chunk (server-side rendered, code-split per route).
+- All admin routes continue to render server-side via existing SvelteKit adapter.
+- All admin routes continue to require admin auth via existing hooks.server.ts logic.
 
 ### Next Phase
 
-**Phase C — Media Library:**
-- Implement the full Media Library workspace at `/admin/media/library`
-- Hierarchy: Movies → Year → Title; Series → Season → Episode; Anime → Season → Episode
-- Search by title, TMDB ID, IMDb ID, canonical key
-- Filter by type, year, provider, status
-- Master-detail layout with detail drawer
-- Provider availability per asset (Vidara status, Abyss status, quality, audio, subtitles)
-- Inline operations: rename, move, detach, delete, reconcile, sync (all backend APIs already exist)
-- Responsive data views: dense table on desktop, card list on mobile
-- URL-driven filters for shareable views
-- Remove the Phase B placeholder page at `/admin/media/library` once full implementation lands
+**Phase D — Upload / Import:**
+- Implement contextual upload entry points (from Media Library, Missing Media, media detail, content type).
+- Refine TMDB workflow with better metadata confirmation.
+- Decompose the 755-line upload wizard into per-step components.
+- Encapsulate provider-specific upload flows (Vidara browser-direct vs Abyss server-proxied).
+- Implement progress, processing, success/failure states with the new Admin 2.0 visual system.
+- Implement subtitle flow using existing backend services.
+- Migrate the upload page from legacy `AdminPageHeader` to the new `AdminPage` framework.

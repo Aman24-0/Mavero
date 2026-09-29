@@ -183,9 +183,7 @@ ok('6a. AdminPlaceholder component exists with phase + capabilities + related li
 
 // Every previously-orphaned nav destination now has a page
 assert.match(libraryPage, /<AdminAppShell>/, 'library page wraps in AdminAppShell');
-assert.match(libraryPage, /phase="C"/, 'library page is tagged Phase C');
-assert.match(libraryPage, /Media Library/, 'library page title is Media Library');
-ok('6b. /admin/media/library placeholder exists (Phase C destination)');
+ok('6b. /admin/media/library page exists — Phase C replaced the placeholder with the real Media Library');
 
 assert.match(assetsPage, /<AdminAppShell>/, 'assets page wraps in AdminAppShell');
 assert.match(assetsPage, /phase="E"/, 'assets page is tagged Phase E');

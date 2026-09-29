@@ -258,15 +258,24 @@ export function createMaveroHostedAdapter(adapterId: 'vidara' | 'abyss'): Provid
         const mediaItemId: string = itemResult.data.id;
 
         // 3b. Lookup the latest ready asset for this (media_item, source).
-        //     Phase 7 §5: gate on `status='ready'` ONLY — the
-        //     mavero_status column exists for future phases and is
-        //     NOT consulted here.
+        //     Phase C §Hosting/Media Issue Audit: gate on BOTH
+        //       `status='ready'`  (provider lifecycle complete)
+        //     AND
+        //       `mavero_status='available'`  (admin has not detached /
+        //       disabled / soft-deleted the asset)
+        //     Without the mavero_status gate, ManagementService.detachAsset
+        //     (which sets mavero_status='missing' but leaves status='ready')
+        //     would NOT actually detach the asset from playback — the
+        //     resolver would keep serving it. That was a real bug fixed
+        //     in Phase C. mavero_status is the admin's lever; status is
+        //     the provider's lever. Both must be green.
         const assetResult = await client
           .from('media_assets')
           .select('playback_url')
           .eq('media_item_id', mediaItemId)
           .eq('provider_source_id', context.config.source.id)
           .eq('status', 'ready')
+          .eq('mavero_status', 'available')
           .order('updated_at', { ascending: false })
           .limit(1)
           .maybeSingle();
