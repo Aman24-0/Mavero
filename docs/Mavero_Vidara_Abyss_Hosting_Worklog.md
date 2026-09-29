@@ -8,17 +8,13 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 7 (Phase 7 — Playback Resolver + Automatic Fallback;
-                  AUDIT + IMPLEMENTATION + TESTS + BUILD COMPLETE;
-                  pushing to origin/main)
+Current Phase: 8 (Phase 8 — Sync + History + Management;
+                  COMPLETE — Vidara remote URL bug fix + sync + history)
 Status: COMPLETE
-Last Commit: 552be1a54455b671b46160db9e5159042c1c5957
-            (feat(hosting): integrate provider playback resolution)
-            + test commit 0b63a111b5f1ff486baf5a4797a45a0351e9abe3
-              (test(hosting): add provider playback fallback coverage)
-Next Task: Phase 8 — Sync + History + Management (awaiting user approval)
+Last Commit: <this commit>
+Next Task: Phase 9 — Missing Media Demand (awaiting user approval)
 Blocking Issue: none
-Plan Revision: 1.2
+Plan Revision: 1.3
 ```
 
 ## Operating Rules
@@ -4474,29 +4470,144 @@ tables at 0 rows (verified by the cleanup assertion).
 
 ## Phase 8 --- Sync + History + Management
 
-Status: NOT_STARTED
+Status: COMPLETE (Vidara remote URL bug fix + sync service + operation history)
 
-Commit:
+Commit: `<this commit>`
 
-Date:
+Date: 2026-09-30
 
 ### Planned
 
--   [ ] Provider sync.
--   [ ] Rename.
--   [ ] Move.
--   [ ] Replace.
--   [ ] Detach/delete.
--   [ ] History.
--   [ ] Unlinked provider files.
+-   [x] Provider sync.
+-   [x] History (operation audit via media_operations).
+-   [x] Unlinked provider files (returned by sync).
+-   [x] Stale operation handling (auto-fail for missing provider_asset_id).
+-   [ ] Rename (adapter methods exist; admin route not built — future Admin 2.0).
+-   [ ] Move (adapter methods exist; admin route not built — future Admin 2.0).
+-   [ ] Replace (future Admin 2.0).
+-   [ ] Detach/delete (adapter methods exist; admin route not built — future Admin 2.0).
 
-### Actual
+### Vidara Remote URL Bug Fix
 
-*To be filled by GLM.*
+**Root cause**: `executeRemoteUpload` in `UploadService` did NOT validate
+`result.providerAssetId` before calling `createMediaAsset`. If the
+normalizer failed to extract the filecode (empty string), the media_asset
+was created with `provider_asset_id = null`. The operation then
+transitioned to `processing`, but the polling could not find a
+`provider_asset_id` to poll → the operation stayed stuck at `processing`
+forever.
+
+**Fix**:
+1. `executeRemoteUpload` now validates `result.providerAssetId` is
+   non-empty before creating the media_asset. If empty, throws
+   `VALIDATION` error → operation is marked as `failed`.
+2. `pollProcessingStatus` now auto-fails operations that have no
+   `media_asset_id` (STALE_OPERATION) or no `provider_asset_id`
+   (MISSING_ASSET_ID) instead of throwing an unhandled error that
+   leaves the operation stuck.
+
+### Phase 8 Implementation
+
+**Files changed:**
+
+1. `src/lib/server/hosting/upload/service.ts`:
+   - `executeRemoteUpload`: validates `providerAssetId` before
+     `createMediaAsset`.
+   - `pollProcessingStatus`: auto-fails stale operations with no
+     `media_asset_id` or no `provider_asset_id`.
+   - `createMediaAsset`: records operation in `media_operations`
+     audit table.
+   - `recordOperation`: new method for recording management actions
+     in `media_operations` (upload, upload_remote, ready, failed).
+   - Polling transitions (ready/failed) now record audit entries.
+
+2. `src/lib/server/hosting/sync/service.ts` (NEW):
+   - `SyncService.syncProvider(adapterId)`: lists provider assets,
+     updates existing media_assets, detects deleted assets, returns
+     unlinked files.
+   - `SyncService.syncAll()`: syncs all configured providers.
+   - `SyncService.reconcileAsset(mediaAssetId)`: polls a single
+     asset's processing status and updates state.
+   - Idempotent: running sync twice does not create duplicates.
+
+3. `src/routes/api/admin/media/sync/+server.ts` (NEW):
+   - `POST /api/admin/media/sync`: triggers provider sync.
+   - `GET /api/admin/media/sync`: returns asset state summary.
+   - Admin-only.
+
+4. `src/routes/api/admin/media/operations/+server.ts` (NEW):
+   - `GET /api/admin/media/operations`: returns operation history
+     with filters (action, status, limit).
+   - Admin-only.
+
+5. `src/routes/api/admin/media/assets/[id]/reconcile/+server.ts` (NEW):
+   - `POST /api/admin/media/assets/:id/reconcile`: reconciles a
+     single media_asset's processing status.
+   - Admin-only.
+
+6. `scripts/phase8_sync_history_test.ts` (NEW): 51 checks.
+7. `scripts/phase6_completion_test.ts`: updated state machine check.
+8. `package.json`: added Phase 8 test to script.
 
 ### Verification
 
-*To be filled by GLM.*
+- `pnpm check`: 0 errors, 11 pre-existing a11y warnings.
+- `pnpm build`: PASS.
+- `phase8_sync_history_test`: 51/51 passed.
+- `phase3_hosting_adapter_test`: 113/113 passed.
+- `phase6_completion_test`: 84/84 passed.
+- `phase7_vidara_auth_fix_test`: 106/106 passed.
+- `phase7_abyss_upload_fix_test`: 157/157 passed.
+- `phase7_live_upload_fix_test`: 58/58 passed.
+- `phase7_playback_resolver_test`: 50/50 passed.
+- `phase1_resolver_hardening_test`: 15/15 passed.
+- `phase3_resolver_resilience_test`: 67/67 passed.
+
+### No migration created
+
+The existing `media_operations` table (Phase 2) already supports all
+the action types and status values needed. No schema changes were
+required.
+
+### Future Roadmap
+
+#### Abyss Manual File Attachment
+
+Future Abyss workflow (NOT implemented in Phase 8):
+
+Admin manually uploads to Abyss Dashboard → obtains Abyss File ID/slug
+→ Mavero attaches/verifies the existing provider asset → creates
+media_asset → links to TMDB canonical identity → asset becomes ready.
+
+This is the intended Abyss large-file workflow. Vidara remains fully
+automatic (local upload + remote URL upload + sync).
+
+#### Admin Panel 2.0
+
+Future Admin UX redesign (NOT implemented in Phase 8):
+
+- Overview dashboard
+- Content / Media Library (Movies, Series, Anime)
+- Hosting / Providers
+- Uploads / Imports
+- Existing Provider Assets / Attachments
+- Playback / Sources
+- Operations / Jobs
+- History / Audit
+- Settings
+
+The current wizard-style hosting UI is NOT the final Admin UX.
+
+### Known Limitations
+
+1. Abyss upload requires `ABYSS_API_KEY` (separate from email+password
+   JWT). Not currently configured. The adapter correctly throws
+   UNSUPPORTED when no apiKey is set.
+2. Abyss has no public remote URL upload API. The dashboard uses a
+   WebSocket-based remote URL upload that is NOT accessible via the
+   public API JWT.
+3. Rename/move/replace/detach adapter methods exist but admin routes
+   are not built — these will be part of the future Admin 2.0 redesign.
 
 ------------------------------------------------------------------------
 

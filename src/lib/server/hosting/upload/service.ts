@@ -284,6 +284,24 @@ export class UploadService {
         filename: op.source_filename ?? undefined,
       });
 
+      // CRITICAL FIX (Phase 8): validate that the upload result contains a
+      // non-empty providerAssetId BEFORE creating the media_asset. The
+      // previous implementation did NOT validate this — if the normalizer
+      // failed to extract the filecode (empty string), the media_asset was
+      // created with provider_asset_id = null (Supabase converts empty
+      // string to null for nullable text columns). The operation then
+      // transitioned to 'processing', but the polling could not find a
+      // provider_asset_id to poll → the operation stayed stuck at
+      // 'processing' forever.
+      //
+      // The completeUploadFromResult route (local upload path) already
+      // validates this — the remote upload path was missing the same check.
+      if (!result.providerAssetId) {
+        throw new HostingProviderError('VALIDATION', {
+          message: 'Remote upload succeeded but the provider response did not contain a provider asset ID (filecode). The upload may not have completed correctly.',
+        });
+      }
+
       // Update state: uploading → uploaded
       await this.updateOperationState(operationId, 'uploaded', { uploaded_at: new Date().toISOString() });
 
@@ -342,6 +360,21 @@ export class UploadService {
       return { status: op.status, providerStatus: null, progressPercent: null, ready: op.status === 'ready', failed: op.status === 'failed' };
     }
 
+    // CRITICAL FIX (Phase 8): stale-operation safety. If the operation is
+    // in 'processing' but has NO media_asset_id (or the media_asset has
+    // no provider_asset_id), it CANNOT be polled — the operation is
+    // stuck. Auto-fail it with a clear error instead of leaving it
+    // stuck forever. This prevents the "processing with null
+    // provider_asset_id" bug from creating permanent orphans.
+    if (!op.media_asset_id) {
+      await this.updateOperationState(operationId, 'failed', {
+        failed_at: new Date().toISOString(),
+        error_code: 'STALE_OPERATION',
+        error_message: 'Operation is in processing state but has no associated media asset. The upload may have failed to produce a valid provider asset.',
+      });
+      return { status: 'failed', providerStatus: null, progressPercent: null, ready: false, failed: true };
+    }
+
     // Look up the adapter via direct queries.
     const { data: sourceRow } = await this.client
       .from('streaming_sources')
@@ -362,7 +395,6 @@ export class UploadService {
     if (!adapter) throw new Error(`No hosting adapter for ${adapterId}.`);
 
     // Get the provider asset ID from the media_assets row.
-    if (!op.media_asset_id) throw new Error('No media asset associated with this operation.');
     const { data: asset } = await this.client
       .from('media_assets')
       .select('provider_asset_id')
@@ -370,7 +402,23 @@ export class UploadService {
       .maybeSingle();
 
     const providerAssetId = (asset as { provider_asset_id: string | null })?.provider_asset_id;
-    if (!providerAssetId) throw new Error('No provider_asset_id on the media asset.');
+    if (!providerAssetId) {
+      // CRITICAL FIX (Phase 8): auto-fail operations with no provider_asset_id
+      // instead of throwing an unhandled error that leaves the operation stuck.
+      await this.updateOperationState(operationId, 'failed', {
+        failed_at: new Date().toISOString(),
+        error_code: 'MISSING_ASSET_ID',
+        error_message: 'The media asset has no provider_asset_id. The provider upload may not have completed correctly.',
+      });
+      // Also mark the media_asset as failed.
+      await this.client.from('media_assets').update({
+        status: 'failed',
+        mavero_status: 'failed',
+        error_code: 'MISSING_ASSET_ID',
+        error_message: 'No provider_asset_id was stored during upload.',
+      }).eq('id', op.media_asset_id);
+      return { status: 'failed', providerStatus: null, progressPercent: null, ready: false, failed: true };
+    }
 
     // Poll the provider.
     const procStatus = await adapter.getProcessingStatus(providerAssetId);
@@ -393,9 +441,30 @@ export class UploadService {
       await this.updateOperationState(operationId, 'ready', { ready_at: new Date().toISOString() });
       // Also update the media_assets mavero_status.
       await this.client.from('media_assets').update({ mavero_status: 'available' }).eq('id', op.media_asset_id);
+      // Phase 8: record the ready transition in operation history.
+      await this.recordOperation({
+        action: 'ready',
+        status: 'success',
+        media_item_id: op.media_item_id,
+        media_asset_id: op.media_asset_id ?? undefined,
+        provider_source_id: op.provider_source_id ?? undefined,
+        upload_operation_id: operationId,
+        details: { provider_status: procStatus.providerStatus },
+      });
     } else if (procStatus.status === 'failed') {
       await this.updateOperationState(operationId, 'failed', {
         failed_at: new Date().toISOString(),
+        error_code: procStatus.providerErrorCode ?? 'PROVIDER_PROCESSING',
+        error_message: procStatus.providerErrorMessage ?? 'Provider processing failed.',
+      });
+      // Phase 8: record the failure in operation history.
+      await this.recordOperation({
+        action: 'failed',
+        status: 'failed',
+        media_item_id: op.media_item_id,
+        media_asset_id: op.media_asset_id ?? undefined,
+        provider_source_id: op.provider_source_id ?? undefined,
+        upload_operation_id: operationId,
         error_code: procStatus.providerErrorCode ?? 'PROVIDER_PROCESSING',
         error_message: procStatus.providerErrorMessage ?? 'Provider processing failed.',
       });
@@ -507,7 +576,58 @@ export class UploadService {
       .single();
 
     if (assetRow) {
-      await this.client.from('media_upload_operations').update({ media_asset_id: (assetRow as { id: string }).id }).eq('id', op.id);
+      const assetId = (assetRow as { id: string }).id;
+      await this.client.from('media_upload_operations').update({ media_asset_id: assetId }).eq('id', op.id);
+      // Phase 8: record the operation in media_operations for audit history.
+      await this.recordOperation({
+        action: op.source_url ? 'upload_remote' : 'upload',
+        status: 'success',
+        media_item_id: op.media_item_id,
+        media_asset_id: assetId,
+        provider_source_id: op.provider_source_id ?? undefined,
+        upload_operation_id: op.id,
+        admin_user_id: op.requested_by_user_id ?? undefined,
+        details: { provider_asset_id: result.providerAssetId, playback_url: result.playbackUrl },
+      });
+    }
+  }
+
+  /**
+   * Phase 8 — Records a management operation in the media_operations
+   * audit table. Used by sync, reconcile, retry, cancel, and other
+   * management actions to build a consistent operation history.
+   *
+   * SECURITY: never store credentials, tokens, or API keys in `details`.
+   * The `details` field is jsonb and may be visible to admins.
+   */
+  async recordOperation(params: {
+    action: string;
+    status: 'success' | 'failed' | 'pending';
+    media_item_id?: string;
+    media_asset_id?: string;
+    provider_source_id?: string;
+    upload_operation_id?: string;
+    admin_user_id?: string;
+    details?: Record<string, unknown>;
+    error_code?: string;
+    error_message?: string;
+  }): Promise<void> {
+    try {
+      await this.client.from('media_operations').insert({
+        action: params.action,
+        status: params.status,
+        media_item_id: params.media_item_id ?? null,
+        media_asset_id: params.media_asset_id ?? null,
+        provider_source_id: params.provider_source_id ?? null,
+        upload_operation_id: params.upload_operation_id ?? null,
+        admin_user_id: params.admin_user_id ?? null,
+        details: (params.details ?? {}) as never,
+        error_code: params.error_code ?? null,
+        error_message: params.error_message ?? null,
+      });
+    } catch {
+      // Silently absorb — operation history is a best-effort audit trail.
+      // A failure to record history must NOT break the main operation.
     }
   }
 }

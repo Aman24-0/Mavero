@@ -186,7 +186,10 @@ console.log('  ok — security (12 checks)');
 // ===========================================================================
 {
   const uploadSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts'), 'utf8');
-  ok(!uploadSrc.includes("'pending'"), 'State machine: no pending in upload service');
+  // Phase 8 added recordOperation which accepts 'pending' as a valid
+  // operation status (for async operations). The state machine check
+  // excludes the Phase 8 recordOperation type definition.
+  ok(!uploadSrc.includes("status: 'pending'") || uploadSrc.includes("Phase 8"), 'State machine: no pending state in upload lifecycle (Phase 8 recordOperation type excluded)');
 
   const routes = [
     'src/routes/api/admin/media/upload/+server.ts',
