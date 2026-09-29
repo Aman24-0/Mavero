@@ -8,11 +8,11 @@ Do not rewrite completed history. Append phase results and corrections.
 ## Current State
 
 ``` text
-Current Phase: 8 (Phase 8 — Sync + History + Management;
-                  COMPLETE — Vidara remote URL bug fix + sync + history)
+Current Phase: 9 (Phase 9 — Missing Media Demand;
+                  COMPLETE — demand tracking + admin API + UI)
 Status: COMPLETE
 Last Commit: <this commit>
-Next Task: Phase 9 — Missing Media Demand (awaiting user approval)
+Next Task: Phase 10 — Hardening + Provider Health (awaiting user approval)
 Blocking Issue: none
 Plan Revision: 1.3
 ```
@@ -4613,29 +4613,60 @@ The current wizard-style hosting UI is NOT the final Admin UX.
 
 ## Phase 9 --- Missing Media Demand
 
-Status: NOT_STARTED
+Status: COMPLETE
 
-Commit:
+Commit: `<this commit>`
 
-Date:
+Date: 2026-09-30
 
 ### Planned
 
--   [ ] Create/increment missing request on failed Mavero availability.
--   [ ] Deduplicate repeated requests.
--   [ ] Movie requests.
--   [ ] Episode requests.
--   [ ] Admin request list.
--   [ ] Upload action.
--   [ ] Ignore/resolve state.
+-   [x] Create/increment missing request on failed Mavero availability.
+-   [x] Deduplicate repeated requests.
+-   [x] Movie requests.
+-   [x] Episode requests.
+-   [x] Admin request list.
+-   [x] Upload action.
+-   [x] Ignore/resolve state.
 
-### Actual
+### Implementation
 
-*To be filled by GLM.*
+**Resolver insertion point**: `/api/playback/resolve` endpoint. After
+`resolveSource` completes, if the resolved source was NOT a Mavero-hosted
+provider (meaning both Vidara and Abyss were unavailable), the
+`recordDemandIfNeeded` function is called as a fire-and-forget side
+effect (`.catch(() => {})`). This does NOT block playback.
+
+**DemandService** (`src/lib/server/hosting/demand/service.ts`):
+- `recordDemand(entry)`: creates or increments a
+  `media_availability_requests` row using `canonical_key` for
+  deduplication. Only 'open' and 'uploading' status rows are
+  incremented. 'ignored' and 'ready' rows are NOT incremented.
+- `resolveDemand(canonicalKey)`: transitions matching requests to
+  'ready' status when hosted media becomes available.
+- `buildEntry(content, request, userKind)`: builds a DemandEntry from
+  the resolver context using the Phase 5 canonical key helpers.
+
+**Deduplication**: uses `canonical_key` unique constraint from Phase 2
+schema. Movie: `movie:tmdb:<id>`. Episode: `series:tmdb:<id>:s<S>:e<E>`.
+
+**Admin API** (`src/routes/api/admin/media/missing/+server.ts`):
+- `GET /api/admin/media/missing`: lists requests with status filter.
+- `PATCH /api/admin/media/missing`: updates request status.
+
+**Admin UI** (`src/routes/admin/media/missing/`):
+- Shows: title, type, TMDB ID, request count, first/last requested,
+  status, actions (Upload, Ignore, Resolve, Reopen).
+- Upload link preserves TMDB/season/episode identity.
+
+**Status lifecycle**: open → uploading → ready (auto-resolved on
+upload/sync). open → ignored (admin dismissed). ignored/ready → open
+(admin reopens).
 
 ### Verification
 
-*To be filled by GLM.*
+- `phase8_9_management_demand_test`: 79/79 passed.
+- All existing hosting/resolver tests pass unchanged.
 
 ------------------------------------------------------------------------
 
