@@ -506,7 +506,6 @@
     border-radius: var(--a2-radius-sm);
     font-size: var(--a2-text-2xs);
   }
-  .a2-sync-summary:has(svg) { color: var(--a2-text); }
 
   /* ---- Unlinked ---- */
   .a2-sync-unlinked {

@@ -59,6 +59,7 @@
   let loading = $state(false);
   let listError = $state<string | null>(null);
 
+  // svelte-ignore state_referenced_locally
   let filters = $state<HostingAssetQuery>({
     q: '',
     provider: initialProvider ?? 'all',
@@ -162,11 +163,17 @@
   }
 
   // Re-fetch when filters change (except q, which is debounced).
+  // svelte-ignore state_referenced_locally
   let lastProvider = $state(filters.provider);
+  // svelte-ignore state_referenced_locally
   let lastLinked = $state(filters.linked);
+  // svelte-ignore state_referenced_locally
   let lastStatus = $state(filters.status);
+  // svelte-ignore state_referenced_locally
   let lastContentType = $state(filters.contentType);
+  // svelte-ignore state_referenced_locally
   let lastHasSubtitles = $state(filters.hasSubtitles);
+  // svelte-ignore state_referenced_locally
   let lastSort = $state(filters.sort);
 
   $effect(() => {
@@ -559,7 +566,8 @@
   <!-- Mobile filter sheet -->
   {#if mobileFiltersOpen}
     <div class="a2-assets-filter-sheet-overlay" onclick={() => { mobileFiltersOpen = false; }} role="presentation">
-      <div class="a2-assets-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-assets-filter-sheet-title" onclick={(e) => e.stopPropagation()}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-assets-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-assets-filter-sheet-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <header class="a2-assets-filter-sheet-head">
           <h2 id="a2-assets-filter-sheet-title">Filters</h2>
           <button type="button" class="a2-assets-filter-sheet-close" onclick={() => { mobileFiltersOpen = false; }} aria-label="Close">
@@ -615,11 +623,13 @@
   {#if drawerOpen && selectedAsset}
     {@const caps = capsForAdapter(selectedAsset.providerAdapterId)}
     <div class="a2-asset-drawer-overlay" onclick={() => { drawerOpen = false; }} role="presentation">
-      <aside
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
         class="a2-asset-drawer"
         role="dialog"
         aria-modal="true"
         aria-labelledby="a2-asset-drawer-title"
+        tabindex="-1"
         onclick={(e) => e.stopPropagation()}
       >
         <header class="a2-asset-drawer-head">
@@ -736,14 +746,15 @@
             </div>
           </section>
         </div>
-      </aside>
+      </div>
     </div>
   {/if}
 
   <!-- Rename modal -->
   {#if renameOpen && selectedAsset}
     <div class="a2-asset-modal-overlay" onclick={() => { renameOpen = false; }} role="presentation">
-      <div class="a2-asset-modal" role="dialog" aria-modal="true" aria-labelledby="a2-asset-rename-title" onclick={(e) => e.stopPropagation()}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-asset-modal" role="dialog" aria-modal="true" aria-labelledby="a2-asset-rename-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <h2 id="a2-asset-rename-title" class="a2-asset-modal-title">Rename asset</h2>
         <p class="a2-asset-modal-desc">Enter the new name. The provider-side file will be renamed; the Mavero media_asset metadata will be updated.</p>
         <label class="a2-asset-modal-field">
@@ -762,7 +773,8 @@
   {#if moveOpen && selectedAsset}
     {@const caps = capsForAdapter(selectedAsset.providerAdapterId)}
     <div class="a2-asset-modal-overlay" onclick={() => { moveOpen = false; }} role="presentation">
-      <div class="a2-asset-modal" role="dialog" aria-modal="true" aria-labelledby="a2-asset-move-title" onclick={(e) => e.stopPropagation()}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-asset-modal" role="dialog" aria-modal="true" aria-labelledby="a2-asset-move-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <h2 id="a2-asset-move-title" class="a2-asset-modal-title">Move asset</h2>
         <p class="a2-asset-modal-desc">
           {#if caps?.nestedFolders}

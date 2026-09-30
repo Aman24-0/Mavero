@@ -258,11 +258,13 @@
     {@const h = effectiveHealth(selectedProvider)}
     {@const configured = h?.configured ?? false}
     <div class="a2-provider-drawer-overlay" onclick={() => { drawerOpen = false; }} role="presentation">
-      <aside
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
         class="a2-provider-drawer"
         role="dialog"
         aria-modal="true"
         aria-labelledby="a2-provider-drawer-title"
+        tabindex="-1"
         onclick={(e) => e.stopPropagation()}
       >
         <header class="a2-provider-drawer-head">
@@ -354,7 +356,7 @@
             </div>
           </section>
         </div>
-      </aside>
+      </div>
     </div>
   {/if}
 </section>

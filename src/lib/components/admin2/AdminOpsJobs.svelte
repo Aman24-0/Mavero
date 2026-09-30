@@ -104,11 +104,17 @@
     }, 300);
   }
 
+  // svelte-ignore state_referenced_locally
   let lastStatus = $state(filters.status);
+  // svelte-ignore state_referenced_locally
   let lastOpType = $state(filters.operationType);
+  // svelte-ignore state_referenced_locally
   let lastProvider = $state(filters.provider);
+  // svelte-ignore state_referenced_locally
   let lastRetryable = $state(filters.retryable);
+  // svelte-ignore state_referenced_locally
   let lastStale = $state(filters.stale);
+  // svelte-ignore state_referenced_locally
   let lastSort = $state(filters.sort);
 
   $effect(() => {
@@ -443,7 +449,8 @@
   <!-- Mobile filter sheet -->
   {#if mobileFiltersOpen}
     <div class="a2-jobs-filter-sheet-overlay" onclick={() => { mobileFiltersOpen = false; }} role="presentation">
-      <div class="a2-jobs-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-jobs-filter-sheet-title" onclick={(e) => e.stopPropagation()}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-jobs-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-jobs-filter-sheet-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <header class="a2-jobs-filter-sheet-head">
           <h2 id="a2-jobs-filter-sheet-title">Filters</h2>
           <button type="button" class="a2-jobs-filter-sheet-close" onclick={() => { mobileFiltersOpen = false; }} aria-label="Close">
@@ -504,11 +511,13 @@
   <!-- Detail drawer -->
   {#if drawerOpen && selectedJob}
     <div class="a2-job-drawer-overlay" onclick={() => { drawerOpen = false; }} role="presentation">
-      <aside
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
         class="a2-job-drawer"
         role="dialog"
         aria-modal="true"
         aria-labelledby="a2-job-drawer-title"
+        tabindex="-1"
         onclick={(e) => e.stopPropagation()}
       >
         <header class="a2-job-drawer-head">
@@ -636,7 +645,7 @@
             </div>
           </section>
         </div>
-      </aside>
+      </div>
     </div>
   {/if}
 </section>

@@ -28,6 +28,7 @@
   let { data }: { data: PageData } = $props();
 
   const VALID_TABS = new Set(['categories', 'features']);
+  // svelte-ignore state_referenced_locally
   let currentTab = $state<string>(VALID_TABS.has(data.initialTab) ? data.initialTab : 'categories');
 
   $effect(() => {

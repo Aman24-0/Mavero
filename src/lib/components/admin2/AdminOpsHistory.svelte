@@ -83,8 +83,11 @@
     }, 300);
   }
 
+  // svelte-ignore state_referenced_locally
   let lastAction = $state(filters.action);
+  // svelte-ignore state_referenced_locally
   let lastStatus = $state(filters.status);
+  // svelte-ignore state_referenced_locally
   let lastProvider = $state(filters.provider);
 
   $effect(() => {
@@ -264,6 +267,8 @@
     <ol class="a2-history-timeline" role="list">
       {#each items as event (event.id)}
         {@const Icon = actionIcon(event.action)}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <li class="a2-history-row" onclick={() => openDetail(event)}>
           <div class="a2-history-row-time">
             <span class="a2-history-row-time-main mono">{formatDate(event.occurredAt)}</span>
@@ -324,7 +329,8 @@
   <!-- Mobile filter sheet -->
   {#if mobileFiltersOpen}
     <div class="a2-history-filter-sheet-overlay" onclick={() => { mobileFiltersOpen = false; }} role="presentation">
-      <div class="a2-history-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-history-filter-sheet-title" onclick={(e) => e.stopPropagation()}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-history-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-history-filter-sheet-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <header class="a2-history-filter-sheet-head">
           <h2 id="a2-history-filter-sheet-title">Filters</h2>
           <button type="button" class="a2-history-filter-sheet-close" onclick={() => { mobileFiltersOpen = false; }} aria-label="Close">
@@ -369,11 +375,13 @@
   <!-- Detail drawer -->
   {#if drawerOpen && selectedEvent}
     <div class="a2-event-drawer-overlay" onclick={() => { drawerOpen = false; }} role="presentation">
-      <aside
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
         class="a2-event-drawer"
         role="dialog"
         aria-modal="true"
         aria-labelledby="a2-event-drawer-title"
+        tabindex="-1"
         onclick={(e) => e.stopPropagation()}
       >
         <header class="a2-event-drawer-head">
@@ -461,14 +469,13 @@
             </section>
           {/if}
         </div>
-      </aside>
+      </div>
     </div>
   {/if}
 </section>
 
 <style>
   .a2-ops-history { display: flex; flex-direction: column; gap: var(--a2-space-3); }
-  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
   .a2-history-filters { display: flex; flex-direction: column; gap: var(--a2-space-2); padding: var(--a2-space-3); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); }

@@ -30,6 +30,7 @@
   let { data }: { data: PageData } = $props();
 
   const VALID_TABS = new Set(['providers', 'sources']);
+  // svelte-ignore state_referenced_locally
   let currentTab = $state<string>(VALID_TABS.has(data.initialTab) ? data.initialTab : 'providers');
 
   $effect(() => {
@@ -238,7 +239,8 @@
 <!-- Defaults sheet -->
 {#if defaultsOpen}
   <div class="a2-defaults-overlay" onclick={() => { defaultsOpen = false; }} role="presentation">
-    <aside class="a2-defaults-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-defaults-title" onclick={(e) => e.stopPropagation()}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="a2-defaults-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-defaults-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <header class="a2-defaults-head">
         <h2 id="a2-defaults-title" class="a2-defaults-title"><SlidersHorizontal size={16} /> Default Sources</h2>
         <button type="button" class="a2-defaults-close" onclick={() => { defaultsOpen = false; }} aria-label="Close">
@@ -276,16 +278,13 @@
               </select>
               <button type="submit" class="a2-default-save">Save</button>
               {#if def?.source_id}
-                <form method="POST" action="?/clearDefault" class="a2-default-clear-form">
-                  <input type="hidden" name="content_type" value={ct.type} />
-                  <button type="submit" class="a2-default-clear">Clear</button>
-                </form>
+                <button type="submit" formaction="?/clearDefault" name="content_type" value={ct.type} class="a2-default-clear">Clear</button>
               {/if}
             </div>
           </form>
         {/each}
       </div>
-    </aside>
+    </div>
   </div>
 {/if}
 
@@ -463,7 +462,6 @@
     border: none; border-radius: var(--a2-radius-sm);
     font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer;
   }
-  .a2-default-clear-form { display: inline; }
   .a2-default-clear {
     padding: 4px 10px; background: var(--a2-surface-4); color: var(--a2-text-muted);
     border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm);

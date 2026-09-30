@@ -39,6 +39,7 @@
   let { data }: { data: PageData } = $props();
 
   const VALID_TABS = new Set(['overview', 'users', 'viewing', 'providers', 'retention']);
+  // svelte-ignore state_referenced_locally
   let currentTab = $state<string>(VALID_TABS.has(data.initialTab) ? data.initialTab : 'overview');
 
   $effect(() => {
@@ -130,6 +131,7 @@
     { id: 'retention', label: 'Retention', icon: Repeat },
   ];
 
+  // svelte-ignore state_referenced_locally
   let currentPeriod = $state(data.preset);
   $effect(() => { currentPeriod = data.preset; });
 </script>

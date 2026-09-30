@@ -59,6 +59,7 @@
   // side fetches. The "captures initial value" warning is intentional
   // here — `data` only flows in once from the server loader.
   // ============================================================
+  // svelte-ignore state_referenced_locally
   const initial = $state.snapshot(data);  // svelte-ignore — initial capture only
   let items = $state<LibraryMediaItem[]>(initial.initialList.items);
   let total = $state<number>(initial.initialList.total);
