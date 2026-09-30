@@ -294,6 +294,11 @@
     color: var(--a2-text);
     background: var(--a2-surface-2);
   }
+  .a2-tab:focus-visible {
+    outline: 2px solid var(--a2-cyan);
+    outline-offset: -2px;
+    border-radius: var(--a2-radius-xs);
+  }
   .a2-tab.active {
     color: var(--a2-cyan);
     border-bottom-color: var(--a2-cyan);

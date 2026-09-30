@@ -931,6 +931,10 @@
     color: var(--a2-text);
     background: var(--a2-surface-2);
   }
+  .a2-nav-link:focus-visible {
+    outline: 2px solid var(--a2-cyan);
+    outline-offset: -2px;
+  }
   .a2-nav-link.active {
     color: var(--a2-cyan);
     background: var(--a2-cyan-soft);
@@ -1147,6 +1151,10 @@
     color: var(--a2-cyan);
     background: var(--a2-cyan-soft);
   }
+  .a2-more-link:focus-visible {
+    outline: 2px solid var(--a2-cyan);
+    outline-offset: -2px;
+  }
   .a2-more-link-text {
     flex: 1;
   }
@@ -1215,6 +1223,11 @@
   }
   .a2-bottom-item.active {
     color: var(--a2-cyan);
+  }
+  .a2-bottom-item:focus-visible {
+    outline: 2px solid var(--a2-cyan);
+    outline-offset: -2px;
+    border-radius: var(--a2-radius-sm);
   }
   .a2-bottom-icon {
     display: grid;

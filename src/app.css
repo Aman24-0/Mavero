@@ -491,6 +491,33 @@ html[data-admin-sheet-open] body { touch-action: none; }
   .a2-ambient { animation: none; }
 }
 
+/* ---- Admin 2.0 global focus-visible ring ---- */
+/* Applied to all interactive elements inside admin2 workspace. */
+/* Components that use `outline: none` on :focus MUST also define a */
+/* replacement via this ring or an equivalent border+shadow combo. */
+.a2-focus-ring:focus-visible {
+  outline: 2px solid var(--a2-cyan);
+  outline-offset: 2px;
+  border-radius: var(--a2-radius-xs);
+}
+
+/* ---- Admin 2.0 skeleton shimmer ---- */
+.a2-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--a2-surface-2) 0%,
+    var(--a2-surface-3) 50%,
+    var(--a2-surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: a2-skeleton-shimmer 1.6s ease-in-out infinite;
+  border-radius: var(--a2-radius-sm);
+}
+@keyframes a2-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ---- Admin 2.0 scrollbar ---- */
 .a2-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
 .a2-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -500,3 +527,12 @@ html[data-admin-sheet-open] body { touch-action: none; }
 /* ---- Admin 2.0 body scroll lock (additional) ---- */
 html[data-a2-drawer-open] body { overflow: hidden; }
 html[data-a2-sheet-open] body { overflow: hidden; touch-action: none; }
+
+/* ---- Admin 2.0 dialog open scroll lock ---- */
+html[data-a2-dialog-open] body { overflow: hidden; }
+
+/* ---- Admin 2.0 reduced motion (global) ---- */
+@media (prefers-reduced-motion: reduce) {
+  .a2-skeleton { animation: none; background: var(--a2-surface-3); }
+  .a2-ambient { animation: none; }
+}
