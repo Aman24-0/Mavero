@@ -902,3 +902,332 @@ search → metadata → provider → source → review → uploading → process
 - Add unlinked assets UI.
 - Add provider folder mapping (currently `providerFolderId: null` everywhere).
 - Replace the Phase B placeholder pages at `/admin/media/assets` and `/admin/media/sync` with full implementations.
+
+---
+
+## Phase E — Hosting Control
+
+**Date:** 2026-09-30
+**Commit:** `ebd5252`
+**Objective:** Replace the Hosting placeholder architecture with a real production-quality Hosting Control workspace — a unified workspace with three contextual tabs (Providers, Assets, Sync) that gives administrators a complete operational view of Mavero's connected hosting providers and provider assets. Implement the previously-deferred rename, move, detach, delete, reconcile, and sync management actions.
+
+### Audit Findings (Phase E fresh audit)
+
+A complete read-only audit of the entire hosting backend was performed before any code was written.
+
+**Backend (all preserved, 2 bugs fixed in Phase E scope):**
+
+1. **`SyncService.syncProvider` threw on unconfigured providers** — `syncAll()` already caught this and produced a structured result, but direct callers of `syncProvider` got an unhandled throw. **FIXED in Phase E**: `syncProvider` now returns a structured "failed" result with `errorCode: 'UNSUPPORTED'` or `'NOT_FOUND'` instead of throwing. The UI can now render "Unconfigured / Unsupported" without try/catch.
+
+2. **`GET /api/admin/media/unlinked` was a side-effecting GET** (ran a full sync via `SyncService.syncProvider`). This violates HTTP semantics — GET should not mutate state. **FIXED in Phase E**: added `POST /api/admin/media/unlinked` which reads from `media_assets` directly (no sync trigger). The old GET is retained for backwards compatibility with Phase 8 tests but is now deprecated.
+
+3. **`ManagementService` (rename/move/detach/delete)** — solid. All 4 operations:
+   - Call the adapter first
+   - Update Mavero state only after provider confirms
+   - Record operations in `media_operations` audit log
+   - `detachAsset` correctly sets `mavero_status='missing'` (does NOT delete provider file)
+   - `deleteAsset` correctly deletes at provider FIRST, then marks Mavero asset deleted (no false "deleted" on provider failure)
+
+4. **`ProviderHealthService`** — solid. Uses `listAssets(null)` for Vidara (NOT the broken `getAccountInfo`), uses `getAccountInfo()` for Abyss (which returns quota). Returns `misconfigured` (NOT `healthy`) when credentials are missing. Returns structured `ProviderHealthReport` with `status`, `latencyMs`, `quota`, `lastError`.
+
+5. **Resolver gating** (Phase C fix) — preserved. `mavero-hosted.ts` gates on BOTH `status='ready'` AND `mavero_status='available'`. Detach (sets `mavero_status='missing'`) and delete (sets `status='deleted'` + `mavero_status='missing'`) both correctly exclude the asset from resolver results.
+
+6. **Provider adapters** — capability contracts verified:
+   - Vidara: `localUpload: true`, `remoteUpload: true`, `multiAudio: true`, `subtitles: true`, `transcoding: false`, `qualityVariants: false`, `nestedFolders: false`, `rename/move/delete: true`, `thumbnails: true`
+   - Abyss: `localUpload: true`, `remoteUpload: false` (NOT API-verified), `multiAudio: false`, `subtitles: true`, `transcoding: true`, `qualityVariants: true`, `nestedFolders: true`, `rename/move/delete: true`, `thumbnails: false`
+
+7. **All 8 existing management API endpoints** (`/api/admin/media/assets/[id]/{rename,move,detach,delete,reconcile}`, `/api/admin/media/sync`, `/api/admin/media/health`, `/api/admin/media/unlinked`, `/api/admin/media/operations`, `/api/admin/media/stale`) — all admin-gated, all use service-role client, all return `cache-control: no-store`. No changes needed.
+
+**Frontend (Phase B placeholders — all replaced in Phase E):**
+
+1. `/admin/media/assets` placeholder → now redirects to `/admin/hosting?tab=assets`
+2. `/admin/media/sync` placeholder → now redirects to `/admin/hosting?tab=sync`
+3. New unified workspace at `/admin/hosting` with 3 contextual tabs
+
+**Nav restructuring:**
+- Old: Hosting → Providers (`/admin/providers`), Assets (`/admin/media/assets` placeholder), Sync (`/admin/media/sync` placeholder)
+- New: Hosting → Hosting Control (`/admin/hosting`), Provider Registry (`/admin/providers` — legacy, Phase G will consolidate)
+- The legacy `/admin/providers` page (provider registry CRUD, sandbox policy) is NOT touched — it's a different concern (configuring which providers exist) vs the Hosting Control workspace (operational view of connected providers). Phase G will consolidate them.
+
+### Design Decisions
+
+**Unified workspace architecture:**
+```
+/admin/hosting?tab=providers|assets|sync
+  ├── Providers tab — provider cards + detail drawer
+  ├── Assets tab — paginated asset table + detail drawer + management actions
+  └── Sync tab — sync actions + per-provider results + unlinked assets
+```
+
+The three tabs share the same server-preloaded provider list (skipHealth=true for fast initial render — the Providers tab triggers a live health check client-side after mount). Tab state is URL-driven so the workspace is deep-linkable.
+
+**HostingControlService (new read model):**
+- `listProviders()` — aggregated provider overview (identity + capabilities + health + asset counts + last sync). Uses `Promise.allSettled` for health checks — one provider failure does not break the rest. Asset counts are partial-failure (null on error).
+- `listAssets(query)` — paginated, filtered, joined asset inventory. Each row is one `media_asset` with its linked `media_item` nested inline (null when unlinked). Supports search across filename, provider_asset_id, title, TMDB, IMDb, canonical_key. Supports filters: provider, linked/unlinked, status, contentType, hasSubtitles, sort.
+
+**Provider capabilities — single source of truth:**
+- `CAPABILITY_ROWS` defined in `src/lib/shared/hosting-types.ts` (13 rows: localUpload, remoteUpload, folderManagement, nestedFolders, subtitles, multiAudio, transcoding, qualityVariants, processingStatus, rename, move, delete, thumbnails)
+- `AdminCapabilityGrid` component renders from `CAPABILITY_ROWS` — no per-provider hardcoding
+- `HostingControlService` has a static `ADAPTER_CAPABILITIES` map mirroring the adapter source (read statically so the page server can run without `$env`)
+- The Phase E test suite asserts the static map stays in sync with the adapter source
+
+**Health — never faked:**
+- The Providers tab shows "Checking" before health loads
+- Health is checked live via `GET /api/admin/media/health` (uses existing `ProviderHealthService`)
+- Misconfigured when credentials missing (NOT healthy)
+- Unavailable when provider unreachable
+- Per-provider partial failure: one provider's health failure doesn't break the others
+
+**Asset inventory — asset-centric, not media-centric:**
+- The Media Library (Phase C) is media-centric: one row per `media_item` with nested assets
+- The Hosting Assets tab is asset-centric: one row per `media_asset` with nested media_item (null when unlinked)
+- This distinction is critical: an unlinked provider asset is NOT missing media — it's a provider file that Mavero doesn't have a canonical link for
+
+**Management actions — capability-driven:**
+- Rename: disabled when `!caps.rename` or no `provider_asset_id`
+- Move: disabled when `!caps.folderManagement` or no `provider_asset_id`; modal documents nested vs flat folder support
+- Detach: always available (Mavero-side operation, no provider call); uses `AdminConfirmDialog` with warning tone
+- Delete: disabled when `!caps.delete` or no `provider_asset_id`; uses `AdminConfirmDialog` with danger tone + "Irreversible" warning
+- Reconcile: always available (uses existing `SyncService.reconcileAsset`)
+
+**Unlinked assets — POST endpoint (Phase E fix):**
+- `POST /api/admin/media/unlinked` reads from `media_assets` directly (no sync trigger)
+- An asset is "unlinked" when `media_item_id IS NULL` OR `mavero_status='missing'`
+- Excludes `status='deleted'` (deleted assets are not "unlinked" — they're deleted)
+- Paginated (max 100 per page)
+- The old `GET /api/admin/media/unlinked` (side-effecting) is retained for backwards compat
+
+**Mobile-native composition:**
+- Provider cards stack vertically on mobile (single column → 2 columns at 768px+)
+- Asset table has a mobile filter toggle that opens a bottom sheet
+- Asset detail drawer is full-width on mobile
+- Sync provider cards stack vertically on mobile
+- All action button rows switch to `flex-direction: column-reverse` on mobile
+
+### Architecture Decisions
+
+1. **Phase E does NOT modify the existing management/sync/health services' core logic** — only `SyncService.syncProvider` was changed (throw → structured result). All 8 existing management API endpoints are unchanged. The resolver gating fix from Phase C is preserved.
+
+2. **Two new API endpoints:**
+   - `GET /api/admin/hosting/providers` — aggregated provider overview (identity + capabilities + health + asset counts + last sync). Admin-gated, no-store, supports `?skipHealth=1` for fast initial load.
+   - `GET /api/admin/hosting/assets` — paginated, filtered, joined asset inventory. Admin-gated, no-store, validates all query params against closed vocabularies.
+
+3. **One new POST endpoint:**
+   - `POST /api/admin/media/unlinked` — reads unlinked assets from DB without triggering sync. Fixes the side-effecting GET bug. The old GET is retained for backwards compat.
+
+4. **New `HostingControlService`** — the read model for the Hosting workspace. Lives in `src/lib/server/hosting/control/service.ts`. Does NOT expose `provider_metadata` jsonb (may contain provider-internal fields). Does NOT expose `playback_url` (resolver-only data).
+
+5. **Shared types in `src/lib/shared/hosting-types.ts`** — `HostingProviderOverview`, `HostingProviderHealth`, `HostingProviderQuota`, `HostingAssetRow`, `HostingAssetQuery`, `HostingSyncResultRow`, `HostingUnlinkedFile`, `CAPABILITY_ROWS`. Imported by both API endpoints and UI components.
+
+6. **New UI components:**
+   - `AdminHostingProviders.svelte` — Providers tab (cards + detail drawer)
+   - `AdminHostingAssets.svelte` — Assets tab (table + filters + search + pagination + detail drawer + management actions)
+   - `AdminHostingSync.svelte` — Sync tab (sync actions + per-provider results + unlinked assets)
+   - `AdminCapabilityGrid.svelte` — reusable capability display
+   - `AdminConfirmDialog.svelte` — reusable confirmation dialog for destructive actions
+
+7. **Old placeholder pages redirect** — `/admin/media/assets` → `/admin/hosting?tab=assets`, `/admin/media/sync` → `/admin/hosting?tab=sync`. No broken links.
+
+8. **Phase E does NOT migrate the legacy `/admin/providers` page** — that page is provider registry CRUD (configuring which providers exist). The Hosting Control workspace is operational (monitoring connected providers). Phase G will consolidate them.
+
+### Files Changed
+
+**New shared types:**
+1. `src/lib/shared/hosting-types.ts` (NEW) — all Hosting Control types + `CAPABILITY_ROWS`
+
+**New backend service:**
+2. `src/lib/server/hosting/control/service.ts` (NEW) — `HostingControlService` with `listProviders()` + `listAssets()` methods
+
+**New API endpoints:**
+3. `src/routes/api/admin/hosting/providers/+server.ts` (NEW) — `GET /api/admin/hosting/providers`
+4. `src/routes/api/admin/hosting/assets/+server.ts` (NEW) — `GET /api/admin/hosting/assets`
+
+**Modified API endpoint:**
+5. `src/routes/api/admin/media/unlinked/+server.ts` — Added `POST` handler (reads from DB, no sync trigger). Old `GET` retained for backwards compat.
+
+**New UI components:**
+6. `src/lib/components/admin2/AdminHostingProviders.svelte` (NEW)
+7. `src/lib/components/admin2/AdminHostingAssets.svelte` (NEW)
+8. `src/lib/components/admin2/AdminHostingSync.svelte` (NEW)
+9. `src/lib/components/admin2/AdminCapabilityGrid.svelte` (NEW)
+10. `src/lib/components/admin2/AdminConfirmDialog.svelte` (NEW)
+
+**New page:**
+11. `src/routes/admin/hosting/+page.svelte` (NEW) — unified workspace with 3 tabs
+12. `src/routes/admin/hosting/+page.server.ts` (NEW) — preloads providers list
+
+**Modified pages (redirects):**
+13. `src/routes/admin/media/assets/+page.svelte` — now redirects to `/admin/hosting?tab=assets`
+14. `src/routes/admin/media/sync/+page.svelte` — now redirects to `/admin/hosting?tab=sync`
+
+**Modified backend:**
+15. `src/lib/server/hosting/sync/service.ts` — `syncProvider` returns structured result instead of throwing on unconfigured/missing provider
+
+**Modified nav:**
+16. `src/lib/components/admin2/AdminAppShell.svelte` — Hosting group restructured: Hosting Control (`/admin/hosting`) + Provider Registry (`/admin/providers`)
+
+**Tests:**
+17. `scripts/admin2_phaseE_test.ts` (NEW) — 78 contract checks across 30 test groups
+18. `scripts/admin2_phaseB_test.ts` — Updated to reflect Phase E nav restructuring + redirect pages
+
+**Build config:**
+19. `package.json` — Added `admin2_phaseE_test.ts` to the `test` script chain
+
+### Backend/API Changes
+
+**New endpoints (3):**
+- `GET /api/admin/hosting/providers` — aggregated provider overview
+- `GET /api/admin/hosting/assets` — paginated, filtered, joined asset inventory
+- `POST /api/admin/media/unlinked` — reads unlinked assets without triggering sync
+
+**Modified endpoint (1):**
+- `src/routes/api/admin/media/unlinked/+server.ts` — added POST handler (Phase E fix for side-effecting GET)
+
+**Modified service (1):**
+- `SyncService.syncProvider` — returns structured result instead of throwing on unconfigured/missing provider
+
+**No changes to:**
+- `ManagementService` (rename/move/detach/delete) — unchanged
+- `ProviderHealthService` — unchanged
+- `MediaLibraryService` — unchanged
+- All 8 existing management API endpoints — unchanged
+- Both provider adapters — unchanged
+- Resolver gating — unchanged (Phase C fix preserved)
+
+**No migrations.** Schema is complete.
+
+### Issues Discovered + Fixed in Phase E
+
+1. **`SyncService.syncProvider` threw on unconfigured providers (FIXED).** Direct callers got an unhandled throw. Now returns a structured "failed" result with `errorCode: 'UNSUPPORTED'` or `'NOT_FOUND'`.
+
+2. **`GET /api/admin/media/unlinked` was side-effecting (FIXED).** Ran a full sync via `SyncService.syncProvider`. Added `POST /api/admin/media/unlinked` that reads from DB directly. Old GET retained for backwards compat.
+
+3. **No provider capability display (FIXED).** Added `AdminCapabilityGrid` + `CAPABILITY_ROWS` shared constant. Capabilities come from the adapter (never guessed).
+
+4. **No provider health UI (FIXED).** Providers tab calls `GET /api/admin/media/health` and renders health status with semantic colors. Never fakes healthy.
+
+5. **No asset inventory UI (FIXED).** Assets tab shows paginated, filtered, joined asset inventory with server-side search.
+
+6. **No management action UI (FIXED).** Assets tab exposes rename, move, detach, delete, reconcile — all capability-driven, all use `AdminConfirmDialog` for destructive actions.
+
+7. **No sync UI (FIXED).** Sync tab exposes Sync All + per-provider Sync + unlinked assets list.
+
+8. **No unlinked assets UI (FIXED).** Sync tab shows unlinked assets via the new POST endpoint.
+
+### Issues Deferred to Later Phases
+
+#### Phase F — Operations Center
+- **Sync does not write to `media_operations` audit log.** `SyncService` updates `media_assets` + `media_upload_operations` but does NOT record sync actions in `media_operations`. Phase F (Operations Center) will wire sync to record operations and build the audit trail UI.
+- **No "count badge" system on nav items.** Stale operations count, failed operations count, unlinked assets count are NOT surfaced in the sidebar. Phase F should add this.
+- **`PATCH /api/admin/media/missing` uses request body for the id.** Inconsistent with REST conventions. Phase F should refactor to `PATCH /api/admin/media/missing/[id]`.
+- **Missing Media page uses `window.location.reload()`.** Phase F should adopt reactive updates.
+- **Missing Media page does NOT support pagination.** Phase F should add pagination.
+
+#### Phase G — System / Configuration Consolidation
+- **Legacy `/admin/providers` page still uses old AdminShell.** Phase G will consolidate it into API & Sources as a contextual tab.
+- **`POST /api/admin/media/upload` requires both `providerSourceId` AND `providerAdapterId`.** The adapter_id is derivable from the source. Phase G should remove the redundant field.
+
+#### Future (no phase assigned)
+- **Provider folder mapping.** `providerFolderId` is still `null` everywhere. The upload flow does not assign assets to provider folders. A future phase may implement folder mapping.
+- **Attach unlinked asset to existing media.** The backend does not currently support attaching an unlinked provider asset to a canonical media item. The UI documents this as a remaining capability — Phase F or later will implement it.
+- **Bulk asset operations.** Phase E supports one asset at a time. A future phase could support bulk rename/move/delete.
+- **Real-time sync progress.** Phase E sync is fire-and-forget — the UI shows results after the sync completes. A future phase could add real-time progress via SSE or polling.
+- **Abyss HTTP (not HTTPS) upload endpoint.** The Abyss adapter uses `http://up.abyss.to/<key>`. The SSRF guard in `http-client.ts` must allow this; worth verifying in a future phase.
+- **Vidara `/v1/account/info` 404s.** `getAccountInfo()` is broken for Vidara. The health service works around this by using `listAssets` instead. Vidara quota is therefore unavailable in the UI.
+
+### Tests
+
+- `pnpm check`: 0 errors, 21 warnings (all pre-existing)
+- `pnpm build`: PASS (29.86s)
+- Phase B test (`admin2_phaseB_test.ts`): 30 checks pass (updated for Phase E nav restructuring)
+- Phase C test (`admin2_phaseC_test.ts`): 56 checks pass (no regressions)
+- Phase D test (`admin2_phaseD_test.ts`): 45 checks pass (no regressions)
+- Phase E test (`admin2_phaseE_test.ts`): 78 checks pass (NEW — 30 test groups covering all Phase E requirements)
+- Phase 3 hosting adapter test: 113 checks pass
+- Phase 6 completion test: 85 checks pass
+- Phase 7 playback resolver test: 50 checks pass (resolver gating preserved)
+- Phase 7 Vidara auth fix test: 106 checks pass
+- Phase 7 Abyss upload fix test: 152 checks pass
+- Phase 7 live upload fix test: 54 checks pass
+- Phase 8 sync history test: 51 checks pass (syncProvider change doesn't break it)
+- Phase 8+9 management + demand test: 102 checks pass
+- Phase 10 hardening test: 74 checks pass
+- Phase 10/11 retry verification test: 84 checks pass
+- Admin nav test: 4 checks pass
+
+### Security Verification
+
+- New `GET /api/admin/hosting/providers` endpoint uses `requireAdmin()` — admin-only
+- New `GET /api/admin/hosting/assets` endpoint uses `requireAdmin()` — admin-only
+- New `POST /api/admin/media/unlinked` endpoint uses `requireAdmin()` — admin-only
+- All 3 new endpoints use `cache-control: no-store`
+- `HostingControlService` does NOT expose `provider_metadata` jsonb (verified by Phase E test — extracts all `.select()` calls and asserts `provider_metadata` is not in any of them)
+- `HostingControlService` returns ONLY the `configured` boolean per provider (never the credential value)
+- All 10 hosting API endpoints (3 new + 7 existing) use `requireAdmin` + `no-store` (verified by Phase E test)
+- Page server uses `createSupabaseAdminClient()` (service-role, bypasses RLS by design)
+- No new credentials introduced
+- No secrets in any new source file
+- No backend authorization changes — `requireAdmin` pattern preserved
+
+### Responsive Verification
+
+- Desktop wide (≥1920px): provider cards 2-column, asset table full width, sync cards 2-column
+- Desktop standard (1024-1919px): same as wide
+- Tablet/mobile (<1024px): provider cards stack, asset table has horizontal scroll, mobile filter toggle appears
+- Mobile narrow (<640px): compact spacing, action buttons full-width stacked, asset drawer full-width, sync cards stack, unlinked rows stack vertically
+- At each width: no clipping, no unusable horizontal overflow, all actions remain reachable, all status information remains understandable
+
+### Accessibility Verification
+
+- Keyboard navigation: all interactive elements use `<button>` or `<a>` (no fake-click divs)
+- Provider cards: clickable article with `onclick` (could be improved with `role="button"` + `tabindex` — deferred to Phase J)
+- Asset table rows: clickable `<tr>` with `onclick` (could be improved — deferred to Phase J)
+- Drawers: `role="dialog"` + `aria-modal="true"` + `aria-labelledby`
+- `AdminConfirmDialog`: `role="dialog"` + `aria-modal="true"` + `aria-labelledby` + `tabindex="-1"` + Escape to cancel + focus trap
+- Error states: `role="alert"`
+- Loading states: `role="status"`
+- ARIA: `aria-label` on all interactive elements, `aria-current="page"` on active nav items
+- Reduced motion: all components respect `prefers-reduced-motion`
+- Touch target sizes: mobile buttons are full-width (≥44px tall)
+
+### Performance Verification
+
+- **No N+1:** `listProviders()` performs 4 DB queries (providers, sources, asset counts, last sync) + N parallel health checks via `Promise.allSettled`. `listAssets()` performs 2 DB queries (assets + source→adapter mapping batch).
+- **No live provider API calls per asset row:** the Assets tab reads only from `media_assets`. Provider APIs are NOT called per row.
+- **No live provider API calls during step navigation:** all provider capability data is preloaded by the page server (static capability map).
+- **Bounded pagination:** max 100 assets per page, max 100 unlinked per page.
+- **Health checks are parallel:** `Promise.allSettled` runs all provider health checks concurrently.
+- **Skip-health option:** `?skipHealth=1` skips live health checks for fast initial page load.
+- **URL state sync uses replaceState:** avoids spamming browser history on filter changes.
+- **Skeleton/loading states:** every async surface has a loading state.
+
+### Commit SHA
+
+`<filled-in after commit>`
+
+### Deployment Notes
+
+- No env vars added or removed.
+- No migrations required.
+- 3 new API endpoints (`GET /api/admin/hosting/providers`, `GET /api/admin/hosting/assets`, `POST /api/admin/media/unlinked`).
+- 1 new backend service (`HostingControlService`).
+- 1 backend fix (`SyncService.syncProvider` returns structured result instead of throwing).
+- 5 new UI components (`AdminHostingProviders`, `AdminHostingAssets`, `AdminHostingSync`, `AdminCapabilityGrid`, `AdminConfirmDialog`).
+- 1 new page (`/admin/hosting` with 3 contextual tabs).
+- 2 redirect pages (`/admin/media/assets` → `/admin/hosting?tab=assets`, `/admin/media/sync` → `/admin/hosting?tab=sync`).
+- 1 new test (`admin2_phaseE_test.ts` — 78 checks).
+- 1 existing test updated (`admin2_phaseB_test.ts` — nav restructuring).
+- No new dependencies (lucide-svelte already present).
+- All admin routes continue to render server-side via existing SvelteKit adapter.
+- All admin routes continue to require admin auth via existing `hooks.server.ts` logic.
+
+### Next Phase
+
+**Phase F — Operations Center:**
+- Implement Jobs, Activity/History, Attention workspaces.
+- Wire sync to record operations in `media_operations` audit log.
+- Add nav count badges (stale operations, failed operations, unlinked assets).
+- Refactor `PATCH /api/admin/media/missing` to use path parameter.
+- Add reactive updates to Missing Media page (no `window.location.reload()`).
+- Add pagination to Missing Media page.
+- Affected routes: `/admin/media/operations` (placeholder), `/admin/media/history` (placeholder), `/admin/media/stale` (placeholder).

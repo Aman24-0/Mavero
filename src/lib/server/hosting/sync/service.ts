@@ -57,16 +57,47 @@ export class SyncService {
 
   async syncProvider(adapterId: string): Promise<SyncResult> {
     const adapter = getHostingAdapter(adapterId);
-    if (!adapter) throw new HostingProviderError('UNSUPPORTED', { message: `No hosting adapter for ${adapterId}.` });
+    if (!adapter) {
+      // Phase E: return a structured "failed" result instead of throwing,
+      // so the UI can render "Unconfigured / Unsupported" without catching.
+      // syncAll() already converted this case to a structured result; we
+      // now do the same at the syncProvider level for direct callers.
+      return {
+        providerAdapterId: adapterId,
+        totalProviderAssets: 0,
+        updatedAssets: 0,
+        deletedAssets: 0,
+        unlinkedFiles: [],
+        errors: [{ providerAssetId: '', errorCode: 'UNSUPPORTED', errorMessage: `No hosting adapter for ${adapterId}. The provider may be unconfigured.` }],
+      };
+    }
 
     const { data: providerRow } = await this.client
       .from('streaming_providers').select('id').eq('adapter_id', adapterId).limit(1).maybeSingle();
-    if (!providerRow) throw new HostingProviderError('NOT_FOUND', { message: `No provider for adapter ${adapterId}.` });
+    if (!providerRow) {
+      return {
+        providerAdapterId: adapterId,
+        totalProviderAssets: 0,
+        updatedAssets: 0,
+        deletedAssets: 0,
+        unlinkedFiles: [],
+        errors: [{ providerAssetId: '', errorCode: 'NOT_FOUND', errorMessage: `No provider row for adapter ${adapterId}. Run the Phase 4 migration or add a provider.` }],
+      };
+    }
 
     const { data: sourceRow } = await this.client
       .from('streaming_sources').select('id').eq('provider_id', providerRow.id).limit(1).maybeSingle();
     const providerSourceId = sourceRow?.id;
-    if (!providerSourceId) throw new HostingProviderError('NOT_FOUND', { message: `No source for provider ${adapterId}.` });
+    if (!providerSourceId) {
+      return {
+        providerAdapterId: adapterId,
+        totalProviderAssets: 0,
+        updatedAssets: 0,
+        deletedAssets: 0,
+        unlinkedFiles: [],
+        errors: [{ providerAssetId: '', errorCode: 'NOT_FOUND', errorMessage: `No source row for provider ${adapterId}.` }],
+      };
+    }
 
     const providerAssets = await adapter.listAssets(null);
     const providerAssetIds = new Set(providerAssets.map((a) => a.providerAssetId).filter(Boolean));

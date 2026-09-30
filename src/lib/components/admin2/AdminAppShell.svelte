@@ -121,9 +121,8 @@
       id: 'hosting',
       label: 'Hosting',
       items: [
-        { id: 'providers', label: 'Providers', href: '/admin/providers', icon: Server },
-        { id: 'assets', label: 'Assets', href: '/admin/media/assets', icon: HardDrive, phase: 'E', placeholder: true },
-        { id: 'sync', label: 'Sync', href: '/admin/media/sync', icon: RefreshCw, phase: 'E', placeholder: true },
+        { id: 'hosting', label: 'Hosting Control', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
+        { id: 'providers', label: 'Provider Registry', href: '/admin/providers', icon: Server },
       ]
     },
     {

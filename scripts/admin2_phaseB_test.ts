@@ -57,10 +57,13 @@ assert.match(adminAppShell, /\{ id: 'missing-media', label: 'Missing Media', hre
 ok('1b. nav group CONTENT has Media Library + Upload + Missing Media');
 
 // HOSTING
-assert.match(adminAppShell, /\{ id: 'providers', label: 'Providers', href: '\/admin\/providers'/, 'nav: Hosting → Providers');
-assert.match(adminAppShell, /\{ id: 'assets', label: 'Assets', href: '\/admin\/media\/assets'/, 'nav: Hosting → Assets');
-assert.match(adminAppShell, /\{ id: 'sync', label: 'Sync', href: '\/admin\/media\/sync'/, 'nav: Hosting → Sync');
-ok('1c. nav group HOSTING has Providers + Assets + Sync');
+// Phase E restructured the Hosting group: the unified Hosting Control
+// workspace at /admin/hosting replaces the old separate Assets + Sync
+// placeholders. The legacy /admin/providers page stays as "Provider Registry"
+// (Phase G will consolidate it into API & Sources).
+assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting'/, 'nav: Hosting → Hosting Control');
+assert.match(adminAppShell, /\{ id: 'providers', label: 'Provider Registry', href: '\/admin\/providers'/, 'nav: Hosting → Provider Registry');
+ok('1c. nav group HOSTING has Hosting Control + Provider Registry (Phase E restructuring)');
 
 // OPERATIONS
 assert.match(adminAppShell, /\{ id: 'jobs', label: 'Jobs', href: '\/admin\/media\/operations'/, 'nav: Operations → Jobs');
@@ -185,13 +188,14 @@ ok('6a. AdminPlaceholder component exists with phase + capabilities + related li
 assert.match(libraryPage, /<AdminAppShell>/, 'library page wraps in AdminAppShell');
 ok('6b. /admin/media/library page exists — Phase C replaced the placeholder with the real Media Library');
 
-assert.match(assetsPage, /<AdminAppShell>/, 'assets page wraps in AdminAppShell');
-assert.match(assetsPage, /phase="E"/, 'assets page is tagged Phase E');
-ok('6c. /admin/media/assets placeholder exists (Phase E destination)');
+// Phase E: /admin/media/assets and /admin/media/sync are now redirects
+// to the unified Hosting Control workspace at /admin/hosting. The pages
+// no longer wrap in AdminAppShell — they're thin redirect stubs.
+assert.match(assetsPage, /\/admin\/hosting\?tab=assets/, 'assets page redirects to Hosting Control');
+ok('6c. /admin/media/assets redirects to /admin/hosting?tab=assets (Phase E)');
 
-assert.match(syncPage, /<AdminAppShell>/, 'sync page wraps in AdminAppShell');
-assert.match(syncPage, /phase="E"/, 'sync page is tagged Phase E');
-ok('6d. /admin/media/sync placeholder exists (Phase E destination)');
+assert.match(syncPage, /\/admin\/hosting\?tab=sync/, 'sync page redirects to Hosting Control');
+ok('6d. /admin/media/sync redirects to /admin/hosting?tab=sync (Phase E)');
 
 assert.match(operationsPage, /<AdminAppShell>/, 'operations page wraps in AdminAppShell');
 assert.match(operationsPage, /phase="F"/, 'operations page is tagged Phase F');
@@ -256,12 +260,12 @@ assert.match(adminPage, /prefers-reduced-motion: reduce/, 'AdminPage respects pr
 ok('11a. Reduced-motion support across all new primitives');
 
 // ============================================================
-// 12. AdminPlaceholder — capabilities list mentions the missing
-// admin/hosting UI operations (rename/move/detach/delete/reconcile/sync)
-// so the placeholder explicitly documents what Phase E/F will deliver.
+// 12. Phase E delivered the hosting management operations
+// (rename/move/detach/delete/reconcile/sync) — they're now real
+// actions in the Hosting Control workspace, not placeholder text.
+// The operations placeholder still references them for Phase F.
 // ============================================================
-assert.match(assetsPage, /rename.*move.*detach.*delete.*reconcile/s, 'Assets placeholder documents rename/move/detach/delete/reconcile');
 assert.match(operationsPage, /rename.*move.*detach.*delete/s, 'Operations placeholder references management operations');
-ok('12a. Placeholders document missing admin/hosting UI (rename/move/detach/delete/reconcile/sync)');
+ok('12a. Phase E delivered hosting management ops; Operations placeholder references them for Phase F');
 
 console.log(`\nAdmin 2.0 Phase B tests passed (${passed} check groups).`);
