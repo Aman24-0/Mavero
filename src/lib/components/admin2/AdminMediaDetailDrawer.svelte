@@ -395,7 +395,7 @@
                   </div>
                   <div class="operation-meta">
                     <span class="operation-time">{formatDateTime(op.occurred_at)}</span>
-                    {#if op.admin_user_email}<span class="operation-user">· {op.admin_user_email}</span>{/if}
+                    {#if op.admin_user_display_name}<span class="operation-user">· {op.admin_user_display_name}</span>{/if}
                   </div>
                   {#if op.error_message}
                     <div class="operation-error">{op.error_message}</div>

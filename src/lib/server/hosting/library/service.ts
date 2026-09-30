@@ -92,6 +92,7 @@ export type LibraryOperationSummary = {
   error_code: string | null;
   error_message: string | null;
   admin_user_email: string | null;
+  admin_user_display_name: string | null;
 };
 
 export type LibraryDetailResult = {
@@ -295,7 +296,7 @@ export class MediaLibraryService {
         .maybeSingle(),
       this.client
         .from('media_operations')
-        .select('id, action, status, occurred_at, error_code, error_message, admin_user:profiles(email)')
+        .select('id, action, status, occurred_at, error_code, error_message, admin_user:profiles(display_name)')
         .eq('media_item_id', mediaItemId)
         .order('occurred_at', { ascending: false })
         .limit(20),
@@ -327,7 +328,8 @@ export class MediaLibraryService {
       occurred_at: op.occurred_at,
       error_code: op.error_code,
       error_message: op.error_message,
-      admin_user_email: op.admin_user?.email ?? null,
+      admin_user_email: null, // Email lives in auth.users, not profiles — not accessible via PostgREST
+      admin_user_display_name: op.admin_user?.display_name ?? null,
     }));
 
     return { item: libraryItem, recent_operations };

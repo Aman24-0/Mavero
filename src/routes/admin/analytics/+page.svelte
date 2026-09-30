@@ -247,12 +247,12 @@
           {/if}
 
           <!-- Trend chart (text-based — no chart library dependency) -->
-          {#if o.trend && o.trend.series.length > 0}
+          {#if o.trend && o.trend.points.length > 0}
             <div class="a2-section">
               <h3 class="a2-section-title">Activity Trend ({o.trend.metric}, {o.trend.mode})</h3>
               <div class="a2-trend-chart" role="img" aria-label="Activity trend chart">
-                {#each o.trend.series as point}
-                  {@const maxVal = Math.max(...o.trend.series.map((p: any) => p.value), 1)}
+                {#each o.trend.points as point}
+                  {@const maxVal = Math.max(...o.trend.points.map((p: any) => p.value), 1)}
                   {@const heightPct = maxVal > 0 ? (point.value / maxVal) * 100 : 0}
                   <div class="a2-trend-bar" style="height: {Math.max(2, heightPct)}%" title="{point.label}: {point.value}">
                     <span class="a2-trend-bar-value">{point.value > 0 ? point.value : ''}</span>

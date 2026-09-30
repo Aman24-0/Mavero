@@ -32,7 +32,9 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
   try {
     const results = await searchTmdb(query, tmdbType, page);
-    return json({ ok: true, results });
+    // Return the items array directly as `results` — the frontend expects
+    // an array it can `.map()` over, not the full ContentList object.
+    return json({ ok: true, results: results.items });
   } catch {
     return json({ ok: false, error: { code: 'SEARCH_FAILED', message: 'TMDB search failed.' } }, { status: 502 });
   }

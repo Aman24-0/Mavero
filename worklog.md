@@ -2330,3 +2330,83 @@ This is the correct, minimal, and documented way to handle pnpm 10's build scrip
 ### Commit SHA
 
 `<filled-in after commit>`
+
+---
+
+## Phase 0 — Admin 2.0 Recovery & P0 Stabilization
+
+**Date:** 2026-09-30
+**Commit:** `8e95f9b`
+**Objective:** Recover missing upload subsystem, fix confirmed P0/P1 runtime bugs, verify Dune linkage, and establish a clean verified baseline before CRUD migration.
+
+### Problems Discovered
+
+1. **12 upload files missing from working tree** — Files existed at HEAD and origin/main but were physically deleted from the working directory (unstaged deletions). Affected:
+   - `src/routes/admin/media/upload/+page.svelte` + `+page.server.ts`
+   - `src/lib/server/hosting/upload/service.ts` + `index.ts`
+   - 8 API endpoints under `src/routes/api/admin/media/upload/`
+
+2. **Analytics page crashes on load (P0)** — `src/routes/admin/analytics/+page.svelte` accessed `o.trend.series` but `TrendSeries` type has `points` (not `series`). SSR threw `TypeError: Cannot read properties of undefined (reading 'length')`.
+
+3. **Upload TMDB search broken (P0)** — `src/routes/api/admin/media/search/+server.ts` returned `{ ok: true, results: ContentList }` where `results` was an object (not an array). Frontend called `.map()` on it, throwing `TypeError: (l.results ?? []).map is not a function`.
+
+4. **Media Library detail drawer broken (P1)** — `MediaLibraryService.detail()` queried `admin_user:profiles(email)` but the `profiles` table has no `email` column (only `display_name`). PostgREST generated `profiles_1.email` SQL alias → `column profiles_1.email does not exist`.
+
+5. **Dune "Not Linked" (investigated)** — NOT a bug. The `list()` method correctly returns an empty `assets` array when no `media_assets` rows exist for a `media_item_id`. The UI renders "Not linked" as the correct empty state. Dune simply has no provider assets uploaded yet.
+
+### Root Causes
+
+1. **Missing files**: Likely an accidental `rm` or failed checkout in a previous session. Files were never committed as deleted — they exist at HEAD.
+2. **Analytics `series` vs `points`**: Contract mismatch between the analytics service type (`TrendSeries.points`) and the page template (`o.trend.series`). The Phase H test checked source files but didn't catch the field name mismatch.
+3. **TMDB search response shape**: The API returned the full `ContentList` object as `results`, but the frontend expected `results` to be an array of items. `ContentList.items` is the array.
+4. **`profiles(email)`**: The `profiles` table schema has `display_name` but not `email`. Email lives in `auth.users` (not accessible via PostgREST). The query was written assuming `profiles` had an `email` column.
+
+### Files Changed
+
+**Restored (12 files):**
+- `src/routes/admin/media/upload/+page.svelte` — Phase D upload page
+- `src/routes/admin/media/upload/+page.server.ts` — Phase D upload page server
+- `src/lib/server/hosting/upload/service.ts` — UploadService (state machine, polling, retry)
+- `src/lib/server/hosting/upload/index.ts` — barrel export
+- `src/routes/api/admin/media/upload/+server.ts` — POST create operation
+- `src/routes/api/admin/media/upload/[id]/cancel/+server.ts`
+- `src/routes/api/admin/media/upload/[id]/complete/+server.ts`
+- `src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts`
+- `src/routes/api/admin/media/upload/[id]/retry/+server.ts`
+- `src/routes/api/admin/media/upload/[id]/status/+server.ts`
+- `src/routes/api/admin/media/upload/[id]/subtitle/+server.ts`
+- `src/routes/api/admin/media/upload/[id]/upload-server/+server.ts`
+
+**Fixed (4 files):**
+1. `src/routes/admin/analytics/+page.svelte` — Changed `o.trend.series` → `o.trend.points` (3 references)
+2. `src/routes/api/admin/media/search/+server.ts` — Changed `results` → `results: results.items` (return array, not ContentList)
+3. `src/lib/server/hosting/library/service.ts` — Changed `profiles(email)` → `profiles(display_name)` + added `admin_user_display_name` field
+4. `src/lib/components/admin2/AdminMediaDetailDrawer.svelte` — Changed `admin_user_email` → `admin_user_display_name` in template
+
+**Tests added (1 file):**
+5. `scripts/admin2_phase0_test.ts` — 15 regression checks covering all Phase 0 fixes
+
+### Dune Investigation Result
+
+Dune "Not Linked" for both Vidara and Abyss is **correct behavior** — not a bug. The `MediaLibraryService.list()` method batch-fetches `media_assets` by `media_item_id`. When no assets exist, the array is empty and the UI renders "Not linked". This is the intended empty state. The fix is operational (upload Dune via the upload wizard), not code.
+
+### Validation Results
+
+- `pnpm check`: 0 errors, 0 warnings ✅
+- `pnpm build`: PASS ✅
+- All 13 existing test suites: pass (zero regressions) ✅
+- Phase 0 tests: 15 checks pass ✅
+
+### Intentionally Deferred to Phase 1+
+
+- Provider/Source/Category/Downloader/Addon CRUD migration into Admin 2.0
+- Legacy AdminShell removal
+- Overview page link updates (stale routes)
+- Mobile table → card transforms
+- Performance optimization (3-4s page loads)
+- Loading indicator visual consistency
+- Feature Control SSR auth gate
+
+### Commit SHA
+
+`<filled-in after commit>`
