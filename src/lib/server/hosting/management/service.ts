@@ -240,6 +240,201 @@ export class ManagementService {
 
   // --- Helpers ---
 
+  /**
+   * Links an existing provider-side file to a Mavero media_item.
+   *
+   * This is the admin action for connecting a Vidara/Abyss file that was
+   * uploaded outside of Mavero (e.g. via the Vidara dashboard) to a
+   * canonical media_item. The admin explicitly selects which media_item
+   * to link to which provider file — there is NO auto-matching.
+   *
+   * Flow:
+   *   1. Verify the media_item exists.
+   *   2. Verify the (provider_source_id, provider_asset_id) is not already linked.
+   *   3. Fetch current provider metadata via adapter.getAsset().
+   *   4. INSERT a new media_assets row.
+   *   5. Record the operation.
+   *   6. Resolve any open demand requests for this media_item.
+   */
+  async linkAsset(
+    mediaItemId: string,
+    providerSourceId: string,
+    providerAssetId: string,
+    adminUserId?: string,
+  ): Promise<ManagementResult> {
+    // 1. Verify the media_item exists.
+    const { data: mediaItem, error: itemError } = await this.client
+      .from('media_items')
+      .select('id, canonical_key')
+      .eq('id', mediaItemId)
+      .maybeSingle();
+    if (itemError || !mediaItem) {
+      throw new HostingProviderError('NOT_FOUND', { message: 'Media item not found.' });
+    }
+
+    // 2. Verify not already linked.
+    const { data: existing } = await this.client
+      .from('media_assets')
+      .select('id')
+      .eq('provider_source_id', providerSourceId)
+      .eq('provider_asset_id', providerAssetId)
+      .maybeSingle();
+    if (existing) {
+      throw new HostingProviderError('VALIDATION', { message: 'This provider file is already linked to a media asset.' });
+    }
+
+    // 3. Look up the adapter for this provider source.
+    const { data: sourceRow } = await this.client
+      .from('streaming_sources')
+      .select('provider_id')
+      .eq('id', providerSourceId)
+      .maybeSingle();
+    if (!sourceRow) {
+      throw new HostingProviderError('NOT_FOUND', { message: 'Provider source not found.' });
+    }
+
+    const { data: providerRow } = await this.client
+      .from('streaming_providers')
+      .select('adapter_id')
+      .eq('id', sourceRow.provider_id)
+      .maybeSingle();
+    if (!providerRow) {
+      throw new HostingProviderError('NOT_FOUND', { message: 'Provider not found.' });
+    }
+
+    const adapter = getHostingAdapter(providerRow.adapter_id);
+    if (!adapter) {
+      throw new HostingProviderError('UNSUPPORTED', { message: 'No hosting adapter found for this provider.' });
+    }
+
+    try {
+      // 4. Fetch current provider metadata.
+      const assetInfo = await adapter.getAsset(providerAssetId);
+
+      // 5. INSERT the new media_assets row.
+      const maveroStatus = assetInfo.status === 'ready' ? 'available' : 'processing';
+      const { data: assetRow } = await this.client
+        .from('media_assets')
+        .insert({
+          media_item_id: mediaItemId,
+          provider_source_id: providerSourceId,
+          provider_asset_id: providerAssetId,
+          provider_video_id: assetInfo.providerVideoId,
+          playback_url: assetInfo.playbackUrl,
+          filename: assetInfo.filename,
+          title: assetInfo.title,
+          status: assetInfo.status,
+          provider_status: assetInfo.providerStatus,
+          mavero_status: maveroStatus,
+          source_quality: assetInfo.sourceQuality,
+          available_qualities: assetInfo.availableQualities ?? [],
+          audio_languages: assetInfo.audioLanguages ?? [],
+          has_subtitles: assetInfo.hasSubtitles ?? false,
+          size_bytes: assetInfo.sizeBytes,
+          duration_seconds: assetInfo.durationSeconds,
+          provider_metadata: JSON.parse(JSON.stringify(assetInfo.raw)),
+          last_synced_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+
+      const assetId = (assetRow as { id: string })?.id ?? '';
+
+      // 6. Record the operation.
+      await this.uploadService.recordOperation({
+        action: 'link',
+        status: 'success',
+        media_item_id: mediaItemId,
+        media_asset_id: assetId,
+        provider_source_id: providerSourceId,
+        admin_user_id: adminUserId,
+        details: { provider_asset_id: providerAssetId, playback_url: assetInfo.playbackUrl },
+      });
+
+      // 7. Resolve any open demand requests for this media_item.
+      try {
+        const { DemandService } = await import('../demand/service');
+        const demandService = new DemandService(this.client);
+        await demandService.resolveDemand((mediaItem as { canonical_key: string }).canonical_key);
+      } catch {
+        // Best-effort — demand resolution must not break the link operation.
+      }
+
+      return { ok: true, action: 'link', mediaAssetId: assetId, providerAssetId };
+    } catch (error) {
+      const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
+      await this.uploadService.recordOperation({
+        action: 'link',
+        status: 'failed',
+        media_item_id: mediaItemId,
+        provider_source_id: providerSourceId,
+        admin_user_id: adminUserId,
+        error_code: err.code,
+        error_message: err.message,
+      });
+      return { ok: false, action: 'link', mediaAssetId: '', providerAssetId, error: { code: err.code, message: err.message } };
+    }
+  }
+
+  /**
+   * Lists all provider-side files for a given adapter that are NOT
+   * currently linked to any Mavero media_asset.
+   *
+   * Used by the "Link existing file" UI to show the admin which
+   * Vidara/Abyss files are available for linking.
+   */
+  async listUnlinkedProviderFiles(adapterId: string): Promise<{
+    providerAssetId: string;
+    title: string | null;
+    filename: string | null;
+    sizeBytes: number | null;
+    durationSeconds: number | null;
+    status: string;
+    playbackUrl: string | null;
+  }[]> {
+    const adapter = getHostingAdapter(adapterId);
+    if (!adapter) return [];
+
+    // List all provider files.
+    const allFiles = await adapter.listAssets(null);
+
+    // Find which provider_asset_ids are already linked.
+    const { data: sourceRow } = await this.client
+      .from('streaming_sources')
+      .select('id')
+      .eq('provider_id', (await this.client
+        .from('streaming_providers')
+        .select('id')
+        .eq('adapter_id', adapterId)
+        .maybeSingle()
+      ).data?.id ?? '')
+      .maybeSingle();
+
+    const providerSourceId = sourceRow?.id;
+    if (!providerSourceId) return [];
+
+    const { data: linkedAssets } = await this.client
+      .from('media_assets')
+      .select('provider_asset_id')
+      .eq('provider_source_id', providerSourceId)
+      .not('provider_asset_id', 'is', null);
+
+    const linkedIds = new Set((linkedAssets ?? []).map((a: any) => a.provider_asset_id as string));
+
+    // Return only unlinked files.
+    return allFiles
+      .filter(f => f.providerAssetId && !linkedIds.has(f.providerAssetId))
+      .map(f => ({
+        providerAssetId: f.providerAssetId,
+        title: f.title,
+        filename: f.filename,
+        sizeBytes: f.sizeBytes,
+        durationSeconds: f.durationSeconds,
+        status: f.status,
+        playbackUrl: f.playbackUrl,
+      }));
+  }
+
   private async getMediaAsset(mediaAssetId: string): Promise<{
     id: string;
     media_item_id: string;

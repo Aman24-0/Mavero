@@ -1115,4 +1115,29 @@
     .a2-status-dot { animation: none; }
     .a2-sidebar, .a2-topbar, .a2-main { transition: none; }
   }
+
+  /* ============================================================
+     Admin cyan override for the root layout's nav-spinner/nav-progress.
+     The root layout renders .nav-spinner and .nav-progress as DOM
+     siblings AFTER .a2-shell, so the general-sibling combinator (~)
+     scopes the override to admin routes only.
+     Specificity (0,4,0) beats the root layout's scoped (0,2,0).
+     User-facing routes (no .a2-shell) keep the green default.
+     ============================================================ */
+  .a2-shell ~ :global(.nav-spinner) {
+    border: 1px solid rgba(0, 217, 255, .22);
+    box-shadow: 0 0 14px rgba(0, 217, 255, .3), 0 2px 8px rgba(0, 0, 0, .4);
+  }
+  .a2-shell ~ :global(.nav-spinner) :global(.nav-spinner-ring) {
+    border-top-color: var(--a2-cyan, #00d9ff);
+  }
+  .a2-shell ~ :global(.nav-progress) {
+    background: linear-gradient(90deg, var(--a2-cyan, #00d9ff), var(--a2-cyan, #00d9ff));
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .a2-shell ~ :global(.nav-spinner) :global(.nav-spinner-ring) {
+      border-top-color: var(--a2-cyan, #00d9ff);
+      border-right-color: var(--a2-cyan, #00d9ff);
+    }
+  }
 </style>

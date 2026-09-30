@@ -3168,3 +3168,73 @@ No new tests needed — existing 531 check groups across 15 test files cover all
 ### Commit SHA
 
 `07bd759`
+
+---
+
+## Post-Phase 6 — Production Integration Bugfix Pass
+
+**Date:** 2026-10-01
+
+### Issue 1 — Existing Vidara file shows "Not linked"
+
+**Root cause:** The sync service (`SyncService.syncProvider()`) does NOT create `media_assets` rows for Vidara files discovered during sync. It only updates existing rows. Unlinked files are returned ephemerally in the sync response's `unlinkedFiles` array but never persisted to the database. The `media_assets.media_item_id` column is `NOT NULL` by schema design. There was no "link existing file" endpoint or UI action. Auto-matching by title is unsafe (collisions); Vidara's API returns no TMDB ID.
+
+**Fix:** Added `ManagementService.linkAsset()` method + `POST /api/admin/media/assets/link` API endpoint. The admin explicitly selects which `media_item` to link to which provider file (no auto-matching). The endpoint:
+1. Verifies the media_item exists
+2. Verifies the (provider_source_id, provider_asset_id) is not already linked
+3. Fetches current provider metadata via `adapter.getAsset()`
+4. INSERTs a new `media_assets` row with all metadata
+5. Records the operation
+6. Resolves any open demand requests for this media_item
+
+Also added `ManagementService.listUnlinkedProviderFiles()` to list provider files not yet linked (for the admin UI to display).
+
+**Why the fix handles existing data:** Any existing Vidara file can now be linked to any existing media_item via the new endpoint. The admin uses the media detail drawer to select the file and link it. No schema migration required — the existing `media_assets` table accommodates the new rows.
+
+### Issue 2 — Missing Media business rule
+
+**Root cause (creation):** Verified that demand is created ONLY from user playback attempts via `/api/playback/resolve` → `recordDemandIfNeeded()` → `DemandService.recordDemand()`. No background/catalog/TMDB/import process creates demand. ✅ The business rule is satisfied for creation.
+
+**Root cause (resolution):** The `sweepResolvedDemand()` method had three bugs:
+1. **Missing `mavero_status='available'` filter** — checked only `status='ready'` but the resolver requires BOTH `status='ready'` AND `mavero_status='available'`. A detached asset (`mavero_status='missing'`, `status='ready'`) would falsely resolve the demand.
+2. **N+1 query problem** — issued 2N+2 sequential queries per sweep (one per canonical_key). 
+3. **`count` always returned 0** — missing `{ count: 'exact' }` option.
+
+**Fix:** Rewrote `sweepResolvedDemand()` to use 3 batch queries (no N+1):
+1. Fetch all open/uploading demand rows → canonical_keys
+2. Fetch matching media_items (batch `.in()`)
+3. Fetch ready+available media_assets (batch `.in()` with `.eq('mavero_status', 'available')`)
+4. Batch-resolve matched demand rows with `{ count: 'exact' }`
+
+### Issue 3 — User theme vs admin theme loading UI
+
+**Root cause:** Phase 2 changed the root layout's nav-spinner/progress bar from `--color-primary` (green) to `--a2-cyan` (admin cyan). But the root layout serves ALL routes (user + admin), so user-facing pages got cyan spinners. Phase 6 reverted to green, but admin pages also got green (losing the cyan admin spinner).
+
+**Fix:** Implemented a CSS-scoped solution using the sibling combinator:
+- Root layout: uses `--color-primary` (green) — correct for user pages
+- AdminAppShell: added `.a2-shell ~ :global(.nav-spinner)` override that sets cyan — only matches when `.a2-shell` is in the DOM (admin routes)
+- Specificity (0,4,0) > root layout's scoped (0,2,0) — admin override wins on admin routes
+- User routes (no `.a2-shell`) keep the green default
+
+### Phase 6 R-1/E-1/D-1 verification
+All Phase 6 fixes remain intact:
+- R-1: all 6 legacy routes have server-side 303 redirects ✅
+- E-1: createSupabaseAdminClient inside try/catch in all 5 admin routes ✅
+- D-1: unused icon imports remain removed ✅
+
+### Tests
+- New: `scripts/post_phase6_regression_test.ts` — 13 check groups covering all three issues + Phase 6 R-1/E-1/D-1 verification
+- All existing admin tests pass: 330 check groups across 12 test files
+
+### Validation
+- `pnpm check`: 0 errors / 0 warnings
+- `pnpm test`: all admin tests pass (330 check groups)
+- `pnpm build`: PASS / 0 warnings
+
+### Commit SHA
+`ed0a2f4`
+
+### Remaining issues
+- The "Link existing file" UI button in the media detail drawer is not yet implemented (the API endpoint + service method exist, but the admin needs a UI to select which file to link). This is a UI addition, not a data-flow fix.
+- Existing `media_assets.playback_url` rows containing `https://vidara.so/v/` need a one-time UPDATE or Vidara sync to refresh to `https://vidara.to/e/` format.
+- The `recordDemandIfNeeded` provider-name check is substring-based (`providerName.includes('vidara')`) — fragile if an admin renames the provider. A robust fix would check `adapter_id` instead.

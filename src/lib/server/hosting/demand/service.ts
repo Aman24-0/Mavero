@@ -174,41 +174,39 @@ export class DemandService {
       const canonicalKeys = openRequests.map((r: any) => r.canonical_key as string);
       if (canonicalKeys.length === 0) return 0;
 
-      // Check which canonical_keys now have a ready+available media asset.
-      const { data: availableAssets, error: assetError } = await this.client
+      // Fetch media_items that match these canonical_keys (batch — no N+1).
+      const { data: mediaItems, error: itemError } = await this.client
         .from('media_items')
-        .select('canonical_key')
+        .select('id, canonical_key')
         .in('canonical_key', canonicalKeys);
-      if (assetError || !availableAssets) return 0;
+      if (itemError || !mediaItems || mediaItems.length === 0) return 0;
 
-      const availableKeys = new Set(availableAssets.map((a: any) => a.canonical_key as string));
-      if (availableKeys.size === 0) return 0;
+      // Fetch ready+available media_assets for those media_items (batch — no N+1).
+      // Phase 6 fix: check BOTH status='ready' AND mavero_status='available',
+      // matching the resolver's requirements. Previously only checked status='ready',
+      // which would falsely resolve demands for detached assets (mavero_status='missing').
+      const mediaItemIds = mediaItems.map((m: any) => m.id as string);
+      const { data: readyAssets, error: assetError } = await this.client
+        .from('media_assets')
+        .select('media_item_id')
+        .in('media_item_id', mediaItemIds)
+        .eq('status', 'ready')
+        .eq('mavero_status', 'available')
+        .limit(1);
+      if (assetError || !readyAssets || readyAssets.length === 0) return 0;
 
-      // For each available key, check if there's a ready media_asset linked.
-      const keysToResolve: string[] = [];
-      for (const key of availableKeys) {
-        const { data: assets } = await this.client
-          .from('media_assets')
-          .select('id')
-          .eq('media_item_id', (await this.client
-            .from('media_items')
-            .select('id')
-            .eq('canonical_key', key)
-            .maybeSingle()
-          ).data?.id ?? '')
-          .eq('status', 'ready')
-          .limit(1);
-        if (assets && assets.length > 0) {
-          keysToResolve.push(key);
-        }
-      }
+      // Build the set of canonical_keys that have a ready+available asset.
+      const readyItemIds = new Set(readyAssets.map((a: any) => a.media_item_id as string));
+      const keysToResolve = mediaItems
+        .filter((m: any) => readyItemIds.has(m.id))
+        .map((m: any) => m.canonical_key as string);
 
       if (keysToResolve.length === 0) return 0;
 
       // Batch-resolve all matched demand rows.
       const { count } = await this.client
         .from('media_availability_requests')
-        .update({ status: 'ready' })
+        .update({ status: 'ready' }, { count: 'exact' })
         .in('canonical_key', keysToResolve)
         .in('status', ['open', 'uploading']);
 
