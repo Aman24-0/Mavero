@@ -2173,7 +2173,7 @@ The Admin Panel 2.0 is now a cohesive, production-grade media operations control
 ## FINAL WARNING CLEANUP — Zero-Warning Pass
 
 **Date:** 2026-09-30
-**Commit:** `24fb33f`
+**Commit:** `fac92e6`
 **Objective:** Make the project as close to ZERO warnings as technically possible before production deployment.
 
 ### Initial Baseline
