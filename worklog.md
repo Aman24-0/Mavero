@@ -2275,7 +2275,7 @@ None need to be removed.
 ## Esbuild Build Script Approval
 
 **Date:** 2026-09-30
-**Commit:** `1c457b8`
+**Commit:** `3a0ca05`
 **Objective:** Resolve the pnpm install warning about ignored esbuild build scripts.
 
 ### Root Cause
