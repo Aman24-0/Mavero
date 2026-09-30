@@ -149,9 +149,9 @@
         {
           id: 'analytics',
           label: 'Analytics',
-          href: '/admin/users/overview',
+          href: '/admin/analytics',
           icon: BarChart3,
-          matchPrefix: '/admin/users',
+          matchPrefix: '/admin/analytics',
         },
       ]
     },
@@ -168,7 +168,7 @@
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
     { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library },
     { id: 'upload', label: 'Upload', href: '/admin/media/upload', icon: Upload },
-    { id: 'analytics', label: 'Analytics', href: '/admin/users/overview', icon: BarChart3, matchPrefix: '/admin/users' },
+    { id: 'analytics', label: 'Analytics', href: '/admin/analytics', icon: BarChart3, matchPrefix: '/admin/analytics' },
     { id: 'more', label: 'More', href: '#more', icon: MoreHorizontal },
   ];
 

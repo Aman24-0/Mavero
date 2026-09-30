@@ -1748,3 +1748,150 @@ Phase G does NOT add any new API endpoints. All 4 workspaces reuse existing serv
 **Phase H — Analytics Redesign:**
 - Apply Admin 2.0 architecture and visual system to Overview, Users, Viewing, Providers, and Retention analytics pages.
 - Affected routes: `/admin/users/*` (all currently use legacy AdminShell).
+
+---
+
+## Phase H — Analytics Redesign
+
+**Date:** 2026-09-30
+**Commit:** `8eac717`
+**Objective:** Build the real Admin 2.0 Analytics workspace — a unified workspace with 5 contextual tabs (Overview, Users, Viewing, Providers, Retention) using real analytics_events data. No fabricated metrics.
+
+### Audit Findings (Phase H fresh audit)
+
+A complete read-only audit of all analytics code was performed before implementation.
+
+**Backend services (7 modules, all preserved):**
+- `ingest.ts` (262 lines) — event ingestion with idempotent upsert, IP hashing, fire-and-forget
+- `anonymous-id.ts` (104 lines) — guest identity cookie (httpOnly, 2-year, SameSite=Lax)
+- `overview.ts` (768 lines) — KPIs, DAU/WAU/MAU, reach trends, conversion funnel
+- `users.ts` (890 lines) — user list with search/filter/pagination, guest history stitching
+- `viewing.ts` (640 lines) — watch metrics, top content, genre distribution
+- `providers.ts` (477 lines) — provider/source usage, transitions
+- `retention.ts` (526 lines) — cohort matrix (D1/D7/D30), behavioral cohorts
+
+**Database schema (complete, no migrations needed):**
+- `analytics_events` table — 7 indexes (event_time, event_name+time, user_id+time, anonymous_id+time, session_id+time, content_id+time, provider_id+time)
+- `analytics_sessions` table — 3 indexes
+- RLS enabled — SELECT for authenticated (is_admin()) only; writes via service-role
+- 24 event types in closed taxonomy
+
+**Frontend (all 6 legacy pages used AdminShell — all needed migration):**
+- `/admin/users/+page.svelte` (572 lines) — user list (legacy AdminShell)
+- `/admin/users/[userId]/+page.svelte` (362 lines) — user detail (legacy AdminShell)
+- `/admin/users/overview/+page.svelte` (543 lines) — overview dashboard (legacy AdminShell)
+- `/admin/users/viewing/+page.svelte` (657 lines) — viewing analytics (legacy AdminShell)
+- `/admin/users/providers/+page.svelte` (457 lines) — provider analytics (legacy AdminShell)
+- `/admin/users/retention/+page.svelte` (391 lines) — retention analytics (legacy AdminShell)
+
+**Known gaps (documented, not fixed in Phase H — deferred to future phases):**
+1. `playback_success`/`playback_failed` events exist in taxonomy but are never emitted by the player → provider success rate shows "N/A" honestly
+2. Trend "new"/"returning" modes fall back to "all" series (documented in overview.ts)
+3. No `analytics_daily` aggregate table — all queries read from raw events (acceptable at current scale)
+4. Guest retention unsupported (cookie-based identity unreliable for multi-day tracking)
+5. Per-genre `unique_viewers` is null (deferred to future aggregate table)
+6. In-memory aggregation (fetches raw events, aggregates in JS) — works at current scale, deferred to future performance hardening
+
+### Design Decisions
+
+**Unified workspace architecture:**
+```
+/admin/analytics?tab=overview|users|viewing|providers|retention
+  ├── Overview tab — KPIs + trends + funnel
+  ├── Users tab — user list with guest/auth separation
+  ├── Viewing tab — top content + watch metrics
+  ├── Providers tab — provider/source usage
+  └── Retention tab — cohort matrix
+```
+
+**No new backend APIs.** All 5 tabs reuse existing analytics service functions (`fetchOverview`, `listUsers`, `fetchViewing`, `fetchProviders`, `fetchRetention`). The page server loads only the active tab's data to keep the response small.
+
+**Timezone: UTC throughout.** All ranges, bucketing, and display use UTC (per plan §24 + `analytics-period.ts`). Display labels include explicit `UTC` suffix. This is the existing convention — Phase H preserves it.
+
+**Metric definitions (documented in the UI):**
+- Active user = ≥1 meaningful event in the selected period
+- New user = first recorded activity in the selected period
+- Returning user = active before the period AND active in the period
+- Watch time = approximate (sum of max position_seconds per identity×content pair)
+- Completed = explicit `watch_complete` event (no 90% threshold)
+- Retention = cohort (signup/first-use/first-watch) + activity on day N
+
+**No fabricated data.** Every metric comes from real `analytics_events` rows. Empty states show "No analytics data yet" / "No viewing events in this period" / "No retention cohort available". Provider success rate shows "N/A" (not 0%) when events aren't emitted.
+
+**Legacy pages preserved.** The 6 legacy pages at `/admin/users/*` are NOT deleted — they're linked from the new workspace for the user detail view. The new workspace provides the Admin 2.0 shell; the legacy pages provide deeper detail (e.g. user profile + activity timeline).
+
+**Nav updated.** Analytics nav item now points to `/admin/analytics` (was `/admin/users/overview`). Mobile bottom nav also updated.
+
+### Files Changed
+
+**New pages:**
+1. `src/routes/admin/analytics/+page.svelte` (NEW) — unified Analytics workspace with 5 tabs
+2. `src/routes/admin/analytics/+page.server.ts` (NEW) — loads active tab data via existing services
+
+**Modified nav:**
+3. `src/lib/components/admin2/AdminAppShell.svelte` — Analytics nav + mobile nav updated to `/admin/analytics`
+
+**Tests:**
+4. `scripts/admin2_phaseH_test.ts` (NEW) — 30 contract checks across 29 test groups
+5. `scripts/admin2_phaseB_test.ts` — Updated Analytics nav assertions for Phase H
+
+**Build config:**
+6. `package.json` — Added `admin2_phaseH_test.ts` to the `test` script chain
+
+### Backend/API Changes
+
+**No new endpoints.** All 5 tabs use existing service functions via page server loaders.
+
+**No service changes.** All 7 analytics modules are unchanged.
+
+**No migrations.** Schema is complete. Existing 10 indexes are sufficient.
+
+### Issues Deferred to Later Phases
+
+#### Phase I — Mobile-Native Admin
+- Full mobile migration of analytics charts (currently KPI cards stack, but charts are text-based bars — Phase I will add proper chart components)
+
+#### Phase J — Cinematic Polish
+- Ambient lighting, micro-interactions, and visual polish across the Analytics workspace
+
+#### Future (no phase assigned)
+- **`playback_success`/`playback_failed` event emission** — the events exist in the taxonomy but the player doesn't emit them. A future phase should wire these events in the player code.
+- **`analytics_daily` aggregate table** — would resolve in-memory aggregation, per-genre unique_viewers, and COUNT(DISTINCT) limitations. Deferred to a future performance hardening phase.
+- **Trend "new"/"returning" distinct series** — the toggle exists but falls back to "all". A future phase should compute distinct series or remove the toggle.
+- **Guest retention** — cookie-based identity is unreliable for multi-day tracking. A future phase may add device-fingerprinting or authenticated-only retention.
+- **Legacy analytics pages full migration** — the 6 pages at `/admin/users/*` use legacy AdminShell. A future phase will migrate them to AdminAppShell or fold their functionality fully into the new workspace.
+- **`admin-service.ts` split** — the 445-line god module should be split into domain-specific modules.
+
+### Tests
+
+- `pnpm check`: 0 errors, 50 warnings (all pre-existing)
+- `pnpm build`: PASS
+- Phase B test: 30 checks pass (updated for Phase H nav)
+- Phase C test: 56 checks pass (no regressions)
+- Phase D test: 45 checks pass (no regressions)
+- Phase E test: 78 checks pass (no regressions)
+- Phase F test: 66 checks pass (no regressions)
+- Phase G test: 36 checks pass (no regressions)
+- Phase H test: 30 checks pass (NEW — 29 test groups)
+- Phase 7 playback resolver test: 50 checks pass (resolver preserved)
+- Admin nav test: 4 checks pass
+
+### Security Verification
+
+- Analytics page server uses `requireAdmin()` — admin-only
+- No new API endpoints (no new attack surface)
+- No credentials exposed — pages render only aggregated metrics
+- IP addresses are hashed (SHA-256) before storage — raw IP never stored
+- No PII in analytics display — user list shows display_name + role only (no email, no tokens)
+- Page server uses `createSupabaseAdminClient()` for service-role reads
+- No new credentials introduced
+- No secrets in any new source file
+
+### Commit SHA
+
+`<filled-in after commit>`
+
+### Next Phase
+
+**Phase I — Mobile-Native Admin:**
+- Dedicated mobile pass across navigation, sheets, tables, filters, details, uploads, hosting, operations, analytics, and system configuration. Do not merely test desktop breakpoints — compose mobile independently.

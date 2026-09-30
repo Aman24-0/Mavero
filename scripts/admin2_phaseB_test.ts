@@ -91,10 +91,11 @@ assert.match(adminAppShell, /\{ id: 'integrations', label: 'Integrations', href:
 assert.match(adminAppShell, /const configItems: ConfigItem\[\] = \[\]/, 'configItems is now empty (Phase G consolidation)');
 ok('1e. nav group SYSTEM has 4 items pointing to /admin/system/* (Phase G consolidation)');
 
-// PEOPLE — single Analytics item covering /admin/users/* via matchPrefix
-assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: '\/admin\/users\/overview'/, 'nav: People → Analytics');
-assert.match(adminAppShell, /matchPrefix: '\/admin\/users'/, 'nav: People → Analytics uses matchPrefix to cover /admin/users/*');
-ok('1f. nav group PEOPLE has Analytics with matchPrefix covering /admin/users/*');
+// PEOPLE — single Analytics item pointing to the unified Analytics workspace
+// Phase H: Analytics moved from /admin/users/overview to /admin/analytics
+assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: '\/admin\/analytics'/, 'nav: People → Analytics');
+assert.match(adminAppShell, /matchPrefix: '\/admin\/analytics'/, 'nav: People → Analytics uses matchPrefix');
+ok('1f. nav group PEOPLE has Analytics pointing to /admin/analytics (Phase H)');
 
 // ============================================================
 // 2. Configure dropdown — RETIRED in Phase G
@@ -257,7 +258,7 @@ ok('9a. Overview page uses AdminPage framework + route-aware active state');
 // (a working destination) since the More sheet already covers
 // Jobs.
 // ============================================================
-assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: '\/admin\/users\/overview', icon: BarChart3, matchPrefix: '\/admin\/users' \}/, 'mobile bottom nav has Analytics (not Jobs)');
+assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: '\/admin\/analytics', icon: BarChart3, matchPrefix: '\/admin\/analytics' \}/, 'mobile bottom nav has Analytics (not Jobs)');
 ok('10a. Mobile bottom nav: Home, Media, Upload, Analytics, More');
 
 // ============================================================
