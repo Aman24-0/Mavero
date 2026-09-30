@@ -2269,3 +2269,64 @@ None need to be removed.
 ### Commit SHA
 
 `<filled-in after commit>`
+
+---
+
+## Esbuild Build Script Approval
+
+**Date:** 2026-09-30
+**Commit:** `1c457b8`
+**Objective:** Resolve the pnpm install warning about ignored esbuild build scripts.
+
+### Root Cause
+
+pnpm 10 introduced a breaking change: all dependency build scripts are ignored by default unless explicitly approved via `onlyBuiltDependencies` in `package.json`. Two esbuild versions exist in the dependency tree:
+- `esbuild@0.25.12` — required by `@sveltejs/adapter-netlify@6.0.4`
+- `esbuild@0.28.2` — required by `vite@7.3.6` and `tsx@4.23.12`
+
+The esbuild `postinstall` script (`node install.js`) is necessary — it locates the platform-specific native binary and writes its path into `lib/main.js`. Without it, a clean install would break `pnpm build` (Vite uses esbuild for transpilation) and `pnpm test` (tsx uses esbuild).
+
+### Fix
+
+Added `"onlyBuiltDependencies": ["esbuild"]` to the existing `pnpm` configuration in `package.json`:
+
+```json
+"pnpm": {
+  "overrides": {
+    "hls.js": "1.7.2"
+  },
+  "onlyBuiltDependencies": [
+    "esbuild"
+  ]
+}
+```
+
+This is the correct, minimal, and documented way to handle pnpm 10's build script security model. It approves esbuild specifically while keeping all other packages blocked by default.
+
+### Verification (clean install after deleting node_modules)
+
+1. **`pnpm install --frozen-lockfile`** — No warning. Both esbuild postinstall scripts ran successfully:
+   ```
+   .../esbuild@0.28.2/node_modules/esbuild postinstall: Done
+   .../esbuild@0.25.12/node_modules/esbuild postinstall: Done
+   ```
+
+2. **`pnpm check`** — 0 errors, 0 warnings ✅
+
+3. **`pnpm build`** — PASS, 0 warnings ✅
+
+4. **All 13 test suites** — pass (461+ checks, zero regressions) ✅
+
+### What was NOT done
+
+- Did NOT run `pnpm approve-builds` (creates pnpm-workspace.yaml — different mechanism)
+- Did NOT create pnpm-workspace.yaml
+- Did NOT force-dedupe the two esbuild versions (incompatible version ranges from upstream)
+- Did NOT add dependency overrides for esbuild
+- Did NOT use `--no-warnings`
+- Did NOT make unrelated dependency changes
+- Did NOT modify the lockfile
+
+### Commit SHA
+
+`<filled-in after commit>`
