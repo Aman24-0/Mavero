@@ -60,8 +60,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       .eq('enabled', true),
   ]);
 
-  const providers = providersRes.data ?? [];
-  const sources = sourcesRes.data ?? [];
+  providers = providersRes.data ?? [];
+  sources = sourcesRes.data ?? [];
   } catch {
     // Phase 6: graceful fallback — empty hosting sources if admin client fails.
     // The upload page's "no providers" empty state will guide the admin.

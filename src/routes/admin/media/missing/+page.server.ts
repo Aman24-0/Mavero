@@ -5,6 +5,7 @@
 import { error } from '@sveltejs/kit';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
+import { DemandService } from '$lib/server/hosting/demand/service';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
@@ -17,6 +18,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // uncaught 500 if PRIVATE_SUPABASE_SERVICE_ROLE_KEY is missing.
   try {
     const adminClient = createSupabaseAdminClient();
+
+    // Phase 6 fix: auto-resolve stale 'open' demand requests that now have
+    // a ready+available media asset. This catches demand rows that were
+    // missed by the fire-and-forget resolveDemand() calls during upload/sync.
+    // The sweep is best-effort — errors are silently absorbed.
+    const demandService = new DemandService(adminClient);
+    await demandService.sweepResolvedDemand();
 
     const { data: requests, error: err } = await adminClient
       .from('media_availability_requests')

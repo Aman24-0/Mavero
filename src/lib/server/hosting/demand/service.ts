@@ -150,6 +150,76 @@ export class DemandService {
   }
 
   /**
+   * Sweeps all 'open'/'uploading' demand requests and auto-resolves any
+   * that now have a ready+available media asset.
+   *
+   * This is the "reconciliation sweep" that catches demand rows that were
+   * missed by the fire-and-forget `resolveDemand` calls (e.g. transient
+   * DB errors during upload completion, or assets that became available
+   * via a path that doesn't trigger auto-resolution).
+   *
+   * Called on every admin Missing Media page load — bounded by the
+   * `media_availability_requests` table size (typically < 1000 rows).
+   * Returns the number of rows auto-resolved.
+   */
+  async sweepResolvedDemand(): Promise<number> {
+    try {
+      // Fetch all open/uploading demand rows with their canonical_keys.
+      const { data: openRequests, error } = await this.client
+        .from('media_availability_requests')
+        .select('id, canonical_key')
+        .in('status', ['open', 'uploading']);
+      if (error || !openRequests || openRequests.length === 0) return 0;
+
+      const canonicalKeys = openRequests.map((r: any) => r.canonical_key as string);
+      if (canonicalKeys.length === 0) return 0;
+
+      // Check which canonical_keys now have a ready+available media asset.
+      const { data: availableAssets, error: assetError } = await this.client
+        .from('media_items')
+        .select('canonical_key')
+        .in('canonical_key', canonicalKeys);
+      if (assetError || !availableAssets) return 0;
+
+      const availableKeys = new Set(availableAssets.map((a: any) => a.canonical_key as string));
+      if (availableKeys.size === 0) return 0;
+
+      // For each available key, check if there's a ready media_asset linked.
+      const keysToResolve: string[] = [];
+      for (const key of availableKeys) {
+        const { data: assets } = await this.client
+          .from('media_assets')
+          .select('id')
+          .eq('media_item_id', (await this.client
+            .from('media_items')
+            .select('id')
+            .eq('canonical_key', key)
+            .maybeSingle()
+          ).data?.id ?? '')
+          .eq('status', 'ready')
+          .limit(1);
+        if (assets && assets.length > 0) {
+          keysToResolve.push(key);
+        }
+      }
+
+      if (keysToResolve.length === 0) return 0;
+
+      // Batch-resolve all matched demand rows.
+      const { count } = await this.client
+        .from('media_availability_requests')
+        .update({ status: 'ready' })
+        .in('canonical_key', keysToResolve)
+        .in('status', ['open', 'uploading']);
+
+      return count ?? 0;
+    } catch {
+      // Silently absorb — sweep is best-effort.
+      return 0;
+    }
+  }
+
+  /**
    * Builds a DemandEntry from the resolver context.
    */
   static buildEntry(

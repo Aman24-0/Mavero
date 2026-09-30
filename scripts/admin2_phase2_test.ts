@@ -136,8 +136,10 @@ const adminShellImporters = walkSourceFiles(srcRoot)
 assert.equal(adminShellImporters.length, 0, 'no source file imports AdminShell (AdminAppShell is the sole admin shell)');
 ok('C1. AdminShell.svelte deleted in post-Phase-3 cleanup (no source imports it; AdminAppShell is the sole admin shell)');
 
-// AdminUploadFlow: empty-state link is canonical
-assert.match(adminUploadFlow, /href="\/admin\/system\/api-sources\?tab=providers"/, 'AdminUploadFlow: empty-state link is canonical');
+// AdminUploadFlow: empty-state link points to Hosting Control (not API & Sources)
+// Phase 6 fix: Vidara/Abyss are hosting providers configured in Hosting Control,
+// NOT playback providers configured in API & Sources.
+assert.match(adminUploadFlow, /href="\/admin\/hosting"/, 'AdminUploadFlow: empty-state link points to Hosting Control (not API & Sources)');
 assert.doesNotMatch(adminUploadFlow, /href="\/admin\/providers"/, 'AdminUploadFlow: no stale /admin/providers link');
 ok('C2. AdminUploadFlow: empty-state "Configure Providers" link points at canonical route');
 
@@ -217,18 +219,22 @@ assert.match(libraryService, /const \[assetsRes, demandsRes\] = await Promise\.a
 ok('E7. MediaLibraryService.list: 2 sequential batch queries → parallel Promise.all');
 
 // ============================================================
-// F. Loading UX migration — cyan/blue Admin 2.0 styling
+// F. Loading UX — root spinner uses consumer green (NOT admin cyan)
+// ============================================================
+// Phase 6 fix: the root layout spinner serves ALL routes (user + admin).
+// It must use --color-primary (Mavero green) NOT --a2-cyan (admin cyan).
+// The Phase 2 migration incorrectly changed it to cyan, leaking admin
+// colors into user-facing pages.
 // ============================================================
 
-// Root nav spinner + progress bar: migrated from green to cyan
-assert.match(rootLayout, /border: 1px solid rgba\(0, 217, 255/, 'root nav spinner: cyan border (was green)');
-assert.match(rootLayout, /box-shadow: 0 0 14px rgba\(0, 217, 255/, 'root nav spinner: cyan glow (was green)');
-assert.match(rootLayout, /border-top-color: var\(--a2-cyan, #00d9ff\)/, 'root nav spinner ring: cyan (was --color-primary green)');
-assert.match(rootLayout, /background: linear-gradient\(90deg, var\(--a2-cyan, #00d9ff\), var\(--a2-cyan-bright, #7ee9ff\)\)/, 'root nav progress bar: cyan gradient (was green)');
-// No green remnants in the loading indicator
-assert.doesNotMatch(rootLayout, /rgba\(0, 255, 156/, 'root nav: no green rgba remnants');
-assert.doesNotMatch(rootLayout, /var\(--color-primary, #00ff9c\)/, 'root nav: no --color-primary green references');
-ok('F1. Root navigation spinner + progress bar migrated from green to Admin 2.0 cyan');
+// Root nav spinner + progress bar: use consumer green (--color-primary)
+assert.match(rootLayout, /border: 1px solid rgba\(0, 255, 156/, 'root nav spinner: green border (consumer brand color)');
+assert.match(rootLayout, /box-shadow: 0 0 14px rgba\(0, 255, 156/, 'root nav spinner: green glow (consumer brand color)');
+assert.match(rootLayout, /border-top-color: var\(--color-primary, #00ff9c\)/, 'root nav spinner ring: green --color-primary (NOT admin --a2-cyan)');
+assert.match(rootLayout, /background: linear-gradient\(90deg, var\(--color-primary, #00ff9c\)/, 'root nav progress bar: green gradient (--color-primary)');
+// No admin cyan leaked into root layout
+assert.doesNotMatch(rootLayout, /var\(--a2-cyan/, 'root nav: no --a2-cyan admin token leaked into root layout');
+ok('F1. Root navigation spinner uses consumer green (--color-primary), NOT admin cyan — Phase 6 fix reverts the Phase 2 leak');
 
 // Reduced motion: still respected
 assert.match(rootLayout, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.nav-spinner-ring \{[\s\S]*?animation: none/, 'root nav: reduced motion disables spinner rotation');

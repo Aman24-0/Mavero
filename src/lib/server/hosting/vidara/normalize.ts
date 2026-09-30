@@ -36,8 +36,22 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Vidara player URL pattern. */
-const VIDARA_PLAYBACK_URL_BASE = 'https://vidara.so/v/';
+/**
+ * Vidara embed URL pattern.
+ *
+ * Vidara's API returns two URL types:
+ *   - Share URL:  https://vidara.to/<code>       (NOT embeddable — shows share/download page)
+ *   - Embed URL:  https://vidara.to/e/<code>     (iframe-embeddable player)
+ *
+ * For LOCAL uploads, the API returns the full embed URL in the `filecode` field:
+ *   filecode: "https://vidara.to/e/Vw0hY4n13k83Y"
+ *
+ * For file info/list responses, the `link` field contains the share URL:
+ *   link: "https://vidara.to/<code>"
+ *
+ * We must use the embed URL (/e/ path) for playback, NOT the share URL.
+ */
+const VIDARA_EMBED_URL_BASE = 'https://vidara.to/e/';
 
 // ---------------------------------------------------------------------------
 // Status mapping — Vidara numeric status → Mavero AssetLifecycleState
@@ -114,7 +128,11 @@ export function normalizeVidaraFile(file: VidaraFile): ProviderAssetInfo {
     providerVideoId: (file.vid_id != null ? String(file.vid_id) : null) ?? (filecode ? filecode : null),
     filename: file.filename ?? file.name ?? null,
     title,
-    playbackUrl: file.link ?? (filecode ? `${VIDARA_PLAYBACK_URL_BASE}${filecode}` : null),
+    // Phase 6 fix: use the embed URL (vidara.to/e/<code>) for playback,
+    // NOT the share URL (file.link which is vidara.to/<code>).
+    // The share URL renders the Vidara share/download page in the iframe,
+    // not the embedded player.
+    playbackUrl: filecode ? `${VIDARA_EMBED_URL_BASE}${filecode}` : null,
     thumbnailUrl: file.player_img ?? file.single_img ?? file.thumb ?? file.thumbnail ?? file.splash ?? null,
     sizeBytes: coerceNumber(file.size),
     durationSeconds: coerceNumber(file.length ?? file.duration ?? file.video_length),
@@ -215,15 +233,22 @@ export function normalizeVidaraUploadResult(res: VidaraUploadResultResponse): Pr
     ?? '';
 
   // If the filecode is a full URL (e.g. "https://vidara.to/e/Vw0hY4n13k83Y"),
-  // extract the last path segment as the short code.
+  // it IS the embed URL — preserve it directly as playbackUrl.
+  // Extract the last path segment as the short code for providerAssetId.
   const filecode = rawFilecode.startsWith('http')
     ? rawFilecode.split('/').pop() ?? ''
     : rawFilecode;
 
+  // For local uploads, Vidara returns the full embed URL in filecode.
+  // For remote URL uploads, filecode is just the short code.
+  const playbackUrl = rawFilecode.startsWith('http')
+    ? rawFilecode                          // Already the embed URL from Vidara
+    : (filecode ? `${VIDARA_EMBED_URL_BASE}${filecode}` : null);
+
   return {
     providerAssetId: filecode,
     providerVideoId: filecode || null,
-    playbackUrl: filecode ? `${VIDARA_PLAYBACK_URL_BASE}${filecode}` : null,
+    playbackUrl,
     providerStatus: 'uploaded',
     status: 'uploaded',
     sizeBytes: coerceNumber(res.data?.size),

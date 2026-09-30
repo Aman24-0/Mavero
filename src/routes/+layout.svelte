@@ -240,26 +240,23 @@
   /* ============================================================
      Navigation spinner — PRIMARY loading feedback.
      Compact circular spinner, fixed top-center, below the mobile
-     status bar / notch. Dark translucent background + Admin 2.0 cyan
+     status bar / notch. Dark translucent background + Mavero green
      rotating ring + subtle glow. This is the clear "navigation is
      loading" signal the user sees immediately on tap.
-     Phase 2: migrated from Mavero green (#00ff9c) to Admin 2.0 cyan
-     (#00d9ff / --a2-cyan) so the loading indicator belongs to the
-     same visual system as the rest of the admin UI.
+
+     This spinner lives in the ROOT layout and serves ALL routes
+     (both user-facing and admin). It uses the consumer brand token
+     --color-primary (Mavero green #00ff9c), NOT the admin-scoped
+     --a2-cyan token. Admin pages that want a cyan spinner should
+     scope an override inside AdminAppShell, not here.
      ============================================================ */
   .nav-spinner {
     position: fixed;
-    /* env(safe-area-inset-top) on mobile pushes the spinner below the
-       status bar / notch. On desktop it evaluates to 0, so the spinner
-       sits at the top of the viewport. The 12px offset gives breathing
-       room below the safe area. */
     top: calc(env(safe-area-inset-top, 0px) + 12px);
     left: 50%;
     transform: translateX(-50%);
     z-index: 9999;
     pointer-events: none;
-    /* Dark translucent circular background — visible against any page
-       content underneath, with a subtle backdrop blur for legibility. */
     display: grid;
     place-items: center;
     width: 38px;
@@ -268,19 +265,15 @@
     background: rgba(5, 7, 8, .72);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(0, 217, 255, .22);
-    /* Subtle Admin 2.0 cyan glow so the spinner reads as an active
-       loading state, not a static decoration. */
-    box-shadow: 0 0 14px rgba(0, 217, 255, .3), 0 2px 8px rgba(0, 0, 0, .4);
+    border: 1px solid rgba(0, 255, 156, .22);
+    box-shadow: 0 0 14px rgba(0, 255, 156, .3), 0 2px 8px rgba(0, 0, 0, .4);
   }
-  /* The rotating ring — a CSS border spinner. 20px circle with a
-     translucent track and a solid cyan top segment. */
   .nav-spinner-ring {
     width: 20px;
     height: 20px;
     border-radius: 50%;
     border: 2px solid rgba(242, 255, 248, .12);
-    border-top-color: var(--a2-cyan, #00d9ff);
+    border-top-color: var(--color-primary, #00ff9c);
     animation: nav-spinner-rotate 0.7s linear infinite;
   }
   @keyframes nav-spinner-rotate {
@@ -289,11 +282,9 @@
 
   /* ============================================================
      Navigation progress bar — SECONDARY peripheral cue.
-     Thin static accent line at the very top edge. The sweep animation
-     was removed so the spinner is the sole animated element (no
-     competing motion). This bar provides a subtle peripheral signal
-     at the screen edge without drawing focus from the spinner.
-     Phase 2: migrated from green to Admin 2.0 cyan gradient.
+     Thin static accent line at the very top edge. Uses the consumer
+     brand color (--color-primary, Mavero green) — NOT the admin
+     cyan token. See the nav-spinner comment above for rationale.
      ============================================================ */
   .nav-progress {
     position: fixed;
@@ -303,7 +294,7 @@
     height: 3px;
     z-index: 9999;
     pointer-events: none;
-    background: linear-gradient(90deg, var(--a2-cyan, #00d9ff), var(--a2-cyan-bright, #7ee9ff));
+    background: linear-gradient(90deg, var(--color-primary, #00ff9c), var(--color-primary-hover, #00e88c));
     opacity: .55;
   }
 
@@ -313,8 +304,8 @@
     .nav-spinner-ring {
       animation: none;
       border-color: rgba(242, 255, 248, .12);
-      border-top-color: var(--a2-cyan, #00d9ff);
-      border-right-color: var(--a2-cyan, #00d9ff);
+      border-top-color: var(--color-primary, #00ff9c);
+      border-right-color: var(--color-primary, #00ff9c);
     }
   }
 </style>
