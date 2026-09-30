@@ -908,7 +908,7 @@ search → metadata → provider → source → review → uploading → process
 ## Phase E — Hosting Control
 
 **Date:** 2026-09-30
-**Commit:** `ebd5252`
+**Commit:** `918ada6`
 **Objective:** Replace the Hosting placeholder architecture with a real production-quality Hosting Control workspace — a unified workspace with three contextual tabs (Providers, Assets, Sync) that gives administrators a complete operational view of Mavero's connected hosting providers and provider assets. Implement the previously-deferred rename, move, detach, delete, reconcile, and sync management actions.
 
 ### Audit Findings (Phase E fresh audit)
