@@ -62,7 +62,7 @@ export class SyncService {
       // so the UI can render "Unconfigured / Unsupported" without catching.
       // syncAll() already converted this case to a structured result; we
       // now do the same at the syncProvider level for direct callers.
-      return {
+      const result = {
         providerAdapterId: adapterId,
         totalProviderAssets: 0,
         updatedAssets: 0,
@@ -70,12 +70,15 @@ export class SyncService {
         unlinkedFiles: [],
         errors: [{ providerAssetId: '', errorCode: 'UNSUPPORTED', errorMessage: `No hosting adapter for ${adapterId}. The provider may be unconfigured.` }],
       };
+      // Phase F: record the failed sync attempt in the audit log.
+      await this.recordSyncAudit({ adapterId, providerSourceId: null, outcome: 'failed', totalProviderAssets: 0, updatedAssets: 0, deletedAssets: 0, unlinkedCount: 0, errorCount: 1, firstError: result.errors[0] });
+      return result;
     }
 
     const { data: providerRow } = await this.client
       .from('streaming_providers').select('id').eq('adapter_id', adapterId).limit(1).maybeSingle();
     if (!providerRow) {
-      return {
+      const result = {
         providerAdapterId: adapterId,
         totalProviderAssets: 0,
         updatedAssets: 0,
@@ -83,13 +86,15 @@ export class SyncService {
         unlinkedFiles: [],
         errors: [{ providerAssetId: '', errorCode: 'NOT_FOUND', errorMessage: `No provider row for adapter ${adapterId}. Run the Phase 4 migration or add a provider.` }],
       };
+      await this.recordSyncAudit({ adapterId, providerSourceId: null, outcome: 'failed', totalProviderAssets: 0, updatedAssets: 0, deletedAssets: 0, unlinkedCount: 0, errorCount: 1, firstError: result.errors[0] });
+      return result;
     }
 
     const { data: sourceRow } = await this.client
       .from('streaming_sources').select('id').eq('provider_id', providerRow.id).limit(1).maybeSingle();
     const providerSourceId = sourceRow?.id;
     if (!providerSourceId) {
-      return {
+      const result = {
         providerAdapterId: adapterId,
         totalProviderAssets: 0,
         updatedAssets: 0,
@@ -97,6 +102,8 @@ export class SyncService {
         unlinkedFiles: [],
         errors: [{ providerAssetId: '', errorCode: 'NOT_FOUND', errorMessage: `No source row for provider ${adapterId}.` }],
       };
+      await this.recordSyncAudit({ adapterId, providerSourceId: null, outcome: 'failed', totalProviderAssets: 0, updatedAssets: 0, deletedAssets: 0, unlinkedCount: 0, errorCount: 1, firstError: result.errors[0] });
+      return result;
     }
 
     const providerAssets = await adapter.listAssets(null);
@@ -169,6 +176,22 @@ export class SyncService {
       }
     }
 
+    // Phase F: record a sync audit event in media_operations.
+    // One summary event per provider sync (NOT one per asset) — keeps
+    // the audit trail readable + bounded. Stores aggregate counts in
+    // `details` (safe, non-secret metadata).
+    await this.recordSyncAudit({
+      adapterId,
+      providerSourceId,
+      outcome: errors.length > 0 ? (updatedAssets > 0 ? 'partial' : 'failed') : 'success',
+      totalProviderAssets: providerAssets.length,
+      updatedAssets,
+      deletedAssets,
+      unlinkedCount: unlinkedFiles.length,
+      errorCount: errors.length,
+      firstError: errors[0] ?? null,
+    });
+
     return { providerAdapterId: adapterId, totalProviderAssets: providerAssets.length, updatedAssets, deletedAssets, unlinkedFiles, errors };
   }
 
@@ -218,7 +241,81 @@ export class SyncService {
     } else if (procStatus.status === 'failed') {
       await this.client.from('media_upload_operations').update({ status: 'failed', failed_at: new Date().toISOString(), error_code: procStatus.providerErrorCode ?? 'PROVIDER_PROCESSING', error_message: procStatus.providerErrorMessage ?? 'Provider processing failed.' }).eq('media_asset_id', mediaAssetId).in('status', ['processing', 'uploaded']);
     }
+
+    // Phase F: record the reconcile audit event. Uses action='sync' with
+    // a `reconcile: true` flag in details so the audit trail distinguishes
+    // per-asset reconciliation from full provider sync.
+    const reconcileOutcome = procStatus.status === 'failed' ? 'failed' : 'success';
+    try {
+      await this.client.from('media_operations').insert({
+        action: 'sync',
+        status: reconcileOutcome,
+        media_item_id: null,
+        media_asset_id: mediaAssetId,
+        provider_source_id: ar.provider_source_id,
+        upload_operation_id: null,
+        admin_user_id: null,
+        details: {
+          reconcile: true,
+          adapter: adapterId,
+          provider_asset_id: ar.provider_asset_id,
+          previous_status: ar.status,
+          new_status: procStatus.status,
+          provider_status: procStatus.providerStatus,
+        } as never,
+        error_code: procStatus.providerErrorCode,
+        error_message: procStatus.providerErrorMessage,
+      });
+    } catch {
+      // Silently absorb — audit logging must NOT break reconcile.
+    }
+
     return { status: procStatus.status, providerStatus: procStatus.providerStatus, ready: procStatus.status === 'ready', failed: procStatus.status === 'failed' };
+  }
+
+  /**
+   * Phase F — Records a sync audit event in media_operations.
+   * One summary event per provider sync (NOT one per asset). Stores
+   * aggregate counts + the first error in `details` (safe metadata).
+   * Fire-and-forget — audit failures must NOT break sync.
+   */
+  private async recordSyncAudit(params: {
+    adapterId: string;
+    providerSourceId: string | null;
+    outcome: 'success' | 'partial' | 'failed';
+    totalProviderAssets: number;
+    updatedAssets: number;
+    deletedAssets: number;
+    unlinkedCount: number;
+    errorCount: number;
+    firstError: { providerAssetId: string; errorCode: string; errorMessage: string } | null;
+  }): Promise<void> {
+    try {
+      await this.client.from('media_operations').insert({
+        action: 'sync',
+        status: params.outcome === 'success' ? 'success' : params.outcome === 'partial' ? 'success' : 'failed',
+        media_item_id: null,
+        media_asset_id: null,
+        provider_source_id: params.providerSourceId,
+        upload_operation_id: null,
+        admin_user_id: null,
+        details: {
+          sync: true,
+          adapter: params.adapterId,
+          outcome: params.outcome,
+          total_provider_assets: params.totalProviderAssets,
+          updated_assets: params.updatedAssets,
+          deleted_assets: params.deletedAssets,
+          unlinked_count: params.unlinkedCount,
+          error_count: params.errorCount,
+          first_error: params.firstError,
+        } as never,
+        error_code: params.firstError?.errorCode ?? null,
+        error_message: params.outcome === 'failed' ? (params.firstError?.errorMessage ?? 'Sync failed.') : null,
+      });
+    } catch {
+      // Silently absorb — audit logging must NOT break sync.
+    }
   }
 
   /**

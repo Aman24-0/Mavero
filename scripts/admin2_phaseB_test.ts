@@ -66,10 +66,12 @@ assert.match(adminAppShell, /\{ id: 'providers', label: 'Provider Registry', hre
 ok('1c. nav group HOSTING has Hosting Control + Provider Registry (Phase E restructuring)');
 
 // OPERATIONS
-assert.match(adminAppShell, /\{ id: 'jobs', label: 'Jobs', href: '\/admin\/media\/operations'/, 'nav: Operations → Jobs');
-assert.match(adminAppShell, /\{ id: 'history', label: 'History', href: '\/admin\/media\/history'/, 'nav: Operations → History');
-assert.match(adminAppShell, /\{ id: 'attention', label: 'Attention', href: '\/admin\/media\/stale'/, 'nav: Operations → Attention');
-ok('1d. nav group OPERATIONS has Jobs + History + Attention');
+// Phase F restructured the Operations group: the unified Operations Center
+// workspace at /admin/operations replaces the old separate Jobs/History/Attention
+// placeholders. The three tabs (Jobs/Activity/Attention) live inside the workspace.
+assert.match(adminAppShell, /\{ id: 'operations', label: 'Operations Center', href: '\/admin\/operations'/, 'nav: Operations → Operations Center');
+assert.match(adminAppShell, /matchPrefix: '\/admin\/operations'/, 'Operations Center has matchPrefix');
+ok('1d. nav group OPERATIONS has Operations Center (Phase F restructuring)');
 
 // SYSTEM — 4 primary items only (Defaults + Feature Control removed
 // from the primary SYSTEM nav group). They live in `configItems`
@@ -197,17 +199,18 @@ ok('6c. /admin/media/assets redirects to /admin/hosting?tab=assets (Phase E)');
 assert.match(syncPage, /\/admin\/hosting\?tab=sync/, 'sync page redirects to Hosting Control');
 ok('6d. /admin/media/sync redirects to /admin/hosting?tab=sync (Phase E)');
 
-assert.match(operationsPage, /<AdminAppShell>/, 'operations page wraps in AdminAppShell');
-assert.match(operationsPage, /phase="F"/, 'operations page is tagged Phase F');
-ok('6e. /admin/media/operations placeholder exists (Phase F destination)');
+// Phase F: /admin/media/operations, /admin/media/history, /admin/media/stale
+// are now redirects to the unified Operations Center workspace at
+// /admin/operations. The pages no longer wrap in AdminAppShell — they're
+// thin redirect stubs.
+assert.match(operationsPage, /\/admin\/operations\?tab=jobs/, 'operations page redirects to Operations Center');
+ok('6e. /admin/media/operations redirects to /admin/operations?tab=jobs (Phase F)');
 
-assert.match(historyPage, /<AdminAppShell>/, 'history page wraps in AdminAppShell');
-assert.match(historyPage, /phase="F"/, 'history page is tagged Phase F');
-ok('6f. /admin/media/history placeholder exists (Phase F destination)');
+assert.match(historyPage, /\/admin\/operations\?tab=history/, 'history page redirects to Operations Center');
+ok('6f. /admin/media/history redirects to /admin/operations?tab=history (Phase F)');
 
-assert.match(stalePage, /<AdminAppShell>/, 'stale page wraps in AdminAppShell');
-assert.match(stalePage, /phase="F"/, 'stale page is tagged Phase F');
-ok('6g. /admin/media/stale placeholder exists (Phase F destination)');
+assert.match(stalePage, /\/admin\/operations\?tab=attention/, 'stale page redirects to Operations Center');
+ok('6g. /admin/media/stale redirects to /admin/operations?tab=attention (Phase F)');
 
 // ============================================================
 // 7. Orphaned pages (upload, missing) now wrapped in AdminAppShell
@@ -260,12 +263,10 @@ assert.match(adminPage, /prefers-reduced-motion: reduce/, 'AdminPage respects pr
 ok('11a. Reduced-motion support across all new primitives');
 
 // ============================================================
-// 12. Phase E delivered the hosting management operations
-// (rename/move/detach/delete/reconcile/sync) — they're now real
-// actions in the Hosting Control workspace, not placeholder text.
-// The operations placeholder still references them for Phase F.
+// 12. Phase E + F delivered the hosting + operations management
+// workflows. The old placeholder pages now redirect to the real
+// workspaces (Hosting Control + Operations Center).
 // ============================================================
-assert.match(operationsPage, /rename.*move.*detach.*delete/s, 'Operations placeholder references management operations');
-ok('12a. Phase E delivered hosting management ops; Operations placeholder references them for Phase F');
+ok('12a. Phase E + F delivered hosting + operations management workspaces');
 
 console.log(`\nAdmin 2.0 Phase B tests passed (${passed} check groups).`);

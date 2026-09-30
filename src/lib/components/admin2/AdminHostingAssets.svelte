@@ -370,7 +370,7 @@
   <!-- Filter bar -->
   <div class="a2-assets-filters">
     <div class="a2-assets-search">
-      <Search size={14} class="a2-assets-search-icon" />
+      <Search size={14} style="position: absolute; left: var(--a2-space-3); color: var(--a2-text-dim); pointer-events: none;" />
       <input
         type="text"
         bind:value={filters.q}
@@ -837,10 +837,6 @@
   .a2-assets-search {
     position: relative;
     display: flex; align-items: center;
-  }
-  .a2-assets-search-icon {
-    position: absolute; left: var(--a2-space-3);
-    color: var(--a2-text-dim); pointer-events: none;
   }
   .a2-assets-search-input {
     width: 100%;

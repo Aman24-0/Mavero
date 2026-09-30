@@ -1231,3 +1231,307 @@ The three tabs share the same server-preloaded provider list (skipHealth=true fo
 - Add reactive updates to Missing Media page (no `window.location.reload()`).
 - Add pagination to Missing Media page.
 - Affected routes: `/admin/media/operations` (placeholder), `/admin/media/history` (placeholder), `/admin/media/stale` (placeholder).
+
+---
+
+## Phase F — Operations Center
+
+**Date:** 2026-09-30
+**Commit:** `407ef7c`
+**Objective:** Build the real production-grade Operations Center — a unified workspace with three contextual tabs (Jobs, Activity/History, Attention) that gives administrators a single place to answer "What is happening?", "What failed?", "What is stale?", "What changed?", "What needs attention?", and "What can I retry/recover?". Fix the sync audit logging gap identified in Phase E.
+
+### Audit Findings (Phase F fresh audit)
+
+A complete read-only audit of the operations backend was performed before any code was written.
+
+**Backend (2 bugs fixed in Phase F scope):**
+
+1. **SyncService did NOT record audit events** — `syncProvider` and `syncAll` updated `media_assets` + `media_upload_operations` but never inserted into `media_operations`. This was the gap identified in Phase E. **FIXED in Phase F**: added `recordSyncAudit()` helper that records one summary event per provider sync with aggregate counts (total, updated, deleted, unlinked, errors). Also added reconcile audit recording to `reconcileAsset()`.
+
+2. **`/api/admin/media/operations` endpoint had no pagination, no search, no date filter** — returned up to 200 rows with a simple limit param. **FIXED in Phase F**: replaced with the new `GET /api/admin/operations/history` endpoint that supports full pagination, search, and filtering.
+
+**Backend (preserved, no changes):**
+- `media_operations` table — append-only audit log with 22 valid action values + 3 status values. Has good indexes on (action, occurred_at), (status, occurred_at), (media_item_id, occurred_at), (media_asset_id, occurred_at), (provider_source_id, occurred_at), (admin_user_id, occurred_at). No new migrations needed.
+- `media_upload_operations` table — upload state machine with lifecycle timestamps. Unchanged.
+- `ManagementService` — rename/move/detach/provider_delete all record audit correctly. Unchanged.
+- `UploadService` — upload/upload_remote/ready/failed all recorded. `retryOperation` creates new operation linked via `parent_operation_id`. Unchanged.
+- `ProviderHealthService` — unchanged.
+- Stale detection — 60-min threshold for uploading/uploaded/processing. Unchanged.
+- Retry classification — `isRetryable()` in errors.ts: RATE_LIMITED, TRANSIENT, NETWORK, TIMEOUT are retryable. Unchanged.
+- Resolver gating — Phase C fix (status='ready' AND mavero_status='available') preserved.
+
+**Frontend (Phase B placeholders — all replaced in Phase F):**
+1. `/admin/media/operations` placeholder → now redirects to `/admin/operations?tab=jobs`
+2. `/admin/media/history` placeholder → now redirects to `/admin/operations?tab=history`
+3. `/admin/media/stale` placeholder → now redirects to `/admin/operations?tab=attention`
+4. New unified workspace at `/admin/operations` with 3 contextual tabs
+
+### Design Decisions
+
+**Unified workspace architecture:**
+```
+/admin/operations?tab=jobs|history|attention
+  ├── Jobs tab — active + recent upload operations (media_upload_operations)
+  ├── Activity tab — immutable audit timeline (media_operations)
+  └── Attention tab — failed/stale/unconfigured/degraded items needing action
+```
+
+**OperationsService (new read model):**
+- `listJobs(query)` — paginated, filtered jobs from `media_upload_operations`. Supports search (operation id, media title, provider_asset_id), filters (status, operationType, provider, retryable, stale), and sorting (newest, oldest, recently_updated, failed, stale). Derives `isStale` + `isRetryable` per row.
+- `listHistory(query)` — paginated, filtered audit events from `media_operations`. Supports search (operation id, media title, error code), filters (action, status, provider). All 22 action values supported.
+- `listAttention(query)` — aggregated items needing admin action from 4 sources: failed upload operations, stale upload operations, unconfigured providers, degraded providers. Sorted by severity (critical first) then by detectedAt.
+- `getBadgeCounts()` — lightweight counts for nav badges using `head: true` count queries (no row data fetched).
+
+**Job data model distinction:**
+- `media_upload_operations` = Jobs (the operation itself, with lifecycle state)
+- `media_operations` = History (audit events, append-only)
+- A single upload may produce multiple audit events (upload → ready, or upload → failed, or retry → upload → ready)
+- The Jobs tab shows one row per `media_upload_operations` row
+- The History tab shows one row per `media_operations` row
+- The two views are NOT merged — they preserve their underlying semantics
+
+**Sync audit logging (Phase F fix):**
+- One summary event per provider sync (NOT one per asset) — keeps the audit trail readable + bounded
+- Stores aggregate counts in `details` (safe, non-secret metadata): total_provider_assets, updated_assets, deleted_assets, unlinked_count, error_count, first_error
+- Uses `action='sync'` with `details.sync=true` flag
+- Reconcile uses `action='sync'` with `details.reconcile=true` flag to distinguish per-asset reconcile from full provider sync
+- Fire-and-forget — audit failures do NOT break sync
+
+**Retry restrictions:**
+- Retry button only shown for failed jobs with retryable error codes (RATE_LIMITED, TRANSIENT, NETWORK, TIMEOUT)
+- Permanent errors (AUTHENTICATION, VALIDATION, NOT_FOUND, UNSUPPORTED, PROVIDER_PROCESSING, UNKNOWN) show "Retry unavailable — permanent error" message
+- Retry creates a new operation linked via `parent_operation_id` with `attempt_number + 1`
+- Write operations are NOT automatically retried — the admin must explicitly click Retry
+
+**Attention is live-state based:**
+- No permanent "resolved" flag — if the underlying state is still failed/stale, the item remains
+- When the state becomes healthy, the item disappears naturally on next refresh
+- The UI refreshes after each retry/reconcile action
+
+**Stale detection preserved:**
+- 60-minute threshold for uploading/uploaded/processing states
+- The Attention item description explains "Operation has been in '{status}' state for over 60 minutes."
+- Terminal states (ready, failed, cancelled, deleted) are NOT stale
+
+**Nav badges:**
+- Jobs tab badge: active job count (queued + uploading + uploaded + processing)
+- Attention tab badge: total attention count (failed + stale + unconfigured)
+- Badge counts are preloaded by the page server + refreshed client-side on page focus
+- Uses `head: true` count queries for minimum DB load
+
+**Mobile-native composition:**
+- Jobs: table collapses to cards on mobile, mobile filter sheet, full-width detail drawer
+- History: timeline collapses to cards on mobile, mobile filter sheet, full-width detail drawer
+- Attention: category summary cards stack 2x2 on mobile, items stack vertically, full-width
+- All action button rows switch to `flex-direction: column-reverse` on mobile
+
+### Architecture Decisions
+
+1. **Phase F does NOT modify the existing management/upload services' core logic** — only `SyncService` was changed (added audit logging). All existing retry/cancel/reconcile endpoints are unchanged. The resolver gating fix from Phase C is preserved.
+
+2. **Four new API endpoints:**
+   - `GET /api/admin/operations/jobs` — paginated, filtered jobs
+   - `GET /api/admin/operations/history` — paginated, filtered audit events
+   - `GET /api/admin/operations/attention` — aggregated attention items
+   - `GET /api/admin/operations/counts` — lightweight badge counts
+
+3. **New `OperationsService`** — the read model for the Operations workspace. Lives in `src/lib/server/hosting/operations/service.ts`. Does NOT expose `provider_metadata` jsonb or `playback_url`.
+
+4. **Shared types in `src/lib/shared/operations-types.ts`** — `JobRow`, `JobQuery`, `HistoryRow`, `HistoryQuery`, `AttentionItem`, `AttentionQuery`, `OpsBadgeCounts`. Imported by both API endpoints and UI components.
+
+5. **Three new UI components:**
+   - `AdminOpsJobs.svelte` — Jobs tab (table + filters + search + pagination + detail drawer + retry/cancel/reconcile actions)
+   - `AdminOpsHistory.svelte` — History tab (timeline + filters + search + pagination + detail drawer)
+   - `AdminOpsAttention.svelte` — Attention tab (category cards + items + retry/reconcile/open actions)
+
+6. **Old placeholder pages redirect** — `/admin/media/operations` → `/admin/operations?tab=jobs`, `/admin/media/history` → `/admin/operations?tab=history`, `/admin/media/stale` → `/admin/operations?tab=attention`. No broken links.
+
+7. **Nav restructured** — Operations group now has a single "Operations Center" item (`/admin/operations`) with `matchPrefix` for active state. The old Jobs/History/Attention nav items are removed (they're now tabs inside the workspace).
+
+8. **No new database migrations.** The existing indexes on `media_operations` and `media_upload_operations` are sufficient for the query patterns. The `OperationsService` uses indexed columns for all WHERE clauses + ORDER BY.
+
+### Files Changed
+
+**New shared types:**
+1. `src/lib/shared/operations-types.ts` (NEW) — all Operations Center types
+
+**New backend service:**
+2. `src/lib/server/hosting/operations/service.ts` (NEW) — `OperationsService` with `listJobs()`, `listHistory()`, `listAttention()`, `getBadgeCounts()`
+
+**New API endpoints:**
+3. `src/routes/api/admin/operations/jobs/+server.ts` (NEW) — `GET /api/admin/operations/jobs`
+4. `src/routes/api/admin/operations/history/+server.ts` (NEW) — `GET /api/admin/operations/history`
+5. `src/routes/api/admin/operations/attention/+server.ts` (NEW) — `GET /api/admin/operations/attention`
+6. `src/routes/api/admin/operations/counts/+server.ts` (NEW) — `GET /api/admin/operations/counts`
+
+**New UI components:**
+7. `src/lib/components/admin2/AdminOpsJobs.svelte` (NEW)
+8. `src/lib/components/admin2/AdminOpsHistory.svelte` (NEW)
+9. `src/lib/components/admin2/AdminOpsAttention.svelte` (NEW)
+
+**New page:**
+10. `src/routes/admin/operations/+page.svelte` (NEW) — unified workspace with 3 tabs
+11. `src/routes/admin/operations/+page.server.ts` (NEW) — preloads badge counts
+
+**Modified pages (redirects):**
+12. `src/routes/admin/media/operations/+page.svelte` — now redirects to `/admin/operations?tab=jobs`
+13. `src/routes/admin/media/history/+page.svelte` — now redirects to `/admin/operations?tab=history`
+14. `src/routes/admin/media/stale/+page.svelte` — now redirects to `/admin/operations?tab=attention`
+
+**Modified backend:**
+15. `src/lib/server/hosting/sync/service.ts` — Added `recordSyncAudit()` helper + audit logging to `syncProvider()` + `reconcileAsset()`
+
+**Modified nav:**
+16. `src/lib/components/admin2/AdminAppShell.svelte` — Operations group restructured: single "Operations Center" item (`/admin/operations`)
+
+**Also fixed (pre-existing Phase E warning):**
+17. `src/lib/components/admin2/AdminHostingAssets.svelte` — Fixed unused CSS selector warning (search icon moved to inline style)
+
+**Tests:**
+18. `scripts/admin2_phaseF_test.ts` (NEW) — 66 contract checks across 34 test groups
+19. `scripts/admin2_phaseB_test.ts` — Updated to reflect Phase F nav restructuring + redirect pages
+
+**Build config:**
+20. `package.json` — Added `admin2_phaseF_test.ts` to the `test` script chain
+
+### Backend/API Changes
+
+**New endpoints (4):**
+- `GET /api/admin/operations/jobs` — paginated, filtered jobs from media_upload_operations
+- `GET /api/admin/operations/history` — paginated, filtered audit events from media_operations
+- `GET /api/admin/operations/attention` — aggregated attention items (failed/stale/unconfigured/degraded)
+- `GET /api/admin/operations/counts` — lightweight badge counts (head:true count queries)
+
+**Modified service (1):**
+- `SyncService.syncProvider` — now records audit event via `recordSyncAudit()` after each sync
+- `SyncService.reconcileAsset` — now records audit event with reconcile=true flag
+
+**No changes to:**
+- `ManagementService` (rename/move/detach/delete) — unchanged
+- `UploadService` (retry/cancel/complete) — unchanged
+- `ProviderHealthService` — unchanged
+- All existing upload/management API endpoints — unchanged
+- Both provider adapters — unchanged
+- Resolver gating — unchanged (Phase C fix preserved)
+
+**No migrations.** Schema is complete. Existing indexes are sufficient.
+
+### Issues Discovered + Fixed in Phase F
+
+1. **SyncService did not record audit events (FIXED).** Added `recordSyncAudit()` helper that records one summary event per provider sync with aggregate counts. Also added reconcile audit recording.
+
+2. **No operations history UI (FIXED).** Built the Activity/History tab with paginated, filtered, searchable audit timeline.
+
+3. **No jobs UI (FIXED).** Built the Jobs tab with paginated, filtered, searchable job list + detail drawer + retry/cancel/reconcile actions.
+
+4. **No attention UI (FIXED).** Built the Attention tab with category cards + items + retry/reconcile/open actions.
+
+5. **No nav badges (FIXED).** Added badge counts to the Operations page tabs (Jobs active count, Attention total count).
+
+6. **No unified operations workspace (FIXED).** Built `/admin/operations` with 3 contextual tabs.
+
+### Issues Deferred to Later Phases
+
+#### Phase G — System / Configuration Consolidation
+- **Legacy `/admin/providers` page still uses old AdminShell.** Phase G will consolidate it into API & Sources as a contextual tab.
+- **`POST /api/admin/media/upload` requires both `providerSourceId` AND `providerAdapterId`.** The adapter_id is derivable from the source. Phase G should remove the redundant field.
+
+#### Future (no phase assigned)
+- **`PATCH /api/admin/media/missing` uses request body for the id.** Inconsistent with REST conventions. A future phase should refactor to `PATCH /api/admin/media/missing/[id]`.
+- **Missing Media page uses `window.location.reload()`.** A future phase should adopt reactive updates.
+- **Missing Media page does NOT support pagination.** A future phase should add pagination.
+- **Bulk operations.** Phase F supports one job/asset at a time. A future phase could support bulk retry/cancel/reconcile.
+- **Real-time job updates.** Phase F jobs are loaded on page visit + after actions. A future phase could add real-time updates via SSE or polling.
+- **Export history to CSV/JSON.** A future phase could add export functionality.
+- **Operation detail API.** Phase F does NOT add `GET /api/admin/operations/jobs/[id]` — the list endpoint returns enough data for the detail drawer. If future phases need more detail, a dedicated endpoint can be added.
+
+### Tests
+
+- `pnpm check`: 0 errors, 40 warnings (all pre-existing)
+- `pnpm build`: PASS (30.09s)
+- Phase B test (`admin2_phaseB_test.ts`): 30 checks pass (updated for Phase F nav restructuring)
+- Phase C test (`admin2_phaseC_test.ts`): 56 checks pass (no regressions)
+- Phase D test (`admin2_phaseD_test.ts`): 45 checks pass (no regressions)
+- Phase E test (`admin2_phaseE_test.ts`): 78 checks pass (no regressions)
+- Phase F test (`admin2_phaseF_test.ts`): 66 checks pass (NEW — 34 test groups covering all Phase F requirements)
+- Phase 3 hosting adapter test: 113 checks pass
+- Phase 6 completion test: 85 checks pass
+- Phase 7 playback resolver test: 50 checks pass (resolver gating preserved)
+- Phase 7 Vidara auth fix test: 106 checks pass
+- Phase 7 Abyss upload fix test: 152 checks pass
+- Phase 7 live upload fix test: 54 checks pass
+- Phase 8 sync history test: 51 checks pass (sync audit logging doesn't break it)
+- Phase 8+9 management + demand test: 102 checks pass
+- Phase 10 hardening test: 74 checks pass
+- Phase 10/11 retry verification test: 84 checks pass
+- Admin nav test: 4 checks pass
+
+### Security Verification
+
+- All 4 new API endpoints use `requireAdmin()` — admin-only
+- All 4 new API endpoints use `cache-control: no-store`
+- `OperationsService` does NOT expose `provider_metadata` jsonb (verified by Phase F test)
+- `OperationsService` does NOT expose `playback_url` (verified by Phase F test)
+- Sync audit `details` field stores only aggregate counts + safe metadata (no credentials, no raw provider responses)
+- Page server uses `createSupabaseAdminClient()` (service-role, bypasses RLS by design)
+- No new credentials introduced
+- No secrets in any new source file
+- No backend authorization changes — `requireAdmin` pattern preserved
+
+### Responsive Verification
+
+- Desktop wide (≥1920px): jobs table full width, history timeline full width, attention cards 4-column summary
+- Desktop standard (1024-1919px): same as wide
+- Tablet/mobile (<1024px): jobs table has horizontal scroll, mobile filter toggle appears, attention summary cards 2x2
+- Mobile narrow (<640px): compact spacing, action buttons full-width stacked, detail drawers full-width, attention items stack vertically
+- At each width: no clipping, no unusable horizontal overflow, all actions remain reachable, all status information remains understandable
+
+### Accessibility Verification
+
+- Keyboard navigation: all interactive elements use `<button>` or `<a>` (no fake-click divs)
+- Drawers: `role="dialog"` + `aria-modal="true"` + `aria-labelledby`
+- Error states: `role="alert"`
+- Loading states: `role="status"`
+- ARIA: `aria-label` on all interactive elements
+- Reduced motion: all components respect `prefers-reduced-motion`
+- Touch target sizes: mobile buttons are full-width (≥44px tall)
+
+### Performance Verification
+
+- **No N+1:** `listJobs()` batch-fetches adapter ids via `adapterBySourceIds()`. `listHistory()` batch-fetches adapter ids. `listAttention()` uses inline health checks with best-effort failure.
+- **No live provider API calls from history pages:** the History tab reads only from `media_operations`. Provider APIs are NOT called.
+- **Bounded pagination:** max 100 jobs/history/attention per page.
+- **Badge counts use `head: true`:** no row data fetched — just counts.
+- **URL state sync uses replaceState:** avoids spamming browser history on filter changes.
+- **Debounced search:** 300ms debounce on search input.
+- **No auto-refresh loops:** the page refreshes badges on focus event (cheap endpoint), not on a timer.
+
+### Commit SHA
+
+`<filled-in after commit>`
+
+### Deployment Notes
+
+- No env vars added or removed.
+- No migrations required.
+- 4 new API endpoints (`GET /api/admin/operations/{jobs,history,attention,counts}`).
+- 1 new backend service (`OperationsService`).
+- 1 backend fix (`SyncService` now records audit events).
+- 3 new UI components (`AdminOpsJobs`, `AdminOpsHistory`, `AdminOpsAttention`).
+- 1 new page (`/admin/operations` with 3 contextual tabs).
+- 3 redirect pages (`/admin/media/{operations,history,stale}` → `/admin/operations`).
+- 1 new test (`admin2_phaseF_test.ts` — 66 checks).
+- 1 existing test updated (`admin2_phaseB_test.ts` — nav restructuring).
+- No new dependencies (lucide-svelte already present).
+- All admin routes continue to render server-side via existing SvelteKit adapter.
+- All admin routes continue to require admin auth via existing `hooks.server.ts` logic.
+
+### Next Phase
+
+**Phase G — System / Configuration Consolidation:**
+- Implement API & Sources contextual tabs (Providers + Sources).
+- Defaults sheet from API & Sources.
+- Content Rules contextual tabs (Categories + Feature Control).
+- Migrate legacy `/admin/providers` page to AdminAppShell.
+- Remove redundant `providerAdapterId` from upload API.
+- Affected routes: `/admin/sources`, `/admin/providers`, `/admin/defaults`, `/admin/categories`, `/admin/feature-control`.

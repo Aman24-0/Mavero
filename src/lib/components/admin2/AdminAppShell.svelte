@@ -129,9 +129,7 @@
       id: 'operations',
       label: 'Operations',
       items: [
-        { id: 'jobs', label: 'Jobs', href: '/admin/media/operations', icon: Activity, phase: 'F', placeholder: true },
-        { id: 'history', label: 'History', href: '/admin/media/history', icon: History, phase: 'F', placeholder: true },
-        { id: 'attention', label: 'Attention', href: '/admin/media/stale', icon: TriangleAlert, phase: 'F', placeholder: true },
+        { id: 'operations', label: 'Operations Center', href: '/admin/operations', icon: Activity, matchPrefix: '/admin/operations' },
       ]
     },
     {
