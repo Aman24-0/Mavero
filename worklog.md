@@ -2416,7 +2416,7 @@ Dune "Not Linked" for both Vidara and Abyss is **correct behavior** — not a bu
 ## Phase 1 — Admin 2.0 Canonical CRUD Migration & Navigation Consolidation
 
 **Date:** 2026-09-30
-**Commit:** `da99d0d`
+**Commit:** `446d8ac`
 **Objective:** Migrate ALL legacy Admin CRUD functionality into the canonical Admin 2.0 workspaces. Eliminate "Open legacy registry" escape hatches. Consolidate navigation. Redirect legacy routes.
 
 ### Migration Summary
