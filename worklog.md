@@ -1541,7 +1541,7 @@ A complete read-only audit of the operations backend was performed before any co
 ## Phase G — System / Configuration Consolidation
 
 **Date:** 2026-09-30
-**Commit:** `ae8068b`
+**Commit:** `4e8cc5f`
 **Objective:** Replace the fragmented legacy System/Configuration admin architecture with the approved Admin 2.0 configuration workspace. Consolidate API & Sources, Content Rules, Downloads, and Integrations into unified Admin 2.0 workspaces. Retire the topbar Configure dropdown (Defaults + Feature Control are now inside the workspaces).
 
 ### Audit Findings (Phase G fresh audit)
