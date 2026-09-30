@@ -2513,7 +2513,7 @@ All 7 legacy AdminShell pages converted to redirect stubs:
 
 ### Commit SHA
 
-`cb17883`
+`446d8ac`
 
 ---
 
@@ -2749,4 +2749,4 @@ Subagent audit identified **3 critical tables** + **3 CSS bugs** + **touch targe
 
 ### Commit SHA
 
-`<filled-in after commit>`
+`cb17883`
