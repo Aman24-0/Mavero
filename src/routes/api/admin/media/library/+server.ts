@@ -66,6 +66,10 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   const provider = sp.get('provider');
   if (provider && provider !== 'all') query.provider_source_id = provider;
 
+  // Phase 5: series/anime parent TMDB ID filter (from AdminMediaTree selection).
+  const series = sp.get('series');
+  if (series && /^\d{1,20}$/.test(series)) query.seriesTmdb = series;
+
   const status = sp.get('status') ?? 'all';
   if (VALID_STATUSES.includes(status)) query.status = status as AssetStatus | MaveroStatus | 'all';
 

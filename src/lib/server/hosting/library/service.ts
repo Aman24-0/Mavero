@@ -108,6 +108,8 @@ export type LibraryQuery = {
   q?: string;             // search across title / tmdb_id / imdb_id / canonical_key
   type?: MediaContentType | 'all';
   year?: number | null;
+  /** Phase 5: filter by series/anime parent TMDB ID. Matches both the parent row and all its episode rows (they share tmdb_id). */
+  seriesTmdb?: string | null;
   provider_source_id?: string | null;
   status?: AssetStatus | MaveroStatus | 'all';
   sort?: LibrarySort;
@@ -162,6 +164,13 @@ export class MediaLibraryService {
     }
     if (query.year != null) {
       itemsQuery = itemsQuery.eq('year', query.year);
+    }
+    // Phase 5: filter by series/anime parent TMDB ID. Both the parent row
+    // and all its episode rows share the same tmdb_id, so a single .eq()
+    // filters to exactly that series + its episodes. The existing index
+    // media_items_content_type_tmdb_id_idx covers this lookup.
+    if (query.seriesTmdb) {
+      itemsQuery = itemsQuery.eq('tmdb_id', query.seriesTmdb);
     }
 
     // Sorting — applied at the items layer

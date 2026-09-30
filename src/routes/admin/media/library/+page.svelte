@@ -83,13 +83,16 @@
     sort: (initial.initialFilters.sort as FilterState['sort']) ?? 'recently_updated',
   });
   let yearFilter = $state<number | null>(initial.initialFilters.year ?? null);
-  let seriesTmdbFilter = $state<string | null>(null);
+  // Phase 5: seriesTmdbFilter is now wired to the server — tree selection
+  // actually filters the list. Initialized from the URL ?series= param so
+  // deep links + browser refresh preserve the selection.
+  let seriesTmdbFilter = $state<string | null>(initial.initialFilters.series ?? null);
 
   // Tree selection state — initialized from `initial`, kept in sync via handleTreeSelect
   const treeInitialType = initial.initialFilters.type === 'all' ? 'all' : initial.initialFilters.type;
   let treeSelectedType = $state(treeInitialType);
   let treeSelectedYear = $state<number | null>(initial.initialFilters.year ?? null);
-  let treeSelectedSeriesTmdb = $state<string | null>(null);
+  let treeSelectedSeriesTmdb = $state<string | null>(initial.initialFilters.series ?? null);
   let treeSelectionLabel = $state<string | null>(null);
 
   // Detail drawer state
@@ -119,6 +122,8 @@
       if (filters.q) params.set('q', filters.q);
       if (filters.type !== 'all') params.set('type', filters.type);
       if (yearFilter != null) params.set('year', String(yearFilter));
+      // Phase 5: persist series tree selection to URL so it survives refresh + is shareable.
+      if (seriesTmdbFilter) params.set('series', seriesTmdbFilter);
       if (filters.provider !== 'all') params.set('provider', filters.provider);
       if (filters.status !== 'all') params.set('status', filters.status);
       if (filters.sort !== 'recently_updated') params.set('sort', filters.sort);
@@ -143,6 +148,8 @@
       if (filters.q) params.set('q', filters.q);
       if (filters.type !== 'all') params.set('type', filters.type);
       if (yearFilter != null) params.set('year', String(yearFilter));
+      // Phase 5: send series filter to the API so the list actually filters by series.
+      if (seriesTmdbFilter) params.set('series', seriesTmdbFilter);
       // Provider filter maps to the source-id query param.
       if (filters.provider !== 'all') {
         if (filters.provider === 'vidara' || filters.provider === 'abyss') {

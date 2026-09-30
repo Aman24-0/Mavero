@@ -31,6 +31,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const yearStr = sp.get('year');
   const year = yearStr && /^\d{4}$/.test(yearStr) ? parseInt(yearStr, 10) : undefined;
   const provider = sp.get('provider') || undefined;
+  // Phase 5: series/anime parent TMDB ID filter (from AdminMediaTree selection).
+  const series = sp.get('series') || undefined;
   const status = sp.get('status') || 'all';
   const sort = sp.get('sort') || 'recently_updated';
   const page = parseInt(sp.get('page') ?? '1', 10) || 1;
@@ -40,7 +42,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // If folderSummary or sources fail, we don't fail the whole page —
   // partial failure is part of Phase C's resilience contract.
   const [listResult, folderResult, sourcesResult] = await Promise.allSettled([
-    service.list({ q, type: type as any, year, provider_source_id: provider, status: status as any, sort: sort as any, page, limit: 25 }),
+    service.list({ q, type: type as any, year, seriesTmdb: series, provider_source_id: provider, status: status as any, sort: sort as any, page, limit: 25 }),
     service.folderSummary(),
     adminClient
       .from('streaming_sources')
@@ -67,6 +69,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
           adapterId: s.provider?.adapter_id ?? null,
         }))
       : [],
-    initialFilters: { q, type, year, provider, status, sort, page, selectedId },
+    initialFilters: { q, type, year, series, provider, status, sort, page, selectedId },
   };
 };

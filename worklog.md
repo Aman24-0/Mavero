@@ -2983,3 +2983,96 @@ None. The `fetchViewing` service already runs its 4 main queries in parallel via
 
 - `seriesTmdb` URL/data-model cleanup (unchanged)
 - Admin Overview caching (unchanged — addon registry still lacks invalidation signal)
+
+---
+
+## Phase 5 — Data Model Cleanup, Overview Caching & Final Admin Hardening
+
+**Date:** 2026-10-01
+
+### seriesTmdb Audit Findings
+
+Two distinct layers share the `seriesTmdb` name but are unrelated:
+
+1. **AdminMediaTree selection payload** (`seriesTmdb`, `selectedSeriesTmdb`, `treeSelectedSeriesTmdb`, `seriesTmdbFilter`) — required-but-incomplete. The tree correctly emits `seriesTmdb` for series/anime node selection, and the parent stores it for tree-node highlight. However, `seriesTmdbFilter` was **dead code** — set in `handleTreeSelect` but never read by `syncUrl()` or `fetchList()`. The tree selection did not actually filter the list server-side. Picking "Series X" returned ALL series in the catalog, not just Series X. The selection was never persisted to URL or DB.
+
+2. **CanonicalMediaService input** (`seriesTmdbId` in `EnsureEpisodeInput`) — required and working. This is the parent-series TMDB ID used to create episode rows via `ensureEpisode`/`ensureAnimeEpisode`. Completely separate concern — not touched.
+
+### Canonical Data Model
+
+- `media_items` table uses `tmdb_id` (text) for both series parents and their episodes, with `parent_media_id` (FK) linking episodes to parents.
+- Canonical key format: `series:tmdb:<tmdb_id>` for parent, `series:tmdb:<tmdb_id>:s<season>:e<episode>` for episodes.
+- Both parent and episode rows share the same `tmdb_id`, so a single `.eq('tmdb_id', seriesTmdb)` filter returns exactly the parent + all its episodes.
+- No `series_tmdb` column exists in any table. No `?series=` URL param existed prior to Phase 5.
+- Analytics uses a single `content_id text` column — unrelated to the tree selection.
+
+### Exact Cleanup Performed
+
+**Wired the tree selection to actually filter the list (4-file change):**
+
+1. `src/lib/server/hosting/library/service.ts` — Added `seriesTmdb?: string | null` to `LibraryQuery` type. Added `.eq('tmdb_id', query.seriesTmdb)` filter in `list()` method (after the year filter). Uses the existing `media_items_content_type_tmdb_id_idx` index.
+
+2. `src/routes/api/admin/media/library/+server.ts` — Parses `?series=` query param, validates it's numeric (TMDB ID format), sets `query.seriesTmdb`.
+
+3. `src/routes/admin/media/library/+page.server.ts` — Parses `?series=` from URL, passes `seriesTmdb` to `service.list()`, returns it in `initialFilters` for client initialization.
+
+4. `src/routes/admin/media/library/+page.svelte` — `seriesTmdbFilter` is no longer dead code: `fetchList()` now sends `?series=` to the API, `syncUrl()` persists it to the URL. Both `seriesTmdbFilter` and `treeSelectedSeriesTmdb` are initialized from `initialFilters.series` so deep-links + browser refresh preserve the selection + tree highlight.
+
+### Backward Compatibility
+
+- No URL migration needed — `?series=` is a new param, not a renamed one. Old URLs without `?series=` work exactly as before (no series filter applied).
+- No schema changes — the filter uses the existing `tmdb_id` column + existing index.
+- No breaking changes to the `onselect` callback signature — `seriesTmdb` is still emitted, still stored in `treeSelectedSeriesTmdb` for highlight. The only difference is it now also reaches the server.
+- `CanonicalMediaService.seriesTmdbId` is unchanged — episode creation path is unaffected.
+- Watch/resume/progress/analytics paths are completely independent of the admin tree selection — no regression risk.
+
+### Admin Overview Performance Findings
+
+The Phase 3 deferral reason ("addon registry lacks a safe invalidation signal") is **still factually true** in the Phase 5 codebase:
+
+- `streaming_addons` table has NO `bump_config` trigger (migration `20260918000000_phase1_stremio_addons.sql` explicitly omits it).
+- No `streaming_addons_config_meta` table exists.
+- None of the 7 addon mutation functions (`createAddonFromManifestUrl`, `deleteAddonById`, `setAddonEnabled`, `setAddonPosition`, `setAddonLinkTypes`, `refreshAddonById`, `moveAddon`) call any invalidation function.
+- `content/cache.ts` `invalidate()` is dead code in production — zero production callsites.
+
+Phase 2 parallelization already achieves ~8-15ms Overview latency (13 queries across 3 services, all in parallel). The Overview is a navigation endpoint loaded once per visit — not a polled workload. Caching would save negligible time while introducing stale-data risk for addon counts.
+
+### Caching Decision
+
+**Do NOT cache.** The addon invalidation gap is the blocker. The existing parallelization meets the latency target. The `cache.invalidate()` API is dead code in production. A justified "no caching" conclusion is the acceptable Phase 5 outcome.
+
+### Cache Architecture
+
+Not implemented. `content/cache.ts` infrastructure preserved for future use.
+
+### Invalidation Strategy
+
+Not applicable (no cache introduced).
+
+### Performance Impact
+
+No caching change. The `seriesTmdb` cleanup adds one `.eq()` filter to an indexed column — negligible cost, and only applied when a series is actually selected in the tree.
+
+### Tests Added/Updated
+
+- **New**: `scripts/admin2_phase5_test.ts` — 16 check groups covering:
+  - A. seriesTmdb cleanup (LibraryQuery type, service filter, API param, server loader, page fetchList + syncUrl + initialization)
+  - B. seriesTmdbFilter is no longer dead code (read in 2+ places)
+  - C. CanonicalMediaService.seriesTmdbId unchanged
+  - D. Overview caching NOT implemented (deferral documented)
+  - E. No regressions (legacy redirects, [userId] shell, analytics tabs, fallback state)
+- **All admin tests pass**: 531 check groups across 15 test files
+
+### Validation Results
+
+- `pnpm check`: 0 errors / 0 warnings
+- `pnpm test`: all admin tests pass (531 check groups)
+- `pnpm build`: PASS / 0 warnings
+
+### Commit SHA
+
+`<filled-in after commit>`
+
+### Remaining Deferred Items
+
+- Admin Overview caching — blocked by addon invalidation gap (requires `streaming_addons_config_meta` migration + trigger + 7 invalidation calls). Deferred indefinitely.
