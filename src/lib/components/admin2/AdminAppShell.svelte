@@ -136,10 +136,10 @@
       id: 'system',
       label: 'System',
       items: [
-        { id: 'sources', label: 'API & Sources', href: '/admin/sources', icon: Settings, matchPrefix: '/admin/sources' },
-        { id: 'categories', label: 'Content Rules', href: '/admin/categories', icon: Layers, matchPrefix: '/admin/categories' },
-        { id: 'downloaders', label: 'Downloads', href: '/admin/downloaders', icon: Download, matchPrefix: '/admin/downloaders' },
-        { id: 'addons', label: 'Integrations', href: '/admin/addons', icon: Puzzle, matchPrefix: '/admin/addons' },
+        { id: 'api-sources', label: 'API & Sources', href: '/admin/system/api-sources', icon: Settings, matchPrefix: '/admin/system/api-sources' },
+        { id: 'content-rules', label: 'Content Rules', href: '/admin/system/content-rules', icon: Layers, matchPrefix: '/admin/system/content-rules' },
+        { id: 'downloads', label: 'Downloads', href: '/admin/system/downloads', icon: Download, matchPrefix: '/admin/system/downloads' },
+        { id: 'integrations', label: 'Integrations', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
       ]
     },
     {
@@ -157,12 +157,11 @@
     },
   ];
 
-  // Secondary configuration routes — surfaced via topbar dropdown + mobile More sheet.
-  // Phase G will fold these into API & Sources / Content Rules as contextual tabs.
-  const configItems: ConfigItem[] = [
-    { id: 'defaults', label: 'Defaults', href: '/admin/defaults', description: 'Default source, fallback, category ordering' },
-    { id: 'feature-control', label: 'Feature Control', href: '/admin/feature-control', description: 'Toggle platform features on/off' },
-  ];
+  // Phase G: configItems (Defaults + Feature Control) are now consolidated
+  // inside the Content Rules and API & Sources workspaces. The topbar
+  // Configure dropdown is retired — all configuration is in the SYSTEM
+  // nav group.
+  const configItems: ConfigItem[] = [];
 
   // Mobile bottom nav: 5 primary destinations
   const mobileNav: NavItem[] = [

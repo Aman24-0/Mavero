@@ -78,14 +78,18 @@ ok('1d. nav group OPERATIONS has Operations Center (Phase F restructuring)');
 // instead, surfaced via the topbar Configure dropdown + mobile More
 // sheet. Phase G will fold them into API & Sources / Content Rules
 // as contextual tabs.
-assert.match(adminAppShell, /\{ id: 'sources', label: 'API & Sources', href: '\/admin\/sources'/, 'nav: System → API & Sources');
-assert.match(adminAppShell, /\{ id: 'categories', label: 'Content Rules', href: '\/admin\/categories'/, 'nav: System → Content Rules');
-assert.match(adminAppShell, /\{ id: 'downloaders', label: 'Downloads', href: '\/admin\/downloaders'/, 'nav: System → Downloads');
-assert.match(adminAppShell, /\{ id: 'addons', label: 'Integrations', href: '\/admin\/addons'/, 'nav: System → Integrations');
-// configItems — Defaults + Feature Control live here instead
-assert.match(adminAppShell, /const configItems[\s\S]*\{ id: 'defaults'[\s\S]*href: '\/admin\/defaults'/, 'Defaults is in configItems (not the SYSTEM nav group)');
-assert.match(adminAppShell, /const configItems[\s\S]*\{ id: 'feature-control'[\s\S]*href: '\/admin\/feature-control'/, 'Feature Control is in configItems (not the SYSTEM nav group)');
-ok('1e. nav group SYSTEM has 4 items; Defaults + Feature Control moved to configItems');
+// Phase G consolidated the System nav to point to the new workspaces:
+// /admin/system/api-sources, /admin/system/content-rules,
+// /admin/system/downloads, /admin/system/integrations.
+assert.match(adminAppShell, /\{ id: 'api-sources', label: 'API & Sources', href: '\/admin\/system\/api-sources'/, 'nav: System → API & Sources');
+assert.match(adminAppShell, /\{ id: 'content-rules', label: 'Content Rules', href: '\/admin\/system\/content-rules'/, 'nav: System → Content Rules');
+assert.match(adminAppShell, /\{ id: 'downloads', label: 'Downloads', href: '\/admin\/system\/downloads'/, 'nav: System → Downloads');
+assert.match(adminAppShell, /\{ id: 'integrations', label: 'Integrations', href: '\/admin\/system\/integrations'/, 'nav: System → Integrations');
+// Phase G: configItems (Defaults + Feature Control) are now consolidated
+// inside the Content Rules and API & Sources workspaces. The topbar
+// Configure dropdown is retired — configItems is now an empty array.
+assert.match(adminAppShell, /const configItems: ConfigItem\[\] = \[\]/, 'configItems is now empty (Phase G consolidation)');
+ok('1e. nav group SYSTEM has 4 items pointing to /admin/system/* (Phase G consolidation)');
 
 // PEOPLE — single Analytics item covering /admin/users/* via matchPrefix
 assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: '\/admin\/users\/overview'/, 'nav: People → Analytics');
@@ -93,16 +97,18 @@ assert.match(adminAppShell, /matchPrefix: '\/admin\/users'/, 'nav: People → An
 ok('1f. nav group PEOPLE has Analytics with matchPrefix covering /admin/users/*');
 
 // ============================================================
-// 2. Configure dropdown + Mobile "More" sheet
+// 2. Configure dropdown — RETIRED in Phase G
 //
-// Defaults + Feature Control must be reachable from the new shell.
+// Phase G consolidated Defaults into API & Sources (as a sheet) and
+// Feature Control into Content Rules (as a tab). The topbar Configure
+// dropdown is retired — configItems is now an empty array.
 // ============================================================
-assert.match(adminAppShell, /configItems[\s\S]*id: 'defaults'[\s\S]*href: '\/admin\/defaults'/, 'Configure dropdown exposes Defaults');
-assert.match(adminAppShell, /configItems[\s\S]*id: 'feature-control'[\s\S]*href: '\/admin\/feature-control'/, 'Configure dropdown exposes Feature Control');
-ok('2a. Configure dropdown surfaces Defaults + Feature Control');
+assert.match(adminAppShell, /const configItems: ConfigItem\[\] = \[\]/, 'configItems is empty (Phase G retired the Configure dropdown)');
+ok('2a. Configure dropdown retired — Defaults + Feature Control consolidated into workspaces (Phase G)');
 
-assert.match(adminAppShell, /Configuration[\s\S]*configItems[\s\S]*Cog/, 'Mobile More sheet has a Configuration section');
-ok('2b. Mobile More sheet has Configuration section');
+// Mobile More sheet still renders (nav groups + empty config section)
+assert.match(adminAppShell, /Configuration/, 'Mobile More sheet has a Configuration section (now empty)');
+ok('2b. Mobile More sheet renders (Configuration section is empty in Phase G)');
 
 // ============================================================
 // 3. Route-aware active state — no fragile substring checks
