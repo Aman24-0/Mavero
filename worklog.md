@@ -1754,7 +1754,7 @@ Phase G does NOT add any new API endpoints. All 4 workspaces reuse existing serv
 ## Phase H — Analytics Redesign
 
 **Date:** 2026-09-30
-**Commit:** `8eac717`
+**Commit:** `0768850`
 **Objective:** Build the real Admin 2.0 Analytics workspace — a unified workspace with 5 contextual tabs (Overview, Users, Viewing, Providers, Retention) using real analytics_events data. No fabricated metrics.
 
 ### Audit Findings (Phase H fresh audit)
