@@ -1901,7 +1901,7 @@ A complete read-only audit of all analytics code was performed before implementa
 ## Phase I — Mobile-Native Admin
 
 **Date:** 2026-09-30
-**Commit:** `218f88e`
+**Commit:** `b6281d6`
 **Objective:** Perform a dedicated mobile-native redesign pass across the ENTIRE Admin 2.0. Fix safe-area handling, touch targets, filter sheet self-hiding, drawer full-screen on mobile, overflow prevention, and responsive breakpoints across all workspaces.
 
 ### Audit Findings (Phase I fresh audit)
