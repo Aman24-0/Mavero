@@ -28,7 +28,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   }
 
   const { range, preset, from, to } = resolveRangeFromParams(url.searchParams, '30d');
-  const adminClient = createSupabaseAdminClient();
 
   // Initialize all tab data as null — only the active tab gets populated.
   let overview: any = null;
@@ -45,6 +44,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   let retentionCohort = 'signup';
 
   try {
+    // Phase 4: createSupabaseAdminClient() is INSIDE the try/catch.
+    // Previously it was outside, so a missing PRIVATE_SUPABASE_SERVICE_ROLE_KEY
+    // env var would throw an uncaught error and 500 the entire route.
+    // Now the error is caught and surfaced via analyticsError, so the page
+    // renders the error state instead of crashing.
+    const adminClient = createSupabaseAdminClient();
+
     if (tab === 'overview') {
       overviewMode = url.searchParams.get('mode') ?? 'all';
       overviewMetric = url.searchParams.get('metric') ?? 'users';

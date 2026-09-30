@@ -2911,3 +2911,75 @@ Remove dead AdminShell architecture and obsolete test contracts after completion
 
 ### Commit
 `793d6f4`
+
+---
+
+## Phase 4 — Analytics Recovery & Viewing Completion
+
+**Date:** 2026-10-01
+
+### Root Cause of Analytics Not Opening
+
+The `/admin/analytics` route had a critical bug: `createSupabaseAdminClient()` was called **outside** the `try/catch` block in `+page.server.ts` (line 31, before the try block). If the `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` environment variable was missing or misconfigured, this call threw an uncaught error, causing the entire route to 500. The error was never caught by the `analyticsError` handler, so the page never rendered — not even an error state.
+
+Additional issues found during the audit:
+- **No fallback empty state**: if no tab condition matched (e.g., `data.<tab>` was null while `analyticsError` was also null), the page rendered completely blank inside AdminPage.
+- **Overview tab field-name mismatches**: `m.totalUsersComparison`, `m.watchStarts`, and `m.stickiness` did not exist on `OverviewMetrics` — they rendered `undefined`/`—` for every load.
+- **Viewing tab field-name mismatches**: `m.totalViews`, `m.watchCompletes`, `m.approxWatchTimeSeconds`, and `m.searches` did not exist on `ViewingMetrics` — same issue.
+
+### Exact Fix
+
+1. **`+page.server.ts`**: Moved `createSupabaseAdminClient()` inside the `try/catch` block. If it throws, `analyticsError` is set and the page renders the error state instead of 500ing.
+
+2. **`+page.svelte` — Overview tab**: Removed non-existent fields (`totalUsersComparison`, `watchStarts`), fixed `m.stickiness` → `m.dauMauRatio`, replaced `Guest Sessions` label with `Guest Reach` (matching `OverviewMetrics.guestReach`), added `Logged-in Reach` KPI card.
+
+3. **`+page.svelte` — Viewing tab**: Fixed all field names (`watchCompletes` → `completedWatches`, `approxWatchTimeSeconds` → `watchTimeSeconds`, `m.searches` → `v.search?.totalSearches`), removed non-existent `m.totalViews`.
+
+4. **`+page.svelte` — Fallback**: Added `{:else}` at the end of the tab chain rendering "Loading analytics data…" to prevent a blank page if no tab condition matches.
+
+5. **`+page.svelte` — CSS cleanup**: Removed 4 unused `.a2-kpi-comparison` CSS selectors (the comparison display was removed from the overview tab since `totalUsersComparison` doesn't exist on the metrics type).
+
+### Viewing Functionality Completed
+
+The Viewing tab was previously a stripped-down version showing only 6 KPI cards (most of which rendered `—` due to field-name bugs) and a single "Top Content" table. Phase 4 completed the deferred Viewing enrichment by adding all sections supported by the existing `fetchViewing` service:
+
+1. **Content Type Breakdown** — Movie/Series/Anime/Other watch starts + completes (8 KPI cards)
+2. **Top Content (Most Started)** — ranking table + mobile cards (fixed field names)
+3. **Most Completed** — ranking table + mobile cards (new section from `v.mostCompleted`)
+4. **Trending** — ranking table + mobile cards (new section from `v.trending`)
+5. **Genre Breakdown** — table from `v.genres` (new section)
+6. **Discovery & Search** — Total Searches, Unique Searchers, No-Result Searches KPIs + Top Queries table from `v.search` (new section)
+
+All data comes from the existing `fetchViewing` service — no new backend queries, no metric redefinition, no fabricated data.
+
+### Performance Changes
+
+None. The `fetchViewing` service already runs its 4 main queries in parallel via `Promise.all`. The enrichment adds only client-side rendering of data that was already fetched but not displayed.
+
+### Responsive/Loading Changes
+
+- Fallback empty state prevents blank page (loading/disabled state)
+- All new Viewing sections use the existing mobile card list pattern (`.a2-top-content-card-list`) established in Phase 3
+- Genre and Search tables use `.a2-top-content-wrap` class (hidden on mobile, table shown on desktop)
+- No horizontal page overflow on mobile
+
+### Tests Added/Updated
+
+- **New**: `scripts/admin2_phase4_test.ts` — 13 check groups covering root cause fix, fallback state, overview/viewing field-name fixes, viewing enrichment sections, legacy redirect integrity, AdminAppShell migration, CSS cleanup
+- **Updated**: `scripts/admin2_phaseH_test.ts` — fixed "Guest Sessions" → "Guest Reach" assertion (matching the corrected field name)
+- **All admin tests pass**: 515 check groups across 14 test files
+
+### Validation
+
+- `pnpm check`: 0 errors / 0 warnings
+- `pnpm test`: all admin tests pass (515 check groups)
+- `pnpm build`: PASS / 0 warnings
+
+### Commit SHA
+
+`<filled-in after commit>`
+
+### Deferred Items
+
+- `seriesTmdb` URL/data-model cleanup (unchanged)
+- Admin Overview caching (unchanged — addon registry still lacks invalidation signal)

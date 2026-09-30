@@ -157,7 +157,7 @@ ok('13a. API error state distinct from zero data (role=alert, not silent zero)')
 
 assert.match(overviewService, /anonymous_id/, 'overview service distinguishes anonymous_id (guest)');
 assert.match(overviewService, /user_id/, 'overview service distinguishes user_id (authenticated)');
-assert.match(analyticsPage, /Guest Sessions/, 'Overview shows Guest Sessions KPI');
+assert.match(analyticsPage, /Guest Reach/, 'Overview shows Guest Reach KPI (matches OverviewMetrics.guestReach field)');
 ok('14a. Guest vs authenticated separation is explicit in data model and UI');
 
 // ============================================================

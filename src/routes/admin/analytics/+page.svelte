@@ -198,12 +198,6 @@
             <div class="a2-kpi-card">
               <span class="a2-kpi-label">Total Users</span>
               <span class="a2-kpi-value">{formatNumber(m.totalUsers)}</span>
-              {#if m.totalUsersComparison != null}
-                <span class="a2-kpi-comparison" data-tone={comparisonTone(m.totalUsersComparison)}>
-                  {#if m.totalUsersComparison > 0}<TrendingUp size={11} />{:else if m.totalUsersComparison < 0}<TrendingDown size={11} />{:else}<Minus size={11} />{/if}
-                  {comparisonLabel(m.totalUsersComparison)}
-                </span>
-              {/if}
             </div>
             <div class="a2-kpi-card">
               <span class="a2-kpi-label">Active Users</span>
@@ -221,13 +215,13 @@
               <span class="a2-kpi-hint">Active before + in period</span>
             </div>
             <div class="a2-kpi-card">
-              <span class="a2-kpi-label">Guest Sessions</span>
+              <span class="a2-kpi-label">Guest Reach</span>
               <span class="a2-kpi-value">{formatNumber(m.guestReach)}</span>
               <span class="a2-kpi-hint">Unique anonymous IDs</span>
             </div>
             <div class="a2-kpi-card">
-              <span class="a2-kpi-label">Watch Starts</span>
-              <span class="a2-kpi-value">{formatNumber(m.watchStarts)}</span>
+              <span class="a2-kpi-label">Logged-in Reach</span>
+              <span class="a2-kpi-value">{formatNumber(m.loggedInReach)}</span>
             </div>
           </div>
 
@@ -239,8 +233,8 @@
                 <div class="a2-reach-card"><span class="a2-reach-label">DAU</span><span class="a2-reach-value">{formatNumber(m.dau)}</span><span class="a2-reach-hint">24h</span></div>
                 <div class="a2-reach-card"><span class="a2-reach-label">WAU</span><span class="a2-reach-value">{formatNumber(m.wau)}</span><span class="a2-reach-hint">7d</span></div>
                 <div class="a2-reach-card"><span class="a2-reach-label">MAU</span><span class="a2-reach-value">{formatNumber(m.mau)}</span><span class="a2-reach-hint">30d</span></div>
-                {#if m.stickiness != null}
-                  <div class="a2-reach-card"><span class="a2-reach-label">Stickiness</span><span class="a2-reach-value">{formatPercent(m.stickiness)}</span><span class="a2-reach-hint">DAU/MAU</span></div>
+                {#if m.dauMauRatio != null}
+                  <div class="a2-reach-card"><span class="a2-reach-label">Stickiness</span><span class="a2-reach-value">{formatPercent(m.dauMauRatio)}</span><span class="a2-reach-hint">DAU/MAU</span></div>
                 {/if}
               </div>
             </div>
@@ -347,18 +341,37 @@
         {:else}
           {@const m = v.metrics}
           <div class="a2-kpi-grid">
-            <div class="a2-kpi-card"><span class="a2-kpi-label">Total Views</span><span class="a2-kpi-value">{formatNumber(m.totalViews)}</span></div>
             <div class="a2-kpi-card"><span class="a2-kpi-label">Unique Viewers</span><span class="a2-kpi-value">{formatNumber(m.uniqueViewers)}</span></div>
             <div class="a2-kpi-card"><span class="a2-kpi-label">Watch Starts</span><span class="a2-kpi-value">{formatNumber(m.watchStarts)}</span></div>
-            <div class="a2-kpi-card"><span class="a2-kpi-label">Completed</span><span class="a2-kpi-value">{formatNumber(m.watchCompletes)}</span></div>
-            <div class="a2-kpi-card"><span class="a2-kpi-label">Watch Time</span><span class="a2-kpi-value">{formatDuration(m.approxWatchTimeSeconds)}</span><span class="a2-kpi-hint">Approximate</span></div>
-            <div class="a2-kpi-card"><span class="a2-kpi-label">Searches</span><span class="a2-kpi-value">{formatNumber(m.searches)}</span></div>
+            <div class="a2-kpi-card"><span class="a2-kpi-label">Completed</span><span class="a2-kpi-value">{formatNumber(m.completedWatches)}</span></div>
+            <div class="a2-kpi-card"><span class="a2-kpi-label">Watch Time</span><span class="a2-kpi-value">{formatDuration(m.watchTimeSeconds)}</span><span class="a2-kpi-hint">Approximate</span></div>
+            <div class="a2-kpi-card"><span class="a2-kpi-label">Searches</span><span class="a2-kpi-value">{formatNumber(v.search?.totalSearches)}</span></div>
+            <div class="a2-kpi-card"><span class="a2-kpi-label">Unique Searchers</span><span class="a2-kpi-value">{formatNumber(v.search?.uniqueSearchers)}</span></div>
           </div>
+
+          <!-- Content type breakdown -->
+          {#if m.watchStarts > 0}
+            <div class="a2-section">
+              <h3 class="a2-section-title">Content Type Breakdown</h3>
+              <div class="a2-kpi-grid">
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Movie Starts</span><span class="a2-kpi-value">{formatNumber(m.movieWatchStarts)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Series Starts</span><span class="a2-kpi-value">{formatNumber(m.seriesWatchStarts)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Anime Starts</span><span class="a2-kpi-value">{formatNumber(m.animeWatchStarts)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Other Starts</span><span class="a2-kpi-value">{formatNumber(m.otherWatchStarts)}</span></div>
+              </div>
+              <div class="a2-kpi-grid" style="margin-top: var(--a2-space-2);">
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Movie Completes</span><span class="a2-kpi-value">{formatNumber(m.movieCompletedWatches)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Series Completes</span><span class="a2-kpi-value">{formatNumber(m.seriesCompletedWatches)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Anime Completes</span><span class="a2-kpi-value">{formatNumber(m.animeCompletedWatches)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Other Completes</span><span class="a2-kpi-value">{formatNumber(m.otherCompletedWatches)}</span></div>
+              </div>
+            </div>
+          {/if}
 
           {@const topContent = v.mostStarted ?? []}
           {#if topContent.length > 0}
             <div class="a2-section">
-              <h3 class="a2-section-title">Top Content</h3>
+              <h3 class="a2-section-title">Top Content (Most Started)</h3>
               <!-- Phase 3 mobile: card list (visible <768px). Read-only. -->
               <ul class="a2-analytics-card-list a2-top-content-card-list" role="list">
                 {#each topContent as item, i}
@@ -397,6 +410,134 @@
             </div>
           {:else}
             <div class="a2-empty-inline">No viewing events in this period.</div>
+          {/if}
+
+          <!-- Most Completed -->
+          {#if v.mostCompleted && v.mostCompleted.length > 0}
+            <div class="a2-section">
+              <h3 class="a2-section-title">Most Completed</h3>
+              <ul class="a2-analytics-card-list a2-top-content-card-list" role="list">
+                {#each v.mostCompleted as item, i}
+                  <li>
+                    <div class="a2-top-content-card">
+                      <div class="a2-top-content-card-head">
+                        <span class="a2-rank mono">#{i + 1}</span>
+                        <span class="a2-type-chip" data-type={item.content_type ?? 'unknown'}>{item.content_type ?? '—'}</span>
+                      </div>
+                      <div class="a2-top-content-card-title">{item.title ?? '—'}</div>
+                      <div class="a2-top-content-card-foot">
+                        <span>Completes <span class="mono">{formatNumber(item.count)}</span></span>
+                        <span>Unique viewers <span class="mono">{formatNumber(item.unique_viewers)}</span></span>
+                      </div>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+              <div class="a2-table-wrap a2-top-content-wrap">
+                <table class="a2-table">
+                  <thead><tr><th>#</th><th>Title</th><th>Type</th><th>Completes</th><th>Unique Viewers</th></tr></thead>
+                  <tbody>
+                    {#each v.mostCompleted as item, i}
+                      <tr>
+                        <td class="mono">{i + 1}</td>
+                        <td>{item.title ?? '—'}</td>
+                        <td>{item.content_type ?? '—'}</td>
+                        <td class="mono">{formatNumber(item.count)}</td>
+                        <td class="mono">{formatNumber(item.unique_viewers)}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Trending -->
+          {#if v.trending && v.trending.length > 0}
+            <div class="a2-section">
+              <h3 class="a2-section-title">Trending (Watch Starts in Period)</h3>
+              <ul class="a2-analytics-card-list a2-top-content-card-list" role="list">
+                {#each v.trending as item, i}
+                  <li>
+                    <div class="a2-top-content-card">
+                      <div class="a2-top-content-card-head">
+                        <span class="a2-rank mono">#{i + 1}</span>
+                        <span class="a2-type-chip" data-type={item.content_type ?? 'unknown'}>{item.content_type ?? '—'}</span>
+                      </div>
+                      <div class="a2-top-content-card-title">{item.title ?? '—'}</div>
+                      <div class="a2-top-content-card-foot">
+                        <span>Watch starts <span class="mono">{formatNumber(item.count)}</span></span>
+                        <span>Unique viewers <span class="mono">{formatNumber(item.unique_viewers)}</span></span>
+                      </div>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+              <div class="a2-table-wrap a2-top-content-wrap">
+                <table class="a2-table">
+                  <thead><tr><th>#</th><th>Title</th><th>Type</th><th>Watch Starts</th><th>Unique Viewers</th></tr></thead>
+                  <tbody>
+                    {#each v.trending as item, i}
+                      <tr>
+                        <td class="mono">{i + 1}</td>
+                        <td>{item.title ?? '—'}</td>
+                        <td>{item.content_type ?? '—'}</td>
+                        <td class="mono">{formatNumber(item.count)}</td>
+                        <td class="mono">{formatNumber(item.unique_viewers)}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Genre breakdown -->
+          {#if v.genres && v.genres.length > 0}
+            <div class="a2-section">
+              <h3 class="a2-section-title">Genre Breakdown</h3>
+              <div class="a2-table-wrap a2-top-content-wrap">
+                <table class="a2-table">
+                  <thead><tr><th>Genre</th><th>Watch Starts</th></tr></thead>
+                  <tbody>
+                    {#each v.genres as g}
+                      <tr>
+                        <td>{g.genre}</td>
+                        <td class="mono">{formatNumber(g.watch_starts)}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Search / Discovery analytics -->
+          {#if v.search && v.search.totalSearches > 0}
+            <div class="a2-section">
+              <h3 class="a2-section-title">Discovery & Search</h3>
+              <div class="a2-kpi-grid">
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Total Searches</span><span class="a2-kpi-value">{formatNumber(v.search.totalSearches)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">Unique Searchers</span><span class="a2-kpi-value">{formatNumber(v.search.uniqueSearchers)}</span></div>
+                <div class="a2-kpi-card"><span class="a2-kpi-label">No-Result Searches</span><span class="a2-kpi-value">{formatNumber(v.search.noResultSearches)}</span></div>
+              </div>
+              {#if v.search.topQueries && v.search.topQueries.length > 0}
+                <div class="a2-table-wrap a2-top-content-wrap" style="margin-top: var(--a2-space-2);">
+                  <table class="a2-table">
+                    <thead><tr><th>Query</th><th>Count</th><th>No Results</th></tr></thead>
+                    <tbody>
+                      {#each v.search.topQueries as q}
+                        <tr>
+                          <td>{q.query}</td>
+                          <td class="mono">{formatNumber(q.count)}</td>
+                          <td class="mono">{formatNumber(q.no_result_count)}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              {/if}
+            </div>
           {/if}
         {/if}
 
@@ -528,6 +669,11 @@
             <div class="a2-empty-inline">No retention cohort available. Guest retention is not supported (cookie-based identity is unreliable for multi-day tracking).</div>
           {/if}
         {/if}
+
+      <!-- Fallback: no tab data loaded (should not normally happen, but
+           prevents a blank page if data.<tab> is null without an error) -->
+      {:else}
+        <div class="a2-empty-inline">Loading analytics data… If this persists, the analytics database may be unavailable.</div>
       {/if}
     {/if}
   </AdminPage>
@@ -549,10 +695,6 @@
   .a2-kpi-label { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
   .a2-kpi-value { font-family: var(--a2-font-mono); font-size: var(--a2-text-xl); font-weight: 700; color: var(--a2-text-bright); }
   .a2-kpi-hint { font-size: 9px; color: var(--a2-text-dim); }
-  .a2-kpi-comparison { display: inline-flex; align-items: center; gap: 2px; font-size: var(--a2-text-2xs); font-weight: 600; }
-  .a2-kpi-comparison[data-tone="green"] { color: var(--a2-green); }
-  .a2-kpi-comparison[data-tone="red"] { color: var(--a2-red); }
-  .a2-kpi-comparison[data-tone="neutral"] { color: var(--a2-text-dim); }
 
   .a2-section { display: flex; flex-direction: column; gap: var(--a2-space-2); padding: var(--a2-space-4) 0; }
   .a2-section-title { margin: 0; font-size: var(--a2-text-sm); font-weight: 700; color: var(--a2-text-bright); }
