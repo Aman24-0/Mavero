@@ -35,21 +35,28 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
 // ============================================================
-// A. Route + admin authorization
+// A. Route — now a Phase 3 redirect stub to /admin/analytics?tab=viewing
 // ============================================================
+// Phase 3: the canonical Analytics workspace (Phase H) owns the viewing
+// dashboard. The legacy /admin/users/viewing/+page.server.ts and +page.svelte
+// are redirect stubs. Service contracts (fetchViewing) are tested in §B–K.
 
 const viewingServer = read('src/routes/admin/users/viewing/+page.server.ts');
-ok(/requireAdmin\(locals, \{ redirectTo: '\/admin\/users\/viewing' \}\)/.test(viewingServer), 'A1. viewing load calls requireAdmin with correct redirect');
-ok(/fetchViewing\(locals\.supabase, range\)/.test(viewingServer), 'A2. viewing load calls fetchViewing with locals.supabase + range');
-ok(/resolveRangeFromParams\(url\.searchParams/.test(viewingServer), 'A3. viewing load resolves date range from URL params');
+const viewingServerNoComments = viewingServer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+ok(/throw redirect\(303, `\/admin\/analytics\?/.test(viewingServer), 'A1. viewing server is a redirect stub to /admin/analytics?tab=viewing');
+ok(!/requireAdmin/.test(viewingServerNoComments), 'A2. viewing server no longer calls requireAdmin (canonical route handles auth)');
+ok(!/fetchViewing/.test(viewingServerNoComments), 'A3. viewing server no longer calls fetchViewing (canonical route owns the fetch)');
+ok(/params\.set\('tab', 'viewing'\)/.test(viewingServer), 'A4. viewing server sets tab=viewing in forwarded params');
 
 const viewingPage = read('src/routes/admin/users/viewing/+page.svelte');
-ok(/<AdminShell active="users-viewing">/.test(viewingPage), 'A4. viewing page wraps in AdminShell with active="users-viewing"');
+ok(/goto\(.*\/admin\/analytics\?tab=viewing/.test(viewingPage) || /\/admin\/analytics\?/.test(viewingPage), 'A5. viewing page has client-side goto() to canonical Analytics viewing tab');
+ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=viewing"/.test(viewingPage), 'A6. viewing page has meta-refresh fallback for no-JS clients');
+ok(!/<AdminShell/.test(viewingPage), 'A7. viewing page does NOT mount AdminShell (redirect stub)');
 
-// Nav entry added.
+// Nav entry — kept in AdminShell.svelte as a legacy pointer to the now-redirect stub.
 const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/id: 'users-viewing', label: 'Viewing', href: '\/admin\/users\/viewing'/.test(adminShell), 'A5. AdminShell usersLinks contains users-viewing entry');
-ok(/icon: Play/.test(adminShell), 'A6. Viewing nav entry uses the Play icon');
+ok(/id: 'users-viewing', label: 'Viewing', href: '\/admin\/users\/viewing'/.test(adminShell), 'A8. AdminShell usersLinks still contains legacy users-viewing entry (points at redirect stub)');
+ok(/icon: Play/.test(adminShell), 'A9. Viewing nav entry uses the Play icon');
 
 // ============================================================
 // B. Date range — UTC / half-open preserved
@@ -121,8 +128,9 @@ ok(!/ip_address/.test(viewingModuleNoComments), 'H1. viewing module does not ref
 ok(!/user_agent/.test(viewingModuleNoComments), 'H2. viewing module does not select/display user_agent');
 ok(!/request_id/.test(viewingModuleNoComments), 'H3. viewing module does not select/display request_id');
 ok(!/ip_hash/.test(viewingModuleNoComments), 'H4. viewing module does not use ip_hash for identity (no IP-based stitching)');
-// The page does not display anonymous IDs.
-ok(!/anonymous_id.*display|display.*anonymous_id/i.test(viewingPage), 'H5. viewing page does not display anonymous_id values');
+// The canonical analytics page (not the legacy redirect stub) does not
+// display anonymous IDs.
+ok(!/anonymous_id.*display|display.*anonymous_id/i.test(read('src/routes/admin/analytics/+page.svelte')), 'H5. canonical analytics page does not display anonymous_id values');
 
 // ============================================================
 // I. Performance/safety — bounded query, no unbounded fetch, no client DB
@@ -131,19 +139,23 @@ ok(!/anonymous_id.*display|display.*anonymous_id/i.test(viewingPage), 'H5. viewi
 ok(/TOP_CONTENT_LIMIT|\.slice\(0,/.test(viewingModule), 'I1. content rankings bounded (TOP_CONTENT_LIMIT or slice)');
 ok(/TOP_QUERIES_LIMIT/.test(viewingModule), 'I2. search queries bounded (TOP_QUERIES_LIMIT)');
 ok(/resolveContentTitles\(/.test(viewingModule), 'I3. content title resolution is bounded (resolveContentTitles called with bounded set)');
-// No client-side Supabase — the page does not import createClient.
-ok(!/createClient|@supabase\/supabase-js/.test(viewingPage), 'I4. viewing page does NOT import Supabase client (no client-side DB access)');
+// No client-side Supabase — the canonical analytics page does not import createClient
+// (the legacy viewing route is a redirect stub with no client-side code at all).
+ok(!/createClient|@supabase\/supabase-js/.test(read('src/routes/admin/analytics/+page.svelte')), 'I4. canonical analytics page does NOT import Supabase client (no client-side DB access)');
 // The query selects only required columns (not select('*')).
 ok(!/select\('\*'\)/.test(viewingModule), 'I5. viewing module does NOT use select('*') — projects only required columns');
 
 // ============================================================
-// J. UI states — empty, error, unavailable metric
+// J. UI states — empty, error, unavailable metric (on canonical analytics page)
+// The legacy /admin/users/viewing page is now a redirect stub; the
+// canonical /admin/analytics?tab=viewing page owns the UI states.
 // ============================================================
 
-ok(/AdminEmptyState/.test(viewingPage), 'J1. viewing page uses AdminEmptyState for empty state');
-ok(/role="alert"/.test(viewingPage), 'J2. viewing page has error state with role="alert"');
-ok(/watchTimeSeconds === null|not available/.test(viewingPage), 'J3. viewing page shows not-available state when watch time is null');
-ok(/isEmpty/.test(viewingPage), 'J4. viewing page has isEmpty derived state');
+const analyticsPage = read('src/routes/admin/analytics/+page.svelte');
+ok(/a2-empty/.test(analyticsPage), 'J1. canonical analytics page uses a2-empty empty-state class');
+ok(/role="alert"/.test(analyticsPage), 'J2. canonical analytics page has error state with role="alert"');
+ok(/Approximate|not available|Watch Time/.test(analyticsPage), 'J3. canonical analytics page labels watch time as Approximate (not-available state owned by module)');
+ok(/a2-empty|a2-empty-inline/.test(analyticsPage), 'J4. canonical analytics page has empty-state classes for zero-data');
 
 // ============================================================
 // K. Mock-DB behavioral tests

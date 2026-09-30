@@ -55,34 +55,33 @@ ok(/icon: Users/.test(adminShell), '1b. Users nav entry uses the Users icon');
 ok(/users-overview/.test(adminShell) && /users-list/.test(adminShell), '1c. both users-overview (Phase 2) and users-list (Phase 3) entries present');
 // The active prop type now includes 'users-list' and 'users-detail'.
 ok(/users-list/.test(adminShell) && /users-detail/.test(adminShell), '1d. active prop type includes users-list + users-detail');
-// The existing Workspace links are preserved (test-locked).
+// The existing Workspace links are preserved (test-locked). Workspace
+// Providers link was updated to the canonical route in Phase 1.
 ok(/\{ id: 'overview', label: 'Overview', href: '\/admin'/.test(adminShell), '1e. existing Workspace Overview link preserved');
-ok(/\{ id: 'providers', label: 'Providers', href: '\/admin\/providers'/.test(adminShell), '1f. existing Workspace Providers link preserved');
+ok(/href: '\/admin\/system\/api-sources\?tab=providers'/.test(adminShell), '1f. Workspace Providers link points to canonical /admin/system/api-sources?tab=providers (Phase 1)');
 
 // ============================================================
-// 2. Users list route + server load contract
+// 2. Users list route — now a Phase 3 redirect stub to /admin/analytics?tab=users
 // ============================================================
+// Phase 3: the canonical Analytics workspace (Phase H) owns the user list.
+// The legacy /admin/users/+page.server.ts and +page.svelte are redirect
+// stubs. Service contracts (listUsers, fetchUserDetail) are tested in §4.
 
 const listServer = read('src/routes/admin/users/+page.server.ts');
-ok(/requireAdmin\(locals, \{ redirectTo: '\/admin\/users' \}\)/.test(listServer), '2a. users list load calls requireAdmin with correct redirect');
-ok(/listUsers\(/.test(listServer), '2b. users list load calls listUsers');
-ok(/resolveRangeFromParams\(url\.searchParams/.test(listServer), '2c. users list load resolves date range from URL params');
-ok(/url\.searchParams\.get\('q'\)/.test(listServer), '2d. users list load reads ?q= search param');
-ok(/url\.searchParams\.get\('filter'\)/.test(listServer), '2e. users list load reads ?filter= param');
-ok(/url\.searchParams\.get\('page'\)/.test(listServer), '2f. users list load reads ?page= param');
-ok(/url\.searchParams\.get\('pageSize'\)/.test(listServer), '2g. users list load reads ?pageSize= param');
-ok(/filterOptions/.test(listServer), '2h. users list load returns filterOptions for the UI');
-ok(/presetList/.test(listServer), '2i. users list load returns presetList for the date-range picker');
+// Strip comments before checking for absence of requireAdmin/listUsers so
+// that the doc-comment mentions ("canonical route owns the listUsers call")
+// don't trip the negative assertions.
+const listServerNoComments = listServer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+ok(/throw redirect\(303, `\/admin\/analytics\?/.test(listServer), '2a. users list server is a redirect stub to /admin/analytics?tab=users');
+ok(!/requireAdmin/.test(listServerNoComments), '2b. users list server no longer calls requireAdmin (canonical route handles auth)');
+ok(!/listUsers/.test(listServerNoComments), '2c. users list server no longer calls listUsers (canonical route owns the fetch)');
+ok(/params\.set\('tab', 'users'\)/.test(listServer), '2d. users list server sets tab=users in forwarded params');
+ok(/new URLSearchParams\(url\.searchParams\)/.test(listServer), '2e. users list server forwards all URL params (q/filter/page/period) to canonical route');
 
 const listPage = read('src/routes/admin/users/+page.svelte');
-ok(/<AdminShell active="users-list">/.test(listPage), '2j. users list page wraps in AdminShell with active="users-list"');
-ok(/<table class="users-table">/.test(listPage), '2k. users list page renders a table');
-ok(/type="search"/.test(listPage), '2l. users list page has a search input');
-ok(/filter-pill/.test(listPage), '2m. users list page has filter pills');
-ok(/pagination/.test(listPage), '2n. users list page has pagination controls');
-ok(/AdminEmptyState/.test(listPage), '2o. users list page uses AdminEmptyState for empty state');
-ok(/role="alert"/.test(listPage), '2p. users list page has an error state with role="alert"');
-ok(/goto\(`\/admin\/users\/\$\{user\.id\}`\)/.test(listPage), '2q. clicking a user row navigates to /admin/users/[userId]');
+ok(/goto\(.*\/admin\/analytics\?tab=users/.test(listPage) || /\/admin\/analytics\?/.test(listPage), '2f. users list page has client-side goto() to canonical Analytics users tab');
+ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=users"/.test(listPage), '2g. users list page has meta-refresh fallback for no-JS clients');
+ok(!/<AdminShell/.test(listPage), '2h. users list page does NOT mount AdminShell (redirect stub)');
 
 // ============================================================
 // 3. User detail route + server load contract
@@ -97,13 +96,13 @@ ok(/throw error\(404/.test(detailServer), '3e. user detail load throws 404 when 
 ok(/url\.searchParams\.get\('page'\)/.test(detailServer), '3f. user detail load reads timeline ?page= param');
 
 const detailPage = read('src/routes/admin/users/[userId]/+page.svelte');
-ok(/<AdminShell active="users-detail">/.test(detailPage), '3g. user detail page wraps in AdminShell with active="users-detail"');
+ok(/<AdminAppShell active="analytics">/.test(detailPage), '3g. user detail page wraps in AdminAppShell with active="analytics"');
 ok(/Account Information/i.test(detailPage) || /Account/.test(detailPage), '3h. user detail page has account information section');
 ok(/Activity Summary/i.test(detailPage) || /activity-summary/.test(detailPage) || /ActivitySummary/.test(detailPage) || /activity summary/i.test(detailPage), '3i. user detail page has activity summary section');
 ok(/Activity Timeline/i.test(detailPage) || /timeline/.test(detailPage), '3j. user detail page has activity timeline section');
 ok(/Viewing History/i.test(detailPage) || /viewing-history/.test(detailPage), '3k. user detail page has viewing history section');
 ok(/Guest history/i.test(detailPage) || /guest-history/.test(detailPage), '3l. user detail page has guest history section');
-ok(/back-link/.test(detailPage) && /\/admin\/users/.test(detailPage), '3m. user detail page has a back-to-users link');
+ok(/back-link/.test(detailPage) && /\/admin\/analytics\?tab=users/.test(detailPage), '3m. user detail page has a back-to-users link pointing to canonical /admin/analytics?tab=users');
 ok(/AdminEmptyState/.test(detailPage), '3n. user detail page uses AdminEmptyState');
 ok(/role="alert"/.test(detailPage), '3o. user detail page has an error state with role="alert"');
 
@@ -161,8 +160,9 @@ ok(/timelinePage/.test(usersModule) && /timelinePageSize/.test(usersModule), '6c
 ok(/display_name\.ilike/.test(usersModule), '7a. listUsers uses ilike for case-insensitive partial match on display_name');
 // 7b. Search is bounded (200 chars max).
 ok(/slice\(0, 200\)/.test(usersModule), '7b. search input bounded to 200 chars');
-// 7c. The list server reads ?q= from the URL.
-ok(/url\.searchParams\.get\('q'\)/.test(listServer), '7c. search is URL-driven (?q=)');
+// 7c. The list server forwards URL params to the canonical route (search is
+// URL-driven via ?q= in the canonical /admin/analytics page).
+ok(/new URLSearchParams\(url\.searchParams\)/.test(listServer), '7c. users list server forwards URL params (including ?q=) to canonical route');
 
 // ============================================================
 // 8. Identity handling — user_id primary, no IP-based stitching
@@ -216,8 +216,9 @@ ok(/users: \[\]/.test(usersModule), '11a. listUsers returns empty array on no re
 ok(/error:/.test(usersModule), '11b. listUsers returns error field on failure');
 // 11c. fetchUserDetail returns safe empty shape on error.
 ok(/account: null/.test(usersModule), '11c. fetchUserDetail returns account: null on error');
-// 11d. The list page shows AdminEmptyState when no users.
-ok(/AdminEmptyState/.test(listPage), '11d. list page uses AdminEmptyState');
+// 11d. The canonical analytics page (not the legacy redirect stub) shows
+// an empty state when no users match the search/filter.
+ok(/a2-empty/.test(read('src/routes/admin/analytics/+page.svelte')), '11d. canonical analytics page has a2-empty empty-state class (legacy list route is now a redirect stub)');
 // 11e. The detail page shows AdminEmptyState when user not found.
 ok(/AdminEmptyState/.test(detailPage), '11e. detail page uses AdminEmptyState');
 
@@ -236,10 +237,12 @@ ok(/order\('event_time', \{ ascending: false \}\)/.test(usersModule), '12c. time
 // 13. URL state behavior
 // ============================================================
 
-// 13a. List page uses goto() for URL-driven state.
-ok(/goto\(/.test(listPage), '13a. list page uses goto() for URL-driven state');
-// 13b. Search resets to page 1.
-ok(/params\.delete\('page'\)/.test(listPage), '13b. search/filter change resets page to 1');
+// 13a. List page uses goto() for the redirect stub (URL state is now owned
+// by the canonical /admin/analytics page).
+ok(/goto\(/.test(listPage), '13a. list page uses goto() for redirect stub to canonical route');
+// 13b. The canonical analytics page owns the search/filter/page URL state
+// (the legacy list route is a redirect stub that forwards all params).
+ok(/new URLSearchParams\(url\.searchParams\)/.test(listServer), '13b. list server forwards URL params (search/filter/page state preserved across redirect)');
 // 13c. Detail page timeline is URL-paginated.
 ok(/goto\(/.test(detailPage) && /page/.test(detailPage), '13c. detail page timeline is URL-paginated');
 
@@ -249,20 +252,25 @@ ok(/goto\(/.test(detailPage) && /page/.test(detailPage), '13c. detail page timel
 
 // 14a. Reuses MEANINGFUL_ACTIVITY_EVENTS from Phase 1.
 ok(/import \{ MEANINGFUL_ACTIVITY_EVENTS \} from '\$lib\/shared\/analytics-taxonomy'/.test(usersModule), '14a. users module imports MEANINGFUL_ACTIVITY_EVENTS from Phase 1');
-// 14b. Reuses resolveRangeFromParams from Phase 2.
-ok(/import \{.*resolveRangeFromParams.*\} from '\$lib\/shared\/analytics-period'/.test(listServer), '14b. list server imports resolveRangeFromParams from Phase 2');
-// 14c. Reuses AdminShell (no second admin layout).
-ok(/import AdminShell from '\$lib\/components\/AdminShell\.svelte'/.test(listPage), '14c-i. list page reuses AdminShell');
-ok(/import AdminShell from '\$lib\/components\/AdminShell\.svelte'/.test(detailPage), '14c-ii. detail page reuses AdminShell');
-// 14d. Reuses admin components (AdminPageHeader, AdminEmptyState, AdminStatusBadge, AdminMetricCard, AdminSection, AdminDateRangePicker).
-ok(/AdminPageHeader/.test(listPage) && /AdminPageHeader/.test(detailPage), '14d-i. both pages reuse AdminPageHeader');
-ok(/AdminEmptyState/.test(listPage) && /AdminEmptyState/.test(detailPage), '14d-ii. both pages reuse AdminEmptyState');
-ok(/AdminStatusBadge/.test(listPage) && /AdminStatusBadge/.test(detailPage), '14d-iii. both pages reuse AdminStatusBadge');
+// 14b. resolveRangeFromParams is imported by the canonical analytics server
+// (the legacy list server is now a redirect stub and no longer resolves ranges).
+const analyticsServer = read('src/routes/admin/analytics/+page.server.ts');
+ok(/import \{.*resolveRangeFromParams.*\} from '\$lib\/shared\/analytics-period'/.test(analyticsServer), '14b. canonical analytics server imports resolveRangeFromParams from Phase 2');
+// 14c. Reuses admin shells — detail page uses AdminAppShell (Phase 3),
+// list page is a redirect stub (no shell mounted).
+ok(!/<AdminShell/.test(listPage), '14c-i. list page is a redirect stub (no AdminShell mounted)');
+ok(/import AdminAppShell from '\$lib\/components\/admin2\/AdminAppShell\.svelte'/.test(detailPage), '14c-ii. detail page reuses AdminAppShell (Phase 3 admin2 shell)');
+// 14d. Reuses admin components — list page is a redirect stub (no components),
+// detail page reuses the Phase 1/2/3 admin component library.
+ok(/AdminPage/.test(detailPage), '14d-i. detail page reuses AdminPage (admin2 header)');
+ok(/AdminEmptyState/.test(detailPage), '14d-ii. detail page reuses AdminEmptyState');
+ok(/AdminStatusBadge/.test(detailPage), '14d-iii. detail page reuses AdminStatusBadge');
 ok(/AdminMetricCard/.test(detailPage), '14d-iv. detail page reuses AdminMetricCard');
 ok(/AdminSection/.test(detailPage), '14d-v. detail page reuses AdminSection');
-ok(/AdminDateRangePicker/.test(listPage), '14d-vi. list page reuses AdminDateRangePicker');
-// 14e. Reuses requireAdmin from Phase 1 (no new admin auth).
-ok(/import \{ requireAdmin \} from '\$lib\/server\/streaming\/admin-auth'/.test(listServer), '14e-i. list server reuses requireAdmin');
+ok(/AdminDateRangePicker/.test(read('src/lib/components/admin/AdminDateRangePicker.svelte')), '14d-vi. AdminDateRangePicker component still exists (legacy list route is a redirect stub; canonical analytics page uses inline period controls)');
+// 14e. Reuses requireAdmin from Phase 1 — detail server still does; the
+// legacy list server is now a redirect stub (auth handled by canonical route).
+ok(!/requireAdmin/.test(listServerNoComments), '14e-i. list server is a redirect stub (no requireAdmin — canonical route handles auth)');
 ok(/import \{ requireAdmin \} from '\$lib\/server\/streaming\/admin-auth'/.test(detailServer), '14e-ii. detail server reuses requireAdmin');
 
 // ============================================================

@@ -11,8 +11,8 @@
    */
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import AdminShell from '$lib/components/AdminShell.svelte';
-  import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
+  import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
+  import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminSection from '$lib/components/admin/AdminSection.svelte';
   import AdminMetricCard from '$lib/components/admin/AdminMetricCard.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
@@ -72,20 +72,21 @@
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
-<AdminShell active="users-detail">
-  <AdminPageHeader
-    eyebrow="MAVERO / User Management"
+<AdminAppShell active="analytics">
+  <AdminPage
+    eyebrow="People / Analytics"
     title={data.result.account?.display_name ?? 'Unnamed user'}
-    accent="."
-    description={data.result.account?.email ?? data.userId}
+    accent="cyan"
   >
+    {#snippet description()}
+      <p>{data.result.account?.email ?? data.userId}</p>
+    {/snippet}
     {#snippet actions()}
-      <a class="back-link" href="/admin/users" aria-label="Back to users list">
+      <a class="back-link" href="/admin/analytics?tab=users" aria-label="Back to users list">
         <ArrowLeft size={14} />
         <span>Back to users</span>
       </a>
     {/snippet}
-  </AdminPageHeader>
 
   {#if hasError}
     <div class="detail-error" role="alert">
@@ -359,7 +360,8 @@
       {/if}
     </section>
   {/if}
-</AdminShell>
+</AdminPage>
+</AdminAppShell>
 
 <style>
   .back-link {

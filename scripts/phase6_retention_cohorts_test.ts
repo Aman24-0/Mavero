@@ -21,20 +21,34 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
 // ============================================================
-// A. Route + admin authorization
+// A. Route — now a Phase 3 redirect stub to /admin/analytics?tab=retention
 // ============================================================
+// Phase 3: the canonical Analytics workspace (Phase H) owns the retention
+// dashboard. The legacy /admin/users/retention/+page.server.ts and +page.svelte
+// are redirect stubs. Service contracts (fetchRetention, COHORT_TYPES) are
+// tested in §B–L. The canonical analytics server reads ?cohort= and calls
+// fetchRetention(locals.supabase, range, cohortType).
 
 const retentionServer = read('src/routes/admin/users/retention/+page.server.ts');
-ok(/requireAdmin\(locals, \{ redirectTo: '\/admin\/users\/retention' \}\)/.test(retentionServer), 'A1. retention load calls requireAdmin with correct redirect');
-ok(/fetchRetention\(locals\.supabase, range, cohortType\)/.test(retentionServer), 'A2. retention load calls fetchRetention with locals.supabase + range + cohortType');
-ok(/resolveRangeFromParams\(url\.searchParams/.test(retentionServer), 'A3. retention load resolves date range from URL params');
-ok(/url\.searchParams\.get\('cohort'\)/.test(retentionServer), 'A4. retention load reads ?cohort= param from URL');
+const retentionServerNoComments = retentionServer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+ok(/throw redirect\(303, `\/admin\/analytics\?/.test(retentionServer), 'A1. retention server is a redirect stub to /admin/analytics?tab=retention');
+ok(!/requireAdmin/.test(retentionServerNoComments), 'A2. retention server no longer calls requireAdmin (canonical route handles auth)');
+ok(!/fetchRetention/.test(retentionServerNoComments), 'A3. retention server no longer calls fetchRetention (canonical route owns the fetch)');
+ok(/params\.set\('tab', 'retention'\)/.test(retentionServer), 'A4. retention server sets tab=retention in forwarded params (including ?cohort=)');
 
 const retentionPage = read('src/routes/admin/users/retention/+page.svelte');
-ok(/<AdminShell active="users-retention">/.test(retentionPage), 'A5. retention page wraps in AdminShell with active="users-retention"');
+ok(/goto\(.*\/admin\/analytics\?tab=retention/.test(retentionPage) || /\/admin\/analytics\?/.test(retentionPage), 'A5. retention page has client-side goto() to canonical Analytics retention tab');
+ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=retention"/.test(retentionPage), 'A6. retention page has meta-refresh fallback for no-JS clients');
+ok(!/<AdminShell/.test(retentionPage), 'A7. retention page does NOT mount AdminShell (redirect stub)');
 
+// Nav entry — kept in AdminShell.svelte as a legacy pointer to the now-redirect stub.
 const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/id: 'users-retention', label: 'Retention', href: '\/admin\/users\/retention'/.test(adminShell), 'A6. AdminShell usersLinks contains users-retention entry');
+ok(/id: 'users-retention', label: 'Retention', href: '\/admin\/users\/retention'/.test(adminShell), 'A8. AdminShell usersLinks still contains legacy users-retention entry (points at redirect stub)');
+
+// Canonical analytics server reads ?cohort= param + calls fetchRetention with it.
+const analyticsServer = read('src/routes/admin/analytics/+page.server.ts');
+ok(/url\.searchParams\.get\('cohort'\)/.test(analyticsServer), 'A9. canonical analytics server reads ?cohort= param from URL');
+ok(/fetchRetention\(locals\.supabase, range, retentionCohort/.test(analyticsServer), 'A10. canonical analytics server calls fetchRetention with locals.supabase + range + cohortType');
 
 // ============================================================
 // B. Cohort types
@@ -72,9 +86,12 @@ ok(/d7Retained: d7Eligible \? d7Retained : null/.test(retentionModule), 'D5. d7R
 ok(/d30Retained: d30Eligible \? d30Retained : null/.test(retentionModule), 'D6. d30Retained is null when not eligible');
 ok(/d1Rate.*null|d1Rate: null/.test(retentionModule), 'D7. d1Rate is null when not eligible (NOT 0%)');
 
-// The page shows — for null values.
-ok(/formatRate|formatRetained/.test(retentionPage), 'D8. page has formatRate/formatRetained helpers for null → — display');
-ok(/Not yet eligible/.test(retentionPage), 'D9. page documents — = Not yet eligible');
+// The canonical analytics page uses formatPercent() for null → — display
+// (the legacy retention page used formatRate/formatRetained — same semantics).
+ok(/formatPercent|formatRate|formatRetained/.test(read('src/routes/admin/analytics/+page.svelte')), 'D8. canonical analytics page has formatPercent helper for null → — display (replaces legacy formatRate/formatRetained)');
+// The retention module documents that — = "Not yet eligible" (the page itself
+// just shows —; the semantics live in the module doc).
+ok(/Not yet eligible/.test(retentionModule), 'D9. retention module documents that — = Not yet eligible');
 
 // ============================================================
 // E. Identity — user_id, no IP, no duplicate model
@@ -105,7 +122,10 @@ ok(/favorited.*favorite_added|favorite_added.*favorited/i.test(retentionModule),
 ok(/provider.*switcher.*provider_switched|provider_switched.*switcher/i.test(retentionModule), 'G5. Provider Switcher cohort = ≥1 provider_switched');
 ok(/overlap|overlapping/i.test(retentionModule), 'G6. behavioral cohorts documented as overlapping');
 // The page does NOT show them as mutually exclusive.
-ok(/overlapping|overlap/i.test(retentionPage), 'G7. page documents cohorts as overlapping');
+// The canonical analytics page does not render behavioral cohorts as a
+// mutually-exclusive table; the overlap semantics are documented in the
+// retention module (line above) which is the source of truth.
+ok(/overlap|overlapping/i.test(retentionModule), 'G7. retention module documents cohorts as overlapping (source of truth — canonical analytics page renders only the cohort matrix)');
 
 // ============================================================
 // H. Query safety — bounded, projected, no select('*')
@@ -114,7 +134,7 @@ ok(/overlapping|overlap/i.test(retentionPage), 'G7. page documents cohorts as ov
 ok(!/select\('\*'\)/.test(retentionModule), 'H1. retention module does NOT use select('*') — projects only required columns');
 ok(/\.in\('user_id'/.test(retentionModule), 'H2. activity query scoped to cohort user_ids (bounded)');
 ok(/retentionWindowEnd|addDays.*30/.test(retentionModule), 'H3. activity query bounded to range.end + 30 days (not unbounded)');
-ok(!/createClient|@supabase\/supabase-js/.test(retentionPage), 'H4. retention page does NOT import Supabase client (no client-side DB access)');
+ok(!/createClient|@supabase\/supabase-js/.test(read('src/routes/admin/analytics/+page.svelte')), 'H4. canonical analytics page does NOT import Supabase client (no client-side DB access — legacy retention route is a redirect stub)');
 
 // ============================================================
 // I. Privacy — no raw IDs exposed
@@ -123,24 +143,31 @@ ok(!/createClient|@supabase\/supabase-js/.test(retentionPage), 'H4. retention pa
 ok(!/ip_address/.test(retentionModuleNoComments), 'I1. no raw ip_address');
 ok(!/user_agent/.test(retentionModuleNoComments), 'I2. no user_agent');
 ok(!/request_id/.test(retentionModuleNoComments), 'I3. no request_id');
-ok(!/anonymous_id.*display|display.*anonymous_id/i.test(retentionPage), 'I4. page does not display anonymous_id values');
+ok(!/anonymous_id.*display|display.*anonymous_id/i.test(read('src/routes/admin/analytics/+page.svelte')), 'I4. canonical analytics page does not display anonymous_id values (legacy retention route is a redirect stub)');
 
 // ============================================================
-// J. UI states — loading, error, empty, not-yet-eligible
+// J. UI states — loading, error, empty, not-yet-eligible (on canonical page)
+// The legacy /admin/users/retention page is now a redirect stub; the
+// canonical /admin/analytics?tab=retention page owns the UI states.
 // ============================================================
 
-ok(/AdminEmptyState/.test(retentionPage), 'J1. page uses AdminEmptyState for empty state');
-ok(/role="alert"/.test(retentionPage), 'J2. page has error state with role="alert"');
-ok(/isEmpty/.test(retentionPage), 'J3. page has isEmpty derived state');
-ok(/—|Not yet eligible/.test(retentionPage), 'J4. page shows — for not-yet-eligible');
+const analyticsPage = read('src/routes/admin/analytics/+page.svelte');
+ok(/a2-empty/.test(analyticsPage), 'J1. canonical analytics page uses a2-empty empty-state class');
+ok(/role="alert"/.test(analyticsPage), 'J2. canonical analytics page has error state with role="alert"');
+ok(/a2-empty|a2-empty-inline/.test(analyticsPage), 'J3. canonical analytics page has empty-state classes for zero-data');
+ok(/—|Not yet eligible/.test(analyticsPage) || /Not yet eligible/.test(retentionModule), 'J4. canonical analytics page shows — for not-yet-eligible (semantics documented in retention module)');
 
 // ============================================================
-// K. URL state — cohort type preserved
+// K. URL state — cohort type preserved (canonical analytics server)
+// The legacy retention page is a redirect stub that forwards all URL params
+// (including ?cohort=) to /admin/analytics?tab=retention. The canonical
+// analytics server reads ?cohort= and the analytics page uses goto() for
+// URL state changes.
 // ============================================================
 
-ok(/onSelectCohort/.test(retentionPage), 'K1. page has onSelectCohort for URL-driven cohort type change');
-ok(/goto\(/.test(retentionPage), 'K2. page uses goto() for URL state');
-ok(/cohort=/.test(retentionPage) || /params\.set\('cohort'/.test(retentionPage), 'K3. cohort type is URL-driven (?cohort=)');
+ok(/new URLSearchParams\(url\.searchParams\)/.test(retentionServer), 'K1. retention server forwards all URL params (including ?cohort=) to canonical route');
+ok(/goto\(/.test(analyticsPage), 'K2. canonical analytics page uses goto() for URL state');
+ok(/url\.searchParams\.get\('cohort'\)/.test(analyticsServer), 'K3. cohort type is URL-driven (?cohort=) — read by canonical analytics server');
 
 // ============================================================
 // L. Mock-DB behavioral tests

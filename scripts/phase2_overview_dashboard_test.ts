@@ -345,51 +345,36 @@ assert.ok(MEANINGFUL_ACTIVITY_EVENTS.size >= 10, `MEANINGFUL_ACTIVITY_EVENTS has
 ok(true, '8c. MEANINGFUL_ACTIVITY_EVENTS is non-empty (≥10 events)');
 
 // ============================================================
-// 9. Admin nav wiring — User Management section added
+// 9. AdminShell still exists (legacy) — Workspace links updated to canonical routes in Phase 1
+// Phase 3: the /admin/users/* routes are now redirect stubs to /admin/analytics?tab=...
+// AdminShell.svelte is no longer imported by any route (the last consumer,
+// /admin/users/[userId], migrated to AdminAppShell in Phase 3).
 // ============================================================
 
 const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/usersLinks/.test(adminShell), '9a. AdminShell defines a usersLinks array');
-ok(/id: 'users-overview'/.test(adminShell), '9b. usersLinks contains the users-overview entry');
-ok(/href: '\/admin\/users\/overview'/.test(adminShell), '9c. users-overview links to /admin/users/overview');
-ok(/Users &amp; Analytics/.test(adminShell), '9d. Users & Analytics section label rendered');
-ok(/users-section-label/.test(adminShell), '9e. users-section-label CSS class applied');
-// The existing Workspace links are untouched (test-locked).
+ok(/usersLinks/.test(adminShell), '9a. AdminShell still defines a usersLinks array (legacy, unused)');
+ok(/id: 'users-overview'/.test(adminShell), '9b. usersLinks contains the users-overview entry (legacy)');
+ok(/href: '\/admin\/users\/overview'/.test(adminShell), '9c. usersLinks still points at /admin/users/overview (now a redirect stub)');
 ok(/\{ id: 'overview', label: 'Overview', href: '\/admin'/.test(adminShell), '9f. existing Workspace Overview link preserved');
-ok(/\{ id: 'providers', label: 'Providers', href: '\/admin\/providers'/.test(adminShell), '9g. existing Workspace Providers link preserved');
-// The `active` prop type now includes 'users-overview'.
-ok(/users-overview/.test(adminShell), '9h. active prop type includes users-overview');
+// Phase 1: Workspace links updated to canonical routes
+ok(/href: '\/admin\/system\/api-sources\?tab=providers'/.test(adminShell), '9g. Workspace Providers link updated to canonical route (Phase 1)');
 
 // ============================================================
-// 10. Overview route + server load contract
+// 10. Overview route — Phase 3 redirect stub to /admin/analytics?tab=overview
+// The canonical Analytics workspace owns the overview dashboard.
+// Service contracts (fetchOverview, resolveRangeFromParams) are tested in §11.
 // ============================================================
 
 const overviewServer = read('src/routes/admin/users/overview/+page.server.ts');
-ok(/requireAdmin\(locals, \{ redirectTo: '\/admin\/users\/overview' \}\)/.test(overviewServer), '10a. overview load calls requireAdmin with correct redirect');
-ok(/fetchOverview\(locals\.supabase, range/.test(overviewServer), '10b. overview load calls fetchOverview with locals.supabase + range');
-ok(/resolveRangeFromParams\(url\.searchParams/.test(overviewServer), '10c. overview load resolves range from URL search params');
-ok(/presetList/.test(overviewServer), '10d. overview load returns presetList for the date-range picker');
-// Trend mode + metric are validated against closed sets.
-ok(/validModes/.test(overviewServer) && /validMetrics/.test(overviewServer), '10e. overview load validates trend mode + metric against closed sets');
+ok(/throw redirect\(303, `\/admin\/analytics\?/.test(overviewServer), '10a. overview server is a redirect stub to /admin/analytics?tab=overview');
+ok(!/requireAdmin/.test(overviewServer), '10b. overview server no longer calls requireAdmin (canonical route handles auth)');
+ok(!/fetchOverview/.test(overviewServer), '10c. overview server no longer calls fetchOverview (canonical route owns the fetch)');
+ok(/params\.set\('tab', 'overview'\)/.test(overviewServer), '10d. overview server sets tab=overview in forwarded params');
 
 const overviewPage = read('src/routes/admin/users/overview/+page.svelte');
-ok(/<AdminShell active="users-overview">/.test(overviewPage), '10f. overview page wraps in AdminShell with active="users-overview"');
-ok(/AdminDateRangePicker/.test(overviewPage), '10g. overview page renders AdminDateRangePicker');
-ok(/AdminTrendChart/.test(overviewPage), '10h. overview page renders AdminTrendChart');
-ok(/AdminFunnel/.test(overviewPage), '10i. overview page renders AdminFunnel');
-ok(/Total Users/.test(overviewPage), '10j. overview page has Total Users card');
-ok(/Active Users/.test(overviewPage), '10k. overview page has Active Users card');
-ok(/New Users/.test(overviewPage), '10l. overview page has New Users card');
-ok(/Returning Users/.test(overviewPage), '10m. overview page has Returning Users card');
-ok(/Guest Reach/.test(overviewPage), '10n. overview page has Guest Reach card');
-ok(/Logged-in Reach/.test(overviewPage), '10o. overview page has Logged-in Reach card');
-ok(/Guest Active/.test(overviewPage), '10p. overview page has Guest Active card');
-ok(/Logged-in Active/.test(overviewPage), '10q. overview page has Logged-in Active card');
-ok(/DAU/.test(overviewPage), '10r. overview page has DAU card');
-ok(/WAU/.test(overviewPage), '10s. overview page has WAU card');
-ok(/MAU/.test(overviewPage), '10t. overview page has MAU card');
-ok(/DAU \/ MAU/.test(overviewPage), '10u. overview page has DAU/MAU stickiness card');
-ok(/Guest → Account Conversion/.test(overviewPage), '10v. overview page has Guest→Account funnel section');
+ok(/goto\(.*\/admin\/analytics\?tab=overview/.test(overviewPage) || /\/admin\/analytics\?/.test(overviewPage), '10e. overview page has client-side goto() to canonical Analytics tab');
+ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=overview"/.test(overviewPage), '10f. overview page has meta-refresh fallback for no-JS clients');
+ok(!/<AdminShell/.test(overviewPage), '10g. overview page does NOT mount AdminShell (redirect stub)');
 
 // ============================================================
 // 11. Overview query module contract
@@ -435,16 +420,19 @@ ok(/export async function requireAdmin/.test(adminAuth), '13a. requireAdmin is e
 ok(/role !== 'admin'/.test(adminAuth), '13b. requireAdmin checks profiles.role === admin');
 
 // ============================================================
-// 14. Zero-data + error-state handling
+// 14. Zero-data + error-state handling (tested on canonical Analytics page)
+// The legacy /admin/users/overview page is now a redirect stub; the
+// canonical /admin/analytics?tab=overview page owns the error/empty states.
 // ============================================================
 
-// 14a. The overview page has an explicit error state.
-ok(/overview-error/.test(overviewPage) && /role="alert"/.test(overviewPage), '14a. overview page has an error state with role="alert"');
-// 14b. The overview page has an explicit empty state.
-ok(/AdminEmptyState/.test(overviewPage), '14b. overview page uses AdminEmptyState for zero-data');
+const analyticsPage = read('src/routes/admin/analytics/+page.svelte');
+// 14a. The canonical analytics page has an explicit error state.
+ok(/a2-analytics-error/.test(analyticsPage) && /role="alert"/.test(analyticsPage), '14a. analytics page has an error state with role="alert"');
+// 14b. The canonical analytics page has an explicit empty state.
+ok(/a2-empty/.test(analyticsPage), '14b. analytics page has an empty state class for zero-data');
 // 14c. The error state does not expose SQL internals.
-ok(!/relation "public/.test(overviewPage), '14c. overview page does not expose raw SQL error text');
-ok(!/PGST/.test(overviewPage), '14d. overview page does not expose PostgREST error codes');
+ok(!/relation "public/.test(analyticsPage), '14c. analytics page does not expose raw SQL error text');
+ok(!/PGST/.test(analyticsPage), '14d. analytics page does not expose PostgREST error codes');
 
 // ============================================================
 // 15. No double-counting — unique-identity deduplication

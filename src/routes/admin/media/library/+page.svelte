@@ -39,7 +39,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { Upload, SlidersHorizontal, ChevronLeft, ChevronRight, X, Film, AlertCircle, Server } from 'lucide-svelte';
+  import { Upload, SlidersHorizontal, ChevronLeft, ChevronRight, X, Film, AlertCircle, Server, ListTree } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminMediaTree, { type FolderSummary } from '$lib/components/admin2/AdminMediaTree.svelte';
@@ -101,6 +101,8 @@
 
   // Mobile filter sheet state
   let mobileFiltersOpen = $state<boolean>(false);
+  // Phase 3: mobile content-hierarchy sheet state (replaces the hidden tree on <1024px)
+  let mobileHierarchyOpen = $state<boolean>(false);
 
   let selectedId = $state<string | null>(initial.initialFilters.selectedId ?? null);
 
@@ -353,6 +355,17 @@
         >
           <SlidersHorizontal size={14} /> Filters
         </button>
+
+        <!-- Phase 3: mobile content-hierarchy trigger (hidden on desktop, shown <1024px).
+             Replaces the desktop tree sidebar which is display:none on mobile. -->
+        <button
+          type="button"
+          class="library-hierarchy-mobile-btn"
+          onclick={() => (mobileHierarchyOpen = true)}
+          aria-label="Open content hierarchy"
+        >
+          <ListTree size={14} /> Hierarchy
+        </button>
       </div>
 
       {#if treeSelectionLabel}
@@ -455,6 +468,62 @@
     onclose={closeDetail}
     onupload={openUploadForItem}
   />
+
+  <!-- ============================================================
+       Phase 3: Mobile content-hierarchy sheet (<1024px only).
+       Reuses the same <AdminMediaTree> component as the desktop sidebar,
+       with the same props + onselect callback. Auto-closes on selection.
+       Same folders ref — zero data duplication.
+       ============================================================ -->
+  {#if mobileHierarchyOpen}
+    <div
+      class="library-hierarchy-sheet-overlay"
+      onclick={() => (mobileHierarchyOpen = false)}
+      role="presentation"
+    >
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
+        class="library-hierarchy-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="library-hierarchy-sheet-title"
+        tabindex="-1"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <header class="library-hierarchy-sheet-head">
+          <h2 id="library-hierarchy-sheet-title"><ListTree size={14} /> Content Hierarchy</h2>
+          <button
+            type="button"
+            class="library-hierarchy-sheet-close"
+            onclick={() => (mobileHierarchyOpen = false)}
+            aria-label="Close hierarchy"
+          >
+            <X size={16} />
+          </button>
+        </header>
+        <div class="library-hierarchy-sheet-body">
+          <AdminMediaTree
+            {folders}
+            loading={foldersLoading}
+            error={foldersError}
+            selectedType={treeSelectedType}
+            selectedYear={treeSelectedYear}
+            selectedSeriesTmdb={treeSelectedSeriesTmdb}
+            onselect={(sel) => { handleTreeSelect(sel); mobileHierarchyOpen = false; }}
+          />
+        </div>
+        <footer class="library-hierarchy-sheet-actions">
+          <button
+            type="button"
+            class="library-hierarchy-sheet-done"
+            onclick={() => (mobileHierarchyOpen = false)}
+          >
+            Done
+          </button>
+        </footer>
+      </div>
+    </div>
+  {/if}
 </AdminAppShell>
 
 <style>
@@ -495,6 +564,108 @@
     background: var(--a2-surface-2);
     color: var(--a2-text-muted);
     font-size: var(--a2-text-xs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* Phase 3: mobile hierarchy trigger — mirrors .library-filters-mobile-btn */
+  .library-hierarchy-mobile-btn {
+    display: none;
+    align-items: center;
+    gap: var(--a2-space-2);
+    padding: var(--a2-space-2) var(--a2-space-3);
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-surface-2);
+    color: var(--a2-text-muted);
+    font-size: var(--a2-text-xs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* Phase 3: mobile hierarchy sheet (Pattern B — matches AdminOpsJobs/AdminHostingAssets filter sheets) */
+  .library-hierarchy-sheet-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: rgba(0, 0, 0, .55);
+    display: flex;
+    align-items: flex-end;
+  }
+  .library-hierarchy-sheet {
+    width: 100%;
+    background: var(--a2-surface-1);
+    border-top-left-radius: var(--a2-radius-lg);
+    border-top-right-radius: var(--a2-radius-lg);
+    border-top: 1px solid var(--a2-border-strong);
+    display: flex;
+    flex-direction: column;
+    max-height: 80vh;
+    animation: a2-sheet-up var(--a2-motion-normal, 240ms) var(--a2-ease-out);
+  }
+  @keyframes a2-sheet-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+  .library-hierarchy-sheet-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--a2-space-4);
+    border-bottom: 1px solid var(--a2-border);
+  }
+  .library-hierarchy-sheet-head h2 {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--a2-space-2);
+    font-size: var(--a2-text-base);
+    font-weight: 700;
+    color: var(--a2-text-bright);
+  }
+  .library-hierarchy-sheet-close {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--a2-text-muted);
+    padding: 8px;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: var(--a2-radius-xs);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .library-hierarchy-sheet-close:hover { color: var(--a2-cyan); background: var(--a2-surface-3); }
+  .library-hierarchy-sheet-body {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    flex: 1;
+  }
+  /* Override the tree's sidebar-specific CSS when rendered inside the sheet */
+  .library-hierarchy-sheet-body :global(.a2-media-tree) {
+    border-right: 0;
+    height: auto;
+    width: 100%;
+  }
+  .library-hierarchy-sheet-actions {
+    padding: var(--a2-space-3) var(--a2-space-4);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--a2-border);
+    display: flex;
+    gap: var(--a2-space-2);
+  }
+  .library-hierarchy-sheet-done {
+    flex: 1;
+    padding: var(--a2-space-2) var(--a2-space-4);
+    min-height: 44px;
+    background: var(--a2-cyan);
+    color: var(--a2-surface-1);
+    border: none;
+    border-radius: var(--a2-radius-sm);
+    font-size: var(--a2-text-sm);
     font-weight: 600;
     cursor: pointer;
   }
@@ -658,6 +829,10 @@
     .library-filters-mobile-btn {
       display: inline-flex;
     }
+    /* Phase 3: show the hierarchy trigger on mobile */
+    .library-hierarchy-mobile-btn {
+      display: inline-flex;
+    }
     /* Hide the desktop filter bar's inline selects on mobile — they'd be cramped */
     .library-toolbar-desktop :global(.media-filters-desktop .filter-select),
     .library-toolbar-desktop :global(.media-filters-desktop .filter-search) {
@@ -684,5 +859,6 @@
     .library-action,
     .page-btn,
     .library-error-retry { transition: none; }
+    .library-hierarchy-sheet { animation: none; }
   }
 </style>

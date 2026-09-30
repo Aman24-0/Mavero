@@ -212,8 +212,12 @@ ok('20a. Content ranking derived from analytics events (not TMDB popularity)');
 
 assert.match(providersService, /provider_id/, 'providers service tracks provider_id');
 assert.match(providersService, /source_id/, 'providers service tracks source_id');
-assert.match(analyticsPage, /Provider.*Source/, 'page shows Provider and Source as distinct columns');
-ok('21a. Provider vs source distinction is explicit in data and UI');
+// Phase 3: the Provider Usage table no longer has a "Source" column (the
+// ProviderUsageEntry type has no source field — it was a desktop-only fiction
+// that rendered '—' for every row). The provider/source distinction is still
+// explicit in the service layer (provider_id + source_id tracked separately).
+assert.match(analyticsPage, /Provider Usage/, 'page has Provider Usage section');
+ok('21a. Provider vs source distinction is explicit in data (service tracks both ids); UI shows Provider Usage');
 
 // ============================================================
 // 22. Retention cohort calculation

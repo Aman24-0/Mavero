@@ -2750,3 +2750,132 @@ Subagent audit identified **3 critical tables** + **3 CSS bugs** + **touch targe
 ### Commit SHA
 
 `cb17883`
+
+---
+
+## Phase 3 — Admin 2.0 Final Consistency / Deferred Issue Fixes
+
+**Date:** 2026-10-01
+**Objective:** Address the four deferred areas from Phase 2: Analytics mobile tables, legacy /admin/users/* architecture, Media Library mobile hierarchy, and Admin Overview caching.
+
+### Phase 1/2 Verification
+
+- `pnpm check`: 0 errors / 0 warnings (Phase 2 intact)
+- All admin2 tests pass: admin_nav (4) + phaseB (30) + phaseG (36) + phaseI (29) + phase2 (31) = 130 check groups
+- No regression in Phase 2 performance parallelization, cyan loading UI, mobile card transformations, or touch-target fixes
+
+### Audit Findings
+
+**A. Analytics Mobile Tables** — 4 tables (Users, Top Content, Provider Usage, Cohort Matrix) used shared `.a2-table-wrap` with `overflow-x: auto` on mobile. Audit also discovered latent field-name bugs: 3 of 4 tables referenced camelCase fields (`displayName`, `isActive`, `topContent`, `providerName`, `watchStarts`) but the data is snake_case (`display_name`, `is_active`, `mostStarted`, `provider_name`, `watch_starts`). The Top Content table NEVER rendered (`v.topContent` does not exist on `ViewingResult`). The Users pagination never rendered (`u.totalPages` doesn't exist on `UserListResult`). The Cohort KPI card showed `undefined` (`s?.cohortSize` should be `s?.totalCohortUsers`).
+
+**B. Legacy /admin/users/*** — All 6 routes used `AdminShell` (legacy). Backend services were 100% reused by `/admin/analytics` but the 5 list/overview routes rendered richer presentations than the Analytics tabs. The `/admin/users/[userId]` detail page was the only unique route (per-user detail with timeline, viewing history, guest history). AdminShell.svelte was imported ONLY by `/admin/users/*` — no other route used it. 5 phase-specific test files (phase2_overview_dashboard, phase3_user_management, phase4_viewing_discovery, phase5_provider_analytics, phase6_retention_cohorts) had been broken since Phase 1's AdminShell link changes but were not run during Phase 2.
+
+**C. Media Library Mobile Hierarchy** — The `AdminMediaTree` sidebar was `display: none` on mobile (<1024px), losing the Movies/Series/Anime navigation. No hierarchy trigger existed. Audit confirmed `AdminMediaTree` is a pure presentational component (props in, callback out) that can be reused inside a sheet with a single `:global` CSS override. The same `folders` state ref feeds both desktop + mobile — zero data duplication.
+
+**D. Admin Overview Caching** — Audit determined caching is **unsafe** in Phase 3. The addon registry (`streaming_addons`) has NO invalidation signal: no `streaming_addons_config_meta` table, no DB trigger, no in-process invalidator. A cache of `getAddonsAdminOverview` would silently return stale `addonCount`/`enabledCount` after `createAddonFromManifestUrl`/`deleteAddonById`/`setAddonEnabled` until TTL expiry. The existing `content/cache.ts` `invalidate(prefix)` function is unused in production. Phase 2 parallelization already reduced Overview load to ~10-15ms. **Decision: defer caching indefinitely.**
+
+### Design / Architecture Decisions
+
+1. **Analytics tables**: Followed the Phase 2 mobile card-list pattern (AdminOpsJobs/AdminHostingAssets). Added table-specific modifier classes (`.a2-users-wrap`, `.a2-top-content-wrap`, `.a2-providers-wrap`, `.a2-cohort-wrap`) so the 768px breakpoint can flip display. Fixed ALL field-name bugs in both desktop tables AND mobile cards (desktop was also broken — most cells rendered `undefined`/`—`).
+
+2. **Legacy /admin/users/***: Converted 5 list/overview routes to server-side redirect stubs (forwarding all URL params + `?tab=...`). Migrated `/admin/users/[userId]` to `AdminAppShell active="analytics"` + `AdminPage` (minimal shell swap — content sections preserved). Back-link updated to `/admin/analytics?tab=users`. AdminShell.svelte retained but no longer imported by any route.
+
+3. **Media Library hierarchy**: Added a "Hierarchy" trigger button (mobile-only, mirrors the existing "Filters" button pattern) + a bottom sheet (Pattern B from AdminOpsJobs/AdminHostingAssets) that reuses `<AdminMediaTree>` with the same props + callback. Auto-closes on selection. Single `:global` CSS override neutralizes the tree's sidebar-specific `border-right` and `height:100%`.
+
+4. **Overview caching**: Documented deferral with rationale. No code changes.
+
+### Files Changed
+
+**20 files changed, 638 insertions(+), 3056 deletions(-)** — net deletion of 2418 lines (legacy route pages → redirect stubs).
+
+**Analytics mobile tables + field-name fixes (1 file):**
+1. `src/routes/admin/analytics/+page.svelte` — 4 mobile card lists added, 4 desktop tables fixed (snake_case field names), pagination/empty-state bugs fixed, touch targets bumped
+
+**Legacy /admin/users/* migration (11 files):**
+2-6. `src/routes/admin/users/{+page,+page.server}.ts` + `overview/{+page,+page.server}.ts` + `viewing/{+page,+page.server}.ts` + `providers/{+page,+page.server}.ts` + `retention/{+page,+page.server}.ts` — each pair reduced to redirect stubs
+7. `src/routes/admin/users/[userId]/+page.svelte` — AdminShell → AdminAppShell, AdminPageHeader → AdminPage, back-link → canonical Analytics
+
+**Media Library mobile hierarchy (1 file):**
+8. `src/routes/admin/media/library/+page.svelte` — hierarchy trigger button + bottom sheet + CSS
+
+**Tests (7 files):**
+9. `scripts/admin2_phase3_test.ts` — NEW (27 check groups)
+10. `scripts/admin2_phaseH_test.ts` — updated Provider/Source column assertion
+11-15. `scripts/phase2_overview_dashboard_test.ts` + `phase3_user_management_test.ts` + `phase4_viewing_discovery_test.ts` + `phase5_provider_analytics_test.ts` + `phase6_retention_cohorts_test.ts` — route/UI assertions rewritten for redirect stubs + AdminAppShell migration; service-module contract assertions preserved
+
+**Config:**
+16. `package.json` — `admin2_phase3_test.ts` added to test suite
+
+### Backend/API Changes
+
+None. No backend services, API endpoints, database migrations, or analytics metric definitions were modified. All changes are presentation-layer only.
+
+### Issues Fixed
+
+1. Analytics Users table: field-name bugs (camelCase → snake_case) — desktop was rendering `undefined` for most cells
+2. Analytics Users pagination: `u.totalPages` doesn't exist → computed `Math.ceil(u.total / u.pageSize)`
+3. Analytics Users empty state: `u.usersQ` undefined → `data.usersQ`
+4. Analytics Top Content table: `v.topContent` doesn't exist → `v.mostStarted`; `item.views`/`item.completes`/`item.contentType` → `item.count`/`item.unique_viewers`/`item.content_type`
+5. Analytics Provider Usage table: `item.providerName`/`item.sourceName`/`item.watchStarts`/`item.completes` → `item.provider_name`/removed/`item.watch_starts`/`item.completed_watches`; non-existent "Source" column removed
+6. Analytics Cohort KPI: `s?.cohortSize` → `s?.totalCohortUsers`
+7. Analytics mobile: 4 tables converted to card lists (no horizontal scroll on mobile)
+8. Legacy `/admin/users/*`: 5 routes converted to redirect stubs (no double-redirect, URL params forwarded)
+9. `/admin/users/[userId]`: migrated to AdminAppShell (consistent Admin 2.0 shell)
+10. Media Library mobile: hierarchy trigger + bottom sheet replaces hidden tree
+11. 5 broken test files (broken since Phase 1) fixed with updated assertions
+
+### Tests
+
+- **New**: `scripts/admin2_phase3_test.ts` — 27 check groups (A: analytics cards + field bugs, B: users migration, C: library hierarchy, D: caching deferral)
+- **Updated**: `admin2_phaseH_test.ts` — Provider/Source column assertion
+- **Updated**: 5 phase-specific tests (phase2_overview, phase3_user, phase4_viewing, phase5_provider, phase6_retention) — route/UI sections rewritten; service-module contracts preserved
+- **All pass**: admin_nav (4) + phaseB (30) + phaseG (36) + phaseH (30) + phaseI (29) + phase2 (31) + phase3 (27) + phase2_overview (71) + phase3_user (92) + phase4_viewing (56) + phase5_provider (51) + phase6_retention (64) = **521 check groups**
+
+### Security Verification
+
+- No hardcoded secrets in `src/` — all credentials use `PRIVATE_*` env vars
+- `.env.example` contains only placeholder values
+- No new secrets introduced
+- No credentials entered client-side
+- No service-role keys exposed to the browser
+
+### Responsive Verification
+
+- **Analytics**: Desktop tables preserved; mobile card lists shown <768px (no horizontal scroll). Users card = whole-card anchor to `/admin/users/[id]`. Cohort card = 3-cell D1/D7/D30 grid.
+- **User Detail**: AdminAppShell on both desktop + mobile. Back-link points to canonical Analytics.
+- **Media Library**: Desktop tree + table unchanged. Mobile: hierarchy trigger + bottom sheet + card list + detail drawer. Sheet has 44px touch targets, safe-area-inset-bottom, reduced-motion override.
+- **Touch targets**: Analytics page-btn ≥ 44px on mobile. Library sheet close + Done buttons ≥ 44px.
+
+### Performance Verification
+
+- Phase 2 parallelization intact (no regression)
+- Overview caching deferred (audit determined it is unsafe — addon registry lacks invalidation signal)
+- Legacy redirect stubs add zero DB queries (no requireAdmin, no service calls)
+- Media Library hierarchy sheet reuses same `folders` ref — no duplicate fetch
+
+### Remaining Issues
+
+1. **AdminShell.svelte still exists** (802 lines) but is no longer imported by any route. Can be deleted in a future cleanup phase. The 3 tests that read it (`admin_nav_test`, `admin2_phase2_test`, `download_providers_test`) would need updating.
+2. **`/admin/users/*` redirect stubs forward all URL params** including `?pageSize=` (dropped for users route since Analytics hardcodes 25). Other params are silently ignored by the Analytics server if not applicable.
+3. **`seriesTmdb` tree selection is still local-state-only** (existing Phase 2 gap). Picking a specific series/anime in the mobile hierarchy sheet doesn't survive a page reload. Promoting it to a URL param is a future enhancement.
+4. **Analytics tables are read-only** (no row interactivity except Users profile link). The mobile card lists match this — no drawer opening, just display + link.
+5. **Admin Overview caching** deferred indefinitely. Prerequisite for future caching: `streaming_addons_config_meta` migration + 6 invalidation calls in `admin-addons.ts`.
+
+### Commit SHA
+
+`<filled-in after commit>`
+
+### Deployment Notes
+
+- No database migrations required
+- No environment variable changes
+- No backend API changes
+- Redirect stubs are backward-compatible (old bookmarks/links will redirect to canonical Analytics)
+- The `/admin/users/[userId]` route URL is unchanged (only the shell swapped)
+
+### Next Phase
+
+- Delete `AdminShell.svelte` (802 lines of dead code) + update 3 dependent tests
+- Promote `seriesTmdb` to a URL param for Media Library tree selection
+- Consider enriching Analytics tabs to absorb the fuller presentations from the legacy `/admin/users/*` routes (the redirect stubs lose some UI fidelity — worst case: Viewing tab drops 4 ranking lists, genre table, search analytics)
+- Add `streaming_addons_config_meta` migration to enable safe Overview caching

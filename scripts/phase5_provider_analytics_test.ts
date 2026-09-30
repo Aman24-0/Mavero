@@ -32,19 +32,27 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
 // ============================================================
-// A. Route + admin authorization
+// A. Route — now a Phase 3 redirect stub to /admin/analytics?tab=providers
 // ============================================================
+// Phase 3: the canonical Analytics workspace (Phase H) owns the provider
+// dashboard. The legacy /admin/users/providers/+page.server.ts and +page.svelte
+// are redirect stubs. Service contracts (fetchProviders) are tested in §B–K.
 
 const providersServer = read('src/routes/admin/users/providers/+page.server.ts');
-ok(/requireAdmin\(locals, \{ redirectTo: '\/admin\/users\/providers' \}\)/.test(providersServer), 'A1. providers load calls requireAdmin with correct redirect');
-ok(/fetchProviders\(locals\.supabase, range\)/.test(providersServer), 'A2. providers load calls fetchProviders with locals.supabase + range');
-ok(/resolveRangeFromParams\(url\.searchParams/.test(providersServer), 'A3. providers load resolves date range from URL params');
+const providersServerNoComments = providersServer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+ok(/throw redirect\(303, `\/admin\/analytics\?/.test(providersServer), 'A1. providers server is a redirect stub to /admin/analytics?tab=providers');
+ok(!/requireAdmin/.test(providersServerNoComments), 'A2. providers server no longer calls requireAdmin (canonical route handles auth)');
+ok(!/fetchProviders/.test(providersServerNoComments), 'A3. providers server no longer calls fetchProviders (canonical route owns the fetch)');
+ok(/params\.set\('tab', 'providers'\)/.test(providersServer), 'A4. providers server sets tab=providers in forwarded params');
 
 const providersPage = read('src/routes/admin/users/providers/+page.svelte');
-ok(/<AdminShell active="users-providers">/.test(providersPage), 'A4. providers page wraps in AdminShell with active="users-providers"');
+ok(/goto\(.*\/admin\/analytics\?tab=providers/.test(providersPage) || /\/admin\/analytics\?/.test(providersPage), 'A5. providers page has client-side goto() to canonical Analytics providers tab');
+ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=providers"/.test(providersPage), 'A6. providers page has meta-refresh fallback for no-JS clients');
+ok(!/<AdminShell/.test(providersPage), 'A7. providers page does NOT mount AdminShell (redirect stub)');
 
+// Nav entry — kept in AdminShell.svelte as a legacy pointer to the now-redirect stub.
 const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/id: 'users-providers', label: 'Providers', href: '\/admin\/users\/providers'/.test(adminShell), 'A5. AdminShell usersLinks contains users-providers entry');
+ok(/id: 'users-providers', label: 'Providers', href: '\/admin\/users\/providers'/.test(adminShell), 'A8. AdminShell usersLinks still contains legacy users-providers entry (points at redirect stub)');
 
 // ============================================================
 // B. Date range — UTC / half-open preserved
@@ -110,8 +118,9 @@ ok(/successFailureAvailable.*false|successFailureAvailable = false/.test(provide
 ok(!/success_rate|successRate/.test(providersModule.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')), 'G2. NO success_rate computed (no fake success rate)');
 ok(!/playback_success|playback_failed/.test(providersModule.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/'playback_success'/g, '').replace(/'playback_failed'/g, '')), 'G3. no query for playback_success/playback_failed events (they are not emitted)');
 
-// The page must show "Not available" for success/failure.
-ok(/Not available|not available|unavailable/i.test(providersPage), 'G4. providers page shows Not available for success/failure');
+// The canonical analytics page shows "N/A" / "Not tracked" for success/failure
+// (successFailureAvailable is false — events not emitted).
+ok(/Not available|not available|unavailable|N\/A|Not tracked/i.test(read('src/routes/admin/analytics/+page.svelte')), 'G4. canonical analytics page shows N/A / Not tracked for success/failure when successFailureAvailable is false');
 
 // ============================================================
 // H. Identity/privacy — no IP, no raw anonymous ID
@@ -123,8 +132,9 @@ ok(!/user_agent/.test(providersModuleNoComments), 'H2. providers module does not
 ok(!/request_id/.test(providersModuleNoComments), 'H3. providers module does not select/display request_id');
 ok(!/ip_hash/.test(providersModuleNoComments), 'H4. providers module does not use ip_hash for identity');
 ok(/rowIdentity/.test(providersModule), 'H5. providers module uses rowIdentity (user_id OR anonymous_id, no IP)');
-// The page does not display anonymous IDs.
-ok(!/anonymous_id.*display|display.*anonymous_id/i.test(providersPage), 'H6. providers page does not display anonymous_id values');
+// The canonical analytics page (not the legacy redirect stub) does not
+// display anonymous IDs.
+ok(!/anonymous_id.*display|display.*anonymous_id/i.test(read('src/routes/admin/analytics/+page.svelte')), 'H6. canonical analytics page does not display anonymous_id values');
 
 // ============================================================
 // I. Query safety — bounded, projected, no select('*')
@@ -133,17 +143,21 @@ ok(!/anonymous_id.*display|display.*anonymous_id/i.test(providersPage), 'H6. pro
 ok(!/select\('\*'\)/.test(providersModule), 'I1. providers module does NOT use select('*') — projects only required columns');
 // Transitions are bounded to top 20.
 ok(/\.slice\(0, 20\)/.test(providersModule), 'I2. transitions bounded to top 20');
-// No client-side Supabase.
-ok(!/createClient|@supabase\/supabase-js/.test(providersPage), 'I3. providers page does NOT import Supabase client (no client-side DB access)');
+// No client-side Supabase — the canonical analytics page does not import createClient
+// (the legacy providers route is a redirect stub with no client-side code at all).
+ok(!/createClient|@supabase\/supabase-js/.test(read('src/routes/admin/analytics/+page.svelte')), 'I3. canonical analytics page does NOT import Supabase client (no client-side DB access)');
 
 // ============================================================
-// J. UI states — empty, error, unavailable
+// J. UI states — empty, error, unavailable (on canonical analytics page)
+// The legacy /admin/users/providers page is now a redirect stub; the
+// canonical /admin/analytics?tab=providers page owns the UI states.
 // ============================================================
 
-ok(/AdminEmptyState/.test(providersPage), 'J1. providers page uses AdminEmptyState for empty state');
-ok(/role="alert"/.test(providersPage), 'J2. providers page has error state with role="alert"');
-ok(/unavailable-card|Not available/.test(providersPage), 'J3. providers page has unavailable-metric state for success/failure');
-ok(/isEmpty/.test(providersPage), 'J4. providers page has isEmpty derived state');
+const analyticsPage = read('src/routes/admin/analytics/+page.svelte');
+ok(/a2-empty/.test(analyticsPage), 'J1. canonical analytics page uses a2-empty empty-state class');
+ok(/role="alert"/.test(analyticsPage), 'J2. canonical analytics page has error state with role="alert"');
+ok(/N\/A|Not tracked|unavailable/i.test(analyticsPage), 'J3. canonical analytics page shows unavailable-metric state for success/failure (N/A / Not tracked)');
+ok(/a2-empty|a2-empty-inline/.test(analyticsPage), 'J4. canonical analytics page has empty-state classes for zero-data');
 
 // ============================================================
 // K. Mock-DB behavioral tests

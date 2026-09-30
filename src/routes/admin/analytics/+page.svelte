@@ -284,34 +284,57 @@
       <!-- Users tab -->
       {:else if currentTab === 'users' && data.users}
         {@const u = data.users}
+        {@const totalPages = Math.ceil((u.total ?? 0) / (u.pageSize || 1))}
         {#if u.error}
           <div class="a2-analytics-error" role="alert"><AlertCircle size={20} /><p>{u.error}</p></div>
         {:else if u.users.length === 0}
-          <div class="a2-empty"><Users size={32} /><h3>No users found</h3><p>{u.usersQ ? 'Try a different search.' : 'No users match the current filter.'}</p></div>
+          <div class="a2-empty"><Users size={32} /><h3>No users found</h3><p>{data.usersQ ? 'Try a different search.' : 'No users match the current filter.'}</p></div>
         {:else}
-          <div class="a2-table-wrap">
+          <!-- Phase 3 mobile: card list (visible <768px). Whole-card anchor to /admin/users/[id]. -->
+          <ul class="a2-analytics-card-list a2-users-card-list" role="list">
+            {#each u.users as user (user.id)}
+              <li>
+                <a class="a2-users-card" href={`/admin/users/${user.id}`}>
+                  <div class="a2-users-card-head">
+                    <span class="a2-users-role-badge" data-role={user.role}>{user.role}</span>
+                    {#if user.is_active}<span class="a2-users-chip a2-users-chip-good">Active</span>{/if}
+                    {#if user.is_new}<span class="a2-users-chip">New</span>{/if}
+                    {#if user.is_returning}<span class="a2-users-chip">Returning</span>{/if}
+                  </div>
+                  <div class="a2-users-card-name">{user.display_name || user.email || '—'}</div>
+                  {#if user.email && user.display_name}<div class="a2-users-card-email mono">{user.email}</div>{/if}
+                  <div class="a2-users-card-foot">
+                    <span>Last seen <span class="mono">{user.last_active ? formatUtcDate(user.last_active) : 'never'}</span></span>
+                    <span class="a2-users-card-open">Open profile <ExternalLink size={11} /></span>
+                  </div>
+                </a>
+              </li>
+            {/each}
+          </ul>
+          <!-- Desktop table (hidden <768px) -->
+          <div class="a2-table-wrap a2-users-wrap">
             <table class="a2-table">
               <thead><tr><th>User</th><th>Role</th><th>Active</th><th>New</th><th>Returning</th><th>Last seen</th><th></th></tr></thead>
               <tbody>
                 {#each u.users as user (user.id)}
                   <tr>
-                    <td><div class="a2-user-cell"><span class="a2-user-name">{user.displayName || '—'}</span></div></td>
+                    <td><div class="a2-user-cell"><span class="a2-user-name">{user.display_name || user.email || '—'}</span></div></td>
                     <td>{user.role}</td>
-                    <td>{user.isActive ? '✓' : '—'}</td>
-                    <td>{user.isNew ? '✓' : '—'}</td>
-                    <td>{user.isReturning ? '✓' : '—'}</td>
-                    <td class="mono">{user.lastSeen ? formatUtcDate(user.lastSeen) : '—'}</td>
+                    <td>{user.is_active ? '✓' : '—'}</td>
+                    <td>{user.is_new ? '✓' : '—'}</td>
+                    <td>{user.is_returning ? '✓' : '—'}</td>
+                    <td class="mono">{user.last_active ? formatUtcDate(user.last_active) : '—'}</td>
                     <td><a href={`/admin/users/${user.id}`} class="a2-row-link"><ExternalLink size={11} /></a></td>
                   </tr>
                 {/each}
               </tbody>
             </table>
           </div>
-          {#if u.totalPages > 1}
+          {#if totalPages > 1}
             <div class="a2-pagination">
               <button type="button" class="a2-page-btn" onclick={() => goto(`${page.url.pathname}?${new URLSearchParams({ ...Object.fromEntries(page.url.searchParams), tab: 'users', page: String(u.page - 1) }).toString()}`, { noScroll: true })} disabled={u.page <= 1}><ChevronLeft size={12} /> Prev</button>
-              <span class="a2-page-info mono">Page {u.page} of {u.totalPages}</span>
-              <button type="button" class="a2-page-btn" onclick={() => goto(`${page.url.pathname}?${new URLSearchParams({ ...Object.fromEntries(page.url.searchParams), tab: 'users', page: String(u.page + 1) }).toString()}`, { noScroll: true })} disabled={u.page >= u.totalPages}>Next <ChevronRight size={12} /></button>
+              <span class="a2-page-info mono">Page {u.page} of {totalPages}</span>
+              <button type="button" class="a2-page-btn" onclick={() => goto(`${page.url.pathname}?${new URLSearchParams({ ...Object.fromEntries(page.url.searchParams), tab: 'users', page: String(u.page + 1) }).toString()}`, { noScroll: true })} disabled={u.page >= totalPages}>Next <ChevronRight size={12} /></button>
             </div>
           {/if}
         {/if}
@@ -332,20 +355,40 @@
             <div class="a2-kpi-card"><span class="a2-kpi-label">Searches</span><span class="a2-kpi-value">{formatNumber(m.searches)}</span></div>
           </div>
 
-          {#if v.topContent && v.topContent.length > 0}
+          {@const topContent = v.mostStarted ?? []}
+          {#if topContent.length > 0}
             <div class="a2-section">
               <h3 class="a2-section-title">Top Content</h3>
-              <div class="a2-table-wrap">
+              <!-- Phase 3 mobile: card list (visible <768px). Read-only. -->
+              <ul class="a2-analytics-card-list a2-top-content-card-list" role="list">
+                {#each topContent as item, i}
+                  <li>
+                    <div class="a2-top-content-card">
+                      <div class="a2-top-content-card-head">
+                        <span class="a2-rank mono">#{i + 1}</span>
+                        <span class="a2-type-chip" data-type={item.content_type ?? 'unknown'}>{item.content_type ?? '—'}</span>
+                      </div>
+                      <div class="a2-top-content-card-title">{item.title ?? '—'}</div>
+                      <div class="a2-top-content-card-foot">
+                        <span>Watch starts <span class="mono">{formatNumber(item.count)}</span></span>
+                        <span>Unique viewers <span class="mono">{formatNumber(item.unique_viewers)}</span></span>
+                      </div>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+              <!-- Desktop table (hidden <768px) -->
+              <div class="a2-table-wrap a2-top-content-wrap">
                 <table class="a2-table">
-                  <thead><tr><th>#</th><th>Title</th><th>Type</th><th>Views</th><th>Completes</th></tr></thead>
+                  <thead><tr><th>#</th><th>Title</th><th>Type</th><th>Watch Starts</th><th>Unique Viewers</th></tr></thead>
                   <tbody>
-                    {#each v.topContent as item, i}
+                    {#each topContent as item, i}
                       <tr>
                         <td class="mono">{i + 1}</td>
                         <td>{item.title ?? '—'}</td>
-                        <td>{item.contentType}</td>
-                        <td class="mono">{item.views}</td>
-                        <td class="mono">{item.completes}</td>
+                        <td>{item.content_type ?? '—'}</td>
+                        <td class="mono">{formatNumber(item.count)}</td>
+                        <td class="mono">{formatNumber(item.unique_viewers)}</td>
                       </tr>
                     {/each}
                   </tbody>
@@ -374,17 +417,36 @@
           {#if p.usage && p.usage.length > 0}
             <div class="a2-section">
               <h3 class="a2-section-title">Provider Usage</h3>
-              <div class="a2-table-wrap">
+              <!-- Phase 3 mobile: card list (visible <768px). Read-only. -->
+              <ul class="a2-analytics-card-list a2-providers-card-list" role="list">
+                {#each p.usage as item}
+                  <li>
+                    <div class="a2-providers-card">
+                      <div class="a2-providers-card-head">
+                        <span class="a2-providers-card-name">{item.provider_name ?? item.provider_id}</span>
+                        {#if item.usage_share != null}<span class="a2-share-chip mono">{formatPercent(item.usage_share)}</span>{/if}
+                      </div>
+                      <div class="a2-providers-card-foot">
+                        <span>Selections <span class="mono">{formatNumber(item.selections)}</span></span>
+                        <span>Watch starts <span class="mono">{formatNumber(item.watch_starts)}</span></span>
+                        <span>Completes <span class="mono">{formatNumber(item.completed_watches)}</span></span>
+                      </div>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+              <!-- Desktop table (hidden <768px) -->
+              <div class="a2-table-wrap a2-providers-wrap">
                 <table class="a2-table">
-                  <thead><tr><th>Provider</th><th>Source</th><th>Selections</th><th>Watch Starts</th><th>Completes</th></tr></thead>
+                  <thead><tr><th>Provider</th><th>Selections</th><th>Watch Starts</th><th>Completes</th><th>Unique Users</th></tr></thead>
                   <tbody>
                     {#each p.usage as item}
                       <tr>
-                        <td>{item.providerName ?? item.providerId}</td>
-                        <td>{item.sourceName ?? '—'}</td>
-                        <td class="mono">{item.selections}</td>
-                        <td class="mono">{item.watchStarts}</td>
-                        <td class="mono">{item.completes}</td>
+                        <td>{item.provider_name ?? item.provider_id}</td>
+                        <td class="mono">{formatNumber(item.selections)}</td>
+                        <td class="mono">{formatNumber(item.watch_starts)}</td>
+                        <td class="mono">{formatNumber(item.completed_watches)}</td>
+                        <td class="mono">{formatNumber(item.unique_users)}</td>
                       </tr>
                     {/each}
                   </tbody>
@@ -404,7 +466,7 @@
         {:else}
           {@const s = r.summary}
           <div class="a2-kpi-grid">
-            <div class="a2-kpi-card"><span class="a2-kpi-label">Cohort Size</span><span class="a2-kpi-value">{formatNumber(s?.cohortSize)}</span></div>
+            <div class="a2-kpi-card"><span class="a2-kpi-label">Cohort Size</span><span class="a2-kpi-value">{formatNumber(s?.totalCohortUsers)}</span></div>
             <div class="a2-kpi-card"><span class="a2-kpi-label">D1 Retention</span><span class="a2-kpi-value">{formatPercent(s?.d1Rate)}</span></div>
             <div class="a2-kpi-card"><span class="a2-kpi-label">D7 Retention</span><span class="a2-kpi-value">{formatPercent(s?.d7Rate)}</span></div>
             <div class="a2-kpi-card"><span class="a2-kpi-label">D30 Retention</span><span class="a2-kpi-value">{formatPercent(s?.d30Rate)}</span></div>
@@ -414,7 +476,38 @@
             <div class="a2-section">
               <h3 class="a2-section-title">Cohort Matrix ({data.retentionCohort})</h3>
               <p class="a2-section-desc">Cohort = users whose first {data.retentionCohort === 'signup' ? 'signup' : data.retentionCohort === 'first-use' ? 'activity' : 'watch'} occurred during the cohort period. Retained = user generated another qualifying activity on day N.</p>
-              <div class="a2-table-wrap">
+              <!-- Phase 3 mobile: card list (visible <768px). Read-only. -->
+              <ul class="a2-analytics-card-list a2-cohort-card-list" role="list">
+                {#each r.cohorts as cohort}
+                  <li>
+                    <div class="a2-cohort-card">
+                      <div class="a2-cohort-card-head">
+                        <span class="a2-cohort-date mono">{cohort.cohortDate}</span>
+                        <span class="a2-cohort-size">Size <span class="mono">{cohort.cohortSize}</span></span>
+                      </div>
+                      <div class="a2-cohort-card-grid">
+                        <div class="a2-cohort-cell">
+                          <span class="a2-cohort-cell-label">D1</span>
+                          <span class="a2-cohort-cell-count mono">{cohort.d1Retained != null ? cohort.d1Retained : '—'}</span>
+                          <span class="a2-cohort-cell-rate mono">{cohort.d1Rate != null ? formatPercent(cohort.d1Rate) : '—'}</span>
+                        </div>
+                        <div class="a2-cohort-cell">
+                          <span class="a2-cohort-cell-label">D7</span>
+                          <span class="a2-cohort-cell-count mono">{cohort.d7Retained != null ? cohort.d7Retained : '—'}</span>
+                          <span class="a2-cohort-cell-rate mono">{cohort.d7Rate != null ? formatPercent(cohort.d7Rate) : '—'}</span>
+                        </div>
+                        <div class="a2-cohort-cell">
+                          <span class="a2-cohort-cell-label">D30</span>
+                          <span class="a2-cohort-cell-count mono">{cohort.d30Retained != null ? cohort.d30Retained : '—'}</span>
+                          <span class="a2-cohort-cell-rate mono">{cohort.d30Rate != null ? formatPercent(cohort.d30Rate) : '—'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+              <!-- Desktop table (hidden <768px) -->
+              <div class="a2-table-wrap a2-cohort-wrap">
                 <table class="a2-table a2-cohort-table">
                   <thead><tr><th>Cohort</th><th>Size</th><th>D1</th><th>D7</th><th>D30</th></tr></thead>
                   <tbody>
@@ -508,11 +601,61 @@
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
+  /* ---- Phase 3 mobile card lists (hidden by default, shown <768px) ---- */
+  .a2-analytics-card-list { display: none; list-style: none; margin: 0; padding: 0; gap: var(--a2-space-2); flex-direction: column; }
+  .a2-analytics-card-list > li { margin: 0; }
+
+  /* Users card */
+  .a2-users-card { display: flex; flex-direction: column; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); color: inherit; text-decoration: none; transition: border-color var(--a2-motion-micro, 140ms) var(--a2-ease-out), background var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
+  .a2-users-card:hover { background: var(--a2-surface-3); border-color: var(--a2-cyan-border); }
+  .a2-users-card-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .a2-users-role-badge { display: inline-flex; padding: 1px 6px; background: var(--a2-surface-4); border-radius: var(--a2-radius-xs); font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; color: var(--a2-cyan); }
+  .a2-users-role-badge[data-role="admin"] { color: var(--a2-amber); }
+  .a2-users-chip { display: inline-flex; padding: 1px 6px; background: var(--a2-surface-4); border-radius: var(--a2-radius-xs); font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+  .a2-users-chip-good { color: var(--a2-green); background: var(--a2-green-soft); }
+  .a2-users-card-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); word-break: break-word; }
+  .a2-users-card-email { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); }
+  .a2-users-card-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-2); font-size: var(--a2-text-2xs); color: var(--a2-text-muted); flex-wrap: wrap; padding-top: var(--a2-space-1); border-top: 1px solid var(--a2-border); }
+  .a2-users-card-open { display: inline-flex; align-items: center; gap: 2px; color: var(--a2-cyan); font-weight: 600; }
+
+  /* Top Content card */
+  .a2-top-content-card { display: flex; flex-direction: column; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); }
+  .a2-top-content-card-head { display: flex; align-items: center; gap: var(--a2-space-2); }
+  .a2-rank { font-size: var(--a2-text-xs); font-weight: 700; color: var(--a2-text-dim); }
+  .a2-type-chip { display: inline-flex; padding: 1px 6px; background: var(--a2-surface-4); border-radius: var(--a2-radius-xs); font-size: var(--a2-text-2xs); text-transform: uppercase; color: var(--a2-cyan); }
+  .a2-type-chip[data-type="movie"] { color: var(--a2-cyan); }
+  .a2-type-chip[data-type="series"] { color: var(--a2-amber); }
+  .a2-type-chip[data-type="anime"] { color: var(--a2-green); }
+  .a2-top-content-card-title { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); word-break: break-word; }
+  .a2-top-content-card-foot { display: flex; gap: var(--a2-space-4); font-size: var(--a2-text-2xs); color: var(--a2-text-muted); flex-wrap: wrap; padding-top: var(--a2-space-1); border-top: 1px solid var(--a2-border); }
+
+  /* Provider Usage card */
+  .a2-providers-card { display: flex; flex-direction: column; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); }
+  .a2-providers-card-head { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-2); }
+  .a2-providers-card-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); word-break: break-word; }
+  .a2-share-chip { padding: 1px 6px; background: var(--a2-cyan-soft); border-radius: var(--a2-radius-xs); font-size: var(--a2-text-2xs); font-weight: 700; color: var(--a2-cyan); }
+  .a2-providers-card-foot { display: flex; gap: var(--a2-space-4); font-size: var(--a2-text-2xs); color: var(--a2-text-muted); flex-wrap: wrap; padding-top: var(--a2-space-1); border-top: 1px solid var(--a2-border); }
+
+  /* Cohort Matrix card */
+  .a2-cohort-card { display: flex; flex-direction: column; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); }
+  .a2-cohort-card-head { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-2); }
+  .a2-cohort-date { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
+  .a2-cohort-size { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+  .a2-cohort-card-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--a2-space-2); padding-top: var(--a2-space-1); border-top: 1px solid var(--a2-border); }
+  .a2-cohort-cell { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: var(--a2-space-2); background: var(--a2-surface-3); border-radius: var(--a2-radius-sm); }
+  .a2-cohort-cell-label { font-size: var(--a2-text-2xs); font-weight: 700; color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  .a2-cohort-cell-count { font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
+  .a2-cohort-cell-rate { font-size: var(--a2-text-2xs); color: var(--a2-cyan); }
+
   @media (max-width: 768px) {
     .a2-kpi-grid { grid-template-columns: 1fr 1fr; }
     .a2-reach-grid { grid-template-columns: 1fr 1fr; }
     .a2-period-bar { flex-wrap: wrap; }
     .a2-period-range { display: none; }
+    /* Phase 3: show mobile card lists, hide desktop tables */
+    .a2-analytics-card-list { display: flex; }
+    .a2-users-wrap, .a2-top-content-wrap, .a2-providers-wrap, .a2-cohort-wrap { display: none; }
+    .a2-page-btn { min-height: 44px; padding: 8px 12px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
