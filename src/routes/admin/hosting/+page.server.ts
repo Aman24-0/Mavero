@@ -25,24 +25,22 @@ const VALID_TABS = new Set(['providers', 'assets', 'sync']);
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
-  const adminClient = createSupabaseAdminClient();
-  const service = new HostingControlService(adminClient);
 
   const tab = url.searchParams.get('tab') ?? 'providers';
   if (!VALID_TABS.has(tab)) {
     throw error(400, 'Invalid tab. Use ?tab=providers|assets|sync.');
   }
 
-  // Preload providers overview (used by all 3 tabs — the tab strip itself
-  // shows per-provider status badges). skipHealth=true on the initial load
-  // to keep the page fast; the Providers tab triggers a live health check
-  // client-side after mount.
+  // Phase 6: createSupabaseAdminClient() inside try/catch — prevents
+  // uncaught 500 if PRIVATE_SUPABASE_SERVICE_ROLE_KEY is missing.
   let providers: HostingProviderOverview[] = [];
   let providersError: string | null = null;
   try {
+    const adminClient = createSupabaseAdminClient();
+    const service = new HostingControlService(adminClient);
     providers = await service.listProviders({ skipHealth: true });
   } catch (err) {
-    providersError = err instanceof Error ? err.message : 'Failed to load providers.';
+    providersError = err instanceof Error ? err.message : 'Failed to load hosting providers.';
   }
 
   return {

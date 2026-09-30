@@ -27,7 +27,13 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });
-  const adminClient = createSupabaseAdminClient();
+
+  // Phase 6: createSupabaseAdminClient() inside try/catch — prevents
+  // uncaught 500 if PRIVATE_SUPABASE_SERVICE_ROLE_KEY is missing.
+  let providers: any[] = [];
+  let sources: any[] = [];
+  try {
+    const adminClient = createSupabaseAdminClient();
 
   // Phase 2 perf: fetch hosting providers AND their sources in a single
   // parallel batch. The sources query previously depended on providerIds
@@ -56,6 +62,10 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   const providers = providersRes.data ?? [];
   const sources = sourcesRes.data ?? [];
+  } catch {
+    // Phase 6: graceful fallback — empty hosting sources if admin client fails.
+    // The upload page's "no providers" empty state will guide the admin.
+  }
 
   // Build hostingSources with adapterId for each source.
   const hostingSources = sources.map((s: any) => {

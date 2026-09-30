@@ -8,7 +8,7 @@
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
-  import { Puzzle, Check, AlertCircle, X, RefreshCw, Trash2, Power, Edit3 } from 'lucide-svelte';
+  import { Puzzle, Check, RefreshCw, Trash2, Power, Edit3 } from 'lucide-svelte';
   import { ALL_DOWNLOAD_LINK_TYPES, linkTypeLabel, getLinkTypesConfig, type DownloadLinkType } from '$lib/shared/download-link-types';
   import type { PageData, ActionData } from './$types';
 

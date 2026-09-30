@@ -17,20 +17,27 @@ const VALID_TABS = new Set(['jobs', 'history', 'attention']);
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
-  const adminClient = createSupabaseAdminClient();
-  const service = new OperationsService(adminClient);
 
   const tab = url.searchParams.get('tab') ?? 'jobs';
   if (!VALID_TABS.has(tab)) {
     throw error(400, 'Invalid tab. Use ?tab=jobs|history|attention.');
   }
 
-  // Preload badge counts (used by the nav badges + the tab strip).
+  // Phase 6: createSupabaseAdminClient() inside try/catch — prevents
+  // uncaught 500 if PRIVATE_SUPABASE_SERVICE_ROLE_KEY is missing.
   let badgeCounts = { jobsActive: 0, attentionTotal: 0 };
   try {
-    badgeCounts = await service.getBadgeCounts();
+    const adminClient = createSupabaseAdminClient();
+    const service = new OperationsService(adminClient);
+
+    // Preload badge counts (used by the nav badges + the tab strip).
+    try {
+      badgeCounts = await service.getBadgeCounts();
+    } catch {
+      // Badge counts are decorative — don't break the page if they fail.
+    }
   } catch {
-    // Badge counts are decorative — don't break the page if they fail.
+    // Phase 6: graceful fallback — empty badge counts if admin client fails.
   }
 
   return {

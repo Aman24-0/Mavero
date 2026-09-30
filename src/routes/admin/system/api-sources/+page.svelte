@@ -19,7 +19,7 @@
   import AdminFormSection from '$lib/components/admin/AdminFormSection.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
-  import { Settings, SlidersHorizontal, X, Check, Server, HardDrive, AlertCircle, Plus, Edit3, Trash2, Power } from 'lucide-svelte';
+  import { SlidersHorizontal, X, Check, Server, HardDrive, Edit3, Trash2, Power } from 'lucide-svelte';
   import { CAPABILITY_FIELDS, CAPABILITY_LABELS } from '$lib/shared/player-capabilities';
   import { sandboxPolicyFromCapabilities, sandboxPolicies } from '$lib/shared/sandbox-policy';
   import { integrationTypes, providerStatuses } from '$lib/shared/streaming';

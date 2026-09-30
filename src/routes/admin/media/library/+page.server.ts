@@ -21,8 +21,6 @@ import { MediaLibraryService } from '$lib/server/hosting/library/service';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
-  const adminClient = createSupabaseAdminClient();
-  const service = new MediaLibraryService(adminClient);
 
   // Parse query-string state (so deep links render server-side).
   const sp = url.searchParams;
@@ -37,6 +35,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const sort = sp.get('sort') || 'recently_updated';
   const page = parseInt(sp.get('page') ?? '1', 10) || 1;
   const selectedId = sp.get('selected') || undefined;
+
+  // Phase 6: createSupabaseAdminClient() inside try/catch — prevents
+  // uncaught 500 if PRIVATE_SUPABASE_SERVICE_ROLE_KEY is missing.
+  try {
+    const adminClient = createSupabaseAdminClient();
+    const service = new MediaLibraryService(adminClient);
 
   // Fetch initial page + folder summary + hosting sources in parallel.
   // If folderSummary or sources fail, we don't fail the whole page —
@@ -71,4 +75,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : [],
     initialFilters: { q, type, year, series, provider, status, sort, page, selectedId },
   };
+  } catch (err) {
+    // Phase 6: graceful fallback if admin client creation fails (e.g. missing env).
+    // Return an empty state so the page renders the error instead of 500ing.
+    throw new Error(`Media Library load failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 };

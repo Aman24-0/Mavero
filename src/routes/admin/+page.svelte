@@ -15,7 +15,7 @@
    *   - HOSTING & MEDIA — quick links to media/hosting management
    *   - INTEGRATIONS — secondary metric cards
    */
-  import { Database, Download, Layers3, Puzzle, ShieldCheck, SlidersHorizontal, Wifi } from 'lucide-svelte';
+  import { Database, Download, Layers3, Puzzle, ShieldCheck, Wifi } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
