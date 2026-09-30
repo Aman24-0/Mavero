@@ -531,7 +531,7 @@
   .a2-history-pagination { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); flex-wrap: wrap; padding: var(--a2-space-2) var(--a2-space-3); }
   .a2-history-pagination-info { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
   .a2-history-pagination-actions { display: inline-flex; align-items: center; gap: var(--a2-space-2); }
-  .a2-history-page-btn { display: inline-flex; align-items: center; gap: 2px; padding: 4px 10px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
+  .a2-history-page-btn { display: inline-flex; align-items: center; gap: 2px; padding: 8px 12px; min-height: 44px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
   .a2-history-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .a2-history-page-btn:hover:not(:disabled) { border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-history-page-num { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }

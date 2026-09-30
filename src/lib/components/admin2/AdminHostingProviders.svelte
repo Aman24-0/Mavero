@@ -636,10 +636,16 @@
   @keyframes a2-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   @media (prefers-reduced-motion: reduce) {
+    /* Phase 2 bugfix: previously this block applied `min-width: 44px; min-height: 44px`
+       to the entire .a2-provider-card and .a2-provider-drawer elements, which would
+       have catastrophically collapsed them to 44×44px. The sizing was only meant
+       for the close button (which already has its own min-size rule). The
+       transition/animation reset applies to all listed elements. */
     .a2-provider-card, .a2-hosting-refresh, .a2-provider-card-action, .a2-provider-drawer,
     .a2-provider-drawer-action, .a2-provider-drawer-close {
-    min-width: 44px;
-    min-height: 44px; transition: none; animation: none; }
+      transition: none;
+      animation: none;
+    }
     .a2-provider-drawer-overlay { animation: none; }
   }
 </style>

@@ -468,7 +468,41 @@
       <p>{filters.q || activeFilterCount > 0 ? 'Try adjusting your search or filters.' : 'Assets will appear here after the first upload or sync.'}</p>
     </div>
   {:else}
-    <!-- Desktop table -->
+    <!-- Phase 2 mobile: card list (visible <768px). Mirrors the table data
+         in a stacked card layout. Tapping a card opens the same drawer. -->
+    <ul class="a2-assets-card-list" role="list">
+      {#each items as asset (asset.id)}
+        <li>
+          <button type="button" class="a2-assets-card" class:is-unlinked={isUnlinked(asset)} onclick={() => openDetail(asset)}>
+            <div class="a2-assets-card-head">
+              <span class="a2-assets-provider-badge" data-adapter={asset.providerAdapterId ?? ''}>{asset.providerAdapterId ?? '—'}</span>
+              <AdminStatus label={statusLabel(asset.status)} tone={statusTone(asset.status)} />
+              {#if isUnlinked(asset)}<span class="a2-assets-unlinked-badge">UNLINKED</span>{/if}
+            </div>
+            <div class="a2-assets-card-file" title={asset.filename ?? asset.title ?? '—'}>
+              {asset.filename ?? asset.title ?? '—'}
+            </div>
+            {#if asset.providerAssetId}<div class="a2-assets-card-id mono">{asset.providerAssetId}</div>{/if}
+            {#if asset.mediaItem}
+              <div class="a2-assets-card-media">
+                {#if asset.mediaItem.contentType === 'movie'}<Film size={10} />{:else if asset.mediaItem.contentType === 'anime'}<Sparkles size={10} />{:else}<Tv size={10} />{/if}
+                {asset.mediaItem.title}
+                {#if asset.mediaItem.season != null && asset.mediaItem.episode != null}
+                  · S{String(asset.mediaItem.season).padStart(2, '0')}E{String(asset.mediaItem.episode).padStart(2, '0')}
+                {/if}
+              </div>
+            {/if}
+            <div class="a2-assets-card-chips">
+              <span class="a2-assets-chip mono">{formatQuality(asset)}</span>
+              <span class="a2-assets-chip" title={asset.audioLanguages.join(', ') || '—'}>Audio: {formatAudio(asset)}</span>
+              <span class="a2-assets-chip">{#if asset.hasSubtitles}Subs: ✓{:else}Subs: —{/if}</span>
+              <span class="a2-assets-chip mono">Updated {formatDate(asset.updatedAt)}</span>
+            </div>
+          </button>
+        </li>
+      {/each}
+    </ul>
+    <!-- Desktop table (hidden <768px) -->
     <div class="a2-assets-table-wrap" role="region" aria-label="Assets table">
       <table class="a2-assets-table">
         <thead>
@@ -1029,10 +1063,10 @@
   }
   .a2-assets-dash { color: var(--a2-text-dim); }
 
-  .col-actions { width: 32px; text-align: right; }
+  .col-actions { width: 44px; text-align: right; }
   .a2-assets-row-action {
     background: transparent; border: none; cursor: pointer;
-    color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs);
+    color: var(--a2-text-muted); padding: 8px; min-width: 44px; min-height: 44px; border-radius: var(--a2-radius-xs);
     display: inline-flex; align-items: center; justify-content: center;
   }
   .a2-assets-row-action:hover { background: var(--a2-surface-4); color: var(--a2-cyan); }
@@ -1050,7 +1084,8 @@
   .a2-assets-pagination-actions { display: inline-flex; align-items: center; gap: var(--a2-space-2); }
   .a2-assets-page-btn {
     display: inline-flex; align-items: center; gap: 2px;
-    padding: 4px 10px;
+    padding: 8px 12px;
+    min-height: 44px;
     background: var(--a2-surface-3);
     border: 1px solid var(--a2-border-strong);
     border-radius: var(--a2-radius-sm);
@@ -1349,7 +1384,21 @@
   @keyframes a2-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   /* ---- Mobile ---- */
+  /* Phase 2 mobile card list — visible only below 768px. */
+  .a2-assets-card-list { display: none; list-style: none; margin: 0; padding: 0; gap: var(--a2-space-2); flex-direction: column; }
+  .a2-assets-card { display: flex; flex-direction: column; gap: var(--a2-space-2); width: 100%; padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); color: inherit; text-align: left; cursor: pointer; transition: border-color var(--a2-motion-micro) var(--a2-ease-out), background var(--a2-motion-micro) var(--a2-ease-out); }
+  .a2-assets-card:hover { background: var(--a2-surface-3); border-color: var(--a2-cyan-border); }
+  .a2-assets-card.is-unlinked { border-color: var(--a2-amber-border); }
+  .a2-assets-card-head { display: flex; align-items: center; gap: var(--a2-space-2); flex-wrap: wrap; }
+  .a2-assets-card-file { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); word-break: break-word; }
+  .a2-assets-card-id { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); }
+  .a2-assets-card-media { display: flex; align-items: center; gap: 4px; font-size: var(--a2-text-xs); color: var(--a2-text-muted); flex-wrap: wrap; }
+  .a2-assets-card-chips { display: flex; gap: 4px; flex-wrap: wrap; padding-top: var(--a2-space-1); border-top: 1px solid var(--a2-border); }
+  .a2-assets-chip { display: inline-flex; align-items: center; padding: 2px 6px; background: var(--a2-surface-4); border-radius: var(--a2-radius-xs); font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+
   @media (max-width: 768px) {
+    .a2-assets-card-list { display: flex; }
+    .a2-assets-table-wrap { display: none; }
     .a2-assets-filters { display: none; }
     .a2-assets-mobile-filter-toggle { display: inline-flex; }
     .a2-asset-drawer { max-width: 100%; }

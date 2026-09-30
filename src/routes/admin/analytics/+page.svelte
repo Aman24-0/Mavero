@@ -31,7 +31,7 @@
     type AnalyticsPeriodPreset,
   } from '$lib/shared/analytics-period';
   import {
-    BarChart3, Users, Eye, Server, Repeat, AlertCircle, Loader2,
+    BarChart3, Users, Eye, Server, Repeat, AlertCircle,
     TrendingUp, TrendingDown, Minus, ExternalLink, ChevronLeft, ChevronRight,
   } from 'lucide-svelte';
   import type { PageData } from './$types';
@@ -508,7 +508,6 @@
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
-  .a2-kpi-grid { grid-template-columns: 1fr 1fr; }
   @media (max-width: 768px) {
     .a2-kpi-grid { grid-template-columns: 1fr 1fr; }
     .a2-reach-grid { grid-template-columns: 1fr 1fr; }

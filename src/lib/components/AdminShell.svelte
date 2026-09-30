@@ -37,13 +37,13 @@
 
   const links = [
     { id: 'overview', label: 'Overview', href: '/admin', icon: Database },
-    { id: 'providers', label: 'Providers', href: '/admin/providers', icon: ShieldCheck },
-    { id: 'sources', label: 'Sources', href: '/admin/sources', icon: SlidersHorizontal },
-    { id: 'downloaders', label: 'Downloaders', href: '/admin/downloaders', icon: Download },
-    { id: 'defaults', label: 'Defaults', href: '/admin/defaults', icon: Star },
-    { id: 'categories', label: 'Categories', href: '/admin/categories', icon: Layers3 },
-    { id: 'feature-control', label: 'Feature Control', href: '/admin/feature-control', icon: ToggleRight },
-    { id: 'addons', label: 'Stremio Addons', href: '/admin/addons', icon: Puzzle },
+    { id: 'providers', label: 'Providers', href: '/admin/system/api-sources?tab=providers', icon: ShieldCheck },
+    { id: 'sources', label: 'Sources', href: '/admin/system/api-sources?tab=sources', icon: SlidersHorizontal },
+    { id: 'downloaders', label: 'Downloaders', href: '/admin/system/downloads', icon: Download },
+    { id: 'defaults', label: 'Defaults', href: '/admin/system/api-sources', icon: Star },
+    { id: 'categories', label: 'Categories', href: '/admin/system/content-rules?tab=categories', icon: Layers3 },
+    { id: 'feature-control', label: 'Feature Control', href: '/admin/system/content-rules?tab=features', icon: ToggleRight },
+    { id: 'addons', label: 'Stremio Addons', href: '/admin/system/integrations', icon: Puzzle },
   ] as const;
 
   // Phase 2 — User Management & Analytics section. Separate `usersLinks`

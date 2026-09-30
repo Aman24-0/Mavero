@@ -311,7 +311,6 @@
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
   .a2-attention-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--a2-space-2); }
-  .a2-attention-summary { grid-template-columns: 1fr 1fr; }
   @media (max-width: 640px) { .a2-attention-summary { grid-template-columns: 1fr 1fr; } }
 
   .a2-attention-cat-card { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: var(--a2-space-3); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); cursor: pointer; transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
@@ -364,7 +363,7 @@
   .a2-attention-item-date { margin-left: auto; }
 
   .a2-attention-item-actions { display: flex; gap: var(--a2-space-1); flex-wrap: wrap; padding-top: 4px; }
-  .a2-attention-action { display: inline-flex; align-items: center; gap: var(--a2-space-1); padding: var(--a2-space-1) var(--a2-space-2); background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-xs); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; text-decoration: none; transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
+  .a2-attention-action { display: inline-flex; align-items: center; gap: var(--a2-space-1); padding: 8px 12px; min-height: 44px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-xs); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; text-decoration: none; transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
   .a2-attention-action:hover:not(:disabled) { background: var(--a2-cyan-soft); border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-attention-action:disabled { opacity: 0.5; cursor: not-allowed; }
   .a2-attention-action-primary { background: var(--a2-cyan); color: var(--a2-surface-1); border-color: var(--a2-cyan); }
@@ -374,14 +373,13 @@
   .a2-attention-pagination { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); flex-wrap: wrap; padding: var(--a2-space-2) var(--a2-space-3); }
   .a2-attention-pagination-info { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
   .a2-attention-pagination-actions { display: inline-flex; align-items: center; gap: var(--a2-space-2); }
-  .a2-attention-page-btn { display: inline-flex; align-items: center; gap: 2px; padding: 4px 10px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
+  .a2-attention-page-btn { display: inline-flex; align-items: center; gap: 2px; padding: 8px 12px; min-height: 44px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
   .a2-attention-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .a2-attention-page-btn:hover:not(:disabled) { border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-attention-page-num { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
 
   @keyframes a2-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-  .a2-attention-summary { grid-template-columns: 1fr 1fr; }
   @media (max-width: 640px) {
     .a2-attention-item { grid-template-columns: 1fr; }
     .a2-attention-item-icon { width: 32px; height: 32px; }

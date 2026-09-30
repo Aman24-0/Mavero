@@ -985,7 +985,7 @@
               <AlertCircle size={20} />
               <div class="provider-empty-title">No providers configured</div>
               <div class="provider-empty-desc">Configure Vidara or Abyss in the Providers page before uploading.</div>
-              <a class="provider-empty-link" href="/admin/providers">Configure Providers</a>
+              <a class="provider-empty-link" href="/admin/system/api-sources?tab=providers">Configure Providers</a>
             </div>
           {:else}
             <div class="provider-list">

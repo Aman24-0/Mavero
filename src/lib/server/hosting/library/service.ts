@@ -187,28 +187,32 @@ export class MediaLibraryService {
       return { items: [], total: count ?? 0, page, limit, has_more: false };
     }
 
-    // Batch-fetch assets for all media_items on this page (avoids N+1).
+    // Batch-fetch assets AND demand rows for this page in parallel (Phase 2 perf).
+    // Both depend only on the items page already fetched — no dependency on
+    // each other. Previously these were two sequential awaits.
     const mediaItemIds = items.map(i => i.id);
-    const { data: assets, error: assetsError } = await this.client
-      .from('media_assets')
-      .select('id, media_item_id, provider_source_id, provider_asset_id, status, mavero_status, source_quality, available_qualities, audio_languages, has_subtitles, duration_seconds, size_bytes, last_synced_at, created_at, updated_at')
-      .in('media_item_id', mediaItemIds)
-      .order('updated_at', { ascending: false });
-    if (assetsError) {
-      throw new Error(`MediaLibraryService.list (assets): ${assetsError.message}`);
-    }
-
-    // Batch-fetch demand rows for the canonical keys on this page.
     const canonicalKeys = items.map(i => i.canonical_key);
-    const { data: demands, error: demandError } = await this.client
-      .from('media_availability_requests')
-      .select('canonical_key, request_count, last_requested_at, status')
-      .in('canonical_key', canonicalKeys);
-    if (demandError) {
+    const [assetsRes, demandsRes] = await Promise.all([
+      this.client
+        .from('media_assets')
+        .select('id, media_item_id, provider_source_id, provider_asset_id, status, mavero_status, source_quality, available_qualities, audio_languages, has_subtitles, duration_seconds, size_bytes, last_synced_at, created_at, updated_at')
+        .in('media_item_id', mediaItemIds)
+        .order('updated_at', { ascending: false }),
+      this.client
+        .from('media_availability_requests')
+        .select('canonical_key, request_count, last_requested_at, status')
+        .in('canonical_key', canonicalKeys),
+    ]);
+    if (assetsRes.error) {
+      throw new Error(`MediaLibraryService.list (assets): ${assetsRes.error.message}`);
+    }
+    const assets = assetsRes.data;
+    if (demandsRes.error) {
       // Demand is decorative — partial failure should not break the list.
       // Log and continue with empty demand map.
-      console.warn('[MediaLibrary] demand query failed', demandError.message);
+      console.warn('[MediaLibrary] demand query failed', demandsRes.error.message);
     }
+    const demands = demandsRes.data;
 
     // Index assets and demand by their foreign keys for O(1) lookup.
     const assetsByItem = new Map<string, LibraryAssetSummary[]>();

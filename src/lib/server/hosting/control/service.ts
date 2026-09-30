@@ -148,12 +148,26 @@ export class HostingControlService {
       sourceByProvider.set(s.provider_id, { id: s.id, name: s.name, enabled: Boolean(s.enabled) });
     }
 
-    // 2. Batch-fetch asset counts per source.
+    // 2. Batch-fetch asset counts per source AND last-sync timestamps in
+    //    parallel (Phase 2 perf). Both queries scan media_assets for the
+    //    same sourceIds set and have no dependency on each other.
     const sourceIds = [...sourceByProvider.values()].map((s) => s.id);
-    const { data: assetRows, error: assetErr } = await this.client
-      .from('media_assets')
-      .select('provider_source_id, status, mavero_status')
-      .in('provider_source_id', sourceIds);
+    const [assetRes, syncRes] = await Promise.all([
+      this.client
+        .from('media_assets')
+        .select('provider_source_id, status, mavero_status')
+        .in('provider_source_id', sourceIds),
+      sourceIds.length > 0
+        ? this.client
+            .from('media_assets')
+            .select('provider_source_id, last_synced_at')
+            .in('provider_source_id', sourceIds)
+            .not('last_synced_at', 'is', null)
+            .order('last_synced_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    const assetRows = assetRes.data;
+    const assetErr = assetRes.error;
     // assetCounts is partial-failure — if the query fails, we still return
     // providers with assetCounts=null.
     const countsBySource = new Map<string, { total: number; ready: number; processing: number; failed: number; deleted: number; unlinked: number }>();
@@ -171,21 +185,15 @@ export class HostingControlService {
       }
     }
 
-    // 3. Batch-fetch last sync timestamp per source (max of last_synced_at).
+    // 3. Build last-sync map from the parallel-fetched syncRows.
     const lastSyncBySource = new Map<string, string>();
-    if (sourceIds.length > 0) {
-      const { data: syncRows, error: syncErr } = await this.client
-        .from('media_assets')
-        .select('provider_source_id, last_synced_at')
-        .in('provider_source_id', sourceIds)
-        .not('last_synced_at', 'is', null)
-        .order('last_synced_at', { ascending: false });
-      if (!syncErr && syncRows) {
-        for (const row of syncRows as Array<{ provider_source_id: string | null; last_synced_at: string | null }>) {
-          if (!row.provider_source_id || !row.last_synced_at) continue;
-          if (!lastSyncBySource.has(row.provider_source_id)) {
-            lastSyncBySource.set(row.provider_source_id, row.last_synced_at);
-          }
+    const syncRows = syncRes.data;
+    const syncErr = syncRes.error;
+    if (!syncErr && syncRows) {
+      for (const row of syncRows as Array<{ provider_source_id: string | null; last_synced_at: string | null }>) {
+        if (!row.provider_source_id || !row.last_synced_at) continue;
+        if (!lastSyncBySource.has(row.provider_source_id)) {
+          lastSyncBySource.set(row.provider_source_id, row.last_synced_at);
         }
       }
     }

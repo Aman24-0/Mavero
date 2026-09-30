@@ -365,6 +365,43 @@
       <p>{filters.q || activeFilterCount > 0 ? 'Try adjusting your search or filters.' : 'All operations have completed. New uploads will appear here.'}</p>
     </div>
   {:else}
+    <!-- Phase 2 mobile: card list (visible <768px). Mirrors the table data
+         in a stacked card layout. Tapping a card opens the same drawer. -->
+    <ul class="a2-jobs-card-list" role="list">
+      {#each items as job (job.id)}
+        <li>
+          <button type="button" class="a2-jobs-card" class:is-stale={job.isStale} onclick={() => openDetail(job)}>
+            <div class="a2-jobs-card-head">
+              <div class="a2-jobs-card-status">
+                <AdminStatus label={statusLabel(job.status)} tone={statusTone(job.status, job.isStale)} />
+                {#if job.isStale}<span class="a2-jobs-stale-badge">STALE</span>{/if}
+                {#if job.isRetryable}<span class="a2-jobs-retryable-badge">RETRYABLE</span>{/if}
+              </div>
+              <span class="a2-jobs-type-badge" data-type={job.operationType}>{job.operationType}</span>
+              {#if job.attemptNumber > 1}<span class="a2-jobs-attempt">×{job.attemptNumber}</span>{/if}
+            </div>
+            {#if job.mediaItem}
+              <div class="a2-jobs-card-title" title={job.mediaItem.title}>{job.mediaItem.title}</div>
+              <div class="a2-jobs-card-meta">
+                {#if job.mediaItem.contentType === 'movie'}<Film size={10} />{:else if job.mediaItem.contentType === 'anime'}<Sparkles size={10} />{:else}<Tv size={10} />{/if}
+                {job.mediaItem.contentType}
+                {#if job.mediaItem.season != null && job.mediaItem.episode != null}
+                  · S{String(job.mediaItem.season).padStart(2, '0')}E{String(job.mediaItem.episode).padStart(2, '0')}
+                {/if}
+                · <span class="a2-jobs-provider-badge" data-adapter={job.providerAdapterId ?? ''}>{job.providerAdapterId ?? '—'}</span>
+              </div>
+            {:else}
+              <div class="a2-jobs-card-title a2-jobs-dash">—</div>
+            {/if}
+            <div class="a2-jobs-card-foot">
+              <span class="mono">Updated {formatDate(job.updatedAt)}</span>
+              <span class="mono">{formatDuration(job.uploadStartedAt ?? job.queuedAt, job.readyAt ?? job.failedAt ?? job.cancelledAt)}</span>
+            </div>
+          </button>
+        </li>
+      {/each}
+    </ul>
+    <!-- Phase 2 desktop: table (hidden <768px, replaced by card list above). -->
     <div class="a2-jobs-table-wrap" role="region" aria-label="Jobs table">
       <table class="a2-jobs-table">
         <thead>
@@ -705,14 +742,14 @@
   .a2-jobs-provider-badge { display: inline-block; padding: 1px 6px; background: var(--a2-surface-4); border-radius: var(--a2-radius-xs); font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; color: var(--a2-cyan); }
   .a2-jobs-provider-badge[data-adapter="abyss"] { color: var(--a2-amber); }
 
-  .col-actions { width: 32px; text-align: right; }
-  .a2-jobs-row-action { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); display: inline-flex; align-items: center; justify-content: center; }
+  .col-actions { width: 44px; text-align: right; }
+  .a2-jobs-row-action { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 8px; min-width: 44px; min-height: 44px; border-radius: var(--a2-radius-xs); display: inline-flex; align-items: center; justify-content: center; }
   .a2-jobs-row-action:hover { background: var(--a2-surface-4); color: var(--a2-cyan); }
 
   .a2-jobs-pagination { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); flex-wrap: wrap; padding: var(--a2-space-2) var(--a2-space-3); }
   .a2-jobs-pagination-info { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
   .a2-jobs-pagination-actions { display: inline-flex; align-items: center; gap: var(--a2-space-2); }
-  .a2-jobs-page-btn { display: inline-flex; align-items: center; gap: 2px; padding: 4px 10px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
+  .a2-jobs-page-btn { display: inline-flex; align-items: center; gap: 2px; padding: 8px 12px; min-height: 44px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
   .a2-jobs-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .a2-jobs-page-btn:hover:not(:disabled) { border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-jobs-page-num { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
@@ -782,7 +819,20 @@
 
   @keyframes a2-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+  /* Phase 2 mobile card list — visible only below 768px. */
+  .a2-jobs-card-list { display: none; list-style: none; margin: 0; padding: 0; gap: var(--a2-space-2); flex-direction: column; }
+  .a2-jobs-card { display: flex; flex-direction: column; gap: var(--a2-space-2); width: 100%; padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); color: inherit; text-align: left; cursor: pointer; transition: border-color var(--a2-motion-micro) var(--a2-ease-out), background var(--a2-motion-micro) var(--a2-ease-out); }
+  .a2-jobs-card:hover { background: var(--a2-surface-3); border-color: var(--a2-cyan-border); }
+  .a2-jobs-card.is-stale { border-color: var(--a2-amber-border); }
+  .a2-jobs-card-head { display: flex; align-items: center; gap: var(--a2-space-2); flex-wrap: wrap; }
+  .a2-jobs-card-status { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .a2-jobs-card-title { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); word-break: break-word; }
+  .a2-jobs-card-meta { display: flex; align-items: center; gap: 4px; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); flex-wrap: wrap; }
+  .a2-jobs-card-foot { display: flex; justify-content: space-between; gap: var(--a2-space-2); font-size: var(--a2-text-2xs); color: var(--a2-text-dim); flex-wrap: wrap; padding-top: var(--a2-space-1); border-top: 1px solid var(--a2-border); }
+
   @media (max-width: 768px) {
+    .a2-jobs-card-list { display: flex; }
+    .a2-jobs-table-wrap { display: none; }
     .a2-jobs-filters { display: none; }
     .a2-jobs-mobile-filter-toggle { display: inline-flex; }
     .a2-job-drawer { max-width: 100%; }

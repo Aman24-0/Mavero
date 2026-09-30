@@ -15,7 +15,7 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let sheetOpen = $state(false);
-  let editing: any = null;
+  let editing: any = $state(null);
 
   function openCreate() { editing = null; sheetOpen = true; }
   function openEdit(p: any) { editing = p; sheetOpen = true; }
@@ -140,8 +140,8 @@
   .a2-field input, .a2-field select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 6px 10px; }
   .a2-field input:focus, .a2-field select:focus { outline: none; border-color: var(--a2-cyan); }
   .a2-form-actions { display: flex; gap: var(--a2-space-2); justify-content: flex-end; padding-top: var(--a2-space-3); border-top: 1px solid var(--a2-border); }
-  .a2-btn-primary { padding: 8px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
-  .a2-btn-secondary { padding: 8px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
+  .a2-btn-primary { padding: 10px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
+  .a2-btn-secondary { padding: 10px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
   @media (max-width: 768px) { .a2-dl-row { flex-direction: column; align-items: stretch; } .a2-dl-row-actions { justify-content: flex-end; } }
 </style>

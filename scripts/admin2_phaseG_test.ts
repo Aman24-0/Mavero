@@ -302,15 +302,24 @@ ok('23a. All 4 system workspaces have matchPrefix for route-aware active state')
 // The command menu is populated from navGroups — since the System group
 // now has the 4 new items, they'll appear in the command menu automatically.
 assert.match(adminAppShell, /AdminCommandMenu/, 'AdminAppShell imports AdminCommandMenu');
-assert.match(adminAppShell, /configItems/, 'command menu receives configItems (now empty)');
+// Phase 2: the topbar Configure dropdown was removed entirely (the empty
+// configItems array was the only thing keeping the dropdown rendered). The
+// command menu no longer needs configItems — it accepts an optional
+// configItems prop that defaults to [].
+assert.doesNotMatch(adminAppShell, /a2-config-btn/, 'Phase 2: Configure dropdown button removed');
+assert.doesNotMatch(adminAppShell, /a2-config-pop/, 'Phase 2: Configure dropdown popup removed');
 ok('24a. Command menu populated from nav groups (includes new system items)');
 
 // ============================================================
-// 25. Config items retired
+// 25. Config items retired (Phase 2: dropdown fully removed)
 // ============================================================
 
-assert.match(adminAppShell, /const configItems: ConfigItem\[\] = \[\]/, 'configItems is now empty array');
-ok('25a. Config items (Defaults + Feature Control) retired — consolidated into workspaces');
+// Phase 1 retired configItems by setting it to []. Phase 2 went further:
+// the empty configItems array AND the topbar Configure dropdown button
+// are both removed (the dropdown was rendering as an empty popup — dead UI).
+// AdminAppShell no longer defines configItems at all.
+assert.doesNotMatch(adminAppShell, /const configItems/, 'Phase 2: configItems declaration removed (dropdown fully retired)');
+ok('25a. Config items (Defaults + Feature Control) retired — consolidated into workspaces; Configure dropdown fully removed (Phase 2)');
 
 // ============================================================
 // 26. Mobile navigation

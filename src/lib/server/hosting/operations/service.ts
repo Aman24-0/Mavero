@@ -473,43 +473,46 @@ export class OperationsService {
   // ------------------------------------------------------------
 
   async getBadgeCounts(): Promise<OpsBadgeCounts> {
-    // Active jobs = queued + uploading + uploaded + processing
-    const { count: jobsActive } = await this.client
-      .from('media_upload_operations')
-      .select('id', { count: 'exact', head: true })
-      .in('status', ['queued', 'uploading', 'uploaded', 'processing']);
-
-    // Attention = failed + stale + unconfigured (degraded requires health check — skip for badge perf)
-    const { count: failedCount } = await this.client
-      .from('media_upload_operations')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'failed');
-
+    // Phase 2 perf: run the three media_upload_operations counts in parallel
+    // (they are independent — no shared dependencies). Previously this was
+    // three sequential awaits, costing ~3 round-trips of latency.
     const staleBefore = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
-    const { count: staleCount } = await this.client
-      .from('media_upload_operations')
-      .select('id', { count: 'exact', head: true })
-      .in('status', STALE_STATES)
-      .lt('updated_at', staleBefore);
+    const [activeRes, failedRes, staleRes] = await Promise.all([
+      this.client
+        .from('media_upload_operations')
+        .select('id', { count: 'exact', head: true })
+        .in('status', ['queued', 'uploading', 'uploaded', 'processing']),
+      this.client
+        .from('media_upload_operations')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'failed'),
+      this.client
+        .from('media_upload_operations')
+        .select('id', { count: 'exact', head: true })
+        .in('status', STALE_STATES)
+        .lt('updated_at', staleBefore),
+    ]);
 
-    // Unconfigured providers (cheap — just env var checks)
-    let unconfiguredCount = 0;
-    for (const adapterId of HOSTING_ADAPTER_IDS) {
-      const configured = adapterId === 'vidara' ? getVidaraConfigOrNull() !== null : getAbyssConfigOrNull() !== null;
-      if (!configured) {
+    // Unconfigured providers (cheap — just env var checks). The two adapter
+    // lookups are also independent — parallelize them.
+    const unconfiguredProviders = await Promise.all(
+      HOSTING_ADAPTER_IDS.map(async (adapterId) => {
+        const configured = adapterId === 'vidara' ? getVidaraConfigOrNull() !== null : getAbyssConfigOrNull() !== null;
+        if (configured) return false;
         // Only count if the provider row exists (expected but not configured)
         const { data: providerRow } = await this.client
           .from('streaming_providers')
           .select('id')
           .eq('adapter_id', adapterId)
           .maybeSingle();
-        if (providerRow) unconfiguredCount += 1;
-      }
-    }
+        return Boolean(providerRow);
+      })
+    );
+    const unconfiguredCount = unconfiguredProviders.filter(Boolean).length;
 
     return {
-      jobsActive: jobsActive ?? 0,
-      attentionTotal: (failedCount ?? 0) + (staleCount ?? 0) + unconfiguredCount,
+      jobsActive: activeRes.count ?? 0,
+      attentionTotal: (failedRes.count ?? 0) + (staleRes.count ?? 0) + unconfiguredCount,
     };
   }
 

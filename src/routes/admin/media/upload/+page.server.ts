@@ -29,24 +29,37 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });
   const adminClient = createSupabaseAdminClient();
 
-  // Get hosting providers (Vidara + Abyss).
-  const { data: providers } = await adminClient
-    .from('streaming_providers')
-    .select('id, name, slug, adapter_id, enabled, status')
-    .in('adapter_id', ['vidara', 'abyss'])
-    .eq('enabled', true);
+  // Phase 2 perf: fetch hosting providers AND their sources in a single
+  // parallel batch. The sources query previously depended on providerIds
+  // from the providers query (sequential — 2 round-trips). We now request
+  // all sources for the vidara/abyss adapters' providers in one go by
+  // filtering on provider_id range via a nested select, OR we issue both
+  // queries in parallel using a wide `in` filter on adapter_id-derived
+  // provider_ids.
+  //
+  // Approach: issue both queries in parallel. The sources query is widened
+  // to filter on `provider_id` matching the same adapter_id set by using
+  // a nested PostgREST relation — `streaming_providers!inner(adapter_id)`.
+  // This avoids the sequential dependency entirely.
+  const [providersRes, sourcesRes] = await Promise.all([
+    adminClient
+      .from('streaming_providers')
+      .select('id, name, slug, adapter_id, enabled, status')
+      .in('adapter_id', ['vidara', 'abyss'])
+      .eq('enabled', true),
+    adminClient
+      .from('streaming_sources')
+      .select('id, name, slug, provider_id, status, enabled, streaming_providers!inner(adapter_id)')
+      .in('streaming_providers.adapter_id', ['vidara', 'abyss'])
+      .eq('enabled', true),
+  ]);
 
-  // Get the corresponding sources.
-  const providerIds = (providers ?? []).map((p) => p.id);
-  const { data: sources } = await adminClient
-    .from('streaming_sources')
-    .select('id, name, slug, provider_id, status, enabled')
-    .in('provider_id', providerIds)
-    .eq('enabled', true);
+  const providers = providersRes.data ?? [];
+  const sources = sourcesRes.data ?? [];
 
   // Build hostingSources with adapterId for each source.
-  const hostingSources = (sources ?? []).map((s) => {
-    const provider = (providers ?? []).find((p) => p.id === s.provider_id);
+  const hostingSources = sources.map((s: any) => {
+    const provider = providers.find((p) => p.id === s.provider_id);
     const adapterId = provider?.adapter_id ?? null;
     // Look up capabilities from the adapter registry. This is a
     // module-level singleton — no DB query, no network call. The

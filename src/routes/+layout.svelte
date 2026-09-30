@@ -239,9 +239,12 @@
   /* ============================================================
      Navigation spinner — PRIMARY loading feedback.
      Compact circular spinner, fixed top-center, below the mobile
-     status bar / notch. Dark translucent background + Mavero-green
+     status bar / notch. Dark translucent background + Admin 2.0 cyan
      rotating ring + subtle glow. This is the clear "navigation is
      loading" signal the user sees immediately on tap.
+     Phase 2: migrated from Mavero green (#00ff9c) to Admin 2.0 cyan
+     (#00d9ff / --a2-cyan) so the loading indicator belongs to the
+     same visual system as the rest of the admin UI.
      ============================================================ */
   .nav-spinner {
     position: fixed;
@@ -264,19 +267,19 @@
     background: rgba(5, 7, 8, .72);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(0, 255, 156, .22);
-    /* Subtle Mavero-green glow so the spinner reads as an active
+    border: 1px solid rgba(0, 217, 255, .22);
+    /* Subtle Admin 2.0 cyan glow so the spinner reads as an active
        loading state, not a static decoration. */
-    box-shadow: 0 0 14px rgba(0, 255, 156, .3), 0 2px 8px rgba(0, 0, 0, .4);
+    box-shadow: 0 0 14px rgba(0, 217, 255, .3), 0 2px 8px rgba(0, 0, 0, .4);
   }
   /* The rotating ring — a CSS border spinner. 20px circle with a
-     translucent track and a solid Mavero-green top segment. */
+     translucent track and a solid cyan top segment. */
   .nav-spinner-ring {
     width: 20px;
     height: 20px;
     border-radius: 50%;
     border: 2px solid rgba(242, 255, 248, .12);
-    border-top-color: var(--color-primary, #00ff9c);
+    border-top-color: var(--a2-cyan, #00d9ff);
     animation: nav-spinner-rotate 0.7s linear infinite;
   }
   @keyframes nav-spinner-rotate {
@@ -289,6 +292,7 @@
      was removed so the spinner is the sole animated element (no
      competing motion). This bar provides a subtle peripheral signal
      at the screen edge without drawing focus from the spinner.
+     Phase 2: migrated from green to Admin 2.0 cyan gradient.
      ============================================================ */
   .nav-progress {
     position: fixed;
@@ -298,7 +302,7 @@
     height: 3px;
     z-index: 9999;
     pointer-events: none;
-    background: linear-gradient(90deg, var(--color-primary, #00ff9c), var(--color-primary-hover, #00e88c));
+    background: linear-gradient(90deg, var(--a2-cyan, #00d9ff), var(--a2-cyan-bright, #7ee9ff));
     opacity: .55;
   }
 
@@ -308,8 +312,8 @@
     .nav-spinner-ring {
       animation: none;
       border-color: rgba(242, 255, 248, .12);
-      border-top-color: var(--color-primary, #00ff9c);
-      border-right-color: var(--color-primary, #00ff9c);
+      border-top-color: var(--a2-cyan, #00d9ff);
+      border-right-color: var(--a2-cyan, #00d9ff);
     }
   }
 </style>

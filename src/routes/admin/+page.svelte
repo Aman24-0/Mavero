@@ -15,7 +15,7 @@
    *   - HOSTING & MEDIA — quick links to media/hosting management
    *   - INTEGRATIONS — secondary metric cards
    */
-  import { Database, Download, Layers3, Puzzle, ShieldCheck, SlidersHorizontal, Wifi, Server, HardDrive, Activity, ArrowRight } from 'lucide-svelte';
+  import { Database, Download, Layers3, Puzzle, ShieldCheck, SlidersHorizontal, Wifi } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
@@ -75,50 +75,11 @@
     </section>
 
     <!-- ============================================================
-         HOSTING & MEDIA — quick links
-         ============================================================ -->
-    <section class="a2-section">
-      <div class="a2-section-head">
-        <h2 class="a2-section-title">Hosting & Media</h2>
-      </div>
-      <div class="a2-quick-grid">
-        <a class="a2-quick-card" href="/admin/media/upload">
-          <div class="a2-quick-icon"><HardDrive size={20} /></div>
-          <div class="a2-quick-text">
-            <div class="a2-quick-title">Upload Media</div>
-            <div class="a2-quick-desc">Add content to Vidara or Abyss</div>
-          </div>
-          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
-        </a>
-        <a class="a2-quick-card" href="/admin/media/missing">
-          <div class="a2-quick-icon"><Activity size={20} /></div>
-          <div class="a2-quick-text">
-            <div class="a2-quick-title">Missing Media</div>
-            <div class="a2-quick-desc">Demand requests from playback</div>
-          </div>
-          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
-        </a>
-        <a class="a2-quick-card" href="/admin/hosting">
-          <div class="a2-quick-icon"><Server size={20} /></div>
-          <div class="a2-quick-text">
-            <div class="a2-quick-title">Hosting</div>
-            <div class="a2-quick-desc">Vidara & Abyss management</div>
-          </div>
-          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
-        </a>
-        <a class="a2-quick-card" href="/admin/operations">
-          <div class="a2-quick-icon"><Activity size={20} /></div>
-          <div class="a2-quick-text">
-            <div class="a2-quick-title">Operations</div>
-            <div class="a2-quick-desc">Upload / processing history</div>
-          </div>
-          <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
-        </a>
-      </div>
-    </section>
-
-    <!-- ============================================================
          INTEGRATIONS — secondary metrics
+         (Phase 2: the duplicate "Hosting & Media" quick-grid was removed;
+         those destinations are already in the sidebar. The Overview now
+         follows the brief — dashboard + summary + contextual shortcuts,
+         not a second full admin menu.)
          ============================================================ -->
     {#if data.downloadersOverview || data.addonsOverview}
       <section class="a2-section">
@@ -233,91 +194,18 @@
     margin-top: var(--a2-space-1);
   }
 
-  /* Quick action grid */
-  .a2-quick-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--a2-space-3);
-  }
-
-  .a2-quick-card {
-    display: flex;
-    align-items: center;
-    gap: var(--a2-space-3);
-    padding: var(--a2-space-4);
-    background: var(--a2-surface-2);
-    border: 1px solid var(--a2-border);
-    border-radius: var(--a2-radius-md);
-    text-decoration: none;
-    color: inherit;
-    transition: background var(--a2-motion-micro) var(--a2-ease-out),
-                border-color var(--a2-motion-micro) var(--a2-ease-out);
-  }
-  .a2-quick-card:hover {
-    background: var(--a2-surface-3);
-    border-color: var(--a2-cyan-border);
-  }
-
-  .a2-quick-icon {
-    display: grid;
-    place-items: center;
-    width: 40px;
-    height: 40px;
-    border-radius: var(--a2-radius-md);
-    background: var(--a2-cyan-soft);
-    color: var(--a2-cyan);
-    flex-shrink: 0;
-  }
-
-  .a2-quick-text {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .a2-quick-title {
-    font-size: var(--a2-text-sm);
-    font-weight: 600;
-    color: var(--a2-text);
-  }
-
-  .a2-quick-desc {
-    font-size: var(--a2-text-xs);
-    color: var(--a2-text-dim);
-    margin-top: 2px;
-  }
-
-  .a2-quick-arrow {
-    display: inline-flex;
-    align-items: center;
-    color: var(--a2-text-dim);
-    flex-shrink: 0;
-    transition: color var(--a2-motion-micro) var(--a2-ease-out),
-                transform var(--a2-motion-micro) var(--a2-ease-out);
-  }
-  .a2-quick-card:hover .a2-quick-arrow {
-    color: var(--a2-cyan);
-    transform: translateX(2px);
-  }
-
   /* Responsive */
   @media (max-width: 1024px) {
     .a2-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .a2-quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   @media (max-width: 640px) {
     .a2-metric-grid,
     .a2-metric-grid.a2-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--a2-space-2); }
-    .a2-quick-grid { grid-template-columns: 1fr; gap: var(--a2-space-2); }
     .a2-section { margin-bottom: var(--a2-space-6); }
   }
 
   @media (min-width: 1920px) {
     .a2-metric-grid { gap: var(--a2-space-4); }
-    .a2-quick-grid { gap: var(--a2-space-4); }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .a2-quick-arrow { transition: none; }
   }
 </style>

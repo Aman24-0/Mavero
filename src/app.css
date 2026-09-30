@@ -535,4 +535,12 @@ html[data-a2-dialog-open] body { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .a2-skeleton { animation: none; background: var(--a2-surface-3); }
   .a2-ambient { animation: none; }
+  /* Phase 2: kill all inline-styled spinners inside the admin workspace.
+     Admin 2.0 components render <Loader2 style="animation: a2-spin 1s linear infinite;">
+     inline. Inline styles can only be overridden by !important — this single
+     rule covers every spinner across AdminHostingSync / AdminHostingProviders /
+     AdminOpsAttention / AdminOpsJobs / AdminOpsHistory / AdminHostingAssets /
+     admin/system/* without needing per-component overrides. */
+  .a2-workspace :global([style*="a2-spin"]) { animation: none !important; }
+  .a2-workspace :global(.spin) { animation: none !important; }
 }

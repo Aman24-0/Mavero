@@ -51,7 +51,7 @@
 
   // --- Provider edit/create sheet ---
   let providerSheetOpen = $state(false);
-  let editingProvider: any = null;
+  let editingProvider: any = $state(null);
   let providerSheetTrigger: HTMLElement | null = null;
 
   function openCreateProvider(event?: Event) {
@@ -71,7 +71,7 @@
 
   // --- Source edit/create sheet ---
   let sourceSheetOpen = $state(false);
-  let editingSource: any = null;
+  let editingSource: any = $state(null);
   let sourceSheetTrigger: HTMLElement | null = null;
 
   function openCreateSource(event?: Event) {
@@ -279,8 +279,8 @@
 
 <!-- Defaults sheet -->
 {#if defaultsOpen}
-  <div class="a2-overlay" onclick={() => { defaultsOpen = false; }} role="presentation">
-    <div class="a2-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-defaults-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+  <div class="a2-overlay" onclick={() => { defaultsOpen = false; }} onkeydown={(e) => { if (e.key === 'Escape') defaultsOpen = false; }} role="presentation">
+    <div class="a2-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-defaults-title" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
       <header class="a2-sheet-head">
         <h2 id="a2-defaults-title" class="a2-sheet-title"><SlidersHorizontal size={16} /> Default Sources</h2>
         <button type="button" class="a2-sheet-close" onclick={() => { defaultsOpen = false; }} aria-label="Close"><X size={16} /></button>
@@ -468,18 +468,18 @@
   .a2-default-row-current { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
   .a2-default-row-none { color: var(--a2-text-dim); font-style: italic; }
   .a2-default-row-control { display: flex; gap: var(--a2-space-1); align-items: center; }
-  .a2-default-select { flex: 1; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-xs); padding: 4px 8px; }
-  .a2-default-save { padding: 4px 10px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
-  .a2-default-clear { padding: 4px 10px; background: var(--a2-surface-4); color: var(--a2-text-muted); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
+  .a2-default-select { flex: 1; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-xs); padding: 8px 10px; min-height: 44px; }
+  .a2-default-save { padding: 8px 14px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; min-height: 44px; }
+  .a2-default-clear { padding: 8px 14px; background: var(--a2-surface-4); color: var(--a2-text-muted); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; min-height: 44px; }
 
   .a2-crud-form { display: flex; flex-direction: column; gap: var(--a2-space-4); }
   .a2-field { display: flex; flex-direction: column; gap: 2px; }
   .a2-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
-  .a2-field input, .a2-field select, .a2-field textarea { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 6px 10px; }
+  .a2-field input, .a2-field select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 6px 10px; }
   .a2-field input:focus, .a2-field select:focus { outline: none; border-color: var(--a2-cyan); }
   .a2-form-actions { display: flex; gap: var(--a2-space-2); justify-content: flex-end; padding-top: var(--a2-space-3); border-top: 1px solid var(--a2-border); }
-  .a2-btn-primary { padding: 8px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
-  .a2-btn-secondary { padding: 8px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
+  .a2-btn-primary { padding: 10px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
+  .a2-btn-secondary { padding: 10px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 

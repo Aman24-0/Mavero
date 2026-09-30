@@ -45,7 +45,7 @@
     LayoutGrid, Library, Upload, AlertCircle, Server, HardDrive, RefreshCw,
     Activity, History, TriangleAlert, Settings, Layers, Download, Puzzle,
     BarChart3, PanelLeftClose, PanelLeft, X, ArrowLeft, MoreHorizontal,
-    ChevronRight, Search, Command, Cog, ArrowRight
+    ChevronRight, Search, Command, ArrowRight
   } from 'lucide-svelte';
   import AdminCommandMenu from './AdminCommandMenu.svelte';
 
@@ -88,17 +88,6 @@
     active?: string;
     children: Snippet;
   } = $props();
-
-  // ============================================================
-  // NAVIGATION — Admin 2.0 Information Architecture (Phase B)
-  //
-  // System group consolidates Defaults + Feature Control out of the
-  // primary nav. They remain accessible via the topbar "Configure"
-  // dropdown AND the mobile "More" sheet's Configuration section.
-  // Phase G will fold them into API & Sources / Content Rules as
-  // contextual tabs / sheets, at which point the Configure dropdown
-  // will be retired.
-  // ============================================================
 
   const navGroups: NavGroup[] = [
     {
@@ -156,17 +145,18 @@
     },
   ];
 
-  // Phase G: configItems (Defaults + Feature Control) are now consolidated
-  // inside the Content Rules and API & Sources workspaces. The topbar
-  // Configure dropdown is retired — all configuration is in the SYSTEM
-  // nav group.
-  const configItems: ConfigItem[] = [];
+  // Phase 2: configItems retired — Defaults + Feature Control were folded into
+  // API & Sources / Content Rules as tabs/sheets in Phase 1. The topbar
+  // Configure dropdown and the mobile "Configuration" section are removed
+  // (no longer render an empty affordance).
 
-  // Mobile bottom nav: 5 primary destinations
+  // Mobile bottom nav: 5 primary destinations.
+  // Phase 2: "Media" was a placeholder for the unbuilt Phase C library page.
+  // Swap it for Hosting — a real, existing primary workflow — until Phase C ships.
   const mobileNav: NavItem[] = [
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
-    { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library },
     { id: 'upload', label: 'Upload', href: '/admin/media/upload', icon: Upload },
+    { id: 'hosting', label: 'Hosting', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
     { id: 'analytics', label: 'Analytics', href: '/admin/analytics', icon: BarChart3, matchPrefix: '/admin/analytics' },
     { id: 'more', label: 'More', href: '#more', icon: MoreHorizontal },
   ];
@@ -228,9 +218,6 @@
   let mobileMoreOpen = $state(false);
   let mobileMoreTrigger: HTMLElement | null = null;
   let mobileMoreEl = $state<HTMLElement | undefined>(undefined);
-  let configOpen = $state(false);
-  let configTrigger: HTMLElement | null = null;
-  let configEl = $state<HTMLElement | undefined>(undefined);
   let commandOpen = $state(false);
   let commandTrigger: HTMLElement | null = null;
 
@@ -327,48 +314,6 @@
   }
 
   // ============================================================
-  // CONFIGURE DROPDOWN (desktop topbar)
-  // ============================================================
-
-  function toggleConfig(event: Event) {
-    event.preventDefault();
-    configTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-    configOpen = !configOpen;
-    if (configOpen) {
-      void tick().then(() => {
-        configEl?.querySelector<HTMLElement>('a[href]')?.focus();
-      });
-    }
-  }
-
-  function closeConfig() {
-    configOpen = false;
-    configTrigger?.focus();
-    configTrigger = null;
-  }
-
-  function handleConfigKeydown(event: KeyboardEvent) {
-    if (!configOpen) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeConfig();
-      return;
-    }
-    if (event.key !== 'Tab' || !configEl) return;
-    const focusable = [...configEl.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
-  // ============================================================
   // COMMAND PALETTE (⌘K)
   // ============================================================
 
@@ -396,10 +341,6 @@
         mobileMoreOpen = false;
         unlockBodyScroll();
         mobileMoreTrigger = null;
-      }
-      if (configOpen) {
-        configOpen = false;
-        configTrigger = null;
       }
       // Bump key to retrigger workspace fade-in transition.
       workspaceKey += 1;
@@ -442,38 +383,9 @@
         <kbd class="a2-kbd">⌘K</kbd>
       </button>
 
-      <!-- Configure dropdown: surfaces Defaults + Feature Control without polluting primary nav -->
-      <div class="a2-config-wrap">
-        <button
-          class="a2-config-btn"
-          type="button"
-          onclick={toggleConfig}
-          aria-label="Configure"
-          aria-expanded={configOpen}
-          aria-haspopup="true"
-        >
-          <Cog size={14} />
-        </button>
-        {#if configOpen}
-          <div class="a2-config-overlay" onclick={closeConfig} onkeydown={handleConfigKeydown} aria-hidden="true"></div>
-          <div
-            class="a2-config-pop"
-            bind:this={configEl}
-            role="menu"
-            tabindex="-1"
-            aria-label="Configuration"
-            onkeydown={handleConfigKeydown}
-          >
-            <div class="a2-config-head">Configuration</div>
-            {#each configItems as item}
-              <a class="a2-config-link" href={item.href} onclick={closeConfig} role="menuitem">
-                <div class="a2-config-link-title">{item.label}</div>
-                <div class="a2-config-link-desc">{item.description}</div>
-              </a>
-            {/each}
-          </div>
-        {/if}
-      </div>
+      <!-- Phase 2: Configure dropdown removed — Defaults + Feature Control
+           are now contextual tabs/sheets inside the System workspaces. The
+           topbar no longer renders an empty Configure affordance. -->
 
       <a class="a2-back-link" href="/discover" title="Back to Mavero">
         <ArrowLeft size={14} />
@@ -593,16 +505,9 @@
           </div>
         {/each}
 
-        <div class="a2-more-group">
-          <div class="a2-nav-label">Configuration</div>
-          {#each configItems as item}
-            <a class="a2-more-link" href={item.href} onclick={closeMobileMore}>
-              <span class="a2-nav-icon"><Cog size={16} /></span>
-              <span class="a2-more-link-text">{item.label}</span>
-              <span class="a2-more-chevron"><ChevronRight size={14} /></span>
-            </a>
-          {/each}
-        </div>
+        <!-- Phase 2: empty Configuration group removed — configItems is
+             empty after Phase 1 consolidated Defaults + Feature Control
+             into the System workspaces. No dead section rendered. -->
       </nav>
     </div>
   {/if}
@@ -653,7 +558,6 @@
   <AdminCommandMenu
     bind:open={commandOpen}
     {navGroups}
-    {configItems}
     onclose={closeCommand}
   />
 </div>
@@ -775,81 +679,9 @@
     letter-spacing: 0.04em;
   }
 
-  /* ---- Configure dropdown ---- */
-  .a2-config-wrap {
-    position: relative;
-  }
-  .a2-config-btn {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    border: 1px solid var(--a2-border);
-    border-radius: var(--a2-radius-sm);
-    background: var(--a2-surface-2);
-    color: var(--a2-text-muted);
-    cursor: pointer;
-    transition: color var(--a2-motion-micro) var(--a2-ease-out),
-                border-color var(--a2-motion-micro) var(--a2-ease-out),
-                background var(--a2-motion-micro) var(--a2-ease-out);
-  }
-  .a2-config-btn:hover,
-  .a2-config-btn[aria-expanded="true"] {
-    color: var(--a2-cyan);
-    border-color: var(--a2-cyan-border);
-    background: var(--a2-cyan-soft);
-  }
-  .a2-config-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    background: transparent;
-  }
-  .a2-config-pop {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 61;
-    min-width: 240px;
-    background: var(--a2-surface-3);
-    border: 1px solid var(--a2-border-strong);
-    border-radius: var(--a2-radius-md);
-    box-shadow: var(--a2-shadow-md);
-    padding: var(--a2-space-2);
-    animation: a2-pop-in var(--a2-motion-fast) var(--a2-ease-out);
-  }
-  @keyframes a2-pop-in {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  .a2-config-head {
-    padding: var(--a2-space-1) var(--a2-space-2) var(--a2-space-2);
-    font-size: var(--a2-text-2xs);
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--a2-text-dim);
-  }
-  .a2-config-link {
-    display: block;
-    padding: var(--a2-space-2) var(--a2-space-3);
-    border-radius: var(--a2-radius-sm);
-    text-decoration: none;
-    color: var(--a2-text);
-    transition: background var(--a2-motion-micro) var(--a2-ease-out);
-  }
-  .a2-config-link:hover {
-    background: var(--a2-surface-4);
-  }
-  .a2-config-link-title {
-    font-size: var(--a2-text-sm);
-    font-weight: 600;
-  }
-  .a2-config-link-desc {
-    font-size: var(--a2-text-2xs);
-    color: var(--a2-text-dim);
-    margin-top: 2px;
-  }
+  /* Phase 2: Configure dropdown CSS removed — the dropdown was retired
+     when Defaults + Feature Control were folded into the System
+     workspaces as tabs/sheets in Phase 1. */
 
   .a2-back-link {
     display: inline-flex;
@@ -1279,7 +1111,6 @@
   @media (prefers-reduced-motion: reduce) {
     .a2-more-sheet,
     .a2-more-overlay,
-    .a2-config-pop,
     .a2-workspace { animation: none; }
     .a2-status-dot { animation: none; }
     .a2-sidebar, .a2-topbar, .a2-main { transition: none; }

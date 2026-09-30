@@ -42,7 +42,7 @@
 
   // --- Category edit/create sheet ---
   let categorySheetOpen = $state(false);
-  let editingCategory: any = null;
+  let editingCategory: any = $state(null);
 
   function openCreateCategory(event?: Event) { editingCategory = null; categorySheetOpen = true; }
   function openEditCategory(cat: any, event?: Event) { editingCategory = cat; categorySheetOpen = true; }
@@ -245,7 +245,7 @@
   .a2-features-desc { margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text-muted); }
   .a2-features-loading { display: inline-flex; align-items: center; gap: var(--a2-space-2); color: var(--a2-text-muted); }
   .a2-features-error { display: inline-flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-sm); }
-  .a2-features-retry { padding: 2px 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-xs); color: var(--a2-text); font-size: var(--a2-text-2xs); cursor: pointer; }
+  .a2-features-retry { padding: 8px 12px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-xs); color: var(--a2-text); font-size: var(--a2-text-2xs); cursor: pointer; min-height: 44px; }
   .a2-features-success { display: inline-flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-green-soft); border: 1px solid var(--a2-green-border); border-radius: var(--a2-radius-sm); color: var(--a2-green); font-size: var(--a2-text-sm); }
   .a2-feature-row { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-4); padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); }
   .a2-feature-row-info { display: flex; flex-direction: column; gap: 2px; }
@@ -257,11 +257,11 @@
   .a2-crud-form { display: flex; flex-direction: column; gap: var(--a2-space-4); }
   .a2-field { display: flex; flex-direction: column; gap: 2px; }
   .a2-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
-  .a2-field input, .a2-field select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 6px 10px; }
-  .a2-field input:focus, .a2-field select:focus { outline: none; border-color: var(--a2-cyan); }
+  .a2-field input { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 6px 10px; }
+  .a2-field input:focus { outline: none; border-color: var(--a2-cyan); }
   .a2-form-actions { display: flex; gap: var(--a2-space-2); justify-content: flex-end; padding-top: var(--a2-space-3); border-top: 1px solid var(--a2-border); }
-  .a2-btn-primary { padding: 8px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
-  .a2-btn-secondary { padding: 8px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
+  .a2-btn-primary { padding: 10px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
+  .a2-btn-secondary { padding: 10px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
   @keyframes a2-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   @media (max-width: 768px) { .a2-category-row { flex-direction: column; align-items: stretch; } .a2-category-row-actions { justify-content: flex-end; } }

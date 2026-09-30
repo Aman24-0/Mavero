@@ -242,13 +242,18 @@ ok('24a. All major components respect prefers-reduced-motion');
 
 // ============================================================
 // 25. Mobile nav items have correct hrefs
+//
+// Phase 2: "Media" was a placeholder for the unbuilt Phase C library page.
+// It was swapped for "Hosting" — a real, existing primary workflow — so
+// the bottom nav doesn't waste 20% of mobile nav real estate on a
+// placeholder until Phase C ships.
 // ============================================================
 
 assert.match(adminAppShell, /mobileNav[\s\S]*?Home.*\/admin'/, 'mobile nav has Home');
-assert.match(adminAppShell, /mobileNav[\s\S]*?Media.*\/admin\/media\/library'/, 'mobile nav has Media');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Upload.*\/admin\/media\/upload'/, 'mobile nav has Upload');
+assert.match(adminAppShell, /mobileNav[\s\S]*?Hosting.*\/admin\/hosting'/, 'Phase 2: mobile nav has Hosting (replaced placeholder Media)');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Analytics.*\/admin\/analytics'/, 'mobile nav has Analytics');
 assert.match(adminAppShell, /mobileNav[\s\S]*?More/, 'mobile nav has More');
-ok('25a. Mobile bottom nav has 5 primary destinations');
+ok('25a. Mobile bottom nav has 5 primary destinations (Phase 2: Hosting replaces placeholder Media)');
 
 console.log(`\nAdmin 2.0 Phase I tests passed (${passed} check groups).`);

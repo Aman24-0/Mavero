@@ -16,7 +16,7 @@
 
   let addSheetOpen = $state(false);
   let detailSheetOpen = $state(false);
-  let detailAddon: any = null;
+  let detailAddon: any = $state(null);
   let manifestUrl = $state('');
   let preview = $state<any>(null);
   let previewing = $state(false);
@@ -186,8 +186,8 @@
   .a2-detail-desc { margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text-muted); }
   .a2-detail-section { font-size: var(--a2-text-xs); font-weight: 700; color: var(--a2-text-bright); margin: var(--a2-space-3) 0 var(--a2-space-1); }
   .a2-checkbox { display: flex; align-items: center; gap: var(--a2-space-2); font-size: var(--a2-text-sm); color: var(--a2-text); }
-  .a2-btn-primary { padding: 8px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
-  .a2-btn-secondary { padding: 8px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
+  .a2-btn-primary { padding: 10px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
+  .a2-btn-secondary { padding: 10px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
   @media (max-width: 768px) { .a2-addon-row { flex-direction: column; align-items: stretch; } .a2-addon-row-actions { justify-content: flex-end; } .a2-dl { grid-template-columns: 1fr; } }
 </style>

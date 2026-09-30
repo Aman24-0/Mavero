@@ -74,13 +74,16 @@ for (const [name, content, destRegex] of legacyRedirects) {
 }
 // AdminShell.svelte still defines its own nav links (used by any page that
 // still opts into the legacy shell — e.g. legacy /admin/upload).
+// Phase 2: the legacy shell's nav links now point at the canonical Admin 2.0
+// routes (not the legacy redirect-stub routes) so users on /admin/users/*
+// pages don't see a "Redirecting…" flash + double-redirect when navigating.
 assert.match(adminShell, /\{ id: 'overview', label: 'Overview', href: '\/admin'/, 'admin nav: Overview');
-assert.match(adminShell, /\{ id: 'providers', label: 'Providers', href: '\/admin\/providers'/, 'admin nav: Providers');
-assert.match(adminShell, /\{ id: 'sources', label: 'Sources', href: '\/admin\/sources'/, 'admin nav: Sources');
-assert.match(adminShell, /\{ id: 'defaults', label: 'Defaults', href: '\/admin\/defaults'/, 'admin nav: Defaults');
-assert.match(adminShell, /\{ id: 'categories', label: 'Categories', href: '\/admin\/categories'/, 'admin nav: Categories');
+assert.match(adminShell, /\{ id: 'providers', label: 'Providers', href: '\/admin\/system\/api-sources\?tab=providers'/, 'admin nav: Providers (canonical)');
+assert.match(adminShell, /\{ id: 'sources', label: 'Sources', href: '\/admin\/system\/api-sources\?tab=sources'/, 'admin nav: Sources (canonical)');
+assert.match(adminShell, /\{ id: 'defaults', label: 'Defaults', href: '\/admin\/system\/api-sources'/, 'admin nav: Defaults (canonical)');
+assert.match(adminShell, /\{ id: 'categories', label: 'Categories', href: '\/admin\/system\/content-rules\?tab=categories'/, 'admin nav: Categories (canonical)');
 assert.match(adminShell, /aria-label="Admin navigation"/, 'admin shell exposes its own navigation landmark');
-ok('2. overview uses AdminAppShell; legacy registry pages are Phase 1 redirect stubs to canonical workspaces');
+ok('2. overview uses AdminAppShell; legacy registry pages are Phase 1 redirect stubs to canonical workspaces; AdminShell nav links point at canonical routes (Phase 2)');
 
 // ============================================================
 // 3. AppShell untouched — consumer navigation intact elsewhere

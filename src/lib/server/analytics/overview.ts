@@ -325,23 +325,19 @@ async function fetchMetrics(
   const loggedInNew = newUsers; // every new profile is a logged-in user by definition.
   const dauMauRatio = mau > 0 ? Math.round((dau / mau) * 1000) / 10 : null; // 1 decimal place
 
-  // Returning Users: active users in range who also had meaningful activity
-  // before range.start. Bounded by the active-user count.
+  // Returning Users + Guest New/Returning: parallelize (Phase 2 perf).
+  // countReturningUsers depends on activeUserIds (from the Promise.all above);
+  // computeGuestNewReturning depends on guestReach (also from above). The two
+  // functions query disjoint identity sets and have no dependency on each
+  // other — running them sequentially was wasting one full round-trip.
   const activeUserIds = (activeUsersRes.data as any ?? [])
     .map((row: any) => row.user_id as string)
     .filter((id: string) => typeof id === 'string' && id.length > 0) as string[];
-  const returningUsers = await countReturningUsers(client, activeUserIds, range.start);
+  const [returningUsers, guestNewReturn] = await Promise.all([
+    countReturningUsers(client, activeUserIds, range.start),
+    computeGuestNewReturning(client, range, guestReach),
+  ]);
   const loggedInReturning = returningUsers; // same set (returning users are logged-in by definition).
-
-  // Guest New / Guest Returning: the Phase 1 identity model cannot
-  // reliably compute these. "Guest New" would require knowing when an
-  // anonymous_id was FIRST seen — that's `min(analytics_events.event_time)
-  // where anonymous_id = X`, which IS computable, but the query is
-  // expensive (one min-aggregate per guest). "Guest Returning" requires
-  // knowing whether the same anonymous_id appeared in a prior period.
-  // Both are computable but expensive; we compute them on a best-effort
-  // basis and return null if the query fails or is too expensive.
-  const guestNewReturn = await computeGuestNewReturning(client, range, guestReach);
 
   return {
     metrics: {
@@ -415,30 +411,30 @@ async function computeGuestNewReturning(
   guestReach: number
 ): Promise<{ guestNew: number | null; guestReturning: number | null }> {
   if (guestReach === 0) return { guestNew: 0, guestReturning: 0 };
-  // Fetch anonymous_ids that had events BEFORE range.start (any event,
-  // not just meaningful — a guest who only loaded the page still counts
-  // as "previously seen").
-  const { data: priorData, error: priorError } = await client
-    .from('analytics_events')
-    .select('anonymous_id')
-    .is('user_id', null)
-    .lt('event_time', range.start);
-  if (priorError) return { guestNew: null, guestReturning: null };
+  // Phase 2 perf: fetch "previously seen" and "current range" guest sets in
+  // parallel. The two queries are independent — they only differ by time
+  // range filter. Previously this was two sequential awaits.
+  const [priorRes, currentRes] = await Promise.all([
+    client
+      .from('analytics_events')
+      .select('anonymous_id')
+      .is('user_id', null)
+      .lt('event_time', range.start),
+    client
+      .from('analytics_events')
+      .select('anonymous_id')
+      .is('user_id', null)
+      .gte('event_time', range.start)
+      .lt('event_time', range.end),
+  ]);
+  if (priorRes.error || currentRes.error) return { guestNew: null, guestReturning: null };
   const priorGuests = new Set<string>();
-  for (const row of priorData ?? []) {
+  for (const row of priorRes.data ?? []) {
     const val = (row as any).anonymous_id;
     if (typeof val === 'string' && val) priorGuests.add(val);
   }
-  // Fetch anonymous_ids with events in the current range (any event).
-  const { data: currentData, error: currentError } = await client
-    .from('analytics_events')
-    .select('anonymous_id')
-    .is('user_id', null)
-    .gte('event_time', range.start)
-    .lt('event_time', range.end);
-  if (currentError) return { guestNew: null, guestReturning: null };
   const currentGuests = new Set<string>();
-  for (const row of currentData ?? []) {
+  for (const row of currentRes.data ?? []) {
     const val = (row as any).anonymous_id;
     if (typeof val === 'string' && val) currentGuests.add(val);
   }
@@ -463,67 +459,74 @@ async function fetchTrend(
 ): Promise<TrendSeries> {
   const buckets = rangeBuckets(range);
   const granularity = buckets.length > 0 && buckets[0].label.length === 7 ? 'month' : buckets.length > 0 && buckets.length > 60 ? 'week' : 'day';
-  // Run one query per bucket (bounded by bucket count).
-  const points: TrendPoint[] = [];
-  for (const bucket of buckets) {
-    let query;
-    if (metric === 'watch-starts') {
-      // Watch Starts: count of watch_start events in the bucket.
-      query = client
-        .from('analytics_events')
-        .select('event_id', { count: 'exact', head: true })
-        .eq('event_name', 'watch_start')
-        .gte('event_time', bucket.start)
-        .lt('event_time', bucket.end);
-    } else if (metric === 'sessions') {
-      // Sessions: unique session_id in the bucket.
-      query = client
-        .from('analytics_events')
-        .select('session_id')
-        .gte('event_time', bucket.start)
-        .lt('event_time', bucket.end);
-    } else {
-      // Users: unique identity (depends on mode).
-      if (mode === 'guest') {
+  // Phase 2 perf: run all bucket queries in parallel instead of one-at-a-time.
+  // For a 30-day daily range this drops the trend fetch from ~31 sequential
+  // round-trips (~1.5-2s) to a single parallel batch (~80-150ms). The result
+  // order is preserved by mapping over `buckets` after Promise.all.
+  const bucketResults = await Promise.all(
+    buckets.map(async (bucket) => {
+      let query;
+      if (metric === 'watch-starts') {
+        // Watch Starts: count of watch_start events in the bucket.
         query = client
           .from('analytics_events')
-          .select('anonymous_id')
-          .is('user_id', null)
-          .in('event_name', MEANINGFUL_EVENTS_ARRAY)
+          .select('event_id', { count: 'exact', head: true })
+          .eq('event_name', 'watch_start')
           .gte('event_time', bucket.start)
           .lt('event_time', bucket.end);
-      } else if (mode === 'logged-in') {
+      } else if (metric === 'sessions') {
+        // Sessions: unique session_id in the bucket.
         query = client
           .from('analytics_events')
-          .select('user_id')
-          .not('user_id', 'is', null)
-          .in('event_name', MEANINGFUL_EVENTS_ARRAY)
+          .select('session_id')
           .gte('event_time', bucket.start)
           .lt('event_time', bucket.end);
       } else {
-        // 'all' — unique user_id OR anonymous_id (count distinct identities).
-        query = client
-          .from('analytics_events')
-          .select('user_id,anonymous_id')
-          .in('event_name', MEANINGFUL_EVENTS_ARRAY)
-          .gte('event_time', bucket.start)
-          .lt('event_time', bucket.end);
+        // Users: unique identity (depends on mode).
+        if (mode === 'guest') {
+          query = client
+            .from('analytics_events')
+            .select('anonymous_id')
+            .is('user_id', null)
+            .in('event_name', MEANINGFUL_EVENTS_ARRAY)
+            .gte('event_time', bucket.start)
+            .lt('event_time', bucket.end);
+        } else if (mode === 'logged-in') {
+          query = client
+            .from('analytics_events')
+            .select('user_id')
+            .not('user_id', 'is', null)
+            .in('event_name', MEANINGFUL_EVENTS_ARRAY)
+            .gte('event_time', bucket.start)
+            .lt('event_time', bucket.end);
+        } else {
+          // 'all' — unique user_id OR anonymous_id (count distinct identities).
+          query = client
+            .from('analytics_events')
+            .select('user_id,anonymous_id')
+            .in('event_name', MEANINGFUL_EVENTS_ARRAY)
+            .gte('event_time', bucket.start)
+            .lt('event_time', bucket.end);
+        }
       }
-    }
-    const { data, error, count } = await query;
+      const { data, error, count } = await query;
+      return { bucket, data, error, count };
+    })
+  );
+
+  const points: TrendPoint[] = bucketResults.map(({ bucket, data, error, count }) => {
     if (error) {
-      points.push({ start: bucket.start, end: bucket.end, label: bucket.label, value: 0 });
-      continue;
+      return { start: bucket.start, end: bucket.end, label: bucket.label, value: 0 };
     }
     if (metric === 'watch-starts') {
-      points.push({ start: bucket.start, end: bucket.end, label: bucket.label, value: count ?? 0 });
+      return { start: bucket.start, end: bucket.end, label: bucket.label, value: count ?? 0 };
     } else if (metric === 'sessions') {
       const seen = new Set<string>();
       for (const row of (data as any) ?? []) {
         const val = (row as any).session_id;
         if (typeof val === 'string' && val) seen.add(val);
       }
-      points.push({ start: bucket.start, end: bucket.end, label: bucket.label, value: seen.size });
+      return { start: bucket.start, end: bucket.end, label: bucket.label, value: seen.size };
     } else {
       // users
       const seen = new Set<string>();
@@ -542,9 +545,9 @@ async function fetchTrend(
           if (typeof uid === 'string' && uid) seen.add(uid);
         }
       }
-      points.push({ start: bucket.start, end: bucket.end, label: bucket.label, value: seen.size });
+      return { start: bucket.start, end: bucket.end, label: bucket.label, value: seen.size };
     }
-  }
+  });
 
   // For 'new' and 'returning' modes, the per-bucket computation is more
   // complex (requires knowing first-seen / prior-activity per identity).

@@ -89,7 +89,9 @@ assert.match(adminAppShell, /\{ id: 'integrations', label: 'Integrations', href:
 // Phase G: configItems (Defaults + Feature Control) are now consolidated
 // inside the Content Rules and API & Sources workspaces. The topbar
 // Configure dropdown is retired — configItems is now an empty array.
-assert.match(adminAppShell, /const configItems: ConfigItem\[\] = \[\]/, 'configItems is now empty (Phase G consolidation)');
+// Phase 2: the configItems array AND the Configure dropdown button are
+// fully removed (the empty array was rendering an empty popup — dead UI).
+assert.doesNotMatch(adminAppShell, /const configItems/, 'Phase 2: configItems declaration removed (dropdown fully retired)');
 ok('1e. nav group SYSTEM has 4 items pointing to /admin/system/* (Phase G consolidation)');
 
 // PEOPLE — single Analytics item pointing to the unified Analytics workspace
@@ -99,18 +101,24 @@ assert.match(adminAppShell, /matchPrefix: '\/admin\/analytics'/, 'nav: People �
 ok('1f. nav group PEOPLE has Analytics pointing to /admin/analytics (Phase H)');
 
 // ============================================================
-// 2. Configure dropdown — RETIRED in Phase G
+// 2. Configure dropdown — RETIRED in Phase G, fully removed in Phase 2
 //
 // Phase G consolidated Defaults into API & Sources (as a sheet) and
 // Feature Control into Content Rules (as a tab). The topbar Configure
-// dropdown is retired — configItems is now an empty array.
+// dropdown was retired — configItems was an empty array.
+// Phase 2 fully removed the dropdown button + popup + configItems array
+// (the empty array was rendering an empty popup — dead UI).
 // ============================================================
-assert.match(adminAppShell, /const configItems: ConfigItem\[\] = \[\]/, 'configItems is empty (Phase G retired the Configure dropdown)');
-ok('2a. Configure dropdown retired — Defaults + Feature Control consolidated into workspaces (Phase G)');
+assert.doesNotMatch(adminAppShell, /a2-config-btn/, 'Phase 2: Configure dropdown button removed');
+assert.doesNotMatch(adminAppShell, /a2-config-pop/, 'Phase 2: Configure dropdown popup removed');
+ok('2a. Configure dropdown fully removed in Phase 2 (was retired in Phase G)');
 
-// Mobile More sheet still renders (nav groups + empty config section)
-assert.match(adminAppShell, /Configuration/, 'Mobile More sheet has a Configuration section (now empty)');
-ok('2b. Mobile More sheet renders (Configuration section is empty in Phase G)');
+// Phase 2: the Mobile More sheet no longer renders the empty Configuration
+// section (it was always empty after Phase G). The check looks for a
+// rendered `<div class="a2-more-group">` containing a Configuration label
+// (comments mentioning "Configuration" are allowed — they're not rendered).
+assert.doesNotMatch(adminAppShell, /<div class="a2-more-group">[\s\S]*?<div class="a2-nav-label">Configuration<\/div>/, 'Phase 2: Mobile More sheet no longer renders empty Configuration section');
+ok('2b. Mobile More sheet renders only nav groups (Configuration section removed in Phase 2)');
 
 // ============================================================
 // 3. Route-aware active state — no fragile substring checks
@@ -141,7 +149,7 @@ ok('3c. Overview active state is exact-match (not prefix)');
 // ============================================================
 assert.match(adminAppShell, /import AdminCommandMenu from '.\/AdminCommandMenu\.svelte'/, 'AdminAppShell imports AdminCommandMenu');
 assert.match(adminAppShell, /\(\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === 'k'\)/, 'global ⌘K / Ctrl+K shortcut registered');
-assert.match(adminAppShell, /<AdminCommandMenu[\s\S]*navGroups[\s\S]*configItems/, 'AdminCommandMenu receives navGroups + configItems');
+assert.match(adminAppShell, /<AdminCommandMenu[\s\S]*navGroups[\s\S]*onclose/, 'AdminCommandMenu receives navGroups + onclose (configItems now optional, defaults to [])');
 ok('4a. ⌘K / Ctrl+K command palette wired into AdminAppShell');
 
 assert.match(adminCommandMenu, /role="dialog"/, 'command menu has dialog role');

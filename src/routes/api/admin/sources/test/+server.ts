@@ -23,7 +23,7 @@ import { resolveSourceDiagnostics } from '$lib/server/resolver/service';
  */
 export const POST: RequestHandler = async ({ request, locals }) => {
   // Admin-only: this MUST be called before any resolver logic.
-  await requireAdmin(locals, { redirectTo: '/admin/sources' });
+  await requireAdmin(locals, { redirectTo: '/admin/system/api-sources?tab=sources' });
 
   const parsed = await readJsonBody<unknown>(request);
   if (!parsed.ok) {

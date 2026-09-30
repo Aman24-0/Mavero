@@ -62,7 +62,8 @@
   }: {
     open?: boolean;
     navGroups: NavGroup[];
-    configItems: ConfigItem[];
+    /** Optional configuration items surfaced in the command palette. Defaults to empty. */
+    configItems?: ConfigItem[];
     onclose?: () => void;
   } = $props();
 
