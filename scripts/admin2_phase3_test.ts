@@ -25,7 +25,6 @@ const libraryPage = read('src/routes/admin/media/library/+page.svelte');
 
 // Legacy route stubs
 const usersServer = read('src/routes/admin/users/+page.server.ts');
-const usersPage = read('src/routes/admin/users/+page.svelte');
 const overviewServer = read('src/routes/admin/users/overview/+page.server.ts');
 const viewingServer = read('src/routes/admin/users/viewing/+page.server.ts');
 const providersServer = read('src/routes/admin/users/providers/+page.server.ts');
@@ -123,21 +122,22 @@ for (const [name, server, tab] of stubRoutes) {
 }
 ok('B1. All 5 legacy /admin/users/* list/overview routes are redirect stubs (no requireAdmin, no service calls)');
 
-// B2. All 5 svelte stubs have goto + meta refresh
-const stubPages: Array<[string, string, string]> = [
-  ['users', usersPage, 'users'],
-  ['overview', read('src/routes/admin/users/overview/+page.svelte'), 'overview'],
-  ['viewing', read('src/routes/admin/users/viewing/+page.svelte'), 'viewing'],
-  ['providers', read('src/routes/admin/users/providers/+page.svelte'), 'providers'],
-  ['retention', read('src/routes/admin/users/retention/+page.svelte'), 'retention'],
-];
+// B2. Cleanup: client-side +page.svelte stubs removed — server redirect is sufficient
+// SvelteKit's server-side redirect(303) handles all cases (SSR, client-side nav, no-JS).
+// The +page.svelte files were redundant and have been deleted.
+import { existsSync } from 'node:fs';
 
-for (const [name, page, tab] of stubPages) {
-  assert.match(page, /goto\(.*\/admin\/analytics\?/, `B2-${name}: page has goto() to /admin/analytics`);
-  assert.match(page, new RegExp(`<meta http-equiv="refresh" content="0; url=/admin/analytics\\?tab=${tab}"`), `B2-${name}: page has meta-refresh fallback`);
-  assert.doesNotMatch(page, /<AdminShell/, `B2-${name}: page does NOT mount AdminShell`);
+const removedClientStubs = [
+  'src/routes/admin/users/+page.svelte',
+  'src/routes/admin/users/overview/+page.svelte',
+  'src/routes/admin/users/viewing/+page.svelte',
+  'src/routes/admin/users/providers/+page.svelte',
+  'src/routes/admin/users/retention/+page.svelte',
+];
+for (const f of removedClientStubs) {
+  assert.ok(!existsSync(new URL(`../${f}`, import.meta.url)), `B2: ${f} removed (server redirect is sufficient)`);
 }
-ok('B2. All 5 legacy svelte stubs have goto + meta refresh + no AdminShell');
+ok('B2. Redundant client +page.svelte redirect stubs removed (server redirect(303) handles SSR + client nav + no-JS)');
 
 // B3. /admin/users/[userId] migrated to AdminAppShell
 assert.match(userIdPage, /<AdminAppShell active="analytics">/, 'B3a. [userId] page uses AdminAppShell with active="analytics"');
@@ -146,20 +146,11 @@ assert.match(userIdPage, /<AdminPage/, 'B3c. [userId] page uses AdminPage (not A
 assert.match(userIdPage, /href="\/admin\/analytics\?tab=users"/, 'B3d. [userId] back-link points to /admin/analytics?tab=users (not legacy /admin/users)');
 ok('B3. /admin/users/[userId] migrated to AdminAppShell + back-link points to canonical Analytics');
 
-// B4. AdminShell is no longer imported by any route
-const routeFiles = [
-  'src/routes/admin/users/+page.svelte',
-  'src/routes/admin/users/overview/+page.svelte',
-  'src/routes/admin/users/viewing/+page.svelte',
-  'src/routes/admin/users/providers/+page.svelte',
-  'src/routes/admin/users/retention/+page.svelte',
-  'src/routes/admin/users/[userId]/+page.svelte',
-];
-for (const f of routeFiles) {
-  const content = read(f);
-  assert.doesNotMatch(content, /from '\$lib\/components\/AdminShell\.svelte'/, `B4: ${f} does NOT import AdminShell`);
-}
-ok('B4. No /admin/users/* route imports AdminShell (all 6 routes migrated)');
+// B4. AdminShell.svelte has been deleted entirely (post-Phase-3 cleanup)
+assert.ok(!existsSync(new URL('../src/lib/components/AdminShell.svelte', import.meta.url)), 'B4a. AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
+// The [userId] page (the only remaining svelte in /admin/users/*) uses AdminAppShell
+assert.doesNotMatch(userIdPage, /from '\$lib\/components\/AdminShell\.svelte'/, 'B4b. [userId] page does NOT import AdminShell');
+ok('B4. AdminShell.svelte deleted; no /admin/users/* route imports it');
 
 // B5. URL param forwarding
 assert.match(usersServer, /new URLSearchParams\(url\.searchParams\)/, 'B5a. /admin/users server forwards all URL params');

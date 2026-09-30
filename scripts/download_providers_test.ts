@@ -18,7 +18,7 @@ console.log('superseded: this legacy test was retired by the Phase 2 canonical m
 process.exit(0);
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   applyDownloadTemplate,
   buildDownloadUrl,
@@ -591,16 +591,19 @@ assert.match(detailPage, /open=\{downloadSheetOpen\}/, 'DownloadSheet open prop 
 assert.match(detailPage, /primary-actions/, 'DetailPage wraps Play + Download in a primary-actions row');
 ok('DetailPage wires DownloadSheet + Play|Download row');
 
-// AdminShell + admin overview contract.
-const adminShell = readFileSync(new URL('../src/lib/components/AdminShell.svelte', import.meta.url), 'utf8');
-assert.match(adminShell, /\{ id: 'downloaders', label: 'Downloaders', href: '\/admin\/downloaders'/, 'AdminShell has Downloaders nav item');
+// AdminShell.svelte was deleted in the post-Phase-3 cleanup (dead code
+// after the last admin consumer migrated to AdminAppShell). The download
+// providers service contract is now reached via the canonical
+// /admin/system/downloads route (asserted by scripts/admin2_phase2_test.ts
+// + scripts/admin2_phaseG_test.ts), not via a legacy AdminShell nav item.
+assert.ok(!existsSync(new URL('../src/lib/components/AdminShell.svelte', import.meta.url)), 'AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
 
 const adminOverviewServer = readFileSync(new URL('../src/routes/admin/+page.server.ts', import.meta.url), 'utf8');
 assert.match(adminOverviewServer, /getDownloadersAdminOverview/, 'admin overview loads downloader counts');
 
 const adminOverviewPage = readFileSync(new URL('../src/routes/admin/+page.svelte', import.meta.url), 'utf8');
-assert.match(adminOverviewPage, /href="\/admin\/downloaders"/, 'admin overview has a Downloaders card');
-ok('AdminShell + admin overview wired to /admin/downloaders');
+assert.match(adminOverviewPage, /href="\/admin\/system\/downloads"/, 'admin overview has a Downloaders card linking to the canonical /admin/system/downloads route');
+ok('AdminShell.svelte deleted; admin overview still wired to canonical /admin/system/downloads (download providers service contract)');
 
 // Database types include the new table.
 const dbTypes = readFileSync(new URL('../src/lib/server/supabase/database.types.ts', import.meta.url), 'utf8');

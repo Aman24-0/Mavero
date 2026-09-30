@@ -4,7 +4,7 @@
  * Substantive coverage of all Phase 2 changes:
  *   A. Zero-warning cleanup (9 Phase 1 warnings eliminated)
  *   B. Legacy route stub conversion (6 +page.server.ts reduced to redirect stubs)
- *   C. Stale link cleanup (AdminShell, AdminUploadFlow, api-test, Overview)
+ *   C. Stale link cleanup (AdminUploadFlow, api-test, Overview; AdminShell.svelte deleted as dead code)
  *   D. Navigation consolidation (Configure dropdown removed, mobile Media→Hosting, Overview pruned)
  *   E. Performance parallelization (analytics fetchTrend, Operations badges, Hosting service, Upload, library)
  *   F. Loading UX migration (cyan/blue top progress + spinner, reduced-motion override)
@@ -15,7 +15,8 @@
  * Offline (regex-on-source) — no live Supabase needed.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 let passed = 0;
 function ok(message: string) {
@@ -25,13 +26,24 @@ function ok(message: string) {
 
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
+// Walk src/ and collect every .svelte/.ts source file (used to prove no
+// runtime source imports the deleted AdminShell.svelte).
+function walkSourceFiles(dir: string, files: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry);
+    const s = statSync(p);
+    if (s.isDirectory()) walkSourceFiles(p, files);
+    else if (/\.(svelte|ts)$/.test(entry)) files.push(p);
+  }
+  return files;
+}
+
 const apiSourcesPage = read('src/routes/admin/system/api-sources/+page.svelte');
 const apiSourcesServer = read('src/routes/admin/system/api-sources/+page.server.ts');
 const contentRulesPage = read('src/routes/admin/system/content-rules/+page.svelte');
 const downloadsPage = read('src/routes/admin/system/downloads/+page.svelte');
 const integrationsPage = read('src/routes/admin/system/integrations/+page.svelte');
 const adminAppShell = read('src/lib/components/admin2/AdminAppShell.svelte');
-const adminShell = read('src/lib/components/AdminShell.svelte');
 const adminUploadFlow = read('src/lib/components/admin2/AdminUploadFlow.svelte');
 const overviewServer = read('src/routes/admin/+page.server.ts');
 const overviewPage = read('src/routes/admin/+page.svelte');
@@ -111,22 +123,18 @@ ok('B2. Legacy stubs preserve ?notice query param through redirect');
 // C. Stale link cleanup
 // ============================================================
 
-// AdminShell.svelte: 7 nav links now point at canonical routes (not legacy stubs)
-assert.match(adminShell, /\/admin\/system\/api-sources\?tab=providers/, 'AdminShell: Providers link is canonical');
-assert.match(adminShell, /\/admin\/system\/api-sources\?tab=sources/, 'AdminShell: Sources link is canonical');
-assert.match(adminShell, /\/admin\/system\/downloads/, 'AdminShell: Downloaders link is canonical');
-assert.match(adminShell, /\/admin\/system\/api-sources'/, 'AdminShell: Defaults link is canonical');
-assert.match(adminShell, /\/admin\/system\/content-rules\?tab=categories/, 'AdminShell: Categories link is canonical');
-assert.match(adminShell, /\/admin\/system\/content-rules\?tab=features/, 'AdminShell: Feature Control link is canonical');
-assert.match(adminShell, /\/admin\/system\/integrations/, 'AdminShell: Stremio Addons link is canonical');
-assert.doesNotMatch(adminShell, /href: '\/admin\/providers'/, 'AdminShell: no stale /admin/providers link');
-assert.doesNotMatch(adminShell, /href: '\/admin\/sources'/, 'AdminShell: no stale /admin/sources link');
-assert.doesNotMatch(adminShell, /href: '\/admin\/downloaders'/, 'AdminShell: no stale /admin/downloaders link');
-assert.doesNotMatch(adminShell, /href: '\/admin\/defaults'/, 'AdminShell: no stale /admin/defaults link');
-assert.doesNotMatch(adminShell, /href: '\/admin\/categories'/, 'AdminShell: no stale /admin/categories link');
-assert.doesNotMatch(adminShell, /href: '\/admin\/feature-control'/, 'AdminShell: no stale /admin/feature-control link');
-assert.doesNotMatch(adminShell, /href: '\/admin\/addons'/, 'AdminShell: no stale /admin/addons link');
-ok('C1. AdminShell.svelte: all 7 nav links point at canonical Admin 2.0 routes (no stale legacy links)');
+// AdminShell.svelte was deleted in the post-Phase-3 cleanup — it was dead
+// code after the last consumer (/admin/users/[userId]) migrated to
+// AdminAppShell. No source file may import it; AdminAppShell is the sole
+// admin shell. (Phase 2 originally asserted that the legacy shell's nav
+// links pointed at canonical routes — that contract is now moot because
+// the file no longer exists.)
+assert.ok(!existsSync(new URL('../src/lib/components/AdminShell.svelte', import.meta.url)), 'AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
+const srcRoot = new URL('../src', import.meta.url).pathname;
+const adminShellImporters = walkSourceFiles(srcRoot)
+  .filter((f) => /from\s+['"][^'"]*\/AdminShell(\.svelte)?['"]/.test(readFileSync(f, 'utf8')));
+assert.equal(adminShellImporters.length, 0, 'no source file imports AdminShell (AdminAppShell is the sole admin shell)');
+ok('C1. AdminShell.svelte deleted in post-Phase-3 cleanup (no source imports it; AdminAppShell is the sole admin shell)');
 
 // AdminUploadFlow: empty-state link is canonical
 assert.match(adminUploadFlow, /href="\/admin\/system\/api-sources\?tab=providers"/, 'AdminUploadFlow: empty-state link is canonical');

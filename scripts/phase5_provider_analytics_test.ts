@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { fetchProviders } from '../src/lib/server/analytics/providers';
@@ -45,14 +45,15 @@ ok(!/requireAdmin/.test(providersServerNoComments), 'A2. providers server no lon
 ok(!/fetchProviders/.test(providersServerNoComments), 'A3. providers server no longer calls fetchProviders (canonical route owns the fetch)');
 ok(/params\.set\('tab', 'providers'\)/.test(providersServer), 'A4. providers server sets tab=providers in forwarded params');
 
-const providersPage = read('src/routes/admin/users/providers/+page.svelte');
-ok(/goto\(.*\/admin\/analytics\?tab=providers/.test(providersPage) || /\/admin\/analytics\?/.test(providersPage), 'A5. providers page has client-side goto() to canonical Analytics providers tab');
-ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=providers"/.test(providersPage), 'A6. providers page has meta-refresh fallback for no-JS clients');
-ok(!/<AdminShell/.test(providersPage), 'A7. providers page does NOT mount AdminShell (redirect stub)');
+// A5–A7. Cleanup: client +page.svelte removed — server redirect(303) is
+//        sufficient for SSR, client-nav, and no-JS clients. Assert the file is gone.
+ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/users/providers/+page.svelte')), 'A5. providers client page removed (server redirect is sufficient)');
 
-// Nav entry — kept in AdminShell.svelte as a legacy pointer to the now-redirect stub.
-const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/id: 'users-providers', label: 'Providers', href: '\/admin\/users\/providers'/.test(adminShell), 'A8. AdminShell usersLinks still contains legacy users-providers entry (points at redirect stub)');
+// AdminShell.svelte was deleted in the post-Phase-3 cleanup (dead code
+// after the last consumer migrated to AdminAppShell). The legacy
+// users-providers nav entry lived in AdminShell; with the shell gone, the
+// canonical Analytics workspace owns the providers dashboard.
+ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/AdminShell.svelte')), 'A8. AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
 
 // ============================================================
 // B. Date range — UTC / half-open preserved

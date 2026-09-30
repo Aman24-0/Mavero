@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 // Post-release fix — ADMIN layout must not render the consumer navigation.
 //
@@ -9,7 +10,9 @@ import { readFileSync } from 'node:fs';
 // the normal consumer navigation — inappropriate for an administrative
 // surface. The fix renders /admin/* BARE (exactly like /watch/*): the
 // consumer AppShell is never mounted there — not hidden, not covered —
-// while AdminShell keeps its own administrative navigation.
+// while AdminAppShell provides the administrative navigation (AdminShell.svelte
+// was deleted in the post-Phase-3 cleanup — it was dead code after the
+// last consumer migrated to AdminAppShell).
 
 let passed = 0;
 function ok(message: string) {
@@ -19,12 +22,23 @@ function ok(message: string) {
 
 const rootLayout = readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
 const appShell = readFileSync(new URL('../src/lib/components/AppShell.svelte', import.meta.url), 'utf8');
-const adminShell = readFileSync(new URL('../src/lib/components/AdminShell.svelte', import.meta.url), 'utf8');
 const defaultsPage = readFileSync(new URL('../src/routes/admin/defaults/+page.svelte', import.meta.url), 'utf8');
 const adminIndex = readFileSync(new URL('../src/routes/admin/+page.svelte', import.meta.url), 'utf8');
 const providersPage = readFileSync(new URL('../src/routes/admin/providers/+page.svelte', import.meta.url), 'utf8');
 const sourcesPage = readFileSync(new URL('../src/routes/admin/sources/+page.svelte', import.meta.url), 'utf8');
 const categoriesPage = readFileSync(new URL('../src/routes/admin/categories/+page.svelte', import.meta.url), 'utf8');
+
+// Walk src/ and collect every .svelte/.ts source file (used to prove no
+// runtime source imports the deleted AdminShell.svelte).
+function walkSourceFiles(dir: string, files: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry);
+    const s = statSync(p);
+    if (s.isDirectory()) walkSourceFiles(p, files);
+    else if (/\.(svelte|ts)$/.test(entry)) files.push(p);
+  }
+  return files;
+}
 
 // ============================================================
 // 1. Root layout — /admin/* renders bare (no AppShell mount)
@@ -52,7 +66,7 @@ ok('1. root layout: /admin/* renders bare; consumer pages keep AppShell exactly 
 // client-side redirect stubs that bounce to the canonical workspaces.
 // They no longer mount AdminShell or AdminAppShell.
 // ============================================================
-assert.match(adminIndex, /<(AdminAppShell|AdminShell)(\s+active="overview")?\s*>/, 'overview page wraps in either AdminAppShell (Phase B+ — route-aware active state) or AdminShell');
+assert.match(adminIndex, /<AdminAppShell(\s+active="overview")?\s*>/, 'overview page wraps in AdminAppShell (Phase B+ — route-aware active state)');
 
 // Phase 1: each legacy registry page is now a redirect stub to its
 // canonical Admin 2.0 workspace. The stub uses goto() for SPA nav +
@@ -72,18 +86,16 @@ for (const [name, content, destRegex] of legacyRedirects) {
   // The stub has a <meta http-equiv="refresh"> fallback for no-JS clients.
   assert.match(content, /<meta http-equiv="refresh" content="0; url=/, `${name} admin page has meta-refresh fallback`);
 }
-// AdminShell.svelte still defines its own nav links (used by any page that
-// still opts into the legacy shell — e.g. legacy /admin/upload).
-// Phase 2: the legacy shell's nav links now point at the canonical Admin 2.0
-// routes (not the legacy redirect-stub routes) so users on /admin/users/*
-// pages don't see a "Redirecting…" flash + double-redirect when navigating.
-assert.match(adminShell, /\{ id: 'overview', label: 'Overview', href: '\/admin'/, 'admin nav: Overview');
-assert.match(adminShell, /\{ id: 'providers', label: 'Providers', href: '\/admin\/system\/api-sources\?tab=providers'/, 'admin nav: Providers (canonical)');
-assert.match(adminShell, /\{ id: 'sources', label: 'Sources', href: '\/admin\/system\/api-sources\?tab=sources'/, 'admin nav: Sources (canonical)');
-assert.match(adminShell, /\{ id: 'defaults', label: 'Defaults', href: '\/admin\/system\/api-sources'/, 'admin nav: Defaults (canonical)');
-assert.match(adminShell, /\{ id: 'categories', label: 'Categories', href: '\/admin\/system\/content-rules\?tab=categories'/, 'admin nav: Categories (canonical)');
-assert.match(adminShell, /aria-label="Admin navigation"/, 'admin shell exposes its own navigation landmark');
-ok('2. overview uses AdminAppShell; legacy registry pages are Phase 1 redirect stubs to canonical workspaces; AdminShell nav links point at canonical routes (Phase 2)');
+// AdminShell.svelte was deleted in the post-Phase-3 cleanup — it was dead
+// code after the last consumer (/admin/users/[userId]) migrated to
+// AdminAppShell. No source file may import it; AdminAppShell is the sole
+// admin shell.
+assert.ok(!existsSync(new URL('../src/lib/components/AdminShell.svelte', import.meta.url)), 'AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
+const srcRoot = new URL('../src', import.meta.url).pathname;
+const adminShellImporters = walkSourceFiles(srcRoot)
+  .filter((f) => /from\s+['"][^'"]*\/AdminShell(\.svelte)?['"]/.test(readFileSync(f, 'utf8')));
+assert.equal(adminShellImporters.length, 0, 'no source file imports AdminShell (AdminAppShell is the sole admin shell)');
+ok('2. overview uses AdminAppShell; legacy registry pages are Phase 1 redirect stubs to canonical workspaces; AdminShell.svelte deleted (no source imports it)');
 
 // ============================================================
 // 3. AppShell untouched — consumer navigation intact elsewhere
@@ -96,7 +108,7 @@ ok('3. consumer navigation untouched (mobile + desktop consumers unaffected)');
 // ============================================================
 // 4. Global comment documents the not-hidden-not-covered contract
 // ============================================================
-assert.match(rootLayout, /must not render there[\s\S]*not hidden, not covered/i, 'the layout documents that the consumer nav is never mounted under /admin');
+assert.match(rootLayout, /must not\s+render there[\s\S]*not hidden, not covered/i, 'the layout documents that the consumer nav is never mounted under /admin');
 ok('4. contract documented: consumer nav is unmounted under /admin, never visually suppressed');
 
 console.log(`\nAdmin nav tests passed (${passed} check groups).`);

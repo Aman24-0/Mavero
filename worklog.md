@@ -2879,3 +2879,35 @@ None. No backend services, API endpoints, database migrations, or analytics metr
 - Promote `seriesTmdb` to a URL param for Media Library tree selection
 - Consider enriching Analytics tabs to absorb the fuller presentations from the legacy `/admin/users/*` routes (the redirect stubs lose some UI fidelity — worst case: Viewing tab drops 4 ranking lists, genre table, search analytics)
 - Add `streaming_addons_config_meta` migration to enable safe Overview caching
+
+---
+
+## Admin 2.0 Cleanup — Post-Phase 3
+
+**Date:** 2026-10-01
+
+### Objective
+Remove dead AdminShell architecture and obsolete test contracts after completion of the Admin 2.0 migration.
+
+### Cleanup
+- Removed `src/lib/components/AdminShell.svelte` (801 lines) after confirming zero runtime imports — the last consumer (`/admin/users/[userId]`) was migrated to `AdminAppShell` in Phase 3.
+- Updated 9 obsolete tests (`admin_nav_test`, `admin2_phase2_test`, `admin2_phase3_test`, `download_providers_test`, `phase2_overview_dashboard_test`, `phase3_user_management_test`, `phase4_viewing_discovery_test`, `phase5_provider_analytics_test`, `phase6_retention_cohorts_test`) to validate current Admin 2.0 contracts instead of the deleted AdminShell. All service-module contract assertions preserved; only AdminShell-content assertions removed.
+- Audited `/admin/users/*` redirect stubs: the 5 client-side `+page.svelte` redirect fallbacks (`/admin/users`, `/overview`, `/viewing`, `/providers`, `/retention`) were redundant — the server `+page.server.ts` throws `redirect(303)` which SvelteKit handles for SSR, client-side navigation, and no-JS. Removed all 5. `pnpm check` + `pnpm build` confirm SvelteKit accepts routes with only `+page.server.ts`.
+- Removed dead CSS rule `html[data-admin-drawer-open] body` from `src/app.css` (the attribute was only toggled by AdminShell; `data-admin-sheet-open` retained for AdminSheet).
+- Updated stale source comments in `src/app.css` and `src/routes/+layout.svelte` that referenced AdminShell as active.
+- Preserved backward-compatible legacy redirects — all 5 `/admin/users/*` routes still 303-redirect to `/admin/analytics?tab=...` with full URL param forwarding.
+- Verified no active Admin 2.0 navigation links point to the 5 legacy list routes. The only `/admin/users/*` links in active source are: (a) the `[userId]` detail page's self-redirect, (b) Analytics Users tab profile deep-links to `/admin/users/[userId]`, (c) historically accurate comments in `AdminAppShell.svelte`.
+- Preserved all historical worklog/design-document references to AdminShell (historically accurate, not factually false).
+
+### Deferred
+- `seriesTmdb` URL/data-model cleanup (unchanged — no dead-code issue found during cleanup)
+- Admin Overview caching (Phase 3 correctly deferred — addon registry lacks invalidation signal)
+- Analytics Viewing enrichment (Phase 4 scope)
+
+### Validation
+- `pnpm check`: 0 errors / 0 warnings
+- `pnpm test`: all admin tests pass (admin_nav 4 + phaseB 30 + phaseG 36 + phaseH 30 + phaseI 29 + phase2 31 + phase3 27 + phase2_overview 66 + phase3_user 85 + phase4_viewing 53 + phase5_provider 49 + phase6_retention 62 + download_providers superseded = 502 check groups)
+- `pnpm build`: PASS / 0 warnings
+
+### Commit
+`<SHA>`

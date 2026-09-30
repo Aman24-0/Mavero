@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { fetchViewing } from '../src/lib/server/analytics/viewing';
@@ -48,15 +48,15 @@ ok(!/requireAdmin/.test(viewingServerNoComments), 'A2. viewing server no longer 
 ok(!/fetchViewing/.test(viewingServerNoComments), 'A3. viewing server no longer calls fetchViewing (canonical route owns the fetch)');
 ok(/params\.set\('tab', 'viewing'\)/.test(viewingServer), 'A4. viewing server sets tab=viewing in forwarded params');
 
-const viewingPage = read('src/routes/admin/users/viewing/+page.svelte');
-ok(/goto\(.*\/admin\/analytics\?tab=viewing/.test(viewingPage) || /\/admin\/analytics\?/.test(viewingPage), 'A5. viewing page has client-side goto() to canonical Analytics viewing tab');
-ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=viewing"/.test(viewingPage), 'A6. viewing page has meta-refresh fallback for no-JS clients');
-ok(!/<AdminShell/.test(viewingPage), 'A7. viewing page does NOT mount AdminShell (redirect stub)');
+// A5–A7. Cleanup: client +page.svelte removed — server redirect(303) is
+//        sufficient for SSR, client-nav, and no-JS clients. Assert the file is gone.
+ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/users/viewing/+page.svelte')), 'A5. viewing client page removed (server redirect is sufficient)');
 
-// Nav entry — kept in AdminShell.svelte as a legacy pointer to the now-redirect stub.
-const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/id: 'users-viewing', label: 'Viewing', href: '\/admin\/users\/viewing'/.test(adminShell), 'A8. AdminShell usersLinks still contains legacy users-viewing entry (points at redirect stub)');
-ok(/icon: Play/.test(adminShell), 'A9. Viewing nav entry uses the Play icon');
+// AdminShell.svelte was deleted in the post-Phase-3 cleanup (dead code
+// after the last consumer migrated to AdminAppShell). The legacy
+// users-viewing nav entry lived in AdminShell; with the shell gone, the
+// canonical Analytics workspace owns the viewing dashboard.
+ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/AdminShell.svelte')), 'A8. AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
 
 // ============================================================
 // B. Date range — UTC / half-open preserved

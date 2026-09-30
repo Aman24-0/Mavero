@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
@@ -345,19 +345,15 @@ assert.ok(MEANINGFUL_ACTIVITY_EVENTS.size >= 10, `MEANINGFUL_ACTIVITY_EVENTS has
 ok(true, '8c. MEANINGFUL_ACTIVITY_EVENTS is non-empty (≥10 events)');
 
 // ============================================================
-// 9. AdminShell still exists (legacy) — Workspace links updated to canonical routes in Phase 1
+// 9. AdminShell.svelte deleted in post-Phase-3 cleanup (dead code)
 // Phase 3: the /admin/users/* routes are now redirect stubs to /admin/analytics?tab=...
 // AdminShell.svelte is no longer imported by any route (the last consumer,
-// /admin/users/[userId], migrated to AdminAppShell in Phase 3).
+// /admin/users/[userId], migrated to AdminAppShell in Phase 3). The legacy
+// shell was deleted as dead code; AdminAppShell is the sole admin shell.
 // ============================================================
 
-const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/usersLinks/.test(adminShell), '9a. AdminShell still defines a usersLinks array (legacy, unused)');
-ok(/id: 'users-overview'/.test(adminShell), '9b. usersLinks contains the users-overview entry (legacy)');
-ok(/href: '\/admin\/users\/overview'/.test(adminShell), '9c. usersLinks still points at /admin/users/overview (now a redirect stub)');
-ok(/\{ id: 'overview', label: 'Overview', href: '\/admin'/.test(adminShell), '9f. existing Workspace Overview link preserved');
-// Phase 1: Workspace links updated to canonical routes
-ok(/href: '\/admin\/system\/api-sources\?tab=providers'/.test(adminShell), '9g. Workspace Providers link updated to canonical route (Phase 1)');
+ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/AdminShell.svelte')), '9a. AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
+ok(true, '9b. AdminAppShell is the sole admin shell (no source imports AdminShell)');
 
 // ============================================================
 // 10. Overview route — Phase 3 redirect stub to /admin/analytics?tab=overview
@@ -371,10 +367,9 @@ ok(!/requireAdmin/.test(overviewServer), '10b. overview server no longer calls r
 ok(!/fetchOverview/.test(overviewServer), '10c. overview server no longer calls fetchOverview (canonical route owns the fetch)');
 ok(/params\.set\('tab', 'overview'\)/.test(overviewServer), '10d. overview server sets tab=overview in forwarded params');
 
-const overviewPage = read('src/routes/admin/users/overview/+page.svelte');
-ok(/goto\(.*\/admin\/analytics\?tab=overview/.test(overviewPage) || /\/admin\/analytics\?/.test(overviewPage), '10e. overview page has client-side goto() to canonical Analytics tab');
-ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=overview"/.test(overviewPage), '10f. overview page has meta-refresh fallback for no-JS clients');
-ok(!/<AdminShell/.test(overviewPage), '10g. overview page does NOT mount AdminShell (redirect stub)');
+// 10e–10g. Cleanup: client +page.svelte removed — server redirect(303) is sufficient
+//          for SSR, client-nav, and no-JS clients. Assert the file is gone.
+ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/users/overview/+page.svelte')), '10e. overview client page removed (server redirect is sufficient)');
 
 // ============================================================
 // 11. Overview query module contract

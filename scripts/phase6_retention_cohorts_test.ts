@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { fetchRetention, COHORT_TYPES, type CohortType } from '../src/lib/server/analytics/retention';
@@ -36,14 +36,15 @@ ok(!/requireAdmin/.test(retentionServerNoComments), 'A2. retention server no lon
 ok(!/fetchRetention/.test(retentionServerNoComments), 'A3. retention server no longer calls fetchRetention (canonical route owns the fetch)');
 ok(/params\.set\('tab', 'retention'\)/.test(retentionServer), 'A4. retention server sets tab=retention in forwarded params (including ?cohort=)');
 
-const retentionPage = read('src/routes/admin/users/retention/+page.svelte');
-ok(/goto\(.*\/admin\/analytics\?tab=retention/.test(retentionPage) || /\/admin\/analytics\?/.test(retentionPage), 'A5. retention page has client-side goto() to canonical Analytics retention tab');
-ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=retention"/.test(retentionPage), 'A6. retention page has meta-refresh fallback for no-JS clients');
-ok(!/<AdminShell/.test(retentionPage), 'A7. retention page does NOT mount AdminShell (redirect stub)');
+// A5–A7. Cleanup: client +page.svelte removed — server redirect(303) is
+//        sufficient for SSR, client-nav, and no-JS clients. Assert the file is gone.
+ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/users/retention/+page.svelte')), 'A5. retention client page removed (server redirect is sufficient)');
 
-// Nav entry — kept in AdminShell.svelte as a legacy pointer to the now-redirect stub.
-const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/id: 'users-retention', label: 'Retention', href: '\/admin\/users\/retention'/.test(adminShell), 'A8. AdminShell usersLinks still contains legacy users-retention entry (points at redirect stub)');
+// AdminShell.svelte was deleted in the post-Phase-3 cleanup (dead code
+// after the last consumer migrated to AdminAppShell). The legacy
+// users-retention nav entry lived in AdminShell; with the shell gone, the
+// canonical Analytics workspace owns the retention dashboard.
+ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/AdminShell.svelte')), 'A8. AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
 
 // Canonical analytics server reads ?cohort= param + calls fetchRetention with it.
 const analyticsServer = read('src/routes/admin/analytics/+page.server.ts');

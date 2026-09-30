@@ -347,12 +347,11 @@ img { max-width: 100%; }
 }
 
 /* ============================================================
-   Admin body scroll lock — when the mobile admin drawer OR an admin
-   modal sheet is open, the underlying admin page must not scroll.
-   The AdminShell / AdminSheet primitives toggle these attributes on
-   <html>; the rule is global so it works from any scoped component.
+   Admin body scroll lock — when an admin modal sheet is open,
+   the underlying admin page must not scroll. The AdminSheet
+   primitive toggles this attribute on <html>; the rule is global
+   so it works from any scoped component.
    ============================================================ */
-html[data-admin-drawer-open] body,
 html[data-admin-sheet-open] body { overflow: hidden; }
 html[data-admin-sheet-open] body { touch-action: none; }
 

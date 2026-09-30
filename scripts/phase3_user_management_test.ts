@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
@@ -46,19 +46,13 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
 // ============================================================
-// 1. Admin nav wiring — Users entry added
+// 1. Admin nav wiring — Users entry now lives in AdminAppShell
 // ============================================================
+// AdminShell.svelte was deleted in the post-Phase-3 cleanup (dead code
+// after the last consumer, /admin/users/[userId], migrated to AdminAppShell).
+// The Users nav entry now lives in AdminAppShell; AdminShell is gone.
 
-const adminShell = read('src/lib/components/AdminShell.svelte');
-ok(/id: 'users-list', label: 'Users', href: '\/admin\/users'/.test(adminShell), '1a. AdminShell usersLinks contains users-list entry pointing to /admin/users');
-ok(/icon: Users/.test(adminShell), '1b. Users nav entry uses the Users icon');
-ok(/users-overview/.test(adminShell) && /users-list/.test(adminShell), '1c. both users-overview (Phase 2) and users-list (Phase 3) entries present');
-// The active prop type now includes 'users-list' and 'users-detail'.
-ok(/users-list/.test(adminShell) && /users-detail/.test(adminShell), '1d. active prop type includes users-list + users-detail');
-// The existing Workspace links are preserved (test-locked). Workspace
-// Providers link was updated to the canonical route in Phase 1.
-ok(/\{ id: 'overview', label: 'Overview', href: '\/admin'/.test(adminShell), '1e. existing Workspace Overview link preserved');
-ok(/href: '\/admin\/system\/api-sources\?tab=providers'/.test(adminShell), '1f. Workspace Providers link points to canonical /admin/system/api-sources?tab=providers (Phase 1)');
+ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/AdminShell.svelte')), '1a. AdminShell.svelte has been deleted (dead code after Phase 3 migration)');
 
 // ============================================================
 // 2. Users list route — now a Phase 3 redirect stub to /admin/analytics?tab=users
@@ -78,10 +72,9 @@ ok(!/listUsers/.test(listServerNoComments), '2c. users list server no longer cal
 ok(/params\.set\('tab', 'users'\)/.test(listServer), '2d. users list server sets tab=users in forwarded params');
 ok(/new URLSearchParams\(url\.searchParams\)/.test(listServer), '2e. users list server forwards all URL params (q/filter/page/period) to canonical route');
 
-const listPage = read('src/routes/admin/users/+page.svelte');
-ok(/goto\(.*\/admin\/analytics\?tab=users/.test(listPage) || /\/admin\/analytics\?/.test(listPage), '2f. users list page has client-side goto() to canonical Analytics users tab');
-ok(/<meta http-equiv="refresh" content="0; url=\/admin\/analytics\?tab=users"/.test(listPage), '2g. users list page has meta-refresh fallback for no-JS clients');
-ok(!/<AdminShell/.test(listPage), '2h. users list page does NOT mount AdminShell (redirect stub)');
+// 2f–2h. Cleanup: client +page.svelte removed — server redirect(303) is
+//         sufficient for SSR, client-nav, and no-JS clients. Assert the file is gone.
+ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/users/+page.svelte')), '2f. users list client page removed (server redirect is sufficient)');
 
 // ============================================================
 // 3. User detail route + server load contract
@@ -237,9 +230,10 @@ ok(/order\('event_time', \{ ascending: false \}\)/.test(usersModule), '12c. time
 // 13. URL state behavior
 // ============================================================
 
-// 13a. List page uses goto() for the redirect stub (URL state is now owned
-// by the canonical /admin/analytics page).
-ok(/goto\(/.test(listPage), '13a. list page uses goto() for redirect stub to canonical route');
+// 13a. List page client removed — server redirect(303) forwards URL params
+// to the canonical /admin/analytics page (which owns search/filter/page state).
+// (Previously asserted goto() on the deleted +page.svelte; now handled by server redirect.)
+ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/users/+page.svelte')), '13a. users list client page removed (URL state forwarded via server redirect)');
 // 13b. The canonical analytics page owns the search/filter/page URL state
 // (the legacy list route is a redirect stub that forwards all params).
 ok(/new URLSearchParams\(url\.searchParams\)/.test(listServer), '13b. list server forwards URL params (search/filter/page state preserved across redirect)');
@@ -257,8 +251,8 @@ ok(/import \{ MEANINGFUL_ACTIVITY_EVENTS \} from '\$lib\/shared\/analytics-taxon
 const analyticsServer = read('src/routes/admin/analytics/+page.server.ts');
 ok(/import \{.*resolveRangeFromParams.*\} from '\$lib\/shared\/analytics-period'/.test(analyticsServer), '14b. canonical analytics server imports resolveRangeFromParams from Phase 2');
 // 14c. Reuses admin shells — detail page uses AdminAppShell (Phase 3),
-// list page is a redirect stub (no shell mounted).
-ok(!/<AdminShell/.test(listPage), '14c-i. list page is a redirect stub (no AdminShell mounted)');
+// list client page is removed (server redirect is sufficient; no shell mounted).
+ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/users/+page.svelte')), '14c-i. users list client page removed (no shell mounted — server redirect)');
 ok(/import AdminAppShell from '\$lib\/components\/admin2\/AdminAppShell\.svelte'/.test(detailPage), '14c-ii. detail page reuses AdminAppShell (Phase 3 admin2 shell)');
 // 14d. Reuses admin components — list page is a redirect stub (no components),
 // detail page reuses the Phase 1/2/3 admin component library.
