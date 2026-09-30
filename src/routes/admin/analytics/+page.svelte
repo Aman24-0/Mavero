@@ -506,6 +506,7 @@
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
+  .a2-kpi-grid { grid-template-columns: 1fr 1fr; }
   @media (max-width: 768px) {
     .a2-kpi-grid { grid-template-columns: 1fr 1fr; }
     .a2-reach-grid { grid-template-columns: 1fr 1fr; }

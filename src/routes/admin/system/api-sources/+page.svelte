@@ -421,6 +421,7 @@
   @keyframes a2-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
   .a2-defaults-head {
+    padding-top: env(safe-area-inset-top, 0px);
     display: flex; justify-content: space-between; align-items: center;
     gap: var(--a2-space-3); padding: var(--a2-space-4);
     border-bottom: 1px solid var(--a2-border);
@@ -431,12 +432,15 @@
     margin: 0; font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright);
   }
   .a2-defaults-close {
+    min-width: 44px;
+    min-height: 44px;
     background: transparent; border: none; cursor: pointer;
     color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs);
   }
   .a2-defaults-close:hover { background: var(--a2-surface-3); color: var(--a2-text); }
 
-  .a2-defaults-body { padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-4); }
+  .a2-defaults-body {
+    padding-bottom: env(safe-area-inset-bottom, 0px); padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-4); }
   .a2-defaults-desc { margin: 0 0 var(--a2-space-2); font-size: var(--a2-text-sm); color: var(--a2-text-muted); line-height: 1.5; }
 
   .a2-default-row {

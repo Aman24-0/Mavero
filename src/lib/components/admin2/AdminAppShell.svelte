@@ -1017,11 +1017,13 @@
     display: none;
     position: fixed;
     top: 0; left: 0; right: 0;
-    height: var(--a2-topbar-h);
+    height: var(--a2-topbar-h-safe);
+    padding-top: env(safe-area-inset-top, 0px);
     z-index: 40;
     align-items: center;
     justify-content: space-between;
-    padding: 0 var(--a2-space-4);
+    padding-left: var(--a2-space-4);
+    padding-right: var(--a2-space-4);
     background: var(--a2-glass);
     backdrop-filter: blur(16px) saturate(140%);
     border-bottom: 1px solid var(--a2-border);
@@ -1030,6 +1032,8 @@
     display: flex;
     align-items: center;
     gap: var(--a2-space-2);
+    overflow: hidden;
+    min-width: 0;
   }
   .a2-mobile-actions {
     display: flex;
@@ -1039,8 +1043,8 @@
   .a2-mobile-cmd {
     display: grid;
     place-items: center;
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
     border-radius: var(--a2-radius-sm);
     border: none;
     background: transparent;
@@ -1056,8 +1060,8 @@
   .a2-mobile-exit {
     display: grid;
     place-items: center;
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
     border-radius: var(--a2-radius-sm);
     color: var(--a2-text-muted);
     text-decoration: none;
@@ -1089,7 +1093,7 @@
     background: var(--a2-surface-2);
     border-top: 1px solid var(--a2-border-strong);
     border-radius: var(--a2-radius-xl) var(--a2-radius-xl) 0 0;
-    padding: var(--a2-space-5) var(--a2-space-4) var(--a2-space-8);
+    padding: var(--a2-space-5) var(--a2-space-4) calc(var(--a2-space-8) + env(safe-area-inset-bottom, 0px));
     animation: a2-slide-up var(--a2-motion-slow) var(--a2-ease-out);
   }
   @keyframes a2-fade-in {
@@ -1116,8 +1120,8 @@
   .a2-more-close {
     display: grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     border: none;
     border-radius: var(--a2-radius-md);
     background: var(--a2-surface-3);
@@ -1194,7 +1198,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 2px;
+    min-width: 44px;
+    min-height: 44px;
     padding: var(--a2-space-1) var(--a2-space-2);
     color: var(--a2-text-dim);
     text-decoration: none;

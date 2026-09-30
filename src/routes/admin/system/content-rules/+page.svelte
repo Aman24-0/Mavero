@@ -327,6 +327,11 @@
   .a2-feature-row-desc { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
 
   .a2-toggle {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: transparent; border: none; cursor: pointer;
     color: var(--a2-text-dim); padding: 0; display: inline-flex; align-items: center;
     transition: color var(--a2-motion-micro, 140ms) var(--a2-ease-out);

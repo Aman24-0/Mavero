@@ -461,6 +461,7 @@
   }
 
   .a2-drawer-head {
+    padding-top: env(safe-area-inset-top, 0px);
     position: sticky;
     top: 0;
     z-index: 1;
@@ -481,6 +482,8 @@
     color: var(--a2-text-dim);
   }
   .a2-drawer-close {
+    min-width: 44px;
+    min-height: 44px;
     display: grid;
     place-items: center;
     width: 32px;

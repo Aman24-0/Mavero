@@ -311,6 +311,7 @@
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
   .a2-attention-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--a2-space-2); }
+  .a2-attention-summary { grid-template-columns: 1fr 1fr; }
   @media (max-width: 640px) { .a2-attention-summary { grid-template-columns: 1fr 1fr; } }
 
   .a2-attention-cat-card { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: var(--a2-space-3); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); cursor: pointer; transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
@@ -380,6 +381,7 @@
 
   @keyframes a2-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+  .a2-attention-summary { grid-template-columns: 1fr 1fr; }
   @media (max-width: 640px) {
     .a2-attention-item { grid-template-columns: 1fr; }
     .a2-attention-item-icon { width: 32px; height: 32px; }

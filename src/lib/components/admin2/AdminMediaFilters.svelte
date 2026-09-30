@@ -338,6 +338,12 @@
     margin-top: var(--a2-space-2);
   }
 
+  @media (max-width: 768px) {
+    .media-filters-desktop { display: none; }
+    .filter-sheet-close { min-width: 44px; min-height: 44px; }
+    .filter-sheet { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .filter-overlay, .filter-sheet { animation: none; }
     .filter-search, .filter-select { transition: none; }

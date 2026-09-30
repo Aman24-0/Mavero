@@ -1085,6 +1085,7 @@
     overflow-y: auto;
   }
   .a2-assets-filter-sheet-actions {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     display: flex; gap: var(--a2-space-2);
     padding: var(--a2-space-3) var(--a2-space-4);
     border-top: 1px solid var(--a2-border);
@@ -1118,6 +1119,7 @@
   @keyframes a2-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
   .a2-asset-drawer-head {
+    padding-top: env(safe-area-inset-top, 0px);
     display: flex; justify-content: space-between; align-items: center;
     gap: var(--a2-space-3);
     padding: var(--a2-space-4);
@@ -1142,6 +1144,8 @@
     color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em;
   }
   .a2-asset-drawer-close {
+    min-width: 44px;
+    min-height: 44px;
     background: transparent; border: none; cursor: pointer;
     color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs);
   }

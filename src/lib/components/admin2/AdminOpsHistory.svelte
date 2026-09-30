@@ -497,7 +497,8 @@
   .a2-history-empty h3 { margin: 0; font-size: var(--a2-text-base); color: var(--a2-text); }
   .a2-history-empty p { margin: 0; font-size: var(--a2-text-sm); max-width: 420px; }
 
-  .a2-history-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
+  .a2-history-timeline {
+    overflow-x: auto; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
   .a2-history-row { display: grid; grid-template-columns: 140px 32px 1fr; gap: var(--a2-space-3); padding: var(--a2-space-3); border-bottom: 1px solid var(--a2-border); cursor: pointer; transition: background var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
   .a2-history-row:hover { background: var(--a2-surface-3); }
   .a2-history-row:last-child { border-bottom: none; }
@@ -535,7 +536,8 @@
   .a2-history-filter-sheet-head h2 { margin: 0; font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
   .a2-history-filter-sheet-close { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
   .a2-history-filter-sheet-body { padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-3); overflow-y: auto; }
-  .a2-history-filter-sheet-actions { display: flex; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); border-top: 1px solid var(--a2-border); }
+  .a2-history-filter-sheet-actions {
+    padding-bottom: env(safe-area-inset-bottom, 0px); display: flex; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); border-top: 1px solid var(--a2-border); }
   .a2-history-apply { flex: 1; padding: var(--a2-space-2); background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; }
 
   .a2-event-drawer-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); display: flex; justify-content: flex-end; animation: a2-fade-in var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
@@ -543,11 +545,14 @@
   .a2-event-drawer { width: 100%; max-width: 480px; background: var(--a2-surface-1); border-left: 1px solid var(--a2-border-strong); display: flex; flex-direction: column; overflow-y: auto; animation: a2-slide-in var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
   @keyframes a2-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
-  .a2-event-drawer-head { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-4); border-bottom: 1px solid var(--a2-border); position: sticky; top: 0; background: var(--a2-surface-1); z-index: 1; }
+  .a2-event-drawer-head {
+    padding-top: env(safe-area-inset-top, 0px); display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-4); border-bottom: 1px solid var(--a2-border); position: sticky; top: 0; background: var(--a2-surface-1); z-index: 1; }
   .a2-event-drawer-head-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .a2-event-drawer-title { margin: 0; font-family: var(--a2-font-sans); font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
   .a2-event-drawer-subtitle { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
-  .a2-event-drawer-close { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
+  .a2-event-drawer-close {
+    min-width: 44px;
+    min-height: 44px; background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
   .a2-event-drawer-close:hover { background: var(--a2-surface-3); color: var(--a2-text); }
 
   .a2-event-drawer-body { padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-5); }

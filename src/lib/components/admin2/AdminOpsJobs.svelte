@@ -715,7 +715,8 @@
   .a2-jobs-filter-sheet-head h2 { margin: 0; font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
   .a2-jobs-filter-sheet-close { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
   .a2-jobs-filter-sheet-body { padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-3); overflow-y: auto; }
-  .a2-jobs-filter-sheet-actions { display: flex; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); border-top: 1px solid var(--a2-border); }
+  .a2-jobs-filter-sheet-actions {
+    padding-bottom: env(safe-area-inset-bottom, 0px); display: flex; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); border-top: 1px solid var(--a2-border); }
   .a2-jobs-apply { flex: 1; padding: var(--a2-space-2); background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; }
 
   .a2-job-drawer-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); display: flex; justify-content: flex-end; animation: a2-fade-in var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
@@ -723,11 +724,14 @@
   .a2-job-drawer { width: 100%; max-width: 480px; background: var(--a2-surface-1); border-left: 1px solid var(--a2-border-strong); display: flex; flex-direction: column; overflow-y: auto; animation: a2-slide-in var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
   @keyframes a2-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
-  .a2-job-drawer-head { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-4); border-bottom: 1px solid var(--a2-border); position: sticky; top: 0; background: var(--a2-surface-1); z-index: 1; }
+  .a2-job-drawer-head {
+    padding-top: env(safe-area-inset-top, 0px); display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-4); border-bottom: 1px solid var(--a2-border); position: sticky; top: 0; background: var(--a2-surface-1); z-index: 1; }
   .a2-job-drawer-head-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .a2-job-drawer-title { margin: 0; font-family: var(--a2-font-sans); font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
   .a2-job-drawer-subtitle { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
-  .a2-job-drawer-close { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
+  .a2-job-drawer-close {
+    min-width: 44px;
+    min-height: 44px; background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
   .a2-job-drawer-close:hover { background: var(--a2-surface-3); color: var(--a2-text); }
 
   .a2-job-drawer-body { padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-5); }

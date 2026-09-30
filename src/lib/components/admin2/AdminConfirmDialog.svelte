@@ -183,6 +183,8 @@
     letter-spacing: -0.01em;
   }
   .a2-confirm-close {
+    min-width: 44px;
+    min-height: 44px;
     background: transparent; border: none; cursor: pointer;
     color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs);
     display: inline-flex; align-items: center; justify-content: center;
@@ -241,6 +243,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .a2-confirm-dialog { animation: none; }
-    .a2-confirm-btn, .a2-confirm-close { transition: none; }
+    .a2-confirm-btn, .a2-confirm-close {
+    min-width: 44px;
+    min-height: 44px; transition: none; }
   }
 </style>

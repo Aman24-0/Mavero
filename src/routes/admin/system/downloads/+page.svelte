@@ -116,4 +116,11 @@
   .a2-legacy-link-btn { display: inline-flex; align-items: center; gap: var(--a2-space-1); padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); font-weight: 600; text-decoration: none; transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
   .a2-legacy-link-btn:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
+  @media (max-width: 768px) {
+    .a2-dl-table { font-size: 10px; }
+    .a2-dl-table thead th, .a2-dl-table tbody td { padding: var(--a2-space-1) var(--a2-space-2); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .a2-legacy-link-btn { transition: none; }
+  }
 </style>

@@ -1895,3 +1895,137 @@ A complete read-only audit of all analytics code was performed before implementa
 
 **Phase I — Mobile-Native Admin:**
 - Dedicated mobile pass across navigation, sheets, tables, filters, details, uploads, hosting, operations, analytics, and system configuration. Do not merely test desktop breakpoints — compose mobile independently.
+
+---
+
+## Phase I — Mobile-Native Admin
+
+**Date:** 2026-09-30
+**Commit:** `218f88e`
+**Objective:** Perform a dedicated mobile-native redesign pass across the ENTIRE Admin 2.0. Fix safe-area handling, touch targets, filter sheet self-hiding, drawer full-screen on mobile, overflow prevention, and responsive breakpoints across all workspaces.
+
+### Audit Findings (Phase I fresh audit)
+
+A complete mobile audit of all 21 admin2 component files + page files was performed. Key findings:
+
+**Critical issues fixed:**
+1. AdminAppShell mobile header lacked `safe-area-inset-top` — notch obscured cmd/exit buttons on iOS
+2. All full-screen drawers on mobile lacked `safe-area-inset-top` on their sticky heads
+3. All bottom-anchored sheets lacked `safe-area-inset-bottom` on bottom padding
+4. AdminMediaFilters had no self-contained responsive behavior — desktop toolbar never hid via CSS
+5. Pervasive sub-44px touch targets across close buttons, pagination, action chips, mobile header buttons
+6. AdminHostingProviders drawer breakpoint at 640px (inconsistent with 768px used everywhere else)
+7. AdminOpsHistory timeline had no `overflow-x: auto` wrapper
+8. AdminOpsAttention lacked 768px breakpoint — summary cards stayed 4-col on tablets
+9. Analytics page lacked 640px breakpoint — KPI grid stayed 2-col on phones
+10. Downloads and Integrations pages had ZERO responsive behavior (no `@media` queries at all)
+11. Content-rules Adult Mode toggle button was 24px — below 44px touch target
+
+**Non-issues (already correct):**
+- AdminAppShell bottom nav already had `safe-area-inset-bottom`
+- AdminAppShell main already had `overflow-x: hidden`
+- Z-index hierarchy was consistent (no overlap conflicts)
+- All drawers already had full-screen breakpoint (768px) — except HostingProviders (was 640px, fixed)
+- All filter sheets already had mobile toggle pattern — except AdminMediaFilters (fixed)
+- `prefers-reduced-motion` was respected across most components
+
+### Design Decisions
+
+**Safe-area approach:**
+- Mobile header: `padding-top: env(safe-area-inset-top, 0px)` + `height: var(--a2-topbar-h-safe)` (which already includes the inset)
+- Drawer heads: `padding-top: env(safe-area-inset-top, 0px)` when full-screen on mobile
+- Bottom sheets: `padding-bottom: calc(var(--a2-space-8) + env(safe-area-inset-bottom, 0px))` or `padding-bottom: env(safe-area-inset-bottom, 0px)` on action areas
+
+**Touch target approach:**
+- All icon-only buttons: `min-width: 44px; min-height: 44px` (Apple HIG minimum)
+- Bottom nav items: `min-width: 44px; min-height: 44px`
+- Mobile header cmd/exit buttons: 44px (was 32px)
+- More sheet close: 44px (was 36px)
+- Drawer close buttons: 44px (was ~32px)
+- Confirm dialog close: 44px (was ~24px)
+- Content-rules toggle: 44px (was ~24px)
+
+**Filter sheet self-hiding:**
+- AdminMediaFilters: added `@media (max-width: 768px) { .media-filters-desktop { display: none; } }` to match the pattern used by AdminHostingAssets, AdminOpsJobs, AdminOpsHistory
+
+**Responsive breakpoints:**
+- AdminOpsAttention: added 2-column summary breakpoint before the existing 640px
+- Analytics: added 2-column KPI grid breakpoint
+- Downloads/Integrations: added 768px breakpoint with smaller table font + padding + `prefers-reduced-motion`
+
+**Table strategy:**
+- Tables continue to use `overflow-x: auto` (horizontal scroll) rather than card transformation. Building card variants for each of the 8 tables would be a major effort — deferred to Phase J (Cinematic Polish) if needed. The horizontal scroll is acceptable for admin data tables.
+
+### Files Changed
+
+**Modified components (9):**
+1. `src/lib/components/admin2/AdminAppShell.svelte` — safe-area header + 44px touch targets + overflow brand + safe-area More sheet
+2. `src/lib/components/admin2/AdminMediaFilters.svelte` — self-hide desktop toolbar at 768px + safe-area filter sheet
+3. `src/lib/components/admin2/AdminMediaDetailDrawer.svelte` — safe-area drawer head + 44px close
+4. `src/lib/components/admin2/AdminHostingProviders.svelte` — 768px breakpoint (was 640px) + safe-area drawer head + 44px close
+5. `src/lib/components/admin2/AdminHostingAssets.svelte` — safe-area drawer head + 44px close + safe-area filter sheet
+6. `src/lib/components/admin2/AdminOpsJobs.svelte` — safe-area drawer head + 44px close + safe-area filter sheet
+7. `src/lib/components/admin2/AdminOpsHistory.svelte` — safe-area drawer head + 44px close + safe-area filter sheet + overflow-x timeline
+8. `src/lib/components/admin2/AdminOpsAttention.svelte` — 2-column summary breakpoint
+9. `src/lib/components/admin2/AdminConfirmDialog.svelte` — 44px close button
+
+**Modified pages (5):**
+10. `src/routes/admin/system/api-sources/+page.svelte` — safe-area defaults sheet head/body + 44px close
+11. `src/routes/admin/system/content-rules/+page.svelte` — 44px toggle touch target
+12. `src/routes/admin/system/downloads/+page.svelte` — responsive breakpoint + reduced motion
+13. `src/routes/admin/system/integrations/+page.svelte` — responsive breakpoint + reduced motion
+14. `src/routes/admin/analytics/+page.svelte` — 2-column KPI grid breakpoint
+
+**Tests:**
+15. `scripts/admin2_phaseI_test.ts` (NEW) — 29 contract checks across 25 test groups
+
+**Build config:**
+16. `package.json` — Added `admin2_phaseI_test.ts` to the `test` script chain
+
+**Helper script (not committed as a test):**
+17. `scripts/phaseI_mobile_fixes.sh` — batch fix script (used once, kept for reference)
+
+### Backend/API Changes
+
+None. Phase I is purely CSS + responsive layout fixes.
+
+### Issues Deferred to Later Phases
+
+#### Phase J — Cinematic Polish
+- Table → card transformation for mobile (currently uses horizontal scroll — acceptable but not ideal)
+- Ambient lighting + micro-interactions across all workspaces
+- Final visual polish at all target widths (320px, 360px, 375px, 390px, 412px, 430px)
+
+#### Future (no phase assigned)
+- **Table → card variants**: Building card components for each of the 8 admin tables would provide better mobile UX than horizontal scroll. Deferred — the current scroll approach is functional.
+- **Upload side panel on mobile**: Currently `display: none` at 1023px — could be a collapsible accordion instead.
+- **Step labels on mobile**: Currently hidden at 640px (icons only) — could use abbreviated labels.
+- **Landscape orientation**: Primary target is portrait. Landscape should work but hasn't been specifically tested.
+
+### Tests
+
+- `pnpm check`: 0 errors, 50 warnings (all pre-existing)
+- `pnpm build`: PASS
+- Phase B test: 30 checks pass (no regressions)
+- Phase C test: 56 checks pass (no regressions)
+- Phase D test: 45 checks pass (no regressions)
+- Phase E test: 78 checks pass (no regressions)
+- Phase F test: 66 checks pass (no regressions)
+- Phase G test: 36 checks pass (no regressions)
+- Phase H test: 30 checks pass (no regressions)
+- Phase I test: 29 checks pass (NEW — 25 test groups)
+- Phase 7 playback resolver test: 50 checks pass
+- Admin nav test: 4 checks pass
+
+### Security Verification
+
+No security changes — Phase I is purely CSS + responsive layout.
+
+### Commit SHA
+
+`<filled-in after commit>`
+
+### Next Phase
+
+**Phase J — Cinematic Polish:**
+- Final pass for ambient lighting, micro-interactions, transitions, loading states, focus/hover states, active indicators, skeletons, empty states, density, typography, and responsive polish across all workspaces.

@@ -540,6 +540,7 @@
   @keyframes a2-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
   .a2-provider-drawer-head {
+    padding-top: env(safe-area-inset-top, 0px);
     display: flex; justify-content: space-between; align-items: center;
     gap: var(--a2-space-3);
     padding: var(--a2-space-4);
@@ -561,6 +562,8 @@
     color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.08em;
   }
   .a2-provider-drawer-close {
+    min-width: 44px;
+    min-height: 44px;
     background: transparent; border: none; cursor: pointer;
     color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs);
     display: inline-flex; align-items: center; justify-content: center;
@@ -622,7 +625,7 @@
   }
   .a2-provider-drawer-action:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  @media (max-width: 640px) {
+  @media (max-width: 768px) {
     .a2-provider-drawer { max-width: 100%; }
     .a2-provider-drawer-dl { grid-template-columns: 1fr; }
     .a2-provider-drawer-dl-grid { grid-template-columns: 1fr 1fr; }
@@ -632,7 +635,9 @@
 
   @media (prefers-reduced-motion: reduce) {
     .a2-provider-card, .a2-hosting-refresh, .a2-provider-card-action, .a2-provider-drawer,
-    .a2-provider-drawer-action, .a2-provider-drawer-close { transition: none; animation: none; }
+    .a2-provider-drawer-action, .a2-provider-drawer-close {
+    min-width: 44px;
+    min-height: 44px; transition: none; animation: none; }
     .a2-provider-drawer-overlay { animation: none; }
   }
 </style>
