@@ -1237,7 +1237,7 @@ The three tabs share the same server-preloaded provider list (skipHealth=true fo
 ## Phase F — Operations Center
 
 **Date:** 2026-09-30
-**Commit:** `407ef7c`
+**Commit:** `8ff8a33`
 **Objective:** Build the real production-grade Operations Center — a unified workspace with three contextual tabs (Jobs, Activity/History, Attention) that gives administrators a single place to answer "What is happening?", "What failed?", "What is stale?", "What changed?", "What needs attention?", and "What can I retry/recover?". Fix the sync audit logging gap identified in Phase E.
 
 ### Audit Findings (Phase F fresh audit)
