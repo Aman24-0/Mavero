@@ -622,9 +622,11 @@ assert.doesNotMatch(adminAppShell, /id: 'assets', label: 'Assets', href: '\/admi
 assert.doesNotMatch(adminAppShell, /id: 'sync', label: 'Sync', href: '\/admin\/media\/sync'/, 'old Sync nav item removed');
 ok('29b. Old Assets + Sync nav items removed (replaced by unified Hosting Control)');
 
-// Provider Registry still accessible
-assert.match(adminAppShell, /id: 'providers', label: 'Provider Registry', href: '\/admin\/providers'/, 'nav has Provider Registry item');
-ok('29c. Provider Registry nav item preserved (legacy /admin/providers page)');
+// Phase 1: the standalone Provider Registry nav item is removed —
+// providers are now managed in API & Sources (/admin/system/api-sources).
+// The legacy /admin/providers page is a redirect stub.
+assert.doesNotMatch(adminAppShell, /id: 'providers', label: 'Provider Registry'/, 'nav: Provider Registry item removed (Phase 1 — managed in API & Sources)');
+ok('29c. Provider Registry nav item removed (Phase 1 — providers managed in API & Sources workspace)');
 
 // ============================================================
 // 30. Confirm dialog accessibility

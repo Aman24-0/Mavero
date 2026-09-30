@@ -122,7 +122,6 @@
       label: 'Hosting',
       items: [
         { id: 'hosting', label: 'Hosting Control', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
-        { id: 'providers', label: 'Provider Registry', href: '/admin/providers', icon: Server },
       ]
     },
     {

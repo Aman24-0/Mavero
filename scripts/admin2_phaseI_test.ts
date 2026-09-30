@@ -159,9 +159,11 @@ ok('15a. Analytics KPI grid has responsive breakpoint');
 // 16. System API & Sources safe-area
 // ============================================================
 
-assert.match(apiSourcesPage, /a2-defaults-head[\s\S]*?safe-area-inset-top/, 'API & Sources defaults sheet head has safe-area');
-assert.match(apiSourcesPage, /a2-defaults-body[\s\S]*?safe-area-inset-bottom/, 'API & Sources defaults sheet body has safe-area');
-ok('16a. API & Sources defaults sheet has safe-area');
+// Phase 1: the defaults sheet now uses the generic a2-sheet classes
+// (a2-sheet-head / a2-sheet-body) instead of a2-defaults-head / a2-defaults-body.
+assert.match(apiSourcesPage, /a2-sheet-head[\s\S]*?safe-area-inset-top/, 'API & Sources defaults sheet head (a2-sheet-head) has safe-area');
+assert.match(apiSourcesPage, /a2-sheet-body[\s\S]*?safe-area-inset-bottom/, 'API & Sources defaults sheet body (a2-sheet-body) has safe-area');
+ok('16a. API & Sources defaults sheet has safe-area (Phase 1 — a2-sheet classes)');
 
 // ============================================================
 // 17. System content-rules toggle touch target
@@ -172,19 +174,26 @@ ok('17a. Content Rules feature toggle has 44px touch target');
 
 // ============================================================
 // 18. System downloads responsive
+//
+// Phase 1 rewrote the Downloads page as a simplified in-workspace CRUD
+// page. It still has the 768px mobile breakpoint (rows stack vertically);
+// prefers-reduced-motion was removed because the new page has no
+// animations (no spinners, no transitions).
 // ============================================================
 
 assert.match(downloadsPage, /@media \(max-width: 768px\)/, 'Downloads page has responsive breakpoint');
-assert.match(downloadsPage, /prefers-reduced-motion/, 'Downloads page has prefers-reduced-motion');
-ok('18a. Downloads page has responsive breakpoint + reduced motion');
+ok('18a. Downloads page has responsive breakpoint (Phase 1 — simplified, no animations)');
 
 // ============================================================
 // 19. System integrations responsive
+//
+// Phase 1 rewrote the Integrations page as a simplified in-workspace CRUD
+// page. It still has the 768px mobile breakpoint; prefers-reduced-motion
+// was removed because the new page has no animations.
 // ============================================================
 
 assert.match(integrationsPage, /@media \(max-width: 768px\)/, 'Integrations page has responsive breakpoint');
-assert.match(integrationsPage, /prefers-reduced-motion/, 'Integrations page has prefers-reduced-motion');
-ok('19a. Integrations page has responsive breakpoint + reduced motion');
+ok('19a. Integrations page has responsive breakpoint (Phase 1 — simplified, no animations)');
 
 // ============================================================
 // 20. Drawer full-screen on mobile (768px)

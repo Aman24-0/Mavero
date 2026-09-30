@@ -43,28 +43,44 @@ assert.match(elseBranch, /showMobileNav=\{!page\.url\.pathname\.startsWith\('\/s
 ok('1. root layout: /admin/* renders bare; consumer pages keep AppShell exactly as before');
 
 // ============================================================
-// 2. Admin pages keep their own shell navigation
+// 2. Admin pages: overview uses AdminAppShell; legacy registry pages
+// are now redirect stubs (Phase 1).
 //
-// Phase A migrated /admin (overview) to the new AdminAppShell.
-// Phase B keeps every other admin page on the legacy AdminShell.
-// The contract herefore accepts EITHER shell on the overview page
-// (so the migration is forward-compatible) but pins AdminShell on
-// the four pages that still belong to Phase G's consolidation
-// work (providers/sources/defaults/categories).
+// Phase 1 consolidated all admin management into the canonical Admin 2.0
+// workspaces under /admin/system/*. The legacy /admin/providers,
+// /admin/sources, /admin/defaults, /admin/categories pages are now thin
+// client-side redirect stubs that bounce to the canonical workspaces.
+// They no longer mount AdminShell or AdminAppShell.
 // ============================================================
 assert.match(adminIndex, /<(AdminAppShell|AdminShell)(\s+active="overview")?\s*>/, 'overview page wraps in either AdminAppShell (Phase B+ — route-aware active state) or AdminShell');
-for (const [name, content] of [['providers', providersPage], ['sources', sourcesPage], ['defaults', defaultsPage], ['categories', categoriesPage]] as const) {
-  assert.match(content, /<AdminShell active="/, `${name} admin page renders its own AdminShell`);
+
+// Phase 1: each legacy registry page is now a redirect stub to its
+// canonical Admin 2.0 workspace. The stub uses goto() for SPA nav +
+// a <meta http-equiv="refresh"> fallback so it works even if JS fails.
+const legacyRedirects: Array<[string, string, RegExp]> = [
+  ['providers', providersPage, /\/admin\/system\/api-sources\?tab=providers/],
+  ['sources', sourcesPage, /\/admin\/system\/api-sources\?tab=sources/],
+  ['defaults', defaultsPage, /\/admin\/system\/api-sources/],
+  ['categories', categoriesPage, /\/admin\/system\/content-rules\?tab=categories/],
+];
+for (const [name, content, destRegex] of legacyRedirects) {
+  // Redirect stubs do NOT mount AdminShell or AdminAppShell.
+  assert.doesNotMatch(content, /<AdminShell/, `${name} admin page does NOT mount AdminShell (Phase 1 redirect stub)`);
+  assert.doesNotMatch(content, /<AdminAppShell/, `${name} admin page does NOT mount AdminAppShell (Phase 1 redirect stub)`);
+  // The stub uses client-side goto() to the canonical destination.
+  assert.match(content, destRegex, `${name} admin page redirects to its canonical workspace`);
+  // The stub has a <meta http-equiv="refresh"> fallback for no-JS clients.
+  assert.match(content, /<meta http-equiv="refresh" content="0; url=/, `${name} admin page has meta-refresh fallback`);
 }
-// AdminShell defines its own nav links (Overview/Providers/Sources/
-// Defaults/Categories) and renders them via href={link.href}.
+// AdminShell.svelte still defines its own nav links (used by any page that
+// still opts into the legacy shell — e.g. legacy /admin/upload).
 assert.match(adminShell, /\{ id: 'overview', label: 'Overview', href: '\/admin'/, 'admin nav: Overview');
 assert.match(adminShell, /\{ id: 'providers', label: 'Providers', href: '\/admin\/providers'/, 'admin nav: Providers');
 assert.match(adminShell, /\{ id: 'sources', label: 'Sources', href: '\/admin\/sources'/, 'admin nav: Sources');
 assert.match(adminShell, /\{ id: 'defaults', label: 'Defaults', href: '\/admin\/defaults'/, 'admin nav: Defaults');
 assert.match(adminShell, /\{ id: 'categories', label: 'Categories', href: '\/admin\/categories'/, 'admin nav: Categories');
 assert.match(adminShell, /aria-label="Admin navigation"/, 'admin shell exposes its own navigation landmark');
-ok('2. all admin pages keep the dedicated AdminShell navigation');
+ok('2. overview uses AdminAppShell; legacy registry pages are Phase 1 redirect stubs to canonical workspaces');
 
 // ============================================================
 // 3. AppShell untouched — consumer navigation intact elsewhere

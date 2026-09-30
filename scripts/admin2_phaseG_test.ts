@@ -53,19 +53,30 @@ assert.match(apiSourcesServer, /listProviderHealthSummaries/, 'API & Sources ser
 assert.match(apiSourcesServer, /lookupProviderCapabilities/, 'API & Sources server loads capability map');
 ok('2a. Providers data loaded from existing admin-service (no new backend)');
 
-// Provider cards show identity + capabilities
-assert.match(apiSourcesPage, /a2-provider-card/, 'Providers tab renders provider cards');
-assert.match(apiSourcesPage, /a2-provider-card-name/, 'card shows provider name');
-assert.match(apiSourcesPage, /a2-provider-card-adapter/, 'card shows adapter id');
-assert.match(apiSourcesPage, /a2-cap-dot/, 'card shows capability dots');
-ok('2b. Provider cards show identity + capabilities');
+// Phase 1: provider rows show identity (name + adapter id + integration + sandbox)
+assert.match(apiSourcesPage, /a2-provider-row/, 'Providers tab renders provider rows');
+assert.match(apiSourcesPage, /a2-provider-row-name/, 'row shows provider name');
+assert.match(apiSourcesPage, /a2-provider-row-meta/, 'row shows provider meta');
+assert.match(apiSourcesPage, /adapter_id/, 'row shows adapter id (in meta)');
+ok('2b. Provider rows show identity + adapter id (Phase 1 — rows replace cards)');
 
 // ============================================================
-// 3. Provider enable/disable (via legacy link)
+// 3. Provider CRUD (in-workspace — Phase 1)
+//
+// Phase 1 removed the legacy /admin/providers link. Full CRUD now lives
+// in this workspace's +page.server.ts as createProvider / updateProvider /
+// toggleProvider / deleteProvider actions.
 // ============================================================
 
-assert.match(apiSourcesPage, /\/admin\/providers/, 'API & Sources links to legacy provider registry for full CRUD');
-ok('3a. Provider full CRUD accessible via legacy link (no duplicate CRUD logic)');
+// Phase 1: no href/goto link to the legacy /admin/providers page (full CRUD is in-workspace).
+// (The page header comment may still reference the legacy route name as historical context.)
+assert.doesNotMatch(apiSourcesPage, /href=("|')\/admin\/providers/, 'API & Sources has no href link to legacy provider registry (Phase 1)');
+assert.doesNotMatch(apiSourcesPage, /goto\('\/admin\/providers/, 'API & Sources has no goto() to legacy provider registry (Phase 1)');
+assert.match(apiSourcesServer, /createProvider/, 'server has createProvider action');
+assert.match(apiSourcesServer, /updateProvider/, 'server has updateProvider action');
+assert.match(apiSourcesServer, /toggleProvider/, 'server has toggleProvider action');
+assert.match(apiSourcesServer, /deleteProvider/, 'server has deleteProvider action');
+ok('3a. Provider full CRUD lives in the workspace (Phase 1 — no legacy link)');
 
 // ============================================================
 // 4. Provider secret redaction
@@ -91,7 +102,8 @@ ok('5a. Provider capabilities come from shared player-capabilities module (no du
 
 assert.match(apiSourcesPage, /Sources/, 'API & Sources page has Sources tab');
 assert.match(apiSourcesServer, /listAdminSources/, 'API & Sources server loads sources via existing service');
-assert.match(apiSourcesPage, /a2-source-table/, 'Sources tab renders source table');
+// Phase 1: source rows (was a2-source-table — replaced by a2-source-list of rows)
+assert.match(apiSourcesPage, /a2-source-list/, 'Sources tab renders source list');
 ok('6a. Sources listed from existing admin-service');
 
 // ============================================================
@@ -103,20 +115,37 @@ assert.match(apiSourcesPage, /provider\?.name/, 'source table shows provider nam
 ok('7a. Source/provider relationship is clear in the UI');
 
 // ============================================================
-// 8. Source CRUD (via legacy link)
+// 8. Source CRUD (in-workspace — Phase 1)
+//
+// Phase 1 removed the legacy /admin/sources link. Full CRUD now lives
+// in this workspace's +page.server.ts as createSource / updateSource /
+// toggleSource / deleteSource actions.
 // ============================================================
 
-assert.match(apiSourcesPage, /\/admin\/sources/, 'API & Sources links to legacy source registry for full CRUD');
-ok('8a. Source full CRUD accessible via legacy link (no duplicate CRUD logic)');
+// Phase 1: no href/goto link to the legacy /admin/sources page (full CRUD is in-workspace).
+// (The page header comment may still reference the legacy route name as historical context.)
+assert.doesNotMatch(apiSourcesPage, /href=("|')\/admin\/sources/, 'API & Sources has no href link to legacy source registry (Phase 1)');
+assert.doesNotMatch(apiSourcesPage, /goto\('\/admin\/sources/, 'API & Sources has no goto() to legacy source registry (Phase 1)');
+assert.match(apiSourcesServer, /createSource/, 'server has createSource action');
+assert.match(apiSourcesServer, /updateSource/, 'server has updateSource action');
+assert.match(apiSourcesServer, /toggleSource/, 'server has toggleSource action');
+assert.match(apiSourcesServer, /deleteSource/, 'server has deleteSource action');
+ok('8a. Source full CRUD lives in the workspace (Phase 1 — no legacy link)');
 
 // ============================================================
 // 9. Defaults sheet
 // ============================================================
 
 assert.match(apiSourcesPage, /defaultsOpen/, 'API & Sources has defaults sheet state');
-assert.match(apiSourcesPage, /a2-defaults-sheet/, 'Defaults sheet renders');
+// Phase 1: defaults sheet uses generic a2-sheet classes (a2-sheet / a2-sheet-head / a2-sheet-body)
+assert.match(apiSourcesPage, /a2-sheet\b/, 'Defaults sheet renders (a2-sheet container)');
+assert.match(apiSourcesPage, /a2-sheet-head/, 'Defaults sheet has a2-sheet-head');
 assert.match(apiSourcesPage, /Default Sources/, 'Defaults sheet titled "Default Sources"');
-ok('9a. Defaults sheet exists in API & Sources workspace');
+// Phase 1: the old a2-defaults-sheet / a2-defaults-head / a2-legacy-link classes are gone.
+assert.doesNotMatch(apiSourcesPage, /a2-defaults-sheet/, 'legacy a2-defaults-sheet class removed (Phase 1)');
+assert.doesNotMatch(apiSourcesPage, /a2-defaults-head/, 'legacy a2-defaults-head class removed (Phase 1)');
+assert.doesNotMatch(apiSourcesPage, /a2-legacy-link/, 'no a2-legacy-link class (Phase 1 — full CRUD in-workspace)');
+ok('9a. Defaults sheet exists in API & Sources workspace (Phase 1 — a2-sheet classes)');
 
 // ============================================================
 // 10. Defaults persistence
@@ -154,7 +183,8 @@ ok('12b. Content Rules page uses Admin 2.0 shell');
 assert.match(contentRulesPage, /Categories/, 'Content Rules has Categories tab');
 assert.match(contentRulesServer, /listAdminCategories/, 'Content Rules server loads categories via existing service');
 assert.match(contentRulesServer, /listSourceCategories/, 'Content Rules server loads source-category mappings');
-assert.match(contentRulesPage, /a2-category-table/, 'Categories tab renders category table');
+// Phase 1: category rows (was a2-category-table — now a2-category-list of rows)
+assert.match(contentRulesPage, /a2-category-list/, 'Categories tab renders category list');
 ok('13a. Categories loaded from existing admin-service');
 
 // ============================================================
@@ -199,17 +229,26 @@ ok('17a. Feature Control now has SSR auth gate via Content Rules page server (Ph
 assert.match(adminAppShell, /id: 'downloads', label: 'Downloads', href: '\/admin\/system\/downloads'/, 'nav has Downloads');
 assert.match(downloadsPage, /AdminAppShell/, 'Downloads page uses AdminAppShell');
 assert.match(downloadsServer, /listAdminDownloadProviders/, 'Downloads server uses existing downloader admin-service');
-assert.match(downloadsPage, /a2-dl-table/, 'Downloads page renders provider table');
+// Phase 1: downloader rows (was a2-dl-table — now a2-dl-list of rows)
+assert.match(downloadsPage, /a2-dl-list/, 'Downloads page renders downloader list');
 ok('18a. Downloads workspace uses existing downloader service');
 
 // ============================================================
-// 19. Downloader configuration
+// 19. Downloader configuration (in-workspace — Phase 1)
+//
+// Phase 1 moved full CRUD into the workspace. The page renders
+// type, enabled state, default badge, and CRUD actions directly
+// (no legacy /admin/downloaders link).
 // ============================================================
 
-assert.match(downloadsPage, /provider.type/, 'Downloads shows provider type (embed/json)');
-assert.match(downloadsPage, /provider.enabled/, 'Downloads shows enabled state');
-assert.match(downloadsPage, /\/admin\/downloaders/, 'Downloads links to legacy registry for full CRUD');
-ok('19a. Downloader configuration shows type, enabled, and links to full CRUD');
+assert.match(downloadsPage, /data-type=/, 'Downloads shows provider type (embed/json)');
+assert.match(downloadsPage, /data-enabled=/, 'Downloads shows enabled state');
+assert.doesNotMatch(downloadsPage, /href=("|')\/admin\/downloaders/, 'Downloads has no href link to legacy registry (Phase 1)');
+assert.match(downloadsServer, /createProvider/, 'Downloads server has createProvider action');
+assert.match(downloadsServer, /updateProvider/, 'Downloads server has updateProvider action');
+assert.match(downloadsServer, /toggleProvider/, 'Downloads server has toggleProvider action');
+assert.match(downloadsServer, /deleteProvider/, 'Downloads server has deleteProvider action');
+ok('19a. Downloader configuration shows type + enabled, with full CRUD in-workspace (Phase 1)');
 
 // ============================================================
 // 20. Integrations
@@ -218,7 +257,7 @@ ok('19a. Downloader configuration shows type, enabled, and links to full CRUD');
 assert.match(adminAppShell, /id: 'integrations', label: 'Integrations', href: '\/admin\/system\/integrations'/, 'nav has Integrations');
 assert.match(integrationsPage, /AdminAppShell/, 'Integrations page uses AdminAppShell');
 assert.match(integrationsServer, /listAdminAddons/, 'Integrations server uses existing Stremio admin-addons service');
-assert.match(integrationsPage, /a2-addon-table/, 'Integrations page renders addon table');
+assert.match(integrationsPage, /a2-addon-list/, 'Integrations page renders addon list');
 ok('20a. Integrations workspace uses existing Stremio addon service');
 
 // ============================================================
@@ -228,8 +267,13 @@ ok('20a. Integrations workspace uses existing Stremio addon service');
 assert.match(integrationsPage, /addon.name/, 'Integrations shows addon name');
 assert.match(integrationsPage, /addon.version/, 'Integrations shows addon version');
 assert.match(integrationsPage, /addon.enabled/, 'Integrations shows enabled state');
-assert.match(integrationsPage, /\/admin\/addons/, 'Integrations links to legacy addon registry for full CRUD');
-ok('21a. Stremio configuration shows addon identity + links to full CRUD');
+// Phase 1: full CRUD in-workspace (no legacy /admin/addons link)
+assert.doesNotMatch(integrationsPage, /href=("|')\/admin\/addons/, 'Integrations has no href link to legacy addon registry (Phase 1)');
+assert.match(integrationsServer, /previewAddon/, 'Integrations server has previewAddon action');
+assert.match(integrationsServer, /createAddon/, 'Integrations server has createAddon action');
+assert.match(integrationsServer, /setEnabled/, 'Integrations server has setEnabled action');
+assert.match(integrationsServer, /deleteAddon/, 'Integrations server has deleteAddon action');
+ok('21a. Stremio configuration shows addon identity with full CRUD in-workspace (Phase 1)');
 
 // ============================================================
 // 22. Admin authorization
@@ -291,8 +335,8 @@ ok('27a. API & Sources server-side loads (no client loading state needed)');
 assert.match(apiSourcesPage, /No providers configured/, 'API & Sources has providers empty state');
 assert.match(apiSourcesPage, /No sources configured/, 'API & Sources has sources empty state');
 assert.match(contentRulesPage, /No categories configured/, 'Content Rules has categories empty state');
-assert.match(downloadsPage, /No downloader configuration/, 'Downloads has empty state');
-assert.match(integrationsPage, /No integrations configured/, 'Integrations has empty state');
+assert.match(downloadsPage, /No downloaders/, 'Downloads has empty state');
+assert.match(integrationsPage, /No integrations/, 'Integrations has empty state');
 ok('28a. All 5 workspaces have distinct empty states');
 
 // ============================================================

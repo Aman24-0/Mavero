@@ -59,11 +59,12 @@ ok('1b. nav group CONTENT has Media Library + Upload + Missing Media');
 // HOSTING
 // Phase E restructured the Hosting group: the unified Hosting Control
 // workspace at /admin/hosting replaces the old separate Assets + Sync
-// placeholders. The legacy /admin/providers page stays as "Provider Registry"
-// (Phase G will consolidate it into API & Sources).
+// placeholders. Phase 1 removed the "Provider Registry" nav item —
+// providers are now managed in API & Sources (/admin/system/api-sources).
 assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting'/, 'nav: Hosting → Hosting Control');
-assert.match(adminAppShell, /\{ id: 'providers', label: 'Provider Registry', href: '\/admin\/providers'/, 'nav: Hosting → Provider Registry');
-ok('1c. nav group HOSTING has Hosting Control + Provider Registry (Phase E restructuring)');
+// Phase 1: the standalone Provider Registry nav item is gone (managed in API & Sources).
+assert.doesNotMatch(adminAppShell, /id: 'providers', label: 'Provider Registry'/, 'nav: Provider Registry item removed (Phase 1 — managed in API & Sources)');
+ok('1c. nav group HOSTING has Hosting Control only (Phase 1 removed Provider Registry — managed in API & Sources)');
 
 // OPERATIONS
 // Phase F restructured the Operations group: the unified Operations Center

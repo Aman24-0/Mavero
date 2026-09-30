@@ -47,19 +47,19 @@
         <AdminStatus label="Operational" tone="green" />
       </div>
       <div class="a2-metric-grid">
-        <a class="a2-metric-card" href="/admin/providers">
+        <a class="a2-metric-card" href="/admin/system/api-sources">
           <div class="a2-metric-icon"><ShieldCheck size={18} /></div>
           <div class="a2-metric-value">{data.overview.providerCount}</div>
           <div class="a2-metric-label">Providers</div>
           <div class="a2-metric-status">{data.overview.activeProviderCount} enabled</div>
         </a>
-        <a class="a2-metric-card" href="/admin/sources">
+        <a class="a2-metric-card" href="/admin/system/api-sources?tab=sources">
           <div class="a2-metric-icon"><Wifi size={18} /></div>
           <div class="a2-metric-value">{data.overview.sourceCount}</div>
           <div class="a2-metric-label">Sources</div>
           <div class="a2-metric-status">{data.overview.activeSourceCount} enabled</div>
         </a>
-        <a class="a2-metric-card" href="/admin/categories">
+        <a class="a2-metric-card" href="/admin/system/content-rules">
           <div class="a2-metric-icon"><Layers3 size={18} /></div>
           <div class="a2-metric-value">{data.overview.categoryCount}</div>
           <div class="a2-metric-label">Categories</div>
@@ -98,15 +98,15 @@
           </div>
           <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
         </a>
-        <a class="a2-quick-card" href="/admin/providers">
+        <a class="a2-quick-card" href="/admin/hosting">
           <div class="a2-quick-icon"><Server size={20} /></div>
           <div class="a2-quick-text">
-            <div class="a2-quick-title">Providers</div>
+            <div class="a2-quick-title">Hosting</div>
             <div class="a2-quick-desc">Vidara & Abyss management</div>
           </div>
           <span class="a2-quick-arrow"><ArrowRight size={14} /></span>
         </a>
-        <a class="a2-quick-card" href="/admin/media/operations">
+        <a class="a2-quick-card" href="/admin/operations">
           <div class="a2-quick-icon"><Activity size={20} /></div>
           <div class="a2-quick-text">
             <div class="a2-quick-title">Operations</div>
@@ -127,7 +127,7 @@
         </div>
         <div class="a2-metric-grid a2-secondary">
           {#if data.downloadersOverview}
-            <a class="a2-metric-card" href="/admin/downloaders">
+            <a class="a2-metric-card" href="/admin/system/downloads">
               <div class="a2-metric-icon"><Download size={18} /></div>
               <div class="a2-metric-value">{data.downloadersOverview.providerCount}</div>
               <div class="a2-metric-label">Downloaders</div>
@@ -135,7 +135,7 @@
             </a>
           {/if}
           {#if data.addonsOverview}
-            <a class="a2-metric-card" href="/admin/addons">
+            <a class="a2-metric-card" href="/admin/system/integrations">
               <div class="a2-metric-icon"><Puzzle size={18} /></div>
               <div class="a2-metric-value">{data.addonsOverview.addonCount}</div>
               <div class="a2-metric-label">Stremio Addons</div>

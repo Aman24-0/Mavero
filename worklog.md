@@ -2410,3 +2410,107 @@ Dune "Not Linked" for both Vidara and Abyss is **correct behavior** — not a bu
 ### Commit SHA
 
 `<filled-in after commit>`
+
+---
+
+## Phase 1 — Admin 2.0 Canonical CRUD Migration & Navigation Consolidation
+
+**Date:** 2026-09-30
+**Commit:** `da99d0d`
+**Objective:** Migrate ALL legacy Admin CRUD functionality into the canonical Admin 2.0 workspaces. Eliminate "Open legacy registry" escape hatches. Consolidate navigation. Redirect legacy routes.
+
+### Migration Summary
+
+| Feature | Legacy Route | Canonical Route | CRUD Migrated | Legacy Redirect |
+|---------|-------------|----------------|---------------|-----------------|
+| Providers | /admin/providers | /admin/system/api-sources (Providers tab) | ✅ create/edit/toggle/delete | ✅ redirect |
+| Sources | /admin/sources | /admin/system/api-sources (Sources tab) | ✅ create/edit/toggle/delete | ✅ redirect |
+| Defaults | /admin/defaults | /admin/system/api-sources (Defaults sheet) | ✅ save/clear (already migrated) | ✅ redirect |
+| Categories | /admin/categories | /admin/system/content-rules (Categories tab) | ✅ create/edit/toggle/delete/assign/reorder | ✅ redirect |
+| Feature Control | /admin/feature-control | /admin/system/content-rules (Features tab) | ✅ toggle (already migrated) | ✅ redirect |
+| Downloaders | /admin/downloaders | /admin/system/downloads | ✅ create/edit/toggle/setDefault/delete | ✅ redirect |
+| Stremio Addons | /admin/addons | /admin/system/integrations | ✅ preview/confirm/setEnabled/refresh/position/delete/linkTypes | ✅ redirect |
+
+### Server Actions Migrated
+
+**API & Sources** (`/admin/system/api-sources/+page.server.ts`): 10 actions
+- createProvider, updateProvider, toggleProvider, deleteProvider
+- createSource, updateSource, toggleSource, deleteSource
+- saveDefault, clearDefault
+
+**Content Rules** (`/admin/system/content-rules/+page.server.ts`): 7 actions
+- createCategory, updateCategory, toggleCategory, deleteCategory
+- assignSource, removeSource, reorderSources
+
+**Downloads** (`/admin/system/downloads/+page.server.ts`): 5 actions
+- createProvider, updateProvider, toggleProvider, setDefault, deleteProvider
+
+**Integrations** (`/admin/system/integrations/+page.server.ts`): 7 actions
+- previewAddon, confirmAddon, setEnabled, refreshAddon, setAddonPosition, deleteAddon, saveLinkTypes
+
+### Navigation Changes
+
+- Removed "Provider Registry" from sidebar Hosting group (now only Hosting Control)
+- Updated Overview page links to canonical routes:
+  - `/admin/providers` → `/admin/system/api-sources`
+  - `/admin/sources` → `/admin/system/api-sources?tab=sources`
+  - `/admin/categories` → `/admin/system/content-rules`
+  - `/admin/media/operations` → `/admin/operations`
+  - `/admin/downloaders` → `/admin/system/downloads`
+  - `/admin/addons` → `/admin/system/integrations`
+
+### Legacy Routes Redirected (7)
+
+All 7 legacy AdminShell pages converted to redirect stubs:
+- `/admin/providers` → `/admin/system/api-sources?tab=providers`
+- `/admin/sources` → `/admin/system/api-sources?tab=sources`
+- `/admin/defaults` → `/admin/system/api-sources`
+- `/admin/categories` → `/admin/system/content-rules?tab=categories`
+- `/admin/feature-control` → `/admin/system/content-rules?tab=features`
+- `/admin/downloaders` → `/admin/system/downloads`
+- `/admin/addons` → `/admin/system/integrations`
+
+### Files Changed
+
+**System workspace pages (rewritten with full CRUD):**
+1. `src/routes/admin/system/api-sources/+page.server.ts` — 10 server actions
+2. `src/routes/admin/system/api-sources/+page.svelte` — Full CRUD UI with provider/source rows + edit sheets + defaults sheet
+3. `src/routes/admin/system/content-rules/+page.server.ts` — 7 server actions
+4. `src/routes/admin/system/content-rules/+page.svelte` — Full CRUD UI with category rows + edit sheet + feature toggles
+5. `src/routes/admin/system/downloads/+page.server.ts` — 5 server actions
+6. `src/routes/admin/system/downloads/+page.svelte` — Full CRUD UI with downloader rows + edit sheet
+7. `src/routes/admin/system/integrations/+page.server.ts` — 7 server actions
+8. `src/routes/admin/system/integrations/+page.svelte` — Full CRUD UI with addon rows + add/detail sheets
+
+**Legacy pages (converted to redirect stubs):**
+9-15. 7 legacy `+page.svelte` files replaced with redirect stubs
+
+**Navigation:**
+16. `src/lib/components/admin2/AdminAppShell.svelte` — Removed Provider Registry nav item
+17. `src/routes/admin/+page.svelte` — Updated all overview links to canonical routes
+
+**Tests updated:**
+18. `scripts/admin2_phaseB_test.ts` — Updated nav assertions
+19. `scripts/admin2_phaseE_test.ts` — Updated nav assertions
+20. `scripts/admin2_phaseG_test.ts` — Updated all workspace assertions for new CRUD UI
+21. `scripts/admin2_phaseI_test.ts` — Updated defaults sheet assertions
+22. `scripts/admin_nav_test.ts` — Updated to verify redirect stubs
+
+### Validation
+
+- `pnpm check`: 0 errors, 9 warnings (pre-existing)
+- `pnpm build`: PASS
+- All admin2 test suites: pass (zero regressions)
+- Phase 0 tests: 15 checks pass
+
+### Phase 2 Backlog (deferred)
+
+- Performance optimization (3-4s page loads — parallelize DB queries, defer non-critical data)
+- Loading indicator visual consistency (cyan/blue accent for top progress line)
+- Mobile table → card transforms for remaining tables
+- Legacy `+page.server.ts` files for redirected routes (can be removed once no longer needed for compatibility)
+- 5 older test files (`phase7_admin_defaults_test`, etc.) need updating to test against canonical routes
+
+### Commit SHA
+
+`<filled-in after commit>`
