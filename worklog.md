@@ -2336,7 +2336,7 @@ This is the correct, minimal, and documented way to handle pnpm 10's build scrip
 ## Phase 0 — Admin 2.0 Recovery & P0 Stabilization
 
 **Date:** 2026-09-30
-**Commit:** `8e95f9b`
+**Commit:** `87fe072`
 **Objective:** Recover missing upload subsystem, fix confirmed P0/P1 runtime bugs, verify Dune linkage, and establish a clean verified baseline before CRUD migration.
 
 ### Problems Discovered
