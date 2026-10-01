@@ -299,12 +299,20 @@ export function createMaveroHostedAdapter(adapterId: 'vidara' | 'abyss'): Provid
         //    only — sourceName and providerName come from the
         //    streaming_sources/streaming_providers rows (already
         //    public in the registry, never secrets).
+        //
+        //    `adapterId` is included so downstream consumers (notably
+        //    the demand-tracking check in /api/playback/resolve) can
+        //    robustly identify a Mavero-hosted resolution by exact
+        //    adapter id rather than by fragile providerName substring
+        //    matching. The providerName fallback is retained for
+        //    backward compatibility with any older resolver paths.
         return {
           type: 'embed',
           url: safeUrl,
           metadata: {
             sourceName: context.config.source.name,
             providerName: context.config.provider.name,
+            adapterId,
           },
         };
       } catch {

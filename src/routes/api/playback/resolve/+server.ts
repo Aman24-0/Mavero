@@ -70,14 +70,19 @@ async function recordDemandIfNeeded(
   // a Mavero provider, record the demand.
   if (source && source.type !== 'unavailable' && source.type !== 'error') {
     // Resolution succeeded — check if it was a Mavero provider.
-    // Mavero providers have adapter_id 'vidara' or 'abyss'. We can
-    // check by looking at the sourceId — but we don't have the
-    // adapter_id here. Instead, we check if the source metadata
-    // indicates a Mavero provider.
-    // The resolver does not expose which adapter resolved — but we
-    // can check the provider name in metadata.
+    // Mavero providers have adapter_id 'vidara' or 'abyss'. The
+    // Mavero-hosted resolver adapter stamps `adapterId` into the
+    // source metadata (see mavero-hosted.ts), so we can check it
+    // directly — this is robust against provider display-name
+    // changes (e.g. "Vidara" → "Vidara Pro" would silently break a
+    // pure providerName check).
+    //
+    // The providerName substring fallback is retained for backward
+    // compatibility with any older resolver path that does not yet
+    // set adapterId on the metadata — it must NOT be removed.
+    const adapterId = source.metadata?.adapterId ?? source.metadata?.adapter_id ?? '';
     const providerName = source.metadata?.providerName?.toLowerCase() ?? '';
-    if (providerName.includes('mavero') || providerName.includes('vidara') || providerName.includes('abyss')) {
+    if (adapterId === 'vidara' || adapterId === 'abyss' || providerName.includes('mavero') || providerName.includes('vidara') || providerName.includes('abyss')) {
       // A Mavero provider resolved — do NOT record demand.
       return;
     }

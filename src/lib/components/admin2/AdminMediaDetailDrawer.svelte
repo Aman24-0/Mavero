@@ -31,7 +31,8 @@
    *     failed), still render everything else with an inline note.
    */
   import { onMount, onDestroy, tick } from 'svelte';
-  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight } from 'lucide-svelte';
+  import { invalidateAll } from '$app/navigation';
+  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight, Link2, FileVideo, Loader2, RefreshCw } from 'lucide-svelte';
   import AdminAssetStatus from './AdminAssetStatus.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import type { LibraryMediaItem, LibraryOperationSummary, LibraryAssetSummary } from '$lib/server/hosting/library/service';
@@ -166,6 +167,189 @@
     }
     return [...groups.values()];
   });
+
+  // Map of Mavero-hosted adapter_id ('vidara' | 'abyss') → the first
+  // matching streaming_source id. Used both to render "Not linked"
+  // placeholder blocks for providers with no assets and to supply the
+  // providerSourceId required by the link endpoint.
+  const maveroSourceByAdapter = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const s of hostingSources) {
+      if (s.adapterId === 'vidara' || s.adapterId === 'abyss') {
+        if (!map.has(s.adapterId)) map.set(s.adapterId, s.id);
+      }
+    }
+    return map;
+  });
+
+  // Unified provider availability blocks. Combines:
+  //   1. Every provider group that already has at least one linked asset
+  //      (from providerGroups above).
+  //   2. Every Mavero-hosted provider (vidara/abyss) that has NO linked
+  //      asset — rendered as a "Not linked" placeholder block so the
+  //      admin can see at a glance which provider is missing and use
+  //      the "Link existing file" action without leaving the drawer.
+  //
+  // `sourceId` is the streaming_source id needed to POST a link request.
+  // For Mavero providers it comes from maveroSourceByAdapter; for other
+  // providers it is inferred from the first asset (linking is only
+  // offered for Mavero providers, so a null sourceId there is fine).
+  type ProviderBlock = {
+    adapterId: string;
+    sourceId: string | null;
+    label: string;
+    assets: LibraryAssetSummary[];
+    hasAssets: boolean;
+    isMaveroHosted: boolean;
+  };
+  const providerBlocks = $derived.by(() => {
+    if (!item) return [] as ProviderBlock[];
+    const blocks: ProviderBlock[] = [];
+    const linkedMaveroAdapters = new Set<string>();
+
+    for (const group of providerGroups) {
+      const isMavero = group.adapterId === 'vidara' || group.adapterId === 'abyss';
+      const sourceId = isMavero
+        ? (maveroSourceByAdapter.get(group.adapterId) ?? null)
+        : (group.assets[0]?.provider_source_id ?? null);
+      blocks.push({
+        adapterId: group.adapterId,
+        sourceId,
+        label: group.label,
+        assets: group.assets,
+        hasAssets: true,
+        isMaveroHosted: isMavero,
+      });
+      if (isMavero) linkedMaveroAdapters.add(group.adapterId);
+    }
+
+    // Append "Not linked" blocks for Mavero providers with no assets.
+    for (const [adapterId, sourceId] of maveroSourceByAdapter) {
+      if (linkedMaveroAdapters.has(adapterId)) continue;
+      blocks.push({
+        adapterId,
+        sourceId,
+        label: adapterId === 'vidara' ? 'Vidara' : 'Abyss',
+        assets: [],
+        hasAssets: false,
+        isMaveroHosted: true,
+      });
+    }
+
+    return blocks;
+  });
+
+  // ============================================================
+  // "Link existing file" sheet state + handlers
+  //
+  // Opens a stacked modal above the drawer that fetches the provider's
+  // unlinked files and lets the admin manually pick one to link to the
+  // current media item. No auto-matching — the admin explicitly chooses.
+  // On success the sheet closes and invalidateAll() refreshes the
+  // library data so the newly linked asset appears immediately.
+  // ============================================================
+  type UnlinkedFile = {
+    providerAssetId: string;
+    title: string | null;
+    filename: string | null;
+    sizeBytes: number | null;
+    durationSeconds: number | null;
+    status: string;
+    playbackUrl: string | null;
+  };
+
+  let linkSheetOpen = $state(false);
+  let linkSheetAdapterId = $state<string | null>(null);
+  let linkSheetSourceId = $state<string | null>(null);
+  let linkSheetLabel = $state<string>('');
+  let linkFiles = $state<UnlinkedFile[]>([]);
+  let linkLoading = $state(false);
+  let linkError = $state<string | null>(null);
+  let linkingAssetId = $state<string | null>(null);
+
+  // Reset link sheet state when the drawer closes so a stale sheet
+  // never re-renders on the next open.
+  $effect(() => {
+    if (!open && linkSheetOpen) {
+      linkSheetOpen = false;
+      linkSheetAdapterId = null;
+      linkSheetSourceId = null;
+      linkSheetLabel = '';
+      linkFiles = [];
+      linkError = null;
+      linkingAssetId = null;
+    }
+  });
+
+  async function openLinkSheet(adapterId: string, sourceId: string, label: string) {
+    linkSheetAdapterId = adapterId;
+    linkSheetSourceId = sourceId;
+    linkSheetLabel = label;
+    linkSheetOpen = true;
+    linkLoading = true;
+    linkError = null;
+    linkFiles = [];
+    linkingAssetId = null;
+    try {
+      const res = await fetch(`/api/admin/hosting/providers/${adapterId}/files`);
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      }
+      linkFiles = (json.files ?? []) as UnlinkedFile[];
+    } catch (err) {
+      linkError = err instanceof Error ? err.message : 'Failed to load unlinked files.';
+    } finally {
+      linkLoading = false;
+    }
+  }
+
+  function closeLinkSheet() {
+    linkSheetOpen = false;
+    linkSheetAdapterId = null;
+    linkSheetSourceId = null;
+    linkSheetLabel = '';
+    linkFiles = [];
+    linkError = null;
+    linkingAssetId = null;
+  }
+
+  function handleLinkKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeLinkSheet();
+    }
+  }
+
+  async function linkFile(file: UnlinkedFile) {
+    if (!item || !linkSheetSourceId || !file.providerAssetId) return;
+    linkingAssetId = file.providerAssetId;
+    linkError = null;
+    try {
+      const res = await fetch('/api/admin/media/assets/link', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mediaItemId: item.id,
+          providerSourceId: linkSheetSourceId,
+          providerAssetId: file.providerAssetId,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      }
+      closeLinkSheet();
+      // Refresh all server load functions so the library list, folder
+      // summary, and hosting sources all reflect the newly linked asset.
+      await invalidateAll();
+    } catch (err) {
+      linkError = err instanceof Error ? err.message : 'Failed to link file.';
+    } finally {
+      linkingAssetId = null;
+    }
+  }
 </script>
 
 {#if open}
@@ -246,7 +430,7 @@
             <span class="a2-drawer-section-icon"><HardDrive size={14} /></span>
             <span class="a2-drawer-section-label">Provider Availability</span>
           </div>
-          {#if providerGroups.length === 0}
+          {#if providerBlocks.length === 0}
             <div class="a2-drawer-empty-block">
               <div class="a2-drawer-empty-title">No provider assets linked</div>
               <div class="a2-drawer-empty-desc">This media item has no Vidara or Abyss assets. Upload one to make it playable.</div>
@@ -255,68 +439,88 @@
               </button>
             </div>
           {:else}
-            {#each providerGroups as group (group.adapterId)}
-              <div class="provider-block provider-{group.adapterId}">
+            {#each providerBlocks as block (block.adapterId)}
+              <div class="provider-block provider-{block.adapterId}">
                 <div class="provider-block-head">
-                  <span class="provider-block-name">{group.label}</span>
-                  {#if group.assets.length > 1}
-                    <span class="provider-block-count">{group.assets.length} assets</span>
-                  {/if}
-                </div>
-                {#each group.assets as asset (asset.id)}
-                  <div class="provider-asset-row">
-                    <div class="provider-asset-head">
-                      <AdminAssetStatus status={asset.status} maveroStatus={asset.mavero_status} />
-                      {#if asset.provider_asset_id}
-                        <span class="provider-asset-id mono" title="Provider asset id">{asset.provider_asset_id}</span>
-                      {/if}
-                    </div>
-                    {#if asset.status === 'ready' && asset.mavero_status === 'available'}
-                      <div class="provider-asset-meta">
-                        {#if group.adapterId === 'vidara' && asset.source_quality}
-                          <div class="meta-row">
-                            <span class="meta-label"><HardDrive size={11} /></span>
-                            <span class="meta-value">Quality: <strong>{asset.source_quality}</strong></span>
-                          </div>
-                        {/if}
-                        {#if group.adapterId === 'abyss' && asset.available_qualities.length}
-                          <div class="meta-row">
-                            <span class="meta-label"><HardDrive size={11} /></span>
-                            <span class="meta-value">Variants: <strong>{formatQualities(asset.available_qualities)}</strong></span>
-                          </div>
-                        {/if}
-                        {#if asset.audio_languages.length}
-                          <div class="meta-row">
-                            <span class="meta-label"><Languages size={11} /></span>
-                            <span class="meta-value">Audio: <strong>{formatAudio(asset.audio_languages)}</strong>{#if group.adapterId === 'vidara' && asset.audio_languages.length > 1} (multi){/if}</span>
-                          </div>
-                        {/if}
-                        <div class="meta-row">
-                          <span class="meta-label"><FileText size={11} /></span>
-                          <span class="meta-value">Subtitles: <strong>{asset.has_subtitles ? 'Yes' : 'No'}</strong></span>
-                        </div>
-                        {#if asset.duration_seconds}
-                          <div class="meta-row">
-                            <span class="meta-label"><Clock size={11} /></span>
-                            <span class="meta-value">Duration: <strong>{formatDuration(asset.duration_seconds)}</strong></span>
-                          </div>
-                        {/if}
-                        {#if asset.size_bytes}
-                          <div class="meta-row">
-                            <span class="meta-label"><HardDrive size={11} /></span>
-                            <span class="meta-value">Size: <strong>{formatSize(asset.size_bytes)}</strong></span>
-                          </div>
-                        {/if}
-                        {#if asset.last_synced_at}
-                          <div class="meta-row">
-                            <span class="meta-label"><Activity size={11} /></span>
-                            <span class="meta-value">Last sync: <strong>{formatDateTime(asset.last_synced_at)}</strong></span>
-                          </div>
-                        {/if}
-                      </div>
+                  <span class="provider-block-name">{block.label}</span>
+                  <div class="provider-block-head-right">
+                    <span class="provider-block-status {block.hasAssets ? 'is-linked' : 'is-unlinked'}">
+                      {block.hasAssets ? 'Linked' : 'Not linked'}
+                    </span>
+                    {#if block.hasAssets && block.assets.length > 1}
+                      <span class="provider-block-count">{block.assets.length} assets</span>
                     {/if}
                   </div>
-                {/each}
+                </div>
+                {#if block.hasAssets}
+                  {#each block.assets as asset (asset.id)}
+                    <div class="provider-asset-row">
+                      <div class="provider-asset-head">
+                        <AdminAssetStatus status={asset.status} maveroStatus={asset.mavero_status} />
+                        {#if asset.provider_asset_id}
+                          <span class="provider-asset-id mono" title="Provider asset id">{asset.provider_asset_id}</span>
+                        {/if}
+                      </div>
+                      {#if asset.status === 'ready' && asset.mavero_status === 'available'}
+                        <div class="provider-asset-meta">
+                          {#if block.adapterId === 'vidara' && asset.source_quality}
+                            <div class="meta-row">
+                              <span class="meta-label"><HardDrive size={11} /></span>
+                              <span class="meta-value">Quality: <strong>{asset.source_quality}</strong></span>
+                            </div>
+                          {/if}
+                          {#if block.adapterId === 'abyss' && asset.available_qualities.length}
+                            <div class="meta-row">
+                              <span class="meta-label"><HardDrive size={11} /></span>
+                              <span class="meta-value">Variants: <strong>{formatQualities(asset.available_qualities)}</strong></span>
+                            </div>
+                          {/if}
+                          {#if asset.audio_languages.length}
+                            <div class="meta-row">
+                              <span class="meta-label"><Languages size={11} /></span>
+                              <span class="meta-value">Audio: <strong>{formatAudio(asset.audio_languages)}</strong>{#if block.adapterId === 'vidara' && asset.audio_languages.length > 1} (multi){/if}</span>
+                            </div>
+                          {/if}
+                          <div class="meta-row">
+                            <span class="meta-label"><FileText size={11} /></span>
+                            <span class="meta-value">Subtitles: <strong>{asset.has_subtitles ? 'Yes' : 'No'}</strong></span>
+                          </div>
+                          {#if asset.duration_seconds}
+                            <div class="meta-row">
+                              <span class="meta-label"><Clock size={11} /></span>
+                              <span class="meta-value">Duration: <strong>{formatDuration(asset.duration_seconds)}</strong></span>
+                            </div>
+                          {/if}
+                          {#if asset.size_bytes}
+                            <div class="meta-row">
+                              <span class="meta-label"><HardDrive size={11} /></span>
+                              <span class="meta-value">Size: <strong>{formatSize(asset.size_bytes)}</strong></span>
+                            </div>
+                          {/if}
+                          {#if asset.last_synced_at}
+                            <div class="meta-row">
+                              <span class="meta-label"><Activity size={11} /></span>
+                              <span class="meta-value">Last sync: <strong>{formatDateTime(asset.last_synced_at)}</strong></span>
+                            </div>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="provider-block-notlinked">
+                    <div class="provider-block-notlinked-desc">No {block.label} file linked to this media item yet. Upload a new file or link an existing one from the provider.</div>
+                  </div>
+                {/if}
+                {#if block.isMaveroHosted && block.sourceId}
+                  <button
+                    class="a2-drawer-action a2-drawer-action-sm provider-link-btn"
+                    type="button"
+                    onclick={() => { if (block.sourceId) openLinkSheet(block.adapterId, block.sourceId, block.label); }}
+                  >
+                    <Link2 size={13} /> Link existing file
+                  </button>
+                {/if}
               </div>
             {/each}
           {/if}
@@ -429,6 +633,112 @@
       {/if}
     </div>
   </aside>
+
+  <!-- ============================================================
+       "Link existing file" stacked sheet — renders above the drawer.
+       Only shown when linkSheetOpen is true. Contains its own overlay,
+       Escape handler, and loading / error / empty / list states.
+       ============================================================ -->
+  {#if linkSheetOpen}
+    <div
+      class="a2-link-overlay"
+      onclick={() => closeLinkSheet()}
+      aria-hidden="true"
+    ></div>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+    <aside
+      class="a2-link-sheet a2-scroll"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      aria-label="Link existing file"
+      onkeydown={handleLinkKeydown}
+    >
+      <header class="a2-link-head">
+        <div class="a2-link-titles">
+          <span class="a2-link-title">Link existing {linkSheetLabel} file</span>
+          <span class="a2-link-desc">Select a provider file to link to this media item. No auto-matching — choose carefully.</span>
+        </div>
+        <button class="a2-link-close" type="button" onclick={() => closeLinkSheet()} aria-label="Close link sheet">
+          <X size={16} />
+        </button>
+      </header>
+      <div class="a2-link-body">
+        {#if linkLoading}
+          <div class="a2-link-state a2-link-loading">
+            <Loader2 size={20} class="a2-spin" />
+            <span>Loading unlinked {linkSheetLabel} files…</span>
+          </div>
+        {:else if linkError}
+          <div class="a2-link-state a2-link-error">
+            <div class="a2-link-state-icon"><AlertCircle size={20} /></div>
+            <div class="a2-link-state-title">Failed to load files</div>
+            <div class="a2-link-state-desc">{linkError}</div>
+            {#if linkSheetAdapterId && linkSheetSourceId}
+              <button
+                class="a2-drawer-action a2-drawer-action-sm"
+                type="button"
+                onclick={() => linkSheetAdapterId && linkSheetSourceId && openLinkSheet(linkSheetAdapterId, linkSheetSourceId, linkSheetLabel)}
+              >
+                <RefreshCw size={13} /> Retry
+              </button>
+            {/if}
+          </div>
+        {:else if linkFiles.length === 0}
+          <div class="a2-link-state a2-link-empty">
+            <div class="a2-link-state-icon"><FileVideo size={20} /></div>
+            <div class="a2-link-state-title">No unlinked files</div>
+            <div class="a2-link-state-desc">All {linkSheetLabel} files are already linked to media items, or the provider has no uploaded files yet.</div>
+          </div>
+        {:else}
+          <div class="a2-link-list">
+            {#each linkFiles as file (file.providerAssetId)}
+              <div class="a2-link-file">
+                <div class="a2-link-file-main">
+                  <div class="a2-link-file-title">
+                    <FileVideo size={13} />
+                    <span>{file.title || file.filename || file.providerAssetId}</span>
+                  </div>
+                  <div class="a2-link-file-meta">
+                    <span class="a2-link-file-code mono" title="Provider asset id (filecode)">{file.providerAssetId}</span>
+                    {#if file.filename}
+                      <span class="a2-link-file-sep">·</span>
+                      <span class="a2-link-file-name" title={file.filename}>{file.filename}</span>
+                    {/if}
+                  </div>
+                  <div class="a2-link-file-meta a2-link-file-stats">
+                    {#if file.sizeBytes}
+                      <span class="a2-link-file-stat"><HardDrive size={11} /> {formatSize(file.sizeBytes)}</span>
+                    {/if}
+                    {#if file.durationSeconds}
+                      <span class="a2-link-file-sep">·</span>
+                      <span class="a2-link-file-stat"><Clock size={11} /> {formatDuration(file.durationSeconds)}</span>
+                    {/if}
+                    <span class="a2-link-file-sep">·</span>
+                    <span class="a2-link-file-stat a2-link-file-status">{file.status}</span>
+                  </div>
+                </div>
+                <button
+                  class="a2-link-file-btn"
+                  type="button"
+                  disabled={linkingAssetId !== null}
+                  onclick={() => linkFile(file)}
+                >
+                  {#if linkingAssetId === file.providerAssetId}
+                    <Loader2 size={13} class="a2-spin" /> Linking…
+                  {:else}
+                    <Link2 size={13} /> Link
+                  {/if}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </aside>
+  {/if}
 {/if}
 
 <style>
@@ -852,10 +1162,300 @@
     line-height: 1.5;
   }
 
+  /* ============================================================
+     Provider block additions — status pill + "Not linked" body + link button
+     ============================================================ */
+  .provider-block-head-right {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--a2-space-2);
+  }
+  .provider-block-status {
+    font-size: var(--a2-text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px var(--a2-space-2);
+    border-radius: var(--a2-radius-xs);
+    border: 1px solid var(--a2-border);
+  }
+  .provider-block-status.is-linked {
+    color: var(--a2-cyan);
+    background: var(--a2-cyan-soft);
+    border-color: var(--a2-cyan-border);
+  }
+  .provider-block-status.is-unlinked {
+    color: var(--a2-amber);
+    background: var(--a2-amber-soft);
+    border-color: var(--a2-amber-border);
+  }
+  .provider-block-notlinked {
+    padding: var(--a2-space-2) 0;
+  }
+  .provider-block-notlinked-desc {
+    font-size: var(--a2-text-xs);
+    color: var(--a2-text-dim);
+    line-height: 1.5;
+  }
+  .a2-drawer-action-sm {
+    padding: var(--a2-space-1) var(--a2-space-2);
+    font-size: var(--a2-text-xs);
+    gap: var(--a2-space-1);
+  }
+  .provider-link-btn {
+    margin-top: var(--a2-space-2);
+    width: fit-content;
+  }
+
+  /* ============================================================
+     "Link existing file" stacked sheet — renders above the drawer
+     ============================================================ */
+  .a2-link-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 82;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    animation: a2-drawer-fade var(--a2-motion-fast) var(--a2-ease-out);
+  }
+  .a2-link-sheet {
+    position: fixed;
+    z-index: 83;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(560px, calc(100vw - 32px));
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--a2-surface-2);
+    border: 1px solid var(--a2-border-strong);
+    border-radius: var(--a2-radius-lg);
+    box-shadow: var(--a2-shadow-lg);
+    overflow: hidden;
+    animation: a2-link-pop var(--a2-motion-normal, 240ms) var(--a2-ease-out);
+  }
+  @keyframes a2-link-pop {
+    from { transform: translate(-50%, -50%) scale(.96); opacity: 0; }
+    to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  }
+  .a2-link-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--a2-space-3);
+    padding: var(--a2-space-4) var(--a2-space-4) var(--a2-space-3);
+    border-bottom: 1px solid var(--a2-border);
+    flex: 0 0 auto;
+  }
+  .a2-link-titles { min-width: 0; flex: 1; }
+  .a2-link-title {
+    display: block;
+    font-size: var(--a2-text-base);
+    font-weight: 700;
+    color: var(--a2-text-bright);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+  .a2-link-desc {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--a2-text-2xs);
+    color: var(--a2-text-dim);
+    line-height: 1.5;
+  }
+  .a2-link-close {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--a2-border-strong);
+    border-radius: var(--a2-radius-sm);
+    color: var(--a2-text-muted);
+    background: transparent;
+    cursor: pointer;
+    flex: 0 0 auto;
+    transition: color var(--a2-motion-micro) var(--a2-ease-out),
+                border-color var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-link-close:hover {
+    color: var(--a2-text);
+    border-color: var(--a2-cyan-border);
+  }
+  .a2-link-body {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--a2-space-3) var(--a2-space-4);
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--a2-space-2);
+  }
+
+  /* Shared loading / error / empty state styling */
+  .a2-link-state {
+    padding: var(--a2-space-6);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--a2-space-2);
+  }
+  .a2-link-state-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    margin-bottom: var(--a2-space-1);
+    border-radius: var(--a2-radius-md);
+    background: var(--a2-surface-3);
+    color: var(--a2-text-dim);
+  }
+  .a2-link-error .a2-link-state-icon {
+    background: var(--a2-red-soft);
+    color: var(--a2-red);
+  }
+  .a2-link-state-title {
+    font-size: var(--a2-text-sm);
+    font-weight: 600;
+    color: var(--a2-text);
+  }
+  .a2-link-state-desc {
+    font-size: var(--a2-text-xs);
+    color: var(--a2-text-dim);
+    line-height: 1.5;
+    max-width: 360px;
+  }
+  .a2-link-loading {
+    color: var(--a2-text-muted);
+    font-size: var(--a2-text-sm);
+  }
+
+  /* File list */
+  .a2-link-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--a2-space-2);
+  }
+  .a2-link-file {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--a2-space-3);
+    padding: var(--a2-space-3);
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-md);
+    background: var(--a2-surface-3);
+    transition: border-color var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-link-file:hover {
+    border-color: var(--a2-cyan-border);
+  }
+  .a2-link-file-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--a2-space-1);
+  }
+  .a2-link-file-title {
+    display: flex;
+    align-items: center;
+    gap: var(--a2-space-2);
+    font-size: var(--a2-text-sm);
+    font-weight: 600;
+    color: var(--a2-text-bright);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .a2-link-file-title span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .a2-link-file-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--a2-space-1);
+    font-size: var(--a2-text-2xs);
+    color: var(--a2-text-dim);
+    flex-wrap: wrap;
+  }
+  .a2-link-file-code {
+    color: var(--a2-text-muted);
+    font-size: var(--a2-text-2xs);
+  }
+  .a2-link-file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 280px;
+  }
+  .a2-link-file-sep {
+    color: var(--a2-text-dim);
+  }
+  .a2-link-file-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .a2-link-file-status {
+    text-transform: capitalize;
+  }
+  .a2-link-file-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--a2-space-1);
+    padding: var(--a2-space-1) var(--a2-space-3);
+    border: 1px solid var(--a2-cyan-border);
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-cyan-soft);
+    color: var(--a2-cyan);
+    font-size: var(--a2-text-xs);
+    font-weight: 600;
+    cursor: pointer;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    transition: background var(--a2-motion-micro) var(--a2-ease-out),
+                border-color var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-link-file-btn:hover:not(:disabled) {
+    background: var(--a2-surface-3);
+    border-color: var(--a2-cyan);
+  }
+  .a2-link-file-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .a2-spin {
+    animation: a2-spin 0.9s linear infinite;
+  }
+  @keyframes a2-spin {
+    to { transform: rotate(360deg); }
+  }
+
   @media (max-width: 768px) {
     .a2-drawer {
       width: 100vw;
       border-left: none;
+    }
+    .a2-link-sheet {
+      top: auto;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      transform: none;
+      width: 100%;
+      max-height: 90vh;
+      border-radius: var(--a2-radius-lg) var(--a2-radius-lg) 0 0;
+      border-bottom: none;
+      animation: a2-link-slide-up var(--a2-motion-normal, 240ms) var(--a2-ease-out);
+    }
+    @keyframes a2-link-slide-up {
+      from { transform: translateY(100%); }
+      to   { transform: translateY(0); }
     }
   }
 
@@ -863,5 +1463,7 @@
     .a2-drawer-overlay, .a2-drawer { animation: none; }
     .a2-drawer-skeleton { animation: none; }
     .a2-drawer-action, .a2-drawer-link { transition: none; }
+    .a2-link-overlay, .a2-link-sheet { animation: none; }
+    .a2-spin { animation: none; }
   }
 </style>

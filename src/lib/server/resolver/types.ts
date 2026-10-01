@@ -69,6 +69,20 @@ export type SafeSourceMetadata = {
   protocol?: PlaybackProtocol;
   note?: string;
   /**
+   * Phase 7 (Mavero-hosted): the hosting adapter_id that produced this
+   * source (e.g. 'vidara', 'abyss'). Set by the Mavero-hosted adapter
+   * so downstream consumers (notably the demand-tracking check in
+   * /api/playback/resolve) can robustly identify a Mavero-hosted
+   * resolution by exact adapter id instead of by fragile providerName
+   * substring matching. Undefined for non-hosting adapters.
+   */
+  adapterId?: string;
+  /**
+   * Snake-case alias kept for backward compatibility with any code path
+   * that sets the DB column name form. Preferred form is `adapterId`.
+   */
+  adapter_id?: string;
+  /**
    * Phase 7F (MegaPlay): variants exposed by this source at runtime
    * (e.g. ['sub','dub']). Forwarded into PlayerSource.metadata.variants
    * so the source selector can render inline variant toggles.
