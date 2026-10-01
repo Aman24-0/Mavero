@@ -99,17 +99,15 @@ const libraryPage = read('src/routes/admin/media/library/+page.svelte');
 const libraryServer = read('src/routes/admin/media/library/+page.server.ts');
 const mediaDrawer = read('src/lib/components/admin2/AdminMediaDetailDrawer.svelte');
 
-// Provider Files view toggle
-assert.match(libraryPage, /currentView/, 'C1. Library page has currentView state');
-assert.match(libraryPage, /viewTabs/, 'C2. Library page has viewTabs');
-assert.match(libraryPage, /'media'.*'files'|'files'.*'media'/, 'C3. View tabs include media and files');
-assert.match(libraryPage, /AdminHostingAssets/, 'C4. Library page renders AdminHostingAssets in files view');
-assert.match(libraryPage, /'files'/, 'C5. Files view is URL-driven via view param');
+// Media Library is a single asset-centric file manager (no view toggle)
+assert.match(libraryPage, /AdminHostingAssets/, 'C1. Library page renders AdminHostingAssets as sole component');
+assert.doesNotMatch(libraryPage, /currentView/, 'C2. Library page has no view toggle (single file manager)');
+assert.doesNotMatch(libraryPage, /viewTabs/, 'C3. Library page has no view tabs');
 
-// Library server enriches hostingSources with capabilities
-assert.match(libraryServer, /getHostingAdapter/, 'C6. Library server uses getHostingAdapter to enrich sources');
-assert.match(libraryServer, /capabilities/, 'C7. Library server adds capabilities to hostingSources');
-ok('C. Unified Media Library: Provider Files view + capabilities enrichment');
+// Library server provides hostingSources with capabilities
+assert.match(libraryServer, /getHostingAdapter/, 'C4. Library server uses getHostingAdapter to enrich sources');
+assert.match(libraryServer, /capabilities/, 'C5. Library server adds capabilities to hostingSources');
+ok('C. Unified Media Library: single asset-centric file manager (no view toggle)');
 
 // Drawer has Delete, Rename, Move actions
 assert.match(mediaDrawer, /deleteAsset/, 'C8. Media drawer has deleteAsset handler');
@@ -226,30 +224,34 @@ assert.doesNotMatch(appShell, /id: 'upload'.*label: 'Upload'/, 'E2. No upload it
 assert.doesNotMatch(appShell, /id: 'upload'.*label: 'Upload'.*href: '\/admin\/media\/upload'/, 'E3. No upload in mobile nav');
 assert.match(appShell, /id: 'media-library'.*label: 'Media'.*href: '\/admin\/media\/library'/, 'E4. Mobile nav has Media Library');
 
-// Operations is under Hosting group (not a separate top-level group)
-assert.doesNotMatch(appShell, /id: 'operations'.*label: 'Operations'[\s\S]*?items: \[\s*\{ id: 'operations'/, 'E5. Operations is not a separate top-level nav group');
+// Operations is NOT a separate nav item — merged into Hosting Control as tabs
+assert.doesNotMatch(appShell, /id: 'operations'.*label: 'Operations'/, 'E5. Operations is not a separate nav item (merged into Hosting Control)');
 
-// Operations item exists in the Hosting group
-// Find the hosting group and check it contains operations
+// Hosting group has only Hosting Control (no separate Operations entry)
 const hostingGroupMatch = appShell.match(/id: 'hosting'[\s\S]*?items: \[([\s\S]*?)\]\s*\}/);
 assert.ok(hostingGroupMatch, 'E6. Hosting nav group found');
 assert.match(hostingGroupMatch[1], /id: 'hosting'.*label: 'Hosting Control'/, 'E7. Hosting group has Hosting Control');
-assert.match(hostingGroupMatch[1], /id: 'operations'.*label: 'Operations'/, 'E8. Hosting group contains Operations');
-ok('E. Navigation: Upload removed, Operations under Hosting');
+assert.doesNotMatch(hostingGroupMatch[1], /id: 'operations'/, 'E8. Hosting group does NOT have separate Operations item');
+ok('E. Navigation: Upload removed, Operations merged into Hosting Control (no separate nav item)');
 
 // Hosting page: Assets tab removed, redirects to Media Library
 assert.match(hostingServer, /tab === 'assets'/, 'E9. Hosting server checks for assets tab');
-assert.match(hostingServer, /redirect\(303, '\/admin\/media\/library\?view=files'\)/, 'E10. Hosting server redirects assets tab to Media Library');
+assert.match(hostingServer, /redirect\(303, '\/admin\/media\/library'\)/, 'E10. Hosting server redirects assets tab to Media Library');
 assert.doesNotMatch(hostingServer, /'assets'.*'sync'/, 'E11. Hosting VALID_TABS does not include assets');
 
-// Hosting page UI: no Assets tab
-assert.doesNotMatch(hostingPage, /\{ id: 'assets', label: 'Assets' \}/, 'E12. Hosting page UI has no Assets tab');
+// Hosting page has 5 tabs: Providers, Sync, Jobs, Activity, Attention
 assert.match(hostingPage, /\{ id: 'providers', label: 'Providers' \}/, 'E13. Hosting page has Providers tab');
 assert.match(hostingPage, /\{ id: 'sync', label: 'Sync' \}/, 'E14. Hosting page has Sync tab');
+assert.match(hostingPage, /\{ id: 'jobs', label: 'Jobs'/, 'E15. Hosting page has Jobs tab');
+assert.match(hostingPage, /\{ id: 'activity', label: 'Activity' \}/, 'E16. Hosting page has Activity tab');
+assert.match(hostingPage, /'attention'.*'Attention'/, 'E17. Hosting page has Attention tab');
 
-// openAssetsForProvider navigates to Media Library
-assert.match(hostingPage, /\/admin\/media\/library\?view=files/, 'E15. openAssetsForProvider navigates to Media Library');
-ok('E2. Hosting: Assets tab removed, redirects to Media Library');
+// Operations page redirects to Hosting Control
+assert.match(read('src/routes/admin/operations/+page.server.ts'), /redirect\(303, `\/admin\/hosting/, 'E18. Operations page redirects to Hosting Control');
+
+// openAssetsForProvider navigates to Media Library (no ?view=files)
+assert.match(hostingPage, /\/admin\/media\/library\?provider=/, 'E15. openAssetsForProvider navigates to Media Library');
+ok('E2. Hosting: 5 tabs (Providers/Sync/Jobs/Activity/Attention), Operations redirects');
 
 // ============================================================
 // F. Upload Selector (hosting providers only)
@@ -284,10 +286,8 @@ const uploadRoute = read('src/routes/api/admin/media/upload/+server.ts');
 assert.match(uploadRoute, /requireAdmin/, 'G3. Upload API route still requires admin');
 assert.match(uploadRoute, /resolveAdapterForSource/, 'G4. Upload API route uses canonical resolver');
 
-// Media Library still has the media-item-centric list + drawer
-assert.match(libraryServer, /MediaLibraryService/, 'G5. Library server still uses MediaLibraryService');
-assert.match(libraryPage, /AdminMediaTable/, 'G6. Library page still renders AdminMediaTable');
-assert.match(libraryPage, /AdminMediaDetailDrawer/, 'G7. Library page still renders AdminMediaDetailDrawer');
+// Media Library renders AdminHostingAssets as the sole file manager
+assert.match(libraryPage, /AdminHostingAssets/, 'G6. Library page renders AdminHostingAssets');
 
 // Operations endpoints still work
 const opsCountsEndpoint = read('src/routes/api/admin/operations/counts/+server.ts');

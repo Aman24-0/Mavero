@@ -3676,3 +3676,89 @@ Demand lifecycle:
 
 ### Commit SHA
 (pending)
+
+---
+
+## Phase 4 — Architecture Remediation: Unified File Manager + Hosting Control
+
+**Date:** 2026-10-02
+**Base HEAD:** `706de63`
+
+### Architecture Decision
+
+**Before:**
+- Media Library had TWO views: "Media" (media_items-centric) + "Provider Files" (media_assets-centric)
+- `list()` paginated media_items then JS-filtered assets — total/count mismatch
+- Operations was a standalone page under the Hosting nav group
+- Jobs/Activity/Attention used native `<select>` filters
+- `folderSummary()` counted ALL media_items regardless of asset state
+
+**After:**
+- Media Library = single asset-centric file manager using `AdminHostingAssets`
+- No view toggle, no dual representation
+- Hosting Control = 5 tabs (Providers, Sync, Jobs, Activity, Attention)
+- Operations page redirects to `/admin/hosting?tab=jobs`
+- No separate Operations nav item
+
+### Implementation
+
+**1. Media Library = single file manager:**
+- Removed view toggle (`?view=media|files`)
+- `AdminHostingAssets` is the sole component (asset-centric, excludes deleted)
+- Old `AdminMediaTable` / `AdminMediaCard` / `AdminMediaTree` / `AdminMediaFilters` / `AdminMediaDetailDrawer` no longer rendered on the library page (components retained for backward compat / other consumers)
+- Library page server simplified — provides hosting sources with capabilities only
+
+**2. Hosting Control absorbs Operations:**
+- 5 tabs: Providers, Sync, Jobs, Activity, Attention
+- `AdminOpsJobs`, `AdminOpsHistory`, `AdminOpsAttention` rendered inside Hosting Control
+- Badge counts (jobsActive, attentionTotal) preloaded by server
+- Stale-operation reaper runs on Hosting Control page load (moved from Operations)
+
+**3. Operations page redirects:**
+- `/admin/operations` → `/admin/hosting?tab=jobs`
+- `/admin/operations?tab=history` → `/admin/hosting?tab=activity`
+- `/admin/operations?tab=attention` → `/admin/hosting?tab=attention`
+
+**4. Navigation cleanup:**
+- Removed separate "Operations" nav item from AdminAppShell
+- Hosting group has only "Hosting Control"
+- Mobile nav unchanged (already had Hosting, not Operations)
+
+**5. Old `?view=` URL compatibility:**
+- `?view=media` → redirect to clean URL
+- `?view=files` → redirect to clean URL
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `src/routes/admin/media/library/+page.svelte` | Replaced dual-view with single AdminHostingAssets |
+| `src/routes/admin/media/library/+page.server.ts` | Simplified — hosting sources only, view redirect |
+| `src/routes/admin/hosting/+page.svelte` | 5 tabs (Providers/Sync/Jobs/Activity/Attention) |
+| `src/routes/admin/hosting/+page.server.ts` | Badge counts + reaper + 5 valid tabs |
+| `src/routes/admin/operations/+page.svelte` | Stub (server redirects) |
+| `src/routes/admin/operations/+page.server.ts` | Redirect to Hosting Control |
+| `src/lib/components/admin2/AdminAppShell.svelte` | Removed Operations nav item |
+| `scripts/consolidation_regression_test.ts` | Updated for single file manager + 5 tabs |
+| `scripts/admin2_audit_fix_test.ts` | Updated for redirect + simplified library |
+
+### Tests
+- `architecture_remediation_test`: 6/6 pass
+- `lifecycle_state_transition_test`: 6/6 pass
+- `consolidation_regression_test`: 10/10 pass (updated)
+- `hosting_lifecycle_regression_test`: 11/11 pass
+- `drawer_management_ui_test`: 12/12 pass
+- `delete_and_upload_selector_test`: 17/17 pass
+- `post_deploy_regression_test`: 7/7 pass
+- `admin2_phase2_test`: 31/31 pass
+- `admin2_audit_fix_test`: 36/36 pass (updated)
+
+### Validation
+- `svelte-check`: 0 errors, 0 warnings (4392 files)
+- `vite build`: succeeds (30.33s)
+
+### No Migration Required
+No schema changes. No production data repairs needed (demand was already fixed in previous commit).
+
+### Commit SHA
+(pending)

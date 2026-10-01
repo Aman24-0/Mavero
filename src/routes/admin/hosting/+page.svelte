@@ -2,17 +2,16 @@
   /**
    * Admin 2.0 — Hosting Control workspace.
    *
-   * Phase 2C consolidation: the Assets tab has been merged into Media
-   * Library (?view=files). This workspace now has two tabs:
-   *   - Providers — provider overview + health + capabilities + detail drawer
+   * ARCHITECTURE: Hosting Control is the single hosting/operations workspace.
+   * It contains 5 tabs:
+   *   - Providers — provider overview + health + capabilities
    *   - Sync — provider sync + unlinked assets
+   *   - Jobs — active + recent upload operations
+   *   - Activity — immutable audit timeline (media_operations)
+   *   - Attention — failed/stale/unconfigured/degraded items
    *
-   * "Open in Assets" actions from Providers/Sync now navigate to
-   * /admin/media/library?view=files (the canonical provider-file workspace).
-   *
-   * Tab state is URL-driven (?tab=providers|sync). The server loader
-   * preloads the providers list (skipHealth=true for fast initial
-   * render); the Providers tab triggers a live health check client-side.
+   * The old standalone Operations Center page (/admin/operations) now
+   * redirects to /admin/hosting?tab=jobs.
    */
 
   import { onMount } from 'svelte';
@@ -22,7 +21,11 @@
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminHostingProviders from '$lib/components/admin2/AdminHostingProviders.svelte';
   import AdminHostingSync from '$lib/components/admin2/AdminHostingSync.svelte';
+  import AdminOpsJobs from '$lib/components/admin2/AdminOpsJobs.svelte';
+  import AdminOpsHistory from '$lib/components/admin2/AdminOpsHistory.svelte';
+  import AdminOpsAttention from '$lib/components/admin2/AdminOpsAttention.svelte';
   import type { HostingProviderOverview } from '$lib/shared/hosting-types';
+  import type { OpsBadgeCounts } from '$lib/shared/operations-types';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -30,12 +33,12 @@
   // ============================================================
   // Tab state — URL-driven
   // ============================================================
-  const VALID_TABS = new Set(['providers', 'sync']);
-  // svelte-ignore state_referenced_locally — intentional initial capture from URL
+  const VALID_TABS = new Set(['providers', 'sync', 'jobs', 'activity', 'attention']);
+  // svelte-ignore state_referenced_locally
   let currentTab = $state<string>(VALID_TABS.has(data.initialTab) ? data.initialTab : 'providers');
+  // svelte-ignore state_referenced_locally
+  let badgeCounts = $state<OpsBadgeCounts>(data.badgeCounts ?? { jobsActive: 0, attentionTotal: 0 });
 
-  // Sync URL → tab state. We read the tab from the URL on mount and on
-  // navigation. Changing tabs updates the URL via replaceState.
   $effect(() => {
     const urlTab = page.url.searchParams.get('tab') ?? 'providers';
     if (VALID_TABS.has(urlTab) && urlTab !== currentTab) {
@@ -54,9 +57,9 @@
   // ============================================================
   // Provider data — server-preloaded, refreshable client-side
   // ============================================================
-  // svelte-ignore state_referenced_locally — intentional initial capture from server loader
+  // svelte-ignore state_referenced_locally
   let providers = $state<HostingProviderOverview[]>(data.initialProviders);
-  // svelte-ignore state_referenced_locally — intentional initial capture from server loader
+  // svelte-ignore state_referenced_locally
   let providersError = $state<string | null>(data.initialProvidersError);
 
   async function refreshProviders() {
@@ -74,30 +77,16 @@
     }
   }
 
-  // ============================================================
-  // Cross-tab navigation — "Open in Assets" from Providers/Sync
-  // Phase 2C: now navigates to Media Library's Provider Files view.
-  // ============================================================
   function openAssetsForProvider(adapterId: string) {
-    // Navigate to Media Library's Provider Files view with the provider
-    // filter pre-selected. The AdminHostingAssets component reads the
-    // `provider` URL param to pre-filter.
-    goto(`/admin/media/library?view=files&provider=${encodeURIComponent(adapterId)}`);
+    goto(`/admin/media/library?provider=${encodeURIComponent(adapterId)}`);
   }
 
   // ============================================================
-  // Sync handler — called from Providers tab
+  // Sync handler
   // ============================================================
-  // FINDING-012 fix: surface sync errors instead of swallowing them.
-  // Previously the catch block had a comment "Swallow — the Providers
-  // tab will show the error via its own state" but NO error info was
-  // passed to the Providers tab. Now sync errors are captured in
-  // `syncError` and rendered as an inline error banner.
   let syncError = $state<string | null>(null);
-  let syncingProvider = $state<string | null>(null);
 
   async function syncProvider(adapterId: string): Promise<void> {
-    syncingProvider = adapterId;
     syncError = null;
     try {
       const res = await fetch(`/api/admin/media/sync?provider=${adapterId}`, { method: 'POST' });
@@ -105,28 +94,46 @@
         const json = await res.json().catch(() => null);
         syncError = json?.error?.message ?? `Sync failed (HTTP ${res.status}).`;
       } else {
-        // Refresh providers to update asset counts + last sync.
         await refreshProviders();
       }
     } catch (err) {
       syncError = err instanceof Error ? err.message : 'Network error during sync.';
-    } finally {
-      syncingProvider = null;
     }
   }
 
   // ============================================================
-  // Tabs definition
-  // Phase 2C consolidation: Assets tab removed — merged into Media
-  // Library's "Provider Files" view. Deep links to ?tab=assets are
-  // redirected by the server loader.
+  // Badge refresh
   // ============================================================
-  const tabs = [
+  async function refreshBadges() {
+    try {
+      const res = await fetch('/api/admin/operations/counts');
+      const data = await res.json();
+      if (data.ok) {
+        badgeCounts = { jobsActive: data.jobsActive, attentionTotal: data.attentionTotal };
+      }
+    } catch {
+      // Badges are decorative.
+    }
+  }
+
+  onMount(() => {
+    void refreshBadges();
+    const onFocus = () => void refreshBadges();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  });
+
+  // ============================================================
+  // Tabs definition — 5 tabs
+  // ============================================================
+  const tabs = $derived([
     { id: 'providers', label: 'Providers' },
     { id: 'sync', label: 'Sync' },
-  ];
+    { id: 'jobs', label: 'Jobs', badge: badgeCounts.jobsActive > 0 ? String(badgeCounts.jobsActive) : undefined },
+    { id: 'activity', label: 'Activity' },
+    { id: 'attention', label: 'Attention', badge: badgeCounts.attentionTotal > 0 ? String(badgeCounts.attentionTotal) : undefined },
+  ]);
 
-  // Sync tab needs a slim provider view.
   const syncProviders = $derived(
     providers.map((p) => ({
       adapterId: p.adapterId,
@@ -139,7 +146,7 @@
 </script>
 
 <svelte:head>
-  <title>Hosting — Mavero Admin</title>
+  <title>Hosting Control — Mavero Admin</title>
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
@@ -148,10 +155,10 @@
     eyebrow="Hosting"
     title="Hosting Control"
     accent="cyan"
-    tabs={tabs.map((t) => ({ id: t.id, label: t.label, active: t.id === currentTab, onclick: () => switchTab(t.id) }))}
+    tabs={tabs.map((t) => ({ id: t.id, label: t.label, active: t.id === currentTab, onclick: () => switchTab(t.id), badge: t.badge }))}
   >
     {#snippet description()}
-      <p>Operational view of Mavero's connected hosting providers. Monitor health, manage provider assets, and synchronize state.</p>
+      <p>Single workspace for hosting providers, sync, operations, and monitoring.</p>
     {/snippet}
 
     {#if currentTab === 'providers'}
@@ -171,6 +178,12 @@
         providers={syncProviders}
         onopenassets={openAssetsForProvider}
       />
+    {:else if currentTab === 'jobs'}
+      <AdminOpsJobs {badgeCounts} />
+    {:else if currentTab === 'activity'}
+      <AdminOpsHistory />
+    {:else if currentTab === 'attention'}
+      <AdminOpsAttention />
     {/if}
   </AdminPage>
 </AdminAppShell>

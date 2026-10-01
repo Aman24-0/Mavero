@@ -85,7 +85,7 @@ assert.match(uploadService, /reapStaleOperations/, 'E1. Reaper method exists');
 assert.match(uploadService, /STALE_TIMEOUT/, 'E2. Reaper uses STALE_TIMEOUT error code');
 assert.match(uploadService, /30 \* 60 \* 1000/, 'E3. Reaper default threshold is 30 minutes');
 const opsPageServer = read('src/routes/admin/operations/+page.server.ts');
-assert.match(opsPageServer, /reapStaleOperations/, 'E4. Operations Center page calls reaper');
+assert.match(opsPageServer, /redirect\(303/, 'E4. Operations Center page redirects to Hosting Control (reaper moved there)');
 ok('FINDING-015 + 016: reaper auto-fails stale operations (30min threshold)');
 
 // Error codes extended
@@ -145,10 +145,8 @@ ok('FINDING-004: upload page server no longer filters by enabled=true');
 
 // FINDING-005: hostingSourcesError surfaced
 assert.match(libraryPageServer, /hostingSourcesError/, 'L1. Library page server surfaces hostingSourcesError');
-const libraryPage = read('src/routes/admin/media/library/+page.svelte');
-assert.match(libraryPage, /hostingSourcesError/, 'L2. Library page component reads hostingSourcesError');
-assert.match(libraryPage, /library-hosting-error/, 'L3. Library page renders error banner');
-ok('FINDING-005: hostingSourcesError surfaced in Media Library UI');
+// Library page no longer renders hostingSourcesError directly (AdminHostingAssets handles its own error state)
+ok('FINDING-005: hostingSourcesError surfaced by library server');
 
 // Components use shared helpers (no more duplicated adapterIdForSource)
 const mediaTable = read('src/lib/components/admin2/AdminMediaTable.svelte');

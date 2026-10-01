@@ -110,7 +110,6 @@
       label: 'Hosting',
       items: [
         { id: 'hosting', label: 'Hosting Control', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
-        { id: 'operations', label: 'Operations', href: '/admin/operations', icon: Activity, matchPrefix: '/admin/operations' },
       ]
     },
     {
