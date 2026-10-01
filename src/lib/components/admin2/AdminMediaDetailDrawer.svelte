@@ -734,11 +734,9 @@
                         {/if}
                       </div>
                       <!-- Provider file actions: Rename, Move, Delete.
-                           These operate on the provider-side file directly.
-                           Available for ANY asset with a provider_asset_id,
-                           regardless of mavero_status (linked/detached).
-                           Consolidated from the Hosting Assets drawer. -->
-                      {#if asset.provider_asset_id}
+                           Available for non-deleted assets with a provider_asset_id.
+                           Deleted assets are terminal — no file actions. -->
+                      {#if asset.provider_asset_id && asset.status !== 'deleted'}
                         <div class="provider-asset-actions provider-asset-actions-file">
                           <button
                             class="a2-drawer-action a2-drawer-action-sm"
@@ -767,6 +765,10 @@
                           >
                             {#if isActionLoading(asset.id, 'delete')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Deleting…{:else}<Trash2 size={13} /> Delete{/if}
                           </button>
+                        </div>
+                      {:else if asset.status === 'deleted'}
+                        <div class="provider-asset-deleted-notice">
+                          <Trash2 size={13} /> This file has been permanently deleted.
                         </div>
                       {/if}
                     </div>
@@ -1851,6 +1853,7 @@
   /* Provider asset action buttons */
   .provider-asset-actions { display: flex; gap: var(--a2-space-2); margin-top: var(--a2-space-2); flex-wrap: wrap; }
   .provider-asset-actions-file { padding-top: var(--a2-space-1); border-top: 1px dashed var(--a2-border); }
+  .provider-asset-deleted-notice { display: flex; align-items: center; gap: 6px; padding: var(--a2-space-2) var(--a2-space-3); margin-top: var(--a2-space-2); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-xs); }
   .a2-rename-field { display: flex; flex-direction: column; gap: 4px; }
   .a2-rename-label { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
   .a2-rename-input { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 8px 10px; font-family: var(--a2-font-mono); }

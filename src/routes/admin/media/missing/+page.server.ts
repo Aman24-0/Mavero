@@ -24,7 +24,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     // missed by the fire-and-forget resolveDemand() calls during upload/sync.
     // The sweep is best-effort — errors are silently absorbed.
     const demandService = new DemandService(adminClient);
+    // Phase 6 fix: auto-resolve stale 'open' demand requests that now have
+    // a ready+available media asset. This catches demand rows that were
+    // missed by the fire-and-forget resolveDemand() calls during upload/sync.
     await demandService.sweepResolvedDemand();
+    // ARCHITECTURE FIX: auto-reopen stale 'ready' demand requests whose
+    // underlying asset was deleted/detached. Without this, demand stays
+    // 'ready' forever after a delete — Missing Media never surfaces the
+    // content as missing again. Does NOT reopen 'ignored' demands.
+    await demandService.sweepStaleResolvedDemand();
 
     const { data: requests, error: err } = await adminClient
       .from('media_availability_requests')

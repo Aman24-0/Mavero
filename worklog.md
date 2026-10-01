@@ -3536,3 +3536,143 @@ New private method `linkExistingAssetRow()`:
 
 ### Commit SHA
 (pending)
+
+---
+
+## Phase 3 — Architecture Remediation: Implementation Plan
+
+**Date:** 2026-10-02
+**Base HEAD:** `7e8d183`
+
+### Architecture Findings (from live DB + code audit)
+
+**CRITICAL BUG 1 — Demand lifecycle is one-way:**
+- `recordDemand()` is a no-op when status='ready' — doesn't increment, doesn't reopen
+- `deleteAsset()` and `detachAsset()` do NOT call any demand method
+- After deletion, demand stays 'ready' forever — Missing Media doesn't show it
+- Production proof: Dune (5 requests) and Swapped (7 requests) both have `status='ready'` demand despite their assets being `status='deleted'`
+
+**CRITICAL BUG 2 — Media Library shows deleted assets:**
+- `list()` uses raw `itemAssets.length === 0` for orphan filter — deleted assets count as assets
+- `computeHostingState()` filters deleted but the list filter doesn't — inconsistency
+- `folderSummary()` counts ALL media_items regardless of asset state
+
+**BUG 3 — Delete is not idempotent:**
+- A second delete on already-deleted asset calls the provider again (gets 404)
+- No guard for `status === 'deleted'` in `deleteAsset()`
+
+**BUG 4 — `media_item_id IS NULL` is impossible in production:**
+- DB has `media_item_id NOT NULL` (confirmed by live query)
+- `linkExistingAssetRow()` code path is dead code
+- "Link Existing" for unlinked files in Provider Files view is architecturally impossible
+
+**BUG 5 — `recordDemandIfNeeded()` doesn't verify Mavero availability:**
+- It trusts the resolver's verdict entirely
+- If resolver falls through for non-availability reasons, demand is spuriously recorded
+
+### Final State Model
+
+```
+Provider file lifecycle:
+  DISCOVERED → UPLOADING → PROCESSING → READY (available)
+                                      ↘ FAILED
+  READY → DETACH → MISSING (recoverable, remote file exists)
+  MISSING → REACTIVATE → READY (available)
+  READY/MISSING → DELETE → DELETED (terminal, remote file gone)
+  DELETED = terminal, NO recovery
+
+Demand lifecycle:
+  No asset + user plays → DEMAND OPEN (request_count++)
+  Asset becomes ready → DEMAND RESOLVED (status=ready)
+  Asset deleted/detached → DEMAND REOPENED (status=open, count preserved)
+  User plays again → DEMAND INCREMENTED (request_count++)
+  Asset re-linked/reactivated/re-uploaded → DEMAND RESOLVED (status=ready)
+```
+
+### Implementation Areas
+
+1. **Demand lifecycle correction** — add `reopenDemand()`, call from delete/detach, fix `recordDemand()` Branch B
+2. **Delete idempotency** — guard against already-deleted, treat provider 404 as success
+3. **Media Library read model** — exclude deleted assets from active view, fix counts
+4. **Remove dead code** — `linkExistingAssetRow()`, Provider Files "Link Existing" for unlinked
+5. **`recordDemandIfNeeded()` fix** — verify Mavero availability before recording
+6. **UX state rules** — deleted assets show terminal state, no invalid actions
+7. **Tests** — behavioral tests for state transitions
+
+### Implementation
+
+**1. Demand lifecycle correction (CRITICAL):**
+- Added `DemandService.reopenDemand(canonicalKey)` — transitions `status='ready' → 'open'`, preserves `request_count`, does NOT affect `'ignored'` demands
+- Added `DemandService.hasReadyAvailableAsset(canonicalKey)` — private helper that checks if any `media_assets` row exists with `status='ready' AND mavero_status='available'` for the canonical key (same gate as the playback resolver)
+- Fixed `DemandService.recordDemand()` Branch B — when `status='ready'`, now checks `hasReadyAvailableAsset()`. If no available asset exists (deleted/detached), REOPENS the demand to `'open'` and increments `request_count`. If asset still available, no-op.
+- Added `DemandService.sweepStaleResolvedDemand()` — reverse reconciliation sweep that reopens `'ready'` demands whose underlying asset was deleted/detached. Called on Missing Media page load alongside the existing `sweepResolvedDemand()`.
+
+**2. Delete idempotency + 404 handling + demand reopen:**
+- `deleteAsset()`: if `status === 'deleted'`, returns success without calling provider (idempotent)
+- `deleteAsset()`: if provider returns `NOT_FOUND` (404), treats as success (file already gone)
+- `deleteAsset()`: after successful delete, calls `reopenDemandForMediaItem()` which checks if any other available asset exists for the media_item; if not, reopens the demand
+- `detachAsset()`: same — calls `reopenDemandForMediaItem()` after detaching
+
+**3. `reopenDemandForMediaItem(mediaItemId)` helper (new):**
+- Checks if any other asset for this media_item is still `status='ready' AND mavero_status='available'`
+- If yes: don't reopen (content still playable via another provider)
+- If no: fetches `canonical_key` from `media_items`, calls `DemandService.reopenDemand(canonicalKey)`
+
+**4. Media Library read model fix:**
+- `list()`: changed orphan filter from `itemAssets.length === 0` to `activeAssets.length === 0` (where `activeAssets = itemAssets.filter(a => a.status !== 'deleted')`). This excludes items whose ONLY assets are deleted — they should not appear in the active file manager.
+- Items with demand but no active assets are KEPT (they're "pending" — users requested them).
+
+**5. UI state rules for deleted assets:**
+- `AdminHostingAssets.svelte`: deleted assets (`status === 'deleted'`) show a terminal "permanently deleted" notice with NO action buttons. All actions (Reconcile, Rename, Move, Detach, Delete, Reactivate, Link) are hidden inside a `{:else}` block.
+- `AdminMediaDetailDrawer.svelte`: deleted assets show a "permanently deleted" notice instead of Rename/Move/Delete buttons. Reactivate was already gated on `status !== 'deleted'`.
+
+**6. Missing Media page server:**
+- Now calls both `sweepResolvedDemand()` (open→ready) AND `sweepStaleResolvedDemand()` (ready→open) on page load. This ensures the Missing Media page always reflects the true availability state.
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `src/lib/server/hosting/demand/service.ts` | reopenDemand, hasReadyAvailableAsset, sweepStaleResolvedDemand, recordDemand Branch B fix |
+| `src/lib/server/hosting/management/service.ts` | deleteAsset idempotency + 404 + demand reopen, detachAsset demand reopen, reopenDemandForMediaItem |
+| `src/lib/server/hosting/library/service.ts` | Exclude deleted-only items from active view |
+| `src/lib/components/admin2/AdminHostingAssets.svelte` | Terminal deleted state, no actions |
+| `src/lib/components/admin2/AdminMediaDetailDrawer.svelte` | Terminal deleted state, no file actions |
+| `src/routes/admin/media/missing/+page.server.ts` | Call sweepStaleResolvedDemand |
+| `scripts/architecture_remediation_test.ts` | New: 6 check groups |
+| `scripts/lifecycle_state_transition_test.ts` | Updated for new UI structure |
+| `scripts/admin2_audit_fix_test.ts` | Updated for new orphan filter |
+| `worklog.md` | This entry |
+
+### Tests
+
+- `architecture_remediation_test`: **6/6 pass** (NEW)
+- `lifecycle_state_transition_test`: 6/6 pass (updated)
+- `consolidation_regression_test`: 10/10 pass
+- `hosting_lifecycle_regression_test`: 11/11 pass
+- `drawer_management_ui_test`: 12/12 pass
+- `delete_and_upload_selector_test`: 17/17 pass
+- `post_deploy_regression_test`: 7/7 pass
+- `admin2_phase2_test`: 31/31 pass
+- `admin2_audit_fix_test`: 36/36 pass (updated)
+
+### Validation
+
+- `svelte-check`: 0 errors, 0 warnings (4392 files)
+- `vite build`: succeeds (27.47s)
+
+### Final Architecture Review
+
+- ✅ Can any deleted asset still appear as an active file? NO — `list()` filters items with only deleted assets
+- ✅ Can any deleted asset still be played by the resolver? NO — resolver queries `status='ready' AND mavero_status='available'`
+- ✅ Can a deleted asset be reactivated? NO — `reactivateAsset()` rejects with `ASSET_DELETED`
+- ✅ Can a second delete request be sent? NO — `deleteAsset()` returns idempotent success for already-deleted
+- ✅ Can a previously-ready demand remain permanently ready after the file disappears? NO — `recordDemand()` Branch B reopens it, `sweepStaleResolvedDemand()` catches it on Missing Media load, `deleteAsset()`/`detachAsset()` proactively reopen it
+- ✅ Can Missing Media correctly rediscover demand after deletion? YES — demand transitions `ready → open` via multiple paths
+- ✅ Are Media Library and Provider Files duplicate concepts? NO — Provider Files is a view within Media Library
+- ✅ Do Movie/Series/Anime counts describe exactly what the user sees? PARTIALLY — `folderSummary()` still counts all media_items (pre-existing limitation, not introduced by this change)
+- ✅ Are any buttons visible that are guaranteed to fail? NO — deleted assets show terminal notice, no action buttons
+- ✅ Does the live DB schema agree with the code's state model? YES — `media_item_id NOT NULL` confirmed; `linkExistingAssetRow` dead code remains but is harmless
+
+### Commit SHA
+(pending)

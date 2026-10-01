@@ -278,16 +278,32 @@ export class MediaLibraryService {
     // ghost rows from failed uploads — they have a canonical identity
     // but no playable asset and nobody has requested them. Showing them
     // in Media Library is misleading.
+    //
+    // ARCHITECTURE FIX: also exclude items whose ONLY assets are deleted.
+    // A deleted provider file is terminal — it should NOT appear in the
+    // active file manager. The item may still be visible in Missing Media
+    // (if it has demand) or in Operations Activity (historical record).
+    // This uses the same "active assets" concept as computeHostingState():
+    // assets with status !== 'deleted'.
     const includeOrphans = query.includeOrphans === true;
     const filteredItems: typeof items = [];
     for (const item of items) {
       let itemAssets = assetsByItem.get(item.id) ?? [];
       const itemDemand = demandByKey.get(item.canonical_key) ?? null;
 
-      // FINDING-003: drop orphan items (no assets AND no demand) unless
-      // explicitly included. Do this BEFORE the provider/status filter
-      // so the filter doesn't accidentally expose orphans.
-      if (!includeOrphans && itemAssets.length === 0 && !itemDemand) {
+      // Compute "active" assets (exclude deleted) for the orphan filter.
+      // This must match computeHostingState()'s definition of active.
+      const activeAssets = itemAssets.filter(a => a.status !== 'deleted');
+
+      // ARCHITECTURE FIX: drop items with no active assets AND no demand
+      // (orphan). This catches both:
+      //   - items with zero assets (pure orphan)
+      //   - items with only deleted assets (effectively orphan — the
+      //     provider file is gone and the item is not playable)
+      // Items WITH demand but no active assets are kept (they're "pending"
+      // — users requested them, admin should see them to know an upload
+      // is needed).
+      if (!includeOrphans && activeAssets.length === 0 && !itemDemand) {
         continue;
       }
 
@@ -300,8 +316,8 @@ export class MediaLibraryService {
         itemAssets = itemAssets.filter(a => a.status === query.status || a.mavero_status === query.status);
       }
       // If a filter was applied and the item has no matching assets, skip it.
-      // If no filter is applied, keep all items (including those with no assets —
-      // they're "missing"/"pending" media which is itself a useful signal in the library).
+      // If no filter is applied, keep all items (including those with no active assets
+      // but demand — they're "pending" media which is a useful signal in the library).
       if ((query.provider_source_id || (query.status && query.status !== 'all')) && itemAssets.length === 0) {
         continue;
       }

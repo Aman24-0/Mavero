@@ -910,19 +910,28 @@
 
           <section class="a2-asset-drawer-section">
             <h3 class="a2-asset-drawer-section-title">Actions</h3>
+
+            {#if selectedAsset.status === 'deleted'}
+              <!-- DELETED state: terminal — no actions available.
+                   The provider file has been permanently deleted.
+                   Historical details remain in Operations Activity. -->
+              <div class="a2-asset-deleted-notice" role="status">
+                <Trash2 size={14} />
+                <span>This provider file has been permanently deleted. No actions are available.</span>
+              </div>
+            {:else}
             <div class="a2-asset-drawer-actions">
-              <!-- Reconcile: available for any asset with a provider_asset_id -->
+              <!-- Reconcile: available for any non-deleted asset with a provider_asset_id -->
               <button type="button" class="a2-asset-action" onclick={() => reconcile(selectedAsset!)} disabled={actionInProgress !== null || !selectedAsset.providerAssetId}>
                 {#if actionInProgress === 'reconcile'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RefreshCw size={12} />{/if}
                 {actionInProgress === 'reconcile' ? 'Reconciling…' : 'Reconcile'}
               </button>
 
               <!-- Reactivate: shown ONLY for DETACHED assets (mavero_status='missing'
-                   AND status != 'deleted'). A deleted asset (status='deleted') has
-                   no remote file — reactivating it would create a phantom. The
-                   backend also enforces this, but the UI must not offer the action.
-                   This is a Mavero lifecycle operation — no provider capability gate. -->
-              {#if selectedAsset.maveroStatus === 'missing' && selectedAsset.status !== 'deleted'}
+                   AND status != 'deleted'). A deleted asset has no remote file —
+                   reactivating it would create a phantom. The backend also enforces
+                   this (ASSET_DELETED error). -->
+              {#if selectedAsset.maveroStatus === 'missing'}
                 <button type="button" class="a2-asset-action a2-asset-action-success" onclick={() => reactivate(selectedAsset!)} disabled={actionInProgress !== null}>
                   {#if actionInProgress === 'reactivate'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Zap size={12} />{/if}
                   {actionInProgress === 'reactivate' ? 'Reactivating…' : 'Reactivate'}
@@ -930,8 +939,7 @@
               {/if}
 
               <!-- Link Existing: shown for UNLINKED assets (no mediaItem).
-                   Opens a media-item picker modal. This is a Mavero lifecycle
-                   operation — no provider capability gate. -->
+                   Opens a media-item picker modal. -->
               {#if !selectedAsset.mediaItem}
                 <button type="button" class="a2-asset-action a2-asset-action-success" onclick={() => startLink(selectedAsset!)} disabled={actionInProgress !== null || !selectedAsset.providerAssetId}>
                   {#if actionInProgress === 'link'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Link2 size={12} />{/if}
@@ -966,6 +974,7 @@
                 {#if !caps?.delete}<span class="a2-asset-action-unsupported">unsupported</span>{/if}
               </button>
             </div>
+            {/if}
           </section>
         </div>
       </div>
@@ -1564,6 +1573,7 @@
   .a2-asset-action-warn:hover:not(:disabled) { background: var(--a2-amber-soft); border-color: var(--a2-amber); color: var(--a2-amber); }
   .a2-asset-action-danger { color: var(--a2-red); }
   .a2-asset-action-danger:hover:not(:disabled) { background: var(--a2-red-soft); border-color: var(--a2-red); color: var(--a2-red); }
+  .a2-asset-deleted-notice { display: flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-3); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-sm); }
   .a2-asset-action-unsupported {
     margin-left: auto;
     font-size: 9px; font-weight: 400;

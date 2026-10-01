@@ -170,6 +170,13 @@ export class ManagementService {
         details: { provider_asset_id: asset.provider_asset_id },
       });
 
+      // DEMAND LIFECYCLE FIX: reopen the demand if no other available
+      // asset exists for this media item. Detach removes the asset from
+      // playback availability — if it was the last available one, the
+      // content is effectively missing again and demand should reflect
+      // that. 'ignored' demands are NOT reopened.
+      await this.reopenDemandForMediaItem(asset.media_item_id);
+
       return { ok: true, action: 'detach', mediaAssetId, providerAssetId: asset.provider_asset_id };
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
@@ -199,14 +206,34 @@ export class ManagementService {
       throw new HostingProviderError('VALIDATION', { message: 'Media asset has no provider_asset_id.' });
     }
 
+    // IDEMPOTENCY: if the asset is already deleted, return success without
+    // calling the provider again. This prevents repeated 404 errors when
+    // an admin clicks Delete on an already-deleted asset.
+    if (asset.status === 'deleted') {
+      return { ok: true, action: 'provider_delete', mediaAssetId, providerAssetId: asset.provider_asset_id };
+    }
+
     const adapter = await this.getAdapterForAsset(mediaAssetId);
     if (!adapter) throw new HostingProviderError('UNSUPPORTED', { message: 'No hosting adapter found.' });
 
     try {
       // Delete at the provider first.
-      await adapter.deleteAsset(asset.provider_asset_id);
+      try {
+        await adapter.deleteAsset(asset.provider_asset_id);
+      } catch (providerError) {
+        // If the provider returns 404 (NOT_FOUND), the file is already gone.
+        // Treat this as a successful delete — the end state (file absent at
+        // provider) is achieved. This prevents misleading failed operations
+        // when the file was deleted out-of-band or by a previous delete call.
+        const err = providerError instanceof HostingProviderError ? providerError : new HostingProviderError('UNKNOWN', { cause: providerError });
+        if (err.code !== 'NOT_FOUND') {
+          throw providerError; // Re-throw non-404 errors.
+        }
+        // File already gone at provider — proceed to mark as deleted.
+      }
 
-      // Only update Mavero state after provider confirms deletion.
+      // Only update Mavero state after provider confirms deletion (or file
+      // was already absent).
       await this.client.from('media_assets').update({
         status: 'deleted',
         mavero_status: 'missing',
@@ -222,6 +249,14 @@ export class ManagementService {
         admin_user_id: adminUserId,
         details: { provider_asset_id: asset.provider_asset_id },
       });
+
+      // DEMAND LIFECYCLE FIX: reopen the demand for this media item so
+      // Missing Media shows it again. The asset was deleted — users who
+      // try to play this content should be able to surface it as missing.
+      // This transitions media_availability_requests.status from 'ready'
+      // to 'open' (preserving request_count). 'ignored' demands are NOT
+      // reopened (admin explicitly dismissed them).
+      await this.reopenDemandForMediaItem(asset.media_item_id);
 
       return { ok: true, action: 'provider_delete', mediaAssetId, providerAssetId: asset.provider_asset_id };
     } catch (error) {
@@ -649,6 +684,47 @@ export class ManagementService {
     }
 
     return { ok: true, action: 'link', mediaAssetId: assetId, providerAssetId };
+  }
+
+  /**
+   * Reopens the demand for a media item if no ready+available asset
+   * exists. Called after delete/detach to transition demand from 'ready'
+   * to 'open' so Missing Media surfaces the content again.
+   *
+   * Only reopens if NO other asset for this media_item is still
+   * ready+available. If another provider's asset is still available,
+   * the content is still playable and demand stays 'ready'.
+   *
+   * 'ignored' demands are NOT reopened (admin explicitly dismissed them).
+   */
+  private async reopenDemandForMediaItem(mediaItemId: string): Promise<void> {
+    try {
+      // Check if any other asset for this media item is still available.
+      const { count } = await this.client
+        .from('media_assets')
+        .select('id', { count: 'exact', head: true })
+        .eq('media_item_id', mediaItemId)
+        .eq('status', 'ready')
+        .eq('mavero_status', 'available');
+      if ((count ?? 0) > 0) {
+        // Another asset is still available — don't reopen demand.
+        return;
+      }
+      // No available asset — reopen the demand.
+      const { data: item } = await this.client
+        .from('media_items')
+        .select('canonical_key')
+        .eq('id', mediaItemId)
+        .maybeSingle();
+      const canonicalKey = (item as { canonical_key?: string } | null)?.canonical_key;
+      if (canonicalKey) {
+        const { DemandService } = await import('../demand/service');
+        const demandService = new DemandService(this.client);
+        await demandService.reopenDemand(canonicalKey);
+      }
+    } catch {
+      // Best-effort — demand tracking must NOT break delete/detach.
+    }
   }
 
   private async getMediaAsset(mediaAssetId: string): Promise<{

@@ -125,9 +125,13 @@ ok('Bug 2: reactivateAsset() rejects deleted assets (ASSET_DELETED), DB unchange
 // ============================================================
 console.log('\n--- Bug 2 UI: Reactivate gating ---');
 
-// AdminHostingAssets: Reactivate must check status !== 'deleted'
-const reactivateButtonMatch = hostingAssets.match(/maveroStatus === 'missing' && selectedAsset\.status !== 'deleted'[\s\S]*?reactivate[\s\S]*?<\/button>/);
-assert.ok(reactivateButtonMatch, '3a. AdminHostingAssets Reactivate button checks status !== deleted');
+// AdminHostingAssets: Reactivate must NOT appear for deleted assets.
+// The entire actions section is wrapped in {#if status !== 'deleted'} {:else},
+// so Reactivate is only rendered inside the non-deleted block.
+const deletedBlockMatch = hostingAssets.match(/selectedAsset\.status === 'deleted'[\s\S]*?\{:else\}/);
+assert.ok(deletedBlockMatch, '3a. AdminHostingAssets wraps actions in status !== deleted check');
+// Verify the deleted notice is shown
+assert.match(hostingAssets, /permanently deleted.*No actions/, '3a-2. AdminHostingAssets shows terminal deleted notice');
 
 // AdminMediaDetailDrawer: Reactivate must check status !== 'deleted'
 const drawerReactivateMatch = mediaDrawer.match(/mavero_status === 'missing' && asset\.status !== 'deleted'[\s\S]*?reactivateAsset/);
@@ -177,13 +181,16 @@ assert.doesNotMatch(unlinkedBlock[0], /reactivate/i, '6b. Unlinked: Reactivate N
 const detachBlock = hostingAssets.match(/selectedAsset\.mediaItem[\s\S]*?startDetach/);
 assert.ok(detachBlock, '6c. Detach only shown when mediaItem exists (linked)');
 
-// Detached (maveroStatus='missing' && status !== 'deleted'): Reactivate visible, Link NOT visible
-const detachedBlock = hostingAssets.match(/maveroStatus === 'missing' && selectedAsset\.status !== 'deleted'[\s\S]*?Reactivate[\s\S]*?<\/button>/);
-assert.ok(detachedBlock, '6d. Detached: Reactivate button present (status !== deleted)');
+// Detached (maveroStatus='missing' inside non-deleted block): Reactivate visible
+// Since the entire actions section is wrapped in {#if status !== 'deleted'}, 
+// Reactivate appears for any maveroStatus='missing' inside that block.
+const detachedBlock = hostingAssets.match(/maveroStatus === 'missing'[\s\S]*?Reactivate[\s\S]*?<\/button>/);
+assert.ok(detachedBlock, '6d. Detached: Reactivate button present (inside non-deleted block)');
 
 // Deleted (status='deleted'): Reactivate NOT visible
-// The condition explicitly excludes status === 'deleted'
-assert.match(hostingAssets, /maveroStatus === 'missing' && selectedAsset\.status !== 'deleted'/, '6e. Deleted assets excluded from Reactivate by status check');
+// The entire actions section is wrapped in {#if status === 'deleted'} ... {:else} ... {/if}
+// so Reactivate (inside {:else}) is never rendered for deleted assets.
+assert.match(hostingAssets, /selectedAsset\.status === 'deleted'[\s\S]*?permanently deleted[\s\S]*?\{:else\}/, '6e. Deleted assets get terminal notice, actions in {:else} block');
 
 ok('UI state-aware visibility: Unlinked→Link, Detached→Reactivate, Deleted→no Reactivate, Linked→Detach');
 
