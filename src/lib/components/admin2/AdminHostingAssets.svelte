@@ -77,10 +77,7 @@
   let drawerLoading = $state(false);
   let mobileFiltersOpen = $state(false);
 
-  // Management action state.
-  let actionInProgress = $state(false);
-  let actionError = $state<string | null>(null);
-  let actionSuccess = $state<string | null>(null);
+  // Management action state is declared in the executeAction section below.
 
   // Rename / move modal state.
   let renameOpen = $state(false);
@@ -298,8 +295,15 @@
   // ============================================================
   // Management actions
   // ============================================================
+  // Tracks WHICH action is in progress (not just a boolean) so the UI
+  // can show a specific loading state on the clicked button and keep
+  // other buttons disabled.
+  let actionInProgress = $state<string | null>(null);
+  let actionError = $state<string | null>(null);
+  let actionSuccess = $state<string | null>(null);
+
   async function executeAction(asset: HostingAssetRow, action: 'rename' | 'move' | 'detach' | 'delete' | 'reconcile', body?: Record<string, unknown>) {
-    actionInProgress = true;
+    actionInProgress = action;
     actionError = null;
     actionSuccess = null;
     try {
@@ -320,12 +324,25 @@
           if (updated) selectedAsset = updated;
         }
       } else {
-        actionError = data.error?.message ?? `${action} failed.`;
+        // Provider failure — surface the real error from the API.
+        // Do NOT close the drawer; keep the asset available for retry.
+        // The error message from ManagementService.deleteAsset includes
+        // the real provider error code (e.g. VALIDATION, NOT_FOUND)
+        // and message, so the admin knows exactly what went wrong.
+        actionError = data.error?.message ?? data.result?.error?.message ?? `${action} failed.`;
+        // Reload the list anyway so the failed operation appears in the
+        // asset's operation history (if the drawer shows it). This also
+        // ensures the asset's status is current — the service does NOT
+        // mark it deleted on failure, so it should still be in the list.
+        await loadAssets();
       }
     } catch (err) {
-      actionError = err instanceof Error ? err.message : `Network error during ${action}.`;
+      // Network error (fetch threw) — separate from provider errors.
+      actionError = err instanceof Error
+        ? `Network error: ${err.message}`
+        : `Network error during ${action}.`;
     }
-    actionInProgress = false;
+    actionInProgress = null;
   }
 
   function startRename(asset: HostingAssetRow) {
@@ -687,11 +704,28 @@
         </header>
 
         <div class="a2-asset-drawer-body">
+          {#if actionInProgress}
+            <div class="a2-asset-action-loading" role="status" aria-live="polite">
+              <Loader2 size={14} style="animation: a2-spin 1s linear infinite;" />
+              <span>{actionInProgress.charAt(0).toUpperCase() + actionInProgress.slice(1)} in progress…</span>
+            </div>
+          {/if}
           {#if actionSuccess}
             <p class="a2-asset-action-success" role="status"><Check size={12} /> {actionSuccess}</p>
           {/if}
           {#if actionError}
-            <p class="a2-asset-action-error" role="alert"><AlertCircle size={12} /> {actionError}</p>
+            <div class="a2-asset-action-error-box" role="alert">
+              <AlertCircle size={14} />
+              <div>
+                <strong>Action failed.</strong>
+                <p>{actionError}</p>
+                {#if actionError.includes('Network error')}
+                  <p class="a2-asset-action-error-hint">Check your network connection and try again.</p>
+                {:else}
+                  <p class="a2-asset-action-error-hint">The provider rejected the request. The asset was NOT deleted and is still available for retry. Check the operation history for details.</p>
+                {/if}
+              </div>
+            </div>
           {/if}
 
           <section class="a2-asset-drawer-section">
@@ -758,23 +792,27 @@
           <section class="a2-asset-drawer-section">
             <h3 class="a2-asset-drawer-section-title">Actions</h3>
             <div class="a2-asset-drawer-actions">
-              <button type="button" class="a2-asset-action" onclick={() => reconcile(selectedAsset!)} disabled={actionInProgress || !selectedAsset.providerAssetId}>
-                {#if actionInProgress}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RefreshCw size={12} />{/if}
-                Reconcile
+              <button type="button" class="a2-asset-action" onclick={() => reconcile(selectedAsset!)} disabled={actionInProgress !== null || !selectedAsset.providerAssetId}>
+                {#if actionInProgress === 'reconcile'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RefreshCw size={12} />{/if}
+                {actionInProgress === 'reconcile' ? 'Reconciling…' : 'Reconcile'}
               </button>
-              <button type="button" class="a2-asset-action" onclick={() => startRename(selectedAsset!)} disabled={actionInProgress || !caps?.rename || !selectedAsset.providerAssetId}>
-                <Pencil size={12} /> Rename
+              <button type="button" class="a2-asset-action" onclick={() => startRename(selectedAsset!)} disabled={actionInProgress !== null || !caps?.rename || !selectedAsset.providerAssetId}>
+                {#if actionInProgress === 'rename'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Pencil size={12} />{/if}
+                {actionInProgress === 'rename' ? 'Renaming…' : 'Rename'}
                 {#if !caps?.rename}<span class="a2-asset-action-unsupported">unsupported</span>{/if}
               </button>
-              <button type="button" class="a2-asset-action" onclick={() => startMove(selectedAsset!)} disabled={actionInProgress || !caps?.folderManagement || !selectedAsset.providerAssetId}>
-                <FolderInput size={12} /> Move
+              <button type="button" class="a2-asset-action" onclick={() => startMove(selectedAsset!)} disabled={actionInProgress !== null || !caps?.folderManagement || !selectedAsset.providerAssetId}>
+                {#if actionInProgress === 'move'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<FolderInput size={12} />{/if}
+                {actionInProgress === 'move' ? 'Moving…' : 'Move'}
                 {#if !caps?.folderManagement}<span class="a2-asset-action-unsupported">unsupported</span>{/if}
               </button>
-              <button type="button" class="a2-asset-action a2-asset-action-warn" onclick={() => startDetach(selectedAsset!)} disabled={actionInProgress}>
-                <Unlink size={12} /> Detach
+              <button type="button" class="a2-asset-action a2-asset-action-warn" onclick={() => startDetach(selectedAsset!)} disabled={actionInProgress !== null}>
+                {#if actionInProgress === 'detach'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Unlink size={12} />{/if}
+                {actionInProgress === 'detach' ? 'Detaching…' : 'Detach'}
               </button>
-              <button type="button" class="a2-asset-action a2-asset-action-danger" onclick={() => startDelete(selectedAsset!)} disabled={actionInProgress || !caps?.delete || !selectedAsset.providerAssetId}>
-                <Trash2 size={12} /> Delete
+              <button type="button" class="a2-asset-action a2-asset-action-danger" onclick={() => startDelete(selectedAsset!)} disabled={actionInProgress !== null || !caps?.delete || !selectedAsset.providerAssetId}>
+                {#if actionInProgress === 'delete'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Trash2 size={12} />{/if}
+                {actionInProgress === 'delete' ? 'Deleting…' : 'Delete'}
                 {#if !caps?.delete}<span class="a2-asset-action-unsupported">unsupported</span>{/if}
               </button>
             </div>
@@ -1258,18 +1296,28 @@
 
   .a2-asset-action-success {
     display: inline-flex; align-items: center; gap: var(--a2-space-2);
-    margin: 0; padding: var(--a2-space-2) var(--a2-space-3);
+    margin: 0 0 var(--a2-space-3) 0; padding: var(--a2-space-2) var(--a2-space-3);
     background: var(--a2-green-soft); border: 1px solid var(--a2-green-border);
     border-radius: var(--a2-radius-sm);
     color: var(--a2-green); font-size: var(--a2-text-2xs);
   }
-  .a2-asset-action-error {
-    display: inline-flex; align-items: center; gap: var(--a2-space-2);
-    margin: 0; padding: var(--a2-space-2) var(--a2-space-3);
+  .a2-asset-action-loading {
+    display: flex; align-items: center; gap: var(--a2-space-2);
+    margin: 0 0 var(--a2-space-3) 0; padding: var(--a2-space-2) var(--a2-space-3);
+    background: var(--a2-cyan-soft); border: 1px solid var(--a2-cyan-border);
+    border-radius: var(--a2-radius-sm);
+    color: var(--a2-cyan); font-size: var(--a2-text-2xs); font-weight: 600;
+  }
+  .a2-asset-action-error-box {
+    display: flex; align-items: flex-start; gap: var(--a2-space-2);
+    margin: 0 0 var(--a2-space-3) 0; padding: var(--a2-space-3);
     background: var(--a2-red-soft); border: 1px solid var(--a2-red-border);
     border-radius: var(--a2-radius-sm);
-    color: var(--a2-red); font-size: var(--a2-text-2xs);
+    color: var(--a2-red); font-size: var(--a2-text-2xs); line-height: 1.5;
   }
+  .a2-asset-action-error-box strong { display: block; font-weight: 700; margin-bottom: 2px; }
+  .a2-asset-action-error-box p { margin: 0; }
+  .a2-asset-action-error-hint { margin-top: 4px !important; opacity: 0.85; font-style: italic; }
 
   .a2-asset-drawer-actions {
     display: flex; flex-direction: column; gap: var(--a2-space-2);

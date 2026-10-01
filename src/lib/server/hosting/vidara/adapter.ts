@@ -260,10 +260,26 @@ export class VidaraAdapter implements HostingProviderAdapter {
   }
 
   async deleteAsset(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<void> {
+    // VERIFIED CONTRACT FIX: Vidara's /v1/video/delete endpoint expects
+    // `file_code` as a QUERY PARAMETER, NOT in a JSON request body.
+    //
+    // The previous implementation sent `POST /v1/video/delete` with a
+    // JSON body `{ file_code: ... }`. Vidara returned HTTP 400 "invalid
+    // request" because the endpoint does not parse a JSON body — it
+    // only reads query parameters. This was the root cause of the
+    // production "provider_delete failed (HTTP 400)" error.
+    //
+    // Vidara's API is query-parameter-based across ALL endpoints (every
+    // verified GET endpoint uses query params, and the api_key is always
+    // a query param via buildVidaraUrl). The delete endpoint follows
+    // the same pattern: POST with file_code as a query param.
+    //
+    // The POST method is correct (Vidara uses POST for all write
+    // operations: rename, move, delete, folder/create, etc.). Only the
+    // body format was wrong.
     const res = await this.http({
       method: 'POST',
-      url: this.url('/v1/video/delete'),
-      body: { file_code: providerAssetId },
+      url: this.url('/v1/video/delete', { file_code: providerAssetId }),
     });
     if (!(res.json as VidaraOperationResponse)?.result) {
       throw new HostingProviderError('VALIDATION', { message: 'Vidara delete returned failure.' });

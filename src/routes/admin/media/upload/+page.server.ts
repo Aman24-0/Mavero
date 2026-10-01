@@ -48,20 +48,50 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     // Enrich each resolved source with adapter capabilities (for the
     // upload UI's capability-driven rendering). The capabilities come
     // from the adapter registry — no DB query, no network call.
-    hostingSources = result.list.map((s) => {
-      const adapter = s.adapterId ? getHostingAdapter(s.adapterId) : null;
-      const capabilities: ProviderCapabilities | null = adapter
-        ? adapter.getCapabilities()
-        : null;
-      return {
-        id: s.id,
-        name: s.name,
-        providerId: s.providerId,
-        providerName: s.providerName,
-        adapterId: s.adapterId,
-        capabilities,
-      };
-    });
+    //
+    // ISSUE 2 fix: FILTER to only include sources whose adapterId maps
+    // to a REGISTERED HOSTING adapter (getHostingAdapter() != null).
+    // This excludes non-hosting embed/streaming providers like
+    // MoviesNexus, VidLink, VidZee, VidStuck, etc. — those providers
+    // are embed sources, NOT hosting providers that can receive/store
+    // uploaded media files.
+    //
+    // The filter is canonical and future-proof: it uses the hosting
+    // adapter registry ($lib/server/hosting/registry) as the single
+    // source of truth for "is this adapter a hosting adapter?". When a
+    // new hosting adapter is registered (added to ADAPTER_ID_TO_KEY in
+    // registry.ts), it automatically appears in the upload selector —
+    // no hardcoded adapter_id list, no name matching, no enabled filter.
+    //
+    // getHostingAdapter() returns null when:
+    //   1. adapterId is null (source has no provider — shouldn't happen
+    //      for valid sources, but defensive)
+    //   2. adapterId is not in ADAPTER_ID_TO_KEY (embed/streaming
+    //      providers like MoviesNexus, VidLink, etc.)
+    //   3. the adapter's credentials are not configured (e.g.
+    //      VIDARA_API_KEY env var is missing) — in this case the
+    //      provider can't accept uploads anyway, so excluding it is
+    //      correct behavior
+    hostingSources = result.list
+      .filter((s) => {
+        if (!s.adapterId) return false;
+        const adapter = getHostingAdapter(s.adapterId);
+        return adapter !== null;
+      })
+      .map((s) => {
+        const adapter = s.adapterId ? getHostingAdapter(s.adapterId) : null;
+        const capabilities: ProviderCapabilities | null = adapter
+          ? adapter.getCapabilities()
+          : null;
+        return {
+          id: s.id,
+          name: s.name,
+          providerId: s.providerId,
+          providerName: s.providerName,
+          adapterId: s.adapterId,
+          capabilities,
+        };
+      });
   } catch (err) {
     // Graceful fallback — empty hosting sources if admin client fails.
     // The upload page's "no providers" empty state will guide the admin.
