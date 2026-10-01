@@ -169,28 +169,38 @@
       searchError = '';
       try {
         // Use the content API to fetch detail. The /api/content/[type]/[id]
-        // endpoint returns a NormalizedMediaItem with externalIds.imdb.
+        // endpoint returns an ENVELOPE: `{ ok: true, item: { ... } }` on
+        // success or `{ ok: false, error: { code, message } }` on failure.
+        // The previous implementation read fields directly from `json`
+        // (`json.title`, `json.year`, …), so every field was `undefined`
+        // and the title fell through to 'Unknown Title'. We now extract
+        // `item` from the envelope first.
         const type = initialContext.contentType ?? 'movie';
         const res = await fetch(`/api/content/${type}/${initialContext.tmdbId}`);
         const json = await res.json();
-        if (res.ok && json) {
+        if (json.ok && json.item) {
+          const item = json.item;
           flowState.selectedTitle = {
             id: `${type}-${initialContext.tmdbId}`,
             tmdbId: initialContext.tmdbId,
-            title: json.title ?? json.name ?? 'Unknown Title',
-            year: json.year ?? (json.releaseDate ? new Date(json.releaseDate).getFullYear() : undefined),
-            poster: json.poster ?? json.posterSmall ?? undefined,
+            title: item.title ?? item.name ?? 'Unknown Title',
+            year: item.year ?? (item.releaseDate ? new Date(item.releaseDate).getFullYear() : undefined),
+            poster: item.poster ?? item.posterSmall ?? undefined,
             type: type as 'movie' | 'series' | 'anime',
-            overview: json.description ?? json.overview ?? undefined,
-            imdbId: json.externalIds?.imdb ?? null,
+            overview: item.description ?? item.overview ?? undefined,
+            imdbId: item.externalIds?.imdb ?? null,
           };
           flowState.contentType = (initialContext.contentType ?? 'movie') as 'movie' | 'series' | 'anime';
           flowState.season = initialContext.season;
           flowState.episode = initialContext.episode;
-          flowState.imdbId = json.externalIds?.imdb ?? null;
+          flowState.imdbId = item.externalIds?.imdb ?? null;
           flowState.step = 'metadata';
         } else {
-          searchError = 'Could not load title from TMDB. Please search manually.';
+          // `json.ok === false` (or no item) — surface the API's safe
+          // error message if present, otherwise fall back to a clear
+          // prompt to search manually. The search step is preserved so
+          // the admin can recover without losing context.
+          searchError = json?.error?.message ?? 'Could not load title from TMDB. Please search manually.';
           flowState.step = 'search';
         }
       } catch (err) {

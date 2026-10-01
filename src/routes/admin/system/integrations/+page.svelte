@@ -20,22 +20,40 @@
   let manifestUrl = $state('');
   let preview = $state<any>(null);
   let previewing = $state(false);
+  let previewError = $state('');
 
   async function doPreview() {
     if (!manifestUrl.trim()) return;
     previewing = true;
     preview = null;
+    previewError = '';
     try {
-      const res = await fetch('/admin/system/integrations?/previewAddon', {
+      // Standard JSON endpoint (POST /api/admin/integrations/preview) —
+      // replaces the previous fragile SvelteKit form-action invocation
+      // (`/admin/system/integrations?/previewAddon`), which returned a
+      // SvelteKit-specific `json.form.preview` shape that silently
+      // failed and left the spinner stuck.
+      const res = await fetch('/api/admin/integrations/preview', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ manifestUrl }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manifestUrl }),
       });
       const json = await res.json();
-      if (json.form?.preview) preview = json.form.preview;
-      else if (json.form?.message) alert(json.form.message);
-    } catch { alert('Network error'); }
-    previewing = false;
+      if (json.ok && json.preview) {
+        preview = json.preview;
+      } else {
+        // Safe, curated error message from the server (or a clear
+        // fallback). Surfaced inline (not via alert) so the admin
+        // retains context.
+        previewError = json?.error?.message ?? 'Unable to preview addon.';
+      }
+    } catch {
+      previewError = 'Network error — could not reach the preview endpoint.';
+    } finally {
+      // ALWAYS clear the spinner, even on error, so the UI never
+      // gets stuck in the "Loading…" state.
+      previewing = false;
+    }
   }
 
   function openDetail(addon: any) { detailAddon = addon; detailSheetOpen = true; }
@@ -99,10 +117,13 @@
 
 <!-- Add addon sheet -->
 {#if addSheetOpen}
-  <AdminSheet open={addSheetOpen} title="Add Stremio Addon" onClose={() => { addSheetOpen = false; preview = null; manifestUrl = ''; }}>
+  <AdminSheet open={addSheetOpen} title="Add Stremio Addon" onClose={() => { addSheetOpen = false; preview = null; previewError = ''; manifestUrl = ''; }}>
     <div class="a2-add-flow">
       <label class="a2-field"><span>Manifest URL</span><input type="url" bind:value={manifestUrl} placeholder="https://example.com/manifest.json" /></label>
       <button type="button" class="a2-btn-primary" onclick={doPreview} disabled={previewing || !manifestUrl.trim()}>{previewing ? 'Loading…' : 'Preview'}</button>
+      {#if previewError}
+        <div class="a2-form-error" role="alert">{previewError}</div>
+      {/if}
       {#if preview}
         <div class="a2-preview">
           <h4>{preview.name ?? 'Unnamed'}</h4>

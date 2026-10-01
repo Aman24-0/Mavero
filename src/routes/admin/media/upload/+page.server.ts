@@ -32,39 +32,58 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // uncaught 500 if PRIVATE_SUPABASE_SERVICE_ROLE_KEY is missing.
   let providers: any[] = [];
   let sources: any[] = [];
+  let hostingSourcesError: string | null = null;
   try {
     const adminClient = createSupabaseAdminClient();
 
-  // Phase 2 perf: fetch hosting providers AND their sources in a single
-  // parallel batch. The sources query previously depended on providerIds
-  // from the providers query (sequential — 2 round-trips). We now request
-  // all sources for the vidara/abyss adapters' providers in one go by
-  // filtering on provider_id range via a nested select, OR we issue both
-  // queries in parallel using a wide `in` filter on adapter_id-derived
-  // provider_ids.
+  // Hosting providers AND their sources, fetched with two explicit
+  // queries joined in application code (the same reliable pattern used
+  // by /admin/media/library/+page.server.ts).
   //
-  // Approach: issue both queries in parallel. The sources query is widened
-  // to filter on `provider_id` matching the same adapter_id set by using
-  // a nested PostgREST relation — `streaming_providers!inner(adapter_id)`.
-  // This avoids the sequential dependency entirely.
-  const [providersRes, sourcesRes] = await Promise.all([
-    adminClient
-      .from('streaming_providers')
-      .select('id, name, slug, adapter_id, enabled, status')
-      .in('adapter_id', ['vidara', 'abyss'])
-      .eq('enabled', true),
-    adminClient
-      .from('streaming_sources')
-      .select('id, name, slug, provider_id, status, enabled, streaming_providers!inner(adapter_id)')
-      .in('streaming_providers.adapter_id', ['vidara', 'abyss'])
-      .eq('enabled', true),
-  ]);
+  // The previous implementation used a nested PostgREST join
+  // (`streaming_providers!inner(adapter_id)` with an `.in('streaming_providers.adapter_id', ...)`
+  // filter). That syntax is fragile: depending on the relation
+  // cardinality and PostgREST version, `s.streaming_providers` comes
+  // back as either an object or an array, and any failure of the nested
+  // relation resolves to an empty source list — silently making the
+  // upload page say "No providers configured" even when providers ARE
+  // configured. The `catch` block at the bottom also swallowed ALL
+  // errors (including genuine DB errors) into the same empty state,
+  // making "DB error" indistinguishable from "no providers configured".
+  //
+  // The explicit two-query pattern avoids the nested-relation fragility
+  // entirely: providers are fetched first, then sources are filtered by
+  // the resolved provider IDs with a simple `.in('provider_id', …)`.
+  // Both queries run in parallel; errors are surfaced via
+  // `hostingSourcesError` so the client can distinguish the two cases.
+  const providersRes = await adminClient
+    .from('streaming_providers')
+    .select('id, name, slug, adapter_id, enabled, status')
+    .in('adapter_id', ['vidara', 'abyss'])
+    .eq('enabled', true);
 
-  providers = providersRes.data ?? [];
-  sources = sourcesRes.data ?? [];
-  } catch {
+  if (providersRes.error) {
+    hostingSourcesError = `providers: ${providersRes.error.message}`;
+  } else {
+    providers = providersRes.data ?? [];
+    const providerIds = providers.map((p) => p.id);
+    if (providerIds.length > 0) {
+      const sourcesRes = await adminClient
+        .from('streaming_sources')
+        .select('id, name, slug, provider_id, status, enabled')
+        .in('provider_id', providerIds)
+        .eq('enabled', true);
+      if (sourcesRes.error) {
+        hostingSourcesError = `sources: ${sourcesRes.error.message}`;
+      } else {
+        sources = sourcesRes.data ?? [];
+      }
+    }
+  }
+  } catch (err) {
     // Phase 6: graceful fallback — empty hosting sources if admin client fails.
     // The upload page's "no providers" empty state will guide the admin.
+    hostingSourcesError = err instanceof Error ? err.message : String(err);
   }
 
   // Build hostingSources with adapterId for each source.
@@ -122,6 +141,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   return {
     hostingSources,
+    hostingSourcesError,
     initialContext,
     adminUserId: user.id,
   };

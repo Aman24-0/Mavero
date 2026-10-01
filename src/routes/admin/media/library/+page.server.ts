@@ -45,12 +45,29 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // Fetch initial page + folder summary + hosting sources in parallel.
   // If folderSummary or sources fail, we don't fail the whole page —
   // partial failure is part of Phase C's resilience contract.
-  const [listResult, folderResult, sourcesResult] = await Promise.allSettled([
+  //
+  // Hosting sources use the SAME explicit two-query pattern as the upload
+  // page server (see /admin/media/upload/+page.server.ts). The previous
+  // implementation used a nested PostgREST join
+  // (`provider:streaming_providers(id, name, adapter_id)`), but the
+  // Supabase JS client returns `s.provider` as either an object OR an
+  // array depending on relation cardinality — for a many-to-one relation
+  // PostgREST returns a single object, but in practice the runtime shape
+  // can come back as an array, making `s.provider?.id` return `undefined`,
+  // which drops `adapterId` to `null` for every source and makes the UI
+  // show "Not linked" for assets that ARE linked. Two explicit queries
+  // joined in application code avoids that fragility entirely.
+  const [listResult, folderResult, providersResult, sourcesResult] = await Promise.allSettled([
     service.list({ q, type: type as any, year, seriesTmdb: series, provider_source_id: provider, status: status as any, sort: sort as any, page, limit: 25 }),
     service.folderSummary(),
     adminClient
+      .from('streaming_providers')
+      .select('id, name, adapter_id')
+      .in('adapter_id', ['vidara', 'abyss'])
+      .eq('enabled', true),
+    adminClient
       .from('streaming_sources')
-      .select('id, name, provider:streaming_providers(id, name, adapter_id)')
+      .select('id, name, provider_id')
       .eq('enabled', true)
       .order('display_order', { ascending: true }),
   ]);
@@ -60,19 +77,36 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     throw new Error(`Media Library load failed: ${listResult.reason?.message ?? listResult.reason}`);
   }
 
+  // Join providers + sources in application code. Both queries must
+  // succeed for `hostingSources` to be populated; either failing surfaces
+  // as `hostingSourcesError` so the client can distinguish "DB error"
+  // from "no providers configured".
+  const providers = providersResult.status === 'fulfilled' ? (providersResult.value.data ?? []) : [];
+  const sources = sourcesResult.status === 'fulfilled' ? (sourcesResult.value.data ?? []) : [];
+  const providerById = new Map(providers.map((p: any) => [p.id, p]));
+  const hostingSources = sources.map((s: any) => {
+    const provider = providerById.get(s.provider_id) ?? null;
+    return {
+      id: s.id,
+      name: s.name,
+      providerId: provider?.id ?? null,
+      providerName: provider?.name ?? null,
+      adapterId: provider?.adapter_id ?? null,
+    };
+  });
+  const hostingSourcesError =
+    providersResult.status === 'rejected'
+      ? `providers: ${providersResult.reason?.message ?? providersResult.reason}`
+      : sourcesResult.status === 'rejected'
+        ? `sources: ${sourcesResult.reason?.message ?? sourcesResult.reason}`
+        : null;
+
   return {
     initialList: listResult.value,
     initialFolders: folderResult.status === 'fulfilled' ? folderResult.value : null,
     initialFoldersError: folderResult.status === 'rejected' ? String(folderResult.reason?.message ?? folderResult.reason) : null,
-    hostingSources: sourcesResult.status === 'fulfilled' && sourcesResult.value.data
-      ? sourcesResult.value.data.map(s => ({
-          id: s.id,
-          name: s.name,
-          providerId: s.provider?.id ?? null,
-          providerName: s.provider?.name ?? null,
-          adapterId: s.provider?.adapter_id ?? null,
-        }))
-      : [],
+    hostingSources,
+    hostingSourcesError,
     initialFilters: { q, type, year, series, provider, status, sort, page, selectedId },
   };
   } catch (err) {

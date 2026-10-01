@@ -209,10 +209,13 @@ ok('E4. Operations getBadgeCounts: 3 sequential counts + adapter lookups → par
 assert.match(hostingControlService, /const \[assetRes, syncRes\] = await Promise\.all\(/, 'HostingControl.listProviders: asset + sync queries parallelized');
 ok('E5. HostingControl.listProviders: 2 sequential media_assets queries → parallel Promise.all');
 
-// Upload page: providers + sources parallelized via nested PostgREST relation
-assert.match(uploadServer, /const \[providersRes, sourcesRes\] = await Promise\.all\(/, 'Upload page: providers + sources queries parallelized');
-assert.match(uploadServer, /streaming_providers!inner\(adapter_id\)/, 'Upload page: uses nested PostgREST relation to avoid sequential dependency');
-ok('E6. Upload page: 2 sequential queries → parallel Promise.all with nested relation filter');
+// Upload page: providers + sources queried explicitly (not nested join)
+// Post-deploy fix: replaced fragile streaming_providers!inner nested join
+// with explicit separate queries joined in application code.
+assert.match(uploadServer, /from\('streaming_providers'\)[\s\S]*?in\('adapter_id'/, 'Upload page: queries streaming_providers by adapter_id explicitly');
+assert.match(uploadServer, /from\('streaming_sources'\)[\s\S]*?in\('provider_id'/, 'Upload page: queries streaming_sources by provider_id explicitly');
+assert.doesNotMatch(uploadServer, /\.select\(.*streaming_providers!inner/, 'Upload page: does NOT use fragile !inner nested join (post-deploy fix)');
+ok('E6. Upload page: explicit separate queries for providers + sources (reliable, no nested join dependency)');
 
 // Library service: assets + demands parallelized
 assert.match(libraryService, /const \[assetsRes, demandsRes\] = await Promise\.all\(/, 'MediaLibraryService.list: assets + demands parallelized');
