@@ -143,7 +143,43 @@ export const actions: Actions = {
     try {
       const form = await request.formData();
       const id = parseId(form, 'Source');
-      await updateSource(locals.supabase, id, parseSourceForm(form));
+      const parsed = parseSourceForm(form);
+
+      // FINDING-006 fix: MERGE capabilities with existing instead of
+      // wiping. parseSourceForm() reads `capabilities` from the form,
+      // but the source edit form has NO `<input name="capabilities">`
+      // field — so `parsed.capabilities` is always `{}` (empty object).
+      // Previously this empty object was passed directly to
+      // updateSource(), wiping `allowed_embed_origins`, `result_type`,
+      // `supports_*`, and all other capability keys that were set when
+      // the source was created.
+      //
+      // Now: fetch the existing source's capabilities and MERGE the
+      // new (non-empty) keys into them. This mirrors the provider
+      // update path (lines 89-94 above) and preserves all capability
+      // keys that aren't explicitly being changed by this edit.
+      //
+      // stripSandboxPolicy() is still applied (Phase 8 invariant:
+      // sandbox is provider-level only, never source-level), so a
+      // legacy sandbox_policy key in the existing capabilities is
+      // still stripped on update.
+      const { data: existing } = await locals.supabase
+        .from('streaming_sources')
+        .select('capabilities')
+        .eq('id', id)
+        .maybeSingle();
+      const existingCapabilities = (existing?.capabilities && typeof existing.capabilities === 'object' && !Array.isArray(existing.capabilities))
+        ? { ...(existing.capabilities as Record<string, unknown>) }
+        : {};
+      const mergedCapabilities = { ...existingCapabilities, ...parsed.capabilities } as Record<string, unknown>;
+
+      // Strip the wiped capabilities from the parsed input and replace
+      // with the merged set. All other parsed fields (name, slug, etc.)
+      // pass through unchanged. Cast to `any` for the capabilities field
+      // because the Supabase typed client's `Json` type doesn't accept
+      // `Record<string, unknown>` directly (excess property checking).
+      const { capabilities: _ignoredCaps, ...input } = parsed;
+      await updateSource(locals.supabase, id, { ...input, capabilities: mergedCapabilities as never });
       throw redirect(303, `/admin/system/api-sources?tab=sources&notice=Source%20updated.`);
     } catch (error) {
       if (isRedirect(error)) throw error;

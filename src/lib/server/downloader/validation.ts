@@ -22,6 +22,7 @@
 // remain as defense-in-depth.
 
 import { DOWNLOAD_PLACEHOLDERS, type DownloadProviderType } from '$lib/shared/downloader';
+import { validateIconUrl, IconValidationError } from '$lib/shared/icon-url';
 
 export class DownloaderValidationError extends Error {
   constructor(message: string) {
@@ -150,7 +151,17 @@ export function parseDownloadProviderForm(form: FormData) {
     name: requiredText(form.get('name'), 'Provider name', 120),
     slug: validateSlug(requiredText(form.get('slug'), 'Provider slug', 120), 'Provider slug'),
     description: text(form.get('description'), 'Description', 500),
-    icon: text(form.get('icon'), 'Icon', 120),
+    // FINDING-010 fix: validate icon as a URL (http/https only).
+    // Previously this was loose `text()` validation that accepted
+    // arbitrary strings — the seed value was the literal string
+    // 'download', which rendered as raw text in the admin list and
+    // was never rendered on the user side.
+    //
+    // Now: the icon must be a valid http/https URL (or null/empty for
+    // no icon). The renderer (DownloaderIcon.svelte) shows a safe
+    // fallback lucide icon when the field is null or the URL fails
+    // to load.
+    icon: parseIconField(form.get('icon')),
     enabled: booleanValue(form.get('enabled')),
     is_default: booleanValue(form.get('is_default')),
     ordering: nonNegativeInteger(form.get('ordering'), 'Ordering'),
@@ -169,4 +180,20 @@ export function parseId(form: FormData, label: string): string {
   const id = requiredText(form.get('id'), label, 80);
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new DownloaderValidationError(`${label} is invalid.`);
   return id;
+}
+
+/**
+ * FINDING-010 fix: parse + validate the icon field as a URL.
+ * Returns the validated URL string, or null if the field is empty.
+ * @throws DownloaderValidationError if the URL is non-empty but invalid.
+ */
+function parseIconField(value: FormDataEntryValue | null): string | null {
+  try {
+    return validateIconUrl(value as string);
+  } catch (err) {
+    if (err instanceof IconValidationError) {
+      throw new DownloaderValidationError(err.message);
+    }
+    throw new DownloaderValidationError('Icon URL is invalid.');
+  }
 }

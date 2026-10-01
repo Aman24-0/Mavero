@@ -99,13 +99,30 @@
   // ============================================================
   // Sync handler — called from Providers tab
   // ============================================================
+  // FINDING-012 fix: surface sync errors instead of swallowing them.
+  // Previously the catch block had a comment "Swallow — the Providers
+  // tab will show the error via its own state" but NO error info was
+  // passed to the Providers tab. Now sync errors are captured in
+  // `syncError` and rendered as an inline error banner.
+  let syncError = $state<string | null>(null);
+  let syncingProvider = $state<string | null>(null);
+
   async function syncProvider(adapterId: string): Promise<void> {
+    syncingProvider = adapterId;
+    syncError = null;
     try {
-      await fetch(`/api/admin/media/sync?provider=${adapterId}`, { method: 'POST' });
-      // Refresh providers to update asset counts + last sync.
-      await refreshProviders();
-    } catch {
-      // Swallow — the Providers tab will show the error via its own state.
+      const res = await fetch(`/api/admin/media/sync?provider=${adapterId}`, { method: 'POST' });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        syncError = json?.error?.message ?? `Sync failed (HTTP ${res.status}).`;
+      } else {
+        // Refresh providers to update asset counts + last sync.
+        await refreshProviders();
+      }
+    } catch (err) {
+      syncError = err instanceof Error ? err.message : 'Network error during sync.';
+    } finally {
+      syncingProvider = null;
     }
   }
 
@@ -152,6 +169,11 @@
     {/snippet}
 
     {#if currentTab === 'providers'}
+      {#if syncError}
+        <div class="a2-sync-error" role="alert">
+          <strong>Sync failed:</strong> {syncError}
+        </div>
+      {/if}
       <AdminHostingProviders
         {providers}
         {providersError}
@@ -171,3 +193,19 @@
     {/if}
   </AdminPage>
 </AdminAppShell>
+
+<style>
+  .a2-sync-error {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: var(--a2-space-2) var(--a2-space-3);
+    margin-bottom: var(--a2-space-3);
+    background: var(--a2-red-soft);
+    border: 1px solid var(--a2-red-border);
+    border-radius: var(--a2-radius-sm);
+    color: var(--a2-red);
+    font-size: var(--a2-text-sm);
+  }
+  .a2-sync-error strong { font-weight: 700; }
+</style>

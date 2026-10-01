@@ -21,9 +21,13 @@
   let { data }: { data: PageData } = $props();
 
   let savingId = $state<string | null>(null);
+  let errorId = $state<string | null>(null);
+  let errorMessage = $state<string>('');
 
   async function updateStatus(id: string, status: string) {
     savingId = id;
+    errorId = null;
+    errorMessage = '';
     try {
       const res = await fetch('/api/admin/media/missing', {
         method: 'PATCH',
@@ -33,7 +37,18 @@
       if (res.ok) {
         // Refresh only the page data — no full app reload.
         await invalidateAll();
+      } else {
+        // FINDING-011 fix: surface the PATCH failure to the admin.
+        // Previously there was no else branch — a 500/422 produced
+        // zero user feedback, making it look like the action succeeded.
+        const json = await res.json().catch(() => null);
+        errorMessage = json?.error?.message ?? `Failed to update status (HTTP ${res.status}).`;
+        errorId = id;
       }
+    } catch (err) {
+      // Network error — surface it too.
+      errorMessage = err instanceof Error ? err.message : 'Network error while updating status.';
+      errorId = id;
     } finally {
       savingId = null;
     }
@@ -122,6 +137,11 @@
                 </a>
               {/if}
             </div>
+            {#if errorId === req.id}
+              <div class="a2-missing-card-error" role="alert">
+                <AlertCircle size={14} /> {errorMessage}
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
@@ -156,6 +176,7 @@
   .a2-missing-action-primary:hover:not(:disabled) { color: var(--a2-green); border-color: var(--a2-green-border); background: var(--a2-green-soft); }
   .a2-missing-action-upload { color: var(--a2-surface-1); background: var(--a2-cyan); border-color: var(--a2-cyan); }
   .a2-missing-action-upload:hover { background: var(--a2-cyan); color: var(--a2-surface-1); border-color: var(--a2-cyan); opacity: 0.9; }
+  .a2-missing-card-error { display: flex; align-items: center; gap: 6px; padding: var(--a2-space-2) var(--a2-space-3); margin-top: var(--a2-space-2); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-xs); }
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 

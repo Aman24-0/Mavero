@@ -103,7 +103,7 @@
                 <button type="submit" class="a2-icon-btn" title="Refresh"><RefreshCw size={14} /></button>
               </form>
               <button type="button" class="a2-icon-btn" onclick={() => openDetail(addon)} title="Configure"><Edit3 size={14} /></button>
-              <form method="POST" action="?/deleteAddon" style="display:inline" onsubmit={() => confirm('Delete this addon?')}>
+              <form method="POST" action="?/deleteAddon" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this addon? This cannot be undone.')) e.preventDefault(); }}>
                 <input type="hidden" name="id" value={addon.id} />
                 <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete"><Trash2 size={14} /></button>
               </form>

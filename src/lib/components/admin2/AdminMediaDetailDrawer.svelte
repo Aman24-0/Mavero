@@ -36,6 +36,7 @@
   import AdminAssetStatus from './AdminAssetStatus.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import type { LibraryMediaItem, LibraryOperationSummary, LibraryAssetSummary } from '$lib/server/hosting/library/service';
+  import { adapterIdForSource, sourceNameForId } from '$lib/shared/hosting-source-helpers';
 
   let {
     open = $bindable(false),
@@ -103,15 +104,19 @@
     }
   }
 
-  function adapterIdForSource(sourceId: string | null): string | null {
-    if (!sourceId) return null;
-    return hostingSources.find(s => s.id === sourceId)?.adapterId ?? null;
-  }
-
-  function sourceNameForId(sourceId: string | null): string {
-    if (!sourceId) return 'Unknown';
-    return hostingSources.find(s => s.id === sourceId)?.name ?? 'Unknown';
-  }
+  // Phase C audit fix: provider source resolution now uses the CANONICAL
+  // shared helpers from $lib/shared/hosting-source-helpers. This
+  // eliminates the duplicated logic that existed in AdminMediaTable,
+  // AdminMediaCard, and this component.
+  //
+  // Key behavioral change: sourceNameForId() now returns null (NOT
+  // 'Unknown') when the source isn't in hostingSources. The caller
+  // (providerGroups below) decides what label to render — for a
+  // genuinely unknown source, this is a data-resolution error that
+  // should be surfaced, not masked behind a misleading "UNKNOWN" label
+  // that looks like a real provider name.
+  const resolveAdapter = (sourceId: string | null): string | null => adapterIdForSource(hostingSources, sourceId);
+  const resolveSourceName = (sourceId: string | null): string | null => sourceNameForId(hostingSources, sourceId);
 
   function formatYear(year: number | null): string {
     return year ? String(year) : '—';
@@ -150,17 +155,30 @@
   }
 
   // Group assets by provider adapter for the "Provider availability" section.
-  type ProviderGroup = { adapterId: string; label: string; assets: LibraryAssetSummary[] };
+  //
+  // Phase C audit fix: if resolveAdapter() returns null (the source ID
+  // is not in hostingSources — either the source was deleted, or the
+  // hostingSources query failed), the group's adapterId is 'unresolved'
+  // and the label explicitly calls out the data-resolution problem
+  // instead of rendering "UNKNOWN" (which looked like a real provider
+  // name and hid the underlying issue).
+  type ProviderGroup = { adapterId: string; label: string; assets: LibraryAssetSummary[]; unresolved: boolean };
   const providerGroups = $derived.by(() => {
     if (!item) return [] as ProviderGroup[];
     const groups = new Map<string, ProviderGroup>();
     for (const asset of item.assets) {
-      const adapterId = adapterIdForSource(asset.provider_source_id) ?? 'unknown';
+      const resolved = resolveAdapter(asset.provider_source_id);
+      const adapterId = resolved ?? 'unresolved';
       if (!groups.has(adapterId)) {
+        const sourceName = resolveSourceName(asset.provider_source_id);
+        const label = resolved === 'vidara' ? 'Vidara'
+          : resolved === 'abyss' ? 'Abyss'
+          : sourceName ?? 'Unresolved source';
         groups.set(adapterId, {
           adapterId,
-          label: adapterId === 'vidara' ? 'Vidara' : adapterId === 'abyss' ? 'Abyss' : sourceNameForId(asset.provider_source_id),
+          label,
           assets: [],
+          unresolved: resolved === null,
         });
       }
       groups.get(adapterId)!.assets.push(asset);
@@ -201,6 +219,8 @@
     assets: LibraryAssetSummary[];
     hasAssets: boolean;
     isMaveroHosted: boolean;
+    /** True if the provider source could not be resolved (deleted source or query failure). */
+    unresolved: boolean;
   };
   const providerBlocks = $derived.by(() => {
     if (!item) return [] as ProviderBlock[];
@@ -219,6 +239,7 @@
         assets: group.assets,
         hasAssets: true,
         isMaveroHosted: isMavero,
+        unresolved: group.unresolved,
       });
       if (isMavero) linkedMaveroAdapters.add(group.adapterId);
     }
@@ -233,6 +254,7 @@
         assets: [],
         hasAssets: false,
         isMaveroHosted: true,
+        unresolved: false,
       });
     }
 
@@ -515,18 +537,31 @@
             </div>
           {:else}
             {#each providerBlocks as block (block.adapterId)}
-              <div class="provider-block provider-{block.adapterId}">
+              <div class="provider-block provider-{block.adapterId}" class:provider-unresolved={block.unresolved}>
                 <div class="provider-block-head">
                   <span class="provider-block-name">{block.label}</span>
                   <div class="provider-block-head-right">
-                    <span class="provider-block-status {block.hasAssets ? 'is-linked' : 'is-unlinked'}">
-                      {block.hasAssets ? 'Linked' : 'Not linked'}
-                    </span>
+                    {#if block.unresolved}
+                      <span class="provider-block-status is-unresolved" title="The provider source for this asset could not be resolved. It may have been deleted, or the hosting sources query failed.">
+                        Unresolved
+                      </span>
+                    {:else}
+                      <span class="provider-block-status {block.hasAssets ? 'is-linked' : 'is-unlinked'}">
+                        {block.hasAssets ? 'Linked' : 'Not linked'}
+                      </span>
+                    {/if}
                     {#if block.hasAssets && block.assets.length > 1}
                       <span class="provider-block-count">{block.assets.length} assets</span>
                     {/if}
                   </div>
                 </div>
+                {#if block.unresolved}
+                  <div class="provider-block-unresolved-notice">
+                    The provider source for this asset could not be resolved. This usually means
+                    the streaming source was deleted after the asset was created, or the hosting
+                    sources query failed. The asset still exists but its provider identity is unknown.
+                  </div>
+                {/if}
                 {#if block.hasAssets}
                   {#each block.assets as asset (asset.id)}
                     <div class="provider-asset-row">
@@ -1325,6 +1360,24 @@
     color: var(--a2-amber);
     background: var(--a2-amber-soft);
     border-color: var(--a2-amber-border);
+  }
+  .provider-block-status.is-unresolved {
+    color: var(--a2-red);
+    background: var(--a2-red-soft);
+    border-color: var(--a2-red-border);
+  }
+  .provider-block-unresolved-notice {
+    font-size: var(--a2-text-xs);
+    color: var(--a2-red);
+    line-height: 1.5;
+    padding: var(--a2-space-2) var(--a2-space-3);
+    margin: var(--a2-space-2) 0;
+    background: var(--a2-red-soft);
+    border: 1px solid var(--a2-red-border);
+    border-radius: var(--a2-radius-sm);
+  }
+  .provider-block.provider-unresolved {
+    border-color: var(--a2-red-border);
   }
   .provider-block-notlinked {
     padding: var(--a2-space-2) 0;

@@ -101,7 +101,7 @@
       id: 'content',
       label: 'Content',
       items: [
-        { id: 'media-library', label: 'Media Library', href: '/admin/media/library', icon: Library, phase: 'C', placeholder: true },
+        { id: 'media-library', label: 'Media Library', href: '/admin/media/library', icon: Library },
         { id: 'upload', label: 'Upload / Import', href: '/admin/media/upload', icon: Upload },
         { id: 'missing-media', label: 'Missing Media', href: '/admin/media/missing', icon: AlertCircle },
       ]

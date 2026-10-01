@@ -24,6 +24,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { getHostingAdapter } from '../registry';
 import { HostingProviderError } from '../errors';
+import { resolveAdapterForSource, ProviderResolutionError } from '../provider-resolver';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -219,12 +220,20 @@ export class SyncService {
     if (!ar.provider_asset_id) throw new HostingProviderError('VALIDATION', { message: 'Media asset has no provider_asset_id.' });
     if (!ar.provider_source_id) throw new HostingProviderError('VALIDATION', { message: 'Media asset has no provider_source_id.' });
 
-    const { data: sourceRow } = await this.client.from('streaming_sources').select('provider_id').eq('id', ar.provider_source_id).maybeSingle();
-    const { data: providerRow } = await this.client.from('streaming_providers').select('adapter_id').eq('id', sourceRow?.provider_id ?? '').maybeSingle();
-    const adapterId = providerRow?.adapter_id;
-    if (!adapterId) throw new Error('Provider adapter_id not found.');
-    const adapter = getHostingAdapter(adapterId);
-    if (!adapter) throw new Error(`No hosting adapter for ${adapterId}.`);
+    // Phase C audit fix: use the CANONICAL provider resolver instead of
+    // inline two-query lookup. Surfaces real errors with actionable codes.
+    let adapter: ReturnType<typeof getHostingAdapter>;
+    let adapterId: string;
+    try {
+      const resolution = await resolveAdapterForSource(this.client, ar.provider_source_id);
+      adapter = resolution.adapter;
+      adapterId = resolution.adapterId;
+    } catch (err) {
+      if (err instanceof ProviderResolutionError) {
+        throw new HostingProviderError('NOT_FOUND', { message: err.message });
+      }
+      throw err;
+    }
 
     const procStatus = await adapter.getProcessingStatus(ar.provider_asset_id);
     await this.client.from('media_assets').update({

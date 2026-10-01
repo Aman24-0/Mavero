@@ -74,6 +74,12 @@
   let foldersLoading = $state<boolean>(false);
 
   let hostingSources = $state(initial.hostingSources);
+  // FINDING-005 fix: surface the hostingSourcesError from the server
+  // load. Previously this error was set in the server but never
+  // rendered — if the streaming_providers/streaming_sources query
+  // failed, every asset's adapterId degraded to null and the UI
+  // showed false "Not linked" states with no error indication.
+  let hostingSourcesError = $state<string | null>(initial.hostingSourcesError ?? null);
 
   let filters = $state<FilterState>({
     q: initial.initialFilters.q ?? '',
@@ -344,6 +350,16 @@
       </a>
     {/snippet}
 
+    {#if hostingSourcesError}
+      <!-- FINDING-005 fix: surface hosting sources query failures. -->
+      <div class="library-hosting-error" role="alert">
+        <strong>Provider data could not be loaded:</strong> {hostingSourcesError}
+        <br />
+        Assets may show as "Not linked" or "Unresolved" until this is resolved.
+        Check the database connection and RLS policies for streaming_providers / streaming_sources.
+      </div>
+    {/if}
+
     {#snippet toolbar()}
       <!-- Desktop inline filters -->
       <div class="library-toolbar-desktop">
@@ -534,6 +550,17 @@
 </AdminAppShell>
 
 <style>
+  .library-hosting-error {
+    padding: var(--a2-space-3) var(--a2-space-4);
+    margin-bottom: var(--a2-space-3);
+    background: var(--a2-red-soft);
+    border: 1px solid var(--a2-red-border);
+    border-radius: var(--a2-radius-sm);
+    color: var(--a2-red);
+    font-size: var(--a2-text-sm);
+    line-height: 1.5;
+  }
+  .library-hosting-error strong { font-weight: 700; }
   .library-action {
     display: inline-flex;
     align-items: center;

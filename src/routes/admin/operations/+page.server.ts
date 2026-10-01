@@ -10,6 +10,8 @@
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { OperationsService } from '$lib/server/hosting/operations/service';
+import { UploadService } from '$lib/server/hosting/upload/service';
+import { CanonicalMediaService } from '$lib/server/hosting/media/service';
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
@@ -26,9 +28,25 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // Phase 6: createSupabaseAdminClient() inside try/catch — prevents
   // uncaught 500 if PRIVATE_SUPABASE_SERVICE_ROLE_KEY is missing.
   let badgeCounts = { jobsActive: 0, attentionTotal: 0 };
+  let reapedCount = 0;
   try {
     const adminClient = createSupabaseAdminClient();
     const service = new OperationsService(adminClient);
+
+    // FINDING-015 + FINDING-016 fix: run the stale-operation reaper
+    // on every Operations Center page load. This guarantees that
+    // operations stuck in `uploading`/`uploaded`/`processing` for
+    // more than 30 minutes are auto-failed with a clear
+    // `STALE_TIMEOUT` error, instead of lingering forever. The reaper
+    // is idempotent and admin-triggered (no background cron needed).
+    // It runs BEFORE badge counts so the counts reflect the reaped state.
+    try {
+      const mediaService = new CanonicalMediaService(adminClient);
+      const uploadService = new UploadService(adminClient, mediaService);
+      reapedCount = await uploadService.reapStaleOperations();
+    } catch {
+      // Reaper failure must NOT break the page — best-effort.
+    }
 
     // Preload badge counts (used by the nav badges + the tab strip).
     try {
@@ -43,5 +61,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   return {
     initialTab: tab,
     badgeCounts,
+    // Surface the reaped count so the UI can show a notice if any
+    // operations were auto-failed during this page load.
+    reapedCount,
   };
 };

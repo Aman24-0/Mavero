@@ -10,6 +10,12 @@
  *   - RETRYABLE: RATE_LIMITED, TRANSIENT, NETWORK, TIMEOUT
  *   - PERMANENT (no retry): AUTHENTICATION, AUTHORIZATION, VALIDATION,
  *     NOT_FOUND, UNSUPPORTED, PROVIDER_PROCESSING, UNKNOWN
+ *
+ * FINDING-001 fix: extended with upload-lifecycle codes that surface
+ * DB-level failures (previously masked behind STALE_OPERATION). These
+ * are PERMANENT — the admin must fix the underlying data issue
+ * (duplicate provider_asset_id, missing FK target, etc.) before
+ * retrying.
  */
 
 export type HostingErrorCode =
@@ -23,7 +29,15 @@ export type HostingErrorCode =
   | 'UNSUPPORTED'
   | 'NETWORK'
   | 'TIMEOUT'
-  | 'UNKNOWN';
+  | 'UNKNOWN'
+  // Upload-lifecycle codes (FINDING-001). These surface the real DB
+  // failure that previously caused silent STALE_OPERATION cascades.
+  | 'STALE_OPERATION'
+  | 'MISSING_ASSET_ID'
+  | 'DUPLICATE_PROVIDER_ASSET'
+  | 'FK_VIOLATION'
+  | 'CHECK_VIOLATION'
+  | 'ASSET_INSERT_FAILED';
 
 const messages: Record<HostingErrorCode, string> = {
   AUTHENTICATION: 'Provider authentication failed. Check server-side credentials.',
@@ -37,6 +51,15 @@ const messages: Record<HostingErrorCode, string> = {
   NETWORK: 'A network error occurred while contacting the provider.',
   TIMEOUT: 'The provider request timed out.',
   UNKNOWN: 'An unexpected error occurred while contacting the provider.',
+  // Upload-lifecycle messages. The dynamic DB detail (constraint name,
+  // original Postgres message) is appended by the throw site via the
+  // `message` option — the static message here is the safe prefix.
+  STALE_OPERATION: 'Operation is in processing state but has no associated media asset.',
+  MISSING_ASSET_ID: 'The media asset has no provider_asset_id.',
+  DUPLICATE_PROVIDER_ASSET: 'A media asset with this provider asset ID already exists.',
+  FK_VIOLATION: 'The media asset references a missing media item or provider source.',
+  CHECK_VIOLATION: 'The media asset row violated a database check constraint.',
+  ASSET_INSERT_FAILED: 'Failed to insert the media asset row.',
 };
 
 /** Whether an error code is retryable (transient failures only). */

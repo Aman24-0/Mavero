@@ -45,7 +45,8 @@ import type { Database } from '$lib/server/supabase/database.types';
 import type { HostingProviderAdapter, ProviderUploadResult, ProviderProcessingStatus, AssetLifecycleState } from '../types';
 import { getHostingAdapter } from '../registry';
 import { CanonicalMediaService } from '../media/service';
-import { HostingProviderError } from '../errors';
+import { HostingProviderError, type HostingErrorCode } from '../errors';
+import { resolveAdapterForSource, ProviderResolutionError } from '../provider-resolver';
 import type { EnsureMovieInput, EnsureSeriesInput, EnsureEpisodeInput, EnsureAnimeInput, EnsureAnimeEpisodeInput } from '../media/service';
 
 // ---------------------------------------------------------------------------
@@ -250,31 +251,19 @@ export class UploadService {
     if (!op) throw new Error('Upload operation not found.');
     if (op.status !== 'queued') throw new Error(`Operation is not queued (current: ${op.status}).`);
 
-    // Get the adapter.
-    // Look up the provider's adapter_id from the DB via a direct query.
-    const { data: sourceRow } = await this.client
-      .from('streaming_sources')
-      .select('provider_id')
-      .eq('id', op.provider_source_id!)
-      .maybeSingle();
-
-    if (!sourceRow?.provider_id) {
-      throw new Error('Provider not found for source.');
-    }
-
-    const { data: providerRow } = await this.client
-      .from('streaming_providers')
-      .select('adapter_id')
-      .eq('id', sourceRow.provider_id)
-      .maybeSingle();
-
-    if (!providerRow?.adapter_id) {
-      throw new Error('Provider adapter_id not found.');
-    }
-
-    const providerAdapter = getHostingAdapter(providerRow.adapter_id);
-    if (!providerAdapter) {
-      throw new Error(`No hosting adapter found for adapter_id: ${providerRow.adapter_id}`);
+    // Phase C audit fix: use the CANONICAL provider resolver instead of
+    // inline two-query lookup. This eliminates duplicated resolution
+    // logic and surfaces real errors (deleted source, missing provider,
+    // etc.) with actionable codes instead of generic "Provider not found".
+    let providerAdapter: HostingProviderAdapter;
+    try {
+      const resolution = await resolveAdapterForSource(this.client, op.provider_source_id!);
+      providerAdapter = resolution.adapter;
+    } catch (err) {
+      if (err instanceof ProviderResolutionError) {
+        throw new HostingProviderError('NOT_FOUND', { message: err.message });
+      }
+      throw err;
     }
 
     // Check capability.
@@ -380,12 +369,23 @@ export class UploadService {
    * Polls the provider processing status for an operation.
    * Returns the current state. Does NOT loop — the caller (API route)
    * calls this on each poll request.
+   *
+   * FINDING-002 fix: the return shape now includes an `error` field
+   * ({ code, message } | null) on every path. The two auto-fail paths
+   * (STALE_OPERATION, MISSING_ASSET_ID) and the provider-failed path
+   * all surface the real error code/message so the admin UI can show
+   * actionable diagnostics instead of a generic "Processing failed."
    */
-  async pollProcessingStatus(operationId: string): Promise<{ status: string; providerStatus: string | null; progressPercent: number | null; ready: boolean; failed: boolean }> {
+  async pollProcessingStatus(operationId: string): Promise<{ status: string; providerStatus: string | null; progressPercent: number | null; ready: boolean; failed: boolean; error: { code: string; message: string } | null }> {
     const op = await this.getOperation(operationId);
     if (!op) throw new Error('Upload operation not found.');
     if (op.status !== 'processing' && op.status !== 'uploaded') {
-      return { status: op.status, providerStatus: null, progressPercent: null, ready: op.status === 'ready', failed: op.status === 'failed' };
+      // Terminal or non-pollable state — surface any stored error so the
+      // client can render it after a retry/invalidate.
+      const error = op.status === 'failed' && op.error_code
+        ? { code: op.error_code, message: op.error_message ?? 'Operation failed.' }
+        : null;
+      return { status: op.status, providerStatus: null, progressPercent: null, ready: op.status === 'ready', failed: op.status === 'failed', error };
     }
 
     // CRITICAL FIX (Phase 8): stale-operation safety. If the operation is
@@ -394,33 +394,42 @@ export class UploadService {
     // stuck. Auto-fail it with a clear error instead of leaving it
     // stuck forever. This prevents the "processing with null
     // provider_asset_id" bug from creating permanent orphans.
+    //
+    // FINDING-002 fix: return the STALE_OPERATION error code/message in
+    // the response body so the admin UI can display the real reason
+    // instead of masking it behind a generic "FAILED".
     if (!op.media_asset_id) {
+      const error = {
+        code: 'STALE_OPERATION',
+        message: 'Operation is in processing state but has no associated media asset. The upload may have failed to produce a valid provider asset.',
+      };
       await this.updateOperationState(operationId, 'failed', {
         failed_at: new Date().toISOString(),
-        error_code: 'STALE_OPERATION',
-        error_message: 'Operation is in processing state but has no associated media asset. The upload may have failed to produce a valid provider asset.',
+        error_code: error.code,
+        error_message: error.message,
       });
-      return { status: 'failed', providerStatus: null, progressPercent: null, ready: false, failed: true };
+      return { status: 'failed', providerStatus: null, progressPercent: null, ready: false, failed: true, error };
     }
 
-    // Look up the adapter via direct queries.
-    const { data: sourceRow } = await this.client
-      .from('streaming_sources')
-      .select('provider_id')
-      .eq('id', op.provider_source_id!)
-      .maybeSingle();
-
-    const { data: providerRow } = await this.client
-      .from('streaming_providers')
-      .select('adapter_id')
-      .eq('id', sourceRow?.provider_id ?? '')
-      .maybeSingle();
-
-    const adapterId = providerRow?.adapter_id;
-    if (!adapterId) throw new Error('Provider adapter_id not found.');
-
-    const adapter = getHostingAdapter(adapterId);
-    if (!adapter) throw new Error(`No hosting adapter for ${adapterId}.`);
+    // Phase C audit fix: use the CANONICAL provider resolver instead of
+    // inline two-query lookup. If the source/provider can't be resolved
+    // (deleted, missing adapter), fail the operation with an actionable
+    // error instead of throwing an unhandled error that leaves the
+    // operation stuck.
+    let adapter: HostingProviderAdapter;
+    try {
+      const resolution = await resolveAdapterForSource(this.client, op.provider_source_id!);
+      adapter = resolution.adapter;
+    } catch (err) {
+      const code = err instanceof ProviderResolutionError ? err.code : 'PROVIDER_RESOLUTION_FAILED';
+      const message = err instanceof Error ? err.message : 'Failed to resolve provider adapter.';
+      await this.updateOperationState(operationId, 'failed', {
+        failed_at: new Date().toISOString(),
+        error_code: code,
+        error_message: message,
+      });
+      return { status: 'failed', providerStatus: null, progressPercent: null, ready: false, failed: true, error: { code, message } };
+    }
 
     // Get the provider asset ID from the media_assets row.
     const { data: asset } = await this.client
@@ -433,19 +442,26 @@ export class UploadService {
     if (!providerAssetId) {
       // CRITICAL FIX (Phase 8): auto-fail operations with no provider_asset_id
       // instead of throwing an unhandled error that leaves the operation stuck.
+      //
+      // FINDING-002 fix: return the MISSING_ASSET_ID error code/message in
+      // the response body so the admin UI can display the real reason.
+      const error = {
+        code: 'MISSING_ASSET_ID',
+        message: 'The media asset has no provider_asset_id. The provider upload may not have completed correctly.',
+      };
       await this.updateOperationState(operationId, 'failed', {
         failed_at: new Date().toISOString(),
-        error_code: 'MISSING_ASSET_ID',
-        error_message: 'The media asset has no provider_asset_id. The provider upload may not have completed correctly.',
+        error_code: error.code,
+        error_message: error.message,
       });
       // Also mark the media_asset as failed.
       await this.client.from('media_assets').update({
         status: 'failed',
         mavero_status: 'failed',
-        error_code: 'MISSING_ASSET_ID',
+        error_code: error.code,
         error_message: 'No provider_asset_id was stored during upload.',
       }).eq('id', op.media_asset_id);
-      return { status: 'failed', providerStatus: null, progressPercent: null, ready: false, failed: true };
+      return { status: 'failed', providerStatus: null, progressPercent: null, ready: false, failed: true, error };
     }
 
     // Poll the provider.
@@ -501,12 +517,24 @@ export class UploadService {
       });
     }
 
+    // FINDING-002 fix: surface the provider error code/message on the
+    // failed path so the admin UI can show the real reason the provider
+    // rejected the upload (e.g. Vidara returned 'ERROR_ENCODING' or
+    // Abyss returned 'CONVERT_FAILED') instead of a generic "FAILED".
+    const error = procStatus.status === 'failed'
+      ? {
+          code: procStatus.providerErrorCode ?? 'PROVIDER_PROCESSING',
+          message: procStatus.providerErrorMessage ?? 'Provider processing failed.',
+        }
+      : null;
+
     return {
       status: procStatus.status,
       providerStatus: procStatus.providerStatus,
       progressPercent: procStatus.progressPercent,
       ready: procStatus.status === 'ready',
       failed: procStatus.status === 'failed',
+      error,
     };
   }
 
@@ -582,6 +610,65 @@ export class UploadService {
     return (data ?? []) as unknown as UploadOperation[];
   }
 
+  /**
+   * FINDING-015 + FINDING-016 fix: reaper for stale operations.
+   *
+   * Auto-fails operations that have been stuck in a transitional state
+   * (`uploading`, `uploaded`, `processing`) for longer than the staleness
+   * threshold. This prevents operations from being permanently stuck
+   * when:
+   *   - The browser crashes during a Vidara direct upload (FINDING-015:
+   *     the operation is left in `uploading` with no /complete call).
+   *   - The client stops polling during processing (FINDING-016: the
+   *     operation is left in `processing` indefinitely).
+   *   - The server crashes mid-execution.
+   *
+   * The threshold is deliberately generous (default 30 minutes) to
+   * avoid false-failing legitimate long-running uploads (e.g. a large
+   * file that takes 20 minutes to transcode at Vidara). The Operations
+   * Center's 60-minute visual flag is a separate, more conservative
+   * signal — this reaper is the hard floor that guarantees convergence.
+   *
+   * Called from the Operations Center page load (every time an admin
+   * views the page) — NOT a background cron. This keeps the reaper
+   * server-side and admin-triggered, avoiding the need for a separate
+   * scheduler. The method is idempotent — running it multiple times is
+   * safe.
+   *
+   * Returns the count of operations auto-failed, so the caller can
+   * surface a notice if any were reaped.
+   */
+  async reapStaleOperations(staleAfterMs: number = 30 * 60 * 1000): Promise<number> {
+    const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
+
+    // Find operations in transitional states that haven't been updated
+    // since the cutoff. We use `updated_at` (not the state-specific
+    // timestamps like `upload_started_at`) because `updated_at` is
+    // bumped on every state transition and is the most reliable signal
+    // of "the last time this operation made progress".
+    const { data: staleOps, error } = await this.client
+      .from('media_upload_operations')
+      .select('id, status, updated_at')
+      .in('status', ['uploading', 'uploaded', 'processing'])
+      .lt('updated_at', cutoff);
+
+    if (error) throw new Error(`Reaper query failed: ${error.message}`);
+    if (!staleOps || staleOps.length === 0) return 0;
+
+    // Auto-fail each stale operation with a clear error code.
+    let reaped = 0;
+    for (const op of staleOps as Array<{ id: string; status: string; updated_at: string }>) {
+      const ageMinutes = Math.round((Date.now() - new Date(op.updated_at).getTime()) / 60000);
+      await this.updateOperationState(op.id, 'failed', {
+        failed_at: new Date().toISOString(),
+        error_code: 'STALE_TIMEOUT',
+        error_message: `Operation was stuck in '${op.status}' state for ${ageMinutes} minutes and was automatically failed by the reaper. The upload may have been interrupted (browser crash, network loss, or server restart). Retry the upload if the file is still needed.`,
+      });
+      reaped++;
+    }
+    return reaped;
+  }
+
   // --- Internal helpers ---
 
   async updateOperationState(operationId: string, status: string, extra?: Record<string, string | number | null>): Promise<void> {
@@ -591,8 +678,34 @@ export class UploadService {
     await (this.client.from('media_upload_operations') as unknown as { update: (values: Record<string, unknown>) => { eq: (col: string, val: string) => Promise<unknown> } }).update(update).eq('id', operationId);
   }
 
+  /**
+   * FINDING-001 fix: inspects the FULL Supabase insert response.
+   *
+   * Previously this method destructured away the `error` field:
+   *
+   *     const { data: assetRow } = await ...insert({...}).select('id').single();
+   *     if (assetRow) { ... }  // silently skipped on failure
+   *
+   * When the insert failed (UNIQUE constraint on
+   * (provider_source_id, provider_asset_id), CHECK constraint, FK
+   * violation, RLS, network error, etc.), `data` was null and `error`
+   * was set — but `error` was never inspected. The `if (assetRow)`
+   * guard silently skipped the FK update, the function returned
+   * normally (no throw), and the caller (`executeRemoteUpload` /
+   * `completeUploadFromResult`) transitioned the operation to
+   * `processing` with `media_asset_id = null`. The next
+   * `pollProcessingStatus()` poll then auto-failed with
+   * `STALE_OPERATION`, masking the real DB error.
+   *
+   * Now: any insert failure throws a `HostingProviderError` with the
+   * real DB error code/message. The caller's catch block then marks
+   * the operation `failed` with a descriptive error, and the admin UI
+   * sees the actual constraint violation (e.g. "duplicate key value
+   * violates unique constraint media_assets_provider_source_id_provider_asset_id_key")
+   * instead of a generic "STALE_OPERATION".
+   */
   private async createMediaAsset(op: UploadOperation, result: ProviderUploadResult, _adapter: HostingProviderAdapter): Promise<void> {
-    const { data: assetRow } = await this.client
+    const { data: assetRow, error: insertError } = await this.client
       .from('media_assets')
       .insert({
         media_item_id: op.media_item_id,
@@ -616,21 +729,45 @@ export class UploadService {
       .select('id')
       .single();
 
-    if (assetRow) {
-      const assetId = (assetRow as { id: string }).id;
-      await this.client.from('media_upload_operations').update({ media_asset_id: assetId }).eq('id', op.id);
-      // Phase 8: record the operation in media_operations for audit history.
-      await this.recordOperation({
-        action: op.source_url ? 'upload_remote' : 'upload',
-        status: 'success',
-        media_item_id: op.media_item_id,
-        media_asset_id: assetId,
-        provider_source_id: op.provider_source_id ?? undefined,
-        upload_operation_id: op.id,
-        admin_user_id: op.requested_by_user_id ?? undefined,
-        details: { provider_asset_id: result.providerAssetId, playback_url: result.playbackUrl },
+    if (insertError || !assetRow) {
+      // Map the most common DB errors to actionable codes. The original
+      // Postgres message is preserved in `message` so the admin can
+      // diagnose the real constraint violation.
+      const pgMessage = insertError?.message ?? 'No row was returned by the insert.';
+      const pgCode = insertError?.code ?? 'NO_DATA';
+      let code: HostingErrorCode = 'ASSET_INSERT_FAILED';
+      if (pgCode === '23505') {
+        // unique_violation — most common: a media_assets row with the
+        // same (provider_source_id, provider_asset_id) already exists.
+        code = 'DUPLICATE_PROVIDER_ASSET';
+      } else if (pgCode === '23503') {
+        // foreign_key_violation — media_item_id or provider_source_id
+        // references a row that does not exist (or was deleted).
+        code = 'FK_VIOLATION';
+      } else if (pgCode === '23514') {
+        // check_violation — e.g. status or mavero_status not in the
+        // allowed enum.
+        code = 'CHECK_VIOLATION';
+      }
+      throw new HostingProviderError(code, {
+        message: `Failed to create media asset (${pgCode}): ${pgMessage}`,
+        cause: insertError ?? undefined,
       });
     }
+
+    const assetId = (assetRow as { id: string }).id;
+    await this.client.from('media_upload_operations').update({ media_asset_id: assetId }).eq('id', op.id);
+    // Phase 8: record the operation in media_operations for audit history.
+    await this.recordOperation({
+      action: op.source_url ? 'upload_remote' : 'upload',
+      status: 'success',
+      media_item_id: op.media_item_id,
+      media_asset_id: assetId,
+      provider_source_id: op.provider_source_id ?? undefined,
+      upload_operation_id: op.id,
+      admin_user_id: op.requested_by_user_id ?? undefined,
+      details: { provider_asset_id: result.providerAssetId, playback_url: result.playbackUrl },
+    });
   }
 
   /**

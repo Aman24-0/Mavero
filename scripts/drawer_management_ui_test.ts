@@ -114,13 +114,21 @@ ok('9. Mobile responsive: action buttons stack, confirmation dialog full width')
 // 10. Provider resolution — no UNKNOWN for valid relationships
 // ============================================================
 
-assert.match(drawer, /adapterId === 'vidara' \? 'Vidara' : adapterId === 'abyss' \? 'Abyss'/, '10a. Provider labels resolved from adapterId (not from source name fallback)');
+// Phase C audit fix: the drawer now uses resolveAdapter() (shared helper)
+// and resolves labels from the resolved adapter ID. The old pattern used
+// adapterIdForSource directly; the new pattern uses resolveAdapter which
+// wraps the shared adapterIdForSource helper.
+assert.match(drawer, /resolved === 'vidara' \? 'Vidara'[\s\S]*?resolved === 'abyss' \? 'Abyss'/, '10a. Provider labels resolved from resolved adapterId (not from source name fallback)');
+assert.match(drawer, /import.*adapterIdForSource, sourceNameForId.*from '\$lib\/shared\/hosting-source-helpers'/, '10b. Drawer imports shared helpers (no duplicated logic)');
 // Note: provider-block-name CSS has text-transform:uppercase which renders
 // "Vidara" as "VIDARA" and "Abyss" as "ABYSS" — this is the intended display
 // format. The "UNKNOWN" issue only occurred when adapterIdForSource returned
-// null (source not in hostingSources). With the enabled=true filter removed,
-// the source is always found, so the label is always "Vidara" or "Abyss".
-ok('10. Provider resolution: labels from adapterId (Vidara/Abyss), never Unknown — uppercase CSS is intended display format');
+// null (source not in hostingSources). With the canonical resolver + no
+// enabled filter, the source is always found, so the label is always
+// "Vidara" or "Abyss". When the source genuinely can't be resolved, the
+// drawer now shows "Unresolved" with an error notice instead of "UNKNOWN".
+assert.match(drawer, /unresolved/, '10c. Drawer surfaces Unresolved state for genuinely unresolvable sources (not misleading UNKNOWN)');
+ok('10. Provider resolution: labels from resolved adapterId (Vidara/Abyss), Unresolved for unknown sources — never misleading UNKNOWN');
 
 // ============================================================
 // 11. State refresh after action (invalidateAll)

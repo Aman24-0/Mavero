@@ -13,6 +13,7 @@
   import { Film, Tv, Sparkles, ArrowRight } from 'lucide-svelte';
   import AdminAssetStatus from './AdminAssetStatus.svelte';
   import type { LibraryMediaItem } from '$lib/server/hosting/library/service';
+  import { adapterIdForSource } from '$lib/shared/hosting-source-helpers';
 
   let {
     items = [] as LibraryMediaItem[],
@@ -28,10 +29,15 @@
     hostingSources?: Array<{ id: string; name: string; adapterId: string | null }>;
   } = $props();
 
-  function adapterIdForSource(sourceId: string | null): string | null {
-    if (!sourceId) return null;
-    return hostingSources.find(s => s.id === sourceId)?.adapterId ?? null;
-  }
+  // Phase C audit fix: adapterIdForSource is now imported from the
+  // shared $lib/shared/hosting-source-helpers module. This eliminates
+  // the duplicated logic that existed in AdminMediaTable, AdminMediaCard,
+  // and AdminMediaDetailDrawer. The shared helper is a pure function
+  // over the hostingSources array — no DB access, no server imports.
+  //
+  // Local wrapper captures `hostingSources` so template call sites
+  // don't need to pass it on every invocation.
+  const resolveAdapter = (sourceId: string | null) => adapterIdForSource(hostingSources, sourceId);
 
   function formatYear(year: number | null): string {
     return year ? String(year) : '—';
@@ -103,8 +109,8 @@
       </thead>
       <tbody>
         {#each items as item (item.id)}
-          {@const vidaraAsset = item.assets.find(a => adapterIdForSource(a.provider_source_id) === 'vidara')}
-          {@const abyssAsset = item.assets.find(a => adapterIdForSource(a.provider_source_id) === 'abyss')}
+          {@const vidaraAsset = item.assets.find(a => resolveAdapter(a.provider_source_id) === 'vidara')}
+          {@const abyssAsset = item.assets.find(a => resolveAdapter(a.provider_source_id) === 'abyss')}
           {@const Icon = item.content_type === 'movie' ? Film : item.content_type === 'anime' ? Sparkles : Tv}
           <tr
             class="media-row"

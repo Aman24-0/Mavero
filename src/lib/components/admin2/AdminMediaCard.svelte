@@ -12,6 +12,7 @@
   import { Film, Tv, Sparkles, ChevronRight } from 'lucide-svelte';
   import AdminAssetStatus from './AdminAssetStatus.svelte';
   import type { LibraryMediaItem } from '$lib/server/hosting/library/service';
+  import { adapterIdForSource } from '$lib/shared/hosting-source-helpers';
 
   let {
     items = [] as LibraryMediaItem[],
@@ -27,10 +28,9 @@
     hostingSources?: Array<{ id: string; name: string; adapterId: string | null }>;
   } = $props();
 
-  function adapterIdForSource(sourceId: string | null): string | null {
-    if (!sourceId) return null;
-    return hostingSources.find(s => s.id === sourceId)?.adapterId ?? null;
-  }
+  // Phase C audit fix: shared helper replaces duplicated local logic.
+  const resolveAdapter = (sourceId: string | null) => adapterIdForSource(hostingSources, sourceId);
+
   function formatEpisode(season: number | null, episode: number | null): string {
     if (season == null && episode == null) return '';
     const s = season != null ? String(season).padStart(2, '0') : '—';
@@ -52,8 +52,8 @@
     </div>
   {:else}
     {#each items as item (item.id)}
-      {@const vidaraAsset = item.assets.find(a => adapterIdForSource(a.provider_source_id) === 'vidara')}
-      {@const abyssAsset = item.assets.find(a => adapterIdForSource(a.provider_source_id) === 'abyss')}
+      {@const vidaraAsset = item.assets.find(a => resolveAdapter(a.provider_source_id) === 'vidara')}
+      {@const abyssAsset = item.assets.find(a => resolveAdapter(a.provider_source_id) === 'abyss')}
       {@const Icon = item.content_type === 'movie' ? Film : item.content_type === 'anime' ? Sparkles : Tv}
       <button
         type="button"

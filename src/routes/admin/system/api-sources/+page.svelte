@@ -209,7 +209,7 @@
                 <button type="button" class="a2-icon-btn" onclick={(e) => openEditProvider(provider, e)} title="Edit">
                   <Edit3 size={14} />
                 </button>
-                <form method="POST" action="?/deleteProvider" style="display:inline" onsubmit={() => confirm('Delete this provider? This cannot be undone.')}>
+                <form method="POST" action="?/deleteProvider" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this provider? This cannot be undone.')) e.preventDefault(); }}>
                   <input type="hidden" name="id" value={provider.id} />
                   <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete">
                     <Trash2 size={14} />
@@ -262,7 +262,7 @@
                 <button type="button" class="a2-icon-btn" onclick={(e) => openEditSource(source, e)} title="Edit">
                   <Edit3 size={14} />
                 </button>
-                <form method="POST" action="?/deleteSource" style="display:inline" onsubmit={() => confirm('Delete this source? This cannot be undone.')}>
+                <form method="POST" action="?/deleteSource" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this source? This cannot be undone.')) e.preventDefault(); }}>
                   <input type="hidden" name="id" value={source.id} />
                   <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete">
                     <Trash2 size={14} />
@@ -344,7 +344,7 @@
         </label>
       </AdminFormSection>
       <AdminFormSection heading="Configuration">
-        <label class="a2-field"><span>Icon (emoji or text)</span><input name="icon" value={editingProvider?.icon ?? ''} /></label>
+        <label class="a2-field"><span>Icon URL</span><input name="icon" type="url" value={editingProvider?.icon ?? ''} placeholder="https://example.com/icon.svg" /></label>
         <label class="a2-field"><span>Description</span><input name="description" value={editingProvider?.description ?? ''} /></label>
         <label class="a2-field"><span>Notes</span><input name="notes" value={editingProvider?.notes ?? ''} /></label>
         <label class="a2-field">

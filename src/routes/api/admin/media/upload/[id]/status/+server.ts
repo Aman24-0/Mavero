@@ -33,6 +33,11 @@ export const POST: RequestHandler = async ({ params, locals }) => {
   const uploadService = new UploadService(adminClient, mediaService);
   try {
     const result = await uploadService.pollProcessingStatus(params.id);
+    // FINDING-002 fix: `result` now includes `error: { code, message } | null`
+    // on every path (STALE_OPERATION, MISSING_ASSET_ID, provider-failed,
+    // terminal-state-failed, and success). Spreading it into the response
+    // makes the real error code/message available to the admin UI so it
+    // can display actionable diagnostics instead of a generic "FAILED".
     return json({ ok: true, ...result }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Polling failed.';

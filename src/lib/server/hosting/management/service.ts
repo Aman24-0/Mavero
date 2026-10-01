@@ -18,6 +18,7 @@ import { getHostingAdapter } from '../registry';
 import { HostingProviderError } from '../errors';
 import { UploadService } from '../upload/service';
 import { CanonicalMediaService } from '../media/service';
+import { resolveAdapterForSource, ProviderResolutionError } from '../provider-resolver';
 
 export type ManagementResult = {
   ok: boolean;
@@ -292,28 +293,22 @@ export class ManagementService {
       throw new HostingProviderError('VALIDATION', { message: 'This provider file is already linked to a different media asset. Detach it first.' });
     }
 
-    // 3. Look up the adapter for this provider source.
-    const { data: sourceRow } = await this.client
-      .from('streaming_sources')
-      .select('provider_id')
-      .eq('id', providerSourceId)
-      .maybeSingle();
-    if (!sourceRow) {
-      throw new HostingProviderError('NOT_FOUND', { message: 'Provider source not found.' });
-    }
-
-    const { data: providerRow } = await this.client
-      .from('streaming_providers')
-      .select('adapter_id')
-      .eq('id', sourceRow.provider_id)
-      .maybeSingle();
-    if (!providerRow) {
-      throw new HostingProviderError('NOT_FOUND', { message: 'Provider not found.' });
-    }
-
-    const adapter = getHostingAdapter(providerRow.adapter_id);
-    if (!adapter) {
-      throw new HostingProviderError('UNSUPPORTED', { message: 'No hosting adapter found for this provider.' });
+    // 3. Resolve the adapter for this provider source via the CANONICAL
+    // resolver. Phase C audit fix: replaces inline two-query lookup.
+    let adapter: ReturnType<typeof getHostingAdapter>;
+    try {
+      const resolution = await resolveAdapterForSource(this.client, providerSourceId);
+      adapter = resolution.adapter;
+    } catch (err) {
+      if (err instanceof ProviderResolutionError) {
+        // Distinguish NOT_FOUND (source/provider doesn't exist) from
+        // UNSUPPORTED (adapter_id has no registered adapter).
+        if (err.code === 'ADAPTER_NOT_REGISTERED') {
+          throw new HostingProviderError('UNSUPPORTED', { message: err.message });
+        }
+        throw new HostingProviderError('NOT_FOUND', { message: err.message });
+      }
+      throw err;
     }
 
     try {
@@ -321,8 +316,17 @@ export class ManagementService {
       const assetInfo = await adapter.getAsset(providerAssetId);
 
       // 5. INSERT the new media_assets row.
+      //
+      // FINDING-001 fix (mirrored): inspect the FULL Supabase insert
+      // response. Previously the `error` field was destructured away
+      // — a UNIQUE violation on (provider_source_id, provider_asset_id)
+      // or any other DB failure was silently swallowed, `assetRow` was
+      // null, `assetId` became the empty string, and the operation was
+      // recorded as "success" with a bogus media_asset_id. Now the real
+      // DB error is surfaced as a HostingProviderError so the admin UI
+      // can display it.
       const maveroStatus = assetInfo.status === 'ready' ? 'available' : 'processing';
-      const { data: assetRow } = await this.client
+      const { data: assetRow, error: insertError } = await this.client
         .from('media_assets')
         .insert({
           media_item_id: mediaItemId,
@@ -347,7 +351,20 @@ export class ManagementService {
         .select('id')
         .single();
 
-      const assetId = (assetRow as { id: string })?.id ?? '';
+      if (insertError || !assetRow) {
+        const pgMessage = insertError?.message ?? 'No row was returned by the insert.';
+        const pgCode = insertError?.code ?? 'NO_DATA';
+        let code: 'DUPLICATE_PROVIDER_ASSET' | 'FK_VIOLATION' | 'CHECK_VIOLATION' | 'ASSET_INSERT_FAILED' = 'ASSET_INSERT_FAILED';
+        if (pgCode === '23505') code = 'DUPLICATE_PROVIDER_ASSET';
+        else if (pgCode === '23503') code = 'FK_VIOLATION';
+        else if (pgCode === '23514') code = 'CHECK_VIOLATION';
+        throw new HostingProviderError(code, {
+          message: `Failed to link media asset (${pgCode}): ${pgMessage}`,
+          cause: insertError ?? undefined,
+        });
+      }
+
+      const assetId = (assetRow as { id: string }).id;
 
       // 6. Record the operation.
       await this.uploadService.recordOperation({
@@ -533,19 +550,14 @@ export class ManagementService {
   private async getAdapterForAsset(mediaAssetId: string): Promise<ReturnType<typeof getHostingAdapter>> {
     const asset = await this.getMediaAsset(mediaAssetId);
     if (!asset.provider_source_id) return null;
-
-    const { data: sourceRow } = await this.client
-      .from('streaming_sources')
-      .select('provider_id')
-      .eq('id', asset.provider_source_id)
-      .maybeSingle();
-
-    const { data: providerRow } = await this.client
-      .from('streaming_providers')
-      .select('adapter_id')
-      .eq('id', sourceRow?.provider_id ?? '')
-      .maybeSingle();
-
-    return getHostingAdapter(providerRow?.adapter_id);
+    try {
+      const resolution = await resolveAdapterForSource(this.client, asset.provider_source_id);
+      return resolution.adapter;
+    } catch (err) {
+      if (err instanceof ProviderResolutionError) {
+        throw new HostingProviderError('NOT_FOUND', { message: err.message });
+      }
+      throw err;
+    }
   }
 }

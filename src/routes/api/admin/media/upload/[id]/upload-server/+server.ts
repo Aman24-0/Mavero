@@ -44,22 +44,18 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
     return json({ ok: false, error: { code: 'INVALID_STATE', message: `Operation is not queued (current: ${operation.status}).` } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
-  // 3. Look up the provider adapter_id.
-  const { data: sourceRow } = await adminClient
-    .from('streaming_sources')
-    .select('provider_id')
-    .eq('id', operation.provider_source_id!)
-    .maybeSingle();
-
-  const { data: providerRow } = await adminClient
-    .from('streaming_providers')
-    .select('adapter_id')
-    .eq('id', sourceRow?.provider_id ?? '')
-    .maybeSingle();
-
-  const adapterId = providerRow?.adapter_id;
-  if (!adapterId) {
-    return json({ ok: false, error: { code: 'ADAPTER_NOT_FOUND', message: 'Provider adapter_id not found.' } }, { status: 400, headers: NO_STORE_HEADERS });
+  // 3. Resolve the provider adapter via the CANONICAL resolver.
+  // Phase C audit fix: replaces inline two-query lookup with the shared
+  // resolver. Surfaces real errors with actionable codes.
+  const { resolveAdapterForSource, ProviderResolutionError } = await import('$lib/server/hosting/provider-resolver');
+  let adapterId: string;
+  try {
+    const resolution = await resolveAdapterForSource(adminClient, operation.provider_source_id!);
+    adapterId = resolution.adapterId;
+  } catch (err) {
+    const code = err instanceof ProviderResolutionError ? err.code : 'PROVIDER_RESOLUTION_FAILED';
+    const message = err instanceof Error ? err.message : 'Failed to resolve provider adapter.';
+    return json({ ok: false, error: { code, message } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
   // 4. Get the hosting adapter.

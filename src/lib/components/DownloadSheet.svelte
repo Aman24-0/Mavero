@@ -20,6 +20,7 @@
   import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
   import FourKDownload from '$components/FourKDownload.svelte';
   import JsonDownload from '$components/JsonDownload.svelte';
+  import DownloaderIcon from '$components/source/DownloaderIcon.svelte';
 
   // ----- Props -----
   // Props are explicit per the spec. The parent (DetailPage) supplies the
@@ -404,6 +405,9 @@
                 aria-haspopup="listbox"
                 aria-expanded={dropdownOpen}
               >
+                {#if activeProvider?.icon}
+                  <span class="dl-dropdown-icon"><DownloaderIcon icon={activeProvider.icon} size={14} /></span>
+                {/if}
                 <span class="dl-dropdown-label">{activeProvider?.name ?? 'Select'}</span>
                 <ChevronDown size={14} />
               </button>
@@ -419,6 +423,9 @@
                         class:active={provider.id === activeProvider?.id}
                         onclick={() => chooseProvider(provider)}
                       >
+                        {#if provider.icon}
+                          <span class="dl-item-icon"><DownloaderIcon icon={provider.icon} size={14} /></span>
+                        {/if}
                         <span class="dl-item-name">{provider.name}</span>
                         {#if provider.isDefault}
                           <span class="dl-item-badge">Default</span>
@@ -771,6 +778,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .dl-dropdown-icon, .dl-item-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    opacity: 0.9;
   }
   .dl-dropdown-menu {
     position: absolute;

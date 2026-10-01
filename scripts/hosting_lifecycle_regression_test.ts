@@ -42,27 +42,38 @@ const migration = read('supabase/migrations/20261012000000_add_link_reactivate_a
 // 1. Media Library hostingSources — NO enabled=true filter
 // ============================================================
 
-// The providers query must NOT have .eq('enabled', true) — Hosting Control
-// doesn't filter by enabled, and filtering causes "Not linked" for assets
-// whose provider/source is temporarily disabled.
-const providersQueryMatch = libraryServer.match(/from\('streaming_providers'\)[\s\S]*?\.in\('adapter_id'.*?\)/);
-assert.ok(providersQueryMatch, '1a. Library page queries streaming_providers by adapter_id');
-assert.doesNotMatch(providersQueryMatch[0], /\.eq\('enabled'/, '1b. Library providers query does NOT filter by enabled=true (matches Hosting Control pattern)');
+// Phase C audit fix: the library page server now delegates to the
+// canonical provider resolver ($lib/server/hosting/provider-resolver).
+// The resolver does the two-query lookup with NO enabled filter.
+// Verify the resolver module has the correct queries, and the library
+// page server imports + calls it.
+const resolverFile = read('src/lib/server/hosting/provider-resolver.ts');
 
-const sourcesQueryMatch = libraryServer.match(/from\('streaming_sources'\)[\s\S]*?\.order\('display_order'/);
-assert.ok(sourcesQueryMatch, '1c. Library page queries streaming_sources');
-assert.doesNotMatch(sourcesQueryMatch[0], /\.eq\('enabled'/, '1d. Library sources query does NOT filter by enabled=true (matches Hosting Control pattern)');
-ok('1. Media Library hostingSources: no enabled=true filter (matches Hosting Control — fixes "Not linked" for disabled providers)');
+// The resolver queries streaming_providers WITHOUT enabled filter.
+const resolverProvidersMatch = resolverFile.match(/from\('streaming_providers'\)[\s\S]*?\.select\('id, name, adapter_id, enabled'\)/);
+assert.ok(resolverProvidersMatch, '1a. Provider resolver queries streaming_providers');
+assert.doesNotMatch(resolverFile, /\.eq\('enabled', true\)/, '1b. Provider resolver does NOT filter by enabled=true');
+
+// The resolver queries streaming_sources WITHOUT enabled filter.
+const resolverSourcesMatch = resolverFile.match(/from\('streaming_sources'\)[\s\S]*?\.select\('id, name, provider_id, enabled'\)/);
+assert.ok(resolverSourcesMatch, '1c. Provider resolver queries streaming_sources');
+assert.doesNotMatch(resolverFile, /\.eq\('enabled', true\)/, '1d. Provider resolver does NOT filter by enabled=true (sources)');
+
+// The library page server imports and calls the resolver.
+assert.match(libraryServer, /import.*resolveHostingSources.*from/, '1e. Library page server imports resolveHostingSources');
+assert.match(libraryServer, /resolveHostingSources\(adminClient\)/, '1f. Library page server calls resolveHostingSources');
+ok('1. Media Library hostingSources: no enabled=true filter (canonical resolver — fixes "Not linked" for disabled providers)');
 
 // ============================================================
-// 2. Upload API route — explicit queries (not nested PostgREST join)
+// 2. Upload API route — uses canonical resolver (not inline queries)
 // ============================================================
 
-assert.doesNotMatch(uploadApi, /\.select\(.*streaming_providers\(adapter_id\)/, '2a. Upload API does NOT use nested PostgREST join for adapter_id derivation');
-assert.match(uploadApi, /from\('streaming_sources'\)[\s\S]*?\.eq\('id'.*providerSourceId/, '2b. Upload API queries streaming_sources explicitly');
-assert.match(uploadApi, /from\('streaming_providers'\)[\s\S]*?\.eq\('id'.*provider_id/, '2c. Upload API queries streaming_providers explicitly');
-assert.doesNotMatch(uploadApi, /Could not derive providerAdapterId from providerSourceId/, '2d. Upload API does NOT have the old error message (uses specific error messages now)');
-ok('2. Upload API route: explicit two-query derivation (no fragile nested join — fixes "Could not derive providerAdapterId")');
+// Phase C audit fix: the upload API route now uses resolveAdapterForSource
+// instead of inline two-query lookup.
+assert.match(uploadApi, /resolveAdapterForSource/, '2a. Upload API uses canonical resolver');
+assert.doesNotMatch(uploadApi, /\.select\(.*streaming_providers\(adapter_id\)/, '2b. Upload API does NOT use nested PostgREST join');
+assert.doesNotMatch(uploadApi, /Could not derive providerAdapterId from providerSourceId/, '2c. Upload API does NOT have the old error message');
+ok('2. Upload API route: uses canonical resolver (no fragile inline queries)');
 
 // ============================================================
 // 3. Detach preserves all fields

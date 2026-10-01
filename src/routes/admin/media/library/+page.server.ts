@@ -18,6 +18,7 @@ import type { PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { MediaLibraryService } from '$lib/server/hosting/library/service';
+import { resolveHostingSources } from '$lib/server/hosting/provider-resolver';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
@@ -46,32 +47,21 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // If folderSummary or sources fail, we don't fail the whole page —
   // partial failure is part of Phase C's resilience contract.
   //
-  // Hosting sources use the SAME explicit two-query pattern as the upload
-  // page server (see /admin/media/upload/+page.server.ts). The previous
-  // implementation used a nested PostgREST join
-  // (`provider:streaming_providers(id, name, adapter_id)`), but the
-  // Supabase JS client returns `s.provider` as either an object OR an
-  // array depending on relation cardinality — for a many-to-one relation
-  // PostgREST returns a single object, but in practice the runtime shape
-  // can come back as an array, making `s.provider?.id` return `undefined`,
-  // which drops `adapterId` to `null` for every source and makes the UI
-  // show "Not linked" for assets that ARE linked. Two explicit queries
-  // joined in application code avoids that fragility entirely.
-  const [listResult, folderResult, providersResult, sourcesResult] = await Promise.allSettled([
+  // Hosting sources are now resolved through the CANONICAL provider
+  // resolver (Phase C audit fix). This replaces the inline two-query
+  // pattern and ensures:
+  //   1. NO enabled=true filter (disabled providers/sources may have
+  //      linked assets and must be resolvable).
+  //   2. Query failures are surfaced as `hostingSourcesError` instead
+  //      of silently degrading every adapter_id to null (which caused
+  //      the "Not linked" / "UNKNOWN" production symptom — FINDING-005).
+  //   3. The same resolver is used by the upload page server, eliminating
+  //      the duplicated logic that drifted (upload page had enabled=true
+  //      filter, library page didn't — FINDING-004).
+  const [listResult, folderResult, hostingResult] = await Promise.allSettled([
     service.list({ q, type: type as any, year, seriesTmdb: series, provider_source_id: provider, status: status as any, sort: sort as any, page, limit: 25 }),
     service.folderSummary(),
-    // Post-deploy fix: do NOT filter by enabled=true here. Hosting Control
-    // correctly resolves disabled providers/sources (they may have linked
-    // assets). The enabled filter caused Media Library to show "Not linked"
-    // for assets whose provider/source was temporarily disabled.
-    adminClient
-      .from('streaming_providers')
-      .select('id, name, adapter_id')
-      .in('adapter_id', ['vidara', 'abyss']),
-    adminClient
-      .from('streaming_sources')
-      .select('id, name, provider_id')
-      .order('display_order', { ascending: true }),
+    resolveHostingSources(adminClient),
   ]);
 
   if (listResult.status === 'rejected') {
@@ -79,29 +69,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     throw new Error(`Media Library load failed: ${listResult.reason?.message ?? listResult.reason}`);
   }
 
-  // Join providers + sources in application code. Both queries must
-  // succeed for `hostingSources` to be populated; either failing surfaces
-  // as `hostingSourcesError` so the client can distinguish "DB error"
-  // from "no providers configured".
-  const providers = providersResult.status === 'fulfilled' ? (providersResult.value.data ?? []) : [];
-  const sources = sourcesResult.status === 'fulfilled' ? (sourcesResult.value.data ?? []) : [];
-  const providerById = new Map(providers.map((p: any) => [p.id, p]));
-  const hostingSources = sources.map((s: any) => {
-    const provider = providerById.get(s.provider_id) ?? null;
-    return {
-      id: s.id,
-      name: s.name,
-      providerId: provider?.id ?? null,
-      providerName: provider?.name ?? null,
-      adapterId: provider?.adapter_id ?? null,
-    };
-  });
-  const hostingSourcesError =
-    providersResult.status === 'rejected'
-      ? `providers: ${providersResult.reason?.message ?? providersResult.reason}`
-      : sourcesResult.status === 'rejected'
-        ? `sources: ${sourcesResult.reason?.message ?? sourcesResult.reason}`
-        : null;
+  // Extract hosting sources + surface any resolution error.
+  const hosting = hostingResult.status === 'fulfilled'
+    ? hostingResult.value
+    : { list: [], error: { code: 'HOSTING_SOURCES_REJECTED', message: String(hostingResult.reason?.message ?? hostingResult.reason) } };
+  const hostingSources = hosting.list;
+  const hostingSourcesError = hosting.error?.message ?? null;
 
   return {
     initialList: listResult.value,

@@ -80,32 +80,22 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const mediaService = new CanonicalMediaService(adminClient);
   const uploadService = new UploadService(adminClient, mediaService);
 
-  // Derive providerAdapterId from the source via two explicit queries
-  // (not a nested PostgREST join — that pattern is fragile and was the
-  // root cause of the "Could not derive providerAdapterId" production bug).
+  // Phase C audit fix: derive providerAdapterId via the CANONICAL resolver
+  // instead of inline two-query lookup. Surfaces real errors (deleted
+  // source, missing provider) with actionable codes.
   let providerAdapterId = body.providerAdapterId;
   if (!providerAdapterId) {
-    // 1. Fetch the streaming_sources row to get provider_id.
-    const { data: sourceRow, error: sourceErr } = await adminClient
-      .from('streaming_sources')
-      .select('id, provider_id')
-      .eq('id', body.providerSourceId)
-      .maybeSingle();
-    if (sourceErr || !sourceRow) {
-      return json({ ok: false, error: { code: 'VALIDATION', message: 'Could not find the selected provider source. It may have been deleted.' } }, { status: 400, headers: NO_STORE_HEADERS });
-    }
-    // 2. Fetch the streaming_providers row to get adapter_id.
-    const { data: providerRow, error: providerErr } = await adminClient
-      .from('streaming_providers')
-      .select('id, adapter_id')
-      .eq('id', (sourceRow as { provider_id: string }).provider_id)
-      .maybeSingle();
-    if (providerErr || !providerRow) {
-      return json({ ok: false, error: { code: 'VALIDATION', message: 'Could not find the provider for the selected source.' } }, { status: 400, headers: NO_STORE_HEADERS });
-    }
-    providerAdapterId = (providerRow as { adapter_id?: string }).adapter_id ?? undefined;
-    if (!providerAdapterId) {
-      return json({ ok: false, error: { code: 'VALIDATION', message: 'The provider has no adapter configured.' } }, { status: 400, headers: NO_STORE_HEADERS });
+    try {
+      const { resolveAdapterForSource, ProviderResolutionError } = await import('$lib/server/hosting/provider-resolver');
+      const resolution = await resolveAdapterForSource(adminClient, body.providerSourceId);
+      providerAdapterId = resolution.adapterId;
+    } catch (err) {
+      const { ProviderResolutionError } = await import('$lib/server/hosting/provider-resolver');
+      if (err instanceof ProviderResolutionError) {
+        return json({ ok: false, error: { code: 'VALIDATION', message: err.message } }, { status: 400, headers: NO_STORE_HEADERS });
+      }
+      const message = err instanceof Error ? err.message : 'Failed to resolve provider adapter.';
+      return json({ ok: false, error: { code: 'VALIDATION', message } }, { status: 400, headers: NO_STORE_HEADERS });
     }
   }
 

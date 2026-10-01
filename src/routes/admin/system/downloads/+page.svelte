@@ -9,6 +9,7 @@
   import AdminFormSection from '$lib/components/admin/AdminFormSection.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
+  import DownloaderIcon from '$lib/components/source/DownloaderIcon.svelte';
   import { Download, Check, Edit3, Trash2, Power, Star } from 'lucide-svelte';
   import type { PageData, ActionData } from './$types';
 
@@ -39,7 +40,7 @@
         {#each data.providers as p (p.id)}
           <div class="a2-dl-row" data-enabled={p.enabled}>
             <div class="a2-dl-row-main">
-              <span class="a2-dl-row-icon">{p.icon ?? '📦'}</span>
+              <span class="a2-dl-row-icon"><DownloaderIcon icon={p.icon} size={20} /></span>
               <div class="a2-dl-row-info">
                 <div class="a2-dl-row-name">{p.name} {#if p.is_default}<span class="a2-dl-default-badge">DEFAULT</span>{/if}</div>
                 <div class="a2-dl-row-meta">
@@ -64,7 +65,7 @@
                 <button type="submit" class="a2-icon-btn" title={p.enabled ? 'Disable' : 'Enable'}><Power size={14} /></button>
               </form>
               <button type="button" class="a2-icon-btn" onclick={() => openEdit(p)} title="Edit"><Edit3 size={14} /></button>
-              <form method="POST" action="?/deleteProvider" style="display:inline" onsubmit={() => confirm('Delete this downloader?')}>
+              <form method="POST" action="?/deleteProvider" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this downloader? This cannot be undone.')) e.preventDefault(); }}>
                 <input type="hidden" name="id" value={p.id} />
                 <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete"><Trash2 size={14} /></button>
               </form>
@@ -89,7 +90,7 @@
             <option value="json" selected={editing?.type === 'json'}>JSON</option>
           </select>
         </label>
-        <label class="a2-field"><span>Icon</span><input name="icon" value={editing?.icon ?? ''} /></label>
+        <label class="a2-field"><span>Icon URL</span><input name="icon" type="url" value={editing?.icon ?? ''} placeholder="https://example.com/icon.svg" /></label>
         <label class="a2-field"><span>Ordering</span><input type="number" name="ordering" value={editing?.ordering ?? 0} /></label>
       </AdminFormSection>
       <AdminFormSection heading="Support">

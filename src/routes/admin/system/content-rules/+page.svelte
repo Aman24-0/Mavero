@@ -160,7 +160,7 @@
                   <button type="submit" class="a2-icon-btn" title={cat.enabled ? 'Disable' : 'Enable'}><Power size={14} /></button>
                 </form>
                 <button type="button" class="a2-icon-btn" onclick={() => openEditCategory(cat)} title="Edit"><Edit3 size={14} /></button>
-                <form method="POST" action="?/deleteCategory" style="display:inline" onsubmit={() => confirm('Delete this category? This cannot be undone.')}>
+                <form method="POST" action="?/deleteCategory" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this category? This cannot be undone.')) e.preventDefault(); }}>
                   <input type="hidden" name="id" value={cat.id} />
                   <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete"><Trash2 size={14} /></button>
                 </form>
@@ -207,7 +207,8 @@
       <AdminFormSection heading="Identity">
         <label class="a2-field"><span>Name</span><input name="name" required value={editingCategory?.name ?? ''} /></label>
         <label class="a2-field"><span>Slug</span><input name="slug" required value={editingCategory?.slug ?? ''} /></label>
-        <label class="a2-field"><span>Icon (emoji)</span><input name="icon" value={editingCategory?.icon ?? ''} /></label>
+        <!-- FINDING-007 fix: removed dead Icon emoji input. streaming_categories has no icon column. -->
+
         <label class="a2-field"><span>Ordering</span><input type="number" name="ordering" value={editingCategory?.ordering ?? 0} /></label>
         <label class="a2-field"><span>Enabled</span><input type="checkbox" name="enabled" value="true" checked={editingCategory ? editingCategory.enabled : true} /></label>
       </AdminFormSection>

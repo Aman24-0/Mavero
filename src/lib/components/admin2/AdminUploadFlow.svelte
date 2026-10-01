@@ -619,24 +619,20 @@
       flowState.operationError = '';
       flowState.errorCode = '';
 
-      // Determine the next step based on the operation's source.
-      // If the original was a remote upload, the retry operation carries
-      // source_url — but the server already executed it during retry
-      // (no — retry just creates a queued row; the client must re-drive).
-      // For remote uploads: re-call the upload endpoint with uploadSource='remote'.
-      // For local uploads: re-drive the browser-direct/proxy flow.
+      // FINDING-013 fix: for remote-URL retries, use the dedicated
+      // /execute-remote endpoint instead of calling createOperation
+      // again (which created a THIRD orphan operation row). The retry
+      // operation already carries source_url from the parent — we just
+      // need to tell the server to execute it.
       if (json.operation.source_url) {
-        // Remote upload — re-execute server-side.
         flowState.step = 'processing';
         startPolling();
-        // Note: the original createOperation already called executeRemoteUpload.
-        // For retry, we need to re-trigger it. The simplest path: call the
-        // upload endpoint again with the same params + the new operation id.
-        // But that would create yet another operation. Instead, we directly
-        // call executeRemoteUpload via a new endpoint... which doesn't exist.
-        // Phase D pragmatic fix: for remote retries, re-submit via createOperation
-        // (the server is idempotent on canonical_key, so no duplicate media_item).
-        await reCreateForRetry();
+        const execRes = await fetch(`/api/admin/media/upload/${flowState.operationId}/execute-remote`, { method: 'POST' });
+        const execJson = await execRes.json();
+        if (!execRes.ok || !execJson.ok) {
+          throw new Error(execJson?.error?.message ?? 'Remote upload execution failed.');
+        }
+        flowState.operationStatus = execJson.operation.status;
       } else {
         // Local upload — re-drive the browser-direct/proxy flow.
         flowState.step = 'uploading';
@@ -647,41 +643,6 @@
     } finally {
       retrying = false;
     }
-  }
-
-  async function reCreateForRetry() {
-    // For remote-URL retries where the retry operation carries source_url,
-    // we re-submit via createOperation to trigger executeRemoteUpload.
-    // This is a pragmatic Phase D fix — a future phase should add a
-    // dedicated /api/admin/media/upload/[id]/execute-remote endpoint.
-    if (!flowState.selectedTitle) return;
-    try {
-      const body: Record<string, unknown> = {
-        tmdbId: flowState.selectedTitle.tmdbId,
-        title: flowState.selectedTitle.title,
-        year: flowState.selectedTitle.year ?? null,
-        imdbId: flowState.imdbId ?? null,
-        contentType: flowState.contentType,
-        providerSourceId: flowState.providerSourceId,
-        uploadSource: 'remote',
-        remoteUrl: flowState.remoteUrl,
-        sourceQuality: flowState.sourceQuality || undefined,
-      };
-      if (flowState.season != null) body.season = flowState.season;
-      if (flowState.episode != null) body.episode = flowState.episode;
-      if (flowState.episodeTitle) body.episodeTitle = flowState.episodeTitle;
-
-      const res = await fetch('/api/admin/media/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json();
-      if (res.ok && json.ok) {
-        flowState.operationId = json.operation.id;
-        flowState.operationStatus = json.operation.status;
-      }
-    } catch { /* swallow — polling will surface the issue */ }
   }
 
   // ============================================================
@@ -1280,6 +1241,24 @@
               </div>
               {#if flowState.errorCode}
                 <div class="result-error-code mono">Error: {flowState.errorCode}</div>
+              {/if}
+              {#if flowState.errorCode === 'STALE_OPERATION' || flowState.errorCode === 'MISSING_ASSET_ID'}
+                <div class="result-hint">
+                  The provider upload did not produce a valid asset record. This is usually a
+                  server-side data issue — retry the upload, and if it fails again, check the
+                  Operations Center for the full error log.
+                </div>
+              {:else if flowState.errorCode === 'DUPLICATE_PROVIDER_ASSET'}
+                <div class="result-hint">
+                  A media asset with the same provider file ID already exists. Use
+                  &ldquo;Link existing file&rdquo; in the Media Library detail drawer to attach
+                  the existing asset to this title, or delete the duplicate first.
+                </div>
+              {:else if flowState.errorCode === 'PROVIDER_PROCESSING'}
+                <div class="result-hint">
+                  The provider (Vidara/Abyss) accepted the upload but failed during
+                  transcoding. Check the provider&rsquo;s dashboard for details, then retry.
+                </div>
               {/if}
               <div class="result-actions">
                 <button type="button" class="upload-action" onclick={retryUpload} disabled={retrying}>
@@ -2113,6 +2092,16 @@
     padding: var(--a2-space-1) var(--a2-space-2);
     border-radius: var(--a2-radius-xs);
     background: rgba(255, 77, 109, 0.1);
+  }
+  .result-hint {
+    color: var(--a2-text-muted);
+    font-size: var(--a2-text-xs);
+    line-height: 1.5;
+    padding: var(--a2-space-2) var(--a2-space-3);
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-surface-3);
+    border: 1px solid var(--a2-border);
+    max-width: 480px;
   }
   .result-meta {
     display: flex;

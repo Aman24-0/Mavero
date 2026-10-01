@@ -209,13 +209,14 @@ ok('E4. Operations getBadgeCounts: 3 sequential counts + adapter lookups → par
 assert.match(hostingControlService, /const \[assetRes, syncRes\] = await Promise\.all\(/, 'HostingControl.listProviders: asset + sync queries parallelized');
 ok('E5. HostingControl.listProviders: 2 sequential media_assets queries → parallel Promise.all');
 
-// Upload page: providers + sources queried explicitly (not nested join)
-// Post-deploy fix: replaced fragile streaming_providers!inner nested join
-// with explicit separate queries joined in application code.
-assert.match(uploadServer, /from\('streaming_providers'\)[\s\S]*?in\('adapter_id'/, 'Upload page: queries streaming_providers by adapter_id explicitly');
-assert.match(uploadServer, /from\('streaming_sources'\)[\s\S]*?in\('provider_id'/, 'Upload page: queries streaming_sources by provider_id explicitly');
+// Upload page: uses canonical provider resolver (Phase C audit fix)
+// Post-deploy fix + Phase C audit: replaced fragile streaming_providers!inner
+// nested join, then replaced inline two-query pattern with canonical
+// resolver call. The resolver lives in $lib/server/hosting/provider-resolver.
+assert.match(uploadServer, /resolveHostingSources/, 'Upload page: uses canonical resolveHostingSources');
 assert.doesNotMatch(uploadServer, /\.select\(.*streaming_providers!inner/, 'Upload page: does NOT use fragile !inner nested join (post-deploy fix)');
-ok('E6. Upload page: explicit separate queries for providers + sources (reliable, no nested join dependency)');
+assert.doesNotMatch(uploadServer, /\n\s+\.eq\('enabled', true\)/, 'Upload page: does NOT filter by enabled=true in code (Phase C fix — disabled providers may have linked assets)');
+ok('E6. Upload page: uses canonical provider resolver (no inline queries, no enabled filter)');
 
 // Library service: assets + demands parallelized
 assert.match(libraryService, /const \[assetsRes, demandsRes\] = await Promise\.all\(/, 'MediaLibraryService.list: assets + demands parallelized');

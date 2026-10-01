@@ -1,6 +1,7 @@
 import { identifierModes, integrationTypes, providerStatuses, sourceVisibilities, type IdentifierMode, type IntegrationType, type JsonObject, type ProviderStatus, type SourceVisibility } from './types';
 import { isSourceBadge, isSourceIconKey, type SourceBadge, type SourceIconKey } from '$lib/shared/source-presentation';
 import { withSandboxPolicy, sandboxPolicies, type SandboxPolicy } from '$lib/shared/sandbox-policy';
+import { validateIconUrl, IconValidationError } from '$lib/shared/icon-url';
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const adapterPattern = /^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
@@ -135,7 +136,11 @@ export function parseProviderForm(form: FormData) {
     name: requiredText(form.get('name'), 'Provider name', 120),
     slug: validateSlug(requiredText(form.get('slug'), 'Provider slug', 120), 'Provider slug'),
     description: text(form.get('description'), 'Description', 500),
-    icon: text(form.get('icon'), 'Icon', 120),
+    // FINDING-017 fix: validate provider icon as a URL (http/https only).
+    // Previously this was loose `text()` validation that accepted
+    // arbitrary strings — the same vulnerability as download_providers.icon.
+    // Now: the icon must be a valid http/https URL (or null/empty).
+    icon: parseProviderIconField(form.get('icon')),
     status: enumValue(form.get('status'), 'Provider status', providerStatuses, 'experimental') as ProviderStatus,
     enabled: booleanValue(form.get('enabled')),
     integration_type: enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType,
@@ -243,4 +248,20 @@ export function parseCategoryReorderForm(form: FormData): { categoryId: string; 
     positions.push({ sourceId, position: positiveInteger(value, 'Position') });
   }
   return { categoryId, positions };
+}
+
+/**
+ * FINDING-017 fix: parse + validate the provider icon field as a URL.
+ * Returns the validated URL string, or null if the field is empty.
+ * @throws StreamingValidationError if the URL is non-empty but invalid.
+ */
+function parseProviderIconField(value: FormDataEntryValue | null): string | null {
+  try {
+    return validateIconUrl(value as string);
+  } catch (err) {
+    if (err instanceof IconValidationError) {
+      throw new StreamingValidationError(err.message);
+    }
+    throw new StreamingValidationError('Provider icon URL is invalid.');
+  }
 }

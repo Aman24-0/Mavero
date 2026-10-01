@@ -41,7 +41,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
   const uploadService = new UploadService(adminClient, mediaService);
 
   // 1. Get the operation.
-  const operation = await uploadService.getOperation(params.id);
+  let operation = await uploadService.getOperation(params.id);
   if (!operation) {
     return json({ ok: false, error: { code: 'NOT_FOUND', message: 'Upload operation not found.' } }, { status: 404, headers: NO_STORE_HEADERS });
   }
@@ -49,6 +49,40 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
   // 2. Idempotency: if already uploaded/processing/ready, return current state.
   if (['uploaded', 'processing', 'ready'].includes(operation.status)) {
     return json({ ok: true, operation, message: 'Operation already completed.' }, { headers: NO_STORE_HEADERS });
+  }
+
+  // FINDING-014 fix: recover from concurrent STALE_OPERATION auto-fail.
+  //
+  // Race scenario:
+  //   1. Browser uploads directly to Vidara's upload server (succeeds).
+  //   2. Before the browser calls /complete, a /status poll fires.
+  //   3. The poll sees the operation in 'uploading' with no media_asset_id
+  //      (because /complete hasn't run yet) and auto-fails it with
+  //      STALE_OPERATION.
+  //   4. The browser then calls /complete with a valid providerResult.
+  //
+  // Previously, /complete rejected the call with INVALID_STATE — the
+  // browser's successful upload was discarded, and the file existed at
+  // the provider with no Mavero record (orphan).
+  //
+  // Now: if the operation is in 'failed' state with STALE_OPERATION
+  // (the only auto-fail that fires during the uploading window), AND
+  // the browser is submitting a providerResult, we recover by
+  // transitioning back to 'uploading' and proceeding with completion.
+  // The providerResult is the source of truth — if Vidara returned a
+  // valid filecode, the upload genuinely succeeded.
+  if (operation.status === 'failed' && operation.error_code === 'STALE_OPERATION') {
+    await uploadService.updateOperationState(params.id, 'uploading', {
+      failed_at: null,
+      error_code: null,
+      error_message: null,
+    });
+    // Re-fetch the operation so the rest of the handler sees the
+    // updated state.
+    operation = await uploadService.getOperation(params.id);
+    if (!operation) {
+      return json({ ok: false, error: { code: 'NOT_FOUND', message: 'Upload operation not found after recovery.' } }, { status: 404, headers: NO_STORE_HEADERS });
+    }
   }
 
   // 3. Verify operation is in 'uploading' state.
@@ -67,22 +101,19 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
     return json({ ok: false, error: { code: 'VALIDATION', message: 'Missing providerResult in request body.' } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
-  // 5. Look up the provider adapter.
-  const { data: sourceRow } = await adminClient
-    .from('streaming_sources')
-    .select('provider_id')
-    .eq('id', operation.provider_source_id!)
-    .maybeSingle();
-
-  const { data: providerRow } = await adminClient
-    .from('streaming_providers')
-    .select('adapter_id')
-    .eq('id', sourceRow?.provider_id ?? '')
-    .maybeSingle();
-
-  const adapterId = providerRow?.adapter_id;
-  if (!adapterId) {
-    return json({ ok: false, error: { code: 'ADAPTER_NOT_FOUND', message: 'Provider adapter_id not found.' } }, { status: 400, headers: NO_STORE_HEADERS });
+  // 5. Resolve the provider adapter via the CANONICAL resolver.
+  // Phase C audit fix: replaces inline two-query lookup with the shared
+  // resolver. Surfaces real errors (deleted source, missing provider)
+  // with actionable codes instead of a generic "ADAPTER_NOT_FOUND".
+  const { resolveAdapterForSource, ProviderResolutionError } = await import('$lib/server/hosting/provider-resolver');
+  let adapterId: string;
+  try {
+    const resolution = await resolveAdapterForSource(adminClient, operation.provider_source_id!);
+    adapterId = resolution.adapterId;
+  } catch (err) {
+    const code = err instanceof ProviderResolutionError ? err.code : 'PROVIDER_RESOLUTION_FAILED';
+    const message = err instanceof Error ? err.message : 'Failed to resolve provider adapter.';
+    return json({ ok: false, error: { code, message } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
   const adapter = getHostingAdapter(adapterId);

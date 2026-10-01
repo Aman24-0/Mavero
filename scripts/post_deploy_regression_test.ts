@@ -33,29 +33,30 @@ const rootLayout = read('src/routes/+layout.svelte');
 const adminAppShell = read('src/lib/components/admin2/AdminAppShell.svelte');
 
 // ============================================================
-// 1. Hosting source mapping — explicit queries
+// 1. Hosting source mapping — canonical resolver (Phase C audit fix)
 // ============================================================
 
-// 1a. Library page does NOT use nested join for hosting sources (check the actual select, not comments)
+// Phase C audit fix: the library page server now delegates to the
+// canonical provider resolver. The resolver does the two-query lookup.
+// 1a. Library page does NOT use nested join
 assert.doesNotMatch(libraryServer, /\.select\('id, name, provider:streaming_providers\(/, '1a. Library page does NOT use nested PostgREST join for hosting sources');
-// 1b. Library page queries streaming_providers explicitly
-assert.match(libraryServer, /from\('streaming_providers'\)/, '1b. Library page queries streaming_providers explicitly');
-assert.match(libraryServer, /adapter_id.*vidara.*abyss|in\('adapter_id'.*vidara/, '1c. Library page filters by adapter_id IN (vidara, abyss)');
-// 1c. Library page joins in application code
-assert.match(libraryServer, /providerMap|providerById|Map|\.find\(|\.get\(/, '1d. Library page joins providers + sources in application code');
-// 1d. Library page returns hostingSourcesError
-assert.match(libraryServer, /hostingSourcesError/, '1e. Library page returns hostingSourcesError so DB failure is distinguishable from empty config');
-ok('1. Hosting source mapping: explicit queries + application-code join (no nested PostgREST)');
+// 1b. Library page imports + calls the canonical resolver
+assert.match(libraryServer, /import.*resolveHostingSources/, '1b. Library page imports canonical resolver');
+assert.match(libraryServer, /resolveHostingSources\(adminClient\)/, '1c. Library page calls resolveHostingSources');
+// 1c. Library page returns hostingSourcesError
+assert.match(libraryServer, /hostingSourcesError/, '1d. Library page returns hostingSourcesError so DB failure is distinguishable from empty config');
+ok('1. Hosting source mapping: canonical resolver (no inline queries, no nested PostgREST)');
 
 // ============================================================
-// 2. Upload provider discovery — reliable, no silent fallback
+// 2. Upload provider discovery — canonical resolver (Phase C audit fix)
 // ============================================================
 
-// 2a. Upload page does NOT use !inner nested join (check the actual select, not comments)
+// Phase C audit fix: the upload page server now delegates to the
+// canonical resolver. No inline queries, no enabled=true filter.
+// 2a. Upload page does NOT use !inner nested join
 assert.doesNotMatch(uploadServer, /\.select\(.*streaming_providers!inner/, '2a. Upload page does NOT use streaming_providers!inner nested join');
-// 2b. Upload page queries providers then sources separately
-assert.match(uploadServer, /from\('streaming_providers'\)[\s\S]*?in\('adapter_id'/, '2b. Upload page queries streaming_providers by adapter_id');
-assert.match(uploadServer, /from\('streaming_sources'\)[\s\S]*?in\('provider_id'/, '2c. Upload page queries streaming_sources by provider_id');
+// 2b. Upload page uses the canonical resolver
+assert.match(uploadServer, /resolveHostingSources/, '2b. Upload page uses canonical resolver');
 // 2c. Upload page returns hostingSourcesError
 assert.match(uploadServer, /hostingSourcesError/, '2d. Upload page returns hostingSourcesError');
 ok('2. Upload provider discovery: explicit queries, no fragile nested join, error state returned');

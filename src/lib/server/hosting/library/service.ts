@@ -74,6 +74,18 @@ export type LibraryMediaItem = {
   assets: LibraryAssetSummary[];
   /** Demand summary for this canonical key (null if no demand row exists). */
   demand: { request_count: number; last_requested_at: string; status: string } | null;
+  /**
+   * FINDING-003 fix: computed hosting state. Distinguishes:
+   *   - 'hosted': at least one asset with status='ready' AND mavero_status='available'
+   *   - 'processing': at least one active asset (uploading/uploaded/processing) but none ready
+   *   - 'failed': ALL assets are 'failed' (mix of failed+deleted counts as failed)
+   *   - 'pending': no assets BUT has demand (users requested it — upload needed)
+   *   - 'catalog_only': no assets AND no demand (orphan from failed upload)
+   *
+   * The UI uses this to render a clear status badge instead of letting
+   * orphaned items blend in with hosted content.
+   */
+  hosting_state: 'hosted' | 'processing' | 'failed' | 'pending' | 'catalog_only';
 };
 
 export type LibraryListResult = {
@@ -115,6 +127,23 @@ export type LibraryQuery = {
   sort?: LibrarySort;
   page?: number;
   limit?: number;
+  /**
+   * FINDING-003 fix: when false (default), items with NO assets AND NO
+   * demand are excluded from the list. These are "orphan" rows left
+   * behind by failed uploads — they have a canonical identity but no
+   * playable asset and nobody has requested them, so showing them in
+   * Media Library is misleading (they look like hosted items with
+   * "Not linked" pills + a demand count that doesn't exist).
+   *
+   * Items with demand but no assets are STILL shown (they're
+   * "missing media" — users have requested them and the admin should
+   * see them to know an upload is needed).
+   *
+   * Items with at least one non-deleted asset are always shown.
+   *
+   * Set to `true` to include orphans (for admin debugging / cleanup).
+   */
+  includeOrphans?: boolean;
 };
 
 // ============================================================
@@ -243,9 +272,25 @@ export class MediaLibraryService {
     // these are media_assets filters, not media_items filters. We keep
     // items whose asset list matches the filter; items with no matching
     // assets are dropped (when the filter is set).
+    //
+    // FINDING-003 fix: also filter out ORPHAN items (no assets AND no
+    // demand) unless `includeOrphans` is explicitly true. These are
+    // ghost rows from failed uploads — they have a canonical identity
+    // but no playable asset and nobody has requested them. Showing them
+    // in Media Library is misleading.
+    const includeOrphans = query.includeOrphans === true;
     const filteredItems: typeof items = [];
     for (const item of items) {
       let itemAssets = assetsByItem.get(item.id) ?? [];
+      const itemDemand = demandByKey.get(item.canonical_key) ?? null;
+
+      // FINDING-003: drop orphan items (no assets AND no demand) unless
+      // explicitly included. Do this BEFORE the provider/status filter
+      // so the filter doesn't accidentally expose orphans.
+      if (!includeOrphans && itemAssets.length === 0 && !itemDemand) {
+        continue;
+      }
+
       if (query.provider_source_id) {
         itemAssets = itemAssets.filter(a => a.provider_source_id === query.provider_source_id);
       }
@@ -255,8 +300,8 @@ export class MediaLibraryService {
         itemAssets = itemAssets.filter(a => a.status === query.status || a.mavero_status === query.status);
       }
       // If a filter was applied and the item has no matching assets, skip it.
-      // If no filter was applied, keep all items (including those with no assets —
-      // they're "missing" media which is itself a useful signal in the library).
+      // If no filter is applied, keep all items (including those with no assets —
+      // they're "missing"/"pending" media which is itself a useful signal in the library).
       if ((query.provider_source_id || (query.status && query.status !== 'all')) && itemAssets.length === 0) {
         continue;
       }
@@ -266,12 +311,17 @@ export class MediaLibraryService {
     }
 
     const total = count ?? 0;
-    const resultItems: LibraryMediaItem[] = filteredItems.map(item => ({
-      ...item,
-      content_type: item.content_type as MediaContentType,
-      assets: assetsByItem.get(item.id) ?? [],
-      demand: demandByKey.get(item.canonical_key) ?? null,
-    }));
+    const resultItems: LibraryMediaItem[] = filteredItems.map(item => {
+      const itemAssets = assetsByItem.get(item.id) ?? [];
+      const itemDemand = demandByKey.get(item.canonical_key) ?? null;
+      return {
+        ...item,
+        content_type: item.content_type as MediaContentType,
+        assets: itemAssets,
+        demand: itemDemand,
+        hosting_state: computeHostingState(itemAssets, itemDemand),
+      };
+    });
 
     return {
       items: resultItems,
@@ -321,17 +371,20 @@ export class MediaLibraryService {
 
     const assets: LibraryAssetSummary[] = (assetsRes.data ?? []) as LibraryAssetSummary[];
 
+    const demand = demandRes.data
+      ? {
+          request_count: demandRes.data.request_count,
+          last_requested_at: demandRes.data.last_requested_at,
+          status: demandRes.data.status,
+        }
+      : null;
+
     const libraryItem: LibraryMediaItem = {
       ...item,
       content_type: item.content_type as MediaContentType,
       assets,
-      demand: demandRes.data
-        ? {
-            request_count: demandRes.data.request_count,
-            last_requested_at: demandRes.data.last_requested_at,
-            status: demandRes.data.status,
-          }
-        : null,
+      demand,
+      hosting_state: computeHostingState(assets, demand),
     };
 
     const recent_operations: LibraryOperationSummary[] = (opsRes.data ?? []).map((op: any) => ({
@@ -456,4 +509,50 @@ function clampLimit(limit: unknown): number {
   const n = typeof limit === 'number' ? limit : parseInt(String(limit ?? String(DEFAULT_LIMIT)), 10);
   if (!Number.isFinite(n) || n < 1) return DEFAULT_LIMIT;
   return Math.min(Math.floor(n), MAX_LIMIT);
+}
+
+/**
+ * FINDING-003 fix: compute the hosting state of a media item from its
+ * assets + demand. This is the canonical classification used by the
+ * Media Library UI to distinguish hosted content from orphaned/pending
+ * items.
+ *
+ * Classification rules (checked in order):
+ *   1. 'hosted' — at least one asset with status='ready' AND mavero_status='available'
+ *   2. 'processing' — at least one active asset (status in
+ *      queued|uploading|uploaded|processing) that isn't failed/deleted
+ *   3. 'failed' — ALL assets are 'failed' (a mix of failed+deleted
+ *      also counts as failed since neither is playable)
+ *   4. 'pending' — no assets BUT has demand (users requested it —
+ *      upload needed)
+ *   5. 'catalog_only' — no assets AND no demand (orphan from a failed
+ *      upload — filtered out of the default Media Library view by the
+ *      `includeOrphans` flag)
+ */
+function computeHostingState(
+  assets: LibraryAssetSummary[],
+  demand: { request_count: number; last_requested_at: string; status: string } | null,
+): 'hosted' | 'processing' | 'failed' | 'pending' | 'catalog_only' {
+  // Filter out deleted assets — they don't count toward any active state.
+  const activeAssets = assets.filter(a => a.status !== 'deleted');
+
+  if (activeAssets.length === 0) {
+    // No active assets. If there's demand, it's "pending" (waiting for
+    // upload). Otherwise it's a catalog-only orphan.
+    return demand ? 'pending' : 'catalog_only';
+  }
+
+  // Check for hosted (at least one ready+available asset).
+  const hasHosted = activeAssets.some(a => a.status === 'ready' && a.mavero_status === 'available');
+  if (hasHosted) return 'hosted';
+
+  // Check for processing (at least one asset in an active state).
+  const hasProcessing = activeAssets.some(a =>
+    a.status === 'queued' || a.status === 'uploading' || a.status === 'uploaded' || a.status === 'processing'
+  );
+  if (hasProcessing) return 'processing';
+
+  // All active assets are 'failed' (or 'ready' but not 'available' —
+  // e.g. detached with mavero_status='missing'). Treat as failed.
+  return 'failed';
 }
