@@ -80,17 +80,32 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const mediaService = new CanonicalMediaService(adminClient);
   const uploadService = new UploadService(adminClient, mediaService);
 
-  // Derive providerAdapterId from the source if the client didn't send it.
+  // Derive providerAdapterId from the source via two explicit queries
+  // (not a nested PostgREST join — that pattern is fragile and was the
+  // root cause of the "Could not derive providerAdapterId" production bug).
   let providerAdapterId = body.providerAdapterId;
   if (!providerAdapterId) {
-    const { data: sourceRow } = await adminClient
+    // 1. Fetch the streaming_sources row to get provider_id.
+    const { data: sourceRow, error: sourceErr } = await adminClient
       .from('streaming_sources')
-      .select('provider:streaming_providers(adapter_id)')
+      .select('id, provider_id')
       .eq('id', body.providerSourceId)
       .maybeSingle();
-    providerAdapterId = (sourceRow?.provider as { adapter_id?: string } | null)?.adapter_id ?? undefined;
+    if (sourceErr || !sourceRow) {
+      return json({ ok: false, error: { code: 'VALIDATION', message: 'Could not find the selected provider source. It may have been deleted.' } }, { status: 400, headers: NO_STORE_HEADERS });
+    }
+    // 2. Fetch the streaming_providers row to get adapter_id.
+    const { data: providerRow, error: providerErr } = await adminClient
+      .from('streaming_providers')
+      .select('id, adapter_id')
+      .eq('id', (sourceRow as { provider_id: string }).provider_id)
+      .maybeSingle();
+    if (providerErr || !providerRow) {
+      return json({ ok: false, error: { code: 'VALIDATION', message: 'Could not find the provider for the selected source.' } }, { status: 400, headers: NO_STORE_HEADERS });
+    }
+    providerAdapterId = (providerRow as { adapter_id?: string }).adapter_id ?? undefined;
     if (!providerAdapterId) {
-      return json({ ok: false, error: { code: 'VALIDATION', message: 'Could not derive providerAdapterId from providerSourceId. The source may not exist or has no adapter configured.' } }, { status: 400, headers: NO_STORE_HEADERS });
+      return json({ ok: false, error: { code: 'VALIDATION', message: 'The provider has no adapter configured.' } }, { status: 400, headers: NO_STORE_HEADERS });
     }
   }
 

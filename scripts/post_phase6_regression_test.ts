@@ -32,7 +32,7 @@ const adminAppShell = read('src/lib/components/admin2/AdminAppShell.svelte');
 // 1a. ManagementService has linkAsset method
 assert.match(managementService, /async linkAsset\(/, '1a. ManagementService has linkAsset method');
 assert.match(managementService, /Verify the media_item exists/, '1b. linkAsset verifies media_item exists');
-assert.match(managementService, /Verify not already linked/, '1c. linkAsset checks for existing link (prevents duplicates)');
+assert.match(managementService, /Check if already linked/, '1c. linkAsset checks for existing link (prevents duplicates, handles detached rows)');
 assert.match(managementService, /adapter\.getAsset\(providerAssetId\)/, '1d. linkAsset fetches current provider metadata via adapter.getAsset');
 assert.match(managementService, /INSERT the new media_assets row/, '1e. linkAsset creates media_assets row');
 assert.match(managementService, /Resolve any open demand/, '1f. linkAsset resolves demand after linking');

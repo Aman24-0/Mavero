@@ -60,15 +60,17 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const [listResult, folderResult, providersResult, sourcesResult] = await Promise.allSettled([
     service.list({ q, type: type as any, year, seriesTmdb: series, provider_source_id: provider, status: status as any, sort: sort as any, page, limit: 25 }),
     service.folderSummary(),
+    // Post-deploy fix: do NOT filter by enabled=true here. Hosting Control
+    // correctly resolves disabled providers/sources (they may have linked
+    // assets). The enabled filter caused Media Library to show "Not linked"
+    // for assets whose provider/source was temporarily disabled.
     adminClient
       .from('streaming_providers')
       .select('id, name, adapter_id')
-      .in('adapter_id', ['vidara', 'abyss'])
-      .eq('enabled', true),
+      .in('adapter_id', ['vidara', 'abyss']),
     adminClient
       .from('streaming_sources')
       .select('id, name, provider_id')
-      .eq('enabled', true)
       .order('display_order', { ascending: true }),
   ]);
 

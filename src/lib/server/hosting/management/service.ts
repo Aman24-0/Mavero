@@ -145,8 +145,10 @@ export class ManagementService {
   /**
    * Detaches a provider asset from its canonical Mavero media_item.
    * Does NOT delete the provider-side file — the asset remains at the
-   * provider. The media_asset's media_item_id is set to null and its
-   * mavero_status is set to 'missing' so the resolver no longer returns it.
+   * provider. The media_asset's mavero_status is set to 'missing' so
+   * the resolver no longer returns it. media_item_id, provider_source_id,
+   * provider_asset_id, and playback_url are all PRESERVED so the asset
+   * can be reactivated later via reactivateAsset() or linkAsset().
    */
   async detachAsset(mediaAssetId: string, adminUserId?: string): Promise<ManagementResult> {
     const asset = await this.getMediaAsset(mediaAssetId);
@@ -272,15 +274,22 @@ export class ManagementService {
       throw new HostingProviderError('NOT_FOUND', { message: 'Media item not found.' });
     }
 
-    // 2. Verify not already linked.
+    // 2. Check if already linked — if an existing row has mavero_status='missing'
+    // (detached), reactivate it instead of creating a duplicate. This is the
+    // recovery path for the detach → relink lifecycle.
     const { data: existing } = await this.client
       .from('media_assets')
-      .select('id')
+      .select('id, mavero_status, media_item_id')
       .eq('provider_source_id', providerSourceId)
       .eq('provider_asset_id', providerAssetId)
       .maybeSingle();
     if (existing) {
-      throw new HostingProviderError('VALIDATION', { message: 'This provider file is already linked to a media asset.' });
+      const existingRow = existing as { id: string; mavero_status: string; media_item_id: string };
+      if (existingRow.mavero_status === 'missing' && existingRow.media_item_id === mediaItemId) {
+        // Reactivate the detached asset — UPDATE instead of INSERT.
+        return await this.reactivateAsset(existingRow.id, adminUserId);
+      }
+      throw new HostingProviderError('VALIDATION', { message: 'This provider file is already linked to a different media asset. Detach it first.' });
     }
 
     // 3. Look up the adapter for this provider source.
@@ -377,6 +386,74 @@ export class ManagementService {
   }
 
   /**
+   * Reactivates a previously detached provider asset.
+   *
+   * This is the recovery path for the detach → reattach lifecycle.
+   * Sets mavero_status back to 'available' (if status='ready') or
+   * 'processing' (otherwise), restoring playback.
+   *
+   * Does NOT delete or modify any provider-side state.
+   * Does NOT create a new media_assets row — updates the existing one.
+   */
+  async reactivateAsset(mediaAssetId: string, adminUserId?: string): Promise<ManagementResult> {
+    const asset = await this.getMediaAsset(mediaAssetId);
+
+    try {
+      // Set mavero_status based on current status.
+      // If the asset was 'ready' before detach, make it 'available' again.
+      // Otherwise keep it as 'processing' for the resolver to handle.
+      const newMaveroStatus = asset.status === 'ready' || asset.status === 'processing' ? 'available' : 'processing';
+
+      await this.client.from('media_assets').update({
+        mavero_status: newMaveroStatus,
+        last_synced_at: new Date().toISOString(),
+      }).eq('id', mediaAssetId);
+
+      await this.uploadService.recordOperation({
+        action: 'reactivate',
+        status: 'success',
+        media_item_id: asset.media_item_id,
+        media_asset_id: mediaAssetId,
+        provider_source_id: asset.provider_source_id ?? undefined,
+        admin_user_id: adminUserId,
+        details: { previous_mavero_status: 'missing', new_mavero_status: newMaveroStatus },
+      });
+
+      // Resolve any open demand requests for this media item.
+      try {
+        const { data: item } = await this.client
+          .from('media_items')
+          .select('canonical_key')
+          .eq('id', asset.media_item_id)
+          .maybeSingle();
+        const canonicalKey = (item as { canonical_key?: string } | null)?.canonical_key;
+        if (canonicalKey) {
+          const { DemandService } = await import('../demand/service');
+          const demandService = new DemandService(this.client);
+          await demandService.resolveDemand(canonicalKey);
+        }
+      } catch {
+        // Best-effort — demand resolution must not break reactivation.
+      }
+
+      return { ok: true, action: 'reactivate', mediaAssetId, providerAssetId: asset.provider_asset_id };
+    } catch (error) {
+      const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
+      await this.uploadService.recordOperation({
+        action: 'reactivate',
+        status: 'failed',
+        media_item_id: asset.media_item_id,
+        media_asset_id: mediaAssetId,
+        provider_source_id: asset.provider_source_id ?? undefined,
+        admin_user_id: adminUserId,
+        error_code: err.code,
+        error_message: err.message,
+      });
+      return { ok: false, action: 'reactivate', mediaAssetId, providerAssetId: asset.provider_asset_id, error: { code: err.code, message: err.message } };
+    }
+  }
+
+  /**
    * Lists all provider-side files for a given adapter that are NOT
    * currently linked to any Mavero media_asset.
    *
@@ -441,15 +518,16 @@ export class ManagementService {
     provider_source_id: string | null;
     provider_asset_id: string | null;
     filename: string | null;
+    status: string;
   }> {
     const { data, error } = await this.client
       .from('media_assets')
-      .select('id, media_item_id, provider_source_id, provider_asset_id, filename')
+      .select('id, media_item_id, provider_source_id, provider_asset_id, filename, status')
       .eq('id', mediaAssetId)
       .maybeSingle();
 
     if (error || !data) throw new HostingProviderError('NOT_FOUND', { message: 'Media asset not found.' });
-    return data as { id: string; media_item_id: string; provider_source_id: string | null; provider_asset_id: string | null; filename: string | null };
+    return data as { id: string; media_item_id: string; provider_source_id: string | null; provider_asset_id: string | null; filename: string | null; status: string };
   }
 
   private async getAdapterForAsset(mediaAssetId: string): Promise<ReturnType<typeof getHostingAdapter>> {
