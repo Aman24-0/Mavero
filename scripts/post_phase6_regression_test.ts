@@ -32,7 +32,7 @@ const adminAppShell = read('src/lib/components/admin2/AdminAppShell.svelte');
 // 1a. ManagementService has linkAsset method
 assert.match(managementService, /async linkAsset\(/, '1a. ManagementService has linkAsset method');
 assert.match(managementService, /Verify the media_item exists/, '1b. linkAsset verifies media_item exists');
-assert.match(managementService, /Check if already linked/, '1c. linkAsset checks for existing link (prevents duplicates, handles detached rows)');
+assert.match(managementService, /Check if a media_assets row already exists|Check if already linked/, '1c. linkAsset checks for existing link (prevents duplicates, handles detached rows)');
 assert.match(managementService, /adapter\.getAsset\(providerAssetId\)/, '1d. linkAsset fetches current provider metadata via adapter.getAsset');
 assert.match(managementService, /INSERT the new media_assets row/, '1e. linkAsset creates media_assets row');
 assert.match(managementService, /Resolve any open demand/, '1f. linkAsset resolves demand after linking');
@@ -125,7 +125,10 @@ const e1Files = [
   'src/routes/admin/media/library/+page.server.ts',
   'src/routes/admin/media/missing/+page.server.ts',
   'src/routes/admin/media/upload/+page.server.ts',
-  'src/routes/admin/operations/+page.server.ts',
+  // NOTE (final remediation): /admin/operations/+page.server.ts is now a pure
+  // 303 redirect to /admin/hosting — it intentionally loads no data; the
+  // hosting page server (listed above) owns the try/createSupabaseAdminClient
+  // contract for the merged workspace.
 ];
 for (const file of e1Files) {
   const content = read(file);

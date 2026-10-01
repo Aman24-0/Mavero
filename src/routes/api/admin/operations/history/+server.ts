@@ -28,8 +28,9 @@ const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
 const VALID_ACTIONS = new Set([
   'upload', 'upload_remote', 'processing_started', 'ready', 'failed',
   'retry', 'rename', 'move', 'replace', 'subtitle_upload', 'sync',
-  'provider_delete', 'detach', 'create_media_item', 'update_media_item',
-  'delete_media_item', 'create_folder', 'update_folder', 'delete_folder',
+  'provider_delete', 'detach', 'link', 'reactivate',
+  'create_media_item', 'update_media_item', 'delete_media_item',
+  'create_folder', 'update_folder', 'delete_folder',
   'create_folder_mapping', 'update_folder_mapping', 'delete_folder_mapping',
   'resolve_availability', 'all',
 ]);

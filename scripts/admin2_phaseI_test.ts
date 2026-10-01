@@ -120,12 +120,18 @@ ok('10a. Confirm dialog close button has 44px touch target');
 
 // ============================================================
 // 11. Filter sheet safe-area on bottom
+// [final remediation] The mobile filter sheets are now the shared
+// Mavero-native AdminFilterSheet (chip-based, no native <select>) — the
+// safe-area lives in that component (a2-fs-safe-area + env(safe-area-
+// inset-bottom)) and every consumer renders it.
 // ============================================================
 
-assert.match(adminHostingAssets, /a2-assets-filter-sheet-actions[\s\S]*?safe-area-inset-bottom/, 'assets filter sheet has safe-area');
-assert.match(adminOpsJobs, /a2-jobs-filter-sheet-actions[\s\S]*?safe-area-inset-bottom/, 'jobs filter sheet has safe-area');
-assert.match(adminOpsHistory, /a2-history-filter-sheet-actions[\s\S]*?safe-area-inset-bottom/, 'history filter sheet has safe-area');
-ok('11a. All filter sheets have safe-area-inset-bottom');
+const adminFilterSheet = readFileSync(new URL('../src/lib/components/admin2/AdminFilterSheet.svelte', import.meta.url), 'utf8');
+assert.match(adminFilterSheet, /a2-fs-safe-area[\s\S]*?env\(safe-area-inset-bottom\)/, 'AdminFilterSheet has safe-area-inset-bottom');
+assert.match(adminHostingAssets, /<AdminFilterSheet/, 'assets (Media Library) uses AdminFilterSheet');
+assert.match(adminOpsJobs, /<AdminFilterSheet/, 'jobs uses AdminFilterSheet');
+assert.match(adminOpsHistory, /<AdminFilterSheet/, 'history uses AdminFilterSheet');
+ok('11a. All mobile filter sheets (AdminFilterSheet) have safe-area-inset-bottom');
 
 // ============================================================
 // 12. Hosting providers drawer breakpoint consistency (768px)
@@ -249,11 +255,15 @@ ok('24a. All major components respect prefers-reduced-motion');
 // placeholder until Phase C ships.
 // ============================================================
 
+// [Phase 2C consolidation] Upload was removed from the top-level mobile nav
+// (reachable via Media Library header action + the More sheet) — the nav is
+// Home / Media / Hosting / Analytics / More.
 assert.match(adminAppShell, /mobileNav[\s\S]*?Home.*\/admin'/, 'mobile nav has Home');
-assert.match(adminAppShell, /mobileNav[\s\S]*?Upload.*\/admin\/media\/upload'/, 'mobile nav has Upload');
-assert.match(adminAppShell, /mobileNav[\s\S]*?Hosting.*\/admin\/hosting'/, 'Phase 2: mobile nav has Hosting (replaced placeholder Media)');
+assert.match(adminAppShell, /\{ id: 'media-library', label: 'Media', href: '\/admin\/media\/library'/, 'mobile nav has Media (Media Library)');
+assert.match(adminAppShell, /mobileNav[\s\S]*?Hosting.*\/admin\/hosting'/, 'mobile nav has Hosting');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Analytics.*\/admin\/analytics'/, 'mobile nav has Analytics');
 assert.match(adminAppShell, /mobileNav[\s\S]*?More/, 'mobile nav has More');
-ok('25a. Mobile bottom nav has 5 primary destinations (Phase 2: Hosting replaces placeholder Media)');
+assert.doesNotMatch(adminAppShell, /id: 'upload', label: 'Upload[^']*',[^\n]*matchPrefix[^\n]*\n[\s\S]{0,400}?a2-bottom-nav/, 'mobile nav no longer has top-level Upload (Phase 2C consolidation)');
+ok('25a. Mobile bottom nav has 5 primary destinations (Home/Media/Hosting/Analytics/More)');
 
 console.log(`\nAdmin 2.0 Phase I tests passed (${passed} check groups).`);

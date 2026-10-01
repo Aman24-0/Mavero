@@ -51,10 +51,13 @@ assert.match(adminAppShell, /\{ id: 'overview', label: 'Overview', href: '\/admi
 ok('1a. nav group COMMAND has Overview');
 
 // CONTENT
+// [Phase 2C consolidation] Upload is NOT a top-level nav item anymore —
+// reachable via the Media Library header action. The Content group is
+// Media Library + Missing Media.
 assert.match(adminAppShell, /\{ id: 'media-library', label: 'Media Library', href: '\/admin\/media\/library'/, 'nav: Content → Media Library');
-assert.match(adminAppShell, /\{ id: 'upload', label: 'Upload \/ Import', href: '\/admin\/media\/upload'/, 'nav: Content → Upload');
 assert.match(adminAppShell, /\{ id: 'missing-media', label: 'Missing Media', href: '\/admin\/media\/missing'/, 'nav: Content → Missing Media');
-ok('1b. nav group CONTENT has Media Library + Upload + Missing Media');
+assert.doesNotMatch(adminAppShell, /\{ id: 'upload', label: 'Upload \/ Import', href: '\/admin\/media\/upload'/, 'nav: Content group no longer has top-level Upload (Phase 2C)');
+ok('1b. nav group CONTENT has Media Library + Missing Media (Upload moved to Media Library header action)');
 
 // HOSTING
 // Phase E restructured the Hosting group: the unified Hosting Control
@@ -66,13 +69,14 @@ assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting Control', href: '
 assert.doesNotMatch(adminAppShell, /id: 'providers', label: 'Provider Registry'/, 'nav: Provider Registry item removed (Phase 1 — managed in API & Sources)');
 ok('1c. nav group HOSTING has Hosting Control only (Phase 1 removed Provider Registry — managed in API & Sources)');
 
-// OPERATIONS
-// Phase F restructured the Operations group: the unified Operations Center
-// workspace at /admin/operations replaces the old separate Jobs/History/Attention
-// placeholders. The three tabs (Jobs/Activity/Attention) live inside the workspace.
-assert.match(adminAppShell, /\{ id: 'operations', label: 'Operations Center', href: '\/admin\/operations'/, 'nav: Operations → Operations Center');
-assert.match(adminAppShell, /matchPrefix: '\/admin\/operations'/, 'Operations Center has matchPrefix');
-ok('1d. nav group OPERATIONS has Operations Center (Phase F restructuring)');
+// OPERATIONS — [final remediation] the standalone Operations workspace no
+// longer exists as a nav item: Operations merged into Hosting Control
+// (/admin/hosting — providers/sync/jobs/activity/attention) and
+// /admin/operations is a legacy redirect. The nav has NO Operations entry.
+assert.doesNotMatch(adminAppShell, /\{ id: 'operations', label: 'Operations Center', href: '\/admin\/operations'/, 'nav: no standalone Operations Center item (merged into Hosting Control)');
+assert.doesNotMatch(adminAppShell, /matchPrefix: '\/admin\/operations'/, 'no Operations matchPrefix');
+assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting', icon: Server, matchPrefix: '\/admin\/hosting' \}/, 'nav: Hosting group has Hosting Control (owns Jobs/Activity/Attention)');
+ok('1d. nav group HOSTING has Hosting Control only (Operations merged in — no duplicate workspace)');
 
 // SYSTEM — 4 primary items only (Defaults + Feature Control removed
 // from the primary SYSTEM nav group). They live in `configItems`
@@ -203,7 +207,7 @@ assert.match(adminPlaceholder, /relatedLinks/, 'AdminPlaceholder accepts related
 ok('6a. AdminPlaceholder component exists with phase + capabilities + related links');
 
 // Every previously-orphaned nav destination now has a page
-assert.match(libraryPage, /<AdminAppShell>/, 'library page wraps in AdminAppShell');
+assert.match(libraryPage, /<AdminAppShell /, 'library page wraps in AdminAppShell');
 ok('6b. /admin/media/library page exists — Phase C replaced the placeholder with the real Media Library');
 
 // Phase E: /admin/media/assets and /admin/media/sync are now redirects

@@ -23,9 +23,10 @@
    */
 
   import { onMount, onDestroy } from 'svelte';
-  import { Search, Filter, X, ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Loader2, Clock, ExternalLink, Film, Tv, Sparkles, Activity, Check, Ban, RotateCcw } from 'lucide-svelte';
+  import { Search, Filter, X, ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Loader2, Clock, ExternalLink, Film, Tv, Sparkles, Activity, Check, Ban, RotateCcw, Trash2, FileText, Pencil, FolderInput, Unlink, Zap, Link2 } from 'lucide-svelte';
   import AdminStatus from './AdminStatus.svelte';
-  import type { JobRow, JobQuery } from '$lib/shared/operations-types';
+  import AdminFilterSheet from './AdminFilterSheet.svelte';
+  import type { JobRow, JobQuery, JobOperationType } from '$lib/shared/operations-types';
 
   let {
     badgeCounts = { jobsActive: 0, attentionTotal: 0 },
@@ -157,6 +158,33 @@
   }
   function statusLabel(s: string): string {
     return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  // ============================================================
+  // Operation-type presentation — the unified Jobs stream includes
+  // management operations alongside upload-pipeline jobs. User-facing
+  // terminology: the provider_delete action is ALWAYS "Delete File"
+  // (the provider itself was not deleted — only the file was).
+  // ============================================================
+  function operationTypeLabel(type: JobOperationType): string {
+    switch (type) {
+      case 'upload': return 'Upload';
+      case 'upload_remote': return 'Remote upload';
+      case 'retry': return 'Retry';
+      case 'delete': return 'Delete File';
+      case 'rename': return 'Rename';
+      case 'move': return 'Move';
+      case 'detach': return 'Detach';
+      case 'reactivate': return 'Reactivate';
+      case 'link': return 'Link';
+      case 'subtitle': return 'Subtitle';
+      case 'replace': return 'Replace';
+      case 'sync': return 'Sync';
+      default: return type;
+    }
+  }
+  function operationTypeTitle(job: JobRow): string {
+    return operationTypeLabel(job.operationType);
   }
   function formatDuration(startedAt: string | null, endedAt: string | null): string {
     if (!startedAt) return '—';
@@ -303,6 +331,7 @@
           <option value="ready">Ready</option>
           <option value="failed">Failed</option>
           <option value="cancelled">Cancelled</option>
+          <option value="deleted">Deleted</option>
         </select>
       </label>
       <label class="a2-jobs-filter">
@@ -312,6 +341,13 @@
           <option value="upload">Upload</option>
           <option value="upload_remote">Remote upload</option>
           <option value="retry">Retry</option>
+          <option value="delete">Delete File</option>
+          <option value="rename">Rename</option>
+          <option value="move">Move</option>
+          <option value="detach">Detach</option>
+          <option value="reactivate">Reactivate</option>
+          <option value="link">Link</option>
+          <option value="sync">Sync</option>
         </select>
       </label>
       <label class="a2-jobs-filter">
@@ -377,7 +413,7 @@
                 {#if job.isStale}<span class="a2-jobs-stale-badge">STALE</span>{/if}
                 {#if job.isRetryable}<span class="a2-jobs-retryable-badge">RETRYABLE</span>{/if}
               </div>
-              <span class="a2-jobs-type-badge" data-type={job.operationType}>{job.operationType}</span>
+              <span class="a2-jobs-type-badge" data-type={job.operationType}>{operationTypeLabel(job.operationType)}</span>
               {#if job.attemptNumber > 1}<span class="a2-jobs-attempt">×{job.attemptNumber}</span>{/if}
             </div>
             {#if job.mediaItem}
@@ -426,7 +462,7 @@
                 </div>
               </td>
               <td class="col-type">
-                <span class="a2-jobs-type-badge" data-type={job.operationType}>{job.operationType}</span>
+                <span class="a2-jobs-type-badge" data-type={job.operationType}>{operationTypeLabel(job.operationType)}</span>
                 {#if job.attemptNumber > 1}<span class="a2-jobs-attempt">×{job.attemptNumber}</span>{/if}
               </td>
               <td class="col-media">
@@ -483,67 +519,78 @@
     </footer>
   {/if}
 
-  <!-- Mobile filter sheet -->
-  {#if mobileFiltersOpen}
-    <div class="a2-jobs-filter-sheet-overlay" onclick={() => { mobileFiltersOpen = false; }} role="presentation">
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="a2-jobs-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-jobs-filter-sheet-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-        <header class="a2-jobs-filter-sheet-head">
-          <h2 id="a2-jobs-filter-sheet-title">Filters</h2>
-          <button type="button" class="a2-jobs-filter-sheet-close" onclick={() => { mobileFiltersOpen = false; }} aria-label="Close">
-            <X size={16} />
-          </button>
-        </header>
-        <div class="a2-jobs-filter-sheet-body">
-          <label class="a2-jobs-filter a2-jobs-filter-full">
-            <span class="a2-jobs-filter-label">Status</span>
-            <select bind:value={filters.status} class="a2-jobs-select">
-              <option value="all">All</option>
-              <option value="active">Active</option>
-              <option value="stale">Stale</option>
-              <option value="queued">Queued</option>
-              <option value="uploading">Uploading</option>
-              <option value="processing">Processing</option>
-              <option value="ready">Ready</option>
-              <option value="failed">Failed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </label>
-          <label class="a2-jobs-filter a2-jobs-filter-full">
-            <span class="a2-jobs-filter-label">Type</span>
-            <select bind:value={filters.operationType} class="a2-jobs-select">
-              <option value="all">All</option>
-              <option value="upload">Upload</option>
-              <option value="upload_remote">Remote upload</option>
-              <option value="retry">Retry</option>
-            </select>
-          </label>
-          <label class="a2-jobs-filter a2-jobs-filter-full">
-            <span class="a2-jobs-filter-label">Provider</span>
-            <select bind:value={filters.provider} class="a2-jobs-select">
-              <option value="all">All</option>
-              <option value="vidara">Vidara</option>
-              <option value="abyss">Abyss</option>
-            </select>
-          </label>
-          <label class="a2-jobs-filter a2-jobs-filter-full">
-            <span class="a2-jobs-filter-label">Sort</span>
-            <select bind:value={filters.sort} class="a2-jobs-select">
-              <option value="recently_updated">Recently updated</option>
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
-              <option value="failed">Failed first</option>
-              <option value="stale">Stale first</option>
-            </select>
-          </label>
-        </div>
-        <footer class="a2-jobs-filter-sheet-actions">
-          <button type="button" class="a2-jobs-clear" onclick={clearFilters}>Clear all</button>
-          <button type="button" class="a2-jobs-apply" onclick={() => { mobileFiltersOpen = false; }}>Apply</button>
-        </footer>
-      </div>
-    </div>
-  {/if}
+  <!-- Mobile filter sheet — Mavero-native chip-based filter UI (no native
+       browser <select> on mobile). Includes the Deleted status filter. -->
+  <AdminFilterSheet
+    open={mobileFiltersOpen}
+    title="Jobs filters"
+    sections={[
+      {
+        dimension: 'status',
+        heading: 'Status',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'active', label: 'Active' },
+          { value: 'stale', label: 'Stale' },
+          { value: 'ready', label: 'Ready' },
+          { value: 'failed', label: 'Failed' },
+          { value: 'cancelled', label: 'Cancelled' },
+          { value: 'deleted', label: 'Deleted' },
+        ],
+      },
+      {
+        dimension: 'operationType',
+        heading: 'Type',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'upload', label: 'Upload' },
+          { value: 'upload_remote', label: 'Remote upload' },
+          { value: 'retry', label: 'Retry' },
+          { value: 'delete', label: 'Delete File' },
+          { value: 'rename', label: 'Rename' },
+          { value: 'move', label: 'Move' },
+          { value: 'detach', label: 'Detach' },
+          { value: 'reactivate', label: 'Reactivate' },
+          { value: 'link', label: 'Link' },
+          { value: 'sync', label: 'Sync' },
+        ],
+      },
+      {
+        dimension: 'provider',
+        heading: 'Provider',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'vidara', label: 'Vidara' },
+          { value: 'abyss', label: 'Abyss' },
+        ],
+      },
+      {
+        dimension: 'sort',
+        heading: 'Sort',
+        options: [
+          { value: 'recently_updated', label: 'Recently updated' },
+          { value: 'newest', label: 'Newest' },
+          { value: 'oldest', label: 'Oldest' },
+          { value: 'failed', label: 'Failed first' },
+          { value: 'stale', label: 'Stale first' },
+        ],
+      },
+    ]}
+    selected={{
+      status: filters.status ?? 'all',
+      operationType: filters.operationType ?? 'all',
+      provider: filters.provider ?? 'all',
+      sort: filters.sort ?? 'recently_updated',
+    }}
+    onApply={(applied) => {
+      filters.status = (applied.status as JobQuery['status']) ?? 'all';
+      filters.operationType = (applied.operationType as JobQuery['operationType']) ?? 'all';
+      filters.provider = applied.provider ?? 'all';
+      filters.sort = (applied.sort as JobQuery['sort']) ?? 'recently_updated';
+    }}
+    onClear={clearFilters}
+    onClose={() => { mobileFiltersOpen = false; }}
+  />
 
   <!-- Detail drawer -->
   {#if drawerOpen && selectedJob}
@@ -560,9 +607,9 @@
         <header class="a2-job-drawer-head">
           <div class="a2-job-drawer-head-left">
             <h2 id="a2-job-drawer-title" class="a2-job-drawer-title">
-              {selectedJob.operationType === 'upload_remote' ? 'Remote upload' : selectedJob.operationType === 'retry' ? 'Retry upload' : 'Upload'}
+              {operationTypeTitle(selectedJob)}
             </h2>
-            <span class="a2-job-drawer-subtitle mono">{selectedJob.id.slice(0, 8)}{#if selectedJob.attemptNumber > 1} · attempt {selectedJob.attemptNumber}{/if}</span>
+            <span class="a2-job-drawer-subtitle mono">{selectedJob.id.slice(0, 8)}{#if selectedJob.attemptNumber > 1} · attempt {selectedJob.attemptNumber}{/if}{#if selectedJob.origin === 'management'} · management op{/if}</span>
           </div>
           <button type="button" class="a2-job-drawer-close" onclick={() => { drawerOpen = false; }} aria-label="Close">
             <X size={16} />
@@ -606,7 +653,7 @@
                   <div><dt>Episode</dt><dd>S{String(selectedJob.mediaItem.season).padStart(2, '0')}E{String(selectedJob.mediaItem.episode).padStart(2, '0')}</dd></div>
                 {/if}
               </dl>
-              <a class="a2-job-drawer-open-link" href={`/admin/media/library?selected=${selectedJob.mediaItem.id}`}>
+              <a class="a2-job-drawer-open-link" href={`/admin/media/library?mediaItem=${selectedJob.mediaItem.id}`}>
                 <ExternalLink size={12} /> Open in Media Library
               </a>
             </section>
@@ -658,6 +705,27 @@
 
           <section class="a2-job-drawer-section">
             <h3 class="a2-job-drawer-section-title">Actions</h3>
+            {#if selectedJob.origin === 'management'}
+              <!-- Management operations (delete/rename/move/detach/reactivate/link/sync)
+                   are instantaneous — no retry/cancel pipeline. Reconcile stays
+                   available when the asset still exists. Delete operations are
+                   terminal history — see the Activity tab for the audit record. -->
+              <div class="a2-job-drawer-actions">
+                {#if selectedJob.mediaAssetId && selectedJob.operationType !== 'delete'}
+                  <button type="button" class="a2-job-action" onclick={() => reconcileJob(selectedJob!)} disabled={actionInProgress}>
+                    <RefreshCw size={12} /> Reconcile
+                  </button>
+                {:else}
+                  <div class="a2-job-action-unavailable">
+                    {#if selectedJob.operationType === 'delete'}
+                      <Trash2 size={12} /> Delete File is terminal — the historical record lives in the Activity tab.
+                    {:else}
+                      <Ban size={12} /> No pipeline actions for management operations.
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            {:else}
             <div class="a2-job-drawer-actions">
               {#if selectedJob.status === 'failed' && selectedJob.isRetryable}
                 <button type="button" class="a2-job-action a2-job-action-primary" onclick={() => retryJob(selectedJob!)} disabled={actionInProgress}>
@@ -680,6 +748,7 @@
                 </button>
               {/if}
             </div>
+            {/if}
           </section>
         </div>
       </div>
@@ -699,7 +768,6 @@
 
   .a2-jobs-filter-row { display: flex; gap: var(--a2-space-2); align-items: flex-end; flex-wrap: wrap; }
   .a2-jobs-filter { display: flex; flex-direction: column; gap: 2px; }
-  .a2-jobs-filter-full { width: 100%; }
   .a2-jobs-filter-label { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
   .a2-jobs-select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-family: var(--a2-font-sans); font-size: var(--a2-text-xs); padding: 4px 8px; cursor: pointer; transition: border-color var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
   .a2-jobs-select:focus { outline: none; border-color: var(--a2-cyan); }
@@ -754,16 +822,6 @@
   .a2-jobs-page-btn:hover:not(:disabled) { border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-jobs-page-num { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
 
-  .a2-jobs-filter-sheet-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.55); display: flex; align-items: flex-end; }
-  .a2-jobs-filter-sheet { width: 100%; background: var(--a2-surface-1); border-top-left-radius: var(--a2-radius-lg); border-top-right-radius: var(--a2-radius-lg); border-top: 1px solid var(--a2-border-strong); display: flex; flex-direction: column; max-height: 80vh; animation: a2-sheet-up var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
-  @keyframes a2-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-  .a2-jobs-filter-sheet-head { display: flex; justify-content: space-between; align-items: center; padding: var(--a2-space-4); border-bottom: 1px solid var(--a2-border); }
-  .a2-jobs-filter-sheet-head h2 { margin: 0; font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
-  .a2-jobs-filter-sheet-close { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
-  .a2-jobs-filter-sheet-body { padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-3); overflow-y: auto; }
-  .a2-jobs-filter-sheet-actions {
-    padding-bottom: env(safe-area-inset-bottom, 0px); display: flex; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); border-top: 1px solid var(--a2-border); }
-  .a2-jobs-apply { flex: 1; padding: var(--a2-space-2); background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; }
 
   .a2-job-drawer-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); display: flex; justify-content: flex-end; animation: a2-fade-in var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
   @keyframes a2-fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -840,7 +898,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .a2-job-drawer, .a2-job-drawer-overlay, .a2-jobs-filter-sheet,
+    .a2-job-drawer, .a2-job-drawer-overlay,
     .a2-job-action, .a2-jobs-select, .a2-jobs-search-input,
     .a2-jobs-table tbody tr { animation: none; transition: none; }
   }

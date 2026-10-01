@@ -199,7 +199,7 @@ async function testVidaraAdapter(): Promise<void> {
   const asset = await adapter.getAsset('abc123');
   ok(asset.providerAssetId === 'abc123', 'Vidara: providerAssetId from file_code');
   ok(asset.title === 'Test Movie', 'Vidara: title normalized');
-  ok(asset.playbackUrl === 'https://vidara.so/v/abc123', 'Vidara: playbackUrl is player URL (NOT raw stream)');
+  ok(asset.playbackUrl === 'https://vidara.to/e/abc123', 'Vidara: playbackUrl is the embed player URL (vidara.to/e/ — current contract, NOT the old vidara.so/v/ share page)');
   ok(asset.status === 'ready', 'Vidara: status 1 → ready');
   ok(asset.sizeBytes === 104857600, 'Vidara: size normalized');
   ok(asset.durationSeconds === 7200, 'Vidara: duration normalized');
@@ -432,7 +432,7 @@ function testSecurity(): void {
   // ProviderAssetInfo must NEVER contain credentials.
   const mockAsset: ProviderAssetInfo = {
     providerAssetId: 'abc', providerVideoId: null, filename: 'test.mp4', title: 'Test',
-    playbackUrl: 'https://vidara.so/v/abc', thumbnailUrl: null, sizeBytes: null, durationSeconds: null,
+    playbackUrl: 'https://vidara.to/e/abc', thumbnailUrl: null, sizeBytes: null, durationSeconds: null,
     sourceQuality: null, availableQualities: [], audioLanguages: [], hasSubtitles: false,
     providerStatus: 'ok', status: 'ready', providerFolderId: null, providerUpdatedAt: null,
     raw: {},

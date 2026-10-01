@@ -3762,3 +3762,65 @@ No schema changes. No production data repairs needed (demand was already fixed i
 
 ### Commit SHA
 (pending)
+
+---
+Task ID: audit-1
+Agent: Super Z (main)
+Task: Read-only architecture audit of Mavero repo (baseline b46c351) + live Supabase verification before final remediation
+
+Work Log:
+- Cloned repo @ b46c351, working tree clean.
+- Queried live Supabase (whekhqimzrafhsrmswbn) via Management API SQL: media_assets.media_item_id NOT NULL confirmed; 2 media_items (Dune, Swapped); 2 media_assets — BOTH status='deleted', mavero_status='missing'; 0 NULL media_item_id rows; 5 demand rows all status='open'; 27 media_operations (provider_delete 2 success + 5 failed, detach 1, sync 15, upload 1, upload_remote 1, ready 2); vidara+abyss providers/sources enabled; playback_url already vidara.to/e/ form.
+- Migration tracker: 30 rows, latest 20260928213822 — BUT live schema already contains later migration effects (link/reactivate in media_operations CHECK, icon_url constraints, vidara.to origins). Tracker out of sync; schema state is current. No new migration needed for remediation.
+- Baseline: svelte-check 0 errors; consolidation/lifecycle/architecture_remediation/delete_and_upload_selector tests PASS; admin2_phaseF FAILS (stale: expects /admin/operations page server getBadgeCounts — now redirects to hosting); admin2_phaseE FAILS (stale: expects 3-tab hosting page — now 5 tabs).
+- pnpm test chain has stray bare `pnpm exec tsx` at position #40 (chain hangs/breaks); architecture_remediation_test.ts not in chain.
+
+CONFIRMED GAPS (each maps to prompt section):
+- A (§4/§5): /api/admin/hosting/assets defaults status=all → DELETED assets appear in Media Library default inventory/counts/search/pagination.
+- B (§6): No Movie/Series/Anime counts from the same active asset dataset (old folderSummary removed, nothing replaced).
+- C (§7): /admin/media/library?provider=X does NOT initialize provider filter (page server ignores provider param; AdminHostingAssets initialProvider never passed). syncUrl() writes bogus ?tab=assets onto library URL.
+- E (§9/§10): Jobs read model = media_upload_operations ONLY. Delete/management ops invisible in Jobs; no Deleted filter (JobStatus/JobQuery lack 'deleted'; jobs API VALID_STATUSES lacks it; Type filter lacks delete).
+- F (§11): Activity label renders "Provider Delete"/"Provider delete" (actionLabel title-case + ACTION_OPTIONS) — must be "Delete File".
+- G (§12): Jobs/History/Media Library mobile filter sheets use native <select>. Mavero-native pattern exists (DownloaderFilterSheet — chip-based bottom sheet). Attention already uses chip cards.
+- H (§13): linked/unlinked filter conflates mavero_status='missing' (detached, still linked to media_item) with impossible media_item_id IS NULL. UI renders UNLINKED badge for detached assets.
+- I (§13/§14): linkExistingAssetRow() + linkAsset case (a) are dead NULL-media_item paths (schema NOT NULL, sync never creates rows, only UploadService.createMediaAsset + linkAsset INSERT rows). Must remove; keep INSERT path for genuine provider files (listUnlinkedProviderFiles/sync unlinkedFiles = case 4).
+- J (§14): Detach NOT durable — sync/service.ts:146, reconcileAsset:243, upload poll :487 restore mavero_status='available' when provider reports ready, fighting admin detach.
+- K (§16): sweepResolvedDemand .limit(1) — only ONE demand resolves per sweep even when multiple assets ready (THE bug).
+- L (§15): recordDemand creates/increments demand even when a ready+available Mavero asset exists (non-Mavero source resolved) — violates "No available asset + playback miss → OPEN".
+- M (§4.17/§19): after successful delete, selectedAsset stays stale in drawer (old status + action buttons) because reloaded list excludes the asset.
+- N (§4.20): Vidara deleteAsset throws VALIDATION when result:false (file already gone) — NOT_FOUND needed for terminal-success path. Abyss 404 → NOT_FOUND already works via classifyHttpError.
+- O (§10): jobs ?status=stale hits eq('status','stale') → 0 rows (stale is derived, not stored).
+- P/Q/R (§26): broken test chain; 2 stale tests; missing coverage (view= redirect, deleted exclusion, counts, provider param, deleted jobs filter, sweep multi-resolve behavioral, mobile filter UI, detach durability, NOT_FOUND mapping, NULL-path removal, dead ?selected= links).
+- Dead links: 5 UI surfaces link /admin/media/library?selected=<id> which the library ignores (AdminOpsAttention:272, AdminUploadFlow:744, AdminHostingAssets:894, AdminOpsJobs:609, AdminOpsHistory:427).
+- §8/§21/§22/§18 verified OK: 5-tab Hosting Control, legacy redirects in place, upload provider selector uses canonical resolver+registry, playback resolver dual-gate (status=ready AND mavero_status=available) intact with vidara.to/e/ URLs.
+
+Stage Summary:
+- Architecture decisions: (1) Media Library = HostingControlService.listAssets read model extended with active-only default + facet counts + mediaItem deep-link; (2) Jobs = unified read model merging media_upload_operations + operational media_operations actions {provider_delete,rename,move,detach,reactivate,link,subtitle_upload,replace,sync} — NO schema change, NO duplicate rows; (3) detached ≠ unlinked vocabulary; (4) NO migration required.
+- Next: implement all fixes, add behavioral tests, fix test chain, verify, push.
+
+---
+Task ID: remediation-2
+Agent: Super Z (main)
+Task: FINAL ARCHITECTURE REMEDIATION — implement all fixes from the gap audit (audit-1)
+
+Work Log:
+- DEMAND (§15/§16): removed the `.limit(1)` batch-collapse bug from sweepResolvedDemand (A/B/C scenario now resolves all three — behavioral test A); added the recordDemand LIFECYCLE GUARD (no demand created/incremented while a ready+available asset exists; stale open demands self-heal to ready).
+- MEDIA LIBRARY READ MODEL (§4/§5/§6): HostingControlService.listAssets — default status='active' EXCLUDES terminal deleted files from inventory/search/counts/pagination (explicit 'deleted' is the opt-in audit view); added FACET COUNTS (contentType + provider, file counts, facet semantics: each dimension counted with all other filters applied) via two parallel facet queries; mediaItem deep-link filter; linked/unlinked redefined to linked/detached (legacy 'unlinked' accepted as alias); providers overview 'unlinked' count → 'detached'.
+- URL WIRING (§7): library page server parses provider/q/contentType/status/linked/sort/mediaItem into initialFilters → AdminHostingAssets initializes from them (Hosting Control ?provider= deep-link now actually filters); syncUrl writes clean URLs (no ?tab=assets) preserving all params.
+- JOBS UNIFIED READ MODEL (§9/§10): OperationsService.listJobs merges media_upload_operations + operational media_operations rows (provider_delete/rename/move/detach/reactivate/link/subtitle_upload/replace/sync — upload-lifecycle actions NEVER sourced from media_operations → zero duplicate rows, zero schema change); status='deleted' + operationType='delete' filters; status='stale' pushed to the DB (was eq('status','stale') matching 0 rows); merged pagination via per-source fetch-depth + summed totals; fixed isUploadOnly undefined-vs-null bug (caught by behavioral test).
+- ACTIVITY WORDING (§11): ACTION_LABELS map — provider_delete renders as "Delete File" everywhere (rows/filters/drawer); internal DB action unchanged.
+- MOBILE UX (§12): new AdminFilterSheet.svelte — Mavero-native chip-based bottom sheet following the DownloaderFilterSheet pattern with admin2 --a2-* tokens (focus trap, scroll lock, safe-area, reduced motion, Apply/Clear); replaces the native <select> sheets in Jobs/History/Media Library (Attention already chip-based).
+- DETACHED ≠ UNLINKED (§13/§14): DETACHED badge/copy everywhere; Sync tab section "Detached provider assets" with correct semantics; POST /api/admin/media/unlinked returns detached-only (mavero_status='missing' AND status!='deleted'); removed the dead linkExistingAssetRow NULL-media_item path — linkAsset now throws ASSET_STATE for the impossible NULL state + ASSET_DELETED for terminal rows; legit Link Existing File flow (provider files with NO media_assets row) as a Media Library header action (provider file picker + media item picker → linkAsset INSERT path).
+- DETACH DURABILITY: sync/reconcile/upload-poll no longer restore mavero_status='available' for admin-detached assets (missing preserved; reactivate is the only path back); upload poll demand resolution skips detached assets.
+- DELETE TERMINAL STATE (§4): Vidara deleteAsset result:false → NOT_FOUND (terminal already-gone; was VALIDATION); backend guards now on ALL remote-file mutations for deleted assets (rename/move/detach/reconcile → ASSET_DELETED, alongside existing reactivate/link guards); delete-success updates the drawer to the terminal state locally (no stale buttons, no stuck 'Deleting…').
+- API ROUTES: hosting/assets (default active, linked vocab, mediaItem param, UUID validation); operations/jobs (deleted + extended types); operations/history (link/reactivate actions); media/unlinked (detached semantics).
+- Deep-links repointed: Jobs/History/Attention/UploadFlow ?selected= → ?mediaItem= (Media Library mediaItem filter).
+- TESTS (§26): NEW final_remediation_behavioral_test.ts (11 behavioral checks with an in-memory mock Supabase client — sweep A/B/C, guards, unified jobs matrix D1-D6, stale pushdown); NEW final_remediation_contract_test.ts (59 source-contract checks); NEW final_remediation_live_smoke_test.ts (10 live-DB checks, skips without creds); fixed the broken pnpm test chain (stray bare `pnpm exec tsx` at position #40); registered architecture_remediation + new tests in the chain; updated 13 stale tests to the current architecture (phaseB/C/D/E/F/I, phase3, phase5, phase3-hosting-adapter vidara URL, lifecycle link matrix, consolidation C3, post_phase6, discover_subpage line-wrap, phaseD wording).
+- FIXED 2 live-schema bugs caught by the live smoke: media_operations has NO updated_at column (removed from the Jobs Source B select); facet query used `media_item(content_type)` without the table alias (PostgREST schema error → `media_item:media_items(content_type)`).
+
+Stage Summary:
+- svelte-check: 0 errors, 0 warnings. Build: PASS. Full suite: 185/193 tests PASS — the 8 failures ALL verified failing at baseline b46c351 (adult_mode admin toggles, repo CI file, user-page a11y, 4x player internals, phase4 stale live-empty-tables assertion) — zero regressions; previously the chain broke at position #40 so ~150 tests never ran.
+- LIVE DB verification (read-only): unified Jobs query executes (26 ops: 2 upload + 23 management); status=deleted → exactly the 7 live provider_delete ops; default inventory EXCLUDES the 2 live deleted assets (was 2 → 0); explicit deleted audit view shows exactly those 2; facet counts consistent; detached filter + legacy alias work.
+- NO MIGRATION REQUIRED (verified: live schema already contains all constraints incl. link/reactivate actions + icon_url checks; tracker is out of sync but schema state is current — pre-existing).
+- NO production data changes.
+- Next: commit + push.

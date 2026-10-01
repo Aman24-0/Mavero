@@ -45,6 +45,7 @@ import type {
   HostingAssetRow,
   HostingAssetQuery,
   HostingAssetListResult,
+  HostingAssetFacetCounts,
   AssetLifecycleStatus,
   AssetMaveroStatus,
 } from '$lib/shared/hosting-types';
@@ -170,17 +171,20 @@ export class HostingControlService {
     const assetErr = assetRes.error;
     // assetCounts is partial-failure — if the query fails, we still return
     // providers with assetCounts=null.
-    const countsBySource = new Map<string, { total: number; ready: number; processing: number; failed: number; deleted: number; unlinked: number }>();
+    const countsBySource = new Map<string, { total: number; ready: number; processing: number; failed: number; deleted: number; detached: number }>();
     if (!assetErr && assetRows) {
       for (const row of assetRows as Array<{ provider_source_id: string | null; status: string; mavero_status: string }>) {
         if (!row.provider_source_id) continue;
-        const c = countsBySource.get(row.provider_source_id) ?? { total: 0, ready: 0, processing: 0, failed: 0, deleted: 0, unlinked: 0 };
+        const c = countsBySource.get(row.provider_source_id) ?? { total: 0, ready: 0, processing: 0, failed: 0, deleted: 0, detached: 0 };
         c.total += 1;
         if (row.status === 'ready') c.ready += 1;
         else if (row.status === 'processing' || row.status === 'uploaded' || row.status === 'uploading' || row.status === 'queued') c.processing += 1;
         else if (row.status === 'failed') c.failed += 1;
         else if (row.status === 'deleted') c.deleted += 1;
-        if (row.mavero_status === 'missing' && row.status !== 'deleted') c.unlinked += 1;
+        // Detached (NOT "unlinked"): mavero_status='missing' on a non-deleted
+        // row — the asset still belongs to its media_item; an admin detached
+        // it from playback. The remote file may still exist.
+        if (row.mavero_status === 'missing' && row.status !== 'deleted') c.detached += 1;
         countsBySource.set(row.provider_source_id, c);
       }
     }
@@ -269,6 +273,31 @@ export class HostingControlService {
     const offset = (page - 1) * limit;
     const sort = query.sort ?? 'recently_updated';
 
+    // ==========================================================
+    // ARCHITECTURE (final remediation):
+    //
+    // The Media Library is the ONE canonical asset-centric file manager.
+    // rows / search / filters / counts / pagination total are ALL derived
+    // from the same base query below — there is no second population.
+    //
+    // DEFAULT = 'active' status: terminal deleted files are EXCLUDED from
+    // the normal inventory, search, counts, and pagination. 'deleted' is
+    // an explicit opt-in audit view. A deleted asset is unreachable in the
+    // default experience of every filter combination.
+    // ==========================================================
+    const statusFilter = query.status ?? 'active';
+
+    // Resolve the provider filter once — the source ids are used by the
+    // main query AND the facet queries so every number comes from the
+    // same adapter resolution.
+    let providerSourceIds: string[] | null = null;
+    if (query.provider && query.provider !== 'all') {
+      providerSourceIds = await this.sourceIdsForAdapter(query.provider);
+      if (providerSourceIds.length === 0) {
+        return { items: [], total: 0, page, limit, hasMore: false, counts: { contentType: { all: 0, movie: 0, series: 0, anime: 0 }, provider: { all: 0 } } };
+      }
+    }
+
     // Build the base query. We select from media_assets and LEFT JOIN
     // media_items via the Supabase nested-select syntax.
     let assetsQuery = this.client
@@ -281,30 +310,33 @@ export class HostingControlService {
         media_item:media_items(id, title, content_type, tmdb_id, imdb_id, canonical_key, year, season, episode)
       `, { count: 'exact' });
 
-    // Provider filter — map adapter_id → source_id via a sub-query.
-    // We resolve the source_id(s) for the requested adapter up-front so
-    // the main query stays a simple .in() filter.
-    if (query.provider && query.provider !== 'all') {
-      const sourceIds = await this.sourceIdsForAdapter(query.provider);
-      if (sourceIds.length === 0) {
-        return { items: [], total: 0, page, limit, hasMore: false };
-      }
-      assetsQuery = assetsQuery.in('provider_source_id', sourceIds);
+    // Provider filter — resolved above via the adapter→source mapping.
+    if (providerSourceIds) {
+      assetsQuery = assetsQuery.in('provider_source_id', providerSourceIds);
     }
 
-    // Status filter — applies to media_assets.status
-    if (query.status && query.status !== 'all') {
-      assetsQuery = assetsQuery.eq('status', query.status);
+    // Media-item deep-link filter (Jobs/Activity/Attention "Open media").
+    if (query.mediaItemId) {
+      assetsQuery = assetsQuery.eq('media_item_id', query.mediaItemId);
     }
 
-    // Linked / unlinked filter.
-    //   linked = media_item_id IS NOT NULL AND mavero_status != 'missing'
-    //   unlinked = media_item_id IS NULL OR mavero_status = 'missing'
-    if (query.linked === 'linked') {
-      assetsQuery = assetsQuery.not('media_item_id', 'is', null).neq('mavero_status', 'missing');
-    } else if (query.linked === 'unlinked') {
-      // Two conditions OR'd — Supabase's .or() takes a PostgREST filter string.
-      assetsQuery = assetsQuery.or('media_item_id.is.null,mavero_status.eq.missing');
+    // Status filter — 'active' (default) excludes terminal deleted assets;
+    // concrete statuses filter exactly; 'deleted' is the opt-in audit view.
+    if (statusFilter === 'active') {
+      assetsQuery = assetsQuery.neq('status', 'deleted');
+    } else if (statusFilter !== 'all') {
+      assetsQuery = assetsQuery.eq('status', statusFilter);
+    }
+
+    // Link-state filter (final remediation semantics).
+    //   linked   = mavero_status != 'missing'  (every row HAS a media_item_id — NOT NULL)
+    //   detached = mavero_status = 'missing'   (admin-detached; still belongs to the media_item)
+    //   'unlinked' is accepted as a legacy alias for 'detached'.
+    const linkState = query.linked === 'unlinked' ? 'detached' : query.linked;
+    if (linkState === 'linked') {
+      assetsQuery = assetsQuery.neq('mavero_status', 'missing');
+    } else if (linkState === 'detached') {
+      assetsQuery = assetsQuery.eq('mavero_status', 'missing');
     }
 
     // hasSubtitles filter
@@ -348,7 +380,40 @@ export class HostingControlService {
 
     assetsQuery = assetsQuery.range(offset, offset + limit - 1);
 
-    const { data: assets, error: assetsError, count } = await assetsQuery;
+    // ==========================================================
+    // Facet counts — the SAME base scope (search + link-state +
+    // hasSubtitles + status + media-item deep-link), with one facet
+    // dimension's own filter removed so the chips always show what you
+    // would get by clicking them. Two light queries (2 columns each),
+    // run in parallel with the main page query. Deleted files never
+    // contribute unless status='deleted' is explicitly selected.
+    // ==========================================================
+    const contentTypeFacetPromise = this.facetCountQuery({
+      q: query.q,
+      linked: query.linked,
+      hasSubtitles: query.hasSubtitles,
+      status: query.status ?? 'active',
+      provider: query.provider,
+      mediaItemId: query.mediaItemId,
+      // contentType REMOVED — this IS the facet dimension
+    });
+    const providerFacetPromise = this.facetCountQuery({
+      q: query.q,
+      linked: query.linked,
+      hasSubtitles: query.hasSubtitles,
+      status: query.status ?? 'active',
+      contentType: query.contentType,
+      mediaItemId: query.mediaItemId,
+      // provider REMOVED — this IS the facet dimension
+    });
+
+    const [mainRes, contentTypeFacetRes, providerFacetRes] = await Promise.all([
+      assetsQuery,
+      contentTypeFacetPromise,
+      providerFacetPromise,
+    ]);
+
+    const { data: assets, error: assetsError, count } = mainRes;
     if (assetsError) {
       throw new Error(`HostingControl.listAssets: ${assetsError.message}`);
     }
@@ -368,8 +433,10 @@ export class HostingControlService {
             episode: row.media_item.episode ?? null,
           }
         : null;
-      // An asset is "unlinked" if media_item_id is null OR mavero_status is 'missing'.
-      // The UI uses this to render the UNLINKED badge.
+      // An asset is "detached" if mavero_status is 'missing' (admin detach —
+      // the row still belongs to its media_item). media_item_id cannot be
+      // NULL under the live NOT NULL constraint. The UI uses
+      // row.maveroStatus to render the DETACHED badge.
       return {
         id: row.id,
         providerSourceId: row.provider_source_id,
@@ -395,16 +462,25 @@ export class HostingControlService {
     });
 
     // 6. Fill in providerAdapterId by looking up the source → provider → adapter chain.
-    // Batch-fetch the source → adapter mapping for the source_ids on this page.
+    // Batch-fetch the source → adapter mapping for the source_ids on this page
+    // AND for the provider facet counts (single resolution, shared result).
     const sourceIdsOnPage = [...new Set(items.map((i) => i.providerSourceId).filter(Boolean))] as string[];
-    if (sourceIdsOnPage.length > 0) {
-      const adapterBySource = await this.adapterBySourceIds(sourceIdsOnPage);
-      for (const item of items) {
-        if (item.providerSourceId) {
-          item.providerAdapterId = adapterBySource.get(item.providerSourceId) ?? null;
-        }
+    const facetSourceIds = [
+      ...new Set(
+        ((providerFacetRes?.rows ?? []) as Array<{ provider_source_id: string | null }>)
+          .map((r) => r.provider_source_id)
+          .filter(Boolean),
+      ),
+    ] as string[];
+    const adapterBySource = await this.adapterBySourceIds([...new Set([...sourceIdsOnPage, ...facetSourceIds])]);
+    for (const item of items) {
+      if (item.providerSourceId) {
+        item.providerAdapterId = adapterBySource.get(item.providerSourceId) ?? null;
       }
     }
+
+    // 7. Aggregate the facet counts.
+    const counts = this.aggregateFacetCounts(contentTypeFacetRes, providerFacetRes, adapterBySource);
 
     return {
       items,
@@ -412,7 +488,132 @@ export class HostingControlService {
       page,
       limit,
       hasMore: offset + limit < total,
+      counts,
     };
+  }
+
+  // ------------------------------------------------------------
+  // Facet count helpers
+  // ------------------------------------------------------------
+
+  /**
+   * Builds one facet-count query over the same media_assets base scope.
+   * Returns the raw rows ({provider_source_id, media_item.content_type})
+   * so callers can group by any dimension; null means the facet query
+   * failed (facet counts are partial-failure — the list still loads).
+   */
+  private async facetCountQuery(scope: {
+    q?: string;
+    linked?: HostingAssetQuery['linked'];
+    hasSubtitles?: boolean | null;
+    status?: HostingAssetQuery['status'];
+    contentType?: 'movie' | 'series' | 'anime' | 'all';
+    provider?: string;
+    mediaItemId?: string | null;
+  }): Promise<{ rows: Array<{ provider_source_id: string | null; content_type: string | null }> } | null> {
+    try {
+      let q = this.client
+        .from('media_assets')
+        // NOTE: embedded resource must be the TABLE name with an alias —
+        // `media_item(content_type)` would look for a table literally named
+        // "media_item" and fail with a PostgREST schema error (caught by the
+        // live smoke test).
+        .select('provider_source_id, media_item:media_items(content_type)');
+
+      // Provider filter — resolve adapter → source ids.
+      if (scope.provider && scope.provider !== 'all') {
+        const sourceIds = await this.sourceIdsForAdapter(scope.provider);
+        if (sourceIds.length === 0) return { rows: [] };
+        q = q.in('provider_source_id', sourceIds);
+      }
+
+      if (scope.mediaItemId) {
+        q = q.eq('media_item_id', scope.mediaItemId);
+      }
+
+      // Status — same semantics as the main query (default active).
+      const statusFilter = scope.status ?? 'active';
+      if (statusFilter === 'active') {
+        q = q.neq('status', 'deleted');
+      } else if (statusFilter !== 'all') {
+        q = q.eq('status', statusFilter);
+      }
+
+      // Link state — same semantics as the main query.
+      const linkState = scope.linked === 'unlinked' ? 'detached' : scope.linked;
+      if (linkState === 'linked') {
+        q = q.neq('mavero_status', 'missing');
+      } else if (linkState === 'detached') {
+        q = q.eq('mavero_status', 'missing');
+      }
+
+      if (scope.hasSubtitles === true) {
+        q = q.eq('has_subtitles', true);
+      } else if (scope.hasSubtitles === false) {
+        q = q.eq('has_subtitles', false);
+      }
+
+      if (scope.contentType && scope.contentType !== 'all') {
+        q = q.eq('media_item.content_type', scope.contentType);
+      }
+
+      if (scope.q && scope.q.trim()) {
+        const term = scope.q.trim();
+        if (/^\d+$/.test(term)) {
+          q = q.eq('media_item.tmdb_id', term);
+        } else if (term.startsWith('tt') && /^tt\d{7,10}$/.test(term)) {
+          q = q.eq('media_item.imdb_id', term);
+        } else if (term.includes(':')) {
+          q = q.eq('media_item.canonical_key', term);
+        } else {
+          q = q.or(`filename.ilike.%${term}%,provider_asset_id.ilike.%${term}%,media_item.title.ilike.%${term}%`);
+        }
+      }
+
+      const { data, error } = await q;
+      if (error) return null;
+      const rows = ((data ?? []) as any[]).map((r) => ({
+        provider_source_id: (r.provider_source_id as string | null) ?? null,
+        content_type: (r.media_item?.content_type as string | null) ?? null,
+      }));
+      return { rows };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Groups facet rows into the API-facing counts object.
+   * Content-type counts come from the content-type facet scope; provider
+   * counts come from the provider facet scope (adapter ids resolved via
+   * the shared source→adapter map). Unresolvable sources count toward 'all'
+   * but not any adapter bucket.
+   */
+  private aggregateFacetCounts(
+    contentTypeFacet: { rows: Array<{ provider_source_id: string | null; content_type: string | null }> } | null,
+    providerFacet: { rows: Array<{ provider_source_id: string | null; content_type: string | null }> } | null,
+    adapterBySource: Map<string, string>,
+  ): HostingAssetFacetCounts | null {
+    if (!contentTypeFacet || !providerFacet) return null;
+
+    const contentTypeCounts: HostingAssetFacetCounts['contentType'] = { all: 0, movie: 0, series: 0, anime: 0 };
+    for (const row of contentTypeFacet.rows) {
+      contentTypeCounts.all += 1;
+      if (row.content_type === 'movie') contentTypeCounts.movie += 1;
+      else if (row.content_type === 'series') contentTypeCounts.series += 1;
+      else if (row.content_type === 'anime') contentTypeCounts.anime += 1;
+    }
+
+    const providerCounts: HostingAssetFacetCounts['provider'] = { all: 0 };
+    for (const row of providerFacet.rows) {
+      providerCounts.all += 1;
+      const adapterId = row.provider_source_id ? (adapterBySource.get(row.provider_source_id) ?? null) : null;
+      if (adapterId) {
+        providerCounts[adapterId] = (providerCounts[adapterId] ?? 0) + 1;
+      }
+    }
+
+    return { contentType: contentTypeCounts, provider: providerCounts };
   }
 
   // ------------------------------------------------------------

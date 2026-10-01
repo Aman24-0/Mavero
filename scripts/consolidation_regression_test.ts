@@ -145,17 +145,23 @@ assert.match(hostingAssets, /'reactivate'/, 'C3-3. reactivate action in executeA
 // Reactivate calls the canonical endpoint (via executeAction → POST /:id/reactivate)
 assert.match(hostingAssets, /\/api\/admin\/media\/assets\/\$\{asset\.id\}\/\$\{action\}/, 'C3-4. Reactivate uses canonical endpoint pattern (/:id/reactivate)');
 
-// Link Existing: visible for unlinked assets (!mediaItem)
-assert.match(hostingAssets, /!selectedAsset\.mediaItem[\s\S]*?Link Existing/, 'C3-5. Link Existing button shown for unlinked assets (!mediaItem)');
-assert.match(hostingAssets, /function startLink/, 'C3-6. startLink function exists');
+// Link Existing File (final remediation): header-level action for GENUINE
+// provider-side files with NO media_assets row (discovered via provider
+// sync). The old drawer button gated on !selectedAsset.mediaItem was dead
+// code under the NOT NULL media_item_id constraint and was removed.
+assert.match(hostingAssets, /Link Existing File/, 'C3-5. Link Existing File header action exists');
+assert.match(hostingAssets, /function startLinkExistingFlow/, 'C3-6. startLinkExistingFlow function exists');
 assert.match(hostingAssets, /function confirmLink/, 'C3-7. confirmLink function exists');
+// The dead NULL-media_item drawer path must be GONE:
+assert.doesNotMatch(hostingAssets, /!selectedAsset\.mediaItem[\s\S]{0,400}?Link Existing[\s\S]{0,200}?startLink\(/, 'C3-5b. Dead NULL-media_item Link path removed');
 
 // Link Existing calls the canonical POST /api/admin/media/assets/link endpoint
 assert.match(hostingAssets, /\/api\/admin\/media\/assets\/link/, 'C3-8. Link Existing uses canonical link endpoint');
 assert.match(hostingAssets, /mediaItemId.*providerSourceId.*providerAssetId/, 'C3-9. Link sends mediaItemId + providerSourceId + providerAssetId');
 
-// Link modal: media-item picker with search
+// Link modal: provider-file picker + media-item picker with search
 assert.match(hostingAssets, /linkModalOpen/, 'C3-10. Link modal state exists');
+assert.match(hostingAssets, /function loadProviderFilesForLink/, 'C3-10b. Provider file loader exists (untracked files)');
 assert.match(hostingAssets, /searchMediaItems/, 'C3-11. Media-item search function exists');
 assert.match(hostingAssets, /\/api\/admin\/media\/library/, 'C3-12. Link modal searches via canonical library API');
 
@@ -176,9 +182,9 @@ assert.match(hostingAssets, /selectedAsset\.mediaItem[\s\S]*?startDetach/, 'C3-1
 const reactivateButtonMatch = hostingAssets.match(/maveroStatus === 'missing'[\s\S]*?reactivate[\s\S]*?<\/button>/);
 assert.ok(reactivateButtonMatch, 'C3-19a. Reactivate button block found');
 assert.doesNotMatch(reactivateButtonMatch[0], /caps\?/, 'C3-19. Reactivate button NOT gated by provider capabilities');
-const linkButtonMatch = hostingAssets.match(/!selectedAsset\.mediaItem[\s\S]*?Link Existing[\s\S]*?<\/button>/);
-assert.ok(linkButtonMatch, 'C3-20a. Link Existing button block found');
-assert.doesNotMatch(linkButtonMatch[0], /caps\?/, 'C3-20. Link Existing button NOT gated by provider capabilities');
+const linkButtonMatch = hostingAssets.match(/a2-assets-link-existing[\s\S]*?Link Existing File[\s\S]*?<\/button>/);
+assert.ok(linkButtonMatch, 'C3-20a. Link Existing File header action block found');
+assert.doesNotMatch(linkButtonMatch[0], /caps\?/, 'C3-20. Link Existing File NOT gated by provider capabilities (Mavero lifecycle op)');
 
 ok('C3. Provider Files: Reactivate + Link Existing added, complete lifecycle (Reconcile/Reactivate/Link/Rename/Move/Detach/Delete)');
 

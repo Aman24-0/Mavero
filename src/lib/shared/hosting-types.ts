@@ -62,7 +62,8 @@ export type HostingProviderOverview = {
     processing: number;
     failed: number;
     deleted: number;
-    unlinked: number;
+    /** Detached assets: mavero_status='missing' AND status!='deleted' (still linked to a media_item) */
+    detached: number;
   } | null;
   /** Last sync timestamp (max of media_assets.last_synced_at for this source) */
   lastSyncAt: string | null;
@@ -95,7 +96,7 @@ export type HostingAssetRow = {
   lastSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Linked media item — null when the asset is unlinked (mavero_status='missing' or media_item_id is null) */
+  /** Linked media item — null when the asset row has no media link (impossible under the NOT NULL schema; kept for defensive rendering) */
   mediaItem: {
     id: string;
     title: string;
@@ -109,16 +110,55 @@ export type HostingAssetRow = {
   } | null;
 };
 
+/**
+ * Link-state filter for the asset inventory.
+ *
+ * ARCHITECTURE NOTE (final remediation): `media_assets.media_item_id` is
+ * NOT NULL in the live schema — every row IS linked to a canonical
+ * media_item. The meaningful distinction is therefore:
+ *   - 'linked'   → mavero_status !== 'missing' (active link, playable when ready)
+ *   - 'detached' → mavero_status = 'missing' (admin-detached; still belongs
+ *                  to the media_item; remote file may still exist)
+ * The legacy 'unlinked' value is accepted by the API as an alias for
+ * 'detached' for backward compatibility with old bookmarks.
+ */
+export type HostingAssetLinkState = 'linked' | 'detached' | 'unlinked' | 'all';
+
 export type HostingAssetQuery = {
   q?: string;
   provider?: string;        // adapter id
-  linked?: 'linked' | 'unlinked' | 'all';
-  status?: AssetLifecycleStatus | 'all';
+  linked?: HostingAssetLinkState;
+  /**
+   * Status filter. 'active' (the default) EXCLUDES terminal deleted
+   * assets — deleted files never appear in the normal Media Library
+   * inventory, counts, search, or pagination. 'deleted' is an explicit
+   * opt-in audit view of terminal files. 'all' includes everything
+   * (reserved for programmatic use; the UI never sends it by default).
+   */
+  status?: AssetLifecycleStatus | 'active' | 'all';
   contentType?: 'movie' | 'series' | 'anime' | 'all';
   hasSubtitles?: boolean | null;
   sort?: 'recently_updated' | 'recently_added' | 'status' | 'provider';
+  /** Deep-link: constrain the inventory to one media_item's files (used by Jobs/Activity/Attention "Open media" links). */
+  mediaItemId?: string | null;
   page?: number;
   limit?: number;
+};
+
+/**
+ * Facet counts derived from the SAME canonical asset inventory the
+ * Media Library displays. Each dimension's counts are computed with all
+ * OTHER filters applied but the dimension itself removed (standard
+ * facet semantics — the chips always show what you would get by
+ * clicking them). Deleted assets never contribute (they are excluded
+ * from the facet scope unless status='deleted' is explicitly selected).
+ * Counts are FILE counts, not media-item counts.
+ */
+export type HostingAssetFacetCounts = {
+  /** Active file counts per content type ('all' = total of the facet scope). */
+  contentType: { all: number; movie: number; series: number; anime: number };
+  /** Active file counts per hosting adapter ('all' = total of the facet scope). */
+  provider: Record<string, number> & { all: number };
 };
 
 export type HostingAssetListResult = {
@@ -127,6 +167,8 @@ export type HostingAssetListResult = {
   page: number;
   limit: number;
   hasMore: boolean;
+  /** Facet counts from the same inventory dataset (null if the facet queries failed — list still loads). */
+  counts: HostingAssetFacetCounts | null;
 };
 
 // ============================================================

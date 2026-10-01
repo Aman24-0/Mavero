@@ -45,24 +45,24 @@ const linkMatch = mgmt.match(/async linkAsset\([\s\S]*?\n  \}/);
 assert.ok(linkMatch, '1a. linkAsset method found');
 const linkBody = linkMatch[0];
 
-// The existing-row check must query media_item_id (can be null)
+// The existing-row check must query media_item_id (NOT NULL in live schema;
+// a NULL row is an impossible state guarded with a deterministic error)
 assert.match(linkBody, /media_item_id/, '1b. linkAsset queries media_item_id on existing row');
 
-// Case (a): media_item_id IS NULL → UPDATE existing row (not INSERT)
-assert.match(linkBody, /media_item_id === null/, '1c. linkAsset handles media_item_id IS NULL case');
-assert.match(linkBody, /linkExistingAssetRow/, '1d. linkAsset calls linkExistingAssetRow for unlinked rows');
+// Case (e) [final remediation]: media_item_id IS NULL is IMPOSSIBLE under the
+// NOT NULL constraint — the dead linkExistingAssetRow UPDATE path was removed
+// and replaced with a deterministic ASSET_STATE schema-drift guard. The
+// legitimate "Link Existing File" flow INSERTs a new row for provider files
+// that have NO media_assets row at all.
+assert.match(linkBody, /media_item_id === null/, '1c. linkAsset guards the impossible NULL-media_item case');
+assert.match(linkBody, /ASSET_STATE/, '1c-2. NULL-media_item guard throws ASSET_STATE (deterministic error)');
+assert.doesNotMatch(mgmt, /private async linkExistingAssetRow/, '1d. dead linkExistingAssetRow removed (no fake NULL-media_item paths)');
+// Terminal deleted rows are never relinkable:
+assert.match(linkBody, /existingRow\.status === 'deleted'/, '1d-2. linkAsset rejects deleted rows with ASSET_DELETED');
 
-// linkExistingAssetRow must UPDATE, not INSERT
-const linkExistingMatch = mgmt.match(/private async linkExistingAssetRow[\s\S]*?\n  \}/);
-assert.ok(linkExistingMatch, '1e. linkExistingAssetRow method exists');
-const linkExistingBody = linkExistingMatch[0];
-assert.match(linkExistingBody, /\.update\(/, '1f. linkExistingAssetRow uses UPDATE (not INSERT)');
-assert.doesNotMatch(linkExistingBody, /\.insert\(/, '1g. linkExistingAssetRow does NOT INSERT');
-assert.match(linkExistingBody, /media_item_id: mediaItemId/, '1h. linkExistingAssetRow sets media_item_id to selected item');
-assert.match(linkExistingBody, /mavero_status/, '1i. linkExistingAssetRow sets mavero_status');
-assert.match(linkExistingBody, /action: 'link'/, '1j. linkExistingAssetRow records action=link');
-assert.match(linkExistingBody, /status: 'success'/, '1k. linkExistingAssetRow records status=success');
-assert.match(linkExistingBody, /resolveDemand/, '1l. linkExistingAssetRow resolves demand');
+// The link path INSERTs new rows for genuine untracked provider files
+// (kept assertions for the INSERT semantics — see 4e below).
+assert.match(linkBody, /idempotent/, '1o-pre. idempotent wording kept');
 
 // Case (b): detached + same media_item → reactivate (existing behavior preserved)
 assert.match(linkBody, /mavero_status === 'missing' && existingRow\.media_item_id === mediaItemId/, '1m. linkAsset preserves detach→reactivate for same media_item');
@@ -73,13 +73,13 @@ assert.match(linkBody, /already linked to a different media asset/, '1n. linkAss
 // Case (d): already linked to same media_item + available → idempotent
 assert.match(linkBody, /idempotent/, '1o. linkAsset handles idempotent case (same media_item, already available)');
 
-// The existing-row check must select 'status' (needed for linkExistingAssetRow)
+// The existing-row check must select 'status' (needed for the deleted-row guard)
 assert.match(linkBody, /select\('id, mavero_status, media_item_id, status'\)/, '1p. linkAsset selects status on existing row check');
 
 // media_item_id must be typed as string | null (not just string)
 assert.match(linkBody, /media_item_id: string \| null/, '1q. linkAsset types media_item_id as string | null');
 
-ok('Bug 1: linkAsset() UPDATEs existing unlinked rows (media_item_id IS NULL), no duplicate INSERT');
+ok('Bug 1 [final remediation]: linkAsset() rejects impossible NULL rows with ASSET_STATE, rejects deleted rows with ASSET_DELETED, reactivate/detached+same/idempotent preserved, INSERT path for genuine untracked provider files');
 
 // ============================================================
 // BUG 2 — reactivateAsset() must reject deleted assets
@@ -144,18 +144,20 @@ ok('Bug 2 UI: Reactivate NOT shown for deleted assets in both Provider Files + M
 // ============================================================
 console.log('\n--- State-transition matrix ---');
 
-// LINK matrix:
-// 1. Existing + media_item_id NULL → UPDATE (linkExistingAssetRow)
+// LINK matrix (final remediation):
+// 1. Existing + media_item_id NULL (impossible) → deterministic ASSET_STATE error
 // 2. Existing + same media_item_id + mavero_status missing → reactivate
 // 3. Existing + different media_item_id → reject
 // 4. Existing + same media_item_id + available → idempotent
-// 5. No existing row → INSERT (original path, verified by .insert in the method)
-assert.match(linkBody, /media_item_id === null/, '4a. LINK case 1: media_item_id NULL → UPDATE');
+// 4b. Existing + status deleted → reject (ASSET_DELETED — terminal)
+// 5. No existing row → INSERT (the legitimate Link Existing File path)
+assert.match(linkBody, /media_item_id === null[\s\S]*?ASSET_STATE/, '4a. LINK case 1: NULL row (impossible) → ASSET_STATE guard');
 assert.match(linkBody, /mavero_status === 'missing' && existingRow\.media_item_id === mediaItemId/, '4b. LINK case 2: detached + same item → reactivate');
 assert.match(linkBody, /already linked to a different media asset/, '4c. LINK case 3: different item → reject');
 assert.match(linkBody, /idempotent/, '4d. LINK case 4: same item + available → idempotent');
+assert.match(linkBody, /existingRow\.status === 'deleted'[\s\S]*?ASSET_DELETED/, '4d-2. LINK case 4b: deleted row → ASSET_DELETED reject');
 assert.match(linkBody, /\.insert\(/, '4e. LINK case 5: no existing row → INSERT (original path)');
-ok('LINK state-transition matrix: 5 cases verified (NULL→UPDATE, detached→reactivate, different→reject, same+available→idempotent, none→INSERT)');
+ok('LINK state-transition matrix: 6 cases verified (NULL→ASSET_STATE, deleted→ASSET_DELETED, detached→reactivate, different→reject, same+available→idempotent, none→INSERT)');
 
 // REACTIVATE matrix:
 // 1. status='ready' + mavero_status='missing' → allowed, mavero_status='available'
@@ -172,11 +174,13 @@ ok('REACTIVATE state-transition matrix: 3 cases verified (ready/processing→ava
 // ============================================================
 console.log('\n--- UI state-aware visibility (Provider Files) ---');
 
-// Unlinked (!mediaItem): Link Existing visible, Reactivate NOT visible, Detach NOT visible
-const unlinkedBlock = hostingAssets.match(/!selectedAsset\.mediaItem[\s\S]*?Link Existing[\s\S]*?<\/button>/);
-assert.ok(unlinkedBlock, '6a. Unlinked: Link Existing button present');
-// Reactivate should NOT appear in the unlinked block
-assert.doesNotMatch(unlinkedBlock[0], /reactivate/i, '6b. Unlinked: Reactivate NOT shown');
+// Link Existing File (final remediation): a header-level action for genuine
+// untracked provider files (no media_assets row). The drawer button gated on
+// !mediaItem was dead code under the NOT NULL constraint and was removed.
+const unlinkedBlock = hostingAssets.match(/a2-assets-link-existing[\s\S]*?Link Existing File[\s\S]*?<\/button>/);
+assert.ok(unlinkedBlock, '6a. Link Existing File header action present');
+// Reactivate should NOT appear in the header action block
+assert.doesNotMatch(unlinkedBlock[0], /reactivate/i, '6b. Header action: Reactivate NOT shown there');
 // Detach should NOT appear for unlinked (no mediaItem to detach from)
 const detachBlock = hostingAssets.match(/selectedAsset\.mediaItem[\s\S]*?startDetach/);
 assert.ok(detachBlock, '6c. Detach only shown when mediaItem exists (linked)');
@@ -192,7 +196,7 @@ assert.ok(detachedBlock, '6d. Detached: Reactivate button present (inside non-de
 // so Reactivate (inside {:else}) is never rendered for deleted assets.
 assert.match(hostingAssets, /selectedAsset\.status === 'deleted'[\s\S]*?permanently deleted[\s\S]*?\{:else\}/, '6e. Deleted assets get terminal notice, actions in {:else} block');
 
-ok('UI state-aware visibility: Unlinked→Link, Detached→Reactivate, Deleted→no Reactivate, Linked→Detach');
+ok('UI state-aware visibility: header Link Existing File, Detached→Reactivate, Deleted→no Reactivate, Linked→Detach');
 
 // ============================================================
 // SUMMARY

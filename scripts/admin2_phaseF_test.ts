@@ -370,13 +370,18 @@ assert.match(countsApi, /export const GET/, 'counts API exports GET');
 assert.match(countsApi, /requireAdmin/, 'counts API requires admin');
 ok('26b. Counts API endpoint is admin-gated');
 
-// Operations page preloads badge counts
-assert.match(opsPageServer, /getBadgeCounts/, 'page server preloads badge counts');
-ok('26c. Operations page server preloads badge counts');
+// [final remediation] /admin/operations is a 303 redirect to /admin/hosting —
+// the Hosting Control page server owns the badge-count preload and the tabs
+// that render them. Verified against the hosting page server + component.
+const hostingPageServer = readFileSync(new URL('../src/routes/admin/hosting/+page.server.ts', import.meta.url), 'utf8');
+const hostingPage = readFileSync(new URL('../src/routes/admin/hosting/+page.svelte', import.meta.url), 'utf8');
+assert.match(hostingPageServer, /getBadgeCounts/, 'hosting page server preloads badge counts');
+assert.match(opsPageServer, /redirect/, 'Operations page server redirects (merged into Hosting Control)');
+ok('26c. Hosting Control page server preloads badge counts (Operations redirects into it)');
 
 // Page shows badges on tabs
-assert.match(opsPage, /badge/, 'Operations page shows badges on tabs');
-ok('26d. Operations page shows badge counts on tabs');
+assert.match(hostingPage, /badge/, 'Hosting Control page shows badges on tabs');
+ok('26d. Hosting Control page shows badge counts on tabs');
 
 // ============================================================
 // 27. Admin authorization
@@ -389,8 +394,10 @@ for (const api of allOpsApis) {
 ok('27a. All 4 operations API endpoints use requireAdmin');
 
 // Page server requires admin
-assert.match(opsPageServer, /requireAdmin/, 'operations page server requires admin');
-ok('27b. Operations page server requires admin');
+// [final remediation] /admin/operations is a pure redirect into the admin-gated
+// Hosting Control workspace (requireAdmin enforced by the hosting page server).
+assert.match(hostingPageServer, /requireAdmin/, 'hosting page server requires admin (owns the merged workspace)');
+ok('27b. Hosting Control page server requires admin (Operations redirects into it)');
 
 // All endpoints use NO_STORE
 for (const api of allOpsApis) {
@@ -420,7 +427,7 @@ ok('28b. Audit details are documented as safe (no credentials)');
 
 // Jobs batch-fetches adapter ids via adapterBySourceIds
 assert.match(opsService, /adapterBySourceIds/, 'OperationsService batch-fetches adapter ids');
-assert.match(opsService, /new Set\(items\.map/, 'OperationsService deduplicates source ids before batch lookup');
+assert.match(opsService, /new Set\(merged\.map/, 'OperationsService deduplicates source ids before batch lookup');
 ok('29a. Jobs batch-fetches adapter ids (no N+1)');
 
 // History batch-fetches adapter ids
@@ -487,24 +494,30 @@ ok('32c. Attention has error state + retry button');
 // 33. Mobile structure
 // ============================================================
 
-// Operations page uses AdminAppShell + AdminPage
-assert.match(opsPage, /AdminAppShell/, 'Operations page wraps in AdminAppShell');
-assert.match(opsPage, /AdminPage/, 'Operations page uses AdminPage framework');
-ok('33a. Operations page uses AdminAppShell + AdminPage');
+// [final remediation] Operations merged into Hosting Control — the hosting
+// page owns the AdminAppShell/AdminPage + 5 tabs (providers/sync/jobs/
+// activity/attention); the Operations route is a redirect stub.
+assert.match(hostingPage, /AdminAppShell/, 'Hosting Control page wraps in AdminAppShell');
+assert.match(hostingPage, /AdminPage/, 'Hosting Control page uses AdminPage framework');
+ok('33a. Hosting Control page uses AdminAppShell + AdminPage (Operations redirects into it)');
 
-// Tab navigation
-assert.match(opsPage, /tabs=/, 'Operations page uses AdminPage tabs');
-assert.match(opsPage, /jobs.*history.*attention/, 'Operations page has 3 tabs');
-ok('33b. Operations page has 3 contextual tabs (Jobs/Activity/Attention)');
+// Tab navigation — 5 tabs, Jobs/Activity/Attention included
+assert.match(hostingPage, /tabs=/, 'Hosting Control page uses AdminPage tabs');
+assert.match(hostingPage, /'providers', label: 'Providers'/, 'Hosting Control has Providers tab');
+assert.match(hostingPage, /'sync', label: 'Sync'/, 'Hosting Control has Sync tab');
+assert.match(hostingPage, /'jobs', label: 'Jobs'/, 'Hosting Control has Jobs tab');
+assert.match(hostingPage, /'activity', label: 'Activity'/, 'Hosting Control has Activity tab');
+assert.match(hostingPage, /'attention', label: 'Attention'/, 'Hosting Control has Attention tab');
+ok('33b. Hosting Control has 5 tabs (Providers/Sync/Jobs/Activity/Attention)');
 
-// Jobs mobile filter sheet
+// Jobs mobile filter — Mavero-native AdminFilterSheet (no native <select>)
 assert.match(adminOpsJobs, /a2-jobs-mobile-filter-toggle/, 'Jobs UI has mobile filter toggle');
-assert.match(adminOpsJobs, /a2-jobs-filter-sheet/, 'Jobs UI has mobile filter sheet');
+assert.match(adminOpsJobs, /AdminFilterSheet/, 'Jobs UI uses the Mavero-native chip filter sheet');
 ok('33c. Jobs UI has mobile filter sheet');
 
-// History mobile filter sheet
+// History mobile filter — Mavero-native AdminFilterSheet (no native <select>)
 assert.match(adminOpsHistory, /a2-history-mobile-filter-toggle/, 'History UI has mobile filter toggle');
-assert.match(adminOpsHistory, /a2-history-filter-sheet/, 'History UI has mobile filter sheet');
+assert.match(adminOpsHistory, /AdminFilterSheet/, 'History UI uses the Mavero-native chip filter sheet');
 ok('33d. History UI has mobile filter sheet');
 
 // Job drawer full-width on mobile
@@ -526,7 +539,7 @@ assert.match(opsService, /Health check failed.*skip this item/, 'Attention healt
 ok('34a. Attention health check failure does NOT break the list');
 
 // Badge counts are decorative (don't break the page)
-assert.match(opsPageServer, /Badge counts are decorative/, 'page server documents badge counts as decorative');
+assert.match(hostingPageServer, /Badge counts are decorative/, 'hosting page server documents badge counts as decorative');
 ok('34b. Badge counts failure does NOT break the page');
 
 // ============================================================

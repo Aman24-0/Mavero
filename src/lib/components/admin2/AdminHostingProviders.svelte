@@ -5,7 +5,7 @@
    * The Providers tab. Shows a card per hosting provider with:
    *   - Identity (name, adapter, slug, enabled state)
    *   - Health status (live from ProviderHealthService — never faked)
-   *   - Asset counts (total / ready / processing / failed / deleted / unlinked)
+   *   - Asset counts (total / ready / processing / failed / deleted / detached)
    *   - Last sync timestamp
    *   - Capabilities (verified — from adapter source, never guessed)
    *   - Quota / resources (where the provider exposes them)
@@ -326,7 +326,7 @@
                 <div><dt>Processing</dt><dd>{selectedProvider.assetCounts.processing}</dd></div>
                 <div><dt>Failed</dt><dd>{selectedProvider.assetCounts.failed}</dd></div>
                 <div><dt>Deleted</dt><dd>{selectedProvider.assetCounts.deleted}</dd></div>
-                <div><dt>Unlinked</dt><dd>{selectedProvider.assetCounts.unlinked}</dd></div>
+                <div><dt>Detached</dt><dd>{selectedProvider.assetCounts.detached}</dd></div>
               </dl>
             {:else}
               <p class="a2-provider-drawer-note">Asset counts unavailable.</p>

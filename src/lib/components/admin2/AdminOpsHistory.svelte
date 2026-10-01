@@ -19,8 +19,9 @@
    */
 
   import { onMount, onDestroy } from 'svelte';
-  import { Search, Filter, X, ChevronLeft, ChevronRight, AlertCircle, Loader2, ExternalLink, Film, Tv, Sparkles, Check, X as XIcon, Clock, Activity, Upload, RefreshCw, Pencil, FolderInput, Unlink, Trash2, FileText, Database } from 'lucide-svelte';
+  import { Search, Filter, X, ChevronLeft, ChevronRight, AlertCircle, Loader2, ExternalLink, Film, Tv, Sparkles, Check, X as XIcon, Clock, Activity, Upload, RefreshCw, Pencil, FolderInput, Unlink, Trash2, FileText, Database, Link2, Zap } from 'lucide-svelte';
   import AdminStatus from './AdminStatus.svelte';
+  import AdminFilterSheet from './AdminFilterSheet.svelte';
   import type { HistoryRow, HistoryQuery, HistoryAction } from '$lib/shared/operations-types';
 
   let items = $state<HistoryRow[]>([]);
@@ -121,6 +122,8 @@
       case 'move': return FolderInput;
       case 'detach': return Unlink;
       case 'provider_delete': return Trash2;
+      case 'link': return Link2;
+      case 'reactivate': return Zap;
       case 'subtitle_upload': return FileText;
       case 'ready': return Check;
       case 'failed': return XIcon;
@@ -130,8 +133,41 @@
     }
   }
 
+  // USER-FACING ACTION LABELS (final remediation): the internal DB action
+  // stays 'provider_delete' (backward compat with existing rows + CHECK
+  // constraint), but the UI must NEVER say "Provider Delete" — the provider
+  // itself was not deleted, only the FILE was. Consistent wording:
+  // "Delete File".
+  const ACTION_LABELS: Record<string, string> = {
+    upload: 'Upload',
+    upload_remote: 'Remote upload',
+    processing_started: 'Processing started',
+    ready: 'Ready',
+    failed: 'Failed',
+    retry: 'Retry',
+    rename: 'Rename',
+    move: 'Move',
+    replace: 'Replace',
+    subtitle_upload: 'Subtitle upload',
+    sync: 'Sync / Reconcile',
+    provider_delete: 'Delete File',
+    detach: 'Detach',
+    link: 'Link',
+    reactivate: 'Reactivate',
+    create_media_item: 'Create media item',
+    update_media_item: 'Update media item',
+    delete_media_item: 'Delete media item',
+    create_folder: 'Create folder',
+    update_folder: 'Update folder',
+    delete_folder: 'Delete folder',
+    create_folder_mapping: 'Create folder mapping',
+    update_folder_mapping: 'Update folder mapping',
+    delete_folder_mapping: 'Delete folder mapping',
+    resolve_availability: 'Resolve availability',
+  };
+
   function actionLabel(action: string): string {
-    return action.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return ACTION_LABELS[action] ?? action.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   }
 
   function formatDate(iso: string): string {
@@ -182,7 +218,9 @@
     { value: 'rename', label: 'Rename' },
     { value: 'move', label: 'Move' },
     { value: 'detach', label: 'Detach' },
-    { value: 'provider_delete', label: 'Provider delete' },
+    { value: 'provider_delete', label: 'Delete File' },
+    { value: 'link', label: 'Link' },
+    { value: 'reactivate', label: 'Reactivate' },
     { value: 'subtitle_upload', label: 'Subtitle upload' },
     { value: 'ready', label: 'Ready' },
     { value: 'failed', label: 'Failed' },
@@ -326,51 +364,50 @@
     </footer>
   {/if}
 
-  <!-- Mobile filter sheet -->
-  {#if mobileFiltersOpen}
-    <div class="a2-history-filter-sheet-overlay" onclick={() => { mobileFiltersOpen = false; }} role="presentation">
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="a2-history-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-history-filter-sheet-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-        <header class="a2-history-filter-sheet-head">
-          <h2 id="a2-history-filter-sheet-title">Filters</h2>
-          <button type="button" class="a2-history-filter-sheet-close" onclick={() => { mobileFiltersOpen = false; }} aria-label="Close">
-            <X size={16} />
-          </button>
-        </header>
-        <div class="a2-history-filter-sheet-body">
-          <label class="a2-history-filter a2-history-filter-full">
-            <span class="a2-history-filter-label">Action</span>
-            <select bind:value={filters.action} class="a2-history-select">
-              {#each ACTION_OPTIONS as opt}
-                <option value={opt.value}>{opt.label}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="a2-history-filter a2-history-filter-full">
-            <span class="a2-history-filter-label">Status</span>
-            <select bind:value={filters.status} class="a2-history-select">
-              <option value="all">All</option>
-              <option value="success">Success</option>
-              <option value="failed">Failed</option>
-              <option value="pending">Pending</option>
-            </select>
-          </label>
-          <label class="a2-history-filter a2-history-filter-full">
-            <span class="a2-history-filter-label">Provider</span>
-            <select bind:value={filters.provider} class="a2-history-select">
-              <option value="all">All</option>
-              <option value="vidara">Vidara</option>
-              <option value="abyss">Abyss</option>
-            </select>
-          </label>
-        </div>
-        <footer class="a2-history-filter-sheet-actions">
-          <button type="button" class="a2-history-clear" onclick={clearFilters}>Clear all</button>
-          <button type="button" class="a2-history-apply" onclick={() => { mobileFiltersOpen = false; }}>Apply</button>
-        </footer>
-      </div>
-    </div>
-  {/if}
+  <!-- Mobile filter sheet — Mavero-native chip-based filter UI (no native
+       browser <select> on mobile). -->
+  <AdminFilterSheet
+    open={mobileFiltersOpen}
+    title="Activity filters"
+    sections={[
+      {
+        dimension: 'action',
+        heading: 'Action',
+        options: ACTION_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
+      },
+      {
+        dimension: 'status',
+        heading: 'Status',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'success', label: 'Success' },
+          { value: 'failed', label: 'Failed' },
+          { value: 'pending', label: 'Pending' },
+        ],
+      },
+      {
+        dimension: 'provider',
+        heading: 'Provider',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'vidara', label: 'Vidara' },
+          { value: 'abyss', label: 'Abyss' },
+        ],
+      },
+    ]}
+    selected={{
+      action: filters.action ?? 'all',
+      status: filters.status ?? 'all',
+      provider: filters.provider ?? 'all',
+    }}
+    onApply={(applied) => {
+      filters.action = (applied.action as HistoryQuery['action']) ?? 'all';
+      filters.status = (applied.status as HistoryQuery['status']) ?? 'all';
+      filters.provider = applied.provider ?? 'all';
+    }}
+    onClear={clearFilters}
+    onClose={() => { mobileFiltersOpen = false; }}
+  />
 
   <!-- Detail drawer -->
   {#if drawerOpen && selectedEvent}
@@ -424,7 +461,7 @@
                   <div><dt>Episode</dt><dd>S{String(selectedEvent.mediaItem.season).padStart(2, '0')}E{String(selectedEvent.mediaItem.episode).padStart(2, '0')}</dd></div>
                 {/if}
               </dl>
-              <a class="a2-event-drawer-open-link" href={`/admin/media/library?selected=${selectedEvent.mediaItem.id}`}>
+              <a class="a2-event-drawer-open-link" href={`/admin/media/library?mediaItem=${selectedEvent.mediaItem.id}`}>
                 <ExternalLink size={12} /> Open in Media Library
               </a>
             </section>
@@ -485,7 +522,6 @@
 
   .a2-history-filter-row { display: flex; gap: var(--a2-space-2); align-items: flex-end; flex-wrap: wrap; }
   .a2-history-filter { display: flex; flex-direction: column; gap: 2px; }
-  .a2-history-filter-full { width: 100%; }
   .a2-history-filter-label { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
   .a2-history-select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-family: var(--a2-font-sans); font-size: var(--a2-text-xs); padding: 4px 8px; cursor: pointer; }
   .a2-history-select:focus { outline: none; border-color: var(--a2-cyan); }
@@ -536,17 +572,6 @@
   .a2-history-page-btn:hover:not(:disabled) { border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-history-page-num { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
 
-  .a2-history-filter-sheet-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.55); display: flex; align-items: flex-end; }
-  .a2-history-filter-sheet { width: 100%; background: var(--a2-surface-1); border-top-left-radius: var(--a2-radius-lg); border-top-right-radius: var(--a2-radius-lg); border-top: 1px solid var(--a2-border-strong); display: flex; flex-direction: column; max-height: 80vh; animation: a2-sheet-up var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
-  @keyframes a2-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-  .a2-history-filter-sheet-head { display: flex; justify-content: space-between; align-items: center; padding: var(--a2-space-4); border-bottom: 1px solid var(--a2-border); }
-  .a2-history-filter-sheet-head h2 { margin: 0; font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
-  .a2-history-filter-sheet-close { background: transparent; border: none; cursor: pointer; color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs); }
-  .a2-history-filter-sheet-body { padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-3); overflow-y: auto; }
-  .a2-history-filter-sheet-actions {
-    padding-bottom: env(safe-area-inset-bottom, 0px); display: flex; gap: var(--a2-space-2); padding: var(--a2-space-3) var(--a2-space-4); border-top: 1px solid var(--a2-border); }
-  .a2-history-apply { flex: 1; padding: var(--a2-space-2); background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; }
-
   .a2-event-drawer-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); display: flex; justify-content: flex-end; animation: a2-fade-in var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
   @keyframes a2-fade-in { from { opacity: 0; } to { opacity: 1; } }
   .a2-event-drawer { width: 100%; max-width: 480px; background: var(--a2-surface-1); border-left: 1px solid var(--a2-border-strong); display: flex; flex-direction: column; overflow-y: auto; animation: a2-slide-in var(--a2-motion-normal, 240ms) var(--a2-ease-out); }
@@ -590,7 +615,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .a2-event-drawer, .a2-event-drawer-overlay, .a2-history-filter-sheet,
+    .a2-event-drawer, .a2-event-drawer-overlay,
     .a2-history-row { animation: none; transition: none; }
   }
 </style>

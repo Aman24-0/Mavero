@@ -2,12 +2,15 @@
  * Admin 2.0 — Phase F — Operations Jobs API.
  *
  * GET /api/admin/operations/jobs
- *   Returns a paginated, filtered list of jobs (media_upload_operations).
+ *   Returns a paginated, filtered list from the UNIFIED operational read
+ *   model (media_upload_operations + operational media_operations rows).
+ *   See OperationsService for the merge architecture.
  *
  * Query params:
- *   ?q=<text>             Search operation id, media title, provider_asset_id
- *   ?status=queued|uploading|uploaded|processing|ready|failed|cancelled|active|stale|all
- *   ?operationType=upload|upload_remote|retry|all
+ *   ?q=<text>             Search operation id, media title, provider_asset_id, error code
+ *   ?status=queued|uploading|uploaded|processing|ready|failed|cancelled|active|stale|deleted|all
+ *                         'deleted' = delete-file operations (provider_delete)
+ *   ?operationType=upload|upload_remote|retry|delete|rename|move|detach|reactivate|link|subtitle|replace|sync|all
  *   ?provider=vidara|abyss
  *   ?retryable=true|false
  *   ?stale=true|false
@@ -29,8 +32,8 @@ import type { JobQuery } from '$lib/shared/operations-types';
 
 const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
 
-const VALID_STATUSES = new Set(['queued', 'uploading', 'uploaded', 'processing', 'ready', 'failed', 'cancelled', 'active', 'stale', 'all']);
-const VALID_OP_TYPES = new Set(['upload', 'upload_remote', 'retry', 'all']);
+const VALID_STATUSES = new Set(['queued', 'uploading', 'uploaded', 'processing', 'ready', 'failed', 'cancelled', 'active', 'stale', 'deleted', 'all']);
+const VALID_OP_TYPES = new Set(['upload', 'upload_remote', 'retry', 'delete', 'rename', 'move', 'detach', 'reactivate', 'link', 'subtitle', 'replace', 'sync', 'all']);
 const VALID_SORTS = new Set(['newest', 'oldest', 'recently_updated', 'failed', 'stale']);
 
 export const GET: RequestHandler = async ({ url, locals }) => {

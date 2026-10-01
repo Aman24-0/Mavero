@@ -52,6 +52,25 @@ export class DemandService {
    */
   async recordDemand(entry: DemandEntry): Promise<DemandResult | null> {
     try {
+      // LIFECYCLE GUARD (final remediation): demand must NEVER be created or
+      // incremented while a ready+available Mavero asset exists for the
+      // canonical key. Without this guard, a playback that resolves via a
+      // non-Mavero source (e.g. the user's default source preference, a
+      // provider in health cooldown, or an outranked third-party embed)
+      // would spuriously create demand even though Mavero CAN serve the
+      // content. Per the demand lifecycle: "No available asset + actual
+      // playback miss → OPEN" — the availability check is part of the
+      // trigger, not just the resolution path.
+      //
+      // When an asset IS available and a stale 'open'/'uploading' demand
+      // row exists, we self-heal it to 'ready' (the sweep does the same on
+      // the Missing Media page). 'ignored' rows are never touched.
+      const assetAvailable = await this.hasReadyAvailableAsset(entry.canonicalKey);
+      if (assetAvailable) {
+        await this.resolveDemand(entry.canonicalKey);
+        return { created: false, requestCount: 0, status: 'ready' };
+      }
+
       // Use upsert with onConflict on canonical_key.
       // If the row exists: increment request_count + update last_requested_at + last_user_kind.
       // If not: insert with default request_count=1.
@@ -279,14 +298,22 @@ export class DemandService {
       // Phase 6 fix: check BOTH status='ready' AND mavero_status='available',
       // matching the resolver's requirements. Previously only checked status='ready',
       // which would falsely resolve demands for detached assets (mavero_status='missing').
+      //
+      // SWEEP BUG FIX (final remediation): the query previously had
+      // `.limit(1)` here. Because this is a BATCH query across ALL
+      // media_item_ids in the sweep, the limit collapsed the entire result
+      // set to a single row — so at most ONE demand row was ever resolved
+      // per sweep even when many assets became available (A/B/C scenario:
+      // only A resolved). The limit is removed; we need every ready+available
+      // asset row so `readyItemIds` covers the full batch. The result is
+      // naturally bounded by the number of demand rows in the sweep.
       const mediaItemIds = mediaItems.map((m: any) => m.id as string);
       const { data: readyAssets, error: assetError } = await this.client
         .from('media_assets')
         .select('media_item_id')
         .in('media_item_id', mediaItemIds)
         .eq('status', 'ready')
-        .eq('mavero_status', 'available')
-        .limit(1);
+        .eq('mavero_status', 'available');
       if (assetError || !readyAssets || readyAssets.length === 0) return 0;
 
       // Build the set of canonical_keys that have a ready+available asset.

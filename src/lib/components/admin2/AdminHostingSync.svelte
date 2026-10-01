@@ -5,21 +5,26 @@
    * The Sync tab. Shows:
    *   - Sync actions (Sync All + per-provider Sync)
    *   - Last sync summary per provider (asset counts, last sync timestamp)
-   *   - Unlinked provider assets (assets in Mavero DB with no media link)
+   *   - Detached provider assets (admin-detached; still linked to a media
+   *     item, excluded from playback until reactivated)
    *
    * Sync flow:
    *   1. Admin clicks "Sync All" or per-provider "Sync"
    *   2. POST /api/admin/media/sync?provider=<adapter> (or no param for all)
    *   3. The endpoint calls SyncService.syncProvider / syncAll
    *   4. Returns SyncResult[] with updatedAssets, deletedAssets, unlinkedFiles, errors
-   *   5. UI shows the result inline + refreshes the unlinked list
+   *   5. UI shows the result inline + refreshes the detached list
    *
-   * Unlinked assets:
-   *   - Loaded from POST /api/admin/media/unlinked (Phase E new endpoint —
+   * Detached assets (final remediation terminology):
+   *   - Loaded from POST /api/admin/media/unlinked (Phase E endpoint —
    *     does NOT trigger a sync, reads from media_assets directly).
-   *   - An asset is "unlinked" when media_item_id IS NULL OR mavero_status='missing'.
-   *   - Each row shows: provider, file, provider asset ID, quality, audio,
-   *     subtitles, discovered time, status, actions (Open in Assets).
+   *   - An asset is "detached" when mavero_status='missing' AND
+   *     status!='deleted' — an admin detached it from playback; it STILL
+   *     belongs to its canonical media_item (media_item_id is NOT NULL),
+   *     and the remote file may still exist.
+   *   - "Unlinked files" in the sync RESULT is a different concept:
+   *     provider-side files that have NO media_assets row at all
+   *     (out-of-band uploads) — linkable via Media Library → Link Existing File.
    *
    * Sync state machine:
    *   idle → syncing → success / partial / failed
@@ -33,10 +38,10 @@
   import AdminStatus from './AdminStatus.svelte';
 
   let {
-    providers = [] as Array<{ adapterId: string; name: string; enabled: boolean; lastSyncAt: string | null; assetCounts: { total: number; ready: number; processing: number; failed: number; deleted: number; unlinked: number } | null }>,
+    providers = [] as Array<{ adapterId: string; name: string; enabled: boolean; lastSyncAt: string | null; assetCounts: { total: number; ready: number; processing: number; failed: number; deleted: number; detached: number } | null }>,
     onopenassets = (() => {}) as (adapterId: string) => void,
   }: {
-    providers?: Array<{ adapterId: string; name: string; enabled: boolean; lastSyncAt: string | null; assetCounts: { total: number; ready: number; processing: number; failed: number; deleted: number; unlinked: number } | null }>;
+    providers?: Array<{ adapterId: string; name: string; enabled: boolean; lastSyncAt: string | null; assetCounts: { total: number; ready: number; processing: number; failed: number; deleted: number; detached: number } | null }>;
     onopenassets?: (adapterId: string) => void;
   } = $props();
 
@@ -58,7 +63,7 @@
   let syncError = $state<string | null>(null);
   let syncingProvider = $state<string | null>(null);
 
-  // Unlinked assets state
+  // Detached assets state (endpoint name kept for compat; semantics = detached)
   let unlinked = $state<Array<{
     id: string;
     providerAdapterId: string | null;
@@ -153,7 +158,7 @@
   }
 
   // ============================================================
-  // Unlinked assets
+  // Detached assets
   // ============================================================
   async function loadUnlinked() {
     unlinkedLoading = true;
@@ -166,10 +171,10 @@
         unlinkedTotal = data.total;
         unlinkedHasMore = data.hasMore;
       } else {
-        unlinkedError = data.error?.message ?? 'Failed to load unlinked assets.';
+        unlinkedError = data.error?.message ?? 'Failed to load detached assets.';
       }
     } catch {
-      unlinkedError = 'Network error while loading unlinked assets.';
+      unlinkedError = 'Network error while loading detached assets.';
     }
     unlinkedLoading = false;
   }
@@ -250,7 +255,7 @@
           <div><dt>Last sync</dt><dd>{formatDate(p.lastSyncAt)}</dd></div>
           <div><dt>Total assets</dt><dd>{p.assetCounts?.total ?? '—'}</dd></div>
           <div><dt>Ready</dt><dd>{p.assetCounts?.ready ?? '—'}</dd></div>
-          <div><dt>Unlinked</dt><dd>{p.assetCounts?.unlinked ?? '—'}</dd></div>
+          <div><dt>Detached</dt><dd>{p.assetCounts?.detached ?? '—'}</dd></div>
         </dl>
 
         {#if result}
@@ -310,29 +315,31 @@
     </p>
   {/if}
 
-  <!-- Unlinked assets -->
-  <section class="a2-sync-unlinked" aria-label="Unlinked provider assets">
+  <!-- Detached assets (admin-detached; still linked to a media item) -->
+  <section class="a2-sync-unlinked" aria-label="Detached provider assets">
     <header class="a2-sync-unlinked-head">
       <h3 class="a2-sync-unlinked-title">
-        <Unlink size={14} /> Unlinked provider assets
+        <Unlink size={14} /> Detached provider assets
       </h3>
       <p class="a2-sync-unlinked-desc">
-        Provider assets that exist in Mavero's DB but are not linked to a canonical media item.
-        These may be orphaned files or assets detached by an admin.
+        Assets detached by an admin — excluded from playback but still linked to their
+        canonical media item (the remote file may still exist). Reactivate them from the
+        Media Library, or link newly discovered out-of-band provider files there via
+        “Link Existing File”.
       </p>
     </header>
 
     {#if unlinkedLoading && unlinked.length === 0}
       <div class="a2-sync-unlinked-loading" role="status">
         <Loader2 size={16} style="animation: a2-spin 1s linear infinite; color: var(--a2-cyan);" />
-        <span>Loading unlinked assets…</span>
+        <span>Loading detached assets…</span>
       </div>
     {:else if unlinkedError}
       <p class="a2-sync-error" role="alert"><AlertCircle size={12} /> {unlinkedError}</p>
     {:else if unlinked.length === 0}
       <div class="a2-sync-unlinked-empty">
         <Check size={20} />
-        <p>No unlinked provider assets. All provider assets are linked to media items.</p>
+        <p>No detached provider assets. Every asset is actively linked.</p>
       </div>
     {:else}
       <ul class="a2-sync-unlinked-list" role="list">
@@ -359,7 +366,7 @@
 
       <footer class="a2-sync-unlinked-pagination">
         <span class="a2-sync-unlinked-info">
-          {unlinkedTotal} unlinked {unlinkedTotal === 1 ? 'asset' : 'assets'}
+          {unlinkedTotal} detached {unlinkedTotal === 1 ? 'asset' : 'assets'}
           {#if unlinkedTotal > 0}· page {unlinkedPage}{/if}
         </span>
         <div class="a2-sync-unlinked-page-actions">

@@ -1,25 +1,43 @@
 /**
  * Admin 2.0 — Phase F — Operations Center service.
  *
- * Aggregated read model for the Operations workspace. Combines:
+ * Aggregated read model for the Operations workspace (now the Jobs /
+ * Activity / Attention tabs of Hosting Control). Combines:
  *   - media_upload_operations (Jobs tab — active + recent upload operations)
- *   - media_operations (History tab — immutable audit timeline)
+ *   - media_operations (Activity tab — immutable audit timeline; ALSO the
+ *     source of operational management jobs — see listJobs)
  *   - stale detection + failed ops + provider health (Attention tab)
  *
+ * JOBS — UNIFIED OPERATIONAL READ MODEL (final remediation):
+ *   listJobs() merges TWO sources into ONE operational execution stream:
+ *
+ *   1. media_upload_operations — upload / remote upload / retry /
+ *      processing pipeline jobs (the original Jobs dataset).
+ *
+ *   2. media_operations rows whose action is an operational MANAGEMENT
+ *      action: provider_delete, rename, move, detach, reactivate, link,
+ *      subtitle_upload, replace, sync. These are instantaneous provider/
+ *      lifecycle operations that belong in the operational stream — the
+ *      user specifically requires file deletion to appear in Jobs with a
+ *      Deleted filter.
+ *
+ *   NO duplicate rows are created: upload-lifecycle events (upload,
+ *   upload_remote, processing_started, ready, failed, retry) exist in BOTH
+ *   tables (media_operations is the audit mirror of the upload pipeline) —
+ *   those actions are sourced ONLY from media_upload_operations in the
+ *   Jobs stream, so a single event never appears twice. media_operations
+ *   remains the single source for the Activity (audit) tab.
+ *
+ *   Merged pagination: the top (page × limit) rows are fetched from each
+ *   source (sorted by the SAME key), merged, re-sorted, and sliced. Any
+ *   row in the first K merged rows must be within the top K of its own
+ *   source, so the merged window is exact. total = sum of both counts.
+ *
  * Three read methods:
- *   - listJobs(query) — paginated, filtered jobs from media_upload_operations
+ *   - listJobs(query) — paginated, filtered UNIFIED operational stream
  *   - listHistory(query) — paginated, filtered audit events from media_operations
  *   - listAttention(query) — aggregated items needing admin action
  *   - getBadgeCounts() — lightweight counts for nav badges
- *
- * Why a dedicated read model:
- *   - The existing /api/admin/media/operations endpoint has no pagination,
- *     no search, no date filter. It returns up to 200 rows with a limit param.
- *   - The existing /api/admin/media/stale endpoint returns only stale upload
- *     operations — it does NOT aggregate with failed ops or unconfigured
- *     providers for the Attention view.
- *   - Without this read model, the client would need 4+ requests per tab
- *     (jobs + stale + failed + health).
  *
  * Partial-failure contract:
  *   - If provider health check fails during Attention aggregation, the
@@ -36,7 +54,7 @@ import type { Database } from '$lib/server/supabase/database.types';
 import { getVidaraConfigOrNull } from '../vidara/config';
 import { getAbyssConfigOrNull } from '../abyss/config';
 import type {
-  JobRow, JobQuery, JobListResult, JobStatus,
+  JobRow, JobQuery, JobListResult, JobStatus, JobOperationType, JobOrigin,
   HistoryRow, HistoryQuery, HistoryListResult, HistoryAction, HistoryStatus,
   AttentionItem, AttentionQuery, AttentionListResult,
   AttentionCategory, AttentionSeverity,
@@ -57,6 +75,33 @@ const RETRYABLE_ERROR_CODES = new Set(['RATE_LIMITED', 'TRANSIENT', 'NETWORK', '
 
 const HOSTING_ADAPTER_IDS = ['vidara', 'abyss'] as const;
 
+/**
+ * media_operations actions that are operational MANAGEMENT work and thus
+ * appear in the Jobs stream (mapped to JobOperationType). Upload-lifecycle
+ * actions are deliberately EXCLUDED — they are represented by their
+ * media_upload_operations rows and would otherwise duplicate the same event.
+ */
+const MANAGEMENT_ACTION_TO_TYPE: Record<string, JobOperationType> = {
+  provider_delete: 'delete',
+  rename: 'rename',
+  move: 'move',
+  detach: 'detach',
+  reactivate: 'reactivate',
+  link: 'link',
+  subtitle_upload: 'subtitle',
+  replace: 'replace',
+  sync: 'sync',
+};
+
+const MANAGEMENT_ACTIONS = Object.keys(MANAGEMENT_ACTION_TO_TYPE);
+
+/** media_operations.status → JobRow.status (single vocabulary). */
+function managementStatusToJobStatus(status: string): JobStatus {
+  if (status === 'success') return 'ready';
+  if (status === 'failed') return 'failed';
+  return 'processing'; // 'pending'
+}
+
 // ============================================================
 // Service
 // ============================================================
@@ -65,7 +110,7 @@ export class OperationsService {
   constructor(private client: SupabaseClient<Database>) {}
 
   // ------------------------------------------------------------
-  // Jobs — from media_upload_operations
+  // Jobs — unified operational stream (uploads + management ops)
   // ------------------------------------------------------------
 
   async listJobs(query: JobQuery): Promise<JobListResult> {
@@ -73,85 +118,206 @@ export class OperationsService {
     const limit = clampLimit(query.limit);
     const offset = (page - 1) * limit;
     const sort = query.sort ?? 'recently_updated';
+    // Merged-window depth: the top K rows from EACH source are enough to
+    // produce the exact merged page window (see class doc).
+    const fetchDepth = offset + limit;
 
-    let qb = this.client
-      .from('media_upload_operations')
-      .select(`
-        id, status, attempt_number, parent_operation_id, provider_source_id,
-        media_item_id, media_asset_id, provider_asset_id, source_quality,
-        source_filename, source_url, error_code, error_message,
-        queued_at, upload_started_at, uploaded_at, processing_started_at,
-        ready_at, failed_at, cancelled_at, created_at, updated_at,
-        media_item:media_items(id, title, content_type, tmdb_id, season, episode)
-      `, { count: 'exact' });
+    const status = query.status ?? 'all';
+    const operationType = query.operationType ?? 'all';
 
-    // Status filter — supports 'active' (non-terminal) + 'stale' (derived)
-    if (query.status === 'active') {
-      qb = qb.in('status', ['queued', 'uploading', 'uploaded', 'processing']);
-    } else if (query.status && query.status !== 'all') {
-      qb = qb.eq('status', query.status);
-    }
+    // ==========================================================
+    // Source selection — which tables feed this query.
+    //
+    //  - 'deleted' status or 'delete' type → management ops ONLY
+    //    (action='provider_delete').
+    //  - Concrete upload statuses / 'active' / upload-pipeline types /
+    //    retryable/stale-only → uploads ONLY.
+    //  - 'ready'/'failed'/'all' + 'all' types → BOTH sources.
+    // ==========================================================
+    const isManagementOnly =
+      status === 'deleted' ||
+      (operationType !== 'all' && operationType !== 'upload' && operationType !== 'upload_remote' && operationType !== 'retry');
+    // NOTE: retryable/stale use `!= null` (not `!== null`) — the fields may be
+    // undefined when the caller omits them, and undefined must NOT force the
+    // upload-only source (it would silently drop management ops from 'all').
+    const isUploadOnly =
+      !isManagementOnly &&
+      (['queued', 'uploading', 'uploaded', 'processing', 'cancelled', 'active'].includes(status) ||
+        operationType === 'upload' || operationType === 'upload_remote' || operationType === 'retry' ||
+        query.retryable != null || query.stale != null);
+    const includeUploads = !isManagementOnly;
+    const includeManagement = !isUploadOnly;
 
-    // Operation type filter — derived from source_url (remote vs local) + parent_operation_id (retry)
-    if (query.operationType && query.operationType !== 'all') {
-      if (query.operationType === 'upload_remote') {
-        qb = qb.not('source_url', 'is', null);
-      } else if (query.operationType === 'upload') {
-        qb = qb.is('source_url', null);
-      } else if (query.operationType === 'retry') {
-        qb = qb.not('parent_operation_id', 'is', null);
-      }
-    }
-
-    // Provider filter — resolve adapter → source_ids
+    // Provider filter — resolve adapter → source_ids once, shared by both sources.
+    let providerSourceIds: string[] | null = null;
     if (query.provider && query.provider !== 'all') {
-      const sourceIds = await this.sourceIdsForAdapter(query.provider);
-      if (sourceIds.length === 0) return { items: [], total: 0, page, limit, hasMore: false };
-      qb = qb.in('provider_source_id', sourceIds);
-    }
-
-    // Retryable filter — applied post-fetch (error_code based)
-    // Stale filter — applied post-fetch (updated_at based)
-
-    // Search — operation id, media title, provider_asset_id
-    if (query.q && query.q.trim()) {
-      const q = query.q.trim();
-      // Operation ID match
-      if (/^[0-9a-f]{8}-/i.test(q)) {
-        qb = qb.eq('id', q);
-      } else {
-        // Search via media_item title join + provider_asset_id
-        qb = qb.or(`media_item.title.ilike.%${q}%,provider_asset_id.ilike.%${q}%`);
+      providerSourceIds = await this.sourceIdsForAdapter(query.provider);
+      if (providerSourceIds.length === 0) {
+        return { items: [], total: 0, page, limit, hasMore: false };
       }
     }
 
-    // Sorting
-    switch (sort) {
-      case 'newest':         qb = qb.order('created_at', { ascending: false }); break;
-      case 'oldest':         qb = qb.order('created_at', { ascending: true }); break;
-      case 'recently_updated': qb = qb.order('updated_at', { ascending: false }); break;
-      case 'failed':         qb = qb.order('failed_at', { ascending: false, nullsFirst: false }); break;
-      case 'stale':
-        // Stale first = oldest updated_at among non-terminal states.
-        qb = qb.in('status', STALE_STATES).order('updated_at', { ascending: true }); break;
-      default:               qb = qb.order('updated_at', { ascending: false }); break;
+    // ==========================================================
+    // Source A — media_upload_operations
+    // ==========================================================
+    const noSource = { data: [] as any[], error: null as any, count: 0 };
+    let uploadsPromise: Promise<{ data: any[] | null; error: any; count: number | null }> = Promise.resolve(noSource);
+    if (includeUploads) {
+      let qb = this.client
+        .from('media_upload_operations')
+        .select(`
+          id, status, attempt_number, parent_operation_id, provider_source_id,
+          media_item_id, media_asset_id, provider_asset_id, source_quality,
+          source_filename, source_url, error_code, error_message,
+          queued_at, upload_started_at, uploaded_at, processing_started_at,
+          ready_at, failed_at, cancelled_at, created_at, updated_at,
+          media_item:media_items(id, title, content_type, tmdb_id, season, episode)
+        `, { count: 'exact' });
+
+      // Status filter — 'active' (non-terminal), 'stale' (pushed to the DB:
+      // non-terminal + updated_at older than the 60-minute threshold —
+      // previously this hit eq('status','stale') which matched 0 rows),
+      // or a concrete status. (status==='deleted' is impossible here —
+      // it forces isManagementOnly, which excludes this source.)
+      if (status === 'active') {
+        qb = qb.in('status', ['queued', 'uploading', 'uploaded', 'processing']);
+      } else if (status === 'stale') {
+        const staleBefore = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
+        qb = qb.in('status', STALE_STATES).lt('updated_at', staleBefore);
+      } else if (status !== 'all') {
+        qb = qb.eq('status', status as string);
+      }
+
+      // Operation type filter — derived from source_url (remote vs local) + parent_operation_id (retry)
+      if (operationType !== 'all') {
+        if (operationType === 'upload_remote') {
+          qb = qb.not('source_url', 'is', null);
+        } else if (operationType === 'upload') {
+          qb = qb.is('source_url', null);
+        } else if (operationType === 'retry') {
+          qb = qb.not('parent_operation_id', 'is', null);
+        }
+      }
+
+      if (providerSourceIds) {
+        qb = qb.in('provider_source_id', providerSourceIds);
+      }
+
+      // Search — operation id, media title, provider_asset_id
+      if (query.q && query.q.trim()) {
+        const q = query.q.trim();
+        if (/^[0-9a-f]{8}-/i.test(q)) {
+          qb = qb.eq('id', q);
+        } else {
+          qb = qb.or(`media_item.title.ilike.%${q}%,provider_asset_id.ilike.%${q}%`);
+        }
+      }
+
+      // Sorting — applied per-source by the SAME key used in the merge below.
+      switch (sort) {
+        case 'newest':           qb = qb.order('created_at', { ascending: false }); break;
+        case 'oldest':           qb = qb.order('created_at', { ascending: true }); break;
+        case 'recently_updated': qb = qb.order('updated_at', { ascending: false }); break;
+        case 'failed':           qb = qb.order('failed_at', { ascending: false, nullsFirst: false }); break;
+        case 'stale':            qb = qb.in('status', STALE_STATES).order('updated_at', { ascending: true }); break;
+        default:                 qb = qb.order('updated_at', { ascending: false }); break;
+      }
+
+      // Merged-window depth (NOT the visible page — see class doc).
+      qb = qb.limit(fetchDepth);
+      uploadsPromise = (async () => await qb)();
     }
 
-    qb = qb.range(offset, offset + limit - 1);
+    // ==========================================================
+    // Source B — media_operations (operational MANAGEMENT actions only)
+    // ==========================================================
+    let managementPromise: Promise<{ data: any[] | null; error: any; count: number | null }> = Promise.resolve(noSource);
+    if (includeManagement) {
+      let mb = this.client
+        .from('media_operations')
+        .select(`
+          id, action, status, error_code, error_message, details,
+          occurred_at, created_at, provider_source_id,
+          media_item_id, media_asset_id,
+          media_item:media_items(id, title, content_type, tmdb_id, season, episode),
+          media_asset:media_assets(id, provider_asset_id)
+        `, { count: 'exact' })
+        .in('action', MANAGEMENT_ACTIONS);
 
-    const { data, error, count } = await qb;
-    if (error) throw new Error(`OperationsService.listJobs: ${error.message}`);
+      // Status mapping: media_operations.status ∈ {success, failed, pending}
+      // → JobRow.status ∈ {ready, failed, processing}.
+      if (status === 'ready') {
+        mb = mb.eq('status', 'success');
+      } else if (status === 'failed') {
+        mb = mb.eq('status', 'failed');
+      } else if (status === 'deleted') {
+        // The Deleted view: delete-file operations (any outcome — successful
+        // deletions plus failed delete attempts; failed ones also surface
+        // under the Failed filter).
+        mb = mb.eq('action', 'provider_delete');
+      } else if (status === 'active' || status === 'stale') {
+        // Management ops are instantaneous — nothing is ever "active".
+        mb = mb.eq('status', '__none__'); // matches nothing
+      }
+
+      // Operation type filter — map JobOperationType back to DB actions.
+      if (operationType !== 'all') {
+        if (operationType === 'delete') {
+          mb = mb.eq('action', 'provider_delete');
+        } else {
+          const dbAction = Object.keys(MANAGEMENT_ACTION_TO_TYPE).find((k) => MANAGEMENT_ACTION_TO_TYPE[k] === operationType);
+          if (dbAction) {
+            mb = mb.eq('action', dbAction);
+          } else {
+            // Upload-pipeline type requested — management source contributes nothing.
+            mb = mb.eq('action', '__none__');
+          }
+        }
+      }
+
+      if (providerSourceIds) {
+        mb = mb.in('provider_source_id', providerSourceIds);
+      }
+
+      // Search — operation id, media title, error code
+      if (query.q && query.q.trim()) {
+        const q = query.q.trim();
+        if (/^[0-9a-f]{8}-/i.test(q)) {
+          mb = mb.eq('id', q);
+        } else {
+          mb = mb.or(`media_item.title.ilike.%${q}%,error_code.ilike.%${q}%`);
+        }
+      }
+
+      // Sorting — same keys; occurred_at is the management "updated_at".
+      switch (sort) {
+        case 'newest':           mb = mb.order('created_at', { ascending: false }); break;
+        case 'oldest':           mb = mb.order('created_at', { ascending: true }); break;
+        case 'recently_updated': mb = mb.order('occurred_at', { ascending: false }); break;
+        case 'failed':           mb = mb.order('occurred_at', { ascending: false }); break;
+        case 'stale':            mb = mb.order('occurred_at', { ascending: false }); break;
+        default:                 mb = mb.order('occurred_at', { ascending: false }); break;
+      }
+
+      mb = mb.limit(fetchDepth);
+      managementPromise = (async () => await mb)();
+    }
+
+    const [uploadsRes, managementRes] = await Promise.all([uploadsPromise, managementPromise]);
+    if (uploadsRes.error) throw new Error(`OperationsService.listJobs (uploads): ${uploadsRes.error.message}`);
+    if (managementRes.error) throw new Error(`OperationsService.listJobs (management): ${managementRes.error.message}`);
 
     const now = Date.now();
-    let items: JobRow[] = (data ?? []).map((row: any) => {
+    const uploadItems: JobRow[] = ((uploadsRes.data ?? []) as any[]).map((row) => {
       const updatedAtMs = row.updated_at ? new Date(row.updated_at).getTime() : now;
       const isStale = STALE_STATES.includes(row.status) && (now - updatedAtMs) > STALE_THRESHOLD_MS;
       const isRetryable = row.status === 'failed' && RETRYABLE_ERROR_CODES.has(row.error_code ?? '');
-      const operationType: 'upload' | 'upload_remote' | 'retry' =
+      const operationType: JobOperationType =
         row.parent_operation_id ? 'retry' : row.source_url ? 'upload_remote' : 'upload';
       return {
         id: row.id,
         status: row.status as JobStatus,
+        origin: 'upload' as JobOrigin,
         attemptNumber: row.attempt_number,
         parentOperationId: row.parent_operation_id,
         providerSourceId: row.provider_source_id,
@@ -187,24 +353,95 @@ export class OperationsService {
       };
     });
 
-    // Post-fetch filters: retryable + stale
-    if (query.retryable === true) items = items.filter((i) => i.isRetryable);
-    else if (query.retryable === false) items = items.filter((i) => !i.isRetryable);
-    if (query.stale === true) items = items.filter((i) => i.isStale);
-    else if (query.stale === false) items = items.filter((i) => !i.isStale);
+    const managementItems: JobRow[] = ((managementRes.data ?? []) as any[]).map((row) => {
+      const opType = MANAGEMENT_ACTION_TO_TYPE[row.action] ?? 'sync';
+      // For delete operations the user-facing terminology is "Delete File"
+      // — the internal DB action stays provider_delete (backward compat).
+      const detailFilename = (row.details && typeof row.details === 'object')
+        ? ((row.details as Record<string, unknown>).provider_asset_id as string | undefined) ?? null
+        : null;
+      return {
+        id: row.id,
+        status: managementStatusToJobStatus(row.status),
+        origin: 'management' as JobOrigin,
+        attemptNumber: 1,
+        parentOperationId: null,
+        providerSourceId: row.provider_source_id,
+        providerAdapterId: null, // filled below
+        mediaItemId: row.media_item_id,
+        mediaAssetId: row.media_asset_id,
+        providerAssetId: row.media_asset?.provider_asset_id ?? detailFilename,
+        sourceQuality: null,
+        sourceFilename: null,
+        sourceUrl: null,
+        errorCode: row.error_code,
+        errorMessage: row.error_message,
+        queuedAt: row.created_at,
+        uploadStartedAt: null,
+        uploadedAt: null,
+        processingStartedAt: row.status === 'pending' ? row.occurred_at : null,
+        readyAt: row.status === 'success' ? row.occurred_at : null,
+        failedAt: row.status === 'failed' ? row.occurred_at : null,
+        cancelledAt: null,
+        createdAt: row.created_at,
+        updatedAt: row.occurred_at,
+        isStale: false, // management ops are instantaneous
+        isRetryable: false, // retried via the asset drawer, not the upload pipeline
+        operationType: opType,
+        mediaItem: row.media_item ? {
+          id: row.media_item.id,
+          title: row.media_item.title,
+          contentType: row.media_item.content_type,
+          tmdbId: row.media_item.tmdb_id,
+          season: row.media_item.season,
+          episode: row.media_item.episode,
+        } : null,
+      };
+    });
 
-    // Fill providerAdapterId via source lookup
-    const sourceIds = [...new Set(items.map((i) => i.providerSourceId).filter(Boolean))] as string[];
+    // Post-fetch filters: retryable + stale (upload-sourced only).
+    let merged = [...uploadItems, ...managementItems];
+    if (query.retryable === true) merged = merged.filter((i) => i.isRetryable);
+    else if (query.retryable === false) merged = merged.filter((i) => !i.isRetryable);
+    if (query.stale === true) merged = merged.filter((i) => i.isStale);
+    else if (query.stale === false) merged = merged.filter((i) => !i.isStale);
+
+    // Merge sort — the SAME key each source was sorted by, applied to the
+    // combined window. Deterministic and exact (see class doc).
+    const sortValue = (i: JobRow): number | string => {
+      switch (sort) {
+        case 'newest': case 'oldest':
+          return new Date(i.createdAt).getTime();
+        case 'failed':
+          if (i.origin === 'management') return i.failedAt ? new Date(i.failedAt).getTime() : 0;
+          return i.failedAt ? new Date(i.failedAt).getTime() : 0;
+        case 'stale':
+          return new Date(i.updatedAt).getTime();
+        default: // recently_updated
+          return new Date(i.updatedAt).getTime();
+      }
+    };
+    const ascending = sort === 'oldest' || sort === 'stale';
+    merged.sort((a, b) => {
+      const va = sortValue(a);
+      const vb = sortValue(b);
+      const diff = (va as number) - (vb as number);
+      return ascending ? diff : -diff;
+    });
+
+    // Fill providerAdapterId via source lookup (both sources).
+    const sourceIds = [...new Set(merged.map((i) => i.providerSourceId).filter(Boolean))] as string[];
     if (sourceIds.length > 0) {
       const adapterBySource = await this.adapterBySourceIds(sourceIds);
-      for (const item of items) {
+      for (const item of merged) {
         if (item.providerSourceId) {
           item.providerAdapterId = adapterBySource.get(item.providerSourceId) ?? null;
         }
       }
     }
 
-    const total = count ?? 0;
+    const total = (uploadsRes.count ?? 0) + (managementRes.count ?? 0);
+    const items = merged.slice(offset, offset + limit);
     return { items, total, page, limit, hasMore: offset + limit < total };
   }
 

@@ -143,12 +143,20 @@ export class SyncService {
             audio_languages: providerAsset.audioLanguages,
             has_subtitles: providerAsset.hasSubtitles,
             last_synced_at: new Date().toISOString(),
-            mavero_status: providerAsset.status === 'ready' ? 'available' : existing.mavero_status,
+            // DETACH DURABILITY (final remediation): mavero_status='missing'
+            // is an admin-set detached state. Sync must NOT silently restore
+            // 'available' for a detached asset when the provider still reports
+            // the file ready — that would fight the admin's detach decision
+            // (reactivateAsset is the only path back to 'available').
+            // The processing → available transition still happens for
+            // non-detached assets.
+            mavero_status: providerAsset.status === 'ready' && existing.mavero_status !== 'missing' ? 'available' : existing.mavero_status,
           }).eq('id', existing.id);
           updatedAssets += 1;
-          // Phase 9: if the synced asset is ready, auto-resolve matching
-          // missing-media demand requests. Fire-and-forget — does NOT block sync.
-          if (providerAsset.status === 'ready') {
+          // Phase 9: if the synced asset is ready AND still linked (not
+          // detached), auto-resolve matching missing-media demand requests.
+          // Fire-and-forget — does NOT block sync.
+          if (providerAsset.status === 'ready' && existing.mavero_status !== 'missing') {
             await this.resolveDemandForAsset(existing.id);
           }
         } else {
@@ -220,6 +228,15 @@ export class SyncService {
     if (!ar.provider_asset_id) throw new HostingProviderError('VALIDATION', { message: 'Media asset has no provider_asset_id.' });
     if (!ar.provider_source_id) throw new HostingProviderError('VALIDATION', { message: 'Media asset has no provider_source_id.' });
 
+    // TERMINAL-STATE GUARD (final remediation): deleted assets are terminal —
+    // no remote-file mutations (including reconcile) are permitted. The UI
+    // hides the action; the backend MUST enforce it independently. Reconciling
+    // a deleted row would poll the provider and flip its status away from
+    // 'deleted', breaking the terminal contract.
+    if (ar.status === 'deleted') {
+      throw new HostingProviderError('ASSET_DELETED', { message: 'Deleted provider assets cannot be reconciled. The remote file has been permanently deleted.' });
+    }
+
     // Phase C audit fix: use the CANONICAL provider resolver instead of
     // inline two-query lookup. Surfaces real errors with actionable codes.
     let adapter: ReturnType<typeof getHostingAdapter>;
@@ -240,13 +257,19 @@ export class SyncService {
       status: procStatus.status, provider_status: procStatus.providerStatus,
       available_qualities: procStatus.availableQualities, error_code: procStatus.providerErrorCode,
       error_message: procStatus.providerErrorMessage, last_synced_at: new Date().toISOString(),
-      mavero_status: procStatus.status === 'ready' ? 'available' : ar.mavero_status,
+      // DETACH DURABILITY (final remediation): reconcile is a metadata sync —
+      // it must NOT silently restore 'available' for an admin-detached asset
+      // (mavero_status='missing'). Reactivate is the explicit recovery path.
+      mavero_status: procStatus.status === 'ready' && ar.mavero_status !== 'missing' ? 'available' : ar.mavero_status,
     }).eq('id', mediaAssetId);
 
     if (procStatus.status === 'ready') {
       await this.client.from('media_upload_operations').update({ status: 'ready', ready_at: new Date().toISOString() }).eq('media_asset_id', mediaAssetId).in('status', ['processing', 'uploaded']);
-      // Phase 9: auto-resolve matching missing-media demand requests.
-      await this.resolveDemandForAsset(mediaAssetId);
+      // Phase 9: auto-resolve matching missing-media demand requests —
+      // ONLY for still-linked (non-detached) assets.
+      if (ar.mavero_status !== 'missing') {
+        await this.resolveDemandForAsset(mediaAssetId);
+      }
     } else if (procStatus.status === 'failed') {
       await this.client.from('media_upload_operations').update({ status: 'failed', failed_at: new Date().toISOString(), error_code: procStatus.providerErrorCode ?? 'PROVIDER_PROCESSING', error_message: procStatus.providerErrorMessage ?? 'Provider processing failed.' }).eq('media_asset_id', mediaAssetId).in('status', ['processing', 'uploaded']);
     }

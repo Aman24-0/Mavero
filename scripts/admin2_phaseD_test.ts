@@ -183,7 +183,7 @@ ok('9b. completeUploadFromResult is idempotent for already-completed operations'
 
 assert.match(uploadService, /providerAdapterId\?/, 'CreateUploadOperationInput has optional providerAdapterId');
 assert.match(uploadApi, /providerAdapterId` is now OPTIONAL/, 'API documents optional providerAdapterId');
-assert.match(uploadApi, /Derive providerAdapterId from the source/, 'API derives providerAdapterId when not provided');
+assert.match(uploadApi, /[Dd]erives? it from .providerSourceId.|Derive providerAdapterId from the source/, 'API derives providerAdapterId when not provided');
 ok('10a. backend providerAdapterId is optional (Phase D fix — eliminates redundant field)');
 
 // API no longer requires providerAdapterId in validation

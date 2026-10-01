@@ -269,7 +269,7 @@
                   </button>
                 {/if}
                 {#if item.mediaItemId}
-                  <a class="a2-attention-action a2-attention-action-link" href={`/admin/media/library?selected=${item.mediaItemId}`}>
+                  <a class="a2-attention-action a2-attention-action-link" href={`/admin/media/library?mediaItem=${item.mediaItemId}`}>
                     <ExternalLink size={11} /> Open media
                   </a>
                 {/if}

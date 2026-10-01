@@ -47,38 +47,38 @@ assert.match(libraryApi, /query\.seriesTmdb = series/, 'A3b. API endpoint sets q
 assert.match(libraryApi, /d\{1,20\}.*\.test\(series\)/, 'A3c. API endpoint validates series is numeric (TMDB ID format)');
 ok('A3. API endpoint parses + validates ?series= param');
 
-// A4. Server loader parses ?series= param
-assert.match(libraryServer, /sp\.get\('series'\)/, 'A4a. Server loader reads ?series= query param');
-assert.match(libraryServer, /seriesTmdb: series/, 'A4b. Server loader passes seriesTmdb to service.list()');
-assert.match(libraryServer, /initialFilters: \{[\s\S]*?series[\s\S]*?\}/, 'A4c. Server loader returns series in initialFilters');
-ok('A4. Server loader parses ?series= param + passes to service + returns in initialFilters');
+// A4-A8 — [final remediation] the Phase 5 tree-based library UI (and its
+// ?series= deep-link wiring in the page loader/component) was SUPERSEDED by
+// the asset-centric file-manager consolidation. The MediaLibraryService and
+// /api/admin/media/library endpoint STILL support ?series= (A1-A3 above —
+// used by the Link Existing media picker); the library PAGE now parses the
+// canonical params (provider/q/contentType/status/linked/sort/mediaItem).
+const hostingAssetsCmp = read('src/lib/components/admin2/AdminHostingAssets.svelte');
+assert.match(libraryServer, /get\('provider'\)/, 'A4a. Server loader reads the provider deep-link param (canonical URL params)');
+assert.match(libraryServer, /get\('mediaItem'\)/, 'A4b. Server loader reads the mediaItem deep-link param');
+assert.match(libraryServer, /initialFilters/, 'A4c. Server loader returns initialFilters for the file manager');
+ok('A4. Server loader parses the canonical URL params into initialFilters');
 
-// A5. Page sends series in fetchList()
-assert.match(libraryPage, /if \(seriesTmdbFilter\) params\.set\('series', seriesTmdbFilter\)/, 'A5a. fetchList() sends ?series= param to API');
-ok('A5. Page fetchList() sends series filter to API');
+assert.match(hostingAssetsCmp, /params\.set\('provider'/, 'A5a. file manager sends provider filter to the inventory API');
+ok('A5. File manager sends the canonical filters to the inventory API');
 
-// A6. Page persists series in syncUrl()
-assert.match(libraryPage, /if \(seriesTmdbFilter\) params\.set\('series', seriesTmdbFilter\)/, 'A6a. syncUrl() persists ?series= param to URL');
-ok('A6. Page syncUrl() persists series filter to URL (survives refresh + shareable)');
+assert.match(hostingAssetsCmp, /function syncUrl/, 'A6a. file manager persists filters in the URL');
+assert.match(hostingAssetsCmp, /params\.set\('mediaItem'/, 'A6b. mediaItem deep-link persisted (shareable)');
+ok('A6. File manager syncs filter state to the URL (survives refresh + shareable)');
 
-// A7. Page initializes seriesTmdbFilter from URL
-assert.match(libraryPage, /let seriesTmdbFilter = \$state<string \| null>\(initial\.initialFilters\.series/, 'A7a. seriesTmdbFilter initialized from initialFilters.series (URL-driven)');
-ok('A7. seriesTmdbFilter initialized from URL param (deep-link safe)');
+assert.match(hostingAssetsCmp, /initialFilters\.provider \?\? 'all'/, 'A7a. filters initialized from server-parsed URL params (deep-link safe)');
+ok('A7. File manager initializes from URL params (deep-link safe)');
 
-// A8. Page initializes treeSelectedSeriesTmdb from URL
-assert.match(libraryPage, /let treeSelectedSeriesTmdb = \$state<string \| null>\(initial\.initialFilters\.series/, 'A8a. treeSelectedSeriesTmdb initialized from initialFilters.series (tree highlight on deep-link)');
-ok('A8. treeSelectedSeriesTmdb initialized from URL param (tree highlight works on refresh)');
+assert.match(hostingAssetsCmp, /initialFilters\.mediaItemId \?\? null/, 'A8a. mediaItem deep-link initializes the file manager');
+ok('A8. mediaItem deep-link initializes the file manager');
 
 // ============================================================
-// B. seriesTmdbFilter is no longer dead code
+// B. [final remediation] seriesTmdbFilter page wiring superseded — the
+// SERVICE-level seriesTmdb filter (verified above) remains load-bearing for
+// the API; the tree-select page wiring was removed with the tree UI.
 // ============================================================
-
-// B1. seriesTmdbFilter is now READ by fetchList() and syncUrl() (not just written)
-const filterWriteCount = (libraryPage.match(/seriesTmdbFilter = /g) || []).length;
-const filterReadCount = (libraryPage.match(/if \(seriesTmdbFilter\)/g) || []).length;
-assert.ok(filterReadCount >= 2, `B1a. seriesTmdbFilter is READ in at least 2 places (fetchList + syncUrl) — found ${filterReadCount}`);
-assert.ok(filterWriteCount >= 1, `B1b. seriesTmdbFilter is still WRITTEN (in handleTreeSelect) — found ${filterWriteCount}`);
-ok('B1. seriesTmdbFilter is no longer dead code — now read by fetchList() + syncUrl()');
+assert.match(libraryApi, /query\.seriesTmdb = series/, 'B1a. API-level seriesTmdb filter remains functional (service + endpoint)');
+ok('B1. seriesTmdb service-level filter preserved (tree UI wiring superseded)');
 
 // ============================================================
 // C. seriesTmdbId in CanonicalMediaService is unchanged

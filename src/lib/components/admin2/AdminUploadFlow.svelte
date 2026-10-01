@@ -740,8 +740,13 @@
   }
 
   function goToMediaDetail() {
+    // After an upload the new file belongs to the selected media — deep-link
+    // into the Media Library filtered to that media's files via a title
+    // search (the media item id is created server-side during the upload
+    // operation and is not exposed to this client flow).
     if (flowState.selectedTitle) {
-      void goto(`/admin/media/library?selected=${flowState.selectedTitle.tmdbId}`);
+      const title = encodeURIComponent(flowState.selectedTitle.title ?? flowState.selectedTitle.tmdbId);
+      void goto(`/admin/media/library?q=${title}`);
     } else {
       goToMediaLibrary();
     }

@@ -17,9 +17,34 @@
 
 export type JobStatus = 'queued' | 'uploading' | 'uploaded' | 'processing' | 'ready' | 'failed' | 'cancelled';
 
+/**
+ * Where a Jobs row comes from in the unified operational read model:
+ *   - 'upload'     → media_upload_operations (upload/remote-upload/retry pipeline)
+ *   - 'management' → media_operations (provider_delete, rename, move, detach,
+ *                    reactivate, link, subtitle_upload, replace, sync)
+ *
+ * Upload-lifecycle actions (upload, upload_remote, processing_started, ready,
+ * failed, retry) are NEVER sourced from media_operations in the Jobs stream —
+ * they are already represented by their media_upload_operations rows, so
+ * including both would duplicate the same event.
+ */
+export type JobOrigin = 'upload' | 'management';
+
+/**
+ * Operation type of a Jobs row. Upload-pipeline types map 1:1 to
+ * media_upload_operations rows; management types map to media_operations
+ * actions. 'delete' is the management provider_delete action — surfaced in
+ * the UI as "Delete File" (the internal DB action stays provider_delete).
+ */
+export type JobOperationType =
+  | 'upload' | 'upload_remote' | 'retry'
+  | 'delete' | 'rename' | 'move' | 'detach' | 'reactivate' | 'link'
+  | 'subtitle' | 'replace' | 'sync';
+
 export type JobRow = {
   id: string;
   status: JobStatus;
+  origin: JobOrigin;
   attemptNumber: number;
   parentOperationId: string | null;
   providerSourceId: string | null;
@@ -46,7 +71,7 @@ export type JobRow = {
   /** Derived: is the error retryable? (RATE_LIMITED, TRANSIENT, NETWORK, TIMEOUT) */
   isRetryable: boolean;
   /** Derived: operation type label */
-  operationType: 'upload' | 'upload_remote' | 'retry';
+  operationType: JobOperationType;
   /** Linked media item (null if media_item was deleted) */
   mediaItem: {
     id: string;
@@ -60,8 +85,15 @@ export type JobRow = {
 
 export type JobQuery = {
   q?: string;
-  status?: JobStatus | 'active' | 'stale' | 'all';
-  operationType?: 'upload' | 'upload_remote' | 'retry' | 'all';
+  /**
+   * Status filter. In addition to concrete upload statuses:
+   *   - 'active'   → non-terminal upload jobs (queued/uploading/uploaded/processing)
+   *   - 'stale'    → non-terminal upload jobs stuck > 60 min (pushed to the DB query)
+   *   - 'deleted'  → delete-file operations (media_operations action='provider_delete')
+   *   - 'all'      → the full unified stream
+   */
+  status?: JobStatus | 'active' | 'stale' | 'deleted' | 'all';
+  operationType?: JobOperationType | 'all';
   provider?: string;        // adapter id
   retryable?: boolean | null;
   stale?: boolean | null;
@@ -85,8 +117,9 @@ export type JobListResult = {
 export type HistoryAction =
   | 'upload' | 'upload_remote' | 'processing_started' | 'ready' | 'failed'
   | 'retry' | 'rename' | 'move' | 'replace' | 'subtitle_upload' | 'sync'
-  | 'provider_delete' | 'detach' | 'create_media_item' | 'update_media_item'
-  | 'delete_media_item' | 'create_folder' | 'update_folder' | 'delete_folder'
+  | 'provider_delete' | 'detach' | 'link' | 'reactivate'
+  | 'create_media_item' | 'update_media_item' | 'delete_media_item'
+  | 'create_folder' | 'update_folder' | 'delete_folder'
   | 'create_folder_mapping' | 'update_folder_mapping' | 'delete_folder_mapping'
   | 'resolve_availability';
 

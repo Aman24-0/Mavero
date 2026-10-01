@@ -73,7 +73,7 @@ function shippedRegexSource(path: string) {
 }
 assert.ok(!shippedRegexSource('/settings'), '/settings unaffected');
 
-assert.match(rootLayout, /must not render there[\s\S]*not hidden, not covered/i, 'admin not-hidden-not-covered contract intact');
+assert.match(rootLayout, /must not[\s\S]{0,80}?render there[\s\S]{0,120}?not hidden, not covered/i, 'admin not-hidden-not-covered contract intact');
 assert.match(rootLayout, /never mounted on these three[\s\S]*not hidden, not covered, simply not rendered/, 'the discover sub-page contract is documented in the layout itself');
 const elseBranch = rootLayout.slice(rootLayout.indexOf('{:else}'), rootLayout.indexOf('{/if}'));
 assert.match(elseBranch, /<AppShell currentPath=\{page\.url\.pathname\}/, 'consumer pages still render inside AppShell');

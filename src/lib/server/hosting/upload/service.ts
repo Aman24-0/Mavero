@@ -484,7 +484,15 @@ export class UploadService {
     if (procStatus.status === 'ready') {
       await this.updateOperationState(operationId, 'ready', { ready_at: new Date().toISOString() });
       // Also update the media_assets mavero_status.
-      await this.client.from('media_assets').update({ mavero_status: 'available' }).eq('id', op.media_asset_id);
+      // DETACH DURABILITY (final remediation): mavero_status='missing' is an
+      // admin-set detached state — the poll must NOT silently restore
+      // 'available' if an admin detached the asset mid-processing.
+      // reactivateAsset is the only path back to 'available'.
+      await this.client
+        .from('media_assets')
+        .update({ mavero_status: 'available' })
+        .eq('id', op.media_asset_id)
+        .neq('mavero_status', 'missing');
       // Phase 8: record the ready transition in operation history.
       await this.recordOperation({
         action: 'ready',
@@ -497,7 +505,10 @@ export class UploadService {
       });
       // Phase 9: auto-resolve any matching missing-media demand request.
       // Fire-and-forget — does NOT block playback or the upload lifecycle.
-      await this.resolveDemandForMediaItem(op.media_item_id);
+      // Guarded by the same detach-durability rule: if the asset was
+      // detached mid-processing (mavero_status stays 'missing'), the
+      // content is NOT available and demand must not resolve.
+      await this.resolveDemandForMediaItem(op.media_item_id, op.media_asset_id ?? undefined);
     } else if (procStatus.status === 'failed') {
       await this.updateOperationState(operationId, 'failed', {
         failed_at: new Date().toISOString(),
@@ -779,9 +790,24 @@ export class UploadService {
    * Only 'open' and 'uploading' status requests are resolved.
    * 'ignored' requests are NOT reopened (admin explicitly dismissed them).
    * 'ready' requests are already resolved (idempotent).
+   *
+   * DETACH DURABILITY (final remediation): when mediaAssetId is provided
+   * and that asset is detached (mavero_status='missing'), the content is
+   * NOT available — the demand must not resolve.
    */
-  private async resolveDemandForMediaItem(mediaItemId: string): Promise<void> {
+  private async resolveDemandForMediaItem(mediaItemId: string, mediaAssetId?: string): Promise<void> {
     try {
+      if (mediaAssetId) {
+        const { data: assetRow } = await this.client
+          .from('media_assets')
+          .select('mavero_status')
+          .eq('id', mediaAssetId)
+          .maybeSingle();
+        if ((assetRow as { mavero_status?: string } | null)?.mavero_status === 'missing') {
+          // Detached — not available for playback. Demand stays open.
+          return;
+        }
+      }
       const { data: item } = await this.client
         .from('media_items')
         .select('canonical_key')

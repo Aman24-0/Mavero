@@ -280,15 +280,21 @@ export class VidaraAdapter implements HostingProviderAdapter {
     //
     // Success detection: Vidara returns a VidaraOperationResponse with
     // `result: true` on success. A missing/already-deleted file returns
-    // `result: false` (or a NOT_FOUND error) — we surface that as a
-    // VALIDATION error so the admin knows the filecode was not found
-    // at the provider, rather than silently treating it as success.
+    // `result: false` with HTTP 200.
+    //
+    // TERMINAL-STATE CONTRACT (final remediation): `result: false` means
+    // the file is NOT present at the provider — the end state of a delete
+    // (file absent) is already achieved, so we throw NOT_FOUND (NOT
+    // VALIDATION). ManagementService.deleteAsset treats provider NOT_FOUND
+    // as successful terminal deletion and marks the asset deleted; any
+    // other real provider error still fails the operation without
+    // marking the asset deleted.
     const res = await this.http({
       method: 'GET',
       url: this.url('/v1/video/delete', { filecode: providerAssetId }),
     });
     if (!(res.json as VidaraOperationResponse)?.result) {
-      throw new HostingProviderError('VALIDATION', { message: 'Vidara delete returned failure — the file may not exist or the filecode is invalid.' });
+      throw new HostingProviderError('NOT_FOUND', { message: 'Vidara reports the file is no longer present at the provider — treating as already deleted.' });
     }
   }
 

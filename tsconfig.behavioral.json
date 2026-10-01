@@ -1,0 +1,10 @@
+{
+  "extends": "./jsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "$lib/*": ["src/lib/*"],
+      "$env/dynamic/private": ["scripts/stubs/env-dynamic-private.ts"]
+    }
+  }
+}

@@ -158,60 +158,40 @@ assert.match(usersServer, /params\.delete\('pageSize'\)/, 'B5b. /admin/users ser
 ok('B5. URL param forwarding preserved (q, filter, page, period, cohort, mode, metric)');
 
 // ============================================================
-// C. Media Library mobile hierarchy
+// C. Media Library mobile experience — [final remediation] the Phase 3
+// content-hierarchy tree UI (mobile hierarchy sheet) was SUPERSEDED by the
+// asset-centric file-manager consolidation: the Media Library now renders
+// AdminHostingAssets with the Mavero-native AdminFilterSheet on mobile.
 // ============================================================
 
-// C1. Mobile hierarchy trigger button
-assert.match(libraryPage, /class="library-hierarchy-mobile-btn"/, 'C1a. Hierarchy trigger button rendered');
-assert.match(libraryPage, /library-hierarchy-mobile-btn[\s\S]*?ListTree/, 'C1b. Hierarchy trigger uses ListTree icon');
-assert.match(libraryPage, /onclick=\{\(\) => \(mobileHierarchyOpen = true\)\}/, 'C1c. Hierarchy trigger opens sheet');
-assert.match(libraryPage, /aria-label="Open content hierarchy"/, 'C1d. Hierarchy trigger has aria-label');
-ok('C1. Mobile hierarchy trigger button (ListTree icon, aria-label, opens sheet)');
+// C1. The single file manager is the library page's content.
+assert.match(libraryPage, /AdminHostingAssets/, 'C1a. library page renders AdminHostingAssets (single file manager)');
+assert.doesNotMatch(libraryPage, /library-hierarchy-mobile-btn/, 'C1b. hierarchy tree button removed with the tree UI');
+ok('C1. Media Library renders the asset-centric file manager');
 
-// C2. Hierarchy trigger hidden on desktop, shown on mobile
-assert.match(libraryPage, /\.library-hierarchy-mobile-btn \{[\s\S]*?display: none/, 'C2a. Hierarchy trigger hidden by default (desktop)');
-assert.match(libraryPage, /@media \(max-width: 1023px\)[\s\S]*?\.library-hierarchy-mobile-btn \{[\s\S]*?display: inline-flex/, 'C2b. Hierarchy trigger shown <1024px');
-ok('C2. Hierarchy trigger responsive (hidden desktop, shown <1024px)');
+// C2. Mobile filter sheet — AdminFilterSheet (chip-based, dialog semantics).
+const adminFilterSheet = read('src/lib/components/admin2/AdminFilterSheet.svelte');
+assert.match(adminFilterSheet, /role="dialog"[\s\S]*aria-modal="true"/, 'C2a. filter sheet has dialog ARIA semantics');
+assert.match(adminFilterSheet, /aria-labelledby="a2-fs-title"/, 'C2b. filter sheet has accessible title');
+ok('C2. Mobile filter sheet has dialog ARIA semantics (AdminFilterSheet)');
 
-// C3. Hierarchy sheet markup
-assert.match(libraryPage, /class="library-hierarchy-sheet-overlay"/, 'C3a. Hierarchy sheet overlay rendered');
-assert.match(libraryPage, /class="library-hierarchy-sheet"/, 'C3b. Hierarchy sheet rendered');
-assert.match(libraryPage, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby="library-hierarchy-sheet-title"/, 'C3c. Hierarchy sheet has dialog ARIA semantics');
-assert.match(libraryPage, /id="library-hierarchy-sheet-title"[\s\S]*Content Hierarchy/, 'C3d. Hierarchy sheet has title');
-assert.match(libraryPage, /class="library-hierarchy-sheet-close"/, 'C3e. Hierarchy sheet has close button');
-assert.match(libraryPage, /class="library-hierarchy-sheet-done"/, 'C3f. Hierarchy sheet has Done button');
-ok('C3. Hierarchy sheet structure (overlay + dialog + title + close + Done)');
+// C3. Sheet structure (overlay + chips + Apply/Clear).
+assert.match(adminFilterSheet, /a2-fs-backdrop/, 'C3a. sheet overlay rendered');
+assert.match(adminFilterSheet, /class="a2-fs-chip"/, 'C3b. chip options rendered');
+assert.match(adminFilterSheet, /a2-fs-apply/, 'C3c. Apply button rendered');
+assert.match(adminFilterSheet, /a2-fs-clear/, 'C3d. Clear button rendered');
+ok('C3. Filter sheet structure (overlay + chips + Apply/Clear)');
 
-// C4. AdminMediaTree reused inside the sheet
-assert.match(libraryPage, /library-hierarchy-sheet-body[\s\S]*<AdminMediaTree/, 'C4a. AdminMediaTree rendered inside the hierarchy sheet');
-assert.match(libraryPage, /folders=\{folders\}/, 'C4b. Sheet tree reuses same folders ref (no data duplication)');
-assert.match(libraryPage, /onselect=\{\(sel\) => \{ handleTreeSelect\(sel\); mobileHierarchyOpen = false; \}\}/, 'C4c. Sheet tree auto-closes on selection + reuses handleTreeSelect');
-ok('C4. AdminMediaTree reused inside sheet (same props + callback as desktop, auto-close on select)');
+// C4. Sheet CSS — fixed overlay, touch targets, safe area, reduced motion.
+assert.match(adminFilterSheet, /a2-fs-layer \{[\s\S]*?position: fixed[\s\S]*?inset: 0/, 'C4a. sheet overlay is fixed full-screen');
+assert.match(adminFilterSheet, /a2-fs-close \{[\s\S]*?width: 34px/, 'C4b. sheet close button touch target');
+assert.match(adminFilterSheet, /safe-area-inset-bottom/, 'C4c. sheet has safe-area-inset-bottom');
+assert.match(adminFilterSheet, /prefers-reduced-motion: reduce/, 'C4d. sheet respects reduced-motion');
+ok('C4. Filter sheet CSS (fixed overlay, touch targets, safe-area, reduced motion)');
 
-// C5. Sheet CSS
-assert.match(libraryPage, /\.library-hierarchy-sheet-overlay \{[\s\S]*?position: fixed[\s\S]*?inset: 0[\s\S]*?z-index: 90/, 'C5a. Sheet overlay is fixed full-screen');
-assert.match(libraryPage, /\.library-hierarchy-sheet \{[\s\S]*?max-height: 80vh/, 'C5b. Sheet max-height 80vh');
-assert.match(libraryPage, /@keyframes a2-sheet-up/, 'C5c. Sheet has slide-up animation');
-assert.match(libraryPage, /\.library-hierarchy-sheet-close \{[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'C5d. Sheet close button ≥ 44px touch target');
-assert.match(libraryPage, /\.library-hierarchy-sheet-done \{[\s\S]*?min-height: 44px/, 'C5e. Sheet Done button ≥ 44px touch target');
-ok('C5. Hierarchy sheet CSS (fixed overlay, 80vh max, slide-up animation, 44px touch targets)');
-// C6. :global override for tree inside sheet
-assert.match(libraryPage, /\.library-hierarchy-sheet-body :global\(\.a2-media-tree\) \{[\s\S]*?border-right: 0/, 'C6a. Tree border-right overridden inside sheet');
-assert.match(libraryPage, /\.library-hierarchy-sheet-body :global\(\.a2-media-tree\) \{[\s\S]*?height: auto/, 'C6b. Tree height overridden to auto inside sheet');
-ok('C6. Tree CSS overridden inside sheet (border-right: 0, height: auto)');
-
-// C7. Reduced motion
-assert.match(libraryPage, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.library-hierarchy-sheet \{ animation: none/, 'C7a. Sheet animation disabled under reduced-motion');
-ok('C7. Hierarchy sheet respects reduced-motion');
-
-// C8. Desktop tree unchanged
-assert.match(libraryPage, /\.library-tree-wrap \{[\s\S]*?height: calc\(100dvh - 280px\)/, 'C8a. Desktop tree wrap still has fixed height');
-assert.match(libraryPage, /@media \(max-width: 1023px\)[\s\S]*?\.library-tree-wrap \{[\s\S]*?display: none/, 'C8b. Desktop tree still hidden <1024px (unchanged from Phase 2)');
-ok('C8. Desktop tree sidebar unchanged (Phase 2 behavior preserved)');
-
-// C9. mobileHierarchyOpen state
-assert.match(libraryPage, /let mobileHierarchyOpen = \$state<boolean>\(false\)/, 'C9a. mobileHierarchyOpen state declared');
-ok('C9. mobileHierarchyOpen state added');
+// C5. The old tree components remain archived (not rendered by the library).
+assert.doesNotMatch(libraryPage, /<AdminMediaTree/, 'C5a. AdminMediaTree no longer rendered by the library page');
+ok('C5. Tree UI not rendered by the canonical library');
 
 // ============================================================
 // D. Admin Overview caching — deferral documented

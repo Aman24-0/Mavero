@@ -3,14 +3,21 @@
    * Admin 2.0 — Media Library — Canonical File Manager
    *
    * ARCHITECTURE: Media Library is a single asset-centric file manager.
-   * It shows active provider files (media_assets with status != 'deleted')
-   * with their associated canonical media metadata.
+   * It shows active provider files (media_assets, default status='active'
+   * — terminal deleted files are EXCLUDED) with their associated canonical
+   * media metadata.
    *
    * No more "Media" / "Provider Files" dual-view split.
    * The AdminHostingAssets component is the sole file manager — it
-   * handles search, filters, sorting, pagination, file details,
-   * provider metadata, and all lifecycle actions (reconcile, rename,
-   * move, detach, delete, reactivate, link).
+   * handles search, filters, facet counts, sorting, pagination, file
+   * details, provider metadata, and all lifecycle actions (reconcile,
+   * rename, move, detach, delete, reactivate, link).
+   *
+   * The page server passes initialFilters parsed from the canonical URL
+   * params (provider / q / contentType / status / linked / sort /
+   * mediaItem) — Hosting Control's provider deep-link and the
+   * Jobs/Activity/Attention media deep-links land here and initialize
+   * the file manager in exactly the requested state.
    *
    * Deleted files are excluded from the active inventory.
    * Canonical media identities (media_items) are preserved for
@@ -36,7 +43,7 @@
       <p>
         Active provider file inventory — search, filter, and manage every hosted
         file across Vidara and Abyss. Deleted files are excluded from this view
-        but remain in Operations Activity.
+        but remain in Hosting Control → Activity.
       </p>
     {/snippet}
 
@@ -47,6 +54,7 @@
     {/snippet}
 
     <AdminHostingAssets
+      initialFilters={data.initialFilters}
       providers={data.hostingSources
         ?.filter((s: any) => s.adapterId && s.capabilities)
         .map((s: any) => ({ adapterId: s.adapterId, name: s.providerName ?? s.name, capabilities: s.capabilities })) ?? []}

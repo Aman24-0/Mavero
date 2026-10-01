@@ -1,21 +1,29 @@
 <script lang="ts">
   /**
-   * Admin 2.0 — Phase E — AdminHostingAssets
+   * Admin 2.0 — AdminHostingAssets — THE Media Library file manager.
    *
-   * The Assets tab. Shows a dense operational table of media_assets with:
+   * The single asset-centric workspace for every hosted provider file
+   * (media_assets joined with media_items + provider metadata):
    *   - Provider (Vidara / Abyss)
    *   - File name + provider asset ID
-   *   - Linked media (or UNLINKED badge)
+   *   - Linked media (or DETACHED badge)
    *   - Type (movie/series/anime)
    *   - Status (queued/uploading/uploaded/processing/ready/failed/deleted)
    *   - Quality (source_quality for Vidara, available_qualities for Abyss)
    *   - Audio (multi-audio indicator for Vidara)
    *   - Subtitles (yes/no)
    *   - Updated
-   *   - Actions (rename / move / detach / delete / reconcile)
+   *   - Actions (reconcile / rename / move / detach / delete / reactivate)
    *
-   * Server-side pagination + filtering + search via
-   * GET /api/admin/hosting/assets. No N+1 provider API calls.
+   * Server-side pagination + filtering + search + FACET COUNTS via
+   * GET /api/admin/hosting/assets — the ONE canonical read model. rows,
+   * search results, filters, counts, and the pagination total are all
+   * derived from the same dataset.
+   *
+   * DELETED files are terminal: the default status filter is 'active'
+   * (excludes deleted), and the explicit Deleted view shows them with NO
+   * remote-mutation actions. After a successful delete the drawer
+   * immediately reflects the terminal state.
    *
    * Clicking a row opens a detail drawer with full asset metadata +
    * the management actions. Destructive actions (detach, delete) use
@@ -27,23 +35,32 @@
    *   - delete: caps.delete
    *   - reconcile: always available (uses existing SyncService.reconcileAsset)
    *   - detach: always available (Mavero-side operation, no provider call)
+   *   - reactivate: detached assets only (backend rejects deleted)
    *
-   * Mobile: table collapses to a card list. Filters open a bottom sheet.
+   * URL state: provider / q / contentType / linked / status / sort /
+   * mediaItem / page are read from the page server (initialFilters) and
+   * kept in sync — this is what makes Hosting Control's provider
+   * deep-link (?provider=vidara) and the Jobs/Activity/Attention
+   * media deep-links (?mediaItem=<id>) work end-to-end.
+   *
+   * Mobile: table collapses to a card list; filters open the
+   * Mavero-native chip-based AdminFilterSheet (no native <select>).
    */
 
   import { onMount, onDestroy } from 'svelte';
   import { Search, Filter, X, ChevronLeft, ChevronRight, Pencil, FolderInput, Unlink, Trash2, RefreshCw, ExternalLink, AlertCircle, Loader2, HardDrive, FileVideo, Check, Film, Tv, Sparkles, Zap, Link2 } from 'lucide-svelte';
   import AdminStatus from './AdminStatus.svelte';
   import AdminConfirmDialog from './AdminConfirmDialog.svelte';
-  import type { HostingAssetRow, HostingAssetQuery } from '$lib/shared/hosting-types';
+  import type { HostingAssetRow, HostingAssetQuery, HostingAssetFacetCounts } from '$lib/shared/hosting-types';
   import type { ProviderCapabilities } from '$lib/server/hosting/types';
+  import AdminFilterSheet from './AdminFilterSheet.svelte';
 
   let {
-    initialProvider = null as string | null,
+    initialFilters = {} as Partial<HostingAssetQuery>,
     providers = [] as Array<{ adapterId: string; name: string; capabilities: ProviderCapabilities }>,
     onopenprovider = (() => {}) as (adapterId: string) => void,
   }: {
-    initialProvider?: string | null;
+    initialFilters?: Partial<HostingAssetQuery>;
     providers?: Array<{ adapterId: string; name: string; capabilities: ProviderCapabilities }>;
     onopenprovider?: (adapterId: string) => void;
   } = $props();
@@ -58,16 +75,24 @@
   let hasMore = $state(false);
   let loading = $state(false);
   let listError = $state<string | null>(null);
+  // Facet counts from the SAME inventory dataset (file counts).
+  let counts = $state<HostingAssetFacetCounts | null>(null);
 
+  // The single canonical filter state. DEFAULT status='active': terminal
+  // deleted files are EXCLUDED from the normal inventory, search, counts,
+  // and pagination — 'deleted' is an explicit opt-in audit view.
+  // Initialized from the page server's URL params (provider deep-links from
+  // Hosting Control, mediaItem deep-links from Jobs/Activity/Attention).
   // svelte-ignore state_referenced_locally
   let filters = $state<HostingAssetQuery>({
-    q: '',
-    provider: initialProvider ?? 'all',
-    linked: 'all',
-    status: 'all',
-    contentType: 'all',
+    q: initialFilters.q ?? '',
+    provider: initialFilters.provider ?? 'all',
+    linked: initialFilters.linked ?? 'all',
+    status: initialFilters.status ?? 'active',
+    contentType: initialFilters.contentType ?? 'all',
     hasSubtitles: null,
-    sort: 'recently_updated',
+    sort: initialFilters.sort ?? 'recently_updated',
+    mediaItemId: initialFilters.mediaItemId ?? null,
     page: 1,
     limit: 25,
   });
@@ -111,10 +136,13 @@
       if (filters.q) params.set('q', filters.q);
       if (filters.provider && filters.provider !== 'all') params.set('provider', String(filters.provider));
       if (filters.linked && filters.linked !== 'all') params.set('linked', String(filters.linked));
-      if (filters.status && filters.status !== 'all') params.set('status', String(filters.status));
+      // status default 'active' is the API default — only send when the
+      // admin explicitly picked something else.
+      if (filters.status && filters.status !== 'active') params.set('status', String(filters.status));
       if (filters.contentType && filters.contentType !== 'all') params.set('contentType', String(filters.contentType));
       if (filters.hasSubtitles === true) params.set('hasSubtitles', 'true');
       else if (filters.hasSubtitles === false) params.set('hasSubtitles', 'false');
+      if (filters.mediaItemId) params.set('mediaItem', filters.mediaItemId);
       params.set('sort', String(filters.sort ?? 'recently_updated'));
       params.set('page', String(filters.page ?? 1));
       params.set('limit', String(filters.limit ?? 25));
@@ -127,6 +155,7 @@
         page = data.page;
         limit = data.limit;
         hasMore = data.hasMore;
+        counts = data.counts ?? null;
       } else {
         listError = data.error?.message ?? 'Failed to load assets.';
       }
@@ -136,26 +165,30 @@
     loading = false;
   }
 
+  // Keep the URL in sync with the filter state — clean Media Library URLs
+  // (no legacy ?tab=assets), preserving every canonical param so reload /
+  // share / back-navigation reproduces the exact same dataset.
   function syncUrl() {
     const params = new URLSearchParams();
     if (filters.q) params.set('q', filters.q);
     if (filters.provider && filters.provider !== 'all') params.set('provider', String(filters.provider));
     if (filters.linked && filters.linked !== 'all') params.set('linked', String(filters.linked));
-    if (filters.status && filters.status !== 'all') params.set('status', String(filters.status));
+    if (filters.status && filters.status !== 'active') params.set('status', String(filters.status));
     if (filters.contentType && filters.contentType !== 'all') params.set('contentType', String(filters.contentType));
     if (filters.hasSubtitles === true) params.set('hasSubtitles', 'true');
     else if (filters.hasSubtitles === false) params.set('hasSubtitles', 'false');
+    if (filters.mediaItemId) params.set('mediaItem', filters.mediaItemId);
     if (filters.sort && filters.sort !== 'recently_updated') params.set('sort', String(filters.sort));
     if (page > 1) params.set('page', String(page));
-    const url = `${window.location.pathname}?tab=assets${params.toString() ? '&' + params.toString() : ''}`;
+    const url = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
     window.history.replaceState(null, '', url);
   }
 
-  function debouncedSearch() {
+  async function debouncedSearch() {
     if (searchDebounce) clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => {
       filters.page = 1;
-      void loadAssets();
+      void loadAssets().then(() => syncUrl());
     }, 300);
   }
 
@@ -172,6 +205,8 @@
   let lastHasSubtitles = $state(filters.hasSubtitles);
   // svelte-ignore state_referenced_locally
   let lastSort = $state(filters.sort);
+  // svelte-ignore state_referenced_locally
+  let lastMediaItem = $state(filters.mediaItemId);
 
   $effect(() => {
     if (
@@ -180,7 +215,8 @@
       filters.status !== lastStatus ||
       filters.contentType !== lastContentType ||
       filters.hasSubtitles !== lastHasSubtitles ||
-      filters.sort !== lastSort
+      filters.sort !== lastSort ||
+      filters.mediaItemId !== lastMediaItem
     ) {
       lastProvider = filters.provider;
       lastLinked = filters.linked;
@@ -188,13 +224,14 @@
       lastContentType = filters.contentType;
       lastHasSubtitles = filters.hasSubtitles;
       lastSort = filters.sort;
+      lastMediaItem = filters.mediaItemId;
       filters.page = 1;
-      void loadAssets();
+      void loadAssets().then(() => syncUrl());
     }
   });
 
   onMount(() => {
-    void loadAssets();
+    void loadAssets().then(() => syncUrl());
   });
 
   onDestroy(() => {
@@ -216,8 +253,12 @@
   function statusLabel(s: string): string {
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
-  function isUnlinked(asset: HostingAssetRow): boolean {
-    return !asset.mediaItem || asset.maveroStatus === 'missing';
+  function isDetached(asset: HostingAssetRow): boolean {
+    // DETACHED (not "unlinked"): mavero_status='missing' — an admin
+    // detached the asset from playback; the row still belongs to its
+    // canonical media_item (media_item_id is NOT NULL) and the remote
+    // file may still exist.
+    return asset.maveroStatus === 'missing';
   }
   function formatQuality(asset: HostingAssetRow): string {
     if (asset.providerAdapterId === 'abyss' && asset.availableQualities.length > 0) {
@@ -271,26 +312,42 @@
   function pageNext() {
     if (!hasMore) return;
     filters.page = (filters.page ?? 1) + 1;
-    void loadAssets();
+    void loadAssets().then(() => syncUrl());
   }
   function pagePrev() {
     if ((filters.page ?? 1) <= 1) return;
     filters.page = (filters.page ?? 1) - 1;
-    void loadAssets();
+    void loadAssets().then(() => syncUrl());
   }
 
   function clearFilters() {
-    filters = { q: '', provider: 'all', linked: 'all', status: 'all', contentType: 'all', hasSubtitles: null, sort: 'recently_updated', page: 1, limit: 25 };
-    void loadAssets();
+    filters = { q: '', provider: 'all', linked: 'all', status: 'active', contentType: 'all', hasSubtitles: null, sort: 'recently_updated', mediaItemId: null, page: 1, limit: 25 };
+    void loadAssets().then(() => syncUrl());
   }
 
   const activeFilterCount = $derived(
     (filters.provider && filters.provider !== 'all' ? 1 : 0) +
     (filters.linked !== 'all' ? 1 : 0) +
-    (filters.status !== 'all' ? 1 : 0) +
+    (filters.status !== 'active' && filters.status !== 'all' ? 1 : 0) +
     (filters.contentType !== 'all' ? 1 : 0) +
-    (filters.hasSubtitles !== null ? 1 : 0)
+    (filters.hasSubtitles !== null ? 1 : 0) +
+    (filters.mediaItemId ? 1 : 0)
   );
+
+  // Media-item deep-link chip (from Jobs / Activity / Attention).
+  let deepLinkMediaTitle = $state<string | null>(null);
+  $effect(() => {
+    if (filters.mediaItemId && items.length > 0) {
+      const found = items.find((i) => i.mediaItem?.id === filters.mediaItemId);
+      deepLinkMediaTitle = found?.mediaItem?.title ?? null;
+    } else if (!filters.mediaItemId) {
+      deepLinkMediaTitle = null;
+    }
+  });
+
+  function clearMediaItemFilter() {
+    filters.mediaItemId = null;
+  }
 
   // ============================================================
   // Management actions
@@ -317,12 +374,24 @@
         actionSuccess = `${action.charAt(0).toUpperCase() + action.slice(1)} succeeded.`;
         // Reload the list to reflect the change.
         await loadAssets();
-        // If the selected asset is still in the list, update it.
+        // Refresh the drawer's selected asset:
+        //  - DELETE: the asset is TERMINAL (status='deleted', mavero_status='missing')
+        //    and is excluded from the reloaded (active) list, so reflect the
+        //    server-confirmed terminal state locally — the drawer immediately
+        //    renders the "permanently deleted, no actions" notice and the
+        //    Delete button disappears. No second click can call the provider
+        //    (the backend is idempotent as a second guard).
+        //  - Other actions: update from the reloaded list when present.
         const sel = selectedAsset;
         if (sel) {
-          const updated = items.find((i) => i.id === sel.id);
-          if (updated) selectedAsset = updated;
+          if (action === 'delete') {
+            selectedAsset = { ...sel, status: 'deleted', maveroStatus: 'missing' };
+          } else {
+            const updated = items.find((i) => i.id === sel.id);
+            if (updated) selectedAsset = updated;
+          }
         }
+        syncUrl();
       } else {
         // Provider failure — surface the real error from the API.
         // Do NOT close the drawer; keep the asset available for retry.
@@ -400,34 +469,104 @@
   }
 
   // ============================================================
-  // Link Existing — for unlinked assets (mediaItem === null).
-  // Opens a modal that lets the admin search for and select a
-  // media_item, then calls the canonical POST /api/admin/media/assets/link
-  // endpoint with { mediaItemId, providerSourceId, providerAssetId }.
-  // This is a Mavero lifecycle operation — it does NOT depend on
-  // provider capabilities (no remote call, no upload).
+  // Link Existing File — header-level action for GENUINE provider-side
+  // files that have NO media_assets row (uploaded out-of-band via the
+  // Vidara/Abyss dashboard and discovered by provider sync). The old
+  // drawer-based variant was gated on mediaItem===null, which is an
+  // impossible state under the NOT NULL media_item_id constraint (dead
+  // path) — it has been removed.
+  //
+  // Flow: pick a provider file (from
+  // /api/admin/hosting/providers/[adapterId]/files — files NOT in
+  // media_assets), then search for and select the canonical media_item,
+  // then call POST /api/admin/media/assets/link with
+  // { mediaItemId, providerSourceId, providerAssetId } — which INSERTs
+  // a new media_assets row with current provider metadata.
   // ============================================================
   let linkModalOpen = $state(false);
-  let linkModalAsset = $state<HostingAssetRow | null>(null);
+  let linkFilesLoading = $state(false);
+  let linkFilesError = $state<string | null>(null);
+  // Untracked provider files available for linking, keyed by adapter.
+  let linkProviderFiles = $state<Array<{ providerAdapterId: string; providerAssetId: string; title: string | null; filename: string | null; status: string }>>([]);
+  let linkSelectedFile = $state<{ providerAdapterId: string; providerAssetId: string; title: string | null; filename: string | null } | null>(null);
   let linkSearchQuery = $state('');
   let linkSearchLoading = $state(false);
   let linkSearchResults = $state<Array<{ id: string; title: string; content_type: string; year: number | null; tmdb_id: string; canonical_key: string }>>([]);
   let linkSelectedMediaItemId = $state<string | null>(null);
   let linkSearchDebounce: ReturnType<typeof setTimeout> | null = null;
+  // providerSourceId for the selected provider file (resolved during load).
+  let linkSourceIdByAdapter = $state<Record<string, string>>({});
 
-  function startLink(asset: HostingAssetRow) {
-    linkModalAsset = asset;
+  async function startLinkExistingFlow() {
+    linkModalOpen = true;
+    linkSelectedFile = null;
     linkSearchQuery = '';
     linkSearchResults = [];
     linkSelectedMediaItemId = null;
-    linkModalOpen = true;
+    linkFilesError = null;
+    await loadProviderFilesForLink();
     // Trigger an initial empty search to show some items.
     void searchMediaItems('');
   }
 
+  async function loadProviderFilesForLink() {
+    linkFilesLoading = true;
+    linkFilesError = null;
+    linkProviderFiles = [];
+    try {
+      // Resolve the provider sources (for providerSourceId) via the
+      // canonical resolver-backed sources already loaded by the page —
+      // fall back to the hosting providers API.
+      const files: typeof linkProviderFiles = [];
+      const sourceMap: Record<string, string> = {};
+      for (const p of providers) {
+        try {
+          const res = await fetch(`/api/admin/hosting/providers/${encodeURIComponent(p.adapterId)}/files`);
+          const data = await res.json();
+          if (data.ok && Array.isArray(data.files)) {
+            for (const f of data.files) {
+              files.push({
+                providerAdapterId: p.adapterId,
+                providerAssetId: f.providerAssetId,
+                title: f.title ?? null,
+                filename: f.filename ?? null,
+                status: f.status,
+              });
+            }
+          }
+        } catch {
+          // Per-provider failure is non-fatal — other providers still load.
+        }
+      }
+      // providerSourceId per adapter comes from the page's hostingSources
+      // (passed as `providers` — we need the source ids though). We fetch
+      // them from the providers overview endpoint, which includes sourceId.
+      try {
+        const res = await fetch('/api/admin/hosting/providers?skipHealth=1');
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.providers)) {
+          for (const p of data.providers) {
+            if (p.adapterId && p.sourceId) sourceMap[p.adapterId] = p.sourceId;
+          }
+        }
+      } catch {
+        // Non-fatal — confirmLink validates and surfaces a precise error.
+      }
+      linkSourceIdByAdapter = sourceMap;
+      linkProviderFiles = files;
+      if (files.length === 0) {
+        linkFilesError = 'No untracked provider files found. Run a provider sync (Hosting Control → Sync) to discover files uploaded outside Mavero.';
+      }
+    } catch (err) {
+      linkFilesError = err instanceof Error ? err.message : 'Failed to load provider files.';
+    } finally {
+      linkFilesLoading = false;
+    }
+  }
+
   function closeLinkModal() {
     linkModalOpen = false;
-    linkModalAsset = null;
+    linkSelectedFile = null;
     linkSearchQuery = '';
     linkSearchResults = [];
     linkSelectedMediaItemId = null;
@@ -469,10 +608,11 @@
   }
 
   async function confirmLink() {
-    if (!linkModalAsset || !linkSelectedMediaItemId) return;
-    const asset = linkModalAsset;
-    if (!asset.providerSourceId || !asset.providerAssetId) {
-      actionError = 'This asset is missing providerSourceId or providerAssetId — cannot link.';
+    if (!linkSelectedFile || !linkSelectedMediaItemId) return;
+    const file = linkSelectedFile;
+    const providerSourceId = linkSourceIdByAdapter[file.providerAdapterId];
+    if (!providerSourceId) {
+      linkFilesError = `Could not resolve the Mavero source for provider "${file.providerAdapterId}". Check the provider configuration and retry.`;
       return;
     }
     actionInProgress = 'link';
@@ -484,13 +624,13 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mediaItemId: linkSelectedMediaItemId,
-          providerSourceId: asset.providerSourceId,
-          providerAssetId: asset.providerAssetId,
+          providerSourceId,
+          providerAssetId: file.providerAssetId,
         }),
       });
       const data = await res.json();
       if (data.ok) {
-        actionSuccess = 'Asset linked to media item successfully.';
+        actionSuccess = `Provider file ${file.providerAssetId} linked to the selected media item.`;
         closeLinkModal();
         await loadAssets();
         const sel = selectedAsset;
@@ -498,11 +638,12 @@
           const updated = items.find((i) => i.id === sel.id);
           if (updated) selectedAsset = updated;
         }
+        syncUrl();
       } else {
-        actionError = data.error?.message ?? 'Link failed.';
+        linkFilesError = data.error?.message ?? 'Link failed.';
       }
     } catch (err) {
-      actionError = err instanceof Error ? `Network error: ${err.message}` : 'Network error during link.';
+      linkFilesError = err instanceof Error ? `Network error: ${err.message}` : 'Network error during link.';
     } finally {
       actionInProgress = null;
     }
@@ -524,40 +665,95 @@
         autocomplete="off"
       />
     </div>
+
+    <!-- Media-item deep-link chip (Jobs / Activity / Attention → "Open media") -->
+    {#if filters.mediaItemId}
+      <div class="a2-assets-deeplink" role="status">
+        <FileVideo size={12} />
+        <span class="a2-assets-deeplink-label">
+          Showing files of {deepLinkMediaTitle ?? 'one media item'}
+        </span>
+        <button type="button" class="a2-assets-deeplink-clear" onclick={clearMediaItemFilter} aria-label="Clear media filter">
+          <X size={11} />
+        </button>
+      </div>
+    {/if}
+
+    <!-- Content-type filter chips — FILE counts derived from the SAME
+         inventory dataset (facet semantics: counts update when the other
+         filters change; deleted files never contribute to the default). -->
+    <div class="a2-assets-chip-row" role="group" aria-label="Filter by content type">
+      <span class="a2-assets-chip-row-label">Type · files</span>
+      <button
+        type="button"
+        class="a2-assets-chip"
+        class:active={filters.contentType === 'all'}
+        aria-pressed={filters.contentType === 'all'}
+        onclick={() => { filters.contentType = 'all'; }}
+      >All {counts?.contentType.all ?? ''}</button>
+      <button
+        type="button"
+        class="a2-assets-chip"
+        class:active={filters.contentType === 'movie'}
+        aria-pressed={filters.contentType === 'movie'}
+        onclick={() => { filters.contentType = 'movie'; }}
+      >Movie {counts?.contentType.movie ?? ''}</button>
+      <button
+        type="button"
+        class="a2-assets-chip"
+        class:active={filters.contentType === 'series'}
+        aria-pressed={filters.contentType === 'series'}
+        onclick={() => { filters.contentType = 'series'; }}
+      >Series {counts?.contentType.series ?? ''}</button>
+      <button
+        type="button"
+        class="a2-assets-chip"
+        class:active={filters.contentType === 'anime'}
+        aria-pressed={filters.contentType === 'anime'}
+        onclick={() => { filters.contentType = 'anime'; }}
+      >Anime {counts?.contentType.anime ?? ''}</button>
+    </div>
+
+    <!-- Provider filter chips — FILE counts from the same dataset (the
+         provider facet scope). Clicking Vidara here is exactly what the
+         Hosting Control "Open assets" deep-link initializes. -->
+    <div class="a2-assets-chip-row" role="group" aria-label="Filter by provider">
+      <span class="a2-assets-chip-row-label">Provider · files</span>
+      <button
+        type="button"
+        class="a2-assets-chip"
+        class:active={filters.provider === 'all'}
+        aria-pressed={filters.provider === 'all'}
+        onclick={() => { filters.provider = 'all'; }}
+      >All {counts?.provider.all ?? ''}</button>
+      {#each providers as p (p.adapterId)}
+        <button
+          type="button"
+          class="a2-assets-chip"
+          class:active={filters.provider === p.adapterId}
+          aria-pressed={filters.provider === p.adapterId}
+          onclick={() => { filters.provider = p.adapterId; }}
+        >{p.name} {counts?.provider[p.adapterId] ?? ''}</button>
+      {/each}
+    </div>
+
     <div class="a2-assets-filter-row">
       <label class="a2-assets-filter">
-        <span class="a2-assets-filter-label">Provider</span>
-        <select bind:value={filters.provider} class="a2-assets-select">
-          <option value="all">All</option>
-          <option value="vidara">Vidara</option>
-          <option value="abyss">Abyss</option>
-        </select>
-      </label>
-      <label class="a2-assets-filter">
-        <span class="a2-assets-filter-label">Linked</span>
+        <span class="a2-assets-filter-label">Link state</span>
         <select bind:value={filters.linked} class="a2-assets-select">
           <option value="all">All</option>
           <option value="linked">Linked</option>
-          <option value="unlinked">Unlinked</option>
+          <option value="detached">Detached</option>
         </select>
       </label>
       <label class="a2-assets-filter">
         <span class="a2-assets-filter-label">Status</span>
         <select bind:value={filters.status} class="a2-assets-select">
-          <option value="all">All</option>
+          <option value="active">Active (default)</option>
           <option value="ready">Ready</option>
           <option value="processing">Processing</option>
           <option value="failed">Failed</option>
-          <option value="deleted">Deleted</option>
-        </select>
-      </label>
-      <label class="a2-assets-filter">
-        <span class="a2-assets-filter-label">Type</span>
-        <select bind:value={filters.contentType} class="a2-assets-select">
-          <option value="all">All</option>
-          <option value="movie">Movie</option>
-          <option value="series">Series</option>
-          <option value="anime">Anime</option>
+          <option value="deleted">Deleted (terminal)</option>
         </select>
       </label>
       <label class="a2-assets-filter">
@@ -574,6 +770,11 @@
           <X size={11} /> Clear ({activeFilterCount})
         </button>
       {/if}
+      <!-- Link Existing File — for provider-side files NOT yet tracked in
+           media_assets (out-of-band uploads discovered by sync). -->
+      <button type="button" class="a2-assets-link-existing" onclick={startLinkExistingFlow} disabled={actionInProgress !== null}>
+        <Link2 size={12} /> Link Existing File
+      </button>
     </div>
   </div>
 
@@ -609,11 +810,11 @@
     <ul class="a2-assets-card-list" role="list">
       {#each items as asset (asset.id)}
         <li>
-          <button type="button" class="a2-assets-card" class:is-unlinked={isUnlinked(asset)} onclick={() => openDetail(asset)}>
+          <button type="button" class="a2-assets-card" class:is-detached={isDetached(asset)} onclick={() => openDetail(asset)}>
             <div class="a2-assets-card-head">
               <span class="a2-assets-provider-badge" data-adapter={asset.providerAdapterId ?? ''}>{asset.providerAdapterId ?? '—'}</span>
               <AdminStatus label={statusLabel(asset.status)} tone={statusTone(asset.status)} />
-              {#if isUnlinked(asset)}<span class="a2-assets-unlinked-badge">UNLINKED</span>{/if}
+              {#if isDetached(asset)}<span class="a2-assets-detached-badge">DETACHED</span>{/if}
             </div>
             <div class="a2-assets-card-file" title={asset.filename ?? asset.title ?? '—'}>
               {asset.filename ?? asset.title ?? '—'}
@@ -656,7 +857,7 @@
         </thead>
         <tbody>
           {#each items as asset (asset.id)}
-            <tr onclick={() => openDetail(asset)} class="a2-assets-row" class:is-unlinked={isUnlinked(asset)}>
+            <tr onclick={() => openDetail(asset)} class="a2-assets-row" class:is-detached={isDetached(asset)}>
               <td class="col-provider">
                 <span class="a2-assets-provider-badge" data-adapter={asset.providerAdapterId ?? ''}>
                   {asset.providerAdapterId ?? '—'}
@@ -673,8 +874,8 @@
                 </div>
               </td>
               <td class="col-media">
-                {#if isUnlinked(asset)}
-                  <span class="a2-assets-unlinked-badge">UNLINKED</span>
+                {#if isDetached(asset)}
+                  <span class="a2-assets-detached-badge">DETACHED</span>
                 {:else if asset.mediaItem}
                   <div class="a2-assets-media-cell">
                     <div class="a2-assets-media-title" title={asset.mediaItem.title}>{asset.mediaItem.title}</div>
@@ -733,61 +934,79 @@
     </footer>
   {/if}
 
-  <!-- Mobile filter sheet -->
-  {#if mobileFiltersOpen}
-    <div class="a2-assets-filter-sheet-overlay" onclick={() => { mobileFiltersOpen = false; }} role="presentation">
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="a2-assets-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="a2-assets-filter-sheet-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-        <header class="a2-assets-filter-sheet-head">
-          <h2 id="a2-assets-filter-sheet-title">Filters</h2>
-          <button type="button" class="a2-assets-filter-sheet-close" onclick={() => { mobileFiltersOpen = false; }} aria-label="Close">
-            <X size={16} />
-          </button>
-        </header>
-        <div class="a2-assets-filter-sheet-body">
-          <label class="a2-assets-filter a2-assets-filter-full">
-            <span class="a2-assets-filter-label">Provider</span>
-            <select bind:value={filters.provider} class="a2-assets-select">
-              <option value="all">All</option>
-              <option value="vidara">Vidara</option>
-              <option value="abyss">Abyss</option>
-            </select>
-          </label>
-          <label class="a2-assets-filter a2-assets-filter-full">
-            <span class="a2-assets-filter-label">Linked</span>
-            <select bind:value={filters.linked} class="a2-assets-select">
-              <option value="all">All</option>
-              <option value="linked">Linked</option>
-              <option value="unlinked">Unlinked</option>
-            </select>
-          </label>
-          <label class="a2-assets-filter a2-assets-filter-full">
-            <span class="a2-assets-filter-label">Status</span>
-            <select bind:value={filters.status} class="a2-assets-select">
-              <option value="all">All</option>
-              <option value="ready">Ready</option>
-              <option value="processing">Processing</option>
-              <option value="failed">Failed</option>
-              <option value="deleted">Deleted</option>
-            </select>
-          </label>
-          <label class="a2-assets-filter a2-assets-filter-full">
-            <span class="a2-assets-filter-label">Type</span>
-            <select bind:value={filters.contentType} class="a2-assets-select">
-              <option value="all">All</option>
-              <option value="movie">Movie</option>
-              <option value="series">Series</option>
-              <option value="anime">Anime</option>
-            </select>
-          </label>
-        </div>
-        <footer class="a2-assets-filter-sheet-actions">
-          <button type="button" class="a2-assets-clear" onclick={clearFilters}>Clear all</button>
-          <button type="button" class="a2-assets-apply" onclick={() => { mobileFiltersOpen = false; }}>Apply</button>
-        </footer>
-      </div>
-    </div>
-  {/if}
+  <!-- Mobile filter sheet — Mavero-native chip-based filter UI (no native
+       browser <select> on mobile; single-select chips per dimension,
+       grouped sections, Apply/Clear, focus trap, safe-area). -->
+  <AdminFilterSheet
+    open={mobileFiltersOpen}
+    title="Filters"
+    sections={[
+      {
+        dimension: 'provider',
+        heading: 'Provider · files',
+        options: [
+          { value: 'all', label: 'All', count: counts?.contentType.all },
+          ...providers.map((p) => ({ value: p.adapterId, label: p.name, count: counts?.provider[p.adapterId] })),
+        ],
+      },
+      {
+        dimension: 'contentType',
+        heading: 'Type · files',
+        options: [
+          { value: 'all', label: 'All', count: counts?.contentType.all },
+          { value: 'movie', label: 'Movie', count: counts?.contentType.movie },
+          { value: 'series', label: 'Series', count: counts?.contentType.series },
+          { value: 'anime', label: 'Anime', count: counts?.contentType.anime },
+        ],
+      },
+      {
+        dimension: 'linked',
+        heading: 'Link state',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'linked', label: 'Linked' },
+          { value: 'detached', label: 'Detached' },
+        ],
+      },
+      {
+        dimension: 'status',
+        heading: 'Status',
+        options: [
+          { value: 'active', label: 'Active (default)' },
+          { value: 'ready', label: 'Ready' },
+          { value: 'processing', label: 'Processing' },
+          { value: 'failed', label: 'Failed' },
+          { value: 'deleted', label: 'Deleted (terminal)' },
+        ],
+      },
+      {
+        dimension: 'sort',
+        heading: 'Sort',
+        options: [
+          { value: 'recently_updated', label: 'Recently updated' },
+          { value: 'recently_added', label: 'Recently added' },
+          { value: 'status', label: 'Status' },
+          { value: 'provider', label: 'Provider' },
+        ],
+      },
+    ]}
+    selected={{
+      provider: filters.provider ?? 'all',
+      contentType: filters.contentType ?? 'all',
+      linked: filters.linked ?? 'all',
+      status: filters.status ?? 'active',
+      sort: filters.sort ?? 'recently_updated',
+    }}
+    onApply={(applied) => {
+      filters.provider = (applied.provider as HostingAssetQuery['provider']) ?? 'all';
+      filters.contentType = (applied.contentType as HostingAssetQuery['contentType']) ?? 'all';
+      filters.linked = (applied.linked as HostingAssetQuery['linked']) ?? 'all';
+      filters.status = (applied.status as HostingAssetQuery['status']) ?? 'active';
+      filters.sort = (applied.sort as HostingAssetQuery['sort']) ?? 'recently_updated';
+    }}
+    onClear={clearFilters}
+    onClose={() => { mobileFiltersOpen = false; }}
+  />
 
   <!-- Detail drawer -->
   {#if drawerOpen && selectedAsset}
@@ -863,17 +1082,30 @@
 
           <section class="a2-asset-drawer-section">
             <h3 class="a2-asset-drawer-section-title">Mavero link</h3>
-            {#if isUnlinked(selectedAsset)}
+            {#if selectedAsset.status === 'deleted'}
+              <div class="a2-asset-drawer-unlinked">
+                <Trash2 size={16} />
+                <div>
+                  <p class="a2-asset-drawer-unlinked-title">DELETED FILE — TERMINAL</p>
+                  <p class="a2-asset-drawer-unlinked-desc">
+                    This provider file was permanently deleted. The canonical media item is
+                    preserved (Missing Media / demand tracking), and the historical delete
+                    operation remains in Hosting Control → Activity.
+                  </p>
+                </div>
+              </div>
+            {:else if isDetached(selectedAsset)}
               <div class="a2-asset-drawer-unlinked">
                 <Unlink size={16} />
                 <div>
-                  <p class="a2-asset-drawer-unlinked-title">UNLINKED PROVIDER ASSET</p>
+                  <p class="a2-asset-drawer-unlinked-title">DETACHED — NOT SERVED FOR PLAYBACK</p>
                   <p class="a2-asset-drawer-unlinked-desc">
-                    This provider asset is not linked to a canonical Mavero media item.
-                    {#if selectedAsset.maveroStatus === 'missing'}
-                      It was detached by an admin — the provider file still exists.
+                    {#if selectedAsset.mediaItem}
+                      An admin detached this asset from {selectedAsset.mediaItem.title} — the
+                      row still belongs to that canonical media item, and the provider file
+                      may still exist. Reactivate to restore playback.
                     {:else}
-                      It has no media_item_id — sync did not match it to a canonical media item.
+                      This asset has no media link — impossible under the current schema.
                     {/if}
                   </p>
                 </div>
@@ -891,9 +1123,6 @@
                   <div><dt>Episode</dt><dd>S{String(selectedAsset.mediaItem.season).padStart(2, '0')}E{String(selectedAsset.mediaItem.episode).padStart(2, '0')}</dd></div>
                 {/if}
               </dl>
-              <a class="a2-asset-drawer-open-media" href={`/admin/media/library?selected=${selectedAsset.mediaItem.id}`}>
-                <ExternalLink size={12} /> Open in Media Library
-              </a>
             {/if}
           </section>
 
@@ -938,14 +1167,11 @@
                 </button>
               {/if}
 
-              <!-- Link Existing: shown for UNLINKED assets (no mediaItem).
-                   Opens a media-item picker modal. -->
-              {#if !selectedAsset.mediaItem}
-                <button type="button" class="a2-asset-action a2-asset-action-success" onclick={() => startLink(selectedAsset!)} disabled={actionInProgress !== null || !selectedAsset.providerAssetId}>
-                  {#if actionInProgress === 'link'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Link2 size={12} />{/if}
-                  {actionInProgress === 'link' ? 'Linking…' : 'Link Existing'}
-                </button>
-              {/if}
+              <!-- (The old drawer-level "Link Existing" button — gated on
+                   mediaItem===null, an impossible state under the NOT NULL
+                   media_item_id constraint — was removed. The legitimate
+                   Link Existing File flow for untracked provider files is
+                   the header action above.) -->
 
               <!-- Rename: provider capability gate -->
               <button type="button" class="a2-asset-action" onclick={() => startRename(selectedAsset!)} disabled={actionInProgress !== null || !caps?.rename || !selectedAsset.providerAssetId}>
@@ -1032,7 +1258,7 @@
     title={confirmAction === 'delete' ? 'Delete provider asset' : 'Detach asset from media'}
     description={confirmAction === 'delete'
       ? 'This will permanently delete the file from the provider. The Mavero media_asset will be marked as deleted. This action cannot be undone.'
-      : 'This removes the link between the provider asset and the Mavero media item. The provider file is NOT deleted — it becomes an unlinked provider asset. The resolver will no longer serve it.'}
+      : 'This detaches the asset from playback: the resolver will no longer serve it. The row stays linked to its canonical media item and the provider file is NOT deleted — Reactivate can restore it later.'}
     confirmLabel={confirmAction === 'delete' ? 'Delete permanently' : 'Detach'}
     tone="danger"
     onconfirm={confirmDestructive}
@@ -1059,70 +1285,117 @@
     {/if}
   </AdminConfirmDialog>
 
-  <!-- Link Existing modal — lets the admin search for and select a media_item
-       to link an unlinked provider file to. Calls the canonical
-       POST /api/admin/media/assets/link endpoint. -->
-  {#if linkModalOpen && linkModalAsset}
+  <!-- Link Existing File modal — pick an UNTRACKED provider-side file (no
+       media_assets row; discovered via the provider files API) and a
+       canonical media_item, then link them via
+       POST /api/admin/media/assets/link (which INSERTs the row). -->
+  {#if linkModalOpen}
     <div class="a2-asset-modal-overlay" onclick={() => closeLinkModal()} role="presentation">
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="a2-asset-modal a2-asset-modal-wide" role="dialog" aria-modal="true" aria-labelledby="a2-asset-link-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-        <h2 id="a2-asset-link-title" class="a2-asset-modal-title"><Link2 size={16} /> Link to media item</h2>
+        <h2 id="a2-asset-link-title" class="a2-asset-modal-title"><Link2 size={16} /> Link existing provider file</h2>
         <p class="a2-asset-modal-desc">
-          Search for the media item to associate with this provider file.
-          <strong>Provider:</strong> {linkModalAsset.providerAdapterId ?? '—'}
-          · <strong>File:</strong> {linkModalAsset.filename ?? linkModalAsset.title ?? linkModalAsset.providerAssetId ?? '—'}
+          Link a provider-side file that is NOT yet tracked by Mavero (uploaded out-of-band,
+          discovered via provider sync) to a canonical media item. This creates the
+          media_assets link and resolves any open demand.
         </p>
-        <div class="a2-asset-link-search">
-          <input
-            type="text"
-            class="a2-asset-modal-input"
-            placeholder="Search by title, TMDB ID, IMDb ID, or canonical key…"
-            bind:value={linkSearchQuery}
-            oninput={onLinkSearchInput}
-            autocomplete="off"
-          />
-          {#if linkSearchLoading}
-            <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-text-dim);" />
-          {/if}
-        </div>
-        <div class="a2-asset-link-results">
-          {#if linkSearchResults.length === 0 && !linkSearchLoading}
-            <div class="a2-asset-link-empty">
-              {#if linkSearchQuery.trim()}
-                No media items match "{linkSearchQuery}".
-              {:else}
-                Start typing to search, or browse the list below.
-              {/if}
+
+        {#if linkFilesLoading}
+          <div class="a2-asset-link-search" role="status">
+            <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-cyan);" />
+            <span>Loading provider files…</span>
+          </div>
+        {:else}
+          {#if linkFilesError}
+            <div class="a2-asset-action-error-box" role="alert" style="margin-bottom: 10px;">
+              <AlertCircle size={14} />
+              <div><p>{linkFilesError}</p></div>
             </div>
           {/if}
-          {#each linkSearchResults as item (item.id)}
-            <button
-              type="button"
-              class="a2-asset-link-result"
-              class:selected={linkSelectedMediaItemId === item.id}
-              onclick={() => { linkSelectedMediaItemId = item.id; }}
-            >
-              <div class="a2-asset-link-result-icon">
-                {#if item.content_type === 'movie'}<Film size={14} />{:else if item.content_type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}
-              </div>
-              <div class="a2-asset-link-result-info">
-                <div class="a2-asset-link-result-title">{item.title}</div>
-                <div class="a2-asset-link-result-meta">
-                  <span>{item.content_type}</span>
-                  {#if item.year}<span>· {item.year}</span>{/if}
-                  <span>· TMDB {item.tmdb_id}</span>
+
+          <h3 class="a2-asset-modal-step">1. Provider file</h3>
+          <div class="a2-asset-link-results" style="max-height: 180px;">
+            {#if linkProviderFiles.length === 0 && !linkFilesLoading}
+              <div class="a2-asset-link-empty">No untracked provider files available.</div>
+            {/if}
+            {#each linkProviderFiles as file (file.providerAdapterId + ':' + file.providerAssetId)}
+              <button
+                type="button"
+                class="a2-asset-link-result"
+                class:selected={linkSelectedFile?.providerAssetId === file.providerAssetId && linkSelectedFile?.providerAdapterId === file.providerAdapterId}
+                onclick={() => { linkSelectedFile = file; }}
+              >
+                <div class="a2-asset-link-result-icon">
+                  <FileVideo size={14} />
                 </div>
+                <div class="a2-asset-link-result-info">
+                  <div class="a2-asset-link-result-title">{file.filename ?? file.title ?? file.providerAssetId}</div>
+                  <div class="a2-asset-link-result-meta">
+                    <span>{file.providerAdapterId}</span>
+                    <span>· {file.providerAssetId}</span>
+                    <span>· {file.status}</span>
+                  </div>
+                </div>
+                {#if linkSelectedFile?.providerAssetId === file.providerAssetId && linkSelectedFile?.providerAdapterId === file.providerAdapterId}
+                  <span class="a2-asset-link-result-check"><Check size={14} /></span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+
+          <h3 class="a2-asset-modal-step">2. Media item</h3>
+          <div class="a2-asset-link-search">
+            <input
+              type="text"
+              class="a2-asset-modal-input"
+              placeholder="Search by title, TMDB ID, IMDb ID, or canonical key…"
+              bind:value={linkSearchQuery}
+              oninput={onLinkSearchInput}
+              autocomplete="off"
+            />
+            {#if linkSearchLoading}
+              <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-text-dim);" />
+            {/if}
+          </div>
+          <div class="a2-asset-link-results">
+            {#if linkSearchResults.length === 0 && !linkSearchLoading}
+              <div class="a2-asset-link-empty">
+                {#if linkSearchQuery.trim()}
+                  No media items match "{linkSearchQuery}".
+                {:else}
+                  Start typing to search, or browse the list below.
+                {/if}
               </div>
-              {#if linkSelectedMediaItemId === item.id}
-                <span class="a2-asset-link-result-check"><Check size={14} /></span>
-              {/if}
-            </button>
-          {/each}
-        </div>
+            {/if}
+            {#each linkSearchResults as item (item.id)}
+              <button
+                type="button"
+                class="a2-asset-link-result"
+                class:selected={linkSelectedMediaItemId === item.id}
+                onclick={() => { linkSelectedMediaItemId = item.id; }}
+              >
+                <div class="a2-asset-link-result-icon">
+                  {#if item.content_type === 'movie'}<Film size={14} />{:else if item.content_type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}
+                </div>
+                <div class="a2-asset-link-result-info">
+                  <div class="a2-asset-link-result-title">{item.title}</div>
+                  <div class="a2-asset-link-result-meta">
+                    <span>{item.content_type}</span>
+                    {#if item.year}<span>· {item.year}</span>{/if}
+                    <span>· TMDB {item.tmdb_id}</span>
+                  </div>
+                </div>
+                {#if linkSelectedMediaItemId === item.id}
+                  <span class="a2-asset-link-result-check"><Check size={14} /></span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
         <footer class="a2-asset-modal-actions">
           <button type="button" class="a2-asset-modal-btn a2-asset-modal-cancel" onclick={closeLinkModal}>Cancel</button>
-          <button type="button" class="a2-asset-modal-btn a2-asset-modal-confirm" onclick={confirmLink} disabled={!linkSelectedMediaItemId || actionInProgress !== null}>
-            {#if actionInProgress === 'link'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" /> Linking…{:else}<Link2 size={12} /> Link to selected item{/if}
+          <button type="button" class="a2-asset-modal-btn a2-asset-modal-confirm" onclick={confirmLink} disabled={!linkSelectedFile || !linkSelectedMediaItemId || actionInProgress !== null}>
+            {#if actionInProgress === 'link'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" /> Linking…{:else}<Link2 size={12} /> Link file to media item{/if}
           </button>
         </footer>
       </div>
@@ -1171,7 +1444,6 @@
     display: flex; gap: var(--a2-space-2); align-items: flex-end; flex-wrap: wrap;
   }
   .a2-assets-filter { display: flex; flex-direction: column; gap: 2px; }
-  .a2-assets-filter-full { width: 100%; }
   .a2-assets-filter-label {
     font-size: var(--a2-text-2xs); color: var(--a2-text-dim);
     text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
@@ -1278,8 +1550,8 @@
     transition: background var(--a2-motion-micro, 140ms) var(--a2-ease-out);
   }
   .a2-assets-table tbody tr:hover { background: var(--a2-surface-3); }
-  .a2-assets-table tbody tr.is-unlinked { background: var(--a2-amber-soft); }
-  .a2-assets-table tbody tr.is-unlinked:hover { background: var(--a2-surface-3); }
+  .a2-assets-table tbody tr.is-detached { background: var(--a2-amber-soft); }
+  .a2-assets-table tbody tr.is-detached:hover { background: var(--a2-surface-3); }
   .a2-assets-table tbody td {
     padding: var(--a2-space-2) var(--a2-space-3);
     vertical-align: top;
@@ -1307,7 +1579,7 @@
   }
   .a2-assets-file-id { color: var(--a2-text-dim); }
 
-  .a2-assets-unlinked-badge {
+  .a2-assets-detached-badge {
     display: inline-block;
     padding: 1px 6px;
     background: var(--a2-amber-soft);
@@ -1317,6 +1589,88 @@
     font-weight: 700;
     color: var(--a2-amber);
     letter-spacing: 0.05em;
+  }
+
+  /* ---- Facet chip filters (content type + provider, file counts) ---- */
+  .a2-assets-chip-row {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  }
+  .a2-assets-chip-row-label {
+    font-size: var(--a2-text-2xs);
+    font-weight: 700;
+    color: var(--a2-text-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-right: 2px;
+  }
+  .a2-assets-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px;
+    border: 1px solid var(--a2-cyan-border);
+    border-radius: 999px;
+    background: var(--a2-surface-2);
+    color: var(--a2-text-muted);
+    font-family: var(--a2-font-sans);
+    font-size: var(--a2-text-xs);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--a2-motion-micro) var(--a2-ease-out),
+                border-color var(--a2-motion-micro) var(--a2-ease-out),
+                color var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-assets-chip:hover { border-color: var(--a2-cyan); color: var(--a2-text-bright); }
+  .a2-assets-chip.active {
+    border-color: var(--a2-cyan);
+    background: var(--a2-cyan-soft);
+    color: var(--a2-cyan);
+  }
+
+  /* ---- Media-item deep-link chip ---- */
+  .a2-assets-deeplink {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px;
+    background: var(--a2-cyan-soft);
+    border: 1px solid var(--a2-cyan-border);
+    border-radius: var(--a2-radius-sm);
+    color: var(--a2-cyan);
+    font-size: var(--a2-text-xs);
+    font-weight: 600;
+  }
+  .a2-assets-deeplink-clear {
+    display: inline-grid; place-items: center;
+    width: 16px; height: 16px;
+    background: transparent; border: none; cursor: pointer;
+    color: var(--a2-text-muted);
+    border-radius: 50%;
+  }
+  .a2-assets-deeplink-clear:hover { color: var(--a2-red); }
+
+  /* ---- Link Existing File header action ---- */
+  .a2-assets-link-existing {
+    display: inline-flex; align-items: center; gap: var(--a2-space-2);
+    padding: var(--a2-space-2) var(--a2-space-4);
+    border: 1px solid var(--a2-green-border, var(--a2-cyan-border));
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-green-soft, var(--a2-surface-2));
+    color: var(--a2-green, var(--a2-cyan));
+    font-family: var(--a2-font-sans);
+    font-size: var(--a2-text-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--a2-motion-micro) var(--a2-ease-out),
+                border-color var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-assets-link-existing:hover { border-color: var(--a2-green, var(--a2-cyan)); }
+  .a2-assets-link-existing:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .a2-asset-modal-step {
+    margin: 14px 0 6px;
+    font-family: var(--a2-font-sans);
+    font-size: var(--a2-text-xs);
+    font-weight: 700;
+    color: var(--a2-text-dim);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
   .a2-assets-media-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .a2-assets-media-title {
@@ -1363,55 +1717,6 @@
   .a2-assets-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .a2-assets-page-btn:hover:not(:disabled) { border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-assets-page-num { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); font-family: var(--a2-font-mono); }
-
-  /* ---- Mobile filter sheet ---- */
-  .a2-assets-filter-sheet-overlay {
-    position: fixed; inset: 0; z-index: 90;
-    background: rgba(0, 0, 0, 0.55);
-    display: flex; align-items: flex-end;
-  }
-  .a2-assets-filter-sheet {
-    width: 100%;
-    background: var(--a2-surface-1);
-    border-top-left-radius: var(--a2-radius-lg);
-    border-top-right-radius: var(--a2-radius-lg);
-    border-top: 1px solid var(--a2-border-strong);
-    display: flex; flex-direction: column;
-    max-height: 80vh;
-    animation: a2-sheet-up var(--a2-motion-normal, 240ms) var(--a2-ease-out);
-  }
-  @keyframes a2-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-  .a2-assets-filter-sheet-head {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: var(--a2-space-4);
-    border-bottom: 1px solid var(--a2-border);
-  }
-  .a2-assets-filter-sheet-head h2 {
-    margin: 0; font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright);
-  }
-  .a2-assets-filter-sheet-close {
-    background: transparent; border: none; cursor: pointer;
-    color: var(--a2-text-muted); padding: 4px; border-radius: var(--a2-radius-xs);
-  }
-  .a2-assets-filter-sheet-body {
-    padding: var(--a2-space-4);
-    display: flex; flex-direction: column; gap: var(--a2-space-3);
-    overflow-y: auto;
-  }
-  .a2-assets-filter-sheet-actions {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    display: flex; gap: var(--a2-space-2);
-    padding: var(--a2-space-3) var(--a2-space-4);
-    border-top: 1px solid var(--a2-border);
-  }
-  .a2-assets-apply {
-    flex: 1;
-    padding: var(--a2-space-2);
-    background: var(--a2-cyan); color: var(--a2-surface-1);
-    border: none; border-radius: var(--a2-radius-sm);
-    font-size: var(--a2-text-xs); font-weight: 600;
-    cursor: pointer;
-  }
 
   /* ---- Detail drawer ---- */
   .a2-asset-drawer-overlay {
@@ -1509,18 +1814,6 @@
   .a2-asset-drawer-unlinked-desc {
     margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted);
     line-height: 1.5;
-  }
-
-  .a2-asset-drawer-open-media {
-    display: inline-flex; align-items: center; gap: var(--a2-space-1);
-    padding: var(--a2-space-1) var(--a2-space-2);
-    background: var(--a2-cyan-soft);
-    border: 1px solid var(--a2-cyan-border);
-    border-radius: var(--a2-radius-xs);
-    color: var(--a2-cyan);
-    font-size: var(--a2-text-2xs); font-weight: 600;
-    text-decoration: none;
-    align-self: flex-start;
   }
 
   .a2-asset-action-success {
@@ -1681,7 +1974,7 @@
   .a2-assets-card-list { display: none; list-style: none; margin: 0; padding: 0; gap: var(--a2-space-2); flex-direction: column; }
   .a2-assets-card { display: flex; flex-direction: column; gap: var(--a2-space-2); width: 100%; padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-md); color: inherit; text-align: left; cursor: pointer; transition: border-color var(--a2-motion-micro) var(--a2-ease-out), background var(--a2-motion-micro) var(--a2-ease-out); }
   .a2-assets-card:hover { background: var(--a2-surface-3); border-color: var(--a2-cyan-border); }
-  .a2-assets-card.is-unlinked { border-color: var(--a2-amber-border); }
+  .a2-assets-card.is-detached { border-color: var(--a2-amber-border); }
   .a2-assets-card-head { display: flex; align-items: center; gap: var(--a2-space-2); flex-wrap: wrap; }
   .a2-assets-card-file { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); word-break: break-word; }
   .a2-assets-card-id { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); }
@@ -1701,8 +1994,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .a2-asset-drawer, .a2-asset-drawer-overlay, .a2-assets-filter-sheet,
-    .a2-asset-action, .a2-assets-select, .a2-assets-search-input,
+    .a2-asset-drawer, .a2-asset-drawer-overlay, .a2-asset-action,
+    .a2-assets-select, .a2-assets-search-input, .a2-assets-chip,
     .a2-assets-table tbody tr { animation: none; transition: none; }
   }
 </style>

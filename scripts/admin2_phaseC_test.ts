@@ -27,6 +27,7 @@ const libraryDetailApi = readFileSync(new URL('../src/routes/api/admin/media/lib
 const libraryFoldersApi = readFileSync(new URL('../src/routes/api/admin/media/library/folders/+server.ts', import.meta.url), 'utf8');
 const libraryPageServer = readFileSync(new URL('../src/routes/admin/media/library/+page.server.ts', import.meta.url), 'utf8');
 const libraryPage = readFileSync(new URL('../src/routes/admin/media/library/+page.svelte', import.meta.url), 'utf8');
+const hostingAssets = readFileSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url), 'utf8');
 
 const adminAssetStatus = readFileSync(new URL('../src/lib/components/admin2/AdminAssetStatus.svelte', import.meta.url), 'utf8');
 const adminMediaTree = readFileSync(new URL('../src/lib/components/admin2/AdminMediaTree.svelte', import.meta.url), 'utf8');
@@ -128,85 +129,86 @@ ok('2e. GET /api/admin/media/library/folders is admin-gated');
 
 // ============================================================
 // 3. Page server loader — initial server-side render
+// [final remediation] The library page is ASSET-CENTRIC: the file manager
+// (AdminHostingAssets) owns the paginated read via /api/admin/hosting/assets.
+// The page server provides hosting sources + parses the canonical URL params
+// into initialFilters (provider deep-links from Hosting Control, mediaItem
+// deep-links from Jobs/Activity/Attention).
 // ============================================================
 assert.match(libraryPageServer, /export const load: PageServerLoad/, 'page.server.ts exports load');
 assert.match(libraryPageServer, /requireAdmin\(locals/, 'page server requires admin');
-assert.match(libraryPageServer, /Promise\.allSettled/, 'page server uses Promise.allSettled for partial-failure resilience');
-assert.match(libraryPageServer, /initialList/, 'page server returns initialList');
-assert.match(libraryPageServer, /initialFolders/, 'page server returns initialFolders');
-assert.match(libraryPageServer, /initialFoldersError/, 'page server returns initialFoldersError on partial failure');
 assert.match(libraryPageServer, /hostingSources/, 'page server returns hostingSources for filter');
-ok('3a. page server preloads list + folders + sources with partial-failure resilience');
+assert.match(libraryPageServer, /initialFilters/, 'page server returns initialFilters (URL param wiring)');
+ok('3a. page server provides sources + initialFilters (asset-centric read model via /api/admin/hosting/assets)');
 
 // URL state is parsed server-side for deep links
 assert.match(libraryPageServer, /url\.searchParams/, 'page server parses URL search params');
-assert.match(libraryPageServer, /selectedId/, 'page server extracts selectedId for deep-link drawer');
-ok('3b. page server parses URL state for deep links');
+assert.match(libraryPageServer, /get\('provider'\)/, 'page server extracts provider param (Hosting Control deep-link)');
+assert.match(libraryPageServer, /get\('mediaItem'\)/, 'page server extracts mediaItem param (Jobs/Activity/Attention deep-link)');
+assert.match(libraryPageServer, /status.*'active'/, 'page server defaults status to active (deleted excluded)');
+assert.match(libraryPageServer, /params\.delete\('view'\)/, 'page server strips legacy ?view= param (redirect)');
+ok('3b. page server parses URL state for deep links (provider + mediaItem + view redirect)');
 
 // ============================================================
 // 4. Page component — workspace architecture
 // ============================================================
 
 // Uses AdminAppShell + AdminPage framework
-assert.match(libraryPage, /<AdminAppShell>/, 'library page uses AdminAppShell');
+assert.match(libraryPage, /<AdminAppShell/, 'library page uses AdminAppShell');
 assert.match(libraryPage, /<AdminPage eyebrow="Content" title="Media Library"/, 'library page uses AdminPage framework');
 ok('4a. library page uses AdminAppShell + AdminPage framework');
 
-// Imports all the new Phase C components
-assert.match(libraryPage, /AdminMediaTree/, 'imports AdminMediaTree');
-assert.match(libraryPage, /AdminMediaTable/, 'imports AdminMediaTable');
-assert.match(libraryPage, /AdminMediaCard/, 'imports AdminMediaCard');
-assert.match(libraryPage, /AdminMediaDetailDrawer/, 'imports AdminMediaDetailDrawer');
-assert.match(libraryPage, /AdminMediaFilters/, 'imports AdminMediaFilters');
-ok('4b. library page imports all 5 Phase C components');
+// [final remediation] The library page renders ONE canonical file manager
+// (AdminHostingAssets). The old Phase C component set (Tree/Table/Card/
+// DetailDrawer/Filters) was the media_items-centric read model — removed
+// from the active architecture at the consolidation commit.
+assert.match(libraryPage, /AdminHostingAssets/, 'library page renders AdminHostingAssets (the single file manager)');
+assert.doesNotMatch(libraryPage, /AdminMediaTree|AdminMediaTable|AdminMediaCard|AdminMediaDetailDrawer|AdminMediaFilters/, 'library page does NOT render the old Phase C component set');
+assert.match(libraryPage, /initialFilters=\{data\.initialFilters\}/, 'library page passes URL-derived initialFilters to the file manager');
+ok('4b. library page renders the single asset-centric file manager with initialFilters');
 
-// Split layout (tree + main)
-assert.match(libraryPage, /library-workspace/, 'library page has workspace container');
-assert.match(libraryPage, /grid-template-columns: 240px 1fr/, 'desktop split layout: tree (240px) + main');
-ok('4c. library page has split layout (tree + main)');
+// Workspace is the file manager itself — no split tree layout.
+assert.doesNotMatch(libraryPage, /library-workspace/, 'no legacy tree workspace container');
+ok('4c. library page: single-file-manager workspace (no tree split layout)');
 
-// Responsive: mobile swaps to card list, hides tree
-assert.match(libraryPage, /library-card-wrap/, 'library page has mobile card wrap');
-assert.match(libraryPage, /display: none/, 'library page hides elements responsively');
-assert.match(libraryPage, /@media \(max-width: 1023px\)/, 'library page has 1023px breakpoint');
-assert.match(libraryPage, /library-filters-mobile-btn/, 'library page has mobile filter button');
-ok('4d. library page is responsive: mobile swaps to card list + filter sheet');
+// Responsive: the file manager owns the responsive layout (card list on
+// mobile + AdminFilterSheet).
+assert.match(hostingAssets, /a2-assets-card-list/, 'file manager has mobile card list');
+assert.match(hostingAssets, /a2-assets-mobile-filter-toggle/, 'file manager has mobile filter button');
+assert.match(hostingAssets, /AdminFilterSheet/, 'file manager uses the Mavero-native chip filter sheet on mobile');
+ok('4d. library page is responsive: mobile card list + native filter sheet');
 
-// URL state sync
-assert.match(libraryPage, /syncUrl\(\)/, 'library page syncs URL state');
-assert.match(libraryPage, /replaceState: true/, 'library page uses replaceState (no history spam)');
-ok('4e. library page syncs URL state (search/filter/sort/page/selected)');
+// URL state sync — owned by the file manager (the page delegates to it).
+assert.match(hostingAssets, /function syncUrl/, 'file manager syncs URL state');
+assert.match(hostingAssets, /window\.history\.replaceState/, 'file manager uses replaceState (no history spam)');
+assert.match(hostingAssets, /params\.set\('provider'/, 'URL state includes provider param');
+assert.match(hostingAssets, /params\.set\('mediaItem'/, 'URL state includes mediaItem param');
+ok('4e. file manager syncs URL state (search/provider/filter/sort/mediaItem/page)');
 
-// Pagination
-assert.match(libraryPage, /goToPage/, 'library page has pagination');
-assert.match(libraryPage, /hasMore/, 'library page respects hasMore flag');
-assert.match(libraryPage, /totalPages/, 'library page computes total pages');
-ok('4f. library page has pagination');
+// Pagination — owned by the file manager.
+assert.match(hostingAssets, /function pageNext/, 'file manager has pagination');
+assert.match(hostingAssets, /hasMore/, 'file manager respects hasMore flag');
+ok('4f. file manager has pagination');
 
-// Detail drawer integration
-assert.match(libraryPage, /openDetail/, 'library page opens detail drawer on row click');
-assert.match(libraryPage, /closeDetail/, 'library page closes detail drawer');
-assert.match(libraryPage, /drawerItem/, 'library page tracks drawer item');
-assert.match(libraryPage, /drawerLoading/, 'library page tracks drawer loading state');
-assert.match(libraryPage, /drawerError/, 'library page tracks drawer error state');
-ok('4g. library page integrates with detail drawer');
+// Detail drawer integration — owned by the file manager.
+assert.match(hostingAssets, /function openDetail/, 'file manager opens detail drawer on row click');
+assert.match(hostingAssets, /drawerOpen/, 'file manager tracks drawer state');
+ok('4g. file manager integrates with detail drawer');
 
-// Deep-link: ?selected=<id> opens drawer on mount
-assert.match(libraryPage, /onMount/, 'library page has onMount');
-assert.match(libraryPage, /initial\.initialFilters\.selectedId/, 'library page reads selectedId from initial data');
-ok('4h. library page supports deep-link via ?selected=<id>');
+// Deep-links: ?provider= / ?mediaItem= initialize the file manager
+assert.match(hostingAssets, /onMount/, 'file manager has onMount');
+assert.match(hostingAssets, /initialFilters/, 'file manager initializes from server-parsed URL params');
+assert.match(libraryPageServer, /get\('provider'\)/, 'page server reads provider param');
+ok('4h. file manager supports provider + mediaItem deep-links');
 
-// Upload integration: link to existing upload wizard with prefilled params
-assert.match(libraryPage, /openUploadForItem/, 'library page has openUploadForItem');
-assert.match(libraryPage, /tmdbId: item\.tmdb_id/, 'library page prefills tmdbId in upload URL');
-assert.match(libraryPage, /contentType: item\.content_type/, 'library page prefills contentType in upload URL');
-ok('4i. library page integrates with upload wizard (prefilled)');
+// Upload integration: link to the upload wizard
+assert.match(libraryPage, /\/admin\/media\/upload/, 'library page links to the upload wizard');
+ok('4i. library page integrates with upload wizard');
 
 // Partial failure: list error shows retry, doesn't crash whole page
-assert.match(libraryPage, /listError/, 'library page tracks list error');
-assert.match(libraryPage, /library-error-block/, 'library page has error block');
-assert.match(libraryPage, /Retry/, 'library page has retry button');
-ok('4j. library page handles list errors with retry');
+assert.match(hostingAssets, /listError/, 'file manager tracks list error');
+assert.match(hostingAssets, /Retry/, 'file manager has retry button');
+ok('4j. file manager handles list errors with retry');
 
 // ============================================================
 // 5. AdminAssetStatus — per-asset semantic status
@@ -359,8 +361,9 @@ assert.match(adminMediaDetailDrawer, /error = null as string \| null/, 'drawer a
 assert.match(adminMediaDetailDrawer, /a2-drawer-error/, 'drawer has error block');
 assert.match(adminMediaDetailDrawer, /a2-drawer-skeleton/, 'drawer has skeleton loading');
 // Page tracks drawer loading + error states
-assert.match(libraryPage, /drawerLoading/, 'page tracks drawerLoading state');
-assert.match(libraryPage, /drawerError/, 'page tracks drawerError state');
+// [final remediation] the drawer is owned by AdminHostingAssets (selectedAsset)
+assert.match(hostingAssets, /drawerLoading/, 'file manager tracks drawerLoading state');
+assert.match(hostingAssets, /actionError/, 'file manager tracks drawer action error state');
 ok('9f. drawer handles loading + error states (component props + page state)');
 
 // Drawer integrates with upload wizard
@@ -473,7 +476,7 @@ ok('13b. detail() parallelizes asset + demand + operations fetches');
 // real implementation, not a placeholder, but the shell wrapper
 // is preserved.
 // ============================================================
-assert.match(libraryPage, /<AdminAppShell>/, 'Phase C library page still uses AdminAppShell (Phase B contract preserved)');
+assert.match(libraryPage, /<AdminAppShell/, 'Phase C library page still uses AdminAppShell (Phase B contract preserved)');
 assert.doesNotMatch(libraryPage, /AdminPlaceholder/, 'Phase C library page no longer uses AdminPlaceholder (real implementation)');
 ok('14a. Phase C preserves Phase B contracts (AdminAppShell wrapper) + replaces placeholder');
 

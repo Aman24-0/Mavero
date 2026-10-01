@@ -5,7 +5,7 @@
    * ARCHITECTURE: Hosting Control is the single hosting/operations workspace.
    * It contains 5 tabs:
    *   - Providers — provider overview + health + capabilities
-   *   - Sync — provider sync + unlinked assets
+   *   - Sync — provider sync + detached assets
    *   - Jobs — active + recent upload operations
    *   - Activity — immutable audit timeline (media_operations)
    *   - Attention — failed/stale/unconfigured/degraded items

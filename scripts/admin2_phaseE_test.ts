@@ -218,29 +218,37 @@ assert.match(controlService, /query\.contentType/, 'listAssets supports contentT
 assert.match(controlService, /query\.hasSubtitles/, 'listAssets supports hasSubtitles filter');
 ok('8a. listAssets supports provider, linked, status, contentType, hasSubtitles filters');
 
-// Linked filter uses PostgREST .or()
-assert.match(controlService, /media_item_id.is.null,mavero_status.eq.missing/, 'linked=unlinked uses PostgREST or-filter');
-ok('8b. Linked/unlinked filter correctly distinguishes linked vs unlinked assets');
+// Linked filter — [final remediation] DETACHED semantics: media_item_id is
+// NOT NULL, so 'linked' = mavero_status != 'missing' and 'detached' =
+// mavero_status = 'missing'. Legacy 'unlinked' value is an alias for detached.
+assert.match(controlService, /neq\('mavero_status', 'missing'\)/, 'linked=linked excludes detached (mavero_status != missing)');
+assert.match(controlService, /eq\('mavero_status', 'missing'\)/, 'linked=detached selects detached (mavero_status = missing)');
+assert.doesNotMatch(controlService, /media_item_id.is.null/, 'no impossible media_item_id IS NULL filter paths');
+ok('8b. Linked/detached filter correctly distinguishes linked vs detached assets');
 
 // ============================================================
 // 9. Linked vs unlinked assets
 // ============================================================
 
-// Assets UI has isUnlinked helper
-assert.match(adminHostingAssets, /function isUnlinked/, 'Assets UI has isUnlinked helper');
-assert.match(adminHostingAssets, /!asset.mediaItem \|\| asset.maveroStatus === 'missing'/, 'isUnlinked checks mediaItem + maveroStatus');
-ok('9a. Assets UI correctly identifies unlinked assets (no mediaItem OR maveroStatus=missing)');
+// Assets UI has isDetached helper — [final remediation] detached (NOT
+// unlinked): the row still belongs to its media_item.
+assert.match(adminHostingAssets, /function isDetached/, 'Assets UI has isDetached helper');
+assert.match(adminHostingAssets, /asset.maveroStatus === 'missing'/, 'isDetached checks maveroStatus (detached)');
+ok('9a. Assets UI correctly identifies detached assets (maveroStatus=missing, still linked to media_item)');
 
-// Unlinked badge in UI
-assert.match(adminHostingAssets, /UNLINKED/, 'Assets UI shows UNLINKED badge');
-assert.match(adminHostingAssets, /UNLINKED PROVIDER ASSET/, 'asset drawer shows UNLINKED PROVIDER ASSET');
-ok('9b. Assets UI clearly marks unlinked provider assets');
+// DETACHED badge in UI (replaces the old UNLINKED badge)
+assert.match(adminHostingAssets, /DETACHED/, 'Assets UI shows DETACHED badge');
+assert.match(adminHostingAssets, /DETACHED — NOT SERVED FOR PLAYBACK/, 'asset drawer explains the detached state');
+assert.doesNotMatch(adminHostingAssets, /UNLINKED PROVIDER ASSET/, 'asset drawer no longer claims "unlinked" for detached rows');
+ok('9b. Assets UI clearly marks detached assets');
 
-// Unlinked API endpoint (Phase E new POST)
+// Unlinked API endpoint — [final remediation] the endpoint path is kept for
+// compat but returns DETACHED assets (mavero_status='missing', not deleted).
 assert.match(unlinkedApi, /export const POST/, 'unlinked endpoint exports POST');
 assert.match(unlinkedApi, /Does NOT trigger a sync/, 'POST unlinked does NOT trigger sync');
-assert.match(unlinkedApi, /media_item_id.is.null,mavero_status.eq.missing/, 'POST unlinked uses or-filter');
-ok('9c. POST /api/admin/media/unlinked reads from DB without triggering sync (Phase E fix)');
+assert.match(unlinkedApi, /eq\('mavero_status', 'missing'\)/, 'POST unlinked selects detached (mavero_status=missing)');
+assert.doesNotMatch(unlinkedApi, /media_item_id.is.null/, 'POST unlinked has no impossible NULL filter');
+ok('9c. POST /api/admin/media/unlinked reads detached assets without triggering sync');
 
 // ============================================================
 // 10. Asset detail drawer
@@ -380,17 +388,21 @@ assert.match(adminHostingSync, /unlinkedFileCount/, 'Sync UI shows new unlinked 
 ok('16d. Sync UI shows discovered, updated, deleted, new unlinked counts');
 
 // ============================================================
-// 17. Unlinked assets display
+// 17. Detached assets display — [final remediation] the Sync tab section
+// is "Detached provider assets" (admin-detached; still linked to a media
+// item). Untracked provider FILES (no media_assets row) are surfaced via
+// the sync result's unlinkedFiles + the Media Library "Link Existing File"
+// header action.
 // ============================================================
 
-assert.match(adminHostingSync, /Unlinked provider assets/, 'Sync UI has Unlinked section');
-assert.match(adminHostingSync, /POST.*\/api\/admin\/media\/unlinked/, 'Sync UI calls POST unlinked endpoint');
-assert.match(adminHostingSync, /exist in Mavero/, 'Sync UI documents unlinked = in Mavero DB but not linked to media');
-ok('17a. Sync UI exposes unlinked assets via POST endpoint');
+assert.match(adminHostingSync, /Detached provider assets/, 'Sync UI has Detached section');
+assert.match(adminHostingSync, /POST.*\/api\/admin\/media\/unlinked/, 'Sync UI calls POST unlinked endpoint (detached semantics)');
+assert.match(adminHostingSync, /still linked to their/, 'Sync UI documents detached = excluded from playback but still linked');
+ok('17a. Sync UI exposes detached assets via POST endpoint');
 
-// Unlinked does NOT incorrectly equate to missing media
-assert.match(unlinkedApi, /not linked to a canonical/, 'unlinked API documents distinction');
-ok('17b. Unlinked assets correctly distinguished from missing media');
+// Detached does NOT incorrectly equate to missing media or untracked files
+assert.match(unlinkedApi, /IS linked to a canonical|DETACHED provider assets/, 'unlinked API documents the distinction (detached, still linked)');
+ok('17b. Detached assets correctly distinguished from missing media + untracked provider files');
 
 // ============================================================
 // 18. Operation recording
@@ -515,18 +527,24 @@ assert.match(hostingPage, /AdminAppShell/, 'hosting page wraps in AdminAppShell'
 assert.match(hostingPage, /AdminPage/, 'hosting page uses AdminPage framework');
 ok('24a. Hosting page uses AdminAppShell + AdminPage');
 
-// Tab navigation
+// Tab navigation — [final remediation] 5 tabs: the Assets tab moved to the
+// canonical Media Library (/admin/media/library); Operations merged in as
+// Jobs/Activity/Attention. hosting?tab=assets redirects to the library.
 assert.match(hostingPage, /tabs=/, 'hosting page uses AdminPage tabs');
-assert.match(hostingPage, /providers.*assets.*sync/, 'hosting page has 3 tabs');
-ok('24b. Hosting page has 3 contextual tabs (Providers/Assets/Sync)');
+assert.match(hostingPage, /'providers', label: 'Providers'/, 'hosting page has Providers tab');
+assert.match(hostingPage, /'sync', label: 'Sync'/, 'hosting page has Sync tab');
+assert.match(hostingPage, /'jobs', label: 'Jobs'/, 'hosting page has Jobs tab');
+assert.match(hostingPage, /'activity', label: 'Activity'/, 'hosting page has Activity tab');
+assert.match(hostingPage, /'attention', label: 'Attention'/, 'hosting page has Attention tab');
+ok('24b. hosting page has 5 tabs (Providers/Sync/Jobs/Activity/Attention — Assets moved to Media Library)');
 
 // Provider cards stack on mobile
 assert.match(adminHostingProviders, /@media \(max-width: 768px\)[\s\S]*?grid-template-columns: 1fr/, 'provider cards stack on mobile');
 ok('24c. Provider cards stack vertically on mobile');
 
-// Assets table has mobile filter sheet
+// Media Library file manager mobile filter — Mavero-native AdminFilterSheet
 assert.match(adminHostingAssets, /a2-assets-mobile-filter-toggle/, 'Assets UI has mobile filter toggle');
-assert.match(adminHostingAssets, /a2-assets-filter-sheet/, 'Assets UI has mobile filter sheet');
+assert.match(adminHostingAssets, /AdminFilterSheet/, 'Assets UI uses the Mavero-native chip filter sheet (no native <select>)');
 ok('24d. Assets UI has mobile filter sheet (not squeezed desktop filters)');
 
 // Asset drawer is full-screen on mobile
@@ -590,7 +608,7 @@ assert.match(adminHostingSync, /syncState === 'failed'/, 'Sync UI has failed sta
 ok('27a. Sync UI has idle/syncing/success/partial/failed states');
 
 // Unlinked empty
-assert.match(adminHostingSync, /No unlinked provider assets/, 'Sync UI shows no-unlinked empty state');
+assert.match(adminHostingSync, /No detached provider assets/, 'Sync UI shows no-detached empty state');
 ok('27b. Sync UI has unlinked empty state');
 
 // ============================================================

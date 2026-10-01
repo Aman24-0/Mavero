@@ -48,6 +48,10 @@ export class ManagementService {
     if (!asset.provider_asset_id) {
       throw new HostingProviderError('VALIDATION', { message: 'Media asset has no provider_asset_id.' });
     }
+    // TERMINAL-STATE GUARD: no remote-file mutations on deleted assets.
+    if (asset.status === 'deleted') {
+      throw new HostingProviderError('ASSET_DELETED', { message: 'Deleted provider assets cannot be renamed. The remote file has been permanently deleted.' });
+    }
 
     const adapter = await this.getAdapterForAsset(mediaAssetId);
     if (!adapter) throw new HostingProviderError('UNSUPPORTED', { message: 'No hosting adapter found.' });
@@ -98,6 +102,10 @@ export class ManagementService {
     const asset = await this.getMediaAsset(mediaAssetId);
     if (!asset.provider_asset_id) {
       throw new HostingProviderError('VALIDATION', { message: 'Media asset has no provider_asset_id.' });
+    }
+    // TERMINAL-STATE GUARD: no remote-file mutations on deleted assets.
+    if (asset.status === 'deleted') {
+      throw new HostingProviderError('ASSET_DELETED', { message: 'Deleted provider assets cannot be moved. The remote file has been permanently deleted.' });
     }
 
     const adapter = await this.getAdapterForAsset(mediaAssetId);
@@ -153,6 +161,13 @@ export class ManagementService {
    */
   async detachAsset(mediaAssetId: string, adminUserId?: string): Promise<ManagementResult> {
     const asset = await this.getMediaAsset(mediaAssetId);
+
+    // TERMINAL-STATE GUARD: deleted assets are already terminal — detach is
+    // meaningless (mavero_status is already 'missing') and must be rejected
+    // so the state machine stays explicit.
+    if (asset.status === 'deleted') {
+      throw new HostingProviderError('ASSET_DELETED', { message: 'Deleted provider assets cannot be detached. The asset is already terminal.' });
+    }
 
     try {
       await this.client.from('media_assets').update({
@@ -311,28 +326,36 @@ export class ManagementService {
     }
 
     // 2. Check if a media_assets row already exists for this
-    // (provider_source_id, provider_asset_id). Three sub-cases:
+    // (provider_source_id, provider_asset_id). ARCHITECTURE NOTE (final
+    // remediation): media_assets.media_item_id is NOT NULL in the live
+    // schema — a NULL-media_item row is an IMPOSSIBLE state (provider sync
+    // never creates media_assets rows; only upload + this method INSERT
+    // them, always with a media_item_id). The old NULL-row UPDATE path
+    // ("Link Existing" for media_item_id IS NULL) was dead code and has
+    // been removed. Sub-cases:
     //
-    //   a) EXISTING + media_item_id IS NULL (unlinked provider file):
-    //      → UPDATE the existing row's media_item_id to the selected
-    //        mediaItemId. Do NOT INSERT a duplicate. Preserve all
-    //        existing provider metadata. Set mavero_status based on the
-    //        existing status field. This is the "Link Existing" path
-    //        from Provider Files view.
-    //
-    //   b) EXISTING + mavero_status='missing' + media_item_id === mediaItemId
+    //   a) EXISTING + mavero_status='missing' + media_item_id === mediaItemId
     //      (detached, re-linking to the same media item):
     //      → Reactivate the existing asset (UPDATE mavero_status back
     //        to available/processing). This is the detach → reactivate
     //        recovery path.
     //
-    //   c) EXISTING + linked to a DIFFERENT media_item_id:
+    //   b) EXISTING + linked to a DIFFERENT media_item_id:
     //      → REJECT with VALIDATION error. The admin must detach it
     //        first.
     //
-    //   d) EXISTING + linked to the SAME media_item_id + already available:
+    //   c) EXISTING + linked to the SAME media_item_id + already available:
     //      → Idempotent — return success without modifying the DB.
     //        Do NOT create a duplicate.
+    //
+    //   d) EXISTING + status='deleted' (terminal):
+    //      → REJECT with ASSET_DELETED. The provider file is permanently
+    //        gone — linking it would create a phantom asset.
+    //
+    //   e) EXISTING + media_item_id IS NULL (schema drift — impossible under
+    //      the NOT NULL constraint):
+    //      → REJECT with a deterministic ASSET_STATE error. Never silently
+    //        UPDATE a state the architecture declares impossible.
     const { data: existing } = await this.client
       .from('media_assets')
       .select('id, mavero_status, media_item_id, status')
@@ -342,17 +365,24 @@ export class ManagementService {
     if (existing) {
       const existingRow = existing as { id: string; mavero_status: string; media_item_id: string | null; status: string };
 
-      // Case (a): unlinked provider file (media_item_id IS NULL) → UPDATE.
+      // Case (e): impossible NULL-media_item state (schema drift guard).
+      // The dead "update the NULL row" path was removed — see the
+      // architecture note above.
       if (existingRow.media_item_id === null) {
-        return await this.linkExistingAssetRow(existingRow.id, existingRow.status, mediaItemId, providerSourceId, providerAssetId, (mediaItem as { canonical_key: string }).canonical_key, adminUserId);
+        throw new HostingProviderError('ASSET_STATE', { message: 'Provider file row exists without a media link — impossible under the NOT NULL media_item_id constraint. Investigate schema drift before linking.' });
       }
 
-      // Case (b): detached + same media_item → reactivate.
+      // Case (d): terminal deleted row — never relinkable.
+      if (existingRow.status === 'deleted') {
+        throw new HostingProviderError('ASSET_DELETED', { message: 'This provider file was permanently deleted. Link it again only after re-uploading the file to the provider.' });
+      }
+
+      // Case (a): detached + same media_item → reactivate.
       if (existingRow.mavero_status === 'missing' && existingRow.media_item_id === mediaItemId) {
         return await this.reactivateAsset(existingRow.id, adminUserId);
       }
 
-      // Case (d): already linked to the same media_item + available → idempotent.
+      // Case (c): already linked to the same media_item + available → idempotent.
       if (existingRow.media_item_id === mediaItemId && existingRow.mavero_status !== 'missing') {
         await this.uploadService.recordOperation({
           action: 'link',
@@ -366,7 +396,7 @@ export class ManagementService {
         return { ok: true, action: 'link', mediaAssetId: existingRow.id, providerAssetId };
       }
 
-      // Case (c): linked to a different media_item → reject.
+      // Case (b): linked to a different media_item → reject.
       throw new HostingProviderError('VALIDATION', { message: 'This provider file is already linked to a different media asset. Detach it first.' });
     }
 
@@ -630,61 +660,20 @@ export class ManagementService {
   }
 
   /**
-   * Links an EXISTING media_assets row (with media_item_id IS NULL) to
-   * a media_item by UPDATING the row — NOT inserting a duplicate.
+   * REMOVED (final remediation): linkExistingAssetRow() — the "Link
+   * Existing" path that UPDATED a media_assets row with media_item_id IS
+   * NULL. The live schema declares media_item_id NOT NULL and provider
+   * sync never creates media_assets rows (only UploadService.createMediaAsset
+   * and linkAsset INSERT rows, always with a media_item_id), so the
+   * NULL-media_item state is architecturally impossible and the path was
+   * dead code. linkAsset() now REJECTS such a row with a deterministic
+   * ASSET_STATE error (schema-drift guard) instead of silently updating it.
    *
-   * This is the "Link Existing" path from Provider Files view: the
-   * provider file already has a media_assets row (created by sync or
-   * prior upload) but media_item_id is NULL. The admin selects which
-   * media_item to associate it with.
-   *
-   * Preserves all existing provider metadata (playback_url, filename,
-   * qualities, etc.). Only media_item_id and mavero_status are updated.
-   * The mavero_status is set based on the existing status field:
-   *   - status='ready' → mavero_status='available'
-   *   - any other status → mavero_status='processing'
-   *
-   * Records the operation as action='link', status='success'.
-   * Resolves any open demand requests for the media_item.
+   * The LEGITIMATE "Link Existing File" flow (a provider-side file that
+   * has NO media_assets row — uploaded out-of-band and discovered by
+   * provider sync) is handled by the linkAsset INSERT path below, driven
+   * by the Media Library header action.
    */
-  private async linkExistingAssetRow(
-    assetId: string,
-    existingStatus: string,
-    mediaItemId: string,
-    providerSourceId: string,
-    providerAssetId: string,
-    canonicalKey: string,
-    adminUserId?: string,
-  ): Promise<ManagementResult> {
-    const newMaveroStatus = existingStatus === 'ready' ? 'available' : 'processing';
-
-    await this.client.from('media_assets').update({
-      media_item_id: mediaItemId,
-      mavero_status: newMaveroStatus,
-      last_synced_at: new Date().toISOString(),
-    }).eq('id', assetId);
-
-    await this.uploadService.recordOperation({
-      action: 'link',
-      status: 'success',
-      media_item_id: mediaItemId,
-      media_asset_id: assetId,
-      provider_source_id: providerSourceId,
-      admin_user_id: adminUserId,
-      details: { provider_asset_id: providerAssetId, linked_existing_row: true, previous_media_item_id: null },
-    });
-
-    // Resolve any open demand requests for this media item.
-    try {
-      const { DemandService } = await import('../demand/service');
-      const demandService = new DemandService(this.client);
-      await demandService.resolveDemand(canonicalKey);
-    } catch {
-      // Best-effort — demand resolution must not break the link operation.
-    }
-
-    return { ok: true, action: 'link', mediaAssetId: assetId, providerAssetId };
-  }
 
   /**
    * Reopens the demand for a media item if no ready+available asset

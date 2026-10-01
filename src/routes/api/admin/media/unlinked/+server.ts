@@ -1,5 +1,5 @@
 /**
- * Admin 2.0 — Phase E — Unlinked provider assets API.
+ * Admin 2.0 — Phase E — Detached provider assets API.
  *
  * GET /api/admin/media/unlinked
  *   DEPRECATED — side-effecting GET (runs a full sync). Retained for
@@ -7,21 +7,27 @@
  *   future phase.
  *
  * POST /api/admin/media/unlinked
- *   Returns unlinked provider assets. Does NOT trigger a sync — reads
- *   from media_assets directly. An asset is "unlinked" when:
- *     - media_item_id IS NULL, OR
- *     - mavero_status = 'missing' (admin detached it)
+ *   Returns DETACHED provider assets (endpoint path kept for backward
+ *   compatibility; the semantics are detached, NOT unlinked). Does NOT trigger a sync
+ *   — reads from media_assets directly.
+ *
+ *   FINAL REMEDIATION SEMANTICS: media_assets.media_item_id is NOT NULL —
+ *   every row IS linked to a canonical media item. An asset is "detached"
+ *   when mavero_status='missing' AND status!='deleted' — an admin detached
+ *   it from playback; the row still belongs to its media_item and the
+ *   remote file may still exist. The old `media_item_id IS NULL OR
+ *   mavero_status='missing'` filter treated detached (linked) assets as
+ *   unlinked, conflating two different concepts.
  *
  *   Query params:
  *     ?provider=vidara|abyss   Filter by adapter
  *     ?page=1
  *     ?limit=25 (max 100)
  *
- *   NOTE: this endpoint returns MAVERO's view of unlinked assets — i.e.
- *   assets that exist in the Mavero DB but are not linked to a canonical
- *   media item. To discover NEW provider-side files that Mavero doesn't
- *   know about at all, run a sync (POST /api/admin/media/sync) and read
- *   the `unlinkedFiles` field of the sync result.
+ *   NOTE: to discover NEW provider-side files that Mavero doesn't track
+ *   at all (no media_assets row — out-of-band uploads), run a sync
+ *   (POST /api/admin/media/sync) and read the `unlinkedFiles` field of
+ *   the sync result, or use GET /api/admin/hosting/providers/[adapterId]/files.
  *
  * Security: Admin-only. No credentials exposed.
  */
@@ -82,8 +88,9 @@ export const POST: RequestHandler = async ({ url, locals }) => {
     }
   }
 
-  // Query media_assets that are unlinked. Use PostgREST's .or() to express
-  //   media_item_id IS NULL OR mavero_status = 'missing'
+  // Query DETACHED media_assets (mavero_status='missing', not deleted).
+  // See the header comment — under the NOT NULL media_item_id constraint
+  // every row is linked; 'missing' here means admin-detached.
   let query = adminClient
     .from('media_assets')
     .select(`
@@ -93,7 +100,7 @@ export const POST: RequestHandler = async ({ url, locals }) => {
       duration_seconds, size_bytes, last_synced_at, created_at, updated_at,
       media_item_id
     `, { count: 'exact' })
-    .or('media_item_id.is.null,mavero_status.eq.missing')
+    .eq('mavero_status', 'missing')
     .neq('status', 'deleted');
 
   if (sourceFilter) {
