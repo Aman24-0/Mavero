@@ -133,6 +133,58 @@ assert.match(mediaDrawer, /reconcileAsset/, 'C19. Media drawer still has reconci
 ok('C2. Media drawer: Delete/Rename/Move added, existing actions preserved');
 
 // ============================================================
+// C3. Provider Files — Complete Lifecycle (Reactivate + Link Existing)
+// ============================================================
+console.log('\n--- C3. Provider Files Complete Lifecycle ---');
+
+const hostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
+
+// Reactivate: visible for detached assets (maveroStatus === 'missing')
+assert.match(hostingAssets, /maveroStatus === 'missing'[\s\S]*?reactivate/, 'C3-1. Reactivate button shown for detached assets (maveroStatus=missing)');
+assert.match(hostingAssets, /async function reactivate/, 'C3-2. reactivate function exists');
+assert.match(hostingAssets, /'reactivate'/, 'C3-3. reactivate action in executeAction union');
+
+// Reactivate calls the canonical endpoint (via executeAction → POST /:id/reactivate)
+assert.match(hostingAssets, /\/api\/admin\/media\/assets\/\$\{asset\.id\}\/\$\{action\}/, 'C3-4. Reactivate uses canonical endpoint pattern (/:id/reactivate)');
+
+// Link Existing: visible for unlinked assets (!mediaItem)
+assert.match(hostingAssets, /!selectedAsset\.mediaItem[\s\S]*?Link Existing/, 'C3-5. Link Existing button shown for unlinked assets (!mediaItem)');
+assert.match(hostingAssets, /function startLink/, 'C3-6. startLink function exists');
+assert.match(hostingAssets, /function confirmLink/, 'C3-7. confirmLink function exists');
+
+// Link Existing calls the canonical POST /api/admin/media/assets/link endpoint
+assert.match(hostingAssets, /\/api\/admin\/media\/assets\/link/, 'C3-8. Link Existing uses canonical link endpoint');
+assert.match(hostingAssets, /mediaItemId.*providerSourceId.*providerAssetId/, 'C3-9. Link sends mediaItemId + providerSourceId + providerAssetId');
+
+// Link modal: media-item picker with search
+assert.match(hostingAssets, /linkModalOpen/, 'C3-10. Link modal state exists');
+assert.match(hostingAssets, /searchMediaItems/, 'C3-11. Media-item search function exists');
+assert.match(hostingAssets, /\/api\/admin\/media\/library/, 'C3-12. Link modal searches via canonical library API');
+
+// Existing actions still present in Provider Files
+assert.match(hostingAssets, /function reconcile/, 'C3-13. Reconcile still present');
+assert.match(hostingAssets, /function startRename/, 'C3-14. Rename still present');
+assert.match(hostingAssets, /function startMove/, 'C3-15. Move still present');
+assert.match(hostingAssets, /function startDetach/, 'C3-16. Detach still present');
+assert.match(hostingAssets, /function startDelete/, 'C3-17. Delete still present');
+
+// Detach only shown for linked assets (has mediaItem) — not for unlinked
+assert.match(hostingAssets, /selectedAsset\.mediaItem[\s\S]*?startDetach/, 'C3-18. Detach only shown for linked assets (has mediaItem)');
+
+// Reactivate + Link are NOT gated by provider capabilities
+// (they're Mavero lifecycle operations, no provider call).
+// Check the actual button disabled attributes — Reactivate and Link
+// buttons should NOT have caps?. in their disabled expression.
+const reactivateButtonMatch = hostingAssets.match(/maveroStatus === 'missing'[\s\S]*?reactivate[\s\S]*?<\/button>/);
+assert.ok(reactivateButtonMatch, 'C3-19a. Reactivate button block found');
+assert.doesNotMatch(reactivateButtonMatch[0], /caps\?/, 'C3-19. Reactivate button NOT gated by provider capabilities');
+const linkButtonMatch = hostingAssets.match(/!selectedAsset\.mediaItem[\s\S]*?Link Existing[\s\S]*?<\/button>/);
+assert.ok(linkButtonMatch, 'C3-20a. Link Existing button block found');
+assert.doesNotMatch(linkButtonMatch[0], /caps\?/, 'C3-20. Link Existing button NOT gated by provider capabilities');
+
+ok('C3. Provider Files: Reactivate + Link Existing added, complete lifecycle (Reconcile/Reactivate/Link/Rename/Move/Detach/Delete)');
+
+// ============================================================
 // D. Asset Lifecycle Semantics
 // ============================================================
 console.log('\n--- D. Asset Lifecycle Semantics ---');

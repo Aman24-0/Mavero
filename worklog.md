@@ -3359,3 +3359,103 @@ Hosting Control keeps Providers + Sync tabs. Operations Center moves under the H
 
 ### Commit SHA
 (pending)
+
+---
+
+## Phase 2D — Finalize Unified Media Library Provider Files Management
+
+**Date:** 2026-10-02
+**Base HEAD:** `caf19dd`
+
+### Remaining Gap
+
+The previous consolidation (caf19dd) merged Hosting Assets into Media Library via the Provider Files view, but `AdminHostingAssets` only supported Reconcile, Rename, Move, Detach, Delete. It was missing:
+- **Reactivate** (for detached assets with `mavero_status='missing'`)
+- **Link Existing** (for unlinked assets with `media_item_id IS NULL`)
+
+This meant the "unified" Media Library still had an incomplete provider-asset lifecycle — the admin had to navigate back to the Media Library's media-item drawer to reactivate or link.
+
+### Fix
+
+Extended `AdminHostingAssets.svelte` (the component rendered in the Provider Files view) with two new actions:
+
+**Reactivate:**
+- Shown when `selectedAsset.maveroStatus === 'missing'` (detached state)
+- Calls `executeAction(asset, 'reactivate')` → `POST /api/admin/media/assets/:id/reactivate`
+- NOT gated by provider capabilities (Mavero lifecycle operation, no remote call)
+- Reuses the exact same endpoint and `ManagementService.reactivateAsset()` as the Media Library drawer — no duplicate logic
+
+**Link Existing:**
+- Shown when `!selectedAsset.mediaItem` (unlinked state — `media_item_id IS NULL`)
+- Opens a modal with a media-item picker: search by title/TMDB/IMDb/canonical_key via `GET /api/admin/media/library`
+- Admin selects a media item, then `confirmLink()` calls `POST /api/admin/media/assets/link` with `{ mediaItemId, providerSourceId, providerAssetId }`
+- Reuses the exact same endpoint and `ManagementService.linkAsset()` as the Media Library drawer — no duplicate logic
+- NOT gated by provider capabilities (Mavero lifecycle operation, no remote call)
+
+**State-aware button visibility:**
+- **Linked** (`mediaItem != null`, `maveroStatus != 'missing'`): Reconcile, Rename, Move, Detach, Delete
+- **Detached** (`maveroStatus === 'missing'`): Reconcile, Reactivate, Rename, Move, Delete (no Detach — already detached)
+- **Unlinked** (`mediaItem === null`): Reconcile, Link Existing, Rename, Move, Delete (no Detach — nothing to detach)
+
+**Capability gating preserved:**
+- Rename: `caps?.rename`
+- Move: `caps?.folderManagement`
+- Delete: `caps?.delete`
+- Reactivate + Link: NO capability gate (Mavero lifecycle, no provider call)
+
+### Data Semantics (unchanged)
+
+- **DETACH**: `mavero_status='missing'`, remote file preserved, IDs preserved for recovery
+- **REACTIVATE**: restores existing detached asset, NO duplicate, NO remote upload
+- **LINK**: associates existing provider file with existing media_item, NO duplicate, NO remote upload
+- **DELETE**: deletes provider-side file, marks Mavero asset deleted only on provider success
+
+### Duplication Audit
+
+All lifecycle logic is reused from existing services — NO duplication:
+- `reactivateAsset()` → `ManagementService.reactivateAsset()` via `POST /api/admin/media/assets/:id/reactivate`
+- `linkAsset()` → `ManagementService.linkAsset()` via `POST /api/admin/media/assets/link`
+- `detachAsset()` → `ManagementService.detachAsset()` via `POST /api/admin/media/assets/:id/detach`
+- `deleteAsset()` → `ManagementService.deleteAsset()` via `POST /api/admin/media/assets/:id/delete`
+- `renameAsset()` → `ManagementService.renameAsset()` via `POST /api/admin/media/assets/:id/rename`
+- `moveAsset()` → `ManagementService.moveAsset()` via `POST /api/admin/media/assets/:id/move`
+- `reconcileAsset()` → `SyncService.reconcileAsset()` via `POST /api/admin/media/assets/:id/reconcile`
+
+Only UI wiring was added.
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `src/lib/components/admin2/AdminHostingAssets.svelte` | Added Reactivate button, Link Existing button + modal, media-item search, confirmLink function |
+| `scripts/consolidation_regression_test.ts` | Added C3 section: 20 checks for Provider Files complete lifecycle |
+| `worklog.md` | This entry |
+
+### Tests
+
+- `consolidation_regression_test`: 10/10 pass (was 9, added C3 section with 20 sub-checks)
+- `hosting_lifecycle_regression_test`: 11/11 pass
+- `drawer_management_ui_test`: 12/12 pass
+- `delete_and_upload_selector_test`: 17/17 pass
+- `post_deploy_regression_test`: 7/7 pass
+- `admin2_phase2_test`: 31/31 pass
+- `admin2_audit_fix_test`: 36/36 pass
+
+### Validation
+
+- `svelte-check`: 0 errors, 0 warnings (4392 files)
+- `vite build`: succeeds (31.15s)
+
+### Final Acceptance Criteria Met
+
+Media Library:
+- Media view: complete media + provider management (Reconcile, Detach, Reactivate, Link, Rename, Move, Delete)
+- Provider Files view: complete provider-asset lifecycle (Reconcile, Reactivate, Link Existing, Rename, Move, Detach, Delete)
+
+Hosting Control:
+- Providers, Sync, Jobs, Activity, Attention
+
+No separate Assets inventory. No separate top-level Upload / Import navigation.
+
+### Commit SHA
+(pending)

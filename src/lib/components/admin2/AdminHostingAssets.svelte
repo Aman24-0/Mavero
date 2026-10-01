@@ -32,7 +32,7 @@
    */
 
   import { onMount, onDestroy } from 'svelte';
-  import { Search, Filter, X, ChevronLeft, ChevronRight, Pencil, FolderInput, Unlink, Trash2, RefreshCw, ExternalLink, AlertCircle, Loader2, HardDrive, FileVideo, Check, Film, Tv, Sparkles } from 'lucide-svelte';
+  import { Search, Filter, X, ChevronLeft, ChevronRight, Pencil, FolderInput, Unlink, Trash2, RefreshCw, ExternalLink, AlertCircle, Loader2, HardDrive, FileVideo, Check, Film, Tv, Sparkles, Zap, Link2 } from 'lucide-svelte';
   import AdminStatus from './AdminStatus.svelte';
   import AdminConfirmDialog from './AdminConfirmDialog.svelte';
   import type { HostingAssetRow, HostingAssetQuery } from '$lib/shared/hosting-types';
@@ -302,7 +302,7 @@
   let actionError = $state<string | null>(null);
   let actionSuccess = $state<string | null>(null);
 
-  async function executeAction(asset: HostingAssetRow, action: 'rename' | 'move' | 'detach' | 'delete' | 'reconcile', body?: Record<string, unknown>) {
+  async function executeAction(asset: HostingAssetRow, action: 'rename' | 'move' | 'detach' | 'delete' | 'reconcile' | 'reactivate', body?: Record<string, unknown>) {
     actionInProgress = action;
     actionError = null;
     actionSuccess = null;
@@ -387,6 +387,125 @@
 
   async function reconcile(asset: HostingAssetRow) {
     await executeAction(asset, 'reconcile');
+  }
+
+  // ============================================================
+  // Reactivate — for detached assets (mavero_status='missing').
+  // Calls the canonical POST /api/admin/media/assets/:id/reactivate
+  // endpoint. This is a Mavero lifecycle operation — it does NOT
+  // depend on provider capabilities (no remote call, no upload).
+  // ============================================================
+  async function reactivate(asset: HostingAssetRow) {
+    await executeAction(asset, 'reactivate');
+  }
+
+  // ============================================================
+  // Link Existing — for unlinked assets (mediaItem === null).
+  // Opens a modal that lets the admin search for and select a
+  // media_item, then calls the canonical POST /api/admin/media/assets/link
+  // endpoint with { mediaItemId, providerSourceId, providerAssetId }.
+  // This is a Mavero lifecycle operation — it does NOT depend on
+  // provider capabilities (no remote call, no upload).
+  // ============================================================
+  let linkModalOpen = $state(false);
+  let linkModalAsset = $state<HostingAssetRow | null>(null);
+  let linkSearchQuery = $state('');
+  let linkSearchLoading = $state(false);
+  let linkSearchResults = $state<Array<{ id: string; title: string; content_type: string; year: number | null; tmdb_id: string; canonical_key: string }>>([]);
+  let linkSelectedMediaItemId = $state<string | null>(null);
+  let linkSearchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  function startLink(asset: HostingAssetRow) {
+    linkModalAsset = asset;
+    linkSearchQuery = '';
+    linkSearchResults = [];
+    linkSelectedMediaItemId = null;
+    linkModalOpen = true;
+    // Trigger an initial empty search to show some items.
+    void searchMediaItems('');
+  }
+
+  function closeLinkModal() {
+    linkModalOpen = false;
+    linkModalAsset = null;
+    linkSearchQuery = '';
+    linkSearchResults = [];
+    linkSelectedMediaItemId = null;
+    if (linkSearchDebounce) { clearTimeout(linkSearchDebounce); linkSearchDebounce = null; }
+  }
+
+  function onLinkSearchInput() {
+    if (linkSearchDebounce) clearTimeout(linkSearchDebounce);
+    linkSearchDebounce = setTimeout(() => {
+      void searchMediaItems(linkSearchQuery);
+    }, 300);
+  }
+
+  async function searchMediaItems(q: string) {
+    linkSearchLoading = true;
+    try {
+      const params = new URLSearchParams();
+      if (q.trim()) params.set('q', q.trim());
+      params.set('limit', '20');
+      const res = await fetch(`/api/admin/media/library?${params.toString()}`);
+      const json = await res.json();
+      if (json.ok) {
+        linkSearchResults = (json.items ?? []).map((item: any) => ({
+          id: item.id,
+          title: item.title,
+          content_type: item.content_type,
+          year: item.year,
+          tmdb_id: item.tmdb_id,
+          canonical_key: item.canonical_key,
+        }));
+      } else {
+        linkSearchResults = [];
+      }
+    } catch {
+      linkSearchResults = [];
+    } finally {
+      linkSearchLoading = false;
+    }
+  }
+
+  async function confirmLink() {
+    if (!linkModalAsset || !linkSelectedMediaItemId) return;
+    const asset = linkModalAsset;
+    if (!asset.providerSourceId || !asset.providerAssetId) {
+      actionError = 'This asset is missing providerSourceId or providerAssetId — cannot link.';
+      return;
+    }
+    actionInProgress = 'link';
+    actionError = null;
+    actionSuccess = null;
+    try {
+      const res = await fetch('/api/admin/media/assets/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaItemId: linkSelectedMediaItemId,
+          providerSourceId: asset.providerSourceId,
+          providerAssetId: asset.providerAssetId,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        actionSuccess = 'Asset linked to media item successfully.';
+        closeLinkModal();
+        await loadAssets();
+        const sel = selectedAsset;
+        if (sel) {
+          const updated = items.find((i) => i.id === sel.id);
+          if (updated) selectedAsset = updated;
+        }
+      } else {
+        actionError = data.error?.message ?? 'Link failed.';
+      }
+    } catch (err) {
+      actionError = err instanceof Error ? `Network error: ${err.message}` : 'Network error during link.';
+    } finally {
+      actionInProgress = null;
+    }
   }
 </script>
 
@@ -792,24 +911,52 @@
           <section class="a2-asset-drawer-section">
             <h3 class="a2-asset-drawer-section-title">Actions</h3>
             <div class="a2-asset-drawer-actions">
+              <!-- Reconcile: available for any asset with a provider_asset_id -->
               <button type="button" class="a2-asset-action" onclick={() => reconcile(selectedAsset!)} disabled={actionInProgress !== null || !selectedAsset.providerAssetId}>
                 {#if actionInProgress === 'reconcile'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RefreshCw size={12} />{/if}
                 {actionInProgress === 'reconcile' ? 'Reconciling…' : 'Reconcile'}
               </button>
+
+              <!-- Reactivate: shown for DETACHED assets (mavero_status='missing').
+                   This is a Mavero lifecycle operation — no provider capability gate. -->
+              {#if selectedAsset.maveroStatus === 'missing'}
+                <button type="button" class="a2-asset-action a2-asset-action-success" onclick={() => reactivate(selectedAsset!)} disabled={actionInProgress !== null}>
+                  {#if actionInProgress === 'reactivate'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Zap size={12} />{/if}
+                  {actionInProgress === 'reactivate' ? 'Reactivating…' : 'Reactivate'}
+                </button>
+              {/if}
+
+              <!-- Link Existing: shown for UNLINKED assets (no mediaItem).
+                   Opens a media-item picker modal. This is a Mavero lifecycle
+                   operation — no provider capability gate. -->
+              {#if !selectedAsset.mediaItem}
+                <button type="button" class="a2-asset-action a2-asset-action-success" onclick={() => startLink(selectedAsset!)} disabled={actionInProgress !== null || !selectedAsset.providerAssetId}>
+                  {#if actionInProgress === 'link'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Link2 size={12} />{/if}
+                  {actionInProgress === 'link' ? 'Linking…' : 'Link Existing'}
+                </button>
+              {/if}
+
+              <!-- Rename: provider capability gate -->
               <button type="button" class="a2-asset-action" onclick={() => startRename(selectedAsset!)} disabled={actionInProgress !== null || !caps?.rename || !selectedAsset.providerAssetId}>
                 {#if actionInProgress === 'rename'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Pencil size={12} />{/if}
                 {actionInProgress === 'rename' ? 'Renaming…' : 'Rename'}
                 {#if !caps?.rename}<span class="a2-asset-action-unsupported">unsupported</span>{/if}
               </button>
+              <!-- Move: provider capability gate -->
               <button type="button" class="a2-asset-action" onclick={() => startMove(selectedAsset!)} disabled={actionInProgress !== null || !caps?.folderManagement || !selectedAsset.providerAssetId}>
                 {#if actionInProgress === 'move'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<FolderInput size={12} />{/if}
                 {actionInProgress === 'move' ? 'Moving…' : 'Move'}
                 {#if !caps?.folderManagement}<span class="a2-asset-action-unsupported">unsupported</span>{/if}
               </button>
-              <button type="button" class="a2-asset-action a2-asset-action-warn" onclick={() => startDetach(selectedAsset!)} disabled={actionInProgress !== null}>
-                {#if actionInProgress === 'detach'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Unlink size={12} />{/if}
-                {actionInProgress === 'detach' ? 'Detaching…' : 'Detach'}
-              </button>
+              <!-- Detach: Mavero lifecycle operation (no provider capability gate).
+                   Only meaningful for LINKED assets (has mediaItem). -->
+              {#if selectedAsset.mediaItem}
+                <button type="button" class="a2-asset-action a2-asset-action-warn" onclick={() => startDetach(selectedAsset!)} disabled={actionInProgress !== null}>
+                  {#if actionInProgress === 'detach'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Unlink size={12} />{/if}
+                  {actionInProgress === 'detach' ? 'Detaching…' : 'Detach'}
+                </button>
+              {/if}
+              <!-- Delete: provider capability gate -->
               <button type="button" class="a2-asset-action a2-asset-action-danger" onclick={() => startDelete(selectedAsset!)} disabled={actionInProgress !== null || !caps?.delete || !selectedAsset.providerAssetId}>
                 {#if actionInProgress === 'delete'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Trash2 size={12} />{/if}
                 {actionInProgress === 'delete' ? 'Deleting…' : 'Delete'}
@@ -899,6 +1046,76 @@
       </div>
     {/if}
   </AdminConfirmDialog>
+
+  <!-- Link Existing modal — lets the admin search for and select a media_item
+       to link an unlinked provider file to. Calls the canonical
+       POST /api/admin/media/assets/link endpoint. -->
+  {#if linkModalOpen && linkModalAsset}
+    <div class="a2-asset-modal-overlay" onclick={() => closeLinkModal()} role="presentation">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-asset-modal a2-asset-modal-wide" role="dialog" aria-modal="true" aria-labelledby="a2-asset-link-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+        <h2 id="a2-asset-link-title" class="a2-asset-modal-title"><Link2 size={16} /> Link to media item</h2>
+        <p class="a2-asset-modal-desc">
+          Search for the media item to associate with this provider file.
+          <strong>Provider:</strong> {linkModalAsset.providerAdapterId ?? '—'}
+          · <strong>File:</strong> {linkModalAsset.filename ?? linkModalAsset.title ?? linkModalAsset.providerAssetId ?? '—'}
+        </p>
+        <div class="a2-asset-link-search">
+          <input
+            type="text"
+            class="a2-asset-modal-input"
+            placeholder="Search by title, TMDB ID, IMDb ID, or canonical key…"
+            bind:value={linkSearchQuery}
+            oninput={onLinkSearchInput}
+            autocomplete="off"
+          />
+          {#if linkSearchLoading}
+            <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-text-dim);" />
+          {/if}
+        </div>
+        <div class="a2-asset-link-results">
+          {#if linkSearchResults.length === 0 && !linkSearchLoading}
+            <div class="a2-asset-link-empty">
+              {#if linkSearchQuery.trim()}
+                No media items match "{linkSearchQuery}".
+              {:else}
+                Start typing to search, or browse the list below.
+              {/if}
+            </div>
+          {/if}
+          {#each linkSearchResults as item (item.id)}
+            <button
+              type="button"
+              class="a2-asset-link-result"
+              class:selected={linkSelectedMediaItemId === item.id}
+              onclick={() => { linkSelectedMediaItemId = item.id; }}
+            >
+              <div class="a2-asset-link-result-icon">
+                {#if item.content_type === 'movie'}<Film size={14} />{:else if item.content_type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}
+              </div>
+              <div class="a2-asset-link-result-info">
+                <div class="a2-asset-link-result-title">{item.title}</div>
+                <div class="a2-asset-link-result-meta">
+                  <span>{item.content_type}</span>
+                  {#if item.year}<span>· {item.year}</span>{/if}
+                  <span>· TMDB {item.tmdb_id}</span>
+                </div>
+              </div>
+              {#if linkSelectedMediaItemId === item.id}
+                <span class="a2-asset-link-result-check"><Check size={14} /></span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+        <footer class="a2-asset-modal-actions">
+          <button type="button" class="a2-asset-modal-btn a2-asset-modal-cancel" onclick={closeLinkModal}>Cancel</button>
+          <button type="button" class="a2-asset-modal-btn a2-asset-modal-confirm" onclick={confirmLink} disabled={!linkSelectedMediaItemId || actionInProgress !== null}>
+            {#if actionInProgress === 'link'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" /> Linking…{:else}<Link2 size={12} /> Link to selected item{/if}
+          </button>
+        </footer>
+      </div>
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -1410,6 +1627,21 @@
     background: var(--a2-cyan); color: var(--a2-surface-1); border-color: var(--a2-cyan);
   }
   .a2-asset-modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Link Existing modal — wider to fit the search + results list */
+  .a2-asset-modal-wide { max-width: 560px; }
+  .a2-asset-link-search { display: flex; align-items: center; gap: var(--a2-space-2); margin-bottom: var(--a2-space-2); }
+  .a2-asset-link-search .a2-asset-modal-input { flex: 1; }
+  .a2-asset-link-results { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--a2-space-3); }
+  .a2-asset-link-empty { padding: var(--a2-space-4); text-align: center; color: var(--a2-text-dim); font-size: var(--a2-text-sm); }
+  .a2-asset-link-result { display: flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); cursor: pointer; text-align: left; transition: border-color var(--a2-motion-micro) var(--a2-ease-out); }
+  .a2-asset-link-result:hover { border-color: var(--a2-cyan-border); }
+  .a2-asset-link-result.selected { border-color: var(--a2-cyan); background: var(--a2-cyan-soft); }
+  .a2-asset-link-result-icon { display: flex; align-items: center; color: var(--a2-text-dim); flex-shrink: 0; }
+  .a2-asset-link-result-info { flex: 1; min-width: 0; }
+  .a2-asset-link-result-title { font-size: var(--a2-text-sm); color: var(--a2-text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .a2-asset-link-result-meta { display: flex; gap: 4px; font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .a2-asset-link-result-check { color: var(--a2-cyan); flex-shrink: 0; }
 
   .a2-asset-confirm-body {
     display: flex; flex-direction: column; gap: var(--a2-space-2);
