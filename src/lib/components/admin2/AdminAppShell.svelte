@@ -101,8 +101,7 @@
       id: 'content',
       label: 'Content',
       items: [
-        { id: 'media-library', label: 'Media Library', href: '/admin/media/library', icon: Library },
-        { id: 'upload', label: 'Upload / Import', href: '/admin/media/upload', icon: Upload },
+        { id: 'media-library', label: 'Media Library', href: '/admin/media/library', icon: Library, matchPrefix: '/admin/media/library' },
         { id: 'missing-media', label: 'Missing Media', href: '/admin/media/missing', icon: AlertCircle },
       ]
     },
@@ -111,13 +110,7 @@
       label: 'Hosting',
       items: [
         { id: 'hosting', label: 'Hosting Control', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
-      ]
-    },
-    {
-      id: 'operations',
-      label: 'Operations',
-      items: [
-        { id: 'operations', label: 'Operations Center', href: '/admin/operations', icon: Activity, matchPrefix: '/admin/operations' },
+        { id: 'operations', label: 'Operations', href: '/admin/operations', icon: Activity, matchPrefix: '/admin/operations' },
       ]
     },
     {
@@ -151,11 +144,12 @@
   // (no longer render an empty affordance).
 
   // Mobile bottom nav: 5 primary destinations.
-  // Phase 2: "Media" was a placeholder for the unbuilt Phase C library page.
-  // Swap it for Hosting — a real, existing primary workflow — until Phase C ships.
+  // Phase 2C consolidation: Upload removed from top-level nav (route
+  // still works for deep links). Media Library is now the primary
+  // content entry point. Hosting + Operations consolidated under Hosting.
   const mobileNav: NavItem[] = [
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
-    { id: 'upload', label: 'Upload', href: '/admin/media/upload', icon: Upload },
+    { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library, matchPrefix: '/admin/media/library' },
     { id: 'hosting', label: 'Hosting', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
     { id: 'analytics', label: 'Analytics', href: '/admin/analytics', icon: BarChart3, matchPrefix: '/admin/analytics' },
     { id: 'more', label: 'More', href: '#more', icon: MoreHorizontal },

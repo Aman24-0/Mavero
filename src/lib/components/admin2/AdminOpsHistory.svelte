@@ -294,8 +294,8 @@
               {#if event.providerAdapterId}
                 <span class="a2-history-row-provider" data-adapter={event.providerAdapterId}>{event.providerAdapterId}</span>
               {/if}
-              {#if event.adminUserEmail}
-                <span class="a2-history-row-actor">{event.adminUserEmail}</span>
+              {#if event.adminUserDisplayName}
+                <span class="a2-history-row-actor">{event.adminUserDisplayName}</span>
               {/if}
             </div>
             {#if event.errorMessage}
@@ -403,8 +403,8 @@
               <div><dt>Action</dt><dd>{actionLabel(selectedEvent.action)}</dd></div>
               <div><dt>Status</dt><dd><AdminStatus label={selectedEvent.status} tone={statusTone(selectedEvent.status)} /></dd></div>
               <div><dt>Occurred</dt><dd>{formatDate(selectedEvent.occurredAt)}</dd></div>
-              {#if selectedEvent.adminUserEmail}
-                <div><dt>Actor</dt><dd>{selectedEvent.adminUserEmail}</dd></div>
+              {#if selectedEvent.adminUserDisplayName}
+                <div><dt>Admin</dt><dd>{selectedEvent.adminUserDisplayName}</dd></div>
               {/if}
               {#if selectedEvent.providerAdapterId}
                 <div><dt>Provider</dt><dd>{selectedEvent.providerAdapterId}</dd></div>

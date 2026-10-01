@@ -1,19 +1,18 @@
 <script lang="ts">
   /**
-   * Admin 2.0 — Phase E — Hosting Control workspace.
+   * Admin 2.0 — Hosting Control workspace.
    *
-   * Unified workspace with three contextual tabs:
+   * Phase 2C consolidation: the Assets tab has been merged into Media
+   * Library (?view=files). This workspace now has two tabs:
    *   - Providers — provider overview + health + capabilities + detail drawer
-   *   - Assets — paginated, filtered asset inventory + management actions
    *   - Sync — provider sync + unlinked assets
    *
-   * Tab state is URL-driven (?tab=providers|assets|sync) so the workspace
-   * is deep-linkable. The server loader preloads the providers list (with
-   * skipHealth=true for fast initial render); the Providers tab triggers
-   * a live health check client-side after mount.
+   * "Open in Assets" actions from Providers/Sync now navigate to
+   * /admin/media/library?view=files (the canonical provider-file workspace).
    *
-   * The Assets tab accepts an initial provider filter (set when the user
-   * clicks "Open in Assets" from a provider card or sync card).
+   * Tab state is URL-driven (?tab=providers|sync). The server loader
+   * preloads the providers list (skipHealth=true for fast initial
+   * render); the Providers tab triggers a live health check client-side.
    */
 
   import { onMount } from 'svelte';
@@ -22,10 +21,8 @@
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminHostingProviders from '$lib/components/admin2/AdminHostingProviders.svelte';
-  import AdminHostingAssets from '$lib/components/admin2/AdminHostingAssets.svelte';
   import AdminHostingSync from '$lib/components/admin2/AdminHostingSync.svelte';
   import type { HostingProviderOverview } from '$lib/shared/hosting-types';
-  import type { ProviderCapabilities } from '$lib/server/hosting/types';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -33,7 +30,7 @@
   // ============================================================
   // Tab state — URL-driven
   // ============================================================
-  const VALID_TABS = new Set(['providers', 'assets', 'sync']);
+  const VALID_TABS = new Set(['providers', 'sync']);
   // svelte-ignore state_referenced_locally — intentional initial capture from URL
   let currentTab = $state<string>(VALID_TABS.has(data.initialTab) ? data.initialTab : 'providers');
 
@@ -51,15 +48,6 @@
     currentTab = tab;
     const params = new URLSearchParams(page.url.searchParams);
     params.set('tab', tab);
-    // Clear asset-specific params when switching away from Assets.
-    if (tab !== 'assets') {
-      params.delete('provider');
-      params.delete('linked');
-      params.delete('status');
-      params.delete('contentType');
-      params.delete('q');
-      params.delete('page');
-    }
     goto(`${page.url.pathname}?${params.toString()}`, { replaceState: true, noScroll: true, invalidateAll: false });
   }
 
@@ -88,12 +76,13 @@
 
   // ============================================================
   // Cross-tab navigation — "Open in Assets" from Providers/Sync
+  // Phase 2C: now navigates to Media Library's Provider Files view.
   // ============================================================
-  let assetsInitialProvider = $state<string | null>(null);
-
   function openAssetsForProvider(adapterId: string) {
-    assetsInitialProvider = adapterId;
-    switchTab('assets');
+    // Navigate to Media Library's Provider Files view with the provider
+    // filter pre-selected. The AdminHostingAssets component reads the
+    // `provider` URL param to pre-filter.
+    goto(`/admin/media/library?view=files&provider=${encodeURIComponent(adapterId)}`);
   }
 
   // ============================================================
@@ -128,17 +117,14 @@
 
   // ============================================================
   // Tabs definition
+  // Phase 2C consolidation: Assets tab removed — merged into Media
+  // Library's "Provider Files" view. Deep links to ?tab=assets are
+  // redirected by the server loader.
   // ============================================================
   const tabs = [
     { id: 'providers', label: 'Providers' },
-    { id: 'assets', label: 'Assets' },
     { id: 'sync', label: 'Sync' },
   ];
-
-  // Provider capabilities map for the Assets tab.
-  const providerCapabilities = $derived(
-    providers.map((p) => ({ adapterId: p.adapterId, name: p.name, capabilities: p.capabilities as ProviderCapabilities }))
-  );
 
   // Sync tab needs a slim provider view.
   const syncProviders = $derived(
@@ -179,11 +165,6 @@
         {providersError}
         onsyncprovider={syncProvider}
         onopenassets={openAssetsForProvider}
-      />
-    {:else if currentTab === 'assets'}
-      <AdminHostingAssets
-        initialProvider={assetsInitialProvider}
-        providers={providerCapabilities}
       />
     {:else if currentTab === 'sync'}
       <AdminHostingSync

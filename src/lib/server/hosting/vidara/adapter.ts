@@ -260,29 +260,35 @@ export class VidaraAdapter implements HostingProviderAdapter {
   }
 
   async deleteAsset(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<void> {
-    // VERIFIED CONTRACT FIX: Vidara's /v1/video/delete endpoint expects
-    // `file_code` as a QUERY PARAMETER, NOT in a JSON request body.
+    // VERIFIED CONTRACT (audit fix): Vidara's delete endpoint is:
+    //   GET /v1/video/delete?filecode=<providerAssetId>&api_key=<key>
     //
-    // The previous implementation sent `POST /v1/video/delete` with a
-    // JSON body `{ file_code: ... }`. Vidara returned HTTP 400 "invalid
-    // request" because the endpoint does not parse a JSON body — it
-    // only reads query parameters. This was the root cause of the
-    // production "provider_delete failed (HTTP 400)" error.
+    // The method is GET (NOT POST). The query parameter is `filecode`
+    // (NO underscore — matching the same param name used by
+    // /v1/video/info and /v1/upload/url).
     //
-    // Vidara's API is query-parameter-based across ALL endpoints (every
-    // verified GET endpoint uses query params, and the api_key is always
-    // a query param via buildVidaraUrl). The delete endpoint follows
-    // the same pattern: POST with file_code as a query param.
+    // Previous incorrect attempts:
+    //   1. POST /v1/video/delete with JSON body { file_code: ... } → HTTP 400
+    //      (Vidara does not parse JSON bodies on this endpoint)
+    //   2. POST /v1/video/delete?file_code=... → still failed
+    //      (wrong method + wrong param name with underscore)
     //
-    // The POST method is correct (Vidara uses POST for all write
-    // operations: rename, move, delete, folder/create, etc.). Only the
-    // body format was wrong.
+    // The correct contract uses GET with `filecode` (no underscore),
+    // consistent with every other verified Vidara read endpoint:
+    //   - GET /v1/video/info?filecode=... (getAsset, getProcessingStatus)
+    //   - GET /v1/upload/url?url=... (uploadRemote)
+    //
+    // Success detection: Vidara returns a VidaraOperationResponse with
+    // `result: true` on success. A missing/already-deleted file returns
+    // `result: false` (or a NOT_FOUND error) — we surface that as a
+    // VALIDATION error so the admin knows the filecode was not found
+    // at the provider, rather than silently treating it as success.
     const res = await this.http({
-      method: 'POST',
-      url: this.url('/v1/video/delete', { file_code: providerAssetId }),
+      method: 'GET',
+      url: this.url('/v1/video/delete', { filecode: providerAssetId }),
     });
     if (!(res.json as VidaraOperationResponse)?.result) {
-      throw new HostingProviderError('VALIDATION', { message: 'Vidara delete returned failure.' });
+      throw new HostingProviderError('VALIDATION', { message: 'Vidara delete returned failure — the file may not exist or the filecode is invalid.' });
     }
   }
 

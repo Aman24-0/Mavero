@@ -47,10 +47,51 @@
   import AdminMediaCard from '$lib/components/admin2/AdminMediaCard.svelte';
   import AdminMediaDetailDrawer from '$lib/components/admin2/AdminMediaDetailDrawer.svelte';
   import AdminMediaFilters, { type FilterState } from '$lib/components/admin2/AdminMediaFilters.svelte';
+  import AdminHostingAssets from '$lib/components/admin2/AdminHostingAssets.svelte';
   import type { LibraryMediaItem, LibraryOperationSummary } from '$lib/server/hosting/library/service';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+
+  // ============================================================
+  // View toggle: 'media' (media_items) vs 'files' (provider assets).
+  // The 'files' view shows ALL media_assets including unlinked ones
+  // (media_item_id IS NULL). This consolidates the old Hosting Assets
+  // tab into Media Library — one canonical workspace for both media
+  // items and provider files.
+  // URL-driven via ?view=media|files (default: media).
+  // ============================================================
+  let currentView = $state<'media' | 'files'>(
+    page.url.searchParams.get('view') === 'files' ? 'files' : 'media'
+  );
+
+  $effect(() => {
+    const urlView = page.url.searchParams.get('view');
+    currentView = urlView === 'files' ? 'files' : 'media';
+  });
+
+  function switchView(view: 'media' | 'files') {
+    if (view === currentView) return;
+    currentView = view;
+    const params = new URLSearchParams(page.url.searchParams);
+    if (view === 'files') {
+      params.set('view', 'files');
+    } else {
+      params.delete('view');
+    }
+    // Clear media-specific filters when switching to files view.
+    if (view === 'files') {
+      params.delete('selected');
+      params.delete('series');
+      params.delete('year');
+    }
+    goto(`${page.url.pathname}?${params.toString()}`, { replaceState: true, noScroll: true, invalidateAll: false });
+  }
+
+  const viewTabs = $derived([
+    { id: 'media', label: 'Media', active: currentView === 'media', onclick: () => switchView('media') },
+    { id: 'files', label: 'Provider Files', active: currentView === 'files', onclick: () => switchView('files') },
+  ]);
 
   // ============================================================
   // State
@@ -336,11 +377,12 @@
 </svelte:head>
 
 <AdminAppShell>
-  <AdminPage eyebrow="Content" title="Media Library" accent="cyan">
+  <AdminPage eyebrow="Content" title="Media Library" accent="cyan" tabs={viewTabs}>
     {#snippet description()}
       <p>
         Browse, search, filter, and inspect every canonical media identity in Mavero —
         with per-item provider availability across Vidara and Abyss.
+        Switch to <strong>Provider Files</strong> to manage unlinked provider assets.
       </p>
     {/snippet}
 
@@ -350,15 +392,23 @@
       </a>
     {/snippet}
 
-    {#if hostingSourcesError}
-      <!-- FINDING-005 fix: surface hosting sources query failures. -->
-      <div class="library-hosting-error" role="alert">
-        <strong>Provider data could not be loaded:</strong> {hostingSourcesError}
-        <br />
-        Assets may show as "Not linked" or "Unresolved" until this is resolved.
-        Check the database connection and RLS policies for streaming_providers / streaming_sources.
-      </div>
-    {/if}
+    {#if currentView === 'files'}
+      <!-- Provider Files view: delegates to AdminHostingAssets, which
+           shows ALL media_assets (including media_item_id IS NULL).
+           This consolidates the old Hosting Control → Assets tab into
+           the Media Library. The component handles its own filters,
+           pagination, drawer, and management actions. -->
+      <AdminHostingAssets providers={hostingSources.filter((s: any) => s.adapterId && s.capabilities).map((s: any) => ({ adapterId: s.adapterId, name: s.providerName ?? s.name, capabilities: s.capabilities }))} />
+    {:else}
+      {#if hostingSourcesError}
+        <!-- FINDING-005 fix: surface hosting sources query failures. -->
+        <div class="library-hosting-error" role="alert">
+          <strong>Provider data could not be loaded:</strong> {hostingSourcesError}
+          <br />
+          Assets may show as "Not linked" or "Unresolved" until this is resolved.
+          Check the database connection and RLS policies for streaming_providers / streaming_sources.
+        </div>
+      {/if}
 
     {#snippet toolbar()}
       <!-- Desktop inline filters -->
@@ -478,6 +528,7 @@
         {/if}
       </div>
     </div>
+    {/if}
   </AdminPage>
 
   <!-- Detail drawer (renders above everything when open) -->

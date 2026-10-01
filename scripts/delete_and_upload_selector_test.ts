@@ -38,15 +38,17 @@ const managementService = read('src/lib/server/hosting/management/service.ts');
 const deleteRoute = read('src/routes/api/admin/media/assets/[id]/delete/+server.ts');
 const hostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
 
-// 1a. Vidara delete uses query param, NOT JSON body
-// The fix: file_code is passed as a query parameter via this.url(..., { file_code: ... })
-// NOT as body: { file_code: ... }
+// 1a. Vidara delete uses GET method with filecode query param (correct contract)
+// The fix: GET /v1/video/delete?filecode=<id> (NOT POST, NOT file_code with underscore)
 const vidaraDeleteMatch = vidaraAdapter.match(/async deleteAsset[\s\S]*?\n  \}/);
 assert.ok(vidaraDeleteMatch, '1a. Vidara deleteAsset method found');
-assert.match(vidaraDeleteMatch[0], /this\.url\('\/v1\/video\/delete', \{ file_code: providerAssetId \}\)/, '1b. Vidara delete passes file_code as query param (not JSON body)');
-assert.doesNotMatch(vidaraDeleteMatch[0], /body:\s*\{\s*file_code:\s*providerAssetId\s*\}/, '1c. Vidara delete does NOT send JSON body with file_code');
-assert.match(vidaraDeleteMatch[0], /VERIFIED CONTRACT FIX/, '1d. Vidara delete has contract fix comment');
-ok('1. Vidara deleteAsset: file_code sent as query param (fixes HTTP 400)');
+assert.match(vidaraDeleteMatch[0], /method:\s*'GET'/, '1b. Vidara delete uses GET method');
+assert.match(vidaraDeleteMatch[0], /this\.url\('\/v1\/video\/delete', \{ filecode: providerAssetId \}\)/, '1c. Vidara delete passes filecode as query param (no underscore)');
+const vidaraDeleteCodeOnly = vidaraDeleteMatch[0].replace(/\/\/.*$/gm, '');
+assert.doesNotMatch(vidaraDeleteCodeOnly, /file_code/, '1d. Vidara delete does NOT use file_code (underscore) in code');
+assert.doesNotMatch(vidaraDeleteMatch[0], /body:\s*\{/, '1e. Vidara delete does NOT send JSON body');
+assert.match(vidaraDeleteMatch[0], /VERIFIED CONTRACT/, '1f. Vidara delete has contract comment');
+ok('1. Vidara deleteAsset: GET /v1/video/delete?filecode=<id> (correct contract)');
 
 // 1b. Abyss delete uses DELETE method with path parameter (unchanged — was already correct)
 const abyssDeleteMatch = abyssAdapter.match(/async deleteAsset[\s\S]*?\n  \}/);

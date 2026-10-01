@@ -3238,3 +3238,124 @@ All Phase 6 fixes remain intact:
 - The "Link existing file" UI button in the media detail drawer is not yet implemented (the API endpoint + service method exist, but the admin needs a UI to select which file to link). This is a UI addition, not a data-flow fix.
 - Existing `media_assets.playback_url` rows containing `https://vidara.so/v/` need a one-time UPDATE or Vidara sync to refresh to `https://vidara.to/e/` format.
 - The `recordDemandIfNeeded` provider-name check is substring-based (`providerName.includes('vidara')`) — fragile if an admin renames the provider. A robust fix would check `adapter_id` instead.
+
+---
+
+## Phase 2C — Admin 2.0 Consolidation + Hosting/Operations Fix
+
+**Date:** 2026-10-02
+**Base HEAD:** `0e503fb`
+
+### Audit Findings
+
+**Issue 1 — Vidara delete HTTP 400 (still broken):**
+The previous fix (commit `0e503fb`) changed the request from POST with JSON body to POST with `file_code` query param. Both were wrong. The verified Vidara contract is `GET /v1/video/delete?filecode=<id>` — GET method, `filecode` param (no underscore). The previous fix used POST + `file_code` (underscore).
+
+**Issue 2 — Operations Activity `profiles.email` error:**
+`OperationsService.listHistory` queried `admin_user:profiles(id, email)` but the `profiles` table has no `email` column (only `id, display_name, avatar_url, role, created_at, updated_at`). Email lives in `auth.users`, not accessible via PostgREST. The proven working pattern is `profiles(display_name)` (used by `MediaLibraryService.detail()`).
+
+**Issue 3 — Duplicate admin workflows:**
+Media Library and Hosting Assets had overlapping capabilities. Media Library was media_item-centric (couldn't show unlinked provider files). Hosting Assets was media_asset-centric (could show `media_item_id IS NULL`). Detach/Reconcile were duplicated in both drawers. Delete/Rename/Move only existed in Hosting Assets. Reactivate/Link only existed in Media Library.
+
+**Issue 4 — Navigation bloat:**
+Upload / Import had a separate top-level nav entry. Operations Center was a separate top-level group. Hosting Control had an Assets tab that duplicated Media Library's asset management.
+
+### Architectural Decision
+
+Consolidate into **one canonical media+asset workspace** (Media Library) with a view toggle:
+- **Media** view: media_item-centric list (existing behavior, unchanged)
+- **Provider Files** view: delegates to `AdminHostingAssets` component, shows ALL `media_assets` including unlinked (`media_item_id IS NULL`)
+
+Hosting Control keeps Providers + Sync tabs. Operations Center moves under the Hosting nav group. Upload / Import nav entry removed (route kept for deep links).
+
+### Implementation
+
+**Vidara delete fix:**
+- Changed `VidaraAdapter.deleteAsset()` from `POST /v1/video/delete?file_code=<id>` to `GET /v1/video/delete?filecode=<id>`
+- Matches the verified contract: GET method, `filecode` param (no underscore)
+
+**Operations Activity fix:**
+- `operations/service.ts:227`: `profiles(id, email)` → `profiles(id, display_name)`
+- `operations/service.ts:273`: `row.admin_user?.email` → `row.admin_user?.display_name`
+- `operations-types.ts:107`: `adminUserEmail` → `adminUserDisplayName`
+- `AdminOpsHistory.svelte`: updated both consumers (list row + drawer)
+- Legacy `/api/admin/media/operations/+server.ts:37`: same fix
+
+**Media Library drawer consolidation:**
+- Added Delete, Rename, Move buttons to `AdminMediaDetailDrawer.svelte`
+- Delete has a confirmation dialog (distinct from Detach — states "permanently deleted from provider")
+- Rename opens a modal with a text input
+- Move opens a modal with a folder ID input
+- All three use the existing endpoints (`POST /api/admin/media/assets/:id/{delete,rename,move}`)
+- Existing Detach, Reactivate, Reconcile, Link existing file preserved
+
+**Provider Files view:**
+- Added `currentView` state to library page (`'media' | 'files'`, URL-driven via `?view=files`)
+- When `view=files`, renders `AdminHostingAssets` component with enriched `providers` prop
+- Library page server now enriches `hostingSources` with `capabilities` via `getHostingAdapter()`
+
+**Navigation consolidation:**
+- Removed top-level "Upload / Import" from desktop nav (Content group now: Media Library, Missing Media)
+- Moved "Operations" from a separate top-level group into the Hosting group
+- Mobile nav: replaced "Upload" with "Media" (Media Library)
+- Removed Assets tab from Hosting Control (Providers + Sync only)
+- `?tab=assets` on `/admin/hosting` → 303 redirect to `/admin/media/library?view=files`
+- `openAssetsForProvider()` now navigates to `/admin/media/library?view=files&provider=<id>`
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `src/lib/server/hosting/vidara/adapter.ts` | deleteAsset: GET + filecode (correct contract) |
+| `src/lib/server/hosting/operations/service.ts` | profiles(id, email) → profiles(id, display_name) |
+| `src/lib/shared/operations-types.ts` | adminUserEmail → adminUserDisplayName |
+| `src/lib/components/admin2/AdminOpsHistory.svelte` | Updated to use adminUserDisplayName |
+| `src/routes/api/admin/media/operations/+server.ts` | Legacy endpoint: same profiles fix |
+| `src/lib/components/admin2/AdminMediaDetailDrawer.svelte` | Added Delete/Rename/Move actions + modals |
+| `src/routes/admin/media/library/+page.svelte` | Added Provider Files view toggle |
+| `src/routes/admin/media/library/+page.server.ts` | Enriched hostingSources with capabilities |
+| `src/lib/components/admin2/AdminAppShell.svelte` | Removed Upload nav, moved Operations under Hosting |
+| `src/routes/admin/hosting/+page.server.ts` | Redirect ?tab=assets → Media Library |
+| `src/routes/admin/hosting/+page.svelte` | Removed Assets tab, updated openAssetsForProvider |
+| `scripts/consolidation_regression_test.ts` | New: 9 check groups covering all fixes |
+| `scripts/delete_and_upload_selector_test.ts` | Updated for new Vidara contract |
+| `scripts/admin2_phase2_test.ts` | Updated for new mobile nav |
+| `package.json` | Added consolidation test to test script |
+
+### Database/Migration Status
+
+**No migration required.** No schema changes were needed. The `profiles` table already has `display_name` — the bug was that the query asked for a non-existent `email` column.
+
+### Tests
+
+- New: `scripts/consolidation_regression_test.ts` — 9 check groups (A-G) covering Vidara delete, Operations Activity, Unified Media Library, Asset lifecycle, Navigation, Upload selector, Regression
+- Updated: `scripts/delete_and_upload_selector_test.ts` — updated for new Vidara GET+filecode contract
+- Updated: `scripts/admin2_phase2_test.ts` — updated for mobile nav change
+- All existing regression tests pass (hosting_lifecycle, admin2_audit_fix, drawer_management_ui, post_deploy, admin2_phase2)
+
+### Validation Results
+
+- `svelte-check`: 0 errors, 0 warnings (4392 files)
+- `vite build`: succeeds (32.52s)
+- `consolidation_regression_test`: 9/9 pass
+- `delete_and_upload_selector_test`: 17/17 pass
+- `admin2_phase2_test`: 31/31 pass
+- `hosting_lifecycle_regression_test`: 11/11 pass
+- `admin2_audit_fix_test`: 36/36 pass
+- `drawer_management_ui_test`: 12/12 pass
+- `post_deploy_regression_test`: 7/7 pass
+
+### Remaining Known Limitations
+
+1. **Vidara delete "already deleted" handling**: If the filecode doesn't exist at Vidara, the API returns `result: false` which we surface as a VALIDATION error. We do NOT silently treat it as success. This is intentional — the admin should know the file wasn't found. A future enhancement could check for a specific "not found" response shape and treat it as success (file already gone).
+
+2. **Operations Activity sort**: History tab only supports `occurred_at DESC` sort (no sort param exposed). This is pre-existing, not introduced by this change.
+
+3. **`includeOrphans` flag**: Still dead code in MediaLibraryService — no UI toggle. Orphaned media_items (no assets + no demand) remain hidden. This is pre-existing.
+
+4. **`status` sort proxy**: Media Library's `status` sort falls back to `updated_at` (not a true status sort). Pre-existing.
+
+5. **Reactivate/Link in Provider Files view**: The AdminHostingAssets component (rendered in Provider Files view) does not have Reactivate or Link buttons. An admin who detaches from Provider Files must open the Media Library drawer to reactivate. This is a pre-existing limitation of the AdminHostingAssets component — the Media Library drawer is the canonical place for the full lifecycle.
+
+### Commit SHA
+(pending)

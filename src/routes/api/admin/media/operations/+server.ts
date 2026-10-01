@@ -34,7 +34,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
       id, action, status, details, error_code, error_message, occurred_at, created_at,
       media_item:media_items(id, title, tmdb_id, content_type, season, episode),
       media_asset:media_assets(id, provider_asset_id, playback_url, status),
-      admin_user:profiles(id, email)
+      admin_user:profiles(id, display_name)
     `)
     .order('occurred_at', { ascending: false })
     .limit(limit);

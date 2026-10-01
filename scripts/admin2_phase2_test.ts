@@ -168,10 +168,13 @@ assert.doesNotMatch(adminAppShell, /closeConfig/, 'AdminAppShell: closeConfig fu
 assert.doesNotMatch(adminAppShell, /handleConfigKeydown/, 'AdminAppShell: handleConfigKeydown function removed');
 ok('D1. Configure dropdown fully removed (button, popup, state, functions, CSS)');
 
-// Mobile bottom nav: Hosting replaces placeholder Media
-assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting', href: '\/admin\/hosting'/, 'AdminAppShell: mobile nav has Hosting (real workflow)');
-assert.doesNotMatch(adminAppShell, /\{ id: 'media-library', label: 'Media', href: '\/admin\/media\/library'[^}]*\}/, 'AdminAppShell: mobile nav no longer has placeholder Media item');
-ok('D2. Mobile bottom nav: Hosting replaces placeholder Media (real workflow until Phase C ships)');
+// Mobile bottom nav: Hosting + Media Library are both present
+// Phase 2C consolidation: Upload removed from mobile nav, Media Library
+// added as the primary content entry point.
+assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting', href: '\/admin\/hosting'/, 'AdminAppShell: mobile nav has Hosting');
+assert.match(adminAppShell, /\{ id: 'media-library', label: 'Media', href: '\/admin\/media\/library'/, 'AdminAppShell: mobile nav has Media Library (primary content entry)');
+assert.doesNotMatch(adminAppShell, /\{ id: 'upload', label: 'Upload', href: '\/admin\/media\/upload'/, 'AdminAppShell: mobile nav no longer has Upload (removed in Phase 2C)');
+ok('D2. Mobile bottom nav: Media Library replaces Upload (Phase 2C consolidation)');
 
 // Overview: duplicate "Hosting & Media" quick-grid removed
 // (the comment in the file header still mentions it for context — that's OK.

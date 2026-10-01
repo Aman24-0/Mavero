@@ -32,7 +32,7 @@
    */
   import { onMount, onDestroy, tick } from 'svelte';
   import { invalidateAll } from '$app/navigation';
-  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight, Link2, FileVideo, Loader2, RefreshCw, PowerOff, Zap } from 'lucide-svelte';
+  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight, Link2, FileVideo, Loader2, RefreshCw, PowerOff, Zap, Trash2, Pencil, FolderInput } from 'lucide-svelte';
   import AdminAssetStatus from './AdminAssetStatus.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import type { LibraryMediaItem, LibraryOperationSummary, LibraryAssetSummary } from '$lib/server/hosting/library/service';
@@ -380,7 +380,14 @@
   let actionLoading = $state<string | null>(null); // '<assetId>:<action>' when in-flight
   let actionError = $state<string | null>(null);
   let actionSuccess = $state<string | null>(null);
-  let confirmDialog = $state<{ assetId: string; action: 'detach' } | null>(null);
+  let confirmDialog = $state<{ assetId: string; action: 'detach' | 'delete' } | null>(null);
+
+  // Rename + Move modal state (Phase 2C consolidation — these actions
+  // are now exposed in the Media Library drawer, consolidating the
+  // Hosting Assets drawer's per-asset management into the canonical
+  // media workspace).
+  let renameModal = $state<{ assetId: string; currentName: string; newName: string } | null>(null);
+  let moveModal = $state<{ assetId: string; targetFolderId: string } | null>(null);
 
   // Reset action state when drawer closes.
   $effect(() => {
@@ -389,6 +396,8 @@
       actionError = null;
       actionSuccess = null;
       confirmDialog = null;
+      renameModal = null;
+      moveModal = null;
     }
   });
 
@@ -443,6 +452,77 @@
       await invalidateAll();
     } catch (err) {
       actionError = err instanceof Error ? err.message : 'Failed to reconcile asset.';
+    } finally {
+      actionLoading = null;
+    }
+  }
+
+  // Phase 2C consolidation: Delete, Rename, Move — these were previously
+  // only available in the Hosting Assets drawer. They now live in the
+  // Media Library drawer so the admin has ONE canonical place to manage
+  // provider assets. The endpoints are the same (POST /api/admin/media/assets/:id/{action}).
+
+  async function deleteAsset(assetId: string) {
+    confirmDialog = null;
+    actionLoading = `${assetId}:delete`;
+    actionError = null;
+    actionSuccess = null;
+    try {
+      const res = await fetch(`/api/admin/media/assets/${assetId}/delete`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json?.error?.message ?? json?.result?.error?.message ?? `HTTP ${res.status}`);
+      actionSuccess = 'Asset deleted from provider. Mavero asset marked as deleted.';
+      await invalidateAll();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Failed to delete asset.';
+    } finally {
+      actionLoading = null;
+    }
+  }
+
+  async function confirmRename() {
+    if (!renameModal || !renameModal.newName.trim()) return;
+    const { assetId, newName } = renameModal;
+    actionLoading = `${assetId}:rename`;
+    actionError = null;
+    actionSuccess = null;
+    renameModal = null;
+    try {
+      const res = await fetch(`/api/admin/media/assets/${assetId}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newName: newName.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      actionSuccess = 'Asset renamed at provider.';
+      await invalidateAll();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Failed to rename asset.';
+    } finally {
+      actionLoading = null;
+    }
+  }
+
+  async function confirmMove() {
+    if (!moveModal) return;
+    const { assetId, targetFolderId } = moveModal;
+    actionLoading = `${assetId}:move`;
+    actionError = null;
+    actionSuccess = null;
+    moveModal = null;
+    try {
+      const res = await fetch(`/api/admin/media/assets/${assetId}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetFolderId: targetFolderId.trim() || null }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      actionSuccess = 'Asset moved at provider.';
+      await invalidateAll();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Failed to move asset.';
     } finally {
       actionLoading = null;
     }
@@ -650,6 +730,42 @@
                           </button>
                         {/if}
                       </div>
+                      <!-- Provider file actions: Rename, Move, Delete.
+                           These operate on the provider-side file directly.
+                           Available for ANY asset with a provider_asset_id,
+                           regardless of mavero_status (linked/detached).
+                           Consolidated from the Hosting Assets drawer. -->
+                      {#if asset.provider_asset_id}
+                        <div class="provider-asset-actions provider-asset-actions-file">
+                          <button
+                            class="a2-drawer-action a2-drawer-action-sm"
+                            type="button"
+                            onclick={() => { renameModal = { assetId: asset.id, currentName: asset.provider_asset_id ?? '', newName: asset.provider_asset_id ?? '' }; }}
+                            disabled={actionLoading !== null}
+                            title="Rename the provider-side file"
+                          >
+                            <Pencil size={13} /> Rename
+                          </button>
+                          <button
+                            class="a2-drawer-action a2-drawer-action-sm"
+                            type="button"
+                            onclick={() => { moveModal = { assetId: asset.id, targetFolderId: '' }; }}
+                            disabled={actionLoading !== null}
+                            title="Move the provider-side file to a different folder"
+                          >
+                            <FolderInput size={13} /> Move
+                          </button>
+                          <button
+                            class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger"
+                            type="button"
+                            onclick={() => { confirmDialog = { assetId: asset.id, action: 'delete' }; }}
+                            disabled={actionLoading !== null}
+                            title="Permanently delete the file from the provider"
+                          >
+                            {#if isActionLoading(asset.id, 'delete')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Deleting…{:else}<Trash2 size={13} /> Delete{/if}
+                          </button>
+                        </div>
+                      {/if}
                     </div>
                   {/each}
                 {:else}
@@ -793,13 +909,85 @@
     <div class="a2-confirm-overlay" onclick={() => { confirmDialog = null; }} role="presentation">
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="a2-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="a2-confirm-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-        <h3 id="a2-confirm-title" class="a2-confirm-title"><PowerOff size={16} /> Detach provider asset?</h3>
-        <p class="a2-confirm-desc">This will detach the provider asset from this media item. Playback will stop until the asset is reactivated or re-linked.</p>
-        <p class="a2-confirm-note"><strong>The remote provider file will NOT be deleted.</strong> It remains available at the provider and can be re-linked later.</p>
+        {#if confirmDialog.action === 'detach'}
+          <h3 id="a2-confirm-title" class="a2-confirm-title"><PowerOff size={16} /> Detach provider asset?</h3>
+          <p class="a2-confirm-desc">This will detach the provider asset from this media item. Playback will stop until the asset is reactivated or re-linked.</p>
+          <p class="a2-confirm-note"><strong>The remote provider file will NOT be deleted.</strong> It remains available at the provider and can be re-linked later.</p>
+          <div class="a2-confirm-actions">
+            <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { confirmDialog = null; }} disabled={actionLoading !== null}>Cancel</button>
+            <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger" type="button" onclick={() => { if (confirmDialog) detachAsset(confirmDialog.assetId); }} disabled={actionLoading !== null}>
+              {#if isActionLoading(confirmDialog.assetId, 'detach')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Detaching…{:else}<PowerOff size={13} /> Detach{/if}
+            </button>
+          </div>
+        {:else if confirmDialog.action === 'delete'}
+          <h3 id="a2-confirm-title" class="a2-confirm-title"><Trash2 size={16} /> Delete provider file?</h3>
+          <p class="a2-confirm-desc">This will <strong>permanently delete the file from the provider</strong> (Vidara/Abyss). The Mavero media asset will be marked as deleted.</p>
+          <p class="a2-confirm-note"><strong>This action cannot be undone.</strong> The file will be removed from the provider's servers. If you only want to unlink without deleting, use Detach instead.</p>
+          <div class="a2-confirm-actions">
+            <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { confirmDialog = null; }} disabled={actionLoading !== null}>Cancel</button>
+            <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger" type="button" onclick={() => { if (confirmDialog) deleteAsset(confirmDialog.assetId); }} disabled={actionLoading !== null}>
+              {#if isActionLoading(confirmDialog.assetId, 'delete')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Deleting…{:else}<Trash2 size={13} /> Delete permanently{/if}
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  <!-- ============================================================
+       Rename modal — renders above the drawer.
+       ============================================================ -->
+  {#if renameModal}
+    <div class="a2-confirm-overlay" onclick={() => { renameModal = null; }} role="presentation">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="a2-rename-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+        <h3 id="a2-rename-title" class="a2-confirm-title"><Pencil size={16} /> Rename provider file</h3>
+        <p class="a2-confirm-desc">Enter a new name for the provider-side file. This calls the provider's rename API.</p>
+        <label class="a2-rename-field">
+          <span class="a2-rename-label">New name</span>
+          <input
+            type="text"
+            class="a2-rename-input"
+            value={renameModal.newName}
+            oninput={(e) => { renameModal!.newName = (e.target as HTMLInputElement).value; }}
+            placeholder="New file name"
+            autocomplete="off"
+          />
+        </label>
         <div class="a2-confirm-actions">
-          <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { confirmDialog = null; }} disabled={actionLoading !== null}>Cancel</button>
-          <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger" type="button" onclick={() => { if (confirmDialog) detachAsset(confirmDialog.assetId); }} disabled={actionLoading !== null}>
-            {#if isActionLoading(confirmDialog.assetId, 'detach')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Detaching…{:else}<PowerOff size={13} /> Detach{/if}
+          <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { renameModal = null; }} disabled={actionLoading !== null}>Cancel</button>
+          <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-primary" type="button" onclick={confirmRename} disabled={actionLoading !== null || !renameModal.newName.trim()}>
+            {#if renameModal.assetId && isActionLoading(renameModal.assetId, 'rename')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Renaming…{:else}<Pencil size={13} /> Rename{/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ============================================================
+       Move modal — renders above the drawer.
+       ============================================================ -->
+  {#if moveModal}
+    <div class="a2-confirm-overlay" onclick={() => { moveModal = null; }} role="presentation">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="a2-move-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+        <h3 id="a2-move-title" class="a2-confirm-title"><FolderInput size={16} /> Move provider file</h3>
+        <p class="a2-confirm-desc">Enter the destination folder ID at the provider. Leave empty to move to the root folder.</p>
+        <label class="a2-rename-field">
+          <span class="a2-rename-label">Target folder ID</span>
+          <input
+            type="text"
+            class="a2-rename-input"
+            value={moveModal.targetFolderId}
+            oninput={(e) => { moveModal!.targetFolderId = (e.target as HTMLInputElement).value; }}
+            placeholder="Folder ID (leave empty for root)"
+            autocomplete="off"
+          />
+        </label>
+        <div class="a2-confirm-actions">
+          <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { moveModal = null; }} disabled={actionLoading !== null}>Cancel</button>
+          <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-primary" type="button" onclick={confirmMove} disabled={actionLoading !== null}>
+            {#if moveModal.assetId && isActionLoading(moveModal.assetId, 'move')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Moving…{:else}<FolderInput size={13} /> Move{/if}
           </button>
         </div>
       </div>
@@ -1659,6 +1847,12 @@
 
   /* Provider asset action buttons */
   .provider-asset-actions { display: flex; gap: var(--a2-space-2); margin-top: var(--a2-space-2); flex-wrap: wrap; }
+  .provider-asset-actions-file { padding-top: var(--a2-space-1); border-top: 1px dashed var(--a2-border); }
+  .a2-rename-field { display: flex; flex-direction: column; gap: 4px; }
+  .a2-rename-label { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+  .a2-rename-input { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 8px 10px; font-family: var(--a2-font-mono); }
+  .a2-rename-input:focus { outline: none; border-color: var(--a2-cyan); }
+  .a2-drawer-action-primary { background: var(--a2-cyan-soft); border-color: var(--a2-cyan-border); color: var(--a2-cyan); }
   .a2-drawer-action-danger { color: var(--a2-red); border-color: var(--a2-red-border); }
   .a2-drawer-action-danger:hover { background: var(--a2-red-soft); border-color: var(--a2-red); }
   .a2-drawer-action-success { color: var(--a2-green); border-color: var(--a2-green-border); }

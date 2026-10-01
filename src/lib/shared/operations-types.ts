@@ -104,7 +104,7 @@ export type HistoryRow = {
   providerSourceId: string | null;
   providerAdapterId: string | null;
   uploadOperationId: string | null;
-  adminUserEmail: string | null;
+  adminUserDisplayName: string | null;
   mediaItem: {
     id: string;
     title: string;

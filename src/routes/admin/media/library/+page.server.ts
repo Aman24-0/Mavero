@@ -19,6 +19,8 @@ import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { MediaLibraryService } from '$lib/server/hosting/library/service';
 import { resolveHostingSources } from '$lib/server/hosting/provider-resolver';
+import { getHostingAdapter } from '$lib/server/hosting/registry';
+import type { ProviderCapabilities } from '$lib/server/hosting/types';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
@@ -73,8 +75,21 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const hosting = hostingResult.status === 'fulfilled'
     ? hostingResult.value
     : { list: [], error: { code: 'HOSTING_SOURCES_REJECTED', message: String(hostingResult.reason?.message ?? hostingResult.reason) } };
-  const hostingSources = hosting.list;
+  const hostingSourcesRaw = hosting.list;
   const hostingSourcesError = hosting.error?.message ?? null;
+
+  // Enrich each resolved source with adapter capabilities. The
+  // capabilities come from the adapter registry (no DB query, no
+  // network call). This is needed by the "Provider Files" view
+  // (AdminHostingAssets component) to show capability-gated action
+  // buttons (Rename, Move, Delete) correctly.
+  const hostingSources = hostingSourcesRaw.map((s) => {
+    const adapter = s.adapterId ? getHostingAdapter(s.adapterId) : null;
+    const capabilities: ProviderCapabilities | null = adapter
+      ? adapter.getCapabilities()
+      : null;
+    return { ...s, capabilities };
+  });
 
   return {
     initialList: listResult.value,

@@ -1,34 +1,36 @@
 /**
- * Admin 2.0 — Phase E — Hosting Control workspace page server.
+ * Admin 2.0 — Hosting Control workspace page server.
  *
- * Single entry point for the unified Hosting workspace. The page
- * renders three contextual tabs (Providers / Assets / Sync) via
- * client-side state — the server loader just preloads the initial
- * tab's data + the shared provider list for the tabs themselves.
+ * Phase 2C consolidation: the Assets tab has been merged into Media
+ * Library (/?view=files). Requests for ?tab=assets are redirected to
+ * the canonical Media Library Provider Files view. The remaining tabs
+ * (Providers, Sync) stay here.
  *
- * Tab routing: ?tab=providers|assets|sync (defaults to providers).
- * The Assets tab has its own URL state (page, filters) which is
- * managed client-side.
- *
- * Security: admin-only. Uses service-role client for the aggregated
- * read model. No credentials exposed.
+ * Tab routing: ?tab=providers|sync (defaults to providers).
+ * ?tab=assets → 303 redirect to /admin/media/library?view=files
  */
 
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { HostingControlService } from '$lib/server/hosting/control/service';
 import type { HostingProviderOverview } from '$lib/shared/hosting-types';
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
-const VALID_TABS = new Set(['providers', 'assets', 'sync']);
+const VALID_TABS = new Set(['providers', 'sync']);
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
 
   const tab = url.searchParams.get('tab') ?? 'providers';
+
+  // Phase 2C: redirect the old Assets tab to Media Library's Provider Files view.
+  if (tab === 'assets') {
+    throw redirect(303, '/admin/media/library?view=files');
+  }
+
   if (!VALID_TABS.has(tab)) {
-    throw error(400, 'Invalid tab. Use ?tab=providers|assets|sync.');
+    throw error(400, 'Invalid tab. Use ?tab=providers|sync.');
   }
 
   // Phase 6: createSupabaseAdminClient() inside try/catch — prevents

@@ -224,7 +224,7 @@ export class OperationsService {
         provider_source_id, upload_operation_id,
         media_item:media_items(id, title, content_type, tmdb_id, season, episode),
         media_asset:media_assets(id, provider_asset_id, status),
-        admin_user:profiles(id, email)
+        admin_user:profiles(id, display_name)
       `, { count: 'exact' })
       .order('occurred_at', { ascending: false });
 
@@ -270,7 +270,7 @@ export class OperationsService {
       providerSourceId: row.provider_source_id,
       providerAdapterId: row.provider_source_id ? (adapterBySource.get(row.provider_source_id) ?? null) : null,
       uploadOperationId: row.upload_operation_id,
-      adminUserEmail: row.admin_user?.email ?? null,
+      adminUserDisplayName: row.admin_user?.display_name ?? null,
       mediaItem: row.media_item ? {
         id: row.media_item.id,
         title: row.media_item.title,
