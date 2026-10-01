@@ -717,8 +717,11 @@
                           >
                             <PowerOff size={13} /> Detach
                           </button>
-                        {:else if asset.mavero_status === 'missing'}
-                          <!-- DETACHED: Reactivate -->
+                        {:else if asset.mavero_status === 'missing' && asset.status !== 'deleted'}
+                          <!-- DETACHED (not deleted): Reactivate.
+                               A deleted asset (status='deleted') has no remote
+                               file — Reactivate is not offered. The backend
+                               also enforces this (ASSET_DELETED error). -->
                           <button
                             class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-success"
                             type="button"

@@ -3459,3 +3459,80 @@ No separate Assets inventory. No separate top-level Upload / Import navigation.
 
 ### Commit SHA
 (pending)
+
+---
+
+## Phase 2E — Lifecycle State-Transition Bug Fix
+
+**Date:** 2026-10-02
+**Base HEAD:** `0b8ff22`
+
+### Two Real Functional Bugs Found
+
+**BUG 1 — linkAsset() fails for existing unlinked media_assets:**
+`linkAsset()` checked if a `media_assets` row already exists for `(provider_source_id, provider_asset_id)`. If it exists, it only handled `mavero_status='missing' && media_item_id === selected mediaItemId`. Otherwise it threw "already linked to a different media asset". This was WRONG for unlinked provider files (`media_item_id IS NULL`) — they exist in the DB but have no media_item association. The Link Existing action from Provider Files view would fail.
+
+**BUG 2 — Deleted provider asset can be reactivated:**
+`reactivateAsset()` checked `asset.status === 'ready' || 'processing'` to set `mavero_status='available'`, otherwise `'processing'`. A deleted asset (`status='deleted'`) would get `mavero_status='processing'` — creating a phantom Mavero asset whose remote file no longer exists. The UI also showed Reactivate for any `mavero_status='missing'` without checking `status`.
+
+### Fixes
+
+**BUG 1 fix — linkAsset() now handles 4 cases:**
+- Case (a): Existing row + `media_item_id IS NULL` → calls new `linkExistingAssetRow()` which UPDATEs the existing row (sets `media_item_id` + `mavero_status`), preserves all provider metadata, records `action=link`, resolves demand. NO INSERT.
+- Case (b): Existing row + detached (`mavero_status='missing'`) + same `media_item_id` → existing reactivate behavior (preserved).
+- Case (c): Existing row + linked to DIFFERENT `media_item_id` → reject with VALIDATION (preserved).
+- Case (d): Existing row + linked to SAME `media_item_id` + available → idempotent success (no DB change, records operation).
+
+New private method `linkExistingAssetRow()`:
+- UPDATEs `media_item_id` and `mavero_status` on the existing row
+- Preserves ALL existing provider metadata (playback_url, filename, qualities, audio, etc.)
+- Sets `mavero_status` based on existing `status` (`ready`→`available`, other→`processing`)
+- Records `action=link, status=success` with `linked_existing_row: true` detail
+- Resolves demand (same as the INSERT path)
+
+**BUG 2 fix — reactivateAsset() rejects deleted assets:**
+- Added early check: `if (asset.status === 'deleted')` → return `{ ok: false, error: { code: 'ASSET_DELETED', message: 'Deleted provider assets cannot be reactivated. The remote file has been permanently deleted.' } }`
+- Records the failed operation (`action=reactivate, status=failed, error_code=ASSET_DELETED`)
+- Does NOT modify the DB — the asset remains `status='deleted', mavero_status='missing'`
+- The check is BEFORE any `.update()` call, so deleted assets can never become phantom available/processing
+
+**BUG 2 UI fix — Reactivate button gating:**
+- `AdminHostingAssets.svelte`: Reactivate shown only when `maveroStatus === 'missing' && status !== 'deleted'`
+- `AdminMediaDetailDrawer.svelte`: same gating applied (`asset.mavero_status === 'missing' && asset.status !== 'deleted'`)
+
+### Data Semantics (unchanged)
+
+- **DETACH**: `mavero_status='missing'`, remote file preserved, IDs preserved for recovery
+- **REACTIVATE**: only for detached (non-deleted) assets, restores existing asset, no duplicate, no remote upload
+- **LINK**: existing provider file with `media_item_id IS NULL` → UPDATE existing row, no duplicate, no remote upload
+- **DELETE**: deletes provider file, marks `status='deleted', mavero_status='missing'` only on provider success; deleted assets are NOT recoverable through Reactivate
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `src/lib/server/hosting/management/service.ts` | linkAsset: 4-case branching + linkExistingAssetRow method; reactivateAsset: deleted-asset rejection |
+| `src/lib/components/admin2/AdminHostingAssets.svelte` | Reactivate button: `status !== 'deleted'` gate |
+| `src/lib/components/admin2/AdminMediaDetailDrawer.svelte` | Reactivate button: `status !== 'deleted'` gate |
+| `scripts/lifecycle_state_transition_test.ts` | New: 6 check groups covering both bugs + state-transition matrix |
+| `package.json` | Added lifecycle_state_transition_test to test script |
+| `worklog.md` | This entry |
+
+### Tests
+
+- `lifecycle_state_transition_test`: **6/6 pass** (NEW — tests actual state-transition logic)
+- `consolidation_regression_test`: 10/10 pass
+- `hosting_lifecycle_regression_test`: 11/11 pass
+- `drawer_management_ui_test`: 12/12 pass
+- `delete_and_upload_selector_test`: 17/17 pass
+- `post_deploy_regression_test`: 7/7 pass
+- `admin2_phase2_test`: 31/31 pass
+- `admin2_audit_fix_test`: 36/36 pass
+
+### Validation
+
+- `svelte-check`: 0 errors, 0 warnings (4392 files)
+- `vite build`: succeeds (31.66s)
+
+### Commit SHA
+(pending)

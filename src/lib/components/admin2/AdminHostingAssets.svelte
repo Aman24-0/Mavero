@@ -917,9 +917,12 @@
                 {actionInProgress === 'reconcile' ? 'Reconciling…' : 'Reconcile'}
               </button>
 
-              <!-- Reactivate: shown for DETACHED assets (mavero_status='missing').
+              <!-- Reactivate: shown ONLY for DETACHED assets (mavero_status='missing'
+                   AND status != 'deleted'). A deleted asset (status='deleted') has
+                   no remote file — reactivating it would create a phantom. The
+                   backend also enforces this, but the UI must not offer the action.
                    This is a Mavero lifecycle operation — no provider capability gate. -->
-              {#if selectedAsset.maveroStatus === 'missing'}
+              {#if selectedAsset.maveroStatus === 'missing' && selectedAsset.status !== 'deleted'}
                 <button type="button" class="a2-asset-action a2-asset-action-success" onclick={() => reactivate(selectedAsset!)} disabled={actionInProgress !== null}>
                   {#if actionInProgress === 'reactivate'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<Zap size={12} />{/if}
                   {actionInProgress === 'reactivate' ? 'Reactivating…' : 'Reactivate'}
