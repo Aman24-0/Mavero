@@ -32,7 +32,7 @@
    */
   import { onMount, onDestroy, tick } from 'svelte';
   import { invalidateAll } from '$app/navigation';
-  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight, Link2, FileVideo, Loader2, RefreshCw } from 'lucide-svelte';
+  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight, Link2, FileVideo, Loader2, RefreshCw, PowerOff, Zap } from 'lucide-svelte';
   import AdminAssetStatus from './AdminAssetStatus.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import type { LibraryMediaItem, LibraryOperationSummary, LibraryAssetSummary } from '$lib/server/hosting/library/service';
@@ -350,6 +350,81 @@
       linkingAssetId = null;
     }
   }
+
+  // ============================================================
+  // Provider asset management actions: detach, reactivate, reconcile
+  // ============================================================
+
+  let actionLoading = $state<string | null>(null); // '<assetId>:<action>' when in-flight
+  let actionError = $state<string | null>(null);
+  let actionSuccess = $state<string | null>(null);
+  let confirmDialog = $state<{ assetId: string; action: 'detach' } | null>(null);
+
+  // Reset action state when drawer closes.
+  $effect(() => {
+    if (!open) {
+      actionLoading = null;
+      actionError = null;
+      actionSuccess = null;
+      confirmDialog = null;
+    }
+  });
+
+  function isActionLoading(assetId: string, action: string): boolean {
+    return actionLoading === `${assetId}:${action}`;
+  }
+
+  async function detachAsset(assetId: string) {
+    confirmDialog = null;
+    actionLoading = `${assetId}:detach`;
+    actionError = null;
+    actionSuccess = null;
+    try {
+      const res = await fetch(`/api/admin/media/assets/${assetId}/detach`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      actionSuccess = 'Asset detached. Remote provider file was NOT deleted.';
+      await invalidateAll();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Failed to detach asset.';
+    } finally {
+      actionLoading = null;
+    }
+  }
+
+  async function reactivateAsset(assetId: string) {
+    actionLoading = `${assetId}:reactivate`;
+    actionError = null;
+    actionSuccess = null;
+    try {
+      const res = await fetch(`/api/admin/media/assets/${assetId}/reactivate`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      actionSuccess = 'Asset reactivated. Playback restored.';
+      await invalidateAll();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Failed to reactivate asset.';
+    } finally {
+      actionLoading = null;
+    }
+  }
+
+  async function reconcileAsset(assetId: string) {
+    actionLoading = `${assetId}:reconcile`;
+    actionError = null;
+    actionSuccess = null;
+    try {
+      const res = await fetch(`/api/admin/media/assets/${assetId}/reconcile`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      actionSuccess = 'Asset reconciled with provider.';
+      await invalidateAll();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Failed to reconcile asset.';
+    } finally {
+      actionLoading = null;
+    }
+  }
 </script>
 
 {#if open}
@@ -505,6 +580,41 @@
                           {/if}
                         </div>
                       {/if}
+                      <!-- State-aware action buttons per asset -->
+                      <div class="provider-asset-actions">
+                        {#if asset.mavero_status === 'available' || asset.mavero_status === 'processing'}
+                          <!-- LINKED: Reconcile + Detach -->
+                          <button
+                            class="a2-drawer-action a2-drawer-action-sm"
+                            type="button"
+                            onclick={() => reconcileAsset(asset.id)}
+                            disabled={actionLoading !== null}
+                            title="Re-check provider status"
+                          >
+                            {#if isActionLoading(asset.id, 'reconcile')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Reconciling…{:else}<RefreshCw size={13} /> Reconcile{/if}
+                          </button>
+                          <button
+                            class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger"
+                            type="button"
+                            onclick={() => { confirmDialog = { assetId: asset.id, action: 'detach' }; }}
+                            disabled={actionLoading !== null}
+                            title="Detach from this media item (remote file preserved)"
+                          >
+                            <PowerOff size={13} /> Detach
+                          </button>
+                        {:else if asset.mavero_status === 'missing'}
+                          <!-- DETACHED: Reactivate -->
+                          <button
+                            class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-success"
+                            type="button"
+                            onclick={() => reactivateAsset(asset.id)}
+                            disabled={actionLoading !== null}
+                            title="Restore playback — sets mavero_status back to available"
+                          >
+                            {#if isActionLoading(asset.id, 'reactivate')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Reactivating…{:else}<Zap size={13} /> Reactivate{/if}
+                          </button>
+                        {/if}
+                      </div>
                     </div>
                   {/each}
                 {:else}
@@ -523,6 +633,12 @@
                 {/if}
               </div>
             {/each}
+          {/if}
+          {#if actionError}
+            <div class="a2-drawer-action-error" role="alert"><AlertCircle size={13} /> {actionError}</div>
+          {/if}
+          {#if actionSuccess}
+            <div class="a2-drawer-action-success-msg" role="status"><RefreshCw size={13} /> {actionSuccess}</div>
           {/if}
         </section>
 
@@ -633,6 +749,27 @@
       {/if}
     </div>
   </aside>
+
+  <!-- ============================================================
+       Detach confirmation dialog — renders above the drawer.
+       Explicitly states that the remote provider file will NOT be deleted.
+       ============================================================ -->
+  {#if confirmDialog}
+    <div class="a2-confirm-overlay" onclick={() => { confirmDialog = null; }} role="presentation">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="a2-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="a2-confirm-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+        <h3 id="a2-confirm-title" class="a2-confirm-title"><PowerOff size={16} /> Detach provider asset?</h3>
+        <p class="a2-confirm-desc">This will detach the provider asset from this media item. Playback will stop until the asset is reactivated or re-linked.</p>
+        <p class="a2-confirm-note"><strong>The remote provider file will NOT be deleted.</strong> It remains available at the provider and can be re-linked later.</p>
+        <div class="a2-confirm-actions">
+          <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { confirmDialog = null; }} disabled={actionLoading !== null}>Cancel</button>
+          <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger" type="button" onclick={() => { if (confirmDialog) detachAsset(confirmDialog.assetId); }} disabled={actionLoading !== null}>
+            {#if isActionLoading(confirmDialog.assetId, 'detach')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Detaching…{:else}<PowerOff size={13} /> Detach{/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- ============================================================
        "Link existing file" stacked sheet — renders above the drawer.
@@ -1465,5 +1602,30 @@
     .a2-drawer-action, .a2-drawer-link { transition: none; }
     .a2-link-overlay, .a2-link-sheet { animation: none; }
     .a2-spin { animation: none; }
+  }
+
+  /* Provider asset action buttons */
+  .provider-asset-actions { display: flex; gap: var(--a2-space-2); margin-top: var(--a2-space-2); flex-wrap: wrap; }
+  .a2-drawer-action-danger { color: var(--a2-red); border-color: var(--a2-red-border); }
+  .a2-drawer-action-danger:hover { background: var(--a2-red-soft); border-color: var(--a2-red); }
+  .a2-drawer-action-success { color: var(--a2-green); border-color: var(--a2-green-border); }
+  .a2-drawer-action-success:hover { background: var(--a2-green-soft); border-color: var(--a2-green); }
+  .a2-drawer-action-error { display: flex; align-items: center; gap: 6px; padding: var(--a2-space-2) var(--a2-space-3); margin-top: var(--a2-space-2); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-2xs); }
+  .a2-drawer-action-success-msg { display: flex; align-items: center; gap: 6px; padding: var(--a2-space-2) var(--a2-space-3); margin-top: var(--a2-space-2); background: var(--a2-green-soft); border: 1px solid var(--a2-green-border); border-radius: var(--a2-radius-sm); color: var(--a2-green); font-size: var(--a2-text-2xs); }
+
+  /* Detach confirmation dialog */
+  .a2-confirm-overlay { position: fixed; inset: 0; z-index: 84; background: rgba(0, 0, 0, .6); display: flex; align-items: center; justify-content: center; padding: var(--a2-space-4); }
+  .a2-confirm-dialog { width: 100%; max-width: 400px; background: var(--a2-surface-2); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-md); padding: var(--a2-space-4); display: flex; flex-direction: column; gap: var(--a2-space-3); }
+  .a2-confirm-title { display: inline-flex; align-items: center; gap: var(--a2-space-2); margin: 0; font-size: var(--a2-text-base); font-weight: 700; color: var(--a2-text-bright); }
+  .a2-confirm-desc { margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text-muted); line-height: 1.5; }
+  .a2-confirm-note { margin: 0; font-size: var(--a2-text-xs); color: var(--a2-text); line-height: 1.5; padding: var(--a2-space-2); background: var(--a2-surface-3); border-radius: var(--a2-radius-sm); }
+  .a2-confirm-actions { display: flex; gap: var(--a2-space-2); justify-content: flex-end; }
+
+  @media (max-width: 640px) {
+    .a2-confirm-dialog { max-width: 100%; }
+    .a2-confirm-actions { flex-direction: column-reverse; }
+    .a2-confirm-actions .a2-drawer-action { width: 100%; justify-content: center; }
+    .provider-asset-actions { flex-direction: column; }
+    .provider-asset-actions .a2-drawer-action { width: 100%; justify-content: center; }
   }
 </style>
