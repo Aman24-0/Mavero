@@ -180,6 +180,7 @@ export function createCloudStreamRuntimeContext(deps: CloudStreamRuntimeDeps): C
     async resolveBaseUrl(base: string, source: string): Promise<string> {
       return currentBaseUrl(base, source, {
         ...(deps.fetcher !== undefined ? { fetcher: deps.fetcher } : {}),
+        ...(deps.dnsResolver !== undefined ? { dnsResolver: deps.dnsResolver } : {}),
         ...(deps.now !== undefined ? { now: deps.now } : {}),
       });
     },

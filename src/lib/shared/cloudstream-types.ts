@@ -79,6 +79,132 @@ export type CloudStreamExtensionPreview = {
   adapterStatus: CloudStreamAdapterStatus;
 };
 
+// ---------------------------------------------------------------------------
+// Mavero Downloader 2 API response views (CS-3 — plan §13/§40.3)
+//
+// Server services in `src/lib/server/cloudstream/downloader/` produce these
+// views; the future CS-4 UI consumes them. They intentionally reuse the
+// shared StreamKind vocabulary so action capabilities map EXACTLY onto
+// `stream-actions.ts` (no second action model — plan §15).
+// ---------------------------------------------------------------------------
+
+/**
+ * Closed machine-readable error vocabulary for the Downloader 2 API (plan
+ * §40.3 error contract). Top-level envelope errors use the request-level
+ * codes; per-group failures use the extension/provider-level codes.
+ */
+export type CloudStreamDownloaderErrorCode =
+  | 'INVALID_REQUEST'      // malformed request shape (400)
+  | 'EXTENSION_NOT_FOUND'  // requested extension is not in the catalog (404)
+  | 'EXTENSION_DISABLED'   // extension or its repository is disabled (409)
+  | 'ADAPTER_NOT_AVAILABLE'// no Mavero adapter is registered (409)
+  | 'UNSUPPORTED_MEDIA'    // adapter does not support movie/series resolution
+  | 'NO_RESULTS'           // provider answered but nothing matched
+  | 'PROVIDER_TIMEOUT'     // extension resolution exceeded its deadline
+  | 'EXTRACTOR_FAILED'     // every extractor attempt failed
+  | 'NETWORK_ERROR'        // provider network/HTTP/SSRF-rejected failures
+  | 'RATE_LIMITED'         // per-identity rate limit exceeded (429)
+  | 'INTERNAL_ERROR';      // unexpected internal failure (503)
+
+/**
+ * One normalized download link in the Downloader 2 response. `kind` uses
+ * the shared StreamKind vocabulary — Download/Play/Share capabilities are
+ * derived by `streamCapabilities` in `stream-actions.ts`, never re-invented.
+ *
+ * NOTE (deliberate omissions, documented per plan §40.7):
+ *   * No `headers` field — CS-2 extractors resolve DIRECT URLs that need no
+ *     special headers, and the shared action model consumes none. Adding a
+ *     speculative headers map would invite leaking provider credentials.
+ *   * No separate `resolution` field — `quality` ('1080p') IS the resolution
+ *     label; a second field would duplicate the same value.
+ */
+export type CloudStreamDownloadLinkView = {
+  /** Direct resolved URL (never proxied, rewritten, or fetched by Mavero). */
+  url: string;
+  /** The shared stream kind — drives Download/Play/Share capabilities. */
+  kind: 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
+  /** Resolution label ('1080p') derived server-side when detectable. */
+  quality?: string;
+  codec?: string;
+  container?: string;
+  filename?: string;
+  sizeBytes?: number;
+  audioLanguages?: string[];
+  /** Lowercased display host derived server-side (leading www. stripped). */
+  host?: string;
+  /** Producing provider/extension id (the adapter id). */
+  provider: string;
+  /** Display label of the hosting server ('GDFlix [Direct]'). */
+  sourceName: string;
+  /** Extractor id that resolved this link, when applicable. */
+  extractor?: string;
+};
+
+/** One redaction-safe diagnostic stage summary (no URLs/headers/bodies). */
+export type CloudStreamDownloadStageSummary = {
+  stage: string;
+  success: boolean;
+  durationMs: number;
+  httpStatus?: number;
+  resultCount?: number;
+  extractorId?: string;
+  retries?: number;
+};
+
+/** Redaction-safe per-extension diagnostics (bounded at 32 stages). */
+export type CloudStreamDownloadGroupDiagnostics = {
+  /** Wall-clock duration of this extension's resolution. */
+  durationMs: number;
+  stages: CloudStreamDownloadStageSummary[];
+};
+
+export type CloudStreamDownloadGroupStatus = 'loaded' | 'empty' | 'failed';
+
+/**
+ * One extension's resolution result. `errorCode`/`errorMessage` appear only
+ * when status = 'failed' (closed vocabulary; safe curated messages).
+ */
+export type CloudStreamDownloadGroupView = {
+  /** Canonical extension identity (the CloudStream internalName). */
+  extensionId: string;
+  extensionName: string;
+  status: CloudStreamDownloadGroupStatus;
+  links: CloudStreamDownloadLinkView[];
+  /** Closed-vocabulary error code when status = 'failed'. */
+  errorCode?: CloudStreamDownloaderErrorCode;
+  /** Safe human-readable message when status = 'failed'. */
+  errorMessage?: string;
+  /** Provider-matched page title, when the adapter surfaced one. */
+  matchedTitle?: string;
+  diagnostics?: CloudStreamDownloadGroupDiagnostics;
+};
+
+/**
+ * One eligible source tab. ONLY eligible sources are listed (repository
+ * enabled + extension enabled + adapter registered + media-type support),
+ * so `enabled`/`compatible` are always true for returned tabs — they exist
+ * for contract stability with the CS-4 UI.
+ */
+export type CloudStreamDownloadTabView = {
+  extensionId: string;
+  extensionName: string;
+  iconUrl: string | null;
+  /** Media types the REGISTERED adapter supports (code registry authority). */
+  supportedMediaTypes: Array<'movie' | 'series' | 'anime'>;
+  enabled: boolean;
+  compatible: boolean;
+};
+
+/** The request media context, echoed as resolved server-side. */
+export type CloudStreamDownloadMediaView = {
+  mediaType: 'movie' | 'series' | 'anime';
+  tmdbId: string;
+  title: string;
+  year?: number;
+  season?: number;
+  episode?: number;
+};
+
 /** Repository validate/preview result (validation only — NO persistence). */
 export type CloudStreamRepositoryPreview = {
   /** The validated repository URL (echoed for the confirmation round-trip). */

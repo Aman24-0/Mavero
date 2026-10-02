@@ -34,6 +34,8 @@ let cache: DynamicUrlCacheEntry | null = null;
 export type DynamicUrlDeps = {
   /** Injectable fetcher (tests never touch the real network). */
   fetcher?: typeof fetch;
+  /** Injectable DNS resolver (tests; forwarded to the SSRF-safe fetcher). */
+  dnsResolver?: (hostname: string) => Promise<ReadonlyArray<{ address: string; family: number }>>;
   /** Injectable clock. */
   now?: () => number;
   /** Override the cache TTL (tests). */
@@ -73,6 +75,7 @@ export async function dynamicUrls(deps: DynamicUrlDeps = {}): Promise<ReadonlyMa
   try {
     const result = await fetchCloudStreamJson(DYNAMIC_URLS_DOCUMENT, {
       ...(deps.fetcher !== undefined ? { fetcher: deps.fetcher } : {}),
+      ...(deps.dnsResolver !== undefined ? { dnsResolver: deps.dnsResolver } : {}),
     });
     const urls = parseDynamicUrls(result.body);
     cache = { at: now(), urls };

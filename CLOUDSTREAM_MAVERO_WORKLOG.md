@@ -6,7 +6,7 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CS-2 COMPLETE — CS-3 pending (not started)
+**Status:** CS-3 COMPLETE — CS-4 pending (not started)
 
 ------------------------------------------------------------------------
 
@@ -82,7 +82,7 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   Mavero adapter runtime            COMPLETE (CS-2, 2026-10-02)
   Initial CloudStream adapters      COMPLETE (CS-2: Bollyflix, MoviesDrive, VegaMovies)
   Extractor layer                   COMPLETE (CS-2: GDFlix, HubCloud/V-Cloud, fastdlserver)
-  Downloader 2 backend              Pending (CS-3)
+  Downloader 2 backend              COMPLETE (CS-3, 2026-10-02)
   Downloader 2 UI                   Pending (CS-4)
   Downloader registry integration   Pending (CS-5)
   Full regression                   Pending (CS-6)
@@ -641,7 +641,8 @@ top of the CS-2 orchestrator + DB enabled-extension selection).
 
 ## Status
 
-**PENDING**
+**COMPLETED** (2026-10-02, starting HEAD `4b906ec` → CS-3 commit; see the
+Phase Completion Log below)
 
 ## Objective
 
@@ -649,38 +650,111 @@ Expose CloudStream adapters through a dedicated downloader backend.
 
 ## Planned work
 
--   [ ] Create Downloader 2 service.
--   [ ] Implement `/api/downloader/mavero2`.
--   [ ] Implement `/api/downloader/mavero2/tabs`.
--   [ ] Implement targeted extension endpoint if required.
--   [ ] Select enabled extensions.
--   [ ] Resolve extensions with bounded concurrency.
--   [ ] Normalize results.
--   [ ] Deduplicate results.
--   [ ] Group by extension/source.
--   [ ] Preserve diagnostics.
--   [ ] Handle partial failures.
--   [ ] Add API tests.
+-   [x] Create Downloader 2 service.
+      (`src/lib/server/cloudstream/downloader/service.ts` — extension
+      selection + orchestration + response shaping + logging; plus
+      `downloader/errors.ts` closed error vocabulary.)
+-   [x] Implement `/api/downloader/mavero2`.
+      (Public GET; validation → rate limit → adult guard → service →
+      `{ ok, consideredExtensions, media, groups }`; optional explicit
+      `extensions=` selection mode, ≤16, requested-order.)
+-   [x] Implement `/api/downloader/mavero2/tabs`.
+      (Eligible tabs only; no provider fetches; safe display metadata +
+      supportedMediaTypes from the code registry.)
+-   [x] Implement targeted extension endpoint if required.
+      (`/api/downloader/mavero2/extension?extensionId=…` — single extension;
+      structured envelope errors for validation states, group result for
+      resolution outcomes.)
+-   [x] Select enabled extensions.
+      (Repository enabled AND extension enabled AND code adapter
+      registered AND media-type support — the registry stays
+      authoritative, D-007; `consideredExtensions` = the participation
+      baseline.)
+-   [x] Resolve extensions with bounded concurrency.
+      (The service only orchestrates — the CS-2 budgets are THE budgets:
+      mapBounded ≤4, 30s/adapter, 40s overall, 10s/page; NO second
+      fan-out layer.)
+-   [x] Normalize results.
+      (Link views carry url/kind/quality/codec/container/filename/
+      sizeBytes/audioLanguages/host/provider/sourceName/extractor;
+      action capabilities map EXACTLY onto stream-actions.ts.)
+-   [x] Deduplicate results.
+      (Within-group true-URL dedup from CS-2; the SAME URL under two
+      extensions stays visible in BOTH groups — provider identity
+      preserved; documented.)
+-   [x] Group by extension/source.
+      (Per-extension groups in DETERMINISTIC order: repository creation
+      order → internal_name, or the requested order for explicit
+      selection — never completion order; re-ordered after collection.)
+-   [x] Preserve diagnostics.
+      (Per-group redaction-safe stage summaries ≤32 — durations/statuses/
+      counts/extractor ids, never URLs/cookies/tokens; server-side
+      structured console logs with safe fields.)
+-   [x] Handle partial failures.
+      (allSettled isolation from CS-2 + failed groups preserved; one
+      failing/timing-out extension NEVER fails the request —
+      Bollyflix loaded + VegaMovies EXTRACTOR_FAILED + MoviesDrive
+      timeout still returns the loaded results.)
+-   [x] Add API tests.
+      (`cloudstream_downloader_api_test.ts` — 144 deterministic checks
+      covering all 24 brief items; registered in the `pnpm test` chain;
+      manual live smoke `verify:cloudstream-downloader` outside CI.)
 
 ## Regression requirement
 
 Existing Stremio downloader APIs must remain unchanged.
 
+Verified: the Stremio endpoint files are byte-identical (untouched); the
+rate-limit rules are additive only (all pre-existing limits
+test-asserted unchanged); the full chain (203 commands) shows 195 PASS +
+the 8 documented pre-existing baseline failures + 0 new failures.
+
 ## Completed
 
-None.
+See the CS-3 Completion record + session entry below. Summary: the three
+mavero2 endpoints, the Downloader 2 service (selection + orchestration +
+shaping + logging), the closed error vocabulary, 3 additive rate-limit
+buckets, the CS-2 additive refinements (matchedTitle surfacing + the
+dnsResolver test-seam fix), 144 deterministic checks, and a PASSING live
+smoke (27 real links end-to-end: Bollyflix 15 + MoviesDrive 12).
 
 ## Failed / unresolved
 
-None.
+None caused by CS-3. The 8 documented PRE-EXISTING baseline failures
+(adult_mode, phase2_repo_hygiene, phase8_accessibility, phase9_source_
+progress, phase9_landscape, phase9_fix, phase9_landscape_drawer_position,
+phase4_registry_integration) fail identically at the pristine pre-CS-3
+commit `4b906ec` (documented in the CS-2 entry; re-confirmed as
+non-matching the CS-3 diff surface — no baseline suite touches the
+CloudStream domain or rate-limit rules).
+
+Site-availability notes (unchanged from CS-2): vcloud.fit 403s all
+non-WebView clients (VegaMovies honestly EXTRACTOR_FAILED in the live
+smoke); the LIVE Supabase cloudstream catalog is currently EMPTY (0
+repositories / 0 extensions — nothing enabled), so the tabs phase of the
+live smoke honestly reports zero tabs; an admin must add + sync + enable
+a repository (System → Integrations → Extension) for production use.
 
 ## Decisions
 
-None yet.
+-   AC-005 + D-013/D-014/D-015 (see the Architecture Change Log + the
+    Decision Log) — the CS-3 contract finalization: participation
+    semantics (repository enabled is a participation condition), request
+    strictness (movie vs series-episode disambiguation), NO caching,
+    separate additive rate-limit buckets, lazy admin-client imports.
+-   Small additive CS-2 fixes shipped with CS-3: matchedTitle surfaced on
+    resolution groups; `resolveBaseUrl` forwards the injectable
+    dnsResolver (test-seam gap — production behavior unchanged).
+-   The CS-1 admin_ui "no dynamic import()" invariant evolved to its
+    documented intent (static Mavero-owned module paths allowed;
+    computed/remote imports forbidden) — strengthened, not weakened,
+    same precedent as the CS-2 registry assertion evolution.
 
 ## Next step
 
-CS-4.
+CS-4 (Mavero Downloader 2 UI: MaveroCloudStreamDownload.svelte consuming
+the mavero2 API — tabs, filters, stream cards, Download/Play/Share via
+the existing action model).
 
 ------------------------------------------------------------------------
 
@@ -959,6 +1033,39 @@ belongs in phase entries below.
                                 Agent (same     lookup import;
                                 connect-time    Stremio agent
                                 validation)     untouched
+  D-013          2026-10-02     Extension       The admin's           Yes (§40.7)
+                 (CS-3,         participation   whole-source
+                 AC-005)        requires        switch; sync
+                                repository       health never
+                                enabled AND      blocks
+                                extension        (error repos can
+                                enabled AND      still have
+                                code adapter +   functional
+                                media support    extensions);
+                                (registry        DB never the
+                                authoritative)   sole authority
+  D-014          2026-10-02     NO caching in   Provider URLs are    Yes (§40.7)
+                 (CS-3,         the Downloader  dynamic (domains
+                 AC-005)        2 backend +     rotate via
+                                SEPARATE         urls.json, links
+                                additive rate    expire); separate
+                                buckets          buckets so
+                                (mavero2         neither
+                                10/30/30 per     downloader can
+                                min)             lock out the
+                                                 other
+  D-015          2026-10-02     Request         validateEpisodeScope  Yes (§40.7)
+                 (CS-3,         strictness:     convention applied
+                 AC-005)        series/anime    at the boundary;
+                                REQUIRE          a series is
+                                season+episode, never resolved
+                                movies must     as a movie;
+                                NOT carry        lazy admin-
+                                episode          client imports
+                                context +        (adult-guard
+                                                 pattern) for
+                                                 endpoint
+                                                 testability
   -------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -1274,6 +1381,78 @@ bypass the agent); live smoke re-run to confirm the GDFlix path resolves.
 Plan document updated: Yes (§40.6).
 Worklog updated: Yes (this entry + decision D-012).
 
+### AC-005 --- 2026-10-02
+
+Phase: CS-3
+
+Change: Downloader 2 backend contract finalization (selection semantics,
+request strictness, caching/rate-limit posture, endpoint testability
+pattern).
+
+Discovery record:
+- The task brief requires an extension to participate only when it
+  "exists / is enabled / has an adapter / is supported" — inspection of
+  the CS-1 schema showed extension enable/disable is PER-ROW while
+  repository enable/disable is the WHOLE-SOURCE switch, so participation
+  must require BOTH (a disabled repository suspends its catalog; sync
+  health never blocks — an `error` repository can still have functional
+  extensions).
+- The existing Stremio downloader endpoints IGNORE season/episode on
+  movie requests, while the resolver layer (`validateEpisodeScope`)
+  rejects them. For the NEW contract the brief mandates movie vs
+  series-episode disambiguation, so the stricter resolver convention is
+  applied at the mavero2 boundary (movies must NOT carry episode
+  context; series/anime REQUIRE season+episode 1..10000).
+- The endpoints need `createSupabaseAdminClient`, whose module chain
+  requires SvelteKit's `$env` virtual module — top-level imports make
+  the route files unimportable under the tsx test driver. The repo
+  already documents the solution (adult-guard: "production wiring
+  without a top-level $env dependency — testability without behavior
+  drift").
+- The CS-1 admin_ui "no dynamic import()" invariant conflicted with that
+  same documented laziness pattern; it evolved to its intent (static
+  Mavero-owned import targets only — computed/remote targets stay
+  forbidden).
+
+Original plan: §13/§40.3 sketched the three endpoints and the envelope
+without the selection modes, participation rule, strictness rules, media
+echo, error-code table, or the caching/rate-limit decisions.
+
+New plan (plan §13 CS-3 contract + §40.3 + new §40.7): everything
+recorded there — participation semantics, selection modes (all eligible
+/ explicit ≤16 in requested order / single extension), deterministic
+ordering (catalog order, never completion order), dedup semantics
+(within-group collapse; cross-group provider identity preserved), the
+closed error vocabulary + HTTP status mapping + category mapping, NO
+caching, SEPARATE additive rate buckets, lazy admin-client imports, the
+media echo + matchedTitle + the documented link-view omissions.
+
+Affected files: see plan §40.7 CS-3 file inventory (new downloader
+domain + 3 routes + shared types + additive rate-limit/runtime/resolver
+refinements + tests).
+
+Affected phases: CS-3 (implementation), CS-4 (consumes the contract),
+CS-6 (regression list gains the mavero2 endpoints).
+
+Security impact: none negative — client extension ids are resolved
+through the DB + code registry before any adapter runs; every adapter
+fetch stays inside the CS-2 SSRF-guarded runtime; diagnostics and error
+envelopes are closed-vocabulary, redaction-safe (test-asserted, incl. a
+zero-egress private-DNS case).
+
+Regression impact: none on existing systems — Stremio endpoints
+byte-identical, rate rules additive (test-asserted), full chain 203
+commands → 0 new failures. The one existing-test change is the
+documented admin_ui assertion evolution (strengthened).
+
+Tests required: the 144-check cloudstream_downloader_api suite (all 24
+brief items) + re-run CS-1/CS-2 suites + phase1_rate_limit + check +
+build + full chain + live smoke.
+
+Plan document updated: Yes (§13, §40.3, §40.7).
+Worklog updated: Yes (this entry + decisions D-013/D-014/D-015 + the
+CS-3 phase entry + completion record + session entry).
+
 ------------------------------------------------------------------------
 
 # Phase Completion Log
@@ -1521,24 +1700,90 @@ DB enabled-extension selection on the CS-2 orchestrator).
 ## CS-3 Completion
 
 ``` text
-Date:
-HEAD/commit:
-Status:
+Date: 2026-10-02
+HEAD/commit: 4b906ec (CS-2, pristine start) → feat(cloudstream): add mavero downloader 2 backend (dedicated commit; pushed to origin/main)
+Status: COMPLETE
 
 APIs:
+- GET /api/downloader/mavero2               — batch resolution (all eligible
+  or explicit `extensions=` selection ≤16, requested order)
+- GET /api/downloader/mavero2/tabs          — eligible tabs only, no
+  provider fetches
+- GET /api/downloader/mavero2/extension     — single targeted extension
+  (structured envelope errors: 404/409/400 states)
+- All three: public GET, validation → separate additive rate buckets →
+  adult guard → admin-client service call → no-store; lazy admin-client
+  imports (adult-guard pattern) for endpoint testability
+
 Resolver:
+- downloader/service.ts layers DB selection on the CS-2 orchestrator:
+  repository enabled + extension enabled + code adapter + media-type
+  support; consideredExtensions = the participation baseline
+- Content via the canonical pipeline (getDetail +
+  normalizeContentIdentifiers → tmdbId/title/year); title load failure →
+  INVALID_REQUEST ("This title could not be loaded…")
+- Deterministic group order: repository creation → internal_name (or
+  requested order); groups re-emitted in SELECTION order after
+  collection (never completion order — test-proven with a slow provider)
+- Partial success: failed groups preserved alongside loaded ones
+
 Concurrency:
+- No second fan-out layer: the API orchestrates only; CS-2 budgets are
+  THE budgets (mapBounded ≤4, 30s/adapter, 40s overall, 10s/page)
+
 Normalization:
+- Link views (shared cloudstream-types): url/kind/quality/codec/
+  container/filename/sizeBytes/audioLanguages/host/provider/sourceName/
+  extractor; kind = StreamKind → action capabilities EXACTLY
+  stream-actions.ts (per-kind test-asserted)
+- matchedTitle + media echo (mediaType/tmdbId/title/year/season/episode)
+  surfaced; NO headers field (CS-2 links are direct; documented omission)
+
 Diagnostics:
+- Per-group redaction-safe stage summaries (≤32; durations/statuses/
+  counts/extractor ids — never URLs/cookies/tokens; test-asserted)
+- Closed error vocabulary with the documented category mapping
+  (BLOCKED_URL/SEARCH_FAILED/LOAD_FAILED → NETWORK_ERROR etc.)
+- Server-side structured logs: safe fields only
+  ([MaveroDownloader2] mediaType/tmdbId/counts/duration/code)
+
 Tests:
+- cloudstream_downloader_api_test.ts — 144 checks PASSED (24 brief
+  items: validation, movie/series-episode, selection, disabled/missing
+  adapter skip, selected-validation, extension endpoint, tabs, partial
+  failure, timeout, no-results, normalized response, stream-action
+  compatibility, malformed tmdbId/season/episode, unknown/disabled
+  extension, deterministic ordering, duplicate handling, SSRF +
+  redaction, rate limiting 429, CS-1/CS-2 regression invariants)
+- CS-1 suites re-run: parse 78 + sync 113 + admin_ui 160 (evolved
+  dynamic-import assertion, +6 checks) — all PASSED
+- CS-2 suites re-run: runtime 101 + extractors 50 + adapters 39 +
+  resolver 37 — all PASSED
+- phase1_rate_limit_test — 6 checks PASSED (existing rules unchanged)
+- svelte-kit sync + svelte-check: 0 errors, 0 warnings
+- vite build + netlify adapter: PASS (~30s)
+- Full chain: 203 commands — 195 PASSED + the 8 documented pre-existing
+  baseline failures + 0 NEW failures (driver log:
+  scripts/cs3_full_chain.log)
+- Live smoke (manual, verify:cloudstream-downloader, real DB + real
+  network): PASS — 27 real links (Bollyflix 15 + MoviesDrive 12);
+  VegaMovies honest EXTRACTOR_FAILED (vcloud.fit bot challenge);
+  real-DB tabs honestly empty (live catalog has 0 repositories)
 
-Failures:
+Failures: None caused by CS-3 (8 pre-existing baseline failures —
+identical set to the CS-2 baseline; none touch the CS-3 diff surface).
 
-Plan changes:
+Plan changes: §13 + §40.3 refined to the implemented contract; new §40.7
+(CS-3 finalization: selection semantics, ordering, dedup semantics, error
+table, caching decision, concurrency, security decisions, response-model
+decisions, the two additive CS-2 fixes, file inventory).
 
-Remaining work:
+Remaining work: none for CS-3. The live CloudStream catalog is empty —
+adding + enabling a repository is an ADMIN action (CS-1 UI), not code.
 
-Next phase:
+Next phase: CS-4 — Mavero Downloader 2 UI (MaveroCloudStreamDownload
+.svelte on the mavero2 API; reuse the existing action model, no second
+MPV/Share).
 ```
 
 ## CS-4 Completion
@@ -1714,22 +1959,23 @@ Before GLM declares the project complete:
 
 # Final Status
 
-**Project:** CS-2 complete (Mavero CloudStream runtime: adapter
-contract + registry, runtime context, 3 source-verified provider ports —
-Bollyflix/MoviesDrive/VegaMovies, 3 extractor ports — GDFlix/HubCloud/
-fastdlserver, H2-capable SSRF-safe transport, bounded orchestration,
-diagnostics, live-verified end-to-end). CS-3 (Mavero Downloader 2
-backend) is the next phase — NOT started; it must begin with the
-mandatory phase protocol (read plan + worklog, verify repository state,
-confirm CS-2 exit criteria).
+**Project:** CS-3 complete (Mavero Downloader 2 backend: the three
+`/api/downloader/mavero2*` endpoints + the Downloader 2 service with
+DB+registry extension selection on the CS-2 bounded orchestrator, the
+closed error vocabulary, deterministic ordering, partial-success
+semantics, redaction-safe diagnostics, separate additive rate buckets,
+144 deterministic checks, and a PASSING live smoke — 27 real links
+end-to-end). CS-4 (Mavero Downloader 2 UI) is the next phase — NOT
+started; it must begin with the mandatory phase protocol (read plan +
+worklog, verify repository state, confirm CS-3 exit criteria).
 
 The next agent action is:
 
 ``` text
-READ PLAN (§40 contracts incl. §40.3 finalized adapter contract + §40.6 CS-2 runtime + §26 CS-3 scope)
-READ WORKLOG (CS-2 entry + AC-003 + AC-004 + D-009..D-012)
+READ PLAN (§40 contracts incl. §40.3 + §40.6 + §40.7 CS-3 finalization + §27 CS-4 scope)
+READ WORKLOG (CS-3 entry + AC-005 + D-013..D-015)
 VERIFY REPOSITORY STATE
-START CS-3 (only after the phase instruction arrives)
+START CS-4 (only after the phase instruction arrives)
 ```
 
 ------------------------------------------------------------------------
@@ -2023,3 +2269,106 @@ supported titles into Mavero-normalized links independently of the UI —
 exercised by the 227 automated checks with deterministic fixtures AND
 the live smoke run resolving 27 real links across Bollyflix +
 MoviesDrive.)
+
+## 2026-10-02 — Session 4 (CS-3)
+
+Phase: CS-3 — Mavero Downloader 2 Backend
+
+Starting HEAD: `4b906ec` (= origin/main, clean tree; CS-2 complete)
+
+Repository state: `main`, clean at start. Only CS-3 files were
+created/modified during this session (verified via git status review
+before commit — no unrelated files touched; the one existing-test change
+is the documented admin_ui dynamic-import assertion evolution).
+
+Plan/worklog read:
+- [x] Plan (all 2151 lines incl. §40 contracts + §26 CS-3 scope)
+- [x] Worklog (all entries incl. CS-2 + AC-003/AC-004 + D-009..D-012)
+
+Objective: Implement the Mavero Downloader 2 backend — the three
+`/api/downloader/mavero2*` endpoints exposing the CS-2 resolver through
+a production-safe downloader API (validation, rate limiting, adult
+guard, extension selection, deterministic ordering, partial success,
+diagnostics, security) — with zero regressions on existing systems.
+
+Work performed:
+- Phase protocol: verified HEAD/branch/remote/clean tree; re-inspected
+  the CS-1/CS-2 CloudStream implementation (registry, resolver,
+  context, normalize, extensions service), the existing Mavero
+  downloader endpoints (`/api/downloader/mavero{,/tabs,/addon}`),
+  addon-download-service reliability patterns, stream-actions, the rate
+  limiter, the content pipeline (getDetail +
+  normalizeContentIdentifiers), and the live Supabase catalog
+  (read-only via the Management API — 0 repositories / 0 extensions).
+- Implemented the isolated downloader domain
+  (`src/lib/server/cloudstream/downloader/{service,errors}.ts`) +
+  shared response view types + the three API routes + 3 additive
+  rate-limit buckets.
+- AC-005 protocol followed: contract decisions recorded in PLAN §13/
+  §40.3/§40.7 FIRST (participation semantics, selection modes, ordering,
+  dedup semantics, error table, no-caching, separate buckets, strict
+  movie-vs-episode validation, lazy admin-client imports), then
+  implemented.
+- Shipped two small ADDITIVE CS-2 fixes discovered by the new zero-egress
+  SSRF test: matchedTitle surfaced on resolution groups; resolveBaseUrl
+  forwards the injectable dnsResolver (test-seam gap — production
+  behavior unchanged).
+- Evolved the CS-1 admin_ui "no dynamic import()" invariant to its
+  documented intent (static Mavero-owned import targets only —
+  strengthened, not weakened; documented in AC-005).
+- Wrote the 144-check deterministic suite + the manual live smoke;
+  registered the suite in the `pnpm test` chain and
+  verify:cloudstream-downloader as the manual network command.
+
+Files changed:
+- NEW: src/lib/server/cloudstream/downloader/{service,errors}.ts
+- NEW: src/routes/api/downloader/mavero2/{,tabs/,extension/}+server.ts
+- NEW: scripts/cloudstream_downloader_api_test.ts,
+  scripts/cloudstream_cs3_live_smoke.ts
+- MODIFIED: src/lib/shared/cloudstream-types.ts (CS-3 response views)
+- MODIFIED: src/lib/server/http/rate-limit.ts (3 additive buckets)
+- MODIFIED: src/lib/server/cloudstream/types/runtime.ts +
+  resolver/service.ts (matchedTitle, additive)
+- MODIFIED: src/lib/server/cloudstream/runtime/{context,dynamic-urls}.ts
+  (dnsResolver seam fix, additive)
+- MODIFIED: scripts/cloudstream_admin_ui_test.ts (documented assertion
+  evolution)
+- MODIFIED: package.json (chain registration + verify command)
+- MODIFIED: CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§13, §40.3, §40.7)
+- MODIFIED: this worklog
+
+Tests run: the 144-check CS-3 suite; all 7 CS-1/CS-2 suites re-run;
+phase1_rate_limit; svelte-kit sync + svelte-check (0/0); vite build +
+netlify adapter (PASS ~30s); the full 203-command chain via the driver
+(scripts/cs3_full_chain_driver.mjs → scripts/cs3_full_chain.log); the
+live smoke (real DB + real network).
+
+Results: ALL GREEN for CS-3 scope — 195/203 chain commands PASSED with
+the 8 documented pre-existing baseline failures (identical set to the
+CS-2 baseline — none touch the CS-3 diff surface) and ZERO new
+failures; check 0/0; build PASS; live smoke PASS (Bollyflix 15 +
+MoviesDrive 12 real links; VegaMovies honest EXTRACTOR_FAILED on the
+externally-protected vcloud.fit host).
+
+Issues discovered:
+- AC-005 contract decisions (documented above).
+- The CS-2 dnsResolver test-seam gap (fixed additively in-session).
+- The live CloudStream catalog is empty (admin action, not a code issue).
+
+Decisions: AC-005 + D-013/D-014/D-015 (see the Decision Log).
+
+Plan updated: Yes (§13, §40.3, §40.7).
+
+Worklog updated: Yes (this session + CS-3 phase entry + completion
+record + AC-005 + D-013..D-015 + status tables).
+
+Remaining: CS-4 → CS-6 (NOT started — strict phase boundary honored).
+
+Next action: STOP after the CS-3 commit/push; await the CS-4 phase
+instruction.
+
+(CS-3 exit criteria verified: the API returns stable Downloader 2 data
+for supported movies/series without touching the existing Stremio
+downloader APIs — exercised by the 144 automated checks, the full-chain
+0-new-failures result, and the live smoke resolving 27 real links
+through the exact service the endpoints call.)

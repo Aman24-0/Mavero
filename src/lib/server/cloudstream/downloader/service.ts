@@ -1,0 +1,721 @@
+/**
+ * MAVERO CloudStream Downloader 2 service (CS-3 — plan §13/§26/§40.3/§40.7).
+ *
+ * Exposes the CS-2 resolver through a production-safe downloader backend:
+ *
+ *   MAVERO DOWNLOADER 2 → CloudStream Extensions → CS-2 resolver
+ *       → normalized downloadable stream candidates
+ *
+ * Architecture (isolated from the Stremio downloader — plan §2.3/§12):
+ *   * Existing: Mavero Downloader → Stremio Addons → existing resolver.
+ *   * New:      Mavero Downloader 2 → CloudStream Extensions → THIS service
+ *              on top of the CS-2 bounded orchestrator. The resolvers are
+ *              NEVER merged; only genuinely generic shared types/utilities
+ *              (StreamKind, cloudstream-types views) are shared.
+ *
+ * EXTENSION SELECTION (plan §26 task 5 — code registry is authoritative):
+ *   An extension participates ONLY when ALL of these hold:
+ *     1. a `cloudstream_extensions` row exists (repository-synced catalog);
+ *     2. its repository is enabled (repository enabled is the admin's
+ *        whole-source switch; sync-health `status` does NOT block — an
+ *        `error` repository can still have functional extensions);
+ *     3. the extension row itself is enabled;
+ *     4. a Mavero adapter is REGISTERED in the code-owned registry
+ *        (D-007 — DB compatibility state is never the sole authority);
+ *     5. the adapter supports the requested media type.
+ *   Unknown/unimplemented extensions are NEVER attempted.
+ *
+ * DETERMINISTIC ORDERING (plan §40.7): the all-eligible order is repository
+ * creation order → internal_name (the CS-1 catalog convention). Explicitly
+ * selected extensions preserve the REQUESTED order. The orchestrator
+ * returns groups in completion order — this service re-emits them in the
+ * SELECTION order so the response is stable (never fastest-first).
+ *
+ * PARTIAL SUCCESS (plan §26 task 10): one failing/timing-out provider never
+ * fails the request — allSettled isolation comes from the CS-2 orchestrator;
+ * this service preserves failed groups alongside successful ones.
+ *
+ * CONCURRENCY (plan §40.7): there is NO second fan-out layer. The API layer
+ * orchestrates only; the CS-2 budgets are THE budgets (mapBounded ≤4,
+ * 30s/adapter, 40s overall, 10s/page). This service never multiplies them.
+ *
+ * CACHING (documented decision, plan §40.7): NO caching. Resolution results
+ * are dynamic (providers rotate domains, URLs expire, extractors change) —
+ * every response is fresh and served `no-store`. Short-lived caching may be
+ * revisited in a later phase only with a demonstrated need.
+ *
+ * DEDUPLICATION SEMANTICS (documented, plan §40.7): CS-2's true-URL dedup
+ * applies WITHIN one extension's group (exact duplicate URLs collapse).
+ * The SAME URL appearing under TWO different extensions is intentionally
+ * preserved in both groups — provider/source identity stays visible to the
+ * future CS-4 UI (which provider actually resolved it).
+ *
+ * SECURITY: extension config is read SERVER-SIDE via the admin client only
+ * (CS-1 RLS posture — no public SELECT policy on cloudstream_* tables).
+ * Client-supplied extension ids are NEVER trusted: they are resolved
+ * through the DB + code registry before any adapter runs. Diagnostics are
+ * redaction-safe (categories/counts/durations — no URLs, cookies, tokens).
+ */
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '$lib/server/supabase/database.types';
+import type { ContentType } from '$lib/server/content/types';
+import { normalizeContentIdentifiers } from '$lib/server/resolver/identifiers';
+import type {
+  CloudStreamDownloadGroupDiagnostics,
+  CloudStreamDownloadGroupView,
+  CloudStreamDownloadLinkView,
+  CloudStreamDownloadMediaView,
+  CloudStreamDownloadStageSummary,
+  CloudStreamDownloadTabView,
+  CloudStreamDownloaderErrorCode,
+} from '$lib/shared/cloudstream-types';
+import type { MaveroCloudStreamAdapter } from '../types/runtime';
+import type { CloudStreamResolutionGroup, CloudStreamResolutionResult } from '../types/runtime';
+import { lookupCloudStreamAdapterInstance } from '../adapters/registry';
+import { resolveCloudStream } from '../resolver/service';
+import type { SafeDnsResolver } from '$lib/server/streaming/stremio/ssrf';
+import { CloudStreamDownloaderError, downloaderErrorMessage, failureCategoryToErrorCode } from './errors';
+
+type CloudStreamClient = SupabaseClient<Database>;
+
+// ---------------------------------------------------------------------------
+// Request + content contracts
+// ---------------------------------------------------------------------------
+
+/** A Downloader 2 request (mirrors the Stremio AddonDownloadRequest shape). */
+export type CloudStreamDownloadRequest = {
+  mediaType: ContentType;
+  contentId: string;
+  /** Required for series/anime; must be ABSENT for movies. */
+  season?: number;
+  episode?: number;
+};
+
+/** The content facts the CloudStream resolution needs (CS-2 request shape). */
+export type CloudStreamDownloadContent = {
+  mediaType: ContentType;
+  tmdbId: string;
+  title: string;
+  year?: number;
+};
+
+/** DB row projection for extension selection (internal — never exposed raw). */
+export type CloudStreamExtensionSelectionRow = {
+  repository_id: string;
+  internal_name: string;
+  name: string | null;
+  icon_url: string | null;
+  enabled: boolean;
+};
+
+/** Repository rows needed for participation + deterministic ordering. */
+export type CloudStreamRepositorySelectionRow = {
+  id: string;
+  enabled: boolean;
+  created_at: string;
+};
+
+/** The joined selection state (rows + repository order, joined in code). */
+export type CloudStreamExtensionCatalog = {
+  repositories: CloudStreamRepositorySelectionRow[];
+  extensions: CloudStreamExtensionSelectionRow[];
+};
+
+export type CloudStreamDownloaderDeps = {
+  /** Injectable content lookup (tests); defaults to the content pipeline. */
+  loadContent?: (mediaType: ContentType, contentId: string) => Promise<CloudStreamDownloadContent>;
+  /** Injectable catalog loader (tests); defaults to the two-plain-select query. */
+  loadCatalog?: (client: CloudStreamClient) => Promise<CloudStreamExtensionCatalog>;
+  /** Injectable fetcher → CS-2 orchestrator (tests never touch the network). */
+  fetcher?: typeof fetch;
+  /** Injectable DNS resolver → CS-2 orchestrator (tests). */
+  dnsResolver?: SafeDnsResolver;
+  /** Per-adapter timeout override (tests). */
+  adapterTimeoutMs?: number;
+  /** Overall timeout override (tests). */
+  overallTimeoutMs?: number;
+};
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+
+/** Tabs endpoint result (plan §40.3: `{ ok: true, consideredExtensions, tabs }`). */
+export type CloudStreamDownloadTabsResult = {
+  media: CloudStreamDownloadMediaView;
+  tabs: CloudStreamDownloadTabView[];
+  /** Enabled extensions CONSIDERED (the participation baseline). */
+  consideredExtensions: number;
+};
+
+/** Main resolution endpoint result (all eligible, or explicitly selected). */
+export type CloudStreamDownloadResolveResult = {
+  media: CloudStreamDownloadMediaView;
+  groups: CloudStreamDownloadGroupView[];
+  /** Enabled extensions CONSIDERED (the participation baseline). */
+  consideredExtensions: number;
+};
+
+/** Single-extension endpoint result. */
+export type CloudStreamExtensionDownloadResult = {
+  media: CloudStreamDownloadMediaView;
+  group: CloudStreamDownloadGroupView;
+};
+
+/** Maximum explicitly-selected extensions per request (bounded fan-in). */
+export const MAX_SELECTED_EXTENSIONS = 16;
+/** Per-group diagnostic stage bound (response safety; CS-2 caps at 256 total). */
+export const MAX_GROUP_DIAGNOSTIC_STAGES = 32;
+
+// ---------------------------------------------------------------------------
+// Request validation (mirrors the audited downloader + resolver conventions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates the request shape. Series/anime REQUIRE season+episode
+ * (1..10000 safe integers, both or neither); movies must NOT carry episode
+ * context (the request contract distinguishes movie vs series episode — a
+ * series is never accidentally resolved as a movie, plan §13).
+ */
+export function assertValidCloudStreamDownloadRequest(request: CloudStreamDownloadRequest): void {
+  if (!request.contentId || request.contentId.length > 200) {
+    throw new CloudStreamDownloaderError('INVALID_REQUEST', downloaderErrorMessage('INVALID_REQUEST'));
+  }
+  if (request.mediaType !== 'movie' && request.mediaType !== 'series' && request.mediaType !== 'anime') {
+    throw new CloudStreamDownloaderError('INVALID_REQUEST', downloaderErrorMessage('INVALID_REQUEST'));
+  }
+  const { season, episode } = request;
+  if (request.mediaType === 'movie') {
+    if (season !== undefined || episode !== undefined) {
+      throw new CloudStreamDownloaderError('INVALID_REQUEST', downloaderErrorMessage('INVALID_REQUEST'));
+    }
+    return;
+  }
+  // series / anime: season+episode required, both-or-neither, 1..10000.
+  if (
+    !Number.isSafeInteger(season) || !Number.isSafeInteger(episode)
+    || (season as number) < 1 || (season as number) > 10000
+    || (episode as number) < 1 || (episode as number) > 10000
+  ) {
+    throw new CloudStreamDownloaderError('INVALID_REQUEST', downloaderErrorMessage('INVALID_REQUEST'));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Eligibility (plan §26 task 5 — selection over DB rows + code registry)
+// ---------------------------------------------------------------------------
+
+/** Adapter media-type support for one request shape. */
+export function adapterSupportsMediaType(
+  adapter: MaveroCloudStreamAdapter,
+  mediaType: ContentType,
+): boolean {
+  switch (mediaType) {
+    case 'movie':
+      return adapter.supports.movie;
+    case 'series':
+      return adapter.supports.series;
+    case 'anime':
+      // Anime content rides the normal movie/series pipeline (content
+      // types §NormalizedMediaItem.isAnime) — a series-capable adapter can
+      // resolve series-shaped anime; an anime-flagged adapter always can.
+      return adapter.supports.anime || adapter.supports.series;
+    default:
+      return false;
+  }
+}
+
+/** Media types the registered adapter supports (tab metadata — code authority). */
+export function adapterSupportedMediaTypes(adapter: MaveroCloudStreamAdapter): Array<'movie' | 'series' | 'anime'> {
+  const types: Array<'movie' | 'series' | 'anime'> = [];
+  if (adapter.supports.movie) types.push('movie');
+  if (adapter.supports.series) types.push('series');
+  if (adapter.supports.anime) types.push('anime');
+  return types;
+}
+
+/** One eligible extension (row + registered adapter + deterministic order key). */
+export type EligibleCloudStreamExtension = {
+  row: CloudStreamExtensionSelectionRow;
+  adapter: MaveroCloudStreamAdapter;
+  /** Repository creation order (deterministic ordering key). */
+  repositoryOrder: number;
+};
+
+/**
+ * Selects the ELIGIBLE extensions for a media type from the catalog:
+ * repository enabled AND extension enabled AND adapter registered AND
+ * media-type support. Ordered by repository creation order → internal_name.
+ */
+export function selectEligibleExtensions(
+  catalog: CloudStreamExtensionCatalog,
+  mediaType: ContentType,
+): EligibleCloudStreamExtension[] {
+  const repoOrder = new Map(catalog.repositories.map((repo, index) => [repo.id, index]));
+  const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+  const eligible: EligibleCloudStreamExtension[] = [];
+  for (const row of catalog.extensions) {
+    if (!repoEnabled.has(row.repository_id)) continue;
+    if (!row.enabled) continue;
+    const adapter = lookupCloudStreamAdapterInstance(row.internal_name);
+    if (adapter === null) continue;
+    if (!adapterSupportsMediaType(adapter, mediaType)) continue;
+    eligible.push({ row, adapter, repositoryOrder: repoOrder.get(row.repository_id) ?? 0 });
+  }
+  return eligible.sort((a, b) =>
+    a.repositoryOrder - b.repositoryOrder || a.row.internal_name.localeCompare(b.row.internal_name));
+}
+
+/** Counts the participation baseline: repo-enabled + extension-enabled rows. */
+export function countEnabledExtensions(catalog: CloudStreamExtensionCatalog): number {
+  const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+  return catalog.extensions.filter((row) => repoEnabled.has(row.repository_id) && row.enabled).length;
+}
+
+// ---------------------------------------------------------------------------
+// Group shaping (normalization → Downloader 2 response views)
+// ---------------------------------------------------------------------------
+
+/** Maps one normalized link into the response view (no invented fields). */
+function toLinkView(link: CloudStreamResolutionGroup['links'][number]): CloudStreamDownloadLinkView {
+  const view: CloudStreamDownloadLinkView = {
+    url: link.url,
+    kind: link.kind,
+    provider: link.provider,
+    sourceName: link.sourceName,
+  };
+  if (link.quality !== undefined) view.quality = link.quality;
+  if (link.codec !== undefined) view.codec = link.codec;
+  if (link.container !== undefined) view.container = link.container;
+  if (link.filename !== undefined) view.filename = link.filename;
+  if (link.sizeBytes !== undefined) view.sizeBytes = link.sizeBytes;
+  if (link.audioLanguages !== undefined && link.audioLanguages.length > 0) view.audioLanguages = link.audioLanguages;
+  if (link.host !== undefined) view.host = link.host;
+  if (link.extractor !== undefined) view.extractor = link.extractor;
+  return view;
+}
+
+/** Builds the redaction-safe per-group diagnostics summary (≤32 stages). */
+function toGroupDiagnostics(
+  events: CloudStreamResolutionResult['diagnostics'],
+  adapterId: string,
+): CloudStreamDownloadGroupDiagnostics | undefined {
+  const own = events.filter((event) => event.adapterId === adapterId);
+  if (own.length === 0) return undefined;
+  const resolveEvent = own.find((event) => event.stage === 'resolve');
+  const stages: CloudStreamDownloadStageSummary[] = own.slice(0, MAX_GROUP_DIAGNOSTIC_STAGES).map((event) => {
+    const stage: CloudStreamDownloadStageSummary = {
+      stage: event.stage,
+      success: event.success,
+      durationMs: event.durationMs,
+    };
+    if (event.httpStatus !== undefined) stage.httpStatus = event.httpStatus;
+    if (event.resultCount !== undefined) stage.resultCount = event.resultCount;
+    if (event.extractorId !== undefined) stage.extractorId = event.extractorId;
+    if (event.retries !== undefined) stage.retries = event.retries;
+    return stage;
+  });
+  const durationMs = resolveEvent !== undefined
+    ? resolveEvent.durationMs
+    : own.reduce((total, event) => total + event.durationMs, 0);
+  return { durationMs, stages };
+}
+
+/** Maps one CS-2 resolution group into the Downloader 2 view. */
+function toGroupView(
+  group: CloudStreamResolutionGroup,
+  extensionName: string,
+  diagnostics: CloudStreamResolutionResult['diagnostics'],
+): CloudStreamDownloadGroupView {
+  const view: CloudStreamDownloadGroupView = {
+    extensionId: group.adapterId,
+    extensionName,
+    status: group.status,
+    links: group.links.map(toLinkView),
+  };
+  if (group.failure !== undefined) {
+    view.errorCode = failureCategoryToErrorCode(group.failure.category);
+    view.errorMessage = downloaderErrorMessage(view.errorCode);
+  }
+  if (group.matchedTitle !== undefined && group.matchedTitle.length > 0) view.matchedTitle = group.matchedTitle;
+  const groupDiagnostics = toGroupDiagnostics(diagnostics, group.adapterId);
+  if (groupDiagnostics !== undefined) view.diagnostics = groupDiagnostics;
+  return view;
+}
+
+/** Builds a failed group for a requested-but-ineligible extension (no fetch). */
+function toIneligibleGroupView(
+  extensionId: string,
+  errorCode: CloudStreamDownloaderErrorCode,
+): CloudStreamDownloadGroupView {
+  return {
+    extensionId,
+    extensionName: extensionId,
+    status: 'failed',
+    links: [],
+    errorCode,
+    errorMessage: downloaderErrorMessage(errorCode),
+  };
+}
+
+/** Builds the media context echo from the content lookup + request. */
+function toMediaView(
+  content: CloudStreamDownloadContent,
+  request: CloudStreamDownloadRequest,
+): CloudStreamDownloadMediaView {
+  const media: CloudStreamDownloadMediaView = {
+    mediaType: content.mediaType,
+    tmdbId: content.tmdbId,
+    title: content.title,
+  };
+  if (content.year !== undefined) media.year = content.year;
+  if (request.season !== undefined) media.season = request.season;
+  if (request.episode !== undefined) media.episode = request.episode;
+  return media;
+}
+
+/** Safe display name for an extension row (DB name, else adapter display). */
+function extensionDisplayName(row: CloudStreamExtensionSelectionRow | undefined, adapter: MaveroCloudStreamAdapter): string {
+  if (row !== undefined && typeof row.name === 'string' && row.name.length > 0) return row.name;
+  return adapter.displayName;
+}
+
+// ---------------------------------------------------------------------------
+// Observability (plan §21 — safe fields only, matches existing conventions)
+// ---------------------------------------------------------------------------
+
+function logResolutionSummary(
+  request: CloudStreamDownloadRequest,
+  tmdbId: string,
+  groups: CloudStreamDownloadGroupView[],
+  considered: number,
+  durationMs: number,
+): void {
+  const loaded = groups.filter((group) => group.status === 'loaded').length;
+  const empty = groups.filter((group) => group.status === 'empty').length;
+  const failed = groups.filter((group) => group.status === 'failed').length;
+  console.info(
+    `[MaveroDownloader2] resolve mediaType=${request.mediaType} tmdbId=${tmdbId}`
+    + ` considered=${considered} groups=${groups.length} loaded=${loaded} empty=${empty} failed=${failed}`
+    + ` durationMs=${durationMs}`,
+  );
+  for (const group of groups) {
+    if (group.status === 'failed' && group.errorCode !== undefined) {
+      console.info(`[MaveroDownloader2] extension failed extension=${group.extensionId} code=${group.errorCode}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Default loaders (production wiring; tests inject their own)
+// ---------------------------------------------------------------------------
+
+async function defaultLoadContent(mediaType: ContentType, contentId: string): Promise<CloudStreamDownloadContent> {
+  const { getDetail } = await import('$lib/server/content/service');
+  const content = await getDetail(mediaType, contentId);
+  const identifiers = normalizeContentIdentifiers(content, {
+    sourceId: 'mavero-downloader-2',
+    contentId,
+    mediaType,
+  });
+  if (!identifiers.tmdbId) {
+    throw new CloudStreamDownloaderError('INVALID_REQUEST', 'This title could not be loaded for downloading.');
+  }
+  return {
+    mediaType,
+    tmdbId: identifiers.tmdbId,
+    title: content.title,
+    ...(Number.isInteger(content.year) && content.year > 0 ? { year: content.year } : {}),
+  };
+}
+
+async function defaultLoadCatalog(client: CloudStreamClient): Promise<CloudStreamExtensionCatalog> {
+  // Two plain selects joined in code (CS-1 convention — no PostgREST embeds,
+  // easy to fake in tests). Reads happen through the ADMIN client only: the
+  // cloudstream_* tables have no public SELECT policy (CS-1 RLS posture).
+  const { data: repoData, error: repoError } = await client
+    .from('cloudstream_repositories')
+    .select('id, enabled, created_at')
+    .order('created_at', { ascending: true });
+  if (repoError) throw repoError;
+  const repositories = (repoData ?? []) as unknown as CloudStreamRepositorySelectionRow[];
+
+  const { data: extData, error: extError } = await client
+    .from('cloudstream_extensions')
+    .select('repository_id, internal_name, name, icon_url, enabled');
+  if (extError) throw extError;
+  const extensions = (extData ?? []) as unknown as CloudStreamExtensionSelectionRow[];
+
+  return { repositories, extensions };
+}
+
+// ---------------------------------------------------------------------------
+// Internal shared resolution core
+// ---------------------------------------------------------------------------
+
+/** Resolves the given adapters through the CS-2 orchestrator (no DB here). */
+async function resolveThroughOrchestrator(
+  content: CloudStreamDownloadContent,
+  request: CloudStreamDownloadRequest,
+  adapterIds: string[],
+  deps: CloudStreamDownloaderDeps,
+): Promise<CloudStreamResolutionResult> {
+  return resolveCloudStream(
+    {
+      media: { tmdbId: content.tmdbId, title: content.title, ...(content.year !== undefined ? { year: content.year } : {}) },
+      ...(request.season !== undefined && request.episode !== undefined
+        ? { season: request.season, episode: request.episode }
+        : {}),
+      adapterIds,
+    },
+    {
+      ...(deps.fetcher !== undefined ? { fetcher: deps.fetcher } : {}),
+      ...(deps.dnsResolver !== undefined ? { dnsResolver: deps.dnsResolver } : {}),
+      ...(deps.adapterTimeoutMs !== undefined ? { adapterTimeoutMs: deps.adapterTimeoutMs } : {}),
+      ...(deps.overallTimeoutMs !== undefined ? { overallTimeoutMs: deps.overallTimeoutMs } : {}),
+    },
+  );
+}
+
+/** Content + catalog load with typed error wrapping (Stremio parity). */
+async function loadContentAndCatalog(
+  client: CloudStreamClient,
+  request: CloudStreamDownloadRequest,
+  deps: CloudStreamDownloaderDeps,
+): Promise<{ content: CloudStreamDownloadContent; catalog: CloudStreamExtensionCatalog }> {
+  let content: CloudStreamDownloadContent;
+  try {
+    content = await (deps.loadContent ?? defaultLoadContent)(request.mediaType, request.contentId);
+  } catch (error) {
+    if (error instanceof CloudStreamDownloaderError) throw error;
+    throw new CloudStreamDownloaderError('INVALID_REQUEST', 'This title could not be loaded for downloading.');
+  }
+  let catalog: CloudStreamExtensionCatalog;
+  try {
+    catalog = await (deps.loadCatalog ?? defaultLoadCatalog)(client);
+  } catch (error) {
+    if (error instanceof CloudStreamDownloaderError) throw error;
+    throw new CloudStreamDownloaderError('INTERNAL_ERROR', downloaderErrorMessage('INTERNAL_ERROR'));
+  }
+  return { content, catalog };
+}
+
+// ---------------------------------------------------------------------------
+// Public API — tabs
+// ---------------------------------------------------------------------------
+
+/**
+ * Lists the eligible CloudStream source tabs for one title (NO provider
+ * fetches). The future CS-4 UI renders tabs immediately and fires the
+ * extension endpoint per tab independently.
+ */
+export async function listCloudStreamDownloadTabs(
+  client: CloudStreamClient,
+  request: CloudStreamDownloadRequest,
+  deps: CloudStreamDownloaderDeps = {},
+): Promise<CloudStreamDownloadTabsResult> {
+  assertValidCloudStreamDownloadRequest(request);
+  const { content, catalog } = await loadContentAndCatalog(client, request, deps);
+
+  const eligible = selectEligibleExtensions(catalog, request.mediaType);
+  const tabs: CloudStreamDownloadTabView[] = eligible.map(({ row, adapter }) => ({
+    extensionId: adapter.id,
+    extensionName: extensionDisplayName(row, adapter),
+    iconUrl: typeof row.icon_url === 'string' && row.icon_url.length > 0 ? row.icon_url : null,
+    supportedMediaTypes: adapterSupportedMediaTypes(adapter),
+    // Only eligible sources are listed — both flags are structurally true;
+    // kept in the contract for CS-4 shape stability (plan §40.3 tabs sketch).
+    enabled: true,
+    compatible: true,
+  }));
+
+  return {
+    media: toMediaView(content, request),
+    tabs,
+    consideredExtensions: countEnabledExtensions(catalog),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Public API — batch resolution (all eligible, or explicitly selected)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves one title through the eligible CloudStream extensions.
+ *
+ * Selection modes (plan §13/§40.3):
+ *   * `options.extensionIds` ABSENT/empty → resolve ALL eligible extensions
+ *     (deterministic catalog order: repository creation → internal_name).
+ *   * `options.extensionIds` present → resolve ONLY those extensions in the
+ *     REQUESTED order. Each requested id is validated through the DB + code
+ *     registry; ineligible ones produce failed groups with closed-vocabulary
+ *     error codes (EXTENSION_NOT_FOUND / EXTENSION_DISABLED /
+ *     ADAPTER_NOT_AVAILABLE / UNSUPPORTED_MEDIA) — partial-success contract,
+ *     one invalid selection never fails the whole request.
+ */
+export async function resolveCloudStreamDownloads(
+  client: CloudStreamClient,
+  request: CloudStreamDownloadRequest,
+  options: { extensionIds?: string[] } = {},
+  deps: CloudStreamDownloaderDeps = {},
+): Promise<CloudStreamDownloadResolveResult> {
+  assertValidCloudStreamDownloadRequest(request);
+  const startedAt = Date.now();
+  const { content, catalog } = await loadContentAndCatalog(client, request, deps);
+  const considered = countEnabledExtensions(catalog);
+
+  const requestedIds = Array.isArray(options.extensionIds) ? options.extensionIds : [];
+  if (requestedIds.length > MAX_SELECTED_EXTENSIONS) {
+    throw new CloudStreamDownloaderError('INVALID_REQUEST', downloaderErrorMessage('INVALID_REQUEST'));
+  }
+
+  let groups: CloudStreamDownloadGroupView[];
+
+  if (requestedIds.length === 0) {
+    // Mode 1: all eligible extensions in deterministic catalog order.
+    const eligible = selectEligibleExtensions(catalog, request.mediaType);
+    const result = eligible.length > 0
+      ? await resolveThroughOrchestrator(
+          content,
+          request,
+          eligible.map(({ adapter }) => adapter.id),
+          deps,
+        )
+      : null;
+    const byAdapter = new Map(result?.groups.map((group) => [group.adapterId, group]) ?? []);
+    groups = eligible.map(({ row, adapter }) => {
+      const group = byAdapter.get(adapter.id);
+      if (group === undefined) {
+        // Defensive: the orchestrator always emits one group per adapter id.
+        return toIneligibleGroupView(adapter.id, 'INTERNAL_ERROR');
+      }
+      return toGroupView(group, extensionDisplayName(row, adapter), result?.diagnostics ?? []);
+    });
+  } else {
+    // Mode 2: explicitly selected extensions in REQUESTED order. De-duplicate
+    // case-insensitively (first occurrence wins), never trusting client ids.
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const rawId of requestedIds) {
+      if (typeof rawId !== 'string' || rawId.length === 0 || rawId.length > 200) continue;
+      const key = rawId.trim().toLowerCase();
+      if (key.length === 0 || seen.has(key)) continue;
+      seen.add(key);
+      ordered.push(rawId.trim());
+    }
+
+    const rowByKey = new Map(catalog.extensions.map((row) => [row.internal_name.toLowerCase(), row] as const));
+    const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+
+    const resolvable: Array<{ row: CloudStreamExtensionSelectionRow; adapter: MaveroCloudStreamAdapter }> = [];
+    const structured: Array<{ extensionId: string; code: CloudStreamDownloaderErrorCode }> = [];
+    for (const requestedId of ordered) {
+      const row = rowByKey.get(requestedId.toLowerCase());
+      if (row === undefined) {
+        structured.push({ extensionId: requestedId, code: 'EXTENSION_NOT_FOUND' });
+        continue;
+      }
+      if (!repoEnabled.has(row.repository_id) || !row.enabled) {
+        structured.push({ extensionId: requestedId, code: 'EXTENSION_DISABLED' });
+        continue;
+      }
+      const adapter = lookupCloudStreamAdapterInstance(row.internal_name);
+      if (adapter === null) {
+        structured.push({ extensionId: requestedId, code: 'ADAPTER_NOT_AVAILABLE' });
+        continue;
+      }
+      if (!adapterSupportsMediaType(adapter, request.mediaType)) {
+        structured.push({ extensionId: requestedId, code: 'UNSUPPORTED_MEDIA' });
+        continue;
+      }
+      resolvable.push({ row, adapter });
+    }
+
+    const result = resolvable.length > 0
+      ? await resolveThroughOrchestrator(content, request, resolvable.map(({ adapter }) => adapter.id), deps)
+      : null;
+    const byAdapter = new Map(result?.groups.map((group) => [group.adapterId, group]) ?? []);
+    const structuredByCanonical = new Map<string, CloudStreamDownloaderErrorCode>();
+    for (const item of structured) structuredByCanonical.set(item.extensionId, item.code);
+
+    // Emit groups in the REQUESTED order (stable — never completion order).
+    groups = ordered.map((requestedId) => {
+      const canonical = structuredByCanonical.get(requestedId);
+      if (canonical !== undefined) return toIneligibleGroupView(requestedId, canonical);
+      // Eligible: find the resolvable entry whose canonical id matches.
+      const match = resolvable.find(
+        ({ adapter }) => adapter.id.toLowerCase() === requestedId.toLowerCase(),
+      );
+      if (match === undefined) return toIneligibleGroupView(requestedId, 'EXTENSION_NOT_FOUND');
+      const group = byAdapter.get(match.adapter.id);
+      if (group === undefined) return toIneligibleGroupView(match.adapter.id, 'INTERNAL_ERROR');
+      return toGroupView(group, extensionDisplayName(match.row, match.adapter), result?.diagnostics ?? []);
+    });
+  }
+
+  logResolutionSummary(request, content.tmdbId, groups, considered, Date.now() - startedAt);
+  return { media: toMediaView(content, request), groups, consideredExtensions: considered };
+}
+
+// ---------------------------------------------------------------------------
+// Public API — single targeted extension
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves ONE extension for a title (the future per-tab CS-4 flow).
+ *
+ * Validation failures surface as typed `CloudStreamDownloaderError`s the
+ * endpoint maps to structured envelope errors (404/409/400) — the client
+ * supplied extension id is resolved through the DB + code registry FIRST:
+ * arbitrary unregistered adapter ids are never executed.
+ * Resolution failures (timeout/extractor/network) are GROUP results
+ * (partial-success contract), not envelope errors.
+ */
+export async function resolveCloudStreamExtensionDownload(
+  client: CloudStreamClient,
+  request: CloudStreamDownloadRequest,
+  extensionId: string,
+  deps: CloudStreamDownloaderDeps = {},
+): Promise<CloudStreamExtensionDownloadResult> {
+  assertValidCloudStreamDownloadRequest(request);
+  if (typeof extensionId !== 'string' || extensionId.length === 0 || extensionId.length > 200) {
+    throw new CloudStreamDownloaderError('INVALID_REQUEST', downloaderErrorMessage('INVALID_REQUEST'));
+  }
+  const startedAt = Date.now();
+  const { content, catalog } = await loadContentAndCatalog(client, request, deps);
+
+  const row = catalog.extensions.find(
+    (candidate) => candidate.internal_name.toLowerCase() === extensionId.trim().toLowerCase(),
+  );
+  if (row === undefined) {
+    throw new CloudStreamDownloaderError('EXTENSION_NOT_FOUND', downloaderErrorMessage('EXTENSION_NOT_FOUND'));
+  }
+  const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+  if (!repoEnabled.has(row.repository_id) || !row.enabled) {
+    throw new CloudStreamDownloaderError('EXTENSION_DISABLED', downloaderErrorMessage('EXTENSION_DISABLED'));
+  }
+  const adapter = lookupCloudStreamAdapterInstance(row.internal_name);
+  if (adapter === null) {
+    throw new CloudStreamDownloaderError('ADAPTER_NOT_AVAILABLE', downloaderErrorMessage('ADAPTER_NOT_AVAILABLE'));
+  }
+  if (!adapterSupportsMediaType(adapter, request.mediaType)) {
+    throw new CloudStreamDownloaderError('UNSUPPORTED_MEDIA', downloaderErrorMessage('UNSUPPORTED_MEDIA'));
+  }
+
+  const result = await resolveThroughOrchestrator(content, request, [adapter.id], deps);
+  const group = result.groups.find((candidate) => candidate.adapterId === adapter.id);
+  if (group === undefined) {
+    // Defensive: the orchestrator always emits one group per adapter id.
+    throw new CloudStreamDownloaderError('INTERNAL_ERROR', downloaderErrorMessage('INTERNAL_ERROR'));
+  }
+  const groupView = toGroupView(group, extensionDisplayName(row, adapter), result.diagnostics);
+  logResolutionSummary(
+    request,
+    content.tmdbId,
+    [groupView],
+    countEnabledExtensions(catalog),
+    Date.now() - startedAt,
+  );
+  return { media: toMediaView(content, request), group: groupView };
+}

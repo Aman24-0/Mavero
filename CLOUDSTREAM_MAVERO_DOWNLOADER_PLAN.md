@@ -785,6 +785,30 @@ The final API contract must include:
 -   deterministic response shape,
 -   diagnostics without leaking secrets.
 
+## CS-3 implemented contract (2026-10-02 — see §40.7 for the decisions)
+
+All three endpoints are public GETs following the existing
+`/api/downloader/mavero*` conventions verbatim: bounded request validation →
+per-identity rate limit (separate buckets: `downloaderMavero2` 10/min,
+`…Tabs`/`…Extension` 30/min — additive only) → Adult Mode guard at the
+boundary → server-side resolution via the admin client → `no-store`
+response. No caching anywhere (documented decision, §40.7).
+
+``` text
+GET /api/downloader/mavero2?mediaType=movie&contentId=…&tmdbId=…
+GET /api/downloader/mavero2?mediaType=series&contentId=…&tmdbId=…&season=1&episode=2
+GET /api/downloader/mavero2?…&extensions=Bollyflix,MoviesDrive        (explicit selection, ≤16)
+GET /api/downloader/mavero2/tabs?mediaType=…&contentId=…&tmdbId=…     (no provider fetches)
+GET /api/downloader/mavero2/extension?extensionId=Bollyflix&mediaType=…&contentId=…&tmdbId=…
+```
+
+Response envelopes (`{ ok: true, consideredExtensions, media, groups | tabs }`,
+`{ ok: true, media, group }`; errors `{ ok: false, error: { code, message } }`
+from the closed vocabulary in §40.7) and the request-strictness rules
+(series/anime REQUIRE season+episode 1..10000; movies must NOT carry
+episode context — the resolver `validateEpisodeScope` convention applied at
+the downloader boundary) are recorded in §40.7.
+
 ------------------------------------------------------------------------
 
 # 14. Downloader 2 UI
@@ -1942,21 +1966,27 @@ export type CloudStreamNormalizedLink = {
 Action capability mapping is EXACTLY `stream-actions.ts` — CloudStream
 must never advertise HLS/DASH as ordinary file downloads.
 
-### Downloader 2 API contract (CS-3)
+### Downloader 2 API contract (CS-3 — implemented; decisions in §40.7)
 
 ``` text
 GET /api/downloader/mavero2?mediaType=movie&contentId=…&tmdbId=…
+GET /api/downloader/mavero2?mediaType=series&contentId=…&tmdbId=…&season=1&episode=2
+GET /api/downloader/mavero2?…&extensions=Bollyflix,MoviesDrive      (explicit selection, ≤16)
 GET /api/downloader/mavero2/tabs?mediaType=…&contentId=…&tmdbId=…
 GET /api/downloader/mavero2/extension?extensionId=…&mediaType=…&contentId=…&tmdbId=…
 ```
 
-Response envelope mirrors the Stremio downloader: `{ ok: true, tabs |
-groups }` with per-extension groups
-`{ extensionId, extensionName, status: loaded|empty|failed, links: [...] }`;
-errors use the closed `{ ok: false, error: { code, message } }`
-vocabulary. Validation, rate limiting, adult guard, admin-client
-registry reads, and `no-store` follow the existing
-`/api/downloader/mavero*` contract verbatim.
+Response envelope mirrors the Stremio downloader plus a `media` echo (the
+request identity as resolved server-side: mediaType/tmdbId/title/year/
+season/episode): `{ ok: true, consideredExtensions, media, tabs | groups }`
+with per-extension groups `{ extensionId, extensionName, status:
+loaded|empty|failed, links: [...], errorCode?, errorMessage?,
+matchedTitle?, diagnostics? }` and `{ ok: true, media, group }` for the
+extension endpoint; errors use the closed
+`{ ok: false, error: { code, message } }` vocabulary (§40.7 table).
+Validation, rate limiting (SEPARATE mavero2 buckets — additive), adult
+guard, admin-client registry reads, and `no-store` follow the existing
+`/api/downloader/mavero*` contract verbatim. NO caching (§40.7).
 
 ### DB migration design (CS-1)
 
@@ -2148,3 +2178,154 @@ provider sites.
   proxied/fetched by Mavero) — same boundary as stream-actions.
 * Diagnostics record categories/durations/counts, never raw URLs with
   tokens, cookies, or response bodies.
+
+## 40.7 CS-3 Downloader 2 backend finalization (2026-10-02)
+
+Recorded after implementation, per §33/§34 protocol. Everything below is
+implemented at the CS-3 commit (starting HEAD `4b906ec`).
+
+### Extension participation (selection semantics)
+
+An extension participates ONLY when ALL of these hold (the DB is never the
+sole authority — the code registry is authoritative for runtime
+compatibility, D-007):
+
+1. a `cloudstream_extensions` row exists (repository-synced catalog);
+2. its REPOSITORY is enabled (the admin's whole-source switch —
+   repository sync-health `status` never blocks participation: an `error`
+   repository can still have functional extensions);
+3. the extension row itself is enabled;
+4. a Mavero adapter is registered in the code-owned registry;
+5. the adapter supports the requested media type
+   (movie → `supports.movie`; series → `supports.series`; anime →
+   `supports.anime || supports.series` — anime rides the normal
+   series pipeline, content-types §NormalizedMediaItem.isAnime).
+
+`consideredExtensions` = the participation baseline (repo-enabled +
+extension-enabled rows) BEFORE adapter/media filtering — mirrors the
+Stremio `consideredAddons` semantics.
+
+### Selection modes
+
+-   Default: resolve ALL eligible extensions.
+-   `extensions=Bollyflix,MoviesDrive` (≤16, case-insensitive dedup):
+    resolve ONLY those, in the REQUESTED order; each requested id is
+    validated through the DB + code registry — ineligible ids produce
+    structured failed groups (EXTENSION_NOT_FOUND / EXTENSION_DISABLED /
+    ADAPTER_NOT_AVAILABLE / UNSUPPORTED_MEDIA — partial success, one bad
+    selection never fails the request).
+-   `/extension?extensionId=…`: ONE extension; validation-state failures
+    are structured envelope errors (404/409/400), resolution failures are
+    group results.
+
+### Deterministic ordering
+
+The orchestrator emits groups in completion order; the SERVICE re-emits
+them in the SELECTION order (repository creation order → internal_name —
+the CS-1 catalog convention; or the requested order for explicit
+selection). Never fastest-first. Stable across repeated resolutions.
+
+### Deduplication semantics (exact)
+
+CS-2's true-URL dedup applies WITHIN one extension's group (exact
+duplicate URLs collapse). The SAME URL under TWO different extensions is
+intentionally preserved in both groups — provider/source identity stays
+visible to the CS-4 UI.
+
+### Error contract (closed vocabulary)
+
+`INVALID_REQUEST` (400), `EXTENSION_NOT_FOUND` (404), `EXTENSION_DISABLED`
+(409), `ADAPTER_NOT_AVAILABLE` (409), `UNSUPPORTED_MEDIA` (400),
+`NO_RESULTS`, `PROVIDER_TIMEOUT`, `EXTRACTOR_FAILED`, `NETWORK_ERROR`,
+`RATE_LIMITED` (429), `INTERNAL_ERROR` (503 — RESOLUTION_UNAVAILABLE
+parity). Per-group failures carry `errorCode` + a SAFE curated message
+(the CS-2 failure message stays server-side for logs). CS-2 failure
+category mapping: SEARCH_FAILED/LOAD_FAILED/BLOCKED_URL → NETWORK_ERROR;
+NO_MATCH/NO_LINKS → NO_RESULTS; TIMEOUT → PROVIDER_TIMEOUT;
+EXTRACTOR_FAILED → EXTRACTOR_FAILED; UNSUPPORTED → UNSUPPORTED_MEDIA;
+UNEXPECTED → INTERNAL_ERROR.
+
+### Caching decision
+
+NO caching. Resolution results are dynamic (providers rotate domains via
+urls.json, URLs expire, extractors change) — every response is fresh and
+`no-store`. Short-lived caching may be revisited in a later phase only
+with a demonstrated need.
+
+### Concurrency / timeouts
+
+No second fan-out layer: the API layer only orchestrates; the CS-2
+budgets are THE budgets (mapBounded ≤4, 30s/adapter, 40s overall, 10s per
+page fetch — unchanged).
+
+### Security decisions
+
+* Endpoints lazy-import `createSupabaseAdminClient` inside the handler
+  (the adult-guard pattern: production wiring without a top-level `$env`
+  dependency — testability without behavior drift).
+* Rate limits: SEPARATE additive buckets (`downloaderMavero2` 10/min,
+  `downloaderMavero2Tabs` 30/min, `downloaderMavero2Extension` 30/min)
+  so neither downloader ecosystem can lock out the other; ALL
+  pre-existing rules unchanged (test-asserted).
+* Request strictness: series/anime REQUIRE season+episode (1..10000 safe
+  integers, both-or-neither); movies must NOT carry episode context (the
+  resolver `validateEpisodeScope` convention applied at the downloader
+  boundary — a deliberate, documented divergence from the older Stremio
+  endpoints which ignore episode params on movies).
+* `tmdbId` param: bounded sanity check (`^\d{1,12}$` — the 4K endpoint
+  convention); the resolution id comes from the canonical content
+  pipeline (`getDetail` + `normalizeContentIdentifiers`), same semantics
+  as `/api/downloader/mavero`.
+
+### Response model decisions
+
+* `media` echo (additive): the request identity as resolved server-side
+  (mediaType/tmdbId/title/year/season/episode) — satisfies the CS-4/CS-5
+  deep-link needs without a per-link duplicate.
+* `matchedTitle` on groups: the CS-2 adapter-matched page title surfaced
+  through an ADDITIVE field on `CloudStreamResolutionGroup` (the adapters
+  already produced it; the orchestrator previously dropped it).
+* Link views carry NO `headers` field (CS-2 extractors resolve DIRECT
+  URLs needing none; a speculative headers map would invite leaking
+  credentials) and no separate `resolution` field (`quality` IS the
+  resolution label). Action capabilities map EXACTLY onto
+  `stream-actions.ts` (test-asserted per kind).
+* Per-group diagnostics: redaction-safe stage summaries (≤32 stages;
+  durations/statuses/counts/extractor ids — never URLs/cookies/tokens).
+
+### Small CS-2-domain fixes shipped with CS-3 (both additive)
+
+* `runtime/context.ts` + `runtime/dynamic-urls.ts`: `resolveBaseUrl` now
+  forwards the injectable `dnsResolver` into the urls.json fetch. This
+  was a TEST-SEAM gap (production already ran the full SSRF guard with
+  the default resolver — no production behavior change); with the fix,
+  the injected resolver governs EVERY fetch in the runtime, so the
+  zero-egress SSRF test invariant holds.
+* The CS-1 admin_ui suite's "no dynamic import()" invariant evolved to
+  its documented intent: dynamic imports of STATIC Mavero-owned module
+  paths (the adult-guard laziness pattern) are permitted; computed or
+  remote import targets remain forbidden — strengthened, not weakened
+  (same evolution precedent as the CS-2 registry assertion).
+
+### CS-3 file inventory (actual)
+
+``` text
+src/lib/server/cloudstream/downloader/errors.ts        (NEW: closed vocabulary + mapping)
+src/lib/server/cloudstream/downloader/service.ts       (NEW: selection + orchestration + shaping)
+src/routes/api/downloader/mavero2/+server.ts           (NEW)
+src/routes/api/downloader/mavero2/tabs/+server.ts      (NEW)
+src/routes/api/downloader/mavero2/extension/+server.ts (NEW)
+src/lib/shared/cloudstream-types.ts                    (MODIFIED: CS-3 response views, additive)
+src/lib/server/http/rate-limit.ts                      (MODIFIED: 3 additive buckets)
+src/lib/server/cloudstream/types/runtime.ts            (MODIFIED: matchedTitle, additive)
+src/lib/server/cloudstream/resolver/service.ts         (MODIFIED: surface matchedTitle)
+src/lib/server/cloudstream/runtime/context.ts          (MODIFIED: dnsResolver seam fix)
+src/lib/server/cloudstream/runtime/dynamic-urls.ts     (MODIFIED: dnsResolver seam fix)
+scripts/cloudstream_downloader_api_test.ts             (NEW: 144 checks)
+scripts/cloudstream_cs3_live_smoke.ts                  (NEW: manual verify:cloudstream-downloader)
+scripts/cloudstream_admin_ui_test.ts                   (MODIFIED: documented assertion evolution)
+package.json                                           (MODIFIED: chain registration + verify command)
+```
+
+No new DB tables, no migrations (the CS-1 catalog provides everything).
+No UI (CS-4). No downloader-registry changes (CS-5).

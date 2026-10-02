@@ -199,8 +199,9 @@ export async function resolveCloudStream(
         overallController.signal.removeEventListener('abort', propagate);
       }
 
+      const linkResult = result;
       const links = dedupeCloudStreamLinks(
-        (result.links ?? []).map((link) => ({ ...link, provider: adapter.id })),
+        (linkResult.links ?? []).map((link) => ({ ...link, provider: adapter.id })),
       );
 
       groups.push({
@@ -209,6 +210,9 @@ export async function resolveCloudStream(
         status: groupStatusOf(result),
         links,
         ...(result.failure !== undefined && links.length === 0 ? { failure: result.failure } : {}),
+        ...(linkResult.matchedTitle !== undefined && linkResult.matchedTitle.length > 0
+          ? { matchedTitle: linkResult.matchedTitle }
+          : {}),
       });
 
       diagnostics.push({

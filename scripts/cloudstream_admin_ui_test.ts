@@ -178,7 +178,18 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
   for (const [name, source] of files) {
     ok(!/\beval\s*\(/.test(source), `9: ${name} contains no eval()`);
     ok(!/new Function\s*\(/.test(source), `9: ${name} contains no new Function()`);
-    ok(!/\bimport\s*\(/.test(source), `9: ${name} contains no dynamic import()`);
+    // CS-3 evolution (documented in the worklog, intent preserved AND
+    // strengthened): the domain MAY use the repo's documented laziness
+    // pattern (adult-guard precedent) — dynamic imports of STATIC,
+    // Mavero-owned module paths only. Computed/remote dynamic imports stay
+    // forbidden: every import() argument must be a static string literal
+    // anchored to a relative or $lib path. No remote/plugin code can ever
+    // be executed this way.
+    const dynamicImports = [...source.matchAll(/\bimport\s*\(([^)]*)\)/g)];
+    ok(
+      dynamicImports.every((match) => /['"](?:\$lib\/|\.\.?\/)[^'"]*['"]/.test(match[1] ?? '')),
+      `9: ${name} dynamic imports (if any) are STATIC Mavero-owned module paths`,
+    );
   }
   // The only fetch entry point reuses fetchStremioManifest (D-006 — no
   // duplicate HTTP security layer).

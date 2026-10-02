@@ -89,6 +89,13 @@ export const RATE_LIMIT_RULES = {
   downloaderTabs: { limit: 30, windowMs: 60_000 },
   downloader4k: { limit: 20, windowMs: 60_000 },
   downloaderJson: { limit: 20, windowMs: 60_000 },
+  // CS-3 (Mavero Downloader 2 — CloudStream): same cost profile as the
+  // Stremio downloader endpoints. Deliberately SEPARATE buckets so a burst
+  // of Downloader 2 traffic can never lock out the existing Mavero
+  // Downloader (and vice versa) — additive only, existing rules untouched.
+  downloaderMavero2: { limit: 10, windowMs: 60_000 },
+  downloaderMavero2Tabs: { limit: 30, windowMs: 60_000 },
+  downloaderMavero2Extension: { limit: 30, windowMs: 60_000 },
   search: { limit: 30, windowMs: 60_000 },
   stremioSession: { limit: 20, windowMs: 60_000 },
   pairingCreate: { limit: 10, windowMs: 60_000 },

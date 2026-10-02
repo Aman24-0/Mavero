@@ -253,6 +253,12 @@ export type CloudStreamResolutionGroup = {
   status: CloudStreamResolutionGroupStatus;
   links: CloudStreamNormalizedLink[];
   failure?: CloudStreamResolutionFailure;
+  /**
+   * The provider-side page title the adapter matched (CS-3: surfaced for the
+   * Downloader 2 response so the future UI can show what the provider
+   * actually resolved against — honest visibility, never invented).
+   */
+  matchedTitle?: string;
 };
 
 export type CloudStreamResolutionResult = {
