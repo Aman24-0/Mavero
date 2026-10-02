@@ -11,6 +11,7 @@
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
     MAVERO_DOWNLOADER_PROVIDER_ID,
+    MAVERO_DOWNLOADER_2_PROVIDER_ID,
     FOURK_DOWNLOADER_PROVIDER_ID,
     providerUsesExternalServers,
     type DownloadMediaType,
@@ -18,6 +19,7 @@
     type PublicDownloadProvider,
   } from '$lib/shared/downloader';
   import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
+  import MaveroCloudStreamDownload from '$components/MaveroCloudStreamDownload.svelte';
   import FourKDownload from '$components/FourKDownload.svelte';
   import JsonDownload from '$components/JsonDownload.svelte';
   import DownloaderIcon from '$components/source/DownloaderIcon.svelte';
@@ -138,12 +140,12 @@
   // addon-links panel INLINE (no iframe, no URL template) — candidate
   // building is skipped for it entirely.
   $: if (activeProvider && open) {
-    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID || activeProvider.type === 'json') {
-      // Mavero Downloader + 4K Downloader render their own inline panels
-      // (no iframe, no URL template). Generic type='json' providers also
-      // NEVER build a client-side iframe URL — their API is resolved
-      // server-side by /api/downloader/json and rendered inline by
-      // JsonDownload. The iframe URL state stays null for all three.
+    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === MAVERO_DOWNLOADER_2_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID || activeProvider.type === 'json') {
+      // Mavero Downloader + Mavero Downloader 2 + 4K Downloader render their
+      // own inline panels (no iframe, no URL template). Generic type='json'
+      // providers also NEVER build a client-side iframe URL — their API is
+      // resolved server-side by /api/downloader/json and rendered inline by
+      // JsonDownload. The iframe URL state stays null for all four.
       urlCandidates = [];
       alternateUrl = null;
       useAlternate = false;
@@ -360,6 +362,14 @@
   $: hasProviders = filteredProviders.length > 0;
   // Phase 14: the built-in Mavero Downloader renders its addon panel INLINE.
   $: isMaveroDownloader = activeProvider?.slug === MAVERO_DOWNLOADER_PROVIDER_ID;
+  // CS-5: Mavero Downloader 2 renders the CloudStream extensions panel
+  // INLINE — the same slug-special-casing mechanism as the Stremio downloader
+  // above, but a COMPLETELY SEPARATE resolution path (the CS-3 mavero2 API,
+  // never the Stremio addon resolver). Selecting between the two never
+  // crosses state: the {#if} chain below unmounts one panel before the
+  // other mounts (fresh component state, fresh resolution on open — the
+  // URL-lifetime contract, plan §40.7).
+  $: isMaveroDownloader2 = activeProvider?.slug === MAVERO_DOWNLOADER_2_PROVIDER_ID;
   // Phase 19: the 4K Downloader renders its panel INLINE (no iframe — JSON API).
   $: is4kDownloader = activeProvider?.slug === FOURK_DOWNLOADER_PROVIDER_ID;
   // Generic JSON downloader (type='json'): renders the JsonDownload inline
@@ -475,6 +485,27 @@
                surface only presents states and the three link actions. -->
           <div class="dl-mavero-panel">
             <MaveroAddonDownload
+              contentId={maveroContentId}
+              mediaType={maveroMediaType}
+              {tmdbId}
+              {season}
+              {episode}
+              {title}
+              onOpenInSheet={openEmbeddedSheet}
+            />
+          </div>
+        {:else if isMaveroDownloader2}
+          <!-- CS-5: Mavero Downloader 2 — the CloudStream extensions panel
+               rendered INLINE through the SAME slug-special-casing mechanism
+               as the Stremio downloader above. It receives the IDENTICAL
+               media-context props (contentId/mediaType/tmdbId/season/
+               episode/title + the shared embedded-sheet callback) and mounts
+               its own resolution against the CS-3 mavero2 API — the Stremio
+               resolver is never involved, and the two panels never share
+               state (mutually exclusive {#if} branches: switching providers
+               unmounts this panel, so reopening re-resolves fresh). -->
+          <div class="dl-mavero-panel">
+            <MaveroCloudStreamDownload
               contentId={maveroContentId}
               mediaType={maveroMediaType}
               {tmdbId}

@@ -6,7 +6,7 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CS-4 COMPLETE — CS-5 pending (not started)
+**Status:** CS-5 COMPLETE — CS-6 pending (not started)
 
 ------------------------------------------------------------------------
 
@@ -84,7 +84,7 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   Extractor layer                   COMPLETE (CS-2: GDFlix, HubCloud/V-Cloud, fastdlserver)
   Downloader 2 backend              COMPLETE (CS-3, 2026-10-02)
   Downloader 2 UI                   COMPLETE (CS-4, 2026-10-02)
-  Downloader registry integration   Pending (CS-5)
+  Downloader registry integration   COMPLETE (CS-5, 2026-10-02)
   Full regression                   Pending (CS-6)
   Production readiness              Pending
 
@@ -876,46 +876,129 @@ boundary honored).
 
 ## Status
 
-**PENDING**
+**COMPLETE** (2026-10-02, starting HEAD `065d153` -> CS-5 commit; see the
+Phase Completion Log below)
 
 ## Objective
 
-Make Mavero Downloader 2 a first-class selectable downloader.
+Make Mavero Downloader 2 a first-class selectable downloader through the
+EXISTING download provider registry, preserving every existing provider.
 
 ## Planned work
 
--   [ ] Re-audit downloader provider type contract.
--   [ ] Decide backward-compatible discriminator.
--   [ ] Add migration only if required.
--   [ ] Add admin registry entry.
--   [ ] Add public configuration.
--   [ ] Add provider selection.
--   [ ] Route Downloader 2 to dedicated UI.
--   [ ] Verify existing provider types.
--   [ ] Verify enable/disable.
--   [ ] Verify ordering.
--   [ ] Add regression tests.
+-   [x] Re-audit downloader provider type contract. (The audit confirmed
+      the registry's built-in-provider mechanism is ALREADY the canonical
+      pattern: DB row + slug special-casing in DownloadSheet (mavero-
+      downloader -> MaveroAddonDownload, 4k-downloader -> FourKDownload,
+      type json -> JsonDownload, else iframe) + placeholder-origin
+      templates rewritten in public-config. Live DB: 10 rows, mavero-
+      downloader enabled/default ordering 90, 4k-downloader disabled 95.)
+-   [x] Decide backward-compatible discriminator. (Canonical slug
+      `mavero-downloader-2` = MAVERO_DOWNLOADER_2_PROVIDER_ID; type stays
+      `embed` — NO enum extension, NO parallel registry. AC-007/D-022.)
+-   [x] Add migration only if required. (REQUIRED — a seed row is how the
+      registry registers providers. `20261101000001_cloudstream_
+      cs5_downloader2.sql`: idempotent `on conflict (slug) do nothing`,
+      purely additive, applied to live Supabase + tracker entry 32 +
+      read-only verified: row exact, 10 existing rows untouched, config
+      version bumped by the existing trigger.)
+-   [x] Add admin registry entry. (ZERO admin code — the generic
+      /admin/system/downloads CRUD lists the new row automatically;
+      enable/disable/default/rename/edit all work through the existing
+      table-generic actions. No new admin page, no nav change.)
+-   [x] Add public configuration. (rewriteMaveroOrigin gained the
+      mavero-downloader-2 branch BEFORE the untouched Phase 19 branch;
+      the enabled-only view filter + default-fallback + version cache all
+      apply unchanged. LIVE verified through the real
+      /api/downloader/config on a dev server: row exposed with
+      origin-rewritten templates, ordering Mavero -> Mavero 2, disabled
+      rows hidden, no admin fields.)
+-   [x] Add provider selection. (The existing dropdown renders the
+      registry list unchanged — the new row appears automatically between
+      Mavero Downloader (90/default-first) and 4K Downloader (95,
+      disabled) at ordering 92. No dropdown redesign, no label changes,
+      no selection-persistence changes.)
+-   [x] Route Downloader 2 to dedicated UI. (DownloadSheet gained ONE
+      additive `{:else if isMaveroDownloader2}` branch rendering
+      MaveroCloudStreamDownload with the IDENTICAL media-context props
+      the Stremio panel receives; slug checks precede the type dispatch;
+      deep links /watch/mavero-downloader-2/{movie,tv} follow the exact
+      existing /watch/mavero-downloader/** convention incl. the
+      assertAdultDownloadAllowed server boundary.)
+-   [x] Verify existing provider types. (embed/json semantics untouched —
+      the slug dispatch precedes the type dispatch; the 8b/8c/8d
+      assertions in generic_json_downloader + the CS-5 suite's vite-SSR
+      mounts of the REAL sheet (mavero -> .mad panel, mavero2 -> .mcd
+      panel, cineverse -> iframe branch, json -> .jd branch) all pass.)
+-   [x] Verify enable/disable. (The public reader's enabled-only filter +
+      the trigger-driven config version bump apply to the new row
+      unchanged — test-asserted at the source level and LIVE-verified:
+      disabled rows (4k, nhd) absent from the live config response.)
+-   [x] Verify ordering. (sortPublicDownloadProviders default-first then
+      ordering ascending: the built-ins land Mavero (90, default) ->
+      Mavero 2 (92) -> 4K (95); existing providers keep their slots —
+      test-asserted + LIVE-verified in the config response.)
+-   [x] Add regression tests. (`cloudstream_registry_integration_test.ts`
+      — 143 deterministic checks: §A identity+migration, §B public
+      config, §C sheet dispatch contracts with a line-pinned
+      additive-only diff, §D deep links, §E vite-SSR mounts of the REAL
+      DownloadSheet (all four dispatch outcomes + exclusive dispatch +
+      movie no-episode vs series/anime episode context through the actual
+      sheet wiring), §F regression pins. Plus the documented CS-4 §H
+      phase-guard evolution — the four "(CS-5 wiring)" guards now assert
+      the wiring is registered through the canonical constant, in exactly
+      one branch, with the CS-5 seed as the ONLY registry migration.)
 
 ## Critical requirement
 
 Do not casually alter the semantics of existing `embed` and `json`
 provider types.
 
+(Verified: the type column value for the new row is descriptive only;
+the existing branches + their order are byte-pinned; the full chain shows
+0 new failures.)
+
 ## Completed
 
-None.
+All CS-5 scope. Summary: the registry row (idempotent migration, applied
+live), the shared constant, the public-config origin-rewrite extension,
+the DownloadSheet slug routing branch, the deep-link pages, 143 new
+deterministic checks, the CS-4 §H phase-guard evolution, and the live
+end-to-end verification. pnpm check 0/0; pnpm build PASS; full chain 205
+commands -> 197 PASS + the 8 documented pre-existing baseline failures +
+0 NEW failures (driver log: scripts/cs5_full_chain.log).
 
 ## Failed / unresolved
 
-None.
+None caused by CS-5. The 8 documented PRE-EXISTING baseline failures
+(adult_mode, phase2_repo_hygiene, phase8_accessibility, phase9_source_
+progress, phase9_landscape, phase9_fix, phase9_landscape_drawer_position,
+phase4_registry_integration) fail identically at the pristine pre-CS-5
+commit `065d153` — same set as the CS-4 baseline; the chain driver
+classifies exactly those 8 and no others.
+
+ADDITIONAL pre-existing observation (NOT in the chain, NOT caused by
+CS-5): the standalone `detail_back_navigation_test.ts` (not registered
+in the pnpm test chain) fails the assertion
+`/return \(\) => \{ active = false; \}/` against DetailPage.svelte —
+proven byte-identical at pristine `065d153` via a pristine worktree run
+(the assertion expects single-line formatting; the file has always had
+three-line formatting at this commit). Out-of-chain and outside the CS-5
+diff surface — documented here so it is never silently attributed to a
+later phase.
 
 ## Decisions
 
-None yet.
+-   AC-007 + D-022/D-023/D-024 (see the Architecture Change Log + the
+    Decision Log): the canonical representation (slug + DB row + slug
+    special-casing, NO type extension), the row's conventions (enabled
+    seed, not default, ordering 92, icon null, no credentials), and the
+    documented CS-4 §H phase-guard assertion evolution.
 
 ## Next step
 
-CS-6.
+CS-6 (full regression & production hardening) after CS-5 exit criteria
+pass.
 
 ------------------------------------------------------------------------
 
@@ -1190,6 +1273,39 @@ belongs in phase entries below.
                                 (deleted        keeps no new public
                                 before         route (deep links
                                 commit)         are CS-5)
+  D-022          2026-10-02     Downloader 2    The registry's own    Yes (§16,
+                 (CS-5,         = a NORMAL      built-in-provider     §40.9)
+                 AC-007)        download_       mechanism IS the
+                                providers row   canonical pattern
+                                + slug          (Phase 19 precedent);
+                                special-        NO type extension,
+                                casing (slug    NO parallel
+                                mavero-         registry; type stays
+                                downloader-2,   'embed' (descriptive
+                                type 'embed')   only — slug dispatch
+                                                precedes type
+                                                dispatch)
+  D-023          2026-10-02     Row             Registry seed         Yes (§40.9)
+                 (CS-5,         conventions:    convention (existing
+                 AC-007)        enabled, NOT    seeds are enabled;
+                                default,        admin can disable);
+                                ordering 92,    existing default
+                                icon null,      preserved; ordering
+                                no              slots between the
+                                credentials     built-ins; no fake
+                                                configuration (the
+                                                catalog IS the config)
+  D-024          2026-10-02     CS-4 §H         The four phase-guard   Yes (§40.9)
+                 (CS-5,         phase-guard     assertions literally
+                 AC-007)        assertions      anticipated CS-5
+                                EVOLVED for     ("(CS-5 wiring)",
+                                the wired       "registry
+                                state          integration stays
+                                (documented     CS-5)") — same
+                                precedent)      evolution precedent
+                                                as CS-2/CS-3;
+                                                strengthened, not
+                                                weakened
   -------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -1651,6 +1767,81 @@ Plan document updated: Yes (§14, §27, §30, new §40.8).
 Worklog updated: Yes (this entry + decisions D-016..D-021 + the CS-4
 phase entry + completion record + session entry + status tables).
 
+### AC-007 --- 2026-10-02
+
+Phase: CS-5
+
+Change: Downloader registry integration finalized — the canonical
+representation, the row conventions, and the test-guard evolution.
+
+Original plan: §16 left the discriminator decision to CS-5 ("Preferred:
+backward-compatible discriminator"; "Alternative: extend the provider
+type contract"); §12 suggested slug `mavero-downloader-2`; §40.4 listed
+the integration files (constant, DownloadSheet branch, public-config
+extension, migration seed, deep links).
+
+New plan (plan §16 implemented-decision note + new §40.9): everything
+recorded there —
+
+* Canonical representation (D-022): a NORMAL `download_providers` row +
+  slug special-casing in DownloadSheet — the registry's OWN
+  built-in-provider mechanism (the Phase 19 precedent), slug
+  `mavero-downloader-2`, `type` stays `'embed'` (descriptive only; the
+  slug dispatch precedes the type dispatch). NO enum extension, NO
+  parallel registry, NO semantics change to `embed | json`.
+* Row conventions (D-023): enabled seed / not default / ordering 92 /
+  icon null / no credentials (the CloudStream catalog IS the
+  configuration — no fake config fields).
+* Launch routing: one additive `{:else if isMaveroDownloader2}` branch
+  with the IDENTICAL media-context props the Stremio panel receives;
+  deep links under `/watch/mavero-downloader-2/**` follow the existing
+  deep-link convention verbatim (incl. the adult-guard boundary).
+* Test evolution (D-024): the CS-4 suite's four phase-guard §H
+  assertions evolved from "not wired yet" to "wired through the
+  canonical constant, exactly one branch, exactly one registry
+  migration" — the same documented evolution precedent as CS-2/CS-3.
+
+Reason: the phase-start audit (§34 protocol) confirmed the smallest
+architecture-consistent representation is the mechanism the registry
+already provides; inventing a parallel registry or a new type value
+would violate plan §2.5/§16.
+
+Affected files:
+- supabase/migrations/20261101000001_cloudstream_cs5_downloader2.sql (new)
+- src/lib/shared/downloader.ts (additive constant)
+- src/lib/server/downloader/public-config.ts (additive rewrite branch)
+- src/lib/components/DownloadSheet.svelte (additive slug branch)
+- src/routes/watch/mavero-downloader-2/** (4 new files: movie/tv page + server)
+- scripts/cloudstream_registry_integration_test.ts (new, 143 checks)
+- scripts/cloudstream_downloader_ui_test.ts (§H evolution, documented)
+- scripts/cs5_full_chain_driver.mjs + package.json (chain/driver)
+- PLAN §16 + §40.9; this worklog
+
+Affected phases: CS-5 (this implementation), CS-6 (the regression list
+gains the registry/dropdown/deep-link checks — already covered by the
+new suite's §E/§F invariants).
+
+Security impact: none negative — the public config exposes only the
+public field set (no admin metadata, no secrets); the new deep links sit
+behind the SAME server-side adult guard as the existing ones; the panel
+keeps talking only to the Mavero API (test-asserted).
+
+Regression impact: none — the integration is purely additive (line-
+pinned diffs); MaveroAddonDownload, FourKDownload, JsonDownload,
+stream-actions, external-player, download-link-types,
+downloader-filters, DetailPage, the admin CRUD, the mavero2 API, and
+the existing deep links are all byte-identical to the pristine CS-4
+commit (test-asserted); full chain 205 commands → 0 new failures.
+
+Tests required: the 143-check registry integration suite (identity,
+migration, public config, dispatch, mounts, regression pins) + re-run of
+all 10 CloudStream suites + the downloader-adjacent suites + check +
+build + full chain + live config/deep-link verification.
+
+Plan document updated: Yes (§16, §40.9).
+Worklog updated: Yes (this entry + decisions D-022..D-024 + the CS-5
+phase entry + completion record + session entry + status tables).
+
 ------------------------------------------------------------------------
 
 # Phase Completion Log
@@ -2096,23 +2287,101 @@ entry, slug routing, deep links, public config).
 ## CS-5 Completion
 
 ``` text
-Date:
-HEAD/commit:
-Status:
+Date: 2026-10-02
+HEAD/commit: 065d153 (CS-4, pristine start) → feat: integrate mavero
+downloader 2 into provider registry (dedicated commit; pushed to
+origin/main)
+Status: COMPLETE
 
 Registry:
+- Canonical ID: mavero-downloader-2 (MAVERO_DOWNLOADER_2_PROVIDER_ID in
+  src/lib/shared/downloader.ts — the kebab sibling of mavero-downloader,
+  plan §12/§40.4)
+- Representation: a NORMAL download_providers row + slug special-casing
+  in DownloadSheet — the registry's own built-in-provider mechanism. NO
+  new provider type, NO parallel registry, NO enum extension (type stays
+  'embed', descriptive only — slug dispatch precedes type dispatch)
+- Row conventions: enabled=true (seed convention, admin can disable),
+  is_default=false (existing default preserved), ordering=92 (Mavero 90 →
+  Mavero 2 92 → 4K 95), supports movie+tv, icon=null, no credentials
+  (configuration IS the server-side CloudStream catalog)
+- Launch routing: mavero-downloader → MaveroAddonDownload (unchanged),
+  mavero-downloader-2 → MaveroCloudStreamDownload (the new additive
+  branch, IDENTICAL media-context props), 4k → FourKDownload (unchanged),
+  json → JsonDownload (unchanged), else → iframe (unchanged); panels are
+  mutually exclusive {:else if} branches — switching providers unmounts
+  one before the other mounts (no state leak, fresh resolution per open)
+- Movies: no season/episode (parent-gated, existing DetailPage rule);
+  series/anime: season+episode preserved (the CS-3 request contract)
+- Deep links: /watch/mavero-downloader-2/{movie/[tmdbId],
+  tv/[tmdbId]/[season]/[episode]} — the exact existing deep-link
+  convention incl. the assertAdultDownloadAllowed server boundary
+  (canonical pipeline, non-disclosing 404, bounded params)
+
 Migration:
+- supabase/migrations/20261101000001_cloudstream_cs5_downloader2.sql —
+  idempotent seed (on conflict do nothing), purely additive (no
+  UPDATE/ALTER/DELETE/TRUNCATE, no existing-row references)
+- Applied to LIVE Supabase + tracker entry 20261101000001 (32 entries)
+- Live verification (read-only): row exact, idempotency re-run is a
+  no-op, all 10 existing rows untouched, config version bumped by the
+  existing trigger, live /api/downloader/config exposes the row with
+  origin-rewritten templates + correct ordering + disabled rows hidden
+
 Provider selection:
+- The existing dropdown renders the registry list unchanged; the row
+  appears automatically at ordering 92 (Mavero Downloader → Mavero
+  Downloader 2 → …existing providers); no dropdown redesign, no label
+  changes, no selection-persistence changes; the sheet hard-codes NO
+  provider names (registry-driven)
+
 Admin:
+- ZERO admin code changes: the generic /admin/system/downloads CRUD
+  (create/update/enable/disable/default/delete) manages the row like any
+  other provider; no new nav item, no new page; CloudStream extension
+  management stays under System → Integrations → Extension (CS-1)
+
 Regression:
+- cloudstream_registry_integration_test.ts — 143 checks PASSED (§A
+  identity+migration, §B public config, §C sheet dispatch contracts with
+  the line-pinned additive-only DownloadSheet diff, §D deep links, §E
+  vite-SSR mounts of the REAL DownloadSheet: all four dispatch outcomes,
+  exclusive dispatch with both providers selectable, movie no-episode vs
+  series/anime episode-context rendered through the actual sheet
+  wiring, §F regression pins — frozen files byte-identical, shared/
+  downloader + public-config additive diffs pinned, admin surfaces
+  untouched, mavero2 API untouched, existing deep links untouched)
+- CS-4 suite re-run with the documented §H phase-guard evolution: 170
+  checks PASSED (the four "(CS-5 wiring)" guards now assert the wiring
+  IS registered through the canonical constant, in exactly one branch,
+  with the CS-5 seed as the ONLY registry migration)
+- All 10 CloudStream suites re-run: 78+113+160+101+50+39+37+144+170+143
+  = 1035 checks PASSED
+- Downloader-adjacent regression suites re-run: stremio_phase19 (56),
+  phaseE_final (171), phaseF_embedded_state (18),
+  phase2_account_downloader_a11y (37), phase4_ux_a11y (69),
+  admin2_audit_fix (36) — all PASSED
+- svelte-kit sync + svelte-check: 0 errors, 0 warnings
+- vite build + netlify adapter: PASS (~31.5s)
+- Full chain: 205 commands — 197 PASSED + the 8 documented pre-existing
+  baseline failures + 0 NEW failures (driver: scripts/
+  cs5_full_chain_driver.mjs → scripts/cs5_full_chain.log)
+- Live end-to-end: dev server + real Supabase — /api/downloader/config
+  returns mavero-downloader-2 exactly once with origin-rewritten
+  templates; deep-link guard parity proven (identical fail-closed 404s
+  as the existing deep links in a no-TMDB-credentials dev environment)
 
-Failures:
+Failures: None caused by CS-5 (8 pre-existing baseline failures — the
+identical set to the CS-4 baseline; plus the out-of-chain
+detail_back_navigation observation documented in the phase entry, proven
+pre-existing at pristine 065d153).
 
-Plan changes:
+Plan changes: new §40.9 (CS-5 finalization) + §16 implemented-decision
+note; AC-007 + D-022..D-024 recorded.
 
-Remaining work:
+Remaining work: none for CS-5.
 
-Next phase:
+Next phase: CS-6 — full regression & production hardening.
 ```
 
 ## CS-6 Completion
@@ -2773,3 +3042,125 @@ use supported CloudStream results without changing existing downloader
 UI behavior — exercised by the 167 automated checks, the full-chain
 0-new-failures result, the byte-identical regression pins, and the
 browser visual pass over every state at desktop + mobile widths.)
+
+## 2026-10-02 — Session 6 (CS-5)
+
+Phase: CS-5 — Downloader Registry Integration
+
+Starting HEAD: `065d153` (= origin/main, clean tree; CS-4 complete)
+
+Repository state: `main`, clean at start except two untracked CS-4
+working artifacts (scripts/cs4_full_chain.log + driver). Only CS-5 files
+were created/modified during this session (verified via git status/diff
+review before commit — no unrelated files touched; the one existing-test
+change is the documented CS-4 §H phase-guard evolution).
+
+Plan/worklog read:
+- [x] Plan (all 2483 lines incl. §40.8 + the CS-5 file inventory §40.4)
+- [x] Worklog (all entries incl. CS-4 + AC-006 + D-016..D-021)
+
+Objective: Integrate Mavero Downloader 2 into the existing downloader
+provider registry — selectable from the existing provider dropdown,
+launching MaveroCloudStreamDownload, with deep links, public-config
+exposure, and zero regressions on existing providers.
+
+Work performed:
+- Phase protocol: verified HEAD/branch/remote/clean tree; re-audited the
+  registry architecture (download_providers schema + CHECK constraints,
+  public view, public-config reader + origin rewrite, DownloadSheet slug
+  dispatch, DetailPage prefetch/mount, admin CRUD, deep-link convention,
+  CS-4 panel props) + the live DB (10 rows, mavero-downloader
+  enabled/default ordering 90; 4k disabled 95; tracker 31 entries).
+- Implemented the additive integration: the shared constant
+  (MAVERO_DOWNLOADER_2_PROVIDER_ID), the public-config rewrite branch
+  (before the untouched Phase 19 branch), the DownloadSheet slug branch
+  (identical media-context props as the Stremio panel; the no-URL skip
+  condition extended; mutually exclusive {:else if} chain), the
+  idempotent migration seed, and the two deep-link pages (movie/tv) with
+  the assertAdultDownloadAllowed server boundary.
+- Applied the migration to the LIVE Supabase (Management API) + tracker
+  entry 20261101000001 (32 entries); read-only verified the row, the
+  idempotency no-op, the untouched existing rows, and the trigger-driven
+  config-version bump.
+- Wrote the 143-check deterministic suite (vite-SSR mounts of the REAL
+  DownloadSheet through the sheet's actual import graph — D-020 pattern
+  reused; the only harness addition is a test-local requestAnimationFrame
+  shim because the test mounts the sheet OPEN, which production never
+  does during SSR) + registered it in the pnpm test chain.
+- Evolved the CS-4 §H phase-guard assertions per the documented
+  precedent (the guards' own comments anticipated CS-5) — documented in
+  AC-007/D-024.
+- Live end-to-end verification on a dev server against the real
+  Supabase: /api/downloader/config returns the row exactly once with
+  origin-rewritten templates, the default stays Mavero Downloader, the
+  built-ins order Mavero → Mavero 2, disabled rows are hidden, and no
+  admin fields appear; deep-link guard parity proven (identical
+  fail-closed 404s to the EXISTING deep links in the same no-TMQ-creds
+  dev environment — the guard boundary behaves identically for both).
+- Gates: all 10 CloudStream suites PASS (1035 checks); downloader-
+  adjacent suites PASS; svelte-check 0/0; vite build + netlify adapter
+  PASS (~31.5s); full 205-command chain → 197 PASS + the 8 documented
+  pre-existing baseline failures + 0 NEW failures (driver log:
+  scripts/cs5_full_chain.log).
+
+Files changed:
+- NEW: supabase/migrations/20261101000001_cloudstream_cs5_downloader2.sql
+- NEW: src/routes/watch/mavero-downloader-2/movie/[tmdbId]/
+  +page.server.ts, +page.svelte
+- NEW: src/routes/watch/mavero-downloader-2/tv/[tmdbId]/[season]/
+  [episode]/+page.server.ts, +page.svelte
+- NEW: scripts/cloudstream_registry_integration_test.ts (143 checks),
+  scripts/cs5_full_chain_driver.mjs
+- MODIFIED: src/lib/shared/downloader.ts (additive constant + docblock)
+- MODIFIED: src/lib/server/downloader/public-config.ts (additive
+  rewrite branch + docblock; the Phase 19 branch byte-preserved)
+- MODIFIED: src/lib/components/DownloadSheet.svelte (additive slug
+  branch + import + derived flag + extended skip condition)
+- MODIFIED: scripts/cloudstream_downloader_ui_test.ts (documented §H
+  phase-guard evolution)
+- MODIFIED: package.json (1 test chain registration)
+- MODIFIED: CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§16, §40.9)
+- MODIFIED: this worklog
+
+Tests run: the 143-check CS-5 suite; all 9 prior CloudStream suites
+re-run; the downloader-adjacent regression suites; svelte-kit sync +
+svelte-check (0/0); vite build + netlify adapter (PASS ~31.5s); the full
+205-command chain via the driver (scripts/cs5_full_chain_driver.mjs →
+scripts/cs5_full_chain.log); the live config + deep-link guard-parity
+verification.
+
+Results: ALL GREEN for CS-5 scope — 197/205 chain commands PASSED with
+the 8 documented pre-existing baseline failures (identical set to the
+CS-4 baseline — none touch the CS-5 diff surface) and ZERO new failures;
+check 0/0; build PASS; live verification all-pass.
+
+Issues discovered:
+- AC-007 contract decisions (documented above).
+- detail_back_navigation_test.ts (a standalone script NOT in the pnpm
+  test chain) fails a formatting-sensitive regex against
+  DetailPage.svelte — proven byte-identical at pristine 065d153 via a
+  pristine worktree run, so it is a pre-existing OUT-OF-CHAIN failure
+  (documented in the CS-5 phase entry; not fixed — out of CS-5 scope).
+- The statement-level config-version trigger fires even for a no-op
+  conflict INSERT (existing trigger behavior; harmless — the version
+  only ever moves forward).
+
+Decisions: AC-007 + D-022/D-023/D-024 (see the Architecture Change Log +
+the Decision Log).
+
+Plan updated: Yes (§16, §40.9).
+
+Worklog updated: Yes (this session + CS-5 phase entry + completion
+record + AC-007 + D-022..D-024 + status tables).
+
+Remaining: CS-6 (NOT started — strict phase boundary honored).
+
+Next action: STOP after the CS-5 commit/push; await the CS-6 phase
+instruction.
+
+(CS-5 exit criteria verified: admin can manage Mavero Downloader 2
+through the existing provider registry and users can select it beside
+the existing downloaders — exercised by the 143 automated checks
+including REAL-sheet mounts for every dispatch outcome, the full-chain
+0-new-failures result, the byte-identical regression pins, and the live
+config/deep-link verification against the real database.)

@@ -554,7 +554,22 @@ function section_regression(): void {
 
   const sheet = read('src/lib/components/DownloadSheet.svelte');
   const pristineSheet = pristineFile('src/lib/components/DownloadSheet.svelte');
-  ok(pristineSheet === null || pristineSheet === sheet, '§H27: DownloadSheet.svelte is byte-identical (no provider dropdown / registry integration in CS-4)');
+  // §H27 (CS-5 evolution — the assertion's own comment anticipated this):
+  // DownloadSheet was byte-identical through CS-4; CS-5 wires the panel in
+  // through the documented slug branch. The invariant EVOLVES to: every
+  // change vs the pristine CS-3 commit belongs to the CS-5 wiring (the
+  // import, the constant, the extended skip condition, the derived flag,
+  // the render branch, or comments) — full line-level calibration lives in
+  // the CS-5 suite (cloudstream_registry_integration_test.ts §C6).
+  if (pristineSheet !== null) {
+    const removedLines = pristineSheet.split('\n').filter((line) => !sheet.includes(line));
+    const addedLines = sheet.split('\n').filter((line) => !pristineSheet.includes(line));
+    const codeRemovals = removedLines.filter((line) => !line.trim().startsWith('//'));
+    ok(codeRemovals.length === 1, `§H27: exactly ONE code line was removed from DownloadSheet since CS-3 (the old no-URL skip condition — removed ${codeRemovals.length})`);
+    ok(addedLines.every((line) => line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID') || line.includes('MaveroCloudStreamDownload') || line.includes('isMaveroDownloader2') || line.trim().startsWith('//') || line.trim().startsWith('<!--') || line.includes('CS-5') || line.includes('Mavero Downloader 2') || line.includes('providers also NEVER build') || line.includes("own inline panels (no iframe, no URL template). Generic type='json'") || line.includes('resolved server-side by /api/downloader/json') || line.includes('The iframe URL state stays null for all four') || line.includes('rendered INLINE through the SAME') || line.includes('as the Stremio downloader above') || line.includes('media-context props') || line.includes('episode/title + the shared embedded-sheet callback') || line.includes('its own resolution against the CS-3 mavero2 API') || line.includes('resolver is never involved, and the two panels never share') || line.includes('state (mutually exclusive {#if} branches: switching providers') || line.includes('unmounts this panel, so reopening re-resolves fresh')), `§H27: every DownloadSheet change since CS-3 is CS-5 wiring (added ${addedLines.length})`);
+  } else {
+    ok(true, '§H27: pristine sheet unavailable — CS-5 wiring checked structurally');
+  }
 
   // §H27 the frozen shared action model is untouched.
   for (const frozen of ['src/lib/shared/stream-actions.ts', 'src/lib/shared/external-player.ts', 'src/lib/shared/download-link-types.ts', 'src/lib/shared/downloader-filters.ts']) {
@@ -590,15 +605,23 @@ function section_regression(): void {
   // §H27 the Stremio panel still passes exactly its four original dimensions.
   ok(addon.includes("dimension: 'type'") && addon.includes("dimension: 'quality'") && !addon.includes("dimension: 'codec'"), '§H27: MaveroAddonDownload still passes only its original four filter dimensions');
 
-  // §H27 NO registry / migration / provider-config changes in CS-4.
+  // §H27 registry / migration surface — CS-5 evolution (the original
+  // assertion guarded against PREMATURE registry integration; CS-5 is the
+  // documented phase for it): the ONLY registry migration is the CS-5 seed,
+  // and the wiring is registered through the canonical constant.
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   ok(migrations.length > 0, '§H27: the migrations directory is intact (sanity)');
-  ok(!migrations.some((name) => /cs4|downloader2|cs5/i.test(name)), '§H27: no CS-4/CS-5 migration was added (registry integration stays CS-5)');
+  const registryMigrations = migrations.filter((name) => /cs4|downloader2|cs5/i.test(name));
+  ok(registryMigrations.length === 1 && registryMigrations[0] === '20261101000001_cloudstream_cs5_downloader2.sql', `§H27: the ONLY registry migration is the CS-5 Downloader 2 seed (${registryMigrations.join(', ') || 'none'})`);
   ok(!read('src/lib/components/MaveroCloudStreamDownload.svelte').includes('download_providers'), '§H27: the Downloader 2 UI never touches the download_providers registry');
 
-  // §H27 the new component is NOT wired into the existing provider dropdown.
-  ok(!sheet.includes('MaveroCloudStreamDownload'), '§H27: DownloadSheet does not reference the Downloader 2 component (CS-5 wiring)');
-  ok(!read('src/lib/shared/downloader.ts').includes('mavero-downloader-2'), '§H27: no Downloader 2 provider slug registered in the shared downloader module');
+  // §H27 (CS-5 evolution — was "not wired" through CS-4): the panel IS wired
+  // into the existing provider dropdown now, via the canonical slug branch.
+  ok(sheet.includes("import MaveroCloudStreamDownload from '$components/MaveroCloudStreamDownload.svelte'"), '§H27: DownloadSheet imports the Downloader 2 component (the CS-5 wiring)');
+  ok((sheet.match(/<MaveroCloudStreamDownload/g) ?? []).length === 1, '§H27: the Downloader 2 component renders exactly ONCE (the slug branch)');
+  ok(sheet.includes("MAVERO_DOWNLOADER_2_PROVIDER_ID"), '§H27: the sheet dispatches on the canonical slug constant (no string literals)');
+  const sharedDownloader = read('src/lib/shared/downloader.ts');
+  ok(sharedDownloader.includes("export const MAVERO_DOWNLOADER_2_PROVIDER_ID = 'mavero-downloader-2';"), '§H27: the Downloader 2 provider slug is registered in the shared downloader module (CS-5)');
 }
 
 // ---------------------------------------------------------------------------

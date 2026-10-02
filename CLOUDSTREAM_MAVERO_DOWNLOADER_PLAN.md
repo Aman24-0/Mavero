@@ -932,8 +932,16 @@ Extend the provider type contract only if:
 -   TypeScript contracts are updated,
 -   existing providers are regression-tested.
 
-The final decision belongs to CS-5 after the current registry is
-inspected again.
+## CS-5 implemented decision (2026-10-02 — see §40.9)
+
+The PREFERRED option was implemented verbatim: the canonical slug
+`mavero-downloader-2` (kebab sibling of `mavero-downloader`, plan §12) is
+the discriminator, registered through the EXACT built-in-provider
+mechanism the registry already uses (DB row + slug special-casing in
+DownloadSheet + origin rewrite in public-config). The `type` column keeps
+its `embed` value — NO enum extension, NO parallel registry, NO change to
+the `embed | json` contract's meaning (the slug dispatch precedes the type
+dispatch, so the column value is descriptive only for built-ins).
 
 ------------------------------------------------------------------------
 
@@ -2480,3 +2488,130 @@ CLOUDSTREAM_MAVERO_WORKLOG.md                         (MODIFIED)
 No DownloadSheet changes, no provider dropdown changes, no
 download_providers/registry changes, no migrations, no new routes —
 all registry integration stays CS-5.
+
+## 40.9 CS-5 Downloader registry integration finalization (2026-10-02)
+
+Recorded after implementation, per §33/§34 protocol. Everything below is
+implemented at the CS-5 commit (starting HEAD `065d153`). AC-007 + D-022
+through D-024 record the decisions.
+
+### Canonical registry representation
+
+``` text
+download_providers row (seeded, idempotent):
+  slug         mavero-downloader-2            (MAVERO_DOWNLOADER_2_PROVIDER_ID)
+  name         Mavero Downloader 2
+  description  Direct links from enabled CloudStream extensions.
+  enabled      true (registry seed convention; admin can disable)
+  is_default   false (the existing default is preserved)
+  ordering     92 (mavero-downloader 90 → 92 → 4k-downloader 95)
+  supports     movie + tv
+  templates    https://mavero.local/watch/mavero-downloader-2/{movie,tv}/…
+               (placeholder origin, rewritten at public-config read time)
+  type         'embed' (descriptive ONLY — slug dispatch precedes type dispatch)
+  icon         null (icon column expects an http(s) URL; null = safe fallback)
+```
+
+NO new provider type value, NO parallel registry, NO admin code change
+(the generic `/admin/system/downloads` CRUD lists the row automatically),
+NO credentials columns (Downloader 2's configuration IS the server-side
+CloudStream catalog — System → Integrations → Extension).
+
+### Launch routing (the existing built-in-provider mechanism, extended)
+
+``` text
+DownloadSheet.svelte slug dispatch (checked BEFORE the type dispatch):
+  mavero-downloader   → MaveroAddonDownload        (Stremio, UNCHANGED)
+  mavero-downloader-2 → MaveroCloudStreamDownload  (CS-5 branch, additive)
+  4k-downloader       → FourKDownload              (UNCHANGED)
+  type json           → JsonDownload               (UNCHANGED)
+  else                → iframe                     (UNCHANGED)
+```
+
+The new branch passes the IDENTICAL media-context props the Stremio panel
+receives (`contentId={maveroContentId}`, `mediaType={maveroMediaType}`,
+`tmdbId`, `season`, `episode`, `title`, `onOpenInSheet={openEmbeddedSheet}`)
+— the drop-in contract the CS-4 panel was built for. Movies receive
+season/episode undefined (parent-gated, the existing DetailPage rule);
+series/anime carry season+episode (the CS-3 request contract); the panels
+are mutually exclusive `{:else if}` branches, so switching providers
+unmounts one before the other mounts — no shared state, fresh resolution
+on each open (the URL-lifetime contract, §40.7).
+
+### Public configuration
+
+`rewriteMaveroOrigin` gained a `mavero-downloader-2` branch BEFORE the
+untouched `mavero-downloader` branch (the Phase 19 rewrite survives
+verbatim); `rewriteMaveroOrigins`/the config endpoint now rewrite BOTH
+built-ins in one pass. The enabled-only view filter, default-fallback,
+version-keyed cache, and the trigger-driven version bump all apply to the
+new row unchanged (a disabled Downloader 2 disappears from the dropdown).
+
+### Deep links
+
+``` text
+src/routes/watch/mavero-downloader-2/movie/[tmdbId]/+page.{server.ts,svelte}
+src/routes/watch/mavero-downloader-2/tv/[tmdbId]/[season]/[episode]/+page.{server.ts,svelte}
+```
+
+The exact convention of the existing `/watch/mavero-downloader/**` pages:
+server-side `assertAdultDownloadAllowed` boundary (canonical pipeline,
+non-disclosing 404, `^\d{1,12}$` tmdbId + 1..10000 season/episode bounds),
+then the page renders the SAME MaveroCloudStreamDownload panel with
+`contentId = movie-${tmdbId} | series-${tmdbId}` and (for tv) the bounded
+season/episode; the movie page passes NO season/episode props.
+
+### Verification approach
+
+* `cloudstream_registry_integration_test.ts` — 143 deterministic checks:
+  §A identity + migration (canonical ID, slug CHECK pattern, no
+  duplicates, idempotent seed, no UPDATE/ALTER/DELETE/TRUNCATE, no
+  existing-row references, no secrets, exactly one new migration);
+  §B public config (origin rewrite both ways, null-template fallback,
+  non-built-ins untouched, ordering Mavero→Mavero2→4K, media filtering,
+  enabled-only source assertions, no admin fields); §C sheet dispatch
+  contracts (branch order, props parity, additive-only multiset diff
+  pinned line-by-line, dropdown registry-driven, selection persistence
+  untouched); §D deep links (prop derivation, adult-guard parity, template
+  match); §E vite-SSR mounts of the REAL DownloadSheet (routing for all
+  four dispatch outcomes, exclusive dispatch with both providers
+  selectable, movie no-episode vs series/anime episode context rendered
+  through the actual sheet wiring); §F regression pins (frozen files
+  byte-identical, shared/downloader + public-config additive diffs
+  pinned, admin surfaces untouched, mavero2 API untouched, existing deep
+  links untouched).
+* CS-4 §H phase-guard assertions evolved (documented): the four
+  "(CS-5 wiring)" / "registry integration stays CS-5" guards now assert
+  the wiring IS registered, through the canonical constant, in exactly
+  one branch, with the CS-5 seed as the only registry migration.
+* Live verification against the REAL Supabase: migration applied +
+  idempotency re-run no-op + row exact + all 10 existing rows untouched +
+  tracker entry registered (32) + live `/api/downloader/config` returns
+  the row with origin-rewritten templates, correct ordering, and disabled
+  rows hidden. Deep-link guard parity verified (identical fail-closed
+  404s as the existing deep links without TMDB credentials in the dev
+  environment — the guard boundary behaves the same for both pages).
+
+### CS-5 file inventory (actual)
+
+``` text
+supabase/migrations/20261101000001_cloudstream_cs5_downloader2.sql (NEW seed)
+src/lib/shared/downloader.ts                  (MODIFIED: + MAVERO_DOWNLOADER_2_PROVIDER_ID, additive)
+src/lib/server/downloader/public-config.ts    (MODIFIED: + rewrite branch, additive)
+src/lib/components/DownloadSheet.svelte       (MODIFIED: + slug routing branch, additive)
+src/routes/watch/mavero-downloader-2/movie/[tmdbId]/+page.server.ts   (NEW)
+src/routes/watch/mavero-downloader-2/movie/[tmdbId]/+page.svelte      (NEW)
+src/routes/watch/mavero-downloader-2/tv/[tmdbId]/[season]/[episode]/+page.server.ts (NEW)
+src/routes/watch/mavero-downloader-2/tv/[tmdbId]/[season]/[episode]/+page.svelte    (NEW)
+scripts/cloudstream_registry_integration_test.ts (NEW: 143 checks)
+scripts/cloudstream_downloader_ui_test.ts     (MODIFIED: §H phase-guard evolution)
+scripts/cs5_full_chain_driver.mjs             (NEW: chain driver → cs5_full_chain.log)
+package.json                                  (MODIFIED: chain registration)
+CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md         (MODIFIED: §16, §40.9)
+CLOUDSTREAM_MAVERO_WORKLOG.md                 (MODIFIED)
+```
+
+The resolver path, the mavero2 API, the Downloader 2 UI component, the
+Stremio downloader, the direct-streaming providers, and the admin CRUD are
+all untouched — the integration is purely additive, exactly as §3/§31
+require.

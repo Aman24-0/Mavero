@@ -25,7 +25,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import type { PublicDownloadProvider } from '$lib/shared/downloader';
-import { MAVERO_DOWNLOADER_PROVIDER_ID, sortPublicDownloadProviders } from '$lib/shared/downloader';
+import { MAVERO_DOWNLOADER_2_PROVIDER_ID, MAVERO_DOWNLOADER_PROVIDER_ID, sortPublicDownloadProviders } from '$lib/shared/downloader';
 
 type DownloadClient = SupabaseClient<Database>;
 
@@ -170,14 +170,29 @@ export async function getPublicDownloadConfigOrEmpty(client: DownloadClient): Pr
 /** The stable id/slug of the Mavero Downloader provider (defined in $lib/shared/downloader). */
 export { MAVERO_DOWNLOADER_PROVIDER_ID };
 
+/** The stable id/slug of the Mavero Downloader 2 provider (defined in $lib/shared/downloader). */
+export { MAVERO_DOWNLOADER_2_PROVIDER_ID };
+
 /**
- * Rewrites the Mavero Downloader URL templates to the current request origin.
- * The DB stores `https://mavero.local/...` (placeholder); this function
- * replaces it with the real origin so the deep-link pages resolve.
+ * Rewrites the Mavero Downloader / Mavero Downloader 2 URL templates to the
+ * current request origin. Both built-in rows store `https://mavero.local/...`
+ * placeholders (to satisfy the DB's HTTPS CHECK); this function replaces the
+ * placeholder host with the real origin so the standalone deep-link pages
+ * resolve.
  *
- * If the row is NOT the Mavero Downloader, returns it unchanged.
+ * If the row is neither built-in provider, returns it unchanged. The
+ * mavero-downloader branch is preserved verbatim (Phase 19 behavior); the
+ * mavero-downloader-2 branch is the additive CS-5 twin (same mechanism, its
+ * own /watch/mavero-downloader-2/... deep-link paths).
  */
 export function rewriteMaveroOrigin(provider: PublicDownloadProvider, origin: string): PublicDownloadProvider {
+  if (provider.slug === MAVERO_DOWNLOADER_2_PROVIDER_ID) {
+    return {
+      ...provider,
+      movieUrlTemplate: provider.movieUrlTemplate?.replace('https://mavero.local', origin) ?? `${origin}/watch/mavero-downloader-2/movie/{tmdbId}`,
+      tvUrlTemplate: provider.tvUrlTemplate?.replace('https://mavero.local', origin) ?? `${origin}/watch/mavero-downloader-2/tv/{tmdbId}/{season}/{episode}`,
+    };
+  }
   if (provider.slug !== MAVERO_DOWNLOADER_PROVIDER_ID) return provider;
   return {
     ...provider,
@@ -187,7 +202,9 @@ export function rewriteMaveroOrigin(provider: PublicDownloadProvider, origin: st
 }
 
 /**
- * Rewrites ALL Mavero Downloader entries in a config to the current origin.
+ * Rewrites ALL Mavero built-in downloader entries (Mavero Downloader and
+ * Mavero Downloader 2) in a config to the current origin. Non-built-in
+ * providers pass through unchanged.
  */
 export function rewriteMaveroOrigins(config: PublicDownloadConfig, origin: string): PublicDownloadConfig {
   return {

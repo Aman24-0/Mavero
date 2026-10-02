@@ -44,6 +44,20 @@ export type DownloadMediaType = 'movie' | 'tv';
 export const MAVERO_DOWNLOADER_PROVIDER_ID = 'mavero-downloader';
 
 /**
+ * The stable slug of the BUILT-IN "Mavero Downloader 2" provider (CS-5,
+ * CloudStream). Same registry mechanism as MAVERO_DOWNLOADER_PROVIDER_ID:
+ * the row is seeded in download_providers (migration
+ * 20261101000001_cloudstream_cs5_downloader2.sql), the public config
+ * endpoint rewrites its placeholder templates to the request origin, and
+ * the DownloadSheet recognizes the slug and renders the
+ * MaveroCloudStreamDownload panel INLINE (CloudStream extensions — a
+ * completely separate resolution path from the Stremio addon panel).
+ * Kept here (shared, pure) so the server injector/rewriter, the client
+ * sheet, and the tests all reference ONE constant.
+ */
+export const MAVERO_DOWNLOADER_2_PROVIDER_ID = 'mavero-downloader-2';
+
+/**
  * The stable slug of the "4K Downloader" provider (Phase 19).
  * Backed by the downloads.shegu.st JSON API. The DownloadSheet recognizes
  * this slug and renders the FourKDownload panel INLINE (no iframe — the
