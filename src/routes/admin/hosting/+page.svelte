@@ -2,16 +2,27 @@
   /**
    * Admin 2.0 — Hosting Control workspace.
    *
-   * ARCHITECTURE: Hosting Control is the single hosting/operations workspace.
-   * It contains 5 tabs:
-   *   - Providers — provider overview + health + capabilities
-   *   - Sync — provider sync + detached assets
+   * ARCHITECTURE (final 3-issue fix — Hosting navigation consolidation):
+   * Hosting Control is the single hosting/operations workspace with 3 tabs:
+   *   - Providers — provider overview + health + capabilities + ALL sync
+   *     actions (Refresh health + Sync all providers in the page action
+   *     area, per-provider Sync on each card)
    *   - Jobs — active + recent upload operations
    *   - Activity — immutable audit timeline (media_operations)
-   *   - Attention — failed/stale/unconfigured/degraded items
    *
-   * The old standalone Operations Center page (/admin/operations) now
-   * redirects to /admin/hosting?tab=jobs.
+   * The separate Sync tab was removed as redundant: the provider page
+   * already hosts every sync affordance. The Sync-all backend action
+   * (POST /api/admin/media/sync, no provider param), the per-provider
+   * sync backend (POST /api/admin/media/sync?provider=<adapter>), the
+   * sync service, and sync jobs/history are all preserved unchanged —
+   * only the redundant separate UI section is gone.
+   *
+   * Legacy URLs redirect server-side (+page.server.ts):
+   *   /admin/hosting?tab=sync      → /admin/hosting (Providers)
+   *   /admin/hosting?tab=attention → /admin/hosting (Providers)
+   *   /admin/hosting?tab=assets    → /admin/media/library
+   *   /admin/hosting?tab=history   → ?tab=activity
+   *   /admin/operations?tab=X      → /admin/hosting?tab=X
    */
 
   import { onMount } from 'svelte';
@@ -20,10 +31,8 @@
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminHostingProviders from '$lib/components/admin2/AdminHostingProviders.svelte';
-  import AdminHostingSync from '$lib/components/admin2/AdminHostingSync.svelte';
   import AdminOpsJobs from '$lib/components/admin2/AdminOpsJobs.svelte';
   import AdminOpsHistory from '$lib/components/admin2/AdminOpsHistory.svelte';
-  import AdminOpsAttention from '$lib/components/admin2/AdminOpsAttention.svelte';
   import type { HostingProviderOverview } from '$lib/shared/hosting-types';
   import type { OpsBadgeCounts } from '$lib/shared/operations-types';
   import type { PageData } from './$types';
@@ -33,7 +42,7 @@
   // ============================================================
   // Tab state — URL-driven
   // ============================================================
-  const VALID_TABS = new Set(['providers', 'sync', 'jobs', 'activity', 'attention']);
+  const VALID_TABS = new Set(['providers', 'jobs', 'activity']);
   // svelte-ignore state_referenced_locally
   let currentTab = $state<string>(VALID_TABS.has(data.initialTab) ? data.initialTab : 'providers');
   // svelte-ignore state_referenced_locally
@@ -82,10 +91,34 @@
   }
 
   // ============================================================
-  // Sync handler
+  // Sync handlers — same backend actions as before consolidation
   // ============================================================
   let syncError = $state<string | null>(null);
 
+  /**
+   * Sync ALL providers — the exact same backend action the old Sync tab's
+   * "Sync all providers" button used: POST /api/admin/media/sync with no
+   * provider parameter (SyncService.syncAll). No new sync system.
+   */
+  async function syncAllProviders(): Promise<void> {
+    syncError = null;
+    try {
+      const res = await fetch('/api/admin/media/sync', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        syncError = data?.error?.message ?? `Sync failed (HTTP ${res.status}).`;
+      } else {
+        await refreshProviders();
+      }
+    } catch (err) {
+      syncError = err instanceof Error ? err.message : 'Network error during sync.';
+    }
+  }
+
+  /**
+   * Per-provider sync — POST /api/admin/media/sync?provider=<adapter>
+   * (SyncService.syncProvider). Used by each provider card's Sync button.
+   */
   async function syncProvider(adapterId: string): Promise<void> {
     syncError = null;
     try {
@@ -124,25 +157,13 @@
   });
 
   // ============================================================
-  // Tabs definition — 5 tabs
+  // Tabs definition — 3 tabs (Providers / Jobs / Activity)
   // ============================================================
   const tabs = $derived([
     { id: 'providers', label: 'Providers' },
-    { id: 'sync', label: 'Sync' },
     { id: 'jobs', label: 'Jobs', badge: badgeCounts.jobsActive > 0 ? String(badgeCounts.jobsActive) : undefined },
     { id: 'activity', label: 'Activity' },
-    { id: 'attention', label: 'Attention', badge: badgeCounts.attentionTotal > 0 ? String(badgeCounts.attentionTotal) : undefined },
   ]);
-
-  const syncProviders = $derived(
-    providers.map((p) => ({
-      adapterId: p.adapterId,
-      name: p.name,
-      enabled: p.enabled && p.sourceEnabled,
-      lastSyncAt: p.lastSyncAt,
-      assetCounts: p.assetCounts,
-    }))
-  );
 </script>
 
 <svelte:head>
@@ -171,19 +192,13 @@
         {providers}
         {providersError}
         onsyncprovider={syncProvider}
-        onopenassets={openAssetsForProvider}
-      />
-    {:else if currentTab === 'sync'}
-      <AdminHostingSync
-        providers={syncProviders}
+        onsyncall={syncAllProviders}
         onopenassets={openAssetsForProvider}
       />
     {:else if currentTab === 'jobs'}
       <AdminOpsJobs {badgeCounts} />
     {:else if currentTab === 'activity'}
       <AdminOpsHistory />
-    {:else if currentTab === 'attention'}
-      <AdminOpsAttention />
     {/if}
   </AdminPage>
 </AdminAppShell>

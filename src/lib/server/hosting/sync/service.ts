@@ -132,9 +132,31 @@ export class SyncService {
       try {
         const existing = maveroAssetMap.get(providerAsset.providerAssetId);
         if (existing) {
+          // PROCESSING-STATE ENRICHMENT (final 3-issue fix — Vidara
+          // processing status): the file-info status alone cannot
+          // distinguish "queued and waiting" from "queued and actively
+          // encoding" (live-verified: /v1/video/info reports "queued"
+          // while Vidara's page shows "Processing 14%"). Without this, a
+          // sync that runs mid-encoding would OVERWRITE the asset's
+          // 'processing' status (set by the upload poll) back to 'queued'.
+          // For pre-active files only, ask the adapter's authoritative
+          // getProcessingStatus (encoding endpoint + file info). Steady
+          // state (all files active/ready) makes ZERO extra API calls.
+          let effectiveStatus = providerAsset.status;
+          let effectiveProviderStatus = providerAsset.providerStatus;
+          if (providerAsset.status === 'queued') {
+            try {
+              const procStatus = await adapter.getProcessingStatus(providerAsset.providerAssetId);
+              effectiveStatus = procStatus.status;
+              effectiveProviderStatus = procStatus.providerStatus;
+            } catch {
+              // Keep the file-info-derived status — enrichment is
+              // best-effort and must NOT fail the sync.
+            }
+          }
           await this.client.from('media_assets').update({
-            status: providerAsset.status,
-            provider_status: providerAsset.providerStatus,
+            status: effectiveStatus,
+            provider_status: effectiveProviderStatus,
             playback_url: providerAsset.playbackUrl,
             thumbnail_url: providerAsset.thumbnailUrl,
             size_bytes: providerAsset.sizeBytes,
@@ -150,13 +172,13 @@ export class SyncService {
             // (reactivateAsset is the only path back to 'available').
             // The processing → available transition still happens for
             // non-detached assets.
-            mavero_status: providerAsset.status === 'ready' && existing.mavero_status !== 'missing' ? 'available' : existing.mavero_status,
+            mavero_status: effectiveStatus === 'ready' && existing.mavero_status !== 'missing' ? 'available' : existing.mavero_status,
           }).eq('id', existing.id);
           updatedAssets += 1;
           // Phase 9: if the synced asset is ready AND still linked (not
           // detached), auto-resolve matching missing-media demand requests.
           // Fire-and-forget — does NOT block sync.
-          if (providerAsset.status === 'ready' && existing.mavero_status !== 'missing') {
+          if (effectiveStatus === 'ready' && existing.mavero_status !== 'missing') {
             await this.resolveDemandForAsset(existing.id);
           }
         } else {

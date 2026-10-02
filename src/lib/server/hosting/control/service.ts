@@ -171,14 +171,33 @@ export class HostingControlService {
     const assetErr = assetRes.error;
     // assetCounts is partial-failure — if the query fails, we still return
     // providers with assetCounts=null.
+    //
+    // TOTAL-ASSETS SEMANTICS (final 3-issue fix): `total` and `ready` count
+    // ONLY currently-usable assets — rows satisfying the project's canonical
+    // availability predicate (status='ready' AND mavero_status='available'),
+    // the exact same dual gate the playback resolver uses
+    // (resolver/mavero-hosted.ts) and the Media Library / DemandService use.
+    // Deleted, failed, queued, processing, uploaded, uploading, missing
+    // (detached) and disabled rows are NEVER counted — a provider card that
+    // says "TOTAL ASSETS: 3" with three deleted/failed rows is exactly the
+    // production bug this fixes (live evidence: 3 deleted rows + 1 queued
+    // row rendered as TOTAL 3 / READY 0 while zero files were usable).
+    //
+    // The remaining counters (processing / failed / deleted / detached) are
+    // DIAGNOSTIC breakdowns of the non-usable rows — they intentionally do
+    // NOT sum to `total`. The Media Library remains the full lifecycle
+    // inventory (queued/processing/failed rows stay visible there); the
+    // provider card is the usable-inventory view.
     const countsBySource = new Map<string, { total: number; ready: number; processing: number; failed: number; deleted: number; detached: number }>();
     if (!assetErr && assetRows) {
       for (const row of assetRows as Array<{ provider_source_id: string | null; status: string; mavero_status: string }>) {
         if (!row.provider_source_id) continue;
         const c = countsBySource.get(row.provider_source_id) ?? { total: 0, ready: 0, processing: 0, failed: 0, deleted: 0, detached: 0 };
-        c.total += 1;
-        if (row.status === 'ready') c.ready += 1;
-        else if (row.status === 'processing' || row.status === 'uploaded' || row.status === 'uploading' || row.status === 'queued') c.processing += 1;
+        // Usable = ready + available (canonical playback predicate).
+        if (row.status === 'ready' && row.mavero_status === 'available') {
+          c.total += 1;
+          c.ready += 1;
+        } else if (row.status === 'processing' || row.status === 'uploaded' || row.status === 'uploading' || row.status === 'queued') c.processing += 1;
         else if (row.status === 'failed') c.failed += 1;
         else if (row.status === 'deleted') c.deleted += 1;
         // Detached (NOT "unlinked"): mavero_status='missing' on a non-deleted

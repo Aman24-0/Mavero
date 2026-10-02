@@ -1,11 +1,21 @@
 /**
  * Admin 2.0 — Hosting Control workspace page server.
  *
- * ARCHITECTURE: Hosting Control is the single hosting/operations workspace.
- * Tabs: providers | sync | jobs | activity | attention.
+ * ARCHITECTURE (final 3-issue fix — Hosting navigation consolidation):
+ * Hosting Control is the single hosting/operations workspace.
+ * Tabs: providers | jobs | activity.
  *
- * Legacy /admin/operations?tab=X redirects to /admin/hosting?tab=X.
- * Legacy /admin/hosting?tab=assets redirects to /admin/media/library.
+ * The separate Sync tab was removed — every sync affordance now lives on
+ * the Providers tab (Refresh health + Sync all providers in the page
+ * action area, per-provider Sync on each provider card). The sync
+ * backend actions, service, and audit history are unchanged.
+ *
+ * Legacy redirects (all server-side — no broken routes):
+ *   ?tab=sync      → /admin/hosting          (canonical Providers view)
+ *   ?tab=attention → /admin/hosting          (canonical Providers view)
+ *   ?tab=assets    → /admin/media/library
+ *   ?tab=history   → ?tab=activity
+ *   /admin/operations?tab=X → /admin/hosting?tab=X
  */
 
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
@@ -19,7 +29,7 @@ import type { OpsBadgeCounts } from '$lib/shared/operations-types';
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
-const VALID_TABS = new Set(['providers', 'sync', 'jobs', 'activity', 'attention']);
+const VALID_TABS = new Set(['providers', 'jobs', 'activity']);
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin' });
@@ -39,8 +49,20 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     throw redirect(303, `${url.pathname}?${params.toString()}`);
   }
 
+  // REMOVED TAB REDIRECTS (Hosting navigation consolidation):
+  //   'sync'      — the separate Sync section was consolidated into the
+  //                Providers tab (Sync all providers + Refresh health).
+  //   'attention' — the Attention workspace tab was retired from the
+  //                Hosting IA; failed/stale items remain visible under
+  //                Jobs (Failed/Retryable/Stale filters) and Activity.
+  // Old bookmarks and stale navigation land on the canonical Providers
+  // view (the default tab) — never a broken route.
+  if (tab === 'sync' || tab === 'attention') {
+    throw redirect(303, '/admin/hosting');
+  }
+
   if (!VALID_TABS.has(tab)) {
-    throw error(400, 'Invalid tab. Use ?tab=providers|sync|jobs|activity|attention.');
+    throw error(400, 'Invalid tab. Use ?tab=providers|jobs|activity.');
   }
 
   let providers: HostingProviderOverview[] = [];

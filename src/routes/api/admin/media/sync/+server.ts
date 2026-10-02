@@ -45,6 +45,11 @@ export const GET: RequestHandler = async ({ locals }) => {
   const adminClient = createSupabaseAdminClient();
 
   // Return a summary of current asset state per provider.
+  //
+  // SEMANTICS (final 3-issue fix): `total` and `ready` count ONLY usable
+  // assets (status='ready' AND mavero_status='available' — the canonical
+  // availability predicate shared with HostingControlService.listProviders
+  // and the playback resolver). The diagnostic counters stay unchanged.
   const { data: assets } = await adminClient
     .from('media_assets')
     .select('provider_source_id, status, mavero_status');
@@ -54,9 +59,10 @@ export const GET: RequestHandler = async ({ locals }) => {
     const a = asset as { provider_source_id: string | null; status: string; mavero_status: string };
     const key = a.provider_source_id ?? 'unknown';
     if (!summary[key]) summary[key] = { total: 0, ready: 0, processing: 0, failed: 0, deleted: 0 };
-    summary[key].total += 1;
-    if (a.status === 'ready') summary[key].ready += 1;
-    else if (a.status === 'processing') summary[key].processing += 1;
+    if (a.status === 'ready' && a.mavero_status === 'available') {
+      summary[key].total += 1;
+      summary[key].ready += 1;
+    } else if (a.status === 'processing') summary[key].processing += 1;
     else if (a.status === 'failed') summary[key].failed += 1;
     else if (a.status === 'deleted') summary[key].deleted += 1;
   }

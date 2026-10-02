@@ -48,19 +48,26 @@ function ok(name: string) { passed++; console.log(`  ok - ${name}`); }
   ok(`status=all executes against live schema (${all.total} total: ${uploadRows.length} upload + ${mgmtRows.length} management on page)`);
 
   // 2. status=deleted — SUCCESSFUL provider_delete operations only.
-  //    Live DB: 2 successful + 5 FAILED provider_delete rows. The failed
-  //    ones must NOT appear under Deleted (Issue A fix) — live total = 2.
+  //    GROUND TRUTH is derived from the live media_operations table (the
+  //    production data drifts as admins delete files — e.g. 2 successful
+  //    deletes at the previous audit, 3 after the admin deleted the failed
+  //    test upload). The failed deletes must NOT appear under Deleted.
+  const { data: pdRows } = await client.from('media_operations')
+    .select('status').eq('action', 'provider_delete');
+  const pdLive = (pdRows ?? []) as Array<{ status: string }>;
+  const pdSuccessLive = pdLive.filter((r) => r.status === 'success').length;
+  const pdFailedLive = pdLive.filter((r) => r.status === 'failed').length;
   const deleted = await ops.listJobs({ status: 'deleted', page: 1, limit: 25 });
   assert.ok(deleted.items.every((i) => i.operationType === 'delete'), 'deleted filter returns only delete ops');
   assert.ok(deleted.items.every((i) => i.status === 'ready'), 'every Deleted row is a SUCCESSFUL delete (status ready = media_operations success)');
   assert.ok(deleted.items.every((i) => i.origin === 'management'), 'deleted rows come from media_operations');
-  assert.equal(deleted.total, 2, `live Deleted total must be 2 (successful deletes only; the 5 failed provider_deletes are excluded), got ${deleted.total}`);
-  ok(`status=deleted → ${deleted.total} successful file deletions (5 failed deletes correctly EXCLUDED)`);
+  assert.equal(deleted.total, pdSuccessLive, `live Deleted total must equal the live successful provider_delete count (${pdSuccessLive}), got ${deleted.total}`);
+  ok(`status=deleted → ${deleted.total} successful file deletions (${pdFailedLive} failed deletes correctly EXCLUDED)`);
 
   // 2b. The failed deletes must appear under the FAILED filter instead.
   const failedFilter = await ops.listJobs({ status: 'failed', page: 1, limit: 25 });
   const failedDeletes = failedFilter.items.filter((i) => i.operationType === 'delete' && i.origin === 'management');
-  assert.equal(failedDeletes.length, 5, `live Failed filter must include the 5 failed provider_deletes, got ${failedDeletes.length}`);
+  assert.equal(failedDeletes.length, Math.min(pdFailedLive, 25), `live Failed filter must include the ${pdFailedLive} failed provider_deletes, got ${failedDeletes.length}`);
   assert.ok(failedDeletes.every((i) => i.status === 'failed'));
   // Disjointness: no row in both Deleted and Failed buckets.
   const overlap = deleted.items.filter((d) => failedFilter.items.some((f) => f.id === d.id));
@@ -69,21 +76,26 @@ function ok(name: string) { passed++; console.log(`  ok - ${name}`); }
 
   // 2c. Pagination invariant LIVE — Deleted dataset (2 rows) with limit=1:
   //     page 1 = 1 row + hasMore, page 2 = 1 row + !hasMore, page 3 = empty.
-  const dP1 = await ops.listJobs({ status: 'deleted', page: 1, limit: 1 });
-  assert.equal(dP1.items.length, 1); assert.equal(dP1.total, 2); assert.equal(dP1.hasMore, true);
-  const dP2 = await ops.listJobs({ status: 'deleted', page: 2, limit: 1 });
-  assert.equal(dP2.items.length, 1); assert.equal(dP2.total, 2); assert.equal(dP2.hasMore, false);
-  const dP3 = await ops.listJobs({ status: 'deleted', page: 3, limit: 1 });
-  assert.equal(dP3.items.length, 0, 'no phantom page 3'); assert.equal(dP3.total, 2);
-  ok('Deleted pagination (limit=1): pages 1/1/0, total 2 constant, no phantom page');
+  // (Pagination invariant only meaningful when the Deleted dataset has ≥2
+  // rows — true in the live production data.)
+  if (pdSuccessLive >= 2) {
+    const dP1 = await ops.listJobs({ status: 'deleted', page: 1, limit: 1 });
+    assert.equal(dP1.items.length, 1); assert.equal(dP1.total, pdSuccessLive); assert.equal(dP1.hasMore, true);
+    const dP2 = await ops.listJobs({ status: 'deleted', page: 2, limit: 1 });
+    assert.equal(dP2.items.length, 1); assert.equal(dP2.total, pdSuccessLive); assert.equal(dP2.hasMore, pdSuccessLive > 2);
+    const dP3 = await ops.listJobs({ status: 'deleted', page: pdSuccessLive + 1, limit: 1 });
+    assert.equal(dP3.items.length, 0, 'no phantom page beyond the dataset'); assert.equal(dP3.total, pdSuccessLive);
+    ok(`Deleted pagination (limit=1): total ${pdSuccessLive} constant across pages, no phantom page`);
+  } else {
+    ok(`Deleted pagination check skipped (only ${pdSuccessLive} successful deletes live)`);
+  }
 
   // 3. operationType=delete — the Type filter shows ALL delete outcomes
   //    (status-orthogonal): live = 7 (2 success + 5 failed) ≥ Deleted's 2.
   const deleteType = await ops.listJobs({ operationType: 'delete', page: 1, limit: 25 });
   assert.ok(deleteType.total >= deleted.total, 'Type=Delete File is status-orthogonal (superset of Deleted)');
-  assert.equal(deleteType.total, 7, `live Type=Delete File total must be 7 (all provider_delete outcomes), got ${deleteType.total}`);
-  assert.equal(deleteType.items.filter((i) => i.status === 'failed').length, 5, 'failed deletes visible via Type filter (status column shows Failed)');
-  ok('operationType=delete → 7 rows (all delete outcomes; status shown per row)');
+  assert.equal(deleteType.total, pdSuccessLive + pdFailedLive, `live Type=Delete File total must be ${pdSuccessLive + pdFailedLive} (all provider_delete outcomes), got ${deleteType.total}`);
+  ok(`operationType=delete → ${deleteType.total} rows (all delete outcomes; status shown per row)`);
 
   // 4. status=ready (completed uploads + successful management ops).
   const ready = await ops.listJobs({ status: 'ready', page: 1, limit: 25 });
@@ -118,16 +130,22 @@ function ok(name: string) { passed++; console.log(`  ok - ${name}`); }
   console.log('--- Live smoke: asset inventory read model ---');
   const control = new HostingControlService(client as any);
 
-  // 6. DEFAULT inventory — deleted assets EXCLUDED (live DB has exactly 2
-  //    media_assets, both status='deleted' → default view must be EMPTY).
+  // 6. DEFAULT inventory — deleted assets EXCLUDED. Ground truth is
+  //    derived from live media_assets (production data drifts as admins
+  //    delete/upload files).
+  const { data: liveAssets } = await client.from('media_assets').select('status, mavero_status');
+  const liveRows = (liveAssets ?? []) as Array<{ status: string; mavero_status: string }>;
+  const liveDeletedAssets = liveRows.filter((r) => r.status === 'deleted').length;
+  const liveActiveAssets = liveRows.filter((r) => r.status !== 'deleted').length;
   const def = await control.listAssets({ page: 1, limit: 25 });
   assert.ok(def.items.every((i) => i.status !== 'deleted'), 'no deleted rows in default view');
-  ok(`default (active) inventory: ${def.total} files — live DB's 2 assets are BOTH deleted → correctly excluded (was 2 pre-remediation)`);
+  assert.equal(def.total, liveActiveAssets, `default (active) inventory must equal the live non-deleted asset count (${liveActiveAssets}), got ${def.total}`);
+  ok(`default (active) inventory: ${def.total} files — live DB's ${liveDeletedAssets} deleted assets correctly excluded (was counting them pre-remediation)`);
 
   // 7. Explicit deleted audit view.
   const deletedView = await control.listAssets({ status: 'deleted', page: 1, limit: 25 });
-  assert.equal(deletedView.total, 2, `expected the 2 live deleted assets, got ${deletedView.total}`);
-  ok('explicit status=deleted audit view shows the 2 terminal files');
+  assert.equal(deletedView.total, liveDeletedAssets, `expected the ${liveDeletedAssets} live deleted assets, got ${deletedView.total}`);
+  ok(`explicit status=deleted audit view shows the ${liveDeletedAssets} terminal files`);
 
   // 8. Facet counts — same dataset (all zero for active scope on this DB).
   assert.ok(def.counts, 'counts present');

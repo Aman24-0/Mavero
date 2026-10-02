@@ -480,6 +480,29 @@ export class UploadService {
       })
       .eq('id', op.media_asset_id);
 
+    // PERSIST PROVIDER PROGRESS (final 3-issue fix — Vidara processing
+    // status): while the provider is actively encoding, store the REAL
+    // progress percentage (from the provider's encoding endpoint) on the
+    // operation row (media_upload_operations.progress_percent). The column
+    // already existed but was never written. Jobs surfaces it, the wizard
+    // status line displays it, and each progress write refreshes the
+    // operation row so the stale-reaper sees a live (non-stale) operation.
+    // Playback eligibility is NOT touched: only status='ready' +
+    // mavero_status='available' makes an asset playable; 'processing'
+    // stays non-playable.
+    if (procStatus.status === 'processing' && procStatus.progressPercent != null) {
+      await this.updateOperationState(operationId, 'processing', {
+        progress_percent: procStatus.progressPercent,
+      });
+    } else if (op.status === 'uploaded' && procStatus.status === 'processing') {
+      // Forward transition for an operation still sitting in 'uploaded'
+      // (e.g. a poll raced the /complete state write): the provider has
+      // begun encoding → the operation is 'processing'.
+      await this.updateOperationState(operationId, 'processing', {
+        processing_started_at: new Date().toISOString(),
+      });
+    }
+
     // Update the operation state.
     if (procStatus.status === 'ready') {
       await this.updateOperationState(operationId, 'ready', { ready_at: new Date().toISOString() });

@@ -216,8 +216,12 @@ ok('6b. /admin/media/library page exists — Phase C replaced the placeholder wi
 assert.match(assetsPage, /\/admin\/hosting\?tab=assets/, 'assets page redirects to Hosting Control');
 ok('6c. /admin/media/assets redirects to /admin/hosting?tab=assets (Phase E)');
 
-assert.match(syncPage, /\/admin\/hosting\?tab=sync/, 'sync page redirects to Hosting Control');
-ok('6d. /admin/media/sync redirects to /admin/hosting?tab=sync (Phase E)');
+// [HOSTING NAVIGATION CONSOLIDATION — final 3-issue fix] /admin/media/sync
+// redirects to the canonical /admin/hosting (Providers view) — the separate
+// ?tab=sync target no longer exists. Server-side 303 + client fallback.
+assert.match(syncPage, /\/admin\/hosting/, 'sync page redirects to Hosting Control');
+assert.doesNotMatch(syncPage, /\/admin\/hosting\?tab=sync/, 'sync page no longer targets the removed ?tab=sync');
+ok('6d. /admin/media/sync redirects to /admin/hosting (canonical Providers view — post-consolidation)');
 
 // Phase F: /admin/media/operations, /admin/media/history, /admin/media/stale
 // are now redirects to the unified Operations Center workspace at

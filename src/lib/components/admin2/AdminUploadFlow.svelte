@@ -544,6 +544,11 @@
 
   let pollError = $state('');
   let pollStale = $state(false);
+  // PROVIDER PROGRESS (final 3-issue fix — Vidara processing status): the
+  // poll response carries the provider's REAL encoding percentage
+  // (progressPercent, e.g. 14 while Vidara's page shows "Processing 14%").
+  // Stored here so the step-7 status line can display it.
+  let pollProgress = $state<number | null>(null);
 
   async function pollOnce() {
     if (!flowState.operationId) return;
@@ -560,6 +565,7 @@
         throw new Error(json?.error?.message ?? `Poll failed (HTTP ${res.status})`);
       }
       flowState.operationStatus = json.status;
+      pollProgress = typeof json.progressPercent === 'number' ? json.progressPercent : null;
       pollError = '';
       if (json.ready) {
         stopPolling();
@@ -1186,7 +1192,7 @@
           <div class="progress-block">
             <div class="progress-spinner" aria-hidden="true"></div>
             <div class="progress-info">
-              <div class="progress-status">Status: {flowState.operationStatus}</div>
+              <div class="progress-status">Status: {flowState.operationStatus}{pollProgress != null ? ` · ${pollProgress}%` : ''}</div>
               <div class="progress-meta">
                 {flowState.providerName} · Poll {pollAttempts}/{POLL_MAX_ATTEMPTS}
                 {#if pollError}<span class="poll-error"> · {pollError}</span>{/if}

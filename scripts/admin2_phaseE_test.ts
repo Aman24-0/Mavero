@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs';
 /**
  * Admin 2.0 — Phase E contracts.
  *
- * Phase E is the Hosting Control workspace: Providers, Assets, Sync tabs
- * with real management actions (rename, move, detach, delete, reconcile),
- * provider health, capabilities, quota, unlinked assets, and partial-
- * failure handling.
+ * Phase E is the Hosting Control workspace: Providers / Jobs / Activity
+ * tabs (post Hosting-navigation-consolidation) with real management
+ * actions (rename, move, detach, delete, reconcile), provider health,
+ * capabilities, quota, detached assets, and partial-failure handling.
+ * Sync actions live on the Providers tab (Sync all + per-card Sync).
  *
  * This test pins the contracts that Phase F+ will depend on. It also
  * verifies the audit-driven fixes:
@@ -52,10 +53,10 @@ const hostingPage = readFileSync(new URL('../src/routes/admin/hosting/+page.svel
 const hostingPageServer = readFileSync(new URL('../src/routes/admin/hosting/+page.server.ts', import.meta.url), 'utf8');
 const assetsRedirect = readFileSync(new URL('../src/routes/admin/media/assets/+page.svelte', import.meta.url), 'utf8');
 const syncRedirect = readFileSync(new URL('../src/routes/admin/media/sync/+page.svelte', import.meta.url), 'utf8');
+const syncRedirectServer = readFileSync(new URL('../src/routes/admin/media/sync/+page.server.ts', import.meta.url), 'utf8');
 
 const adminHostingProviders = readFileSync(new URL('../src/lib/components/admin2/AdminHostingProviders.svelte', import.meta.url), 'utf8');
 const adminHostingAssets = readFileSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url), 'utf8');
-const adminHostingSync = readFileSync(new URL('../src/lib/components/admin2/AdminHostingSync.svelte', import.meta.url), 'utf8');
 const adminCapabilityGrid = readFileSync(new URL('../src/lib/components/admin2/AdminCapabilityGrid.svelte', import.meta.url), 'utf8');
 const adminConfirmDialog = readFileSync(new URL('../src/lib/components/admin2/AdminConfirmDialog.svelte', import.meta.url), 'utf8');
 
@@ -374,31 +375,45 @@ assert.match(syncService, /return \{[\s\S]*?providerAdapterId: adapterId[\s\S]*?
 assert.match(syncService, /No hosting adapter for/, 'syncProvider returns error message for unconfigured');
 ok('16b. SyncService.syncProvider returns structured result instead of throwing (Phase E fix)');
 
-// Sync UI
-assert.match(adminHostingSync, /syncAll/, 'Sync UI has syncAll');
-assert.match(adminHostingSync, /syncProvider/, 'Sync UI has syncProvider');
-assert.match(adminHostingSync, /\/api\/admin\/media\/sync/, 'Sync UI calls sync endpoint');
-ok('16c. Sync UI exposes Sync All + per-provider Sync');
+// Sync actions (HOSTING NAVIGATION CONSOLIDATION — final 3-issue fix: the
+// separate Sync tab was removed; Sync-all + per-provider Sync now live on
+// the Providers tab / provider cards. Same backend endpoints as before.)
+assert.match(hostingPage, /syncAllProviders/, 'Hosting page has the sync-all handler');
+assert.match(hostingPage, /'\/api\/admin\/media\/sync', \{ method: 'POST' \}/, 'Sync-all still calls the existing all-provider sync backend (no provider param)');
+assert.match(hostingPage, /syncProvider/, 'Hosting page has the per-provider sync handler');
+assert.match(hostingPage, /\/api\/admin\/media\/sync\?provider=\$\{adapterId\}/, 'Per-provider sync still calls the existing provider-scoped sync backend');
+assert.match(adminHostingProviders, /Sync all providers/, 'Providers tab exposes the Sync all providers action');
+assert.match(adminHostingProviders, /a2-hosting-sync-all/, 'Sync-all button has its consolidated action style');
+assert.match(adminHostingProviders, /Refresh health/, 'Providers tab still exposes Refresh health');
+assert.match(adminHostingProviders, /onsyncall/, 'Providers component accepts the onsyncall callback');
+assert.match(adminHostingProviders, /onsyncprovider/, 'Providers component accepts the per-provider onsyncprovider callback');
+assert.match(adminHostingProviders, /flex-wrap/, 'Providers action area wraps (mobile: no horizontal overflow)');
+assert.doesNotMatch(hostingPage, /AdminHostingSync/, 'Hosting page no longer imports the removed AdminHostingSync component');
+ok('16c. Consolidated Sync UI: Sync-all + Refresh health on Providers tab, per-provider Sync on cards, same backend actions');
 
-// Sync result display
-assert.match(adminHostingSync, /totalProviderAssets/, 'Sync UI shows total provider assets');
-assert.match(adminHostingSync, /updatedAssets/, 'Sync UI shows updated count');
-assert.match(adminHostingSync, /deletedAssets/, 'Sync UI shows deleted count');
-assert.match(adminHostingSync, /unlinkedFileCount/, 'Sync UI shows new unlinked count');
-ok('16d. Sync UI shows discovered, updated, deleted, new unlinked counts');
+// Sync result display — the sync backend + audit still report counts
+// (SyncService result fields; the old per-card result panel went with the
+// removed Sync tab). The API + service assertions above (16a/16b) cover
+// the contract; the provider card count semantics are covered by the
+// dedicated final-3-issue regression test.
+assert.match(syncService, /totalProviderAssets/, 'SyncService still reports totalProviderAssets');
+assert.match(syncService, /updatedAssets/, 'SyncService still reports updatedAssets');
+assert.match(syncService, /deletedAssets/, 'SyncService still reports deletedAssets');
+assert.match(syncService, /unlinkedFiles/, 'SyncService still reports unlinkedFiles');
+ok('16d. SyncService still returns discovered/updated/deleted/unlinked counts (audit + API contract)');
 
 // ============================================================
-// 17. Detached assets display — [final remediation] the Sync tab section
-// is "Detached provider assets" (admin-detached; still linked to a media
-// item). Untracked provider FILES (no media_assets row) are surfaced via
-// the sync result's unlinkedFiles + the Media Library "Link Existing File"
-// header action.
+// 17. Detached assets — [final remediation] detached = mavero_status='missing'
+// on a non-deleted row (still linked to a media item). The dedicated Sync-tab
+// section was removed with the tab (Hosting consolidation); detached assets
+// remain visible in the Media Library (linked/detached filter) and via the
+// POST /api/admin/media/unlinked endpoint (unchanged).
 // ============================================================
 
-assert.match(adminHostingSync, /Detached provider assets/, 'Sync UI has Detached section');
-assert.match(adminHostingSync, /POST.*\/api\/admin\/media\/unlinked/, 'Sync UI calls POST unlinked endpoint (detached semantics)');
-assert.match(adminHostingSync, /still linked to their/, 'Sync UI documents detached = excluded from playback but still linked');
-ok('17a. Sync UI exposes detached assets via POST endpoint');
+assert.match(unlinkedApi, /IS linked to a canonical|DETACHED provider assets/, 'unlinked API documents the distinction (detached, still linked)');
+assert.match(unlinkedApi, /mavero_status.*missing/, 'unlinked API still selects detached assets (mavero_status=missing)');
+assert.match(adminHostingAssets, /detached/, 'Media Library still surfaces detached assets after Sync-tab removal');
+ok('17a. Detached assets still exposed via unlinked endpoint + Media Library (post-consolidation)');
 
 // Detached does NOT incorrectly equate to missing media or untracked files
 assert.match(unlinkedApi, /IS linked to a canonical|DETACHED provider assets/, 'unlinked API documents the distinction (detached, still linked)');
@@ -527,16 +542,21 @@ assert.match(hostingPage, /AdminAppShell/, 'hosting page wraps in AdminAppShell'
 assert.match(hostingPage, /AdminPage/, 'hosting page uses AdminPage framework');
 ok('24a. Hosting page uses AdminAppShell + AdminPage');
 
-// Tab navigation — [final remediation] 5 tabs: the Assets tab moved to the
-// canonical Media Library (/admin/media/library); Operations merged in as
-// Jobs/Activity/Attention. hosting?tab=assets redirects to the library.
+// Tab navigation — [HOSTING NAVIGATION CONSOLIDATION, final 3-issue fix]
+// 3 tabs: Providers / Jobs / Activity. The separate Sync tab was removed
+// (all sync actions live on the Providers tab); the Attention tab was
+// retired from the required IA. hosting?tab=assets → Media Library;
+// hosting?tab=sync|attention → /admin/hosting (server-side redirect).
 assert.match(hostingPage, /tabs=/, 'hosting page uses AdminPage tabs');
 assert.match(hostingPage, /'providers', label: 'Providers'/, 'hosting page has Providers tab');
-assert.match(hostingPage, /'sync', label: 'Sync'/, 'hosting page has Sync tab');
 assert.match(hostingPage, /'jobs', label: 'Jobs'/, 'hosting page has Jobs tab');
 assert.match(hostingPage, /'activity', label: 'Activity'/, 'hosting page has Activity tab');
-assert.match(hostingPage, /'attention', label: 'Attention'/, 'hosting page has Attention tab');
-ok('24b. hosting page has 5 tabs (Providers/Sync/Jobs/Activity/Attention — Assets moved to Media Library)');
+assert.doesNotMatch(hostingPage, /'sync', label: 'Sync'/, 'hosting page has NO Sync tab (consolidated into Providers)');
+assert.doesNotMatch(hostingPage, /'attention', label: 'Attention'/, 'hosting page has NO Attention tab (required IA)');
+assert.match(hostingPageServer, /'providers', 'jobs', 'activity'/, 'server VALID_TABS = providers|jobs|activity');
+assert.match(hostingPageServer, /tab === 'sync' \|\| tab === 'attention'/, 'server redirects legacy sync/attention tabs');
+assert.match(hostingPageServer, /redirect\(303, '\/admin\/hosting'\)/, 'legacy sync/attention tab redirect target is canonical /admin/hosting');
+ok('24b. hosting page has exactly 3 tabs (Providers/Jobs/Activity) + legacy tab redirects');
 
 // Provider cards stack on mobile
 assert.match(adminHostingProviders, /@media \(max-width: 768px\)[\s\S]*?grid-template-columns: 1fr/, 'provider cards stack on mobile');
@@ -553,7 +573,9 @@ ok('24e. Asset drawer is full-width on mobile');
 
 // Old /admin/media/assets + /admin/media/sync redirect to new workspace
 assert.match(assetsRedirect, /\/admin\/hosting\?tab=assets/, 'old assets page redirects to hosting workspace');
-assert.match(syncRedirect, /\/admin\/hosting\?tab=sync/, 'old sync page redirects to hosting workspace');
+assert.match(syncRedirect, /\/admin\/hosting(?!\?tab=sync)/, 'old sync page redirects to the Hosting Control Providers view (no ?tab=sync)');
+assert.match(syncRedirectServer, /redirect\(303, '\/admin\/hosting'\)/, 'legacy sync route redirects server-side to canonical /admin/hosting');
+assert.doesNotMatch(syncRedirectServer, /tab', 'sync'/, 'legacy sync redirect no longer targets the removed ?tab=sync');
 ok('24f. Old /admin/media/assets + /admin/media/sync redirect to new workspace');
 
 // ============================================================
@@ -572,10 +594,14 @@ assert.match(adminHostingAssets, /No matching assets/, 'Assets UI shows no-resul
 assert.match(adminHostingAssets, /No assets yet/, 'Assets UI shows no-assets-yet empty state');
 ok('25b. Assets UI has loading + empty + no-results states');
 
-// Sync loading
-assert.match(adminHostingSync, /a2-sync-unlinked-loading/, 'Sync UI has unlinked loading state');
-assert.match(adminHostingSync, /a2-sync-unlinked-empty/, 'Sync UI has unlinked empty state');
-ok('25c. Sync UI has loading + empty states for unlinked assets');
+// Sync loading — [HOSTING NAVIGATION CONSOLIDATION] the separate Sync tab
+// and its unlinked/detached list went away. Detached assets remain visible
+// in the Media Library; the dedicated final-3-issue test covers the
+// consolidated sync busy/success states on the Providers tab.
+assert.match(adminHostingProviders, /syncAllInProgress/, 'Providers UI has sync-all busy state (consolidated)');
+assert.match(adminHostingProviders, /Syncing…/, 'Providers UI shows Syncing… busy label');
+assert.match(hostingPage, /a2-sync-error/, 'Hosting page still surfaces sync errors via banner');
+ok('25c. Consolidated sync UI has busy + error states (no separate Sync tab)');
 
 // ============================================================
 // 26. Error states
@@ -592,39 +618,32 @@ assert.match(adminHostingAssets, /Failed to load assets/, 'Assets UI shows load-
 assert.match(adminHostingAssets, /a2-assets-retry/, 'Assets UI has retry button');
 ok('26b. Assets UI has error state + retry');
 
-// Sync error
-assert.match(adminHostingSync, /a2-sync-error/, 'Sync UI has error state');
-ok('26c. Sync UI has error state');
+// Sync error — consolidated: the hosting page renders the sync error banner
+// (a2-sync-error) asserted in 25c above.
+assert.match(hostingPage, /Sync failed:/, 'Hosting page shows sync-failure banner copy');
+ok('26c. Consolidated sync UI has error state (hosting page banner)');
 
 // ============================================================
 // 27. Empty states
 // ============================================================
 
-// Sync idle / success / partial / failure states
-assert.match(adminHostingSync, /syncState === 'syncing'/, 'Sync UI has syncing state');
-assert.match(adminHostingSync, /syncState === 'success'/, 'Sync UI has success state');
-assert.match(adminHostingSync, /syncState === 'partial'/, 'Sync UI has partial state');
-assert.match(adminHostingSync, /syncState === 'failed'/, 'Sync UI has failed state');
-ok('27a. Sync UI has idle/syncing/success/partial/failed states');
-
-// Unlinked empty
-assert.match(adminHostingSync, /No detached provider assets/, 'Sync UI shows no-detached empty state');
-ok('27b. Sync UI has unlinked empty state');
+// Sync states — [HOSTING NAVIGATION CONSOLIDATION] the old per-provider
+// result/outcome panel went away with the Sync tab. The sync busy state
+// (Syncing…) is asserted in 25c; errors in 26c; the backend still returns
+// structured per-provider outcomes (asserted in 16a/16b/16d).
+assert.match(adminHostingProviders, /handleSyncAll/, 'Providers UI has the consolidated sync-all handler');
+assert.match(adminHostingProviders, /handleSync\(p\.adapterId\)/, 'Providers UI has the per-provider sync handler (cards)');
+ok('27a. Consolidated sync UI has busy/success-via-refresh states');
 
 // ============================================================
 // 28. Partial failures
 // ============================================================
 
-// Sync per-provider outcome
-assert.match(adminHostingSync, /outcome: 'success' \| 'partial' \| 'failed'/, 'Sync UI has outcome type');
-assert.match(adminHostingSync, /outcomeTone/, 'Sync UI has outcomeTone helper');
-assert.match(adminHostingSync, /outcomeLabel/, 'Sync UI has outcomeLabel helper');
-assert.match(adminHostingSync, /outcomeLabel\(result.outcome\)/, 'Sync UI renders per-provider outcome badge');
-ok('28a. Sync UI shows per-provider outcome (success/partial/failed)');
-
-// Sync partial summary
-assert.match(adminHostingSync, /Sync completed with partial failures/, 'Sync UI shows partial-failure summary');
-ok('28b. Sync UI surfaces partial-failure summary');
+// Sync per-provider outcome — the structured outcome contract lives in
+// the SyncService results + API (16a/16d). The per-provider card busy
+// state is covered by 24c/25c assertions.
+assert.match(adminHostingProviders, /await onsyncprovider\(adapterId\)/, 'Providers card invokes the per-provider sync callback');
+ok('28a. Per-provider sync outcome contract preserved (service + API + card action)');
 
 // ============================================================
 // 29. Admin nav updated for Phase E

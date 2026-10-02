@@ -245,12 +245,20 @@ assert.match(hostingServer, /tab === 'assets'/, 'E9. Hosting server checks for a
 assert.match(hostingServer, /redirect\(303, '\/admin\/media\/library'\)/, 'E10. Hosting server redirects assets tab to Media Library');
 assert.doesNotMatch(hostingServer, /'assets'.*'sync'/, 'E11. Hosting VALID_TABS does not include assets');
 
-// Hosting page has 5 tabs: Providers, Sync, Jobs, Activity, Attention
+// Hosting page: [HOSTING NAVIGATION CONSOLIDATION — final 3-issue fix]
+// Exactly 3 tabs: Providers, Jobs, Activity. The separate Sync tab was
+// removed (Sync all + Refresh health on Providers; per-card Sync); the
+// Attention tab was retired from the required IA. Legacy ?tab=sync and
+// ?tab=attention redirect server-side to /admin/hosting.
 assert.match(hostingPage, /\{ id: 'providers', label: 'Providers' \}/, 'E13. Hosting page has Providers tab');
-assert.match(hostingPage, /\{ id: 'sync', label: 'Sync' \}/, 'E14. Hosting page has Sync tab');
 assert.match(hostingPage, /\{ id: 'jobs', label: 'Jobs'/, 'E15. Hosting page has Jobs tab');
 assert.match(hostingPage, /\{ id: 'activity', label: 'Activity' \}/, 'E16. Hosting page has Activity tab');
-assert.match(hostingPage, /'attention'.*'Attention'/, 'E17. Hosting page has Attention tab');
+assert.doesNotMatch(hostingPage, /\{ id: 'sync', label: 'Sync' \}/, 'E14. Hosting page has NO Sync tab (consolidated into Providers)');
+assert.doesNotMatch(hostingPage, /'attention', label: 'Attention'/, 'E17. Hosting page has NO Attention tab (required IA)');
+assert.match(hostingServer, /tab === 'sync' \|\| tab === 'attention'/, 'E19. Hosting server redirects legacy sync/attention tabs');
+assert.match(hostingServer, /redirect\(303, '\/admin\/hosting'\)/, 'E20. Legacy tab redirect target is canonical /admin/hosting');
+assert.match(hostingPage, /Sync all providers/, 'E21. Providers tab hosts the Sync all providers action');
+assert.match(hostingPage, /syncAllProviders/, 'E22. Hosting page has the sync-all handler (same POST /api/admin/media/sync backend)');
 
 // Operations page redirects to Hosting Control
 assert.match(read('src/routes/admin/operations/+page.server.ts'), /redirect\(303, `\/admin\/hosting/, 'E18. Operations page redirects to Hosting Control');

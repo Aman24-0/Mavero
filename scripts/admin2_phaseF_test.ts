@@ -495,20 +495,23 @@ ok('32c. Attention has error state + retry button');
 // ============================================================
 
 // [final remediation] Operations merged into Hosting Control — the hosting
-// page owns the AdminAppShell/AdminPage + 5 tabs (providers/sync/jobs/
-// activity/attention); the Operations route is a redirect stub.
+// page owns the AdminAppShell/AdminPage + 3 tabs (providers/jobs/activity —
+// post Hosting-navigation-consolidation); the Operations route is a
+// redirect stub. Legacy ?tab=sync / ?tab=attention redirect server-side to
+// /admin/hosting; failed/stale items remain visible under Jobs filters.
 assert.match(hostingPage, /AdminAppShell/, 'Hosting Control page wraps in AdminAppShell');
 assert.match(hostingPage, /AdminPage/, 'Hosting Control page uses AdminPage framework');
 ok('33a. Hosting Control page uses AdminAppShell + AdminPage (Operations redirects into it)');
 
-// Tab navigation — 5 tabs, Jobs/Activity/Attention included
+// Tab navigation — 3 tabs (Providers/Jobs/Activity)
 assert.match(hostingPage, /tabs=/, 'Hosting Control page uses AdminPage tabs');
 assert.match(hostingPage, /'providers', label: 'Providers'/, 'Hosting Control has Providers tab');
-assert.match(hostingPage, /'sync', label: 'Sync'/, 'Hosting Control has Sync tab');
 assert.match(hostingPage, /'jobs', label: 'Jobs'/, 'Hosting Control has Jobs tab');
 assert.match(hostingPage, /'activity', label: 'Activity'/, 'Hosting Control has Activity tab');
-assert.match(hostingPage, /'attention', label: 'Attention'/, 'Hosting Control has Attention tab');
-ok('33b. Hosting Control has 5 tabs (Providers/Sync/Jobs/Activity/Attention)');
+assert.doesNotMatch(hostingPage, /'sync', label: 'Sync'/, 'Hosting Control has NO Sync tab (consolidated into Providers)');
+assert.doesNotMatch(hostingPage, /'attention', label: 'Attention'/, 'Hosting Control has NO Attention tab (required IA)');
+assert.match(hostingPage, /Sync all providers/, 'Providers tab hosts the consolidated Sync all providers action');
+ok('33b. Hosting Control has 3 tabs (Providers/Jobs/Activity) + consolidated sync-all on Providers');
 
 // Jobs mobile filter — Mavero-native AdminFilterSheet (no native <select>)
 assert.match(adminOpsJobs, /a2-jobs-mobile-filter-toggle/, 'Jobs UI has mobile filter toggle');

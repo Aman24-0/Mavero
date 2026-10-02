@@ -234,7 +234,10 @@ run('7e. the old native-select mobile sheets are gone', () => {
 
 console.log('--- 8. Detach durability ---');
 run('8a. provider sync preserves mavero_status=missing', () => {
-  assert.match(syncService, /providerAsset\.status === 'ready' && existing\.mavero_status !== 'missing' \? 'available' : existing\.mavero_status/);
+  // [final 3-issue fix] the sync now resolves the EFFECTIVE status for
+  // pre-active (queued) assets via getProcessingStatus — the detach
+  // durability invariant is identical, only the status variable changed.
+  assert.match(syncService, /effectiveStatus === 'ready' && existing\.mavero_status !== 'missing' \? 'available' : existing\.mavero_status/);
 });
 run('8b. reconcile preserves mavero_status=missing', () => {
   assert.match(syncService, /procStatus\.status === 'ready' && ar\.mavero_status !== 'missing' \? 'available' : ar\.mavero_status/);

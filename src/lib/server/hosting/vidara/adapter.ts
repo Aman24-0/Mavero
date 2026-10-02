@@ -58,6 +58,7 @@ import type {
   VidaraUploadResultResponse,
   VidaraEncodingStatusResponse,
   VidaraOperationResponse,
+  VidaraVideoStatusResponse,
 } from './types';
 import {
   normalizeVidaraAccount,
@@ -67,6 +68,7 @@ import {
   normalizeVidaraUploadResult,
   normalizeVidaraEncodingStatus,
   normalizeVidaraProcessingStatus,
+  normalizeVidaraEncodingList,
   extractVidaraUploadServerUrl,
 } from './normalize';
 
@@ -367,36 +369,68 @@ export class VidaraAdapter implements HostingProviderAdapter {
   /**
    * Gets the processing status of a Vidara asset.
    *
-   * VERIFIED CONTRACT (live API, 2026-09-29):
-   *   GET /v1/video/info?filecode=<code>&api_key=<key> →
-   *   {
-   *     "result": [
-   *       {
-   *         "status": "active" | "pending" | ...,
-   *         "filecode": "<code>",
-   *         "link": "https://vidara.to/<code>",
-   *         "file_active": 1 | 0,
-   *         "video_length": "00:01:30",
-   *         "video_title": "...",
-   *         ...
-   *       }
-   *     ]
-   *   }
+   * FINAL 3-ISSUE FIX — Vidara processing status is now resolved from the
+   * provider's ACTUAL encoding state, not the file lifecycle:
    *
-   * The endpoint `/v1/video/encoding_status` returns 404 — it does NOT
-   * exist on the current Vidara API. The status is obtained from
-   * `/v1/video/info` which returns the `status` field as a STRING
-   * ("active", "pending", etc.) and `file_active` as a number (1=active, 0=inactive).
+   *   Step 1 — GET /v1/video/status?filecode=<code>  (Encoding Status)
+   *     VERIFIED CONTRACT (Vidara API document, https://vidara.so/api):
+   *     "Encoding progress for one video. Poll this after an upload until
+   *     progress_percentage reaches 100%. Returns 'encodings': null once
+   *     nothing is in progress." Each entry carries `progress_percentage`
+   *     as a "42%"-style string — exactly the percentage Vidara's own
+   *     player page shows while "Processing your video".
+   *     → If an encoding entry exists for this file: the video IS actively
+   *       processing → status='processing' + real progressPercent.
    *
-   * The previous implementation used `/v1/video/encoding_status` — this
-   * was the root cause of the Vidara remote upload being stuck in
-   * PROCESSING: the polling endpoint returned 404, the error was caught,
-   * and the operation never transitioned to ready.
+   *   Step 2 — GET /v1/video/info?filecode=<code>  (terminal state)
+   *     Only when nothing is in progress: resolves the file lifecycle
+   *     ("active" → ready, "error"/"blocked" → failed, "queued"/"pending"
+   *     → queued). VERIFIED LIVE: /v1/video/info's `status` stays
+   *     "queued" while a video is actively encoding (a file at 14%
+   *     progress reported status="queued") — which is precisely why the
+   *     info endpoint alone made Mavero display "Queued" while Vidara's
+   *     page showed "Processing 14%".
    *
-   * We now use `/v1/video/info` and normalize the result through
-   * `normalizeVidaraFileInfo` → `normalizeVidaraFile` → `vidaraStatusMapper`.
+   * The prior implementation polled ONLY /v1/video/info and never called
+   * /v1/video/status — Mavero could therefore never observe the
+   * queued → processing transition. The historical note below (about the
+   * never-existent /v1/video/encoding_status endpoint) is preserved for
+   * context: the correct endpoint is /v1/video/status.
+   *
+   * Failure isolation: if the video-status endpoint fails (transient
+   * errors are retried by withReadRetry), we degrade to the file-info
+   * fallback rather than failing the whole poll — the poll stays alive
+   * and converges on the next attempt.
    */
   async getProcessingStatus(providerAssetId: string, _deps?: HostingAdapterDeps): Promise<ProviderProcessingStatus> {
+    // Step 1: encoding progress — the authoritative in-progress signal.
+    try {
+      const statusRes = await this.withReadRetry(async () => this.http({
+        method: 'GET',
+        url: this.url('/v1/video/status', { filecode: providerAssetId }),
+      }));
+      if (statusRes.json) {
+        const encoding = normalizeVidaraEncodingList(statusRes.json as VidaraVideoStatusResponse, providerAssetId);
+        if (encoding) {
+          // Actively encoding at the provider RIGHT NOW.
+          return {
+            status: 'processing',
+            providerStatus: encoding.providerStatus,
+            progressPercent: encoding.progressPercent,
+            availableQualities: [],
+            providerErrorCode: null,
+            providerErrorMessage: null,
+          };
+        }
+      }
+      // encodings null/empty (or empty JSON) → nothing in progress:
+      // fall through to the file-info terminal-state resolution.
+    } catch {
+      // Endpoint/transient failure — degrade to the file-info fallback.
+      // The next poll retries the encoding-status endpoint.
+    }
+
+    // Step 2: file info — terminal / pre-encoding state.
     return this.withReadRetry(async () => {
       const res = await this.http({
         method: 'GET',

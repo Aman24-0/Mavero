@@ -5,15 +5,22 @@
    * The Providers tab. Shows a card per hosting provider with:
    *   - Identity (name, adapter, slug, enabled state)
    *   - Health status (live from ProviderHealthService — never faked)
-   *   - Asset counts (total / ready / processing / failed / deleted / detached)
+   *   - Asset counts (total / ready = usable per the canonical
+   *     ready+available predicate; processing / failed / deleted /
+   *     detached are diagnostic breakdowns)
    *   - Last sync timestamp
    *   - Capabilities (verified — from adapter source, never guessed)
    *   - Quota / resources (where the provider exposes them)
    *
+   * PAGE ACTION AREA (Hosting navigation consolidation): Refresh health +
+   * Sync all providers sit together in the header — the old separate Sync
+   * tab's primary action now lives here. On mobile they wrap naturally
+   * (flex-wrap, full-width row) without horizontal overflow.
+   *
    * Clicking a card opens a detail drawer with the full overview + actions:
    *   - Sync now (triggers POST /api/admin/media/sync?provider=<adapter>)
    *   - Refresh health (triggers GET /api/admin/media/health?provider=<adapter>)
-   *   - Open Assets (deep-links to the Assets tab filtered by this provider)
+   *   - Open Assets (deep-links to the Media Library filtered by this provider)
    *
    * Partial-failure contract:
    *   - If one provider's health fails, that card shows "Health unavailable"
@@ -32,16 +39,21 @@
     providers = [] as HostingProviderOverview[],
     providersError = null as string | null,
     onsyncprovider = (async () => {}) as (adapterId: string) => Promise<void>,
+    onsyncall = (async () => {}) as () => Promise<void>,
     onopenassets = (() => {}) as (adapterId: string) => void,
   }: {
     providers?: HostingProviderOverview[];
     providersError?: string | null;
     onsyncprovider?: (adapterId: string) => Promise<void>;
+    onsyncall?: () => Promise<void>;
     onopenassets?: (adapterId: string) => void;
   } = $props();
 
   // Live health refresh state.
   let healthRefreshing = $state(false);
+  // Sync-all state (Hosting navigation consolidation: the old Sync tab's
+  // "Sync all providers" action now lives here, next to Refresh health).
+  let syncAllInProgress = $state(false);
   let selectedProvider = $state<HostingProviderOverview | null>(null);
   let drawerOpen = $state(false);
 
@@ -141,6 +153,23 @@
     // After sync, refresh health (sync may have updated asset counts).
     void refreshHealth();
   }
+
+  /**
+   * Sync ALL providers — the exact backend action the old Sync tab used
+   * (POST /api/admin/media/sync with no provider param). Owned here so the
+   * busy state tracks the button; the fetch itself lives in the parent page.
+   */
+  async function handleSyncAll() {
+    if (syncAllInProgress) return;
+    syncAllInProgress = true;
+    try {
+      await onsyncall();
+      // Sync may have updated asset counts / last-sync timestamps.
+      void refreshHealth();
+    } finally {
+      syncAllInProgress = false;
+    }
+  }
 </script>
 
 <section class="a2-hosting-providers" aria-label="Providers">
@@ -164,10 +193,22 @@
         {providers.length} hosting provider{providers.length === 1 ? '' : 's'} connected.
         Health is checked live — never marked healthy without verification.
       </p>
-      <button type="button" class="a2-hosting-refresh" onclick={refreshHealth} disabled={healthRefreshing}>
-        {#if healthRefreshing}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RefreshCw size={12} />{/if}
-        Refresh health
-      </button>
+      <div class="a2-hosting-providers-actions">
+        <button type="button" class="a2-hosting-refresh" onclick={refreshHealth} disabled={healthRefreshing}>
+          {#if healthRefreshing}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RefreshCw size={12} />{/if}
+          Refresh health
+        </button>
+        <button
+          type="button"
+          class="a2-hosting-sync-all"
+          onclick={handleSyncAll}
+          disabled={syncAllInProgress}
+          title="Reconcile Mavero's view of provider assets with each provider's own view"
+        >
+          {#if syncAllInProgress}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RefreshCw size={12} />{/if}
+          {syncAllInProgress ? 'Syncing…' : 'Sync all providers'}
+        </button>
+      </div>
     </header>
     {#if healthError}
       <p class="a2-hosting-health-error" role="alert">
@@ -371,6 +412,12 @@
   .a2-hosting-providers-desc {
     margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text-muted);
   }
+  /* Action area: Refresh health + Sync all providers side by side. Wraps
+     naturally on narrow screens (no horizontal overflow — mobile-first). */
+  .a2-hosting-providers-actions {
+    display: flex; align-items: center; gap: var(--a2-space-2);
+    flex-wrap: wrap;
+  }
   .a2-hosting-refresh {
     display: inline-flex; align-items: center; gap: var(--a2-space-1);
     padding: var(--a2-space-1) var(--a2-space-3);
@@ -381,9 +428,32 @@
     font-size: var(--a2-text-2xs); font-weight: 600;
     cursor: pointer;
     transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out);
+    white-space: nowrap;
   }
   .a2-hosting-refresh:hover:not(:disabled) { background: var(--a2-surface-4); border-color: var(--a2-cyan-border); color: var(--a2-cyan); }
   .a2-hosting-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* Sync all providers — the consolidated sync-all action (was the old
+     Sync tab's primary button). Primary affordance: cyan. */
+  .a2-hosting-sync-all {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--a2-space-1);
+    padding: var(--a2-space-1) var(--a2-space-3);
+    background: var(--a2-cyan);
+    border: 1px solid var(--a2-cyan);
+    border-radius: var(--a2-radius-sm);
+    color: var(--a2-surface-1);
+    font-family: var(--a2-font-sans);
+    font-size: var(--a2-text-2xs); font-weight: 700;
+    cursor: pointer;
+    transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out);
+    white-space: nowrap;
+  }
+  .a2-hosting-sync-all:hover:not(:disabled) { filter: brightness(1.1); }
+  .a2-hosting-sync-all:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  @media (max-width: 640px) {
+    .a2-hosting-providers-actions { width: 100%; }
+    .a2-hosting-refresh, .a2-hosting-sync-all { flex: 1 1 auto; }
+  }
 
   .a2-hosting-health-error {
     display: inline-flex; align-items: center; gap: var(--a2-space-2);
@@ -641,7 +711,7 @@
        have catastrophically collapsed them to 44×44px. The sizing was only meant
        for the close button (which already has its own min-size rule). The
        transition/animation reset applies to all listed elements. */
-    .a2-provider-card, .a2-hosting-refresh, .a2-provider-card-action, .a2-provider-drawer,
+    .a2-provider-card, .a2-hosting-refresh, .a2-hosting-sync-all, .a2-provider-card-action, .a2-provider-drawer,
     .a2-provider-drawer-action, .a2-provider-drawer-close {
       transition: none;
       animation: none;

@@ -333,9 +333,14 @@ console.log('--- Section C: Vidara adapter mock fetcher tests ---\n');
   }
   console.log('  ok — C.4 uploadRemote auth (6 checks)');
 
-  // C.5 getProcessingStatus — VERIFIED: uses /v1/video/info (NOT /v1/video/encoding_status which returns 404)
+  // C.5 getProcessingStatus — final 3-issue fix: now consults /v1/video/status
+  // (the REAL encoding endpoint) FIRST, then /v1/video/info as the terminal-
+  // state fallback (NOT /v1/video/encoding_status which returns 404).
   {
     const { fetcher, captured } = createCapturingFetcher([
+      // Step 1: /v1/video/status — nothing in progress (encodings: null)
+      { status: 200, json: { msg: 'OK', status: 200, result: { encodings: null, total: 0 } } },
+      // Step 2: /v1/video/info — file lifecycle state
       { status: 200, json: { result: [{ status: 'active', filecode: 'abc123' }] } },
     ]);
     const adapter = new VidaraAdapter({
@@ -343,13 +348,14 @@ console.log('--- Section C: Vidara adapter mock fetcher tests ---\n');
       httpFetcher: fetcher,
     });
     await adapter.getProcessingStatus('abc123');
-    eq(captured.length, 1, 'C.5.1 exactly one request');
-    ok(captured[0].url.includes('/v1/video/info'), 'C.5.2 path is /v1/video/info (VERIFIED: not encoding_status)');
-    ok(captured[0].url.includes('filecode=abc123'), 'C.5.3 filecode query param present (VERIFIED: not file_code)');
-    ok(captured[0].url.includes('api_key=test-key-status'), 'C.5.4 api_key query param present');
+    eq(captured.length, 2, 'C.5.1 exactly two requests (video/status + video/info)');
+    ok(captured[0].url.includes('/v1/video/status'), 'C.5.2a step 1 path is /v1/video/status (the encoding endpoint)');
+    ok(captured[1].url.includes('/v1/video/info'), 'C.5.2b step 2 path is /v1/video/info (VERIFIED: not encoding_status)');
+    ok(captured[1].url.includes('filecode=abc123'), 'C.5.3 filecode query param present (VERIFIED: not file_code)');
+    ok(captured[0].url.includes('api_key=test-key-status') && captured[1].url.includes('api_key=test-key-status'), 'C.5.4 api_key query param present on both requests');
     eq(captured[0].headers.authorization ?? null, null, 'C.5.5 NO Authorization header');
   }
-  console.log('  ok — C.5 getProcessingStatus auth (5 checks)');
+  console.log('  ok — C.5 getProcessingStatus auth (6 checks)');
 
   // C.6 Folder operations — all authenticate via api_key
   {

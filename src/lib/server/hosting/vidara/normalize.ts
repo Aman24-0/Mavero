@@ -30,6 +30,7 @@ import type {
   VidaraUploadServerResponse,
   VidaraUploadResultResponse,
   VidaraEncodingStatusResponse,
+  VidaraVideoStatusResponse,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -61,19 +62,30 @@ const VIDARA_EMBED_URL_BASE = 'https://vidara.to/e/';
  * Maps a Vidara file status (numeric or string) to the canonical
  * Mavero AssetLifecycleState.
  *
- * Vidara status codes (from API documentation / observed behavior):
+ * Vidara /v1/video/info status values (API document + observed behavior):
  *   0 = pending upload / inactive
  *   1 = active / ready
  *   2 = encoding / processing
  *   3 = error / failed
- *   (Other values default to 'unknown' → 'processing' as conservative.)
+ *   "queued" = pre-active (observed LIVE: a file actively encoding at 14%
+ *              reported status="queued" on /v1/video/info)
+ *   "blocked" = documented file status (API docs "Filter by file status:
+ *              active, blocked, error") — a blocked file is not playable
+ *              and will not become playable → mapped to 'failed' so the
+ *              admin sees an actionable terminal state instead of an
+ *              eternal "processing".
+ *
+ * NOTE: the file-info status is the FILE lifecycle, NOT encoding progress.
+ * The authoritative source for ACTIVE encoding is GET /v1/video/status
+ * (see normalizeVidaraEncodingList + VidaraAdapter.getProcessingStatus).
+ * (Other values default to 'processing' as conservative.)
  */
 export function vidaraStatusMapper(status: number | string | undefined): AssetLifecycleState {
   const s = typeof status === 'string' ? status.toLowerCase() : status;
   if (s === 0 || s === '0' || s === 'pending' || s === 'queued') return 'queued';
   if (s === 1 || s === '1' || s === 'active' || s === 'ready') return 'ready';
   if (s === 2 || s === '2' || s === 'encoding' || s === 'processing') return 'processing';
-  if (s === 3 || s === '3' || s === 'error' || s === 'failed') return 'failed';
+  if (s === 3 || s === '3' || s === 'error' || s === 'failed' || s === 'blocked') return 'failed';
   return 'processing'; // Conservative — unknown status treated as in-progress.
 }
 
@@ -272,19 +284,104 @@ export function normalizeVidaraEncodingStatus(res: VidaraEncodingStatusResponse)
   };
 }
 
+// ---------------------------------------------------------------------------
+// Encoding progress (GET /v1/video/status) — the REAL processing source
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalizes Vidara's video-status (encoding progress) response into the
+ * in-progress encoding entry for ONE file, or null when nothing is in
+ * progress for that file.
+ *
+ * VERIFIED CONTRACT (Vidara API document — "Encoding Status"):
+ *   GET /v1/video/status?filecode=<code> →
+ *   {
+ *     "msg": "OK", "status": 200,
+ *     "result": {
+ *       "encodings": [
+ *         { "filecode": "AbC123xY", "type": "encode",
+ *           "progress_percentage": "42%", "last_update": "3m",
+ *           "created_at": "2026-01-08 01:05:32" }
+ *       ],
+ *       "total": 1
+ *     }
+ *   }
+ *   "Returns 'encodings': null once nothing is in progress."
+ *
+ * Defensive handling:
+ *   - result null/absent, encodings null/absent/empty → null (nothing in
+ *     progress — the caller must fall back to /v1/video/info for the
+ *     terminal state).
+ *   - If the response includes encodings for OTHER filecodes (account-wide
+ *     response shape), only the entry matching THIS filecode counts.
+ *   - progress_percentage arrives as a STRING with a "%" suffix ("42%");
+ *     it is coerced to a number (42). Missing/malformed → null (progress
+ *     unknown, but encoding is still in progress).
+ */
+export function normalizeVidaraEncodingList(
+  res: VidaraVideoStatusResponse,
+  filecode: string,
+): { progressPercent: number | null; lastUpdate: string | null; providerStatus: string } | null {
+  const encodings = res?.result?.encodings;
+  if (!Array.isArray(encodings) || encodings.length === 0) return null;
+  // Match this filecode when the entry carries one; a single-entry response
+  // without a filecode field is treated as this file's encoding (the
+  // endpoint was queried with our filecode).
+  const entry = encodings.find((e) => !e.filecode || e.filecode === filecode) ?? null;
+  if (!entry) return null;
+  const progressPercent = parseVidaraProgress(entry.progress_percentage);
+  const providerStatus = `encoding ${progressPercent != null ? `${progressPercent}%` : ''}`.trim();
+  return {
+    progressPercent,
+    lastUpdate: typeof entry.last_update === 'string' ? entry.last_update : null,
+    providerStatus,
+  };
+}
+
+/**
+ * Parses Vidara's "42%" progress strings (also accepts 42, "42", "42.5%").
+ * Clamped to 0-100: media_upload_operations.progress_percent has a DB CHECK
+ * constraint of [0,100], so a malformed provider value (e.g. "150%") must
+ * never reach the persistence layer.
+ */
+function parseVidaraProgress(value: string | number | undefined | null): number | null {
+  if (value == null) return null;
+  let n: number;
+  if (typeof value === 'number') {
+    n = value;
+  } else {
+    const raw = String(value).trim().replace(/%$/, '').trim();
+    if (!raw) return null;
+    n = Number(raw);
+  }
+  if (!Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
 /**
  * Converts a ProviderAssetInfo (from /v1/video/info) into a
- * ProviderProcessingStatus. Used by getProcessingStatus which now
- * polls /v1/video/info instead of the non-existent /v1/video/encoding_status.
+ * ProviderProcessingStatus. This is the FILE-INFO FALLBACK used by
+ * getProcessingStatus AFTER the encoding-progress endpoint
+ * (/v1/video/status) reports nothing in progress — it resolves the
+ * terminal/pre-encoding states:
+ *   active → ready, error/failed/blocked → failed,
+ *   pending/queued → queued (awaiting encoding).
  *
- * VERIFIED (live API): the status field is a STRING: "active", "pending", etc.
- * The vidaraStatusMapper already handles these string values:
- *   "active" → ready, "pending"/"queued" → queued, "encoding"/"processing" → processing,
- *   "error"/"failed" → failed
+ * VERIFIED (live API): the status field is a STRING: "active", "pending",
+ * "queued" (pre-active — observed while actively encoding), "error".
+ * The vidaraStatusMapper handles these string values.
+ *
+ * NOTE: this fallback alone CANNOT distinguish "queued and waiting" from
+ * "queued and actively encoding" — the /v1/video/info status stays
+ * "queued" during active encoding (live-verified at 14% progress). The
+ * encoding-progress endpoint (normalizeVidaraEncodingList) is checked
+ * FIRST for exactly that reason.
  */
 export function normalizeVidaraProcessingStatus(asset: ProviderAssetInfo): ProviderProcessingStatus {
   const providerStatus = asset.providerStatus ?? 'unknown';
-  const isError = providerStatus.toLowerCase().includes('error') || providerStatus.toLowerCase().includes('fail');
+  const isError = providerStatus.toLowerCase().includes('error')
+    || providerStatus.toLowerCase().includes('fail')
+    || providerStatus.toLowerCase().includes('blocked');
   return {
     status: isError ? 'failed' : asset.status,
     providerStatus,

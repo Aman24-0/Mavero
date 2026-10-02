@@ -55,12 +55,28 @@ export type HostingProviderOverview = {
   capabilities: ProviderCapabilities;
   /** Health report (null if health check failed entirely) */
   health: HostingProviderHealth | null;
-  /** Asset counts (null if count query failed — partial failure contract) */
+  /**
+   * Asset counts (null if count query failed — partial failure contract).
+   *
+   * SEMANTICS (final 3-issue fix): `total` and `ready` count ONLY
+   * currently-usable assets — status='ready' AND mavero_status='available'
+   * (the canonical playback availability predicate used by the resolver,
+   * the Media Library and the DemandService). Deleted / failed / queued /
+   * processing / uploaded / detached / disabled rows are never counted.
+   * `processing` / `failed` / `deleted` / `detached` are diagnostic
+   * breakdowns of the non-usable rows and intentionally do NOT sum to
+   * `total` — the Media Library remains the full lifecycle inventory.
+   */
   assetCounts: {
+    /** Usable assets: status='ready' AND mavero_status='available'. */
     total: number;
+    /** Usable assets (same canonical predicate as `total`). */
     ready: number;
+    /** Diagnostic: rows in queued/uploading/uploaded/processing states. */
     processing: number;
+    /** Diagnostic: rows in the failed state. */
     failed: number;
+    /** Diagnostic: rows in the terminal deleted state. */
     deleted: number;
     /** Detached assets: mavero_status='missing' AND status!='deleted' (still linked to a media_item) */
     detached: number;

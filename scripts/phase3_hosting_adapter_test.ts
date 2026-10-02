@@ -166,7 +166,11 @@ async function testVidaraAdapter(): Promise<void> {
     { status: 200, json: { filecode: 'new123', video_id: 123, title: 'test' } },
     // uploadRemote (VERIFIED: GET /v1/upload/url returns data.filecode)
     { status: 200, json: { data: { filecode: 'remote456', link: 'https://vidara.to/remote456', size: 1024 } } },
-    // getProcessingStatus (VERIFIED: now uses /v1/video/info, returns result array with status string)
+    // getProcessingStatus — step 1 (final 3-issue fix): GET /v1/video/status
+    // (the REAL encoding endpoint). Nothing in progress → encodings: null →
+    // the adapter falls through to the file-info endpoint for the state.
+    { status: 200, json: { msg: 'OK', status: 200, result: { encodings: null, total: 0 } } },
+    // getProcessingStatus — step 2: /v1/video/info (file lifecycle status)
     { status: 200, json: { result: [{ status: 'processing', filecode: 'abc123', link: 'https://vidara.to/abc123' }] } },
     // listFolders
     { status: 200, json: { result: { folders: [{ folder_id: 'f1', name: 'Movies' }] } } },
@@ -239,11 +243,12 @@ async function testVidaraAdapter(): Promise<void> {
   });
   ok(remoteResult.providerAssetId === 'remote456', 'Vidara: uploadRemote returns providerAssetId');
 
-  // getProcessingStatus (VERIFIED: now uses /v1/video/info, status is a string)
+  // getProcessingStatus (final 3-issue fix: step 1 = /v1/video/status encoding
+  // endpoint; nothing in progress → fall through to /v1/video/info for state)
   const procStatus = await adapter.getProcessingStatus('abc123');
-  ok(procStatus.status === 'processing', 'Vidara: status "processing" → processing');
+  ok(procStatus.status === 'processing', 'Vidara: status "processing" → processing (info fallback path)');
   // /v1/video/info does NOT report progress percentage — null is expected.
-  ok(procStatus.progressPercent === null, 'Vidara: progressPercent null (video/info does not report progress)');
+  ok(procStatus.progressPercent === null, 'Vidara: progressPercent null (info fallback does not report progress)');
 
   // listFolders
   const folders = await adapter.listFolders(null);
@@ -281,6 +286,67 @@ async function testVidaraAdapter(): Promise<void> {
   } catch (e) {
     ok(e instanceof HostingProviderError && e.code === 'UNSUPPORTED', 'Vidara: moveFolder throws UNSUPPORTED (flat folders)');
   }
+}
+
+// ===========================================================================
+// 3b. Vidara adapter — ACTIVE ENCODING (final 3-issue fix behavioral check)
+//
+// The regression this guards: Vidara's own page showed "Processing 14%"
+// while /v1/video/info still reported status "queued" — Mavero displayed
+// "Queued" for the whole encoding window. getProcessingStatus must now
+// consult GET /v1/video/status FIRST: a non-empty encodings entry for the
+// file means ACTIVELY PROCESSING (with the provider's real percentage),
+// regardless of what the file-info status says.
+// ===========================================================================
+
+async function testVidaraActiveEncoding(): Promise<void> {
+  const urlsCalled: string[] = [];
+  // URL-routed handler fetcher (not a sequential queue).
+  const routingFetcher = createMockFetcher((request) => {
+    urlsCalled.push(request.url);
+    if (request.url.includes('/v1/video/status')) {
+      // Active encoding at 14% — the exact production screenshot scenario.
+      return { status: 200, json: { msg: 'OK', status: 200, result: { encodings: [{ filecode: 'abc123', type: 'encode', progress_percentage: '14%', last_update: '0m', created_at: '2026-10-02 07:00:00' }], total: 1 } } };
+    }
+    if (request.url.includes('/v1/video/info')) {
+      // File info still says "queued" (live-verified pre-active status).
+      return { status: 200, json: { result: [{ status: 'queued', filecode: 'abc123', link: 'https://vidara.to/abc123' }] } };
+    }
+    return { status: 404, json: null };
+  });
+
+  const adapter = new VidaraAdapter({
+    config: { apiKey: 'test-key', baseUrl: 'https://api.test.vidara' },
+    httpFetcher: routingFetcher,
+  });
+
+  const ps = await adapter.getProcessingStatus('abc123');
+  ok(ps.status === 'processing', 'Vidara active encoding: encodings entry → processing (NOT queued)');
+  ok(ps.progressPercent === 14, 'Vidara active encoding: "14%" → progressPercent 14');
+  ok(urlsCalled.some((u) => u.includes('/v1/video/status?filecode=abc123')), 'Vidara active encoding: /v1/video/status called with filecode');
+  ok(!urlsCalled.some((u) => u.includes('/v1/video/info')), 'Vidara active encoding: info fallback NOT called while encoding');
+
+  // Ready path: nothing in progress + file active → ready.
+  const readyFetcher = createMockFetcher((request) => {
+    if (request.url.includes('/v1/video/status')) {
+      return { status: 200, json: { msg: 'OK', status: 200, result: { encodings: null, total: 0 } } };
+    }
+    return { status: 200, json: { result: [{ status: 'active', filecode: 'abc123', link: 'https://vidara.to/abc123' }] } };
+  });
+  const readyAdapter = new VidaraAdapter({ config: { apiKey: 'test-key', baseUrl: 'https://api.test.vidara' }, httpFetcher: readyFetcher });
+  const readyStatus = await readyAdapter.getProcessingStatus('abc123');
+  ok(readyStatus.status === 'ready', 'Vidara: encodings null + file active → ready');
+
+  // Failed path: nothing in progress + file error → failed.
+  const failedFetcher = createMockFetcher((request) => {
+    if (request.url.includes('/v1/video/status')) {
+      return { status: 200, json: { msg: 'OK', status: 200, result: { encodings: null, total: 0 } } };
+    }
+    return { status: 200, json: { result: [{ status: 'error', filecode: 'abc123', link: 'https://vidara.to/abc123' }] } };
+  });
+  const failedAdapter = new VidaraAdapter({ config: { apiKey: 'test-key', baseUrl: 'https://api.test.vidara' }, httpFetcher: failedFetcher });
+  const failedStatus = await failedAdapter.getProcessingStatus('abc123');
+  ok(failedStatus.status === 'failed', 'Vidara: encodings null + file error → failed');
 }
 
 // ===========================================================================
@@ -512,6 +578,9 @@ console.log('  ok — error model (classification + retryable + wrapping)');
 
 await testVidaraAdapter();
 console.log('  ok — Vidara adapter (account, asset, list, rename, move, delete, upload, remote, processing, folders, subtitles, thumbnails)');
+
+await testVidaraActiveEncoding();
+console.log('  ok — Vidara adapter active encoding (final 3-issue fix: /v1/video/status first, progress %, ready/failed paths)');
 
 await testAbyssAdapter();
 console.log('  ok — Abyss adapter (login, account, asset, list, rename, move, delete, upload, processing, folders, subtitles, uploadRemote=UNSUPPORTED)');
