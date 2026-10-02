@@ -595,15 +595,58 @@ Do not allow one extension to monopolize the request.
 
 # 11. Admin CloudStream Extension Manager
 
-Create a dedicated admin area.
+Create the Extension Manager inside the EXISTING central Integrations page.
 
-Suggested route:
+Confirmed architecture (CS-0 audit, product decision AC-001 — replaces the
+original "dedicated admin area" suggestion):
 
 ``` text
-/admin/system/extensions/cloudstream
+System
+  └── Integrations            (/admin/system/integrations)
+        ├── [ Add-on ]        — Stremio addon management (EXISTING, unchanged)
+        └── [ Extension ]     — CloudStream Extension Manager (new)
 ```
 
-The exact route can follow current admin conventions.
+Rules:
+
+-   ONE central Admin page: System → Integrations.
+-   TWO tabs inside it: Add-on and Extension.
+-   The Add-on tab keeps ALL existing Stremio addon behavior (CRUD,
+    enable/disable, refresh, edit, delete, ordering) — unchanged.
+-   The Extension tab hosts the CloudStream Extension Manager described
+    below.
+-   Do NOT create a separate top-level Admin navigation item for CloudStream.
+-   Do NOT create System → CloudStream.
+-   The AdminAppShell navigation is NOT modified (no new nav entry).
+
+Terminology (must remain consistent everywhere):
+
+``` text
+Add-on     = Stremio
+Extension  = CloudStream
+```
+
+The existing "+" button on the Integrations page must open an Add
+Integration sheet/dialog containing two selectable options/chips:
+
+``` text
+Add Integration
+
+[ Stremio ]  [ CloudStream ]
+```
+
+Selecting Stremio shows the EXISTING "Add Stremio Addon" flow (Manifest
+URL → Preview → Confirm) with its current behavior preserved verbatim.
+
+Selecting CloudStream shows the CloudStream repository add flow
+(Repository URL → validate/preview → resolve metadata → discover
+extensions → persist) implemented in CS-1.
+
+Tab state is URL-driven (`?tab=addon` | `?tab=extension`, default `addon`)
+with server-side tab validation, mirroring the Hosting Control VALID_TABS
+redirect convention. The default (no param) MUST resolve to the Add-on tab
+so every existing link to `/admin/system/integrations` keeps rendering the
+Stremio list.
 
 The UI should provide:
 
@@ -1119,7 +1162,11 @@ Implement repository and extension catalog management.
 9.  Implement repository sync.
 10. Persist extension metadata.
 11. Implement compatibility status lookup.
-12. Build admin CloudStream Extension Manager.
+12. Build the CloudStream Extension Manager as the Extension tab inside
+    System → Integrations (AC-001), including the Add-on/Extension tab
+    navigation and the "+" Add Integration selector
+    ([ Stremio ] [ CloudStream ] chips; the Stremio chip must reuse the
+    existing add flow verbatim).
 13. Add enable/disable.
 14. Add refresh/sync.
 15. Add error states.
@@ -1368,16 +1415,20 @@ Suggested UI:
 src/lib/components/MaveroCloudStreamDownload.svelte
 ```
 
-Suggested admin route:
+Admin UI (confirmed by CS-0 audit, AC-001 — no dedicated route; the
+manager is a tab inside the existing Integrations page):
 
 ``` text
-src/routes/admin/system/extensions/cloudstream/
+src/routes/admin/system/integrations/+page.svelte        (tabbed: Add-on | Extension)
+src/routes/admin/system/integrations/+page.server.ts     (tab load + CloudStream form actions)
+src/lib/components/admin2/AdminCloudStreamManager.svelte (Extension tab content, isolated)
 ```
 
 Suggested API:
 
 ``` text
 src/routes/api/downloader/mavero2/
+src/routes/api/admin/integrations/cloudstream/preview/   (repository validate/preview, JSON)
 ```
 
 Actual paths must follow the repository's current routing conventions
@@ -1691,3 +1742,277 @@ The objective is not merely to make CloudStream work.
 
 The objective is to add CloudStream support **without destabilizing the
 existing Mavero product**.
+
+------------------------------------------------------------------------
+
+# 40. CS-0 Audit Results & Finalized Contracts (2026-10-02)
+
+This section records the CS-0 read-only audit outcome. It converts the
+approved architecture into implementation-ready contracts verified against
+the actual repository at HEAD `c4e6abd` (= origin/main, clean tree).
+
+## 40.1 Audited baseline
+
+-   HEAD `c4e6abd` = origin/main, working tree clean.
+-   Baseline gates: `pnpm check` — 0 errors, 0 warnings; `pnpm build` —
+    PASS; `pnpm test` — see the worklog CS-0 entry for the recorded
+    baseline result.
+-   Live DB (read-only): 10 `download_providers` rows (`mavero-downloader`
+    is the enabled default, ordering 90; `4k-downloader` type `json`
+    disabled), 10 `streaming_addons` rows, config version 35. NO
+    `cloudstream_*` tables exist — clean slate for the CS-1 migration.
+
+## 40.2 Confirmed reuse points (no duplicates)
+
+-   **SSRF-safe JSON fetch**: `fetchStremioManifest`
+    (`src/lib/server/streaming/stremio/manifest-fetch.ts`) is the
+    repository's canonical SSRF-safe bounded JSON fetcher (http(s) only,
+    credentials rejected, hostname blocklist, IP-literal coverage
+    incl. IPv4-compact/IPv6/NAT64, DNS resolution of every address,
+    connect-time re-validation via `connect-guard.ts`, bounded redirects
+    each re-validated, timeout, streamed size cap, JSON-only). The
+    generic JSON downloader (`json-service.ts`) already reuses it. The
+    CloudStream repository manager MUST reuse it (possibly via a thin
+    alias in `src/lib/server/cloudstream/security/`) rather than
+    reimplementing a fetcher.
+-   **Action model**: `stream-actions.ts`
+    (`StreamKind`, `streamCapabilities`, `downloadActionFor`,
+    `playActionFor`, `shareActionFor`) is the single capability model.
+    Downloader 2 stream cards MUST consume it — no second MPV, no second
+    Share, no CloudStream-specific action semantics.
+-   **MPV**: `externalPlayerLaunchFor`
+    (`src/lib/shared/external-player.ts`) — reused via
+    `playActionFor`; never duplicated.
+-   **Link-type vocabulary**: `download-link-types.ts`
+    (`DownloadLinkType`, labels/categories) — reused for filters.
+-   **Public downloader registry pattern**: `download_providers` +
+    slug-special-casing in `DownloadSheet.svelte`
+    (mavero-downloader → MaveroAddonDownload, 4k-downloader →
+    FourKDownload, type json → JsonDownload, else iframe). Downloader 2
+    registers the same way (CS-5).
+-   **Admin conventions**: `requireAdmin`, form actions with
+    `redirect(303, …?notice=…)`, `classifyAdminMutationError`,
+    `AdminSheet`, `AdminAddButton`, `AdminStatusBadge`,
+    `AdminContextTabs`-style URL-driven tabs, VALID_TABS server redirect
+    convention (Hosting Control precedent).
+-   **API conventions**: `{ ok, … | error: { code, message } }` envelope,
+    `no-store` headers, `readJsonBody`, `checkRateLimit` +
+    `clientIdentity`, `assertAdultDownloadAllowed` at the boundary,
+    `createSupabaseAdminClient()` for server-side registry reads.
+-   **Test conventions**: standalone `scripts/*.ts` tsx files using
+    `node:assert/strict` with explicit pass counters, mock clients /
+    injected fetchers, registered into the `pnpm test` chain.
+
+## 40.3 Finalized contracts
+
+### CloudStream repository index (CS.json) — parser contract
+
+A CloudStream repository URL points at a JSON index document:
+
+``` ts
+type CloudStreamRepositoryIndex = {
+  name?: string;                 // repository display name
+  description?: string;
+  icon?: string;                 // repository icon URL (optional)
+  pluginLists?: Array<{
+    name?: string;
+    plugins: string;             // ABSOLUTE http(s) URL to plugins.json
+  }>;
+};
+```
+
+Rules: missing `pluginLists` → repository is parsed but yields zero
+extensions (NOT an error); each `plugins` URL must be absolute http(s),
+SSRF-validated, bounded (max 4 plugin lists per repository, max 500
+normalized extension records per repository, 1 MiB per document, 10s
+per-document timeout); relative `plugins` URLs are rejected as invalid;
+plugin-list documents must be a JSON array.
+
+### plugins.json — plugin metadata contract
+
+``` ts
+type CloudStreamPluginListEntry = {
+  internalName: string;          // canonical adapter lookup key
+  name?: string;
+  version?: number;
+  description?: string;
+  authors?: string[];
+  language?: string;
+  tvTypes?: number[];            // CloudStream tvType ids
+  apiVersion?: number;
+  status?: number;               // 1 = OK, 2 = DOWN, 3 = BROKEN (best effort)
+  file?: string;                 // .cs3 artifact URL — metadata ONLY, never fetched/executed
+  icon?: string;                 // plugin icon URL
+};
+```
+
+Rules: entries without `internalName` are skipped (malformed); every
+string is length-bounded; the `.cs3` `file` URL is persisted as metadata
+only — Mavero NEVER downloads or executes it.
+
+### Adapter contract (CS-2)
+
+``` ts
+export type MaveroCloudStreamAdapter = {
+  /** Matches cloudstream_extensions.internal_name (case-insensitive). */
+  id: string;
+  version: string;
+  supports: { movie: boolean; series: boolean; anime: boolean };
+  resolveMovie(req: CloudStreamResolveRequest): Promise<CloudStreamLinkResult>;
+  resolveEpisode?(req: CloudStreamResolveRequest & {
+    season: number; episode: number;
+  }): Promise<CloudStreamLinkResult>;
+};
+
+export type CloudStreamResolveRequest = {
+  tmdbId: string;
+  title: string;
+  year?: number;
+  /** Bounded abort deadline — the adapter MUST respect it. */
+  deadline: AbortSignal;
+};
+```
+
+Adapters are CODE-OWNED (registry maps `internalName` → adapter
+instance); no DB-configurable adapter execution (plan §6.3 preferred
+option). Adapters never run remote `.cs3` code.
+
+### Normalized link contract
+
+The normalized link aligns with the existing downloader stream view so
+the Downloader 2 UI reuses the existing card + action model:
+
+``` ts
+export type CloudStreamNormalizedLink = {
+  url: string;
+  kind: 'http' | 'https' | 'hls' | 'dash' | 'p2p' | 'magnet' | 'external';
+  quality?: string;
+  codec?: string;
+  container?: string;
+  filename?: string;
+  sizeBytes?: number;
+  audioLanguages?: string[];
+  /** Derived server-side for display (matches Stremio downloader §B2). */
+  host?: string;
+};
+```
+
+Action capability mapping is EXACTLY `stream-actions.ts` — CloudStream
+must never advertise HLS/DASH as ordinary file downloads.
+
+### Downloader 2 API contract (CS-3)
+
+``` text
+GET /api/downloader/mavero2?mediaType=movie&contentId=…&tmdbId=…
+GET /api/downloader/mavero2/tabs?mediaType=…&contentId=…&tmdbId=…
+GET /api/downloader/mavero2/extension?extensionId=…&mediaType=…&contentId=…&tmdbId=…
+```
+
+Response envelope mirrors the Stremio downloader: `{ ok: true, tabs |
+groups }` with per-extension groups
+`{ extensionId, extensionName, status: loaded|empty|failed, links: [...] }`;
+errors use the closed `{ ok: false, error: { code, message } }`
+vocabulary. Validation, rate limiting, adult guard, admin-client
+registry reads, and `no-store` follow the existing
+`/api/downloader/mavero*` contract verbatim.
+
+### DB migration design (CS-1)
+
+Tables `cloudstream_repositories` and `cloudstream_extensions` follow the
+`streaming_addons` precedent: RLS enabled, admin-only CRUD
+(`public.is_admin()`), NO public SELECT policy, no public view —
+extension config is read SERVER-SIDE via the service-role/admin client
+only. Status vocabularies as in §6. `mavero_adapter_id` /
+`adapter_status` are filled by the code-owned adapter registry lookup.
+No config-version trigger is needed in CS-1 (no public read path);
+if a public snapshot is introduced later it gets its OWN meta row
+(downloader precedent), never sharing existing counters.
+
+### Security boundary (summary)
+
+Repository URLs and every derived plugin-list URL pass the full SSRF
+guard (`assertSafeManifestUrl` + `assertSafeManifestDestination` +
+connect-time re-validation); responses are size-capped, timeout-bounded,
+redirect-bounded; adapters receive only bounded, typed request data and
+an `AbortSignal`; resolution runs with bounded concurrency (≤4, matching
+`ADDON_CONCURRENCY`) and per-adapter timeout; diagnostics never leak
+URLs/tokens/stack traces; `.cs3` artifacts are never fetched or executed.
+
+## 40.4 Final file inventory
+
+### New files (server domain — isolated)
+
+``` text
+src/lib/server/cloudstream/
+├── types/index.ts                     domain + adapter + link contracts
+├── security/fetch.ts                  thin SSRF-safe fetch facade (reuses fetchStremioManifest)
+├── repository/parse.ts                CS.json + plugins.json parsing/normalization
+├── repository/service.ts              repository CRUD + sync (Supabase)
+├── repository/errors.ts               error taxonomy (closed vocabulary)
+├── extensions/service.ts              extension queries, enable/disable, compatibility
+├── adapters/registry.ts               code-owned internalName → adapter registry
+├── adapters/<initial providers>.ts    CS-2 ports (small set)
+├── extractors/index.ts + <host>.ts    CS-2 extractor abstraction + ports
+├── resolver/service.ts                CS-3 Downloader 2 resolution service
+└── normalize/links.ts                 link construction + dedup
+```
+
+### New files (routes/UI/tests)
+
+``` text
+src/routes/admin/system/integrations/+page.server.ts        (MODIFY: tab load + CloudStream actions)
+src/routes/admin/system/integrations/+page.svelte           (MODIFY: tabs + "+" selector; Add-on tab unchanged)
+src/lib/components/admin2/AdminCloudStreamManager.svelte    (NEW: Extension tab content)
+src/routes/api/admin/integrations/cloudstream/preview/+server.ts   (NEW: repository validate/preview)
+src/routes/api/downloader/mavero2/+server.ts                (NEW, CS-3)
+src/routes/api/downloader/mavero2/tabs/+server.ts           (NEW, CS-3)
+src/routes/api/downloader/mavero2/extension/+server.ts      (NEW, CS-3)
+src/lib/components/MaveroCloudStreamDownload.svelte         (NEW, CS-4 user UI)
+src/routes/watch/mavero-downloader-2/movie/[tmdbId]/…       (NEW, CS-5 deep links)
+src/routes/watch/mavero-downloader-2/tv/[tmdbId]/[s]/[e]/…  (NEW, CS-5 deep links)
+supabase/migrations/20261101000000_cloudstream_cs1.sql      (NEW, CS-1)
+supabase/migrations/…_cloudstream_cs5_downloader2.sql       (NEW, CS-5 seed row)
+scripts/cloudstream_*_test.ts                              (NEW per phase, registered in chain)
+```
+
+### Modified shared files (minimal, regression-covered)
+
+``` text
+src/lib/shared/downloader.ts          (ADD constant MAVERO_DOWNLOADER_2_PROVIDER_ID — additive only)
+src/lib/components/DownloadSheet.svelte(ADD slug routing branch for 'mavero-downloader-2' — additive only)
+src/lib/server/downloader/public-config.ts (EXTEND origin rewrite to the new slug — additive only)
+package.json                          (register new test scripts in the pnpm test chain)
+```
+
+### Untouchable regression surface (verify per phase)
+
+``` text
+src/lib/server/streaming/stremio/**           (all Stremio services)
+src/lib/server/downloader/**                  (except the additive public-config change)
+src/lib/server/resolver/**                    (watch-page providers — MovieNexus/VidStuck isolation)
+src/lib/client/player/**                      (direct/embed player adapters)
+src/lib/shared/stream-actions.ts              (reuse; semantics frozen)
+src/lib/shared/external-player.ts             (reuse; frozen)
+src/lib/shared/download-link-types.ts         (reuse; frozen)
+src/lib/components/MaveroAddonDownload.svelte (existing downloader UI)
+src/lib/components/FourKDownload.svelte, JsonDownload.svelte
+src/lib/components/admin2/AdminAppShell.svelte (nav — NO new item)
+src/routes/watch/** (existing)                 (watch pages)
+src/routes/api/downloader/{mavero,mavero/tabs,mavero/addon,json,4k,config}/**
+authentication, hosting, media, analytics, users domains
+```
+
+## 40.5 Phase dependency map
+
+``` text
+CS-0 (this audit) → CS-1 (repository manager + DB + Extension tab + "+" selector)
+  → CS-2 (adapter runtime + extractors + first ports)
+    → CS-3 (mavero2 API)
+      → CS-4 (user downloader UI)
+        → CS-5 (registry integration + deep links)
+          → CS-6 (full regression + hardening)
+```
+
+CS-1 may begin immediately after this audit: the architecture has no
+unresolved ambiguity (repository parse contract, DB design, admin IA,
+and security boundaries are all finalized above).

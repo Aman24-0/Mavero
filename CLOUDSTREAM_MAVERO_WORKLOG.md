@@ -6,7 +6,7 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** Ready for CS-0
+**Status:** CS-0 COMPLETE — CS-1 cleared to begin
 
 ------------------------------------------------------------------------
 
@@ -74,18 +74,18 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   Area                              Status
   --------------------------------- ---------
   Architecture approved             Ready
-  Plan document                     Created
-  Worklog                           Created
-  CS-0 audit                        Pending
-  CloudStream repository manager    Pending
-  CloudStream DB schema             Pending
-  Mavero adapter runtime            Pending
-  Initial CloudStream adapters      Pending
-  Extractor layer                   Pending
-  Downloader 2 backend              Pending
-  Downloader 2 UI                   Pending
-  Downloader registry integration   Pending
-  Full regression                   Pending
+  Plan document                     Created (v1.0 + CS-0 audit addendum §40)
+  Worklog                           Created + CS-0 recorded
+  CS-0 audit                        COMPLETE (2026-10-02, HEAD c4e6abd)
+  CloudStream repository manager    Pending (CS-1 — cleared to begin)
+  CloudStream DB schema             Pending (CS-1)
+  Mavero adapter runtime            Pending (CS-2)
+  Initial CloudStream adapters      Pending (CS-2)
+  Extractor layer                   Pending (CS-2)
+  Downloader 2 backend              Pending (CS-3)
+  Downloader 2 UI                   Pending (CS-4)
+  Downloader registry integration   Pending (CS-5)
+  Full regression                   Pending (CS-6)
   Production readiness              Pending
 
 ------------------------------------------------------------------------
@@ -159,7 +159,7 @@ The plan must remain complete and current throughout the project.
 
 ## Status
 
-**PENDING**
+**COMPLETED** (2026-10-02, HEAD `c4e6abd`)
 
 ## Objective
 
@@ -168,59 +168,144 @@ into an implementation-ready specification.
 
 ## Planned checks
 
--   [ ] Current git state.
--   [ ] Current branch/HEAD.
--   [ ] Existing downloader architecture.
--   [ ] Stremio downloader services.
--   [ ] Downloader registry.
--   [ ] `download_providers` schema/migrations.
--   [ ] `DownloadSheet.svelte`.
--   [ ] `MaveroAddonDownload.svelte`.
--   [ ] `stream-actions.ts`.
--   [ ] `download-link-types.ts`.
--   [ ] Existing admin conventions.
--   [ ] Direct streaming provider boundaries.
--   [ ] Existing SSRF/security utilities.
--   [ ] Existing test conventions.
--   [ ] Existing migration conventions.
+-   [x] Current git state. (HEAD `c4e6abd` = origin/main after fast-forward
+      from `a149a02`; the remote commit added the two source-of-truth
+      documents. Working tree initially held an aborted upload-feature
+      deletion + mode-bit noise — the SAME broken state documented at
+      verify-1 — restored to pristine before the audit; only
+      plan/worklog documentation edits are allowed in CS-0.)
+-   [x] Current branch/HEAD. (`main`, clean except docs.)
+-   [x] Existing downloader architecture. (`src/lib/server/downloader/`:
+      types, admin-service, public-config, json-service, fourk-service,
+      validation; shared `downloader.ts` — embed|json type contract,
+      slug-special-casing constants, template builder.)
+-   [x] Stremio downloader services. (`addon-download-service.ts`
+      (5-state model, 30s/40s budgets, concurrency 4, retry 1),
+      `stream-normalize-downloader.ts`, `download-selection.ts`,
+      `stream-ids.ts`, `stream-fetch.ts` (STREAM_MAX_BYTES), APIs
+      `/api/downloader/mavero`, `/mavero/tabs`, `/mavero/addon`.)
+-   [x] Downloader registry. (`download_providers` + config meta +
+      trigger + `download_providers_public` sanitized view; admin CRUD at
+      `/admin/system/downloads`; public reader with version-keyed
+      in-process cache; slug routing in `DownloadSheet.svelte`.)
+-   [x] `download_providers` schema/migrations. (20260915000000 base,
+      20260920000000 phase19 seeds mavero-downloader + 4k-downloader
+      idempotently, 20261007000000 adds `type` embed|json + recreates the
+      public view.)
+-   [x] `DownloadSheet.svelte`. (Slug routing: mavero-downloader →
+      MaveroAddonDownload inline, 4k-downloader → FourKDownload, type
+      json → JsonDownload, else iframe; providers prefetch from
+      `/api/downloader/config` with origin rewrite.)
+-   [x] `MaveroAddonDownload.svelte`. (1005 lines: tabs → per-addon
+      fetch → filters (type/quality/size/language) → stream cards →
+      Download/MPV/Share via the shared action model; deep-link pages
+      under `/watch/mavero-downloader/**` with adult-guard server loads.)
+-   [x] `stream-actions.ts`. (Single capability model; kind matrix
+      http/https D+P+S, hls/dash P+S, p2p/magnet D+S, external;
+      Pixeldrain viewer routing; delegates MPV to
+      `externalPlayerLaunchFor`.)
+-   [x] `download-link-types.ts`. (Admin link-type visibility config in
+      addon capabilities.downloaderLinkTypes; ALL_DOWNLOAD_LINK_TYPES.)
+-   [x] Existing admin conventions. (requireAdmin; form actions with
+      303 notice redirects; JSON preview endpoint pattern; AdminSheet /
+      AdminAddButton / AdminStatusBadge / admin2 tokens; AdminAppShell
+      System group already contains exactly one `integrations` item;
+      legacy `/admin/addons` redirects to the canonical page;
+      URL-driven VALID_TABS redirect convention from Hosting Control.)
+-   [x] Direct streaming provider boundaries. (`resolver/adapters.ts`
+      template/direct/embed/api/custom adapters feed the watch page;
+      `src/lib/client/player/providers/*` incl. moviesnexus +
+      vidstuck. CloudStream must never touch these — confirmed
+      isolation plan.)
+-   [x] Existing SSRF/security utilities. (`stremio/ssrf.ts` two-stage
+      guard (sync URL + DNS resolution, IPv4 compact/IPv6/NAT64) +
+      `connect-guard.ts` connect-time re-validation;
+      `manifest-fetch.ts` bounded redirect loop + streamed size cap +
+      JSON-only; generic JSON downloader already reuses
+      `fetchStremioManifest` — the CloudStream repository fetcher will
+      reuse it too; rate-limit + adult-guard + readJsonBody + error
+      envelope conventions.)
+-   [x] Existing test conventions. (Standalone tsx scripts,
+      node:assert/strict, pass counters, mock clients/injected fetchers,
+      `pnpm test` && chain; behavioral tsconfig for newer suites.)
+-   [x] Existing migration conventions. (Idempotent DDL, timestamped
+      filenames, RLS + is_admin() for admin surfaces, revoke anon, no
+      public read for server-side-only config — streaming_addons
+      precedent.)
+-   [x] Live DB read-only check. (10 download_providers —
+      mavero-downloader enabled DEFAULT order 90, 4k-downloader json
+      disabled; 10 streaming_addons; config version 35; NO
+      cloudstream_* tables — clean slate.)
 
 ## Planned design outputs
 
--   [ ] CloudStream repository parser contract.
--   [ ] Extension metadata contract.
--   [ ] Adapter contract.
--   [ ] Normalized link contract.
--   [ ] Downloader 2 API contract.
--   [ ] DB migration design.
--   [ ] Security boundary.
--   [ ] Exact initial adapter scope.
--   [ ] Regression surface.
--   [ ] File inventory.
+-   [x] CloudStream repository parser contract. (Plan §40.3: index
+      `pluginLists[].plugins` absolute URL → plugins.json array;
+      missing pluginLists = valid-but-empty; bounds 4 lists / 500
+      extensions / 1 MiB / 10s.)
+-   [x] Extension metadata contract. (Plan §6.2 + §40.3
+      CloudStreamPluginListEntry; internalName canonical key; `.cs3`
+      `file` persisted as metadata ONLY.)
+-   [x] Adapter contract. (Plan §40.3 MaveroCloudStreamAdapter —
+      resolveMovie/resolveEpisode, code-owned registry, AbortSignal
+      deadline.)
+-   [x] Normalized link contract. (Plan §40.3
+      CloudStreamNormalizedLink aligned to StreamKind + existing stream
+      view; action mapping EXACTLY stream-actions.ts.)
+-   [x] Downloader 2 API contract. (Plan §40.3: /api/downloader/mavero2
+      {,/tabs,/extension}; same envelope/guards/rate limits as the
+      Stremio downloader.)
+-   [x] DB migration design. (Plan §40.3: streaming_addons-precedent
+      RLS admin-only, no public view, no shared config counter.)
+-   [x] Security boundary. (Plan §40.3 summary + §40.2 reuse points.)
+-   [x] Exact initial adapter scope. (CS-2: small set selected from the
+      first synced repository; port only required search/load/extract
+      behavior.)
+-   [x] Regression surface. (Plan §40.4 untouchable list.)
+-   [x] File inventory. (Plan §40.4 new/modified/untouchable.)
 
 ## Implementation changes
 
-None planned for CS-0.
+None for CS-0 (documentation only — plan + this worklog). No production
+code, no schema migration, no UI implementation, no data changes.
 
 ## Tests
 
-Not yet run.
+-   `pnpm check`: 0 errors, 0 warnings.
+-   `pnpm build`: PASS (vite + netlify adapter, ~31s).
+-   `pnpm test` (full chain): stops at `adult_mode_test.ts` — one of the
+    8 documented PRE-EXISTING baseline failures (loadAdultPolicy removed
+    at 446d8ac; verified failing at pristine 025f0c3 in the previous
+    session and re-confirmed failing at pristine `c4e6abd` — the CS-0
+    working tree touched ONLY the two markdown documents, so the failure
+    cannot be caused by this phase). Re-ran the chain excluding the 8
+    known baseline failures: see the Session Log entry for the recorded
+    result.
 
 ## Decisions
 
-None yet.
+-   AC-001 (Architecture Change Log): the CloudStream Extension Manager
+    lives in System → Integrations as the [ Extension ] tab with the
+    Add-on / Extension terminology and the "+" Add Integration selector
+    ([ Stremio ] [ CloudStream ]) — replaces the plan's earlier
+    dedicated-route suggestion. Plan §11, §24, §30 amended.
+-   Reuse decisions recorded in plan §40.2 (SSRF fetcher, action model,
+    MPV, link types, registry pattern, admin/API/test conventions).
 
 ## Blockers
 
-None known.
+None.
 
 ## Exit criteria
 
-CS-0 can be marked complete only after the implementation plan and file
-inventory are confirmed against the current repository.
+Met: no unresolved architecture ambiguity. Plan §40 records the
+finalized contracts, file inventory, and phase dependency map verified
+against the actual repository.
 
 ## Next step
 
-Start CS-0 after reading both source-of-truth documents.
+CS-1 (CloudStream Repository Manager: migration, parser, sync service,
+Integrations Extension tab, "+" selector, tests).
 
 ------------------------------------------------------------------------
 
@@ -615,6 +700,31 @@ belongs in phase entries below.
                                 resolve                            
                                 CloudStream                        
                                 providers                          
+  D-005          2026-10-02     CloudStream     One central admin  Yes (§11,
+                 (CS-0)         manager = IA;   clear                §24, §30,
+                                Extension tab   terminology          §40)
+                                inside System   (Add-on = Stremio;
+                                → Integrations; Extension =
+                                "+" becomes an  CloudStream);
+                                Add Integration no separate
+                                selector with   nav item
+                                [Stremio]
+                                [CloudStream]
+                                chips
+  D-006          2026-10-02     Reuse the       Single canonical     Yes (§40.2)
+                 (CS-0)         fetchStremioMa  fetcher; no
+                                nifest stack    duplicate SSRF
+                                (manifest-      fetch
+                                fetch + ssrf +
+                                connect-guard)
+                                for ALL
+                                CloudStream
+                                remote fetches
+  D-007          2026-10-02     Code-owned      Plan §6.3 preferred  Yes (§40.3)
+                 (CS-0)         adapter         option; no
+                                registry        DB-configurable
+                                (internalName   adapter execution
+                                → adapter)
   -------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -653,6 +763,63 @@ Worklog updated:
 
 No entries yet.
 
+### AC-001 --- 2026-10-02
+
+Phase: CS-0
+
+Change: Admin IA for the CloudStream Extension Manager.
+
+Original plan: §11/§30 suggested a dedicated admin route
+(`src/routes/admin/system/extensions/cloudstream/`).
+
+New plan: The manager lives INSIDE the existing central Integrations page
+(System → Integrations) as a second tab:
+
+``` text
+System → Integrations
+   ├── [ Add-on ]     — Stremio (existing behavior, unchanged)
+   └── [ Extension ]  — CloudStream (new manager)
+```
+
+The existing "+" button becomes an Add Integration selector sheet with
+[ Stremio ] [ CloudStream ] chips (Stremio chip reuses the existing add
+flow verbatim). No new top-level admin nav item is created;
+AdminAppShell is NOT modified. Tab state is URL-driven
+(`?tab=addon|extension`, default `addon`) with server-side VALID_TABS
+redirects; the default keeps every existing link rendering the Stremio
+list.
+
+Reason: Product decision supplied with the task brief — ONE central
+integrations page, two integration kinds, unambiguous terminology
+(Add-on = Stremio, Extension = CloudStream). Fits the repository's
+established URL-driven tab convention (Hosting Control precedent).
+
+Affected files (CS-1):
+- `src/routes/admin/system/integrations/+page.server.ts` (tab load + actions)
+- `src/routes/admin/system/integrations/+page.svelte` (tabs + "+" selector)
+- `src/lib/components/admin2/AdminCloudStreamManager.svelte` (new)
+- `src/routes/api/admin/integrations/cloudstream/preview/+server.ts` (new)
+
+Affected phases: CS-1 (admin manager), CS-6 (regression list gains the
+Integrations tab + "+" selector checks).
+
+Security impact: None (admin surface stays behind requireAdmin; no new
+public route).
+
+Regression impact: The Add-on tab + existing Stremio CRUD flows +
+`/admin/addons` legacy redirect + admin nav must remain behaviorally
+identical; covered by dedicated CS-1 tests (tab set, default tab, Stremio
+flow regression, "+" selector dispatch).
+
+Tests required:
+- Integrations tab contract tests (tab set, default, redirects)
+- Stremio add-flow regression after the "+" selector introduction
+- CloudStream add-flow tests
+- AdminAppShell nav unchanged assertion
+
+Plan document updated: Yes (§11, §24 task 12, §30, new §40).
+Worklog updated: Yes (this entry + CS-0 completion).
+
 ------------------------------------------------------------------------
 
 # Phase Completion Log
@@ -662,28 +829,60 @@ Use this section after each completed phase.
 ## CS-0 Completion
 
 ``` text
-Date:
-HEAD/commit:
-Status:
+Date: 2026-10-02
+HEAD/commit: c4e6abd (= origin/main, clean tree; only plan/worklog docs edited)
+Status: COMPLETE
 
 Audit completed:
+- Repository state (fast-forward a149a02 → c4e6abd; aborted
+  upload-deletion noise restored to pristine first)
+- Downloader architecture (server/downloader/*, shared/downloader.ts,
+  DownloadSheet routing, public config reader, json/embed providers)
+- Stremio downloader (addon-download-service, stream normalize/ids/fetch,
+  /api/downloader/mavero{,/tabs,/addon}, MaveroAddonDownload UI,
+  deep-link pages)
+- Downloader registry + 3 migrations (base, phase19 seeds, type)
+- Integrations admin page + Stremio addon CRUD + legacy /admin/addons
+  redirect + /api/admin/integrations/preview JSON pattern
+- Shared action model (stream-actions, external-player/MPV, Share,
+  download-link-types)
+- Direct streaming boundaries (resolver adapters, player providers —
+  confirmed untouchable)
+- SSRF/security utilities (ssrf.ts, connect-guard, manifest-fetch,
+  rate-limit, adult-guard, body/cache conventions)
+- Test/build setup (tsx scripts chain; check/build verified)
+- Live DB read-only (10 providers, 10 addons, no cloudstream_* tables)
+
 Key findings:
+- No architecture ambiguity remains; every reuse point identified
+  (fetchStremioManifest for repository fetching, stream-actions for
+  capabilities, download_providers slug pattern for CS-5).
+- The 8 known baseline test failures are pre-existing (adult_mode et al)
+  and unrelated to documentation-only CS-0 changes.
 
-Files reviewed:
+Files reviewed: ~30 (see Phase CS-0 Planned checks for the full list)
 
-Architecture decisions:
+Architecture decisions: AC-001 (Integrations Add-on/Extension tabs +
+"+" Add Integration selector; no dedicated CloudStream route; nav
+unchanged). Reuse decisions in plan §40.2.
 
-Tests:
+Tests: pnpm check 0/0; pnpm build PASS; pnpm test chain (excluding the
+8 documented pre-existing baseline failures) — result recorded in the
+Session Log below; the full unfiltered chain stops at adult_mode_test
+(pre-existing, re-confirmed at pristine c4e6abd).
 
-Failures:
+Failures: None caused by CS-0. Pre-existing baseline failures documented.
 
-Plan changes:
+Plan changes: §11 rewritten (Integrations tab architecture), §24 task 12
+updated, §30 admin route block replaced, new §40 (audit results +
+finalized contracts + file inventory + dependency map) appended.
 
-Worklog changes:
+Worklog changes: This CS-0 entry + AC-001 + completion record + session
+entry + status tables updated.
 
-Remaining work:
+Remaining work: none for CS-0.
 
-Next phase:
+Next phase: CS-1 — safe to begin (exit criteria met).
 ```
 
 ## CS-1 Completion
@@ -927,16 +1126,92 @@ Before GLM declares the project complete:
 
 # Final Status
 
-**Project:** Ready to begin CS-0.
+**Project:** CS-0 complete. CS-1 (CloudStream Repository Manager) is
+cleared to begin.
 
 The next agent action is:
 
 ``` text
-READ PLAN
-READ WORKLOG
-AUDIT CURRENT REPOSITORY
-START CS-0
+READ PLAN (§40 contracts + file inventory)
+READ WORKLOG (CS-0 entry + AC-001)
+VERIFY REPOSITORY STATE
+START CS-1
 ```
 
-Do not skip the audit and do not start implementation before CS-0 has
-finalized the implementation contract.
+------------------------------------------------------------------------
+
+# Session Log Entries
+
+## 2026-10-02 — Session 1 (CS-0)
+
+Phase: CS-0 — Audit, Contract & Final Architecture
+
+Starting HEAD: `a149a02` (local) → fast-forwarded to `c4e6abd` (= the
+remote commit that added the two source-of-truth documents)
+
+Repository state: `main`, clean after restoring the recurring aborted
+upload-feature working-tree deletion (documented at verify-1; 13 deleted
+files + mode-bit noise; NO content changes were lost — `git checkout -- .`
+restored tracked state). Only the two CloudStream documents were edited
+during this session.
+
+Plan/worklog read:
+- [x] Plan (all 1693 lines)
+- [x] Worklog (all 942 lines)
+
+Objective: Read-only CS-0 audit; convert the approved architecture into
+an implementation-ready specification; incorporate the new Integrations
+Add-on/Extension tab requirement; verify the baseline is green.
+
+Work performed:
+- Repository state verified (fast-forward, pristine tree restored).
+- Full audit of downloader/Stremio/registry/DB/admin/actions/SSRF/test
+  surfaces (see the Phase CS-0 entry for the per-area findings).
+- Live read-only Supabase verification (10 providers / 10 addons / no
+  cloudstream_* tables / config v35).
+- Baseline gates: `pnpm check` 0 errors 0 warnings; `pnpm build` PASS.
+- `pnpm test`: full chain stops at `adult_mode_test` (pre-existing
+  baseline failure — loadAdultPolicy removed at 446d8ac; re-confirmed
+  failing at pristine `c4e6abd` where the working tree held only doc
+  changes). Re-ran the whole chain excluding the 8 documented
+  pre-existing baseline failures:
+  **187/187 commands PASSED, 0 failed** (per-command driver with 180s
+  timeout each; logs: scripts/cs0_baseline_test3.log).
+- Plan updated: §11 (Integrations Add-on/Extension architecture),
+  §24 CS-1 task 12, §30 (admin file strategy), new §40 (audit results,
+  finalized contracts, file inventory, dependency map).
+- Worklog updated: header status, global status table, CS-0 phase entry,
+  decision log D-005/D-006/D-007, AC-001, CS-0 completion record, this
+  session entry, final status.
+
+Files changed:
+- CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (documentation only)
+- CLOUDSTREAM_MAVERO_WORKLOG.md (documentation only)
+
+Tests run: pnpm check / pnpm build / full test chain (minus 8 documented
+pre-existing baseline failures) — results above.
+
+Results: All green; no CS-0-caused failures; no production code or data
+touched.
+
+Issues discovered:
+- The working tree again contained the recurring aborted upload-feature
+  deletion (restored; nothing committed was lost).
+- The 8 pre-existing baseline test failures remain (documented; NOT
+  CloudStream-related; adult_mode re-confirmed at pristine HEAD).
+
+Decisions: AC-001 (Integrations tabs + "+" selector), D-005/D-006/D-007
+(see Decision Log).
+
+Plan updated: Yes (§11, §24, §30, §40).
+
+Worklog updated: Yes.
+
+Remaining: CS-1 → CS-6 implementation phases.
+
+Next action: Start CS-1 (database migration, repository parser, sync
+service, Integrations Extension tab + "+" selector, tests).
+
+(CS-0 has finalized the implementation contract — plan §40. The audit
+requirement above is satisfied; it applies again at the start of every
+subsequent phase.)
