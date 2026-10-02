@@ -6,7 +6,8 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CS-6 COMPLETE — project complete (all phases CS-0..CS-6 done)
+**Status:** CONTINUED — Permanent Adapter Plan Phase 1 COMPLETE (runtime
+reliability + Downloader 2 fixes; CS-0..CS-6 history below)
 
 ------------------------------------------------------------------------
 
@@ -86,6 +87,9 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   Downloader 2 UI                   COMPLETE (CS-4, 2026-10-02)
   Downloader registry integration   COMPLETE (CS-5, 2026-10-02)
   Full regression                   COMPLETE (CS-6, 2026-10-02)
+  P1 runtime reliability            COMPLETE (2026-10-03 — deadlines,
+                                    cancellation, bounded loading; see
+                                    Session 8 + P1 Completion)
   Production readiness              VERIFIED (CS-6 — gates green; catalog
                                     seeding is an admin action, see §40.10
                                     limitations)
@@ -2524,6 +2528,107 @@ boundary for existing and new pages). CS-6 is the FINAL phase — no
 further CloudStream implementation follows.
 ```
 
+## P1 Completion (Permanent Adapter Plan — Phase 1)
+
+``` text
+Date: 2026-10-03
+Plan: CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md §3 (Phase 1)
+HEAD/commit: 8568608 (start, = origin/main) → fix: enforce cloudstream
+runtime deadlines and bounded downloader 2 loading (Phase 1) (pushed to
+origin/main)
+Status: COMPLETE
+
+Root causes fixed (full audit + empirical proofs in Session 8):
+- RC-1 fetchJson AbortSignal propagation (adapter deadline now reaches
+  JSON fetches; the resolver suite's hanging-provider case dropped from
+  ~10s to ~1s wall-clock as a direct side effect)
+- RC-2 resolveBaseUrl/urls.json deadline awareness
+- RC-3 per-adapter deadline is now a PROMISE RACE — a worker settles at
+  its deadline even if adapter code never observes the signal (no
+  infinite wait is possible); every worker settles ≤
+  min(start + 30s, overall 40s) by construction
+- RC-4 UI client-side fetch deadlines (tabs 20s / resolve + retry 45s
+  safety nets → typed PROVIDER_TIMEOUT states) + envelope errors settle
+  still-loading tabs (no stale spinners)
+- RC-5 client-disconnect signal (request.signal) threads endpoint →
+  service → resolver overall controller (abandoned requests stop
+  server work)
+
+Architecture (budgets UNCHANGED — 30s/adapter, 40s/overall, ≤4
+concurrency, 10s/2MiB per page, 1MiB/10s per JSON doc):
+context.fetchJson/resolveBaseUrl forward the per-adapter signal →
+security/fetch.ts (new signal dep) → stremio manifest-fetch (additive
+optional signal linked into its internal controller — behavior-
+preserving for every existing caller) → fetch abort. The resolver races
+every adapter promise against its deadline; race subscriptions absorb
+the losing promise's eventual rejection (never unhandled). The HTML
+path already propagated signals correctly (unchanged). All security
+controls preserved: SSRF two-stage + connect-time re-validation, HTTPS
+gates, redirect limits, size caps, bounded concurrency (verified by the
+re-run CS-1/CS-2 security suites).
+
+Files changed (12 tracked):
+- src/lib/server/streaming/stremio/manifest-fetch.ts (+22 — additive
+  optional signal + linkExternalSignal)
+- src/lib/server/cloudstream/security/fetch.ts (+3 — signal dep)
+- src/lib/server/cloudstream/runtime/context.ts (+6 — fetchJson +
+  resolveBaseUrl forward the deadline)
+- src/lib/server/cloudstream/runtime/dynamic-urls.ts (+3 — signal dep)
+- src/lib/server/cloudstream/resolver/service.ts (deadline race +
+  external signal)
+- src/lib/server/cloudstream/downloader/service.ts (+7 — signal dep)
+- src/routes/api/downloader/mavero2/+server.ts (+4 — request.signal)
+- src/routes/api/downloader/mavero2/extension/+server.ts (+4 —
+  request.signal)
+- src/lib/shared/cloudstream-download-view.ts (+19 —
+  settleCloudStreamLoadingTabs helper)
+- src/lib/components/MaveroCloudStreamDownload.svelte (client fetch
+  deadlines + envelope settling — reliability only, NO redesign)
+- scripts/cloudstream_phase1_reliability_test.ts (NEW — 38 checks)
+- package.json (test chain registration) +
+  scripts/cloudstream_registry_integration_test.ts (§F1b/§F5 pins
+  evolved for the sanctioned Phase 1 diffs, +6 checks → 151)
+
+Tests:
+- cloudstream_phase1_reliability_test — 38 checks PASSED (budget pins,
+  success anchor, hanging JSON at the adapter deadline, unit-level
+  external-signal abort, hanging urls.json, never-resolving adapter,
+  client-disconnect + pre-aborted signals, overall-budget clamp,
+  hanging extractor isolation, concurrent-request isolation, malformed
+  JSON, UI tab settling)
+- All 10 CloudStream suites re-run GREEN: parse 78 + sync 113 +
+  admin_ui 160 + runtime 101 + extractors 50 + adapters 39 + resolver
+  37 + downloader_api 144 + downloader_ui 170 + registry 151
+- stremio_addons_phase2 (203 — manifest-fetch untouched behavior) +
+  phase1_rate_limit (6) GREEN
+- pnpm check: 0 errors, 0 warnings
+- pnpm build: PASS (~31s, vite + adapter-netlify)
+- Full chain (p1_full_chain_driver, 206 commands): 198 PASS + the 8
+  documented pre-existing baseline failures (identical set —
+  adult_mode, phase2_repo_hygiene, phase8_accessibility,
+  phase9_source_progress, phase9_landscape, phase9_fix,
+  phase9_landscape_drawer_position, phase4_registry_integration) +
+  0 NEW failures
+
+Security: no security control weakened; the signal linkage reuses the
+established linkExternalSignal pattern; SSRF/size/redirect/concurrency
+limits byte-verified by the re-run suites; no Render/Oracle/Builder
+dependency exists in the Downloader 2 path (grep-verified — plan §1
+independence holds).
+
+Known limitations (documented, not defects): DB loads
+(loadContent/loadCatalog) rely on Supabase client behavior with no
+explicit Mavero-side timeout (the shared pattern with the existing
+Stremio downloader — unchanged by Phase 1); the 45s client resolve
+deadline intentionally exceeds the 40s server budget (safety net, not
+a primary bound); Netlify platform function timeouts remain the outer
+envelope.
+
+Next phase: Phase 2 — Unified Permanent Adapter System (NOT started;
+per the plan, later phases cover the adapter registry/lifecycle,
+Nuvio, the Builder, and the Integration Manager redesign).
+```
+
 ------------------------------------------------------------------------
 
 # Daily / Session Log
@@ -2653,9 +2758,12 @@ implementation.
 The next agent action is:
 
 ``` text
-NONE — the CloudStream Downloader project is complete.
-(If work resumes on Mavero, it must be a NEW project/task with its own
-plan — not a continuation of the CloudStream phase chain.)
+CORRECTION (2026-10-03, Permanent Adapter Plan): the CS-0..CS-6 chain is
+complete and stays frozen; work has CONTINUED under the new
+CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (its own plan, per this
+file's rule). Phase 1 (Core Runtime Reliability + Downloader 2 Fixes)
+is COMPLETE — see the P1 Completion record + Session 8.
+Next: Phase 2 — Unified Permanent Adapter System (not started).
 ```
 
 ------------------------------------------------------------------------
@@ -3405,3 +3513,207 @@ the worklog contains the final implementation summary — pnpm check
 0/0, pnpm build PASS, full chain 0 new failures, 1,035 CloudStream
 checks green, live smokes + boundary tests green, production-readiness
 verdict recorded with its documented limitations.)
+
+## 2026-10-03 — Session 8 (Permanent Adapter Plan — Phase 1: Core Runtime Reliability + Downloader 2 Fixes)
+
+Phase: Phase 1 of `CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md` (new
+continuation plan; the CS-0..CS-6 chain above is history).
+
+Starting HEAD: `8b74172` → fast-forwarded to `8568608` (= origin/main;
+added the Permanent Adapter plan doc; includes the `4f25df4` cheerio
+lockfile sync). Working tree: content-identical to HEAD except the
+recurring untracked/uncommitted upload-feature deletions + mode-bit noise
+documented since CS-0 (zero tracked content changes — verified via
+`git diff --numstat`).
+
+Plan/worklog read:
+- [x] CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (all 964 lines)
+- [x] Worklog (structure + CS-2/CS-3/CS-4/CS-5/CS-6 completions + Final
+      Status + session entries; conventions noted)
+
+Objective (plan §3): fix the Downloader 2 loading/stalling problem
+("Finding CloudStream sources…" can remain indefinitely), make the
+runtime fully independent of any external Builder/Render/Oracle service,
+and enforce the documented deadline/cancellation model on EVERY network
+path. Feature freeze: reliability only — no UI redesign, no Phase 2/3/4/5
+work, no unrelated system changes.
+
+STEP 1 — read-only audit findings (whole execution chain inspected:
+runtime/context.ts, security/http.ts, security/fetch.ts, stremio
+manifest-fetch.ts, runtime/dynamic-urls.ts, resolver/service.ts,
+downloader/service.ts, all 3 mavero2 endpoints, the UI component + view
+model, all 3 adapters + 3 extractors):
+
+ROOT CAUSES (each verified against code, not assumed):
+
+- RC-1 — `context.ts fetchJson()` does NOT forward the per-adapter
+  AbortSignal (the plan's known issue #4 — CONFIRMED). The whole JSON
+  path (`security/fetch.ts` → stremio `manifest-fetch.ts`) has NO signal
+  field at all: each JSON fetch is bounded only by its own internal 10s
+  timer, deaf to the 30s adapter / 40s overall deadlines. EMPIRICAL
+  PROOF: `cloudstream_resolver_test` runs 11.3s — its "provider timeout"
+  case (150ms adapter deadline + hanging VegaMovies search.php) waits
+  the FULL 10s internal JSON timeout instead of the 150ms deadline.
+- RC-2 — `context.ts resolveBaseUrl()` also drops the signal
+  (dynamic-urls.ts urls.json fetch: deadline-blind, own 10s cap; every
+  adapter AND every extractor invocation hits it on cache miss/TTL
+  expiry).
+- RC-3 — the orchestrator (`resolver/service.ts`) RACES NOTHING: the
+  per-adapter (30s) and overall (40s) timers only ABORT signals;
+  `mapBounded` awaits the adapter promises directly. Any signal-blind
+  path (RC-1/RC-2, or any future adapter defect) makes the REAL runtime
+  the SUM of internal timeouts (catch-and-continue loops multiply this:
+  Bollyflix episode walk ≤8 season pages + ≤24 sequential extractor
+  sources; GDFlix ≤24 buttons × sub-fetches). Worst case runs minutes
+  past the 40s budget → the API waits → the UI waits.
+- RC-4 — the UI's three fetches (tabs, batch resolve, per-extension
+  retry) have NO client-side timeout: loading ends only when the server
+  responds or the transport errors. A stalled platform connection
+  (function killed without clean teardown, mobile stall, proxy
+  hold-open) leaves the panel at "Finding CloudStream sources…"
+  indefinitely. Secondary UI defect: a typed envelope error from the
+  batch resolve leaves every still-loading tab spinner spinning forever
+  (stale loading state).
+- RC-5 — the mavero2/extension endpoints do not observe the client
+  disconnect signal (`request.signal`): server-side resolution + budget
+  burn continues after the user abandons the page.
+
+VERIFIED ALREADY-CORRECT (no changes): the HTML fetch path
+(security/http.ts) forwards the signal AND links it into a local
+controller with a 10s timer; redirect probes + the ≤7-hop HEAD chain are
+signal-aware (5s/hop); all 3 extractors fetch exclusively through the
+context (signal-aware paths, ≤24 links, per-button failure isolation);
+fastdlserver re-dispatch recursion is bounded; worker-level failure
+isolation + partial-result preservation work (allSettled-style catch
+inside every worker); concurrency ≤4 is enforced; error taxonomy is
+closed (PROVIDER_TIMEOUT et al.); NO Render/Oracle/Builder dependency
+exists anywhere in the Downloader 2 path (grep-verified — plan §3
+independence already holds today); the UI aborts on destroy and guards
+stale responses.
+
+STEP 2 — documented failure paths (blocking points):
+
+1. Movie → adapter → extractor → links: healthy path — every hop
+   signal-aware EXCEPT fetchJson/resolveBaseUrl (RC-1/RC-2).
+2. Movie → slow provider → timeout: HTML path terminates at
+   min(10s page cap, 30s adapter deadline). JSON path terminates at its
+   OWN 10s cap regardless of the deadline (RC-1) — deadline overruns.
+3. Movie → one provider hangs → another succeeds: isolation works, but
+   the hung provider terminates LATE (up to Σ internal timeouts — RC-3
+   removes the 40s ceiling).
+4. Movie → all providers fail: response latency = per-adapter chains,
+   not the overall budget, when signal-blind paths are hit.
+5. Series → season/episode: same defects amplified by longer sequential
+   walks (episode pages + per-episode source resolution).
+6. Concurrent providers: ≤4 concurrency held; per-request controllers
+   are fresh per resolution (no cross-request AbortController reuse);
+   the shared dynamic-urls TTL cache is immutable data (benign).
+7. Client cancels/abandons: the UI aborts its own fetch (no stale state
+   lands), but the server keeps resolving (RC-5) — wasted budgets.
+8. JSON request hangs: 10s internal cap, deadline-blind (RC-1).
+9. HTML request hangs: 10s cap, deadline-AWARE (correct).
+10. Redirect/request chain hangs: 5s/hop × ≤7 hops, deadline-aware
+    (correct).
+
+BLOCKING POINTS (where the indefinite UI wait actually forms): server
+response latency is unbounded-by-design under RC-1+RC-2+RC-3; the client
+has no timeout (RC-4). Either alone cannot hang the UI indefinitely;
+together they can, and do (plan §2 problem 3).
+
+Fix design (STEP 3-6, before implementation):
+- F1: additive optional `signal` on the stremio manifest-fetch deps +
+  linked into its internal controller (behavior-preserving for every
+  existing caller — the same link pattern security/http.ts already
+  established); surfaced through `security/fetch.ts` CloudStreamFetchDeps.
+- F2: `context.ts` forwards the signal in `fetchJson` + `resolveBaseUrl`
+  (dynamic-urls deps).
+- F3: resolver per-adapter deadline becomes a PROMISE RACE (deadline
+  rejection settles the worker even if adapter code never observes the
+  signal); overall→per-adapter propagation already exists, so every
+  worker settles ≤ min(start+30s, 40s); the losing adapter promise is
+  signal-aborted and settles promptly (no orphaned in-flight fetches
+  after F1/F2; race subscriptions prevent unhandled rejections).
+- F4: endpoints pass `request.signal` through the service into the
+  resolver overall controller (client abandonment cancels server work).
+- F5: UI fetch timeout safety net (tabs 20s / batch + retry 45s client
+  caps → typed PROVIDER_TIMEOUT states) + envelope errors settle
+  still-loading tabs (no stale spinners). No visual redesign.
+- Budgets stay EXACTLY as-is (30s/40s/≤4/10s/2MiB — verified against
+  code; concurrency stays 4 per the plan's "unless the audit proves a
+  different existing contract" — it does not).
+
+Status: IN PROGRESS — implementation begins after this entry.
+
+Implementation performed (STEP 3-6, after the audit above):
+- F1 manifest-fetch.ts: additive optional `signal` on ManifestFetchDeps +
+  linkExternalSignal into the internal controller (all existing callers
+  unchanged — verified by stremio_addons_phase2: 203 checks).
+- F2 security/fetch.ts + dynamic-urls.ts: `signal` deps, forwarded.
+- F3 context.ts: fetchJson + resolveBaseUrl now forward the per-adapter
+  deadline signal (the RC-1/RC-2 fixes).
+- F4 resolver/service.ts: the per-adapter deadline became a PROMISE RACE
+  (RC-3) + the external/client signal links into the overall controller
+  (RC-5). Budgets untouched (30s/40s/≤4 — pinned by new test §A).
+- F5 downloader/service.ts + both mavero2 endpoints: request.signal
+  threading (additive-only — pinned by the evolved §F5).
+- F6 view helper settleCloudStreamLoadingTabs + UI fetchWithTimeout
+  (tabs 20s, resolve/retry 45s) + envelope-error settling (RC-4). No
+  visual redesign; destroy-time aborts + stale-response guards intact.
+- The recurring aborted upload-feature working-tree deletion was restored
+  once more (git checkout -- on the 13 deleted tracked files, the session-1
+  convention) so `pnpm check` runs against the committed tree; mode-bit
+  noise left untouched.
+
+Gates (all GREEN):
+- pnpm check: 0 errors, 0 warnings.
+- pnpm build: PASS (~31s, vite + adapter-netlify).
+- pnpm test full chain (p1_full_chain_driver, 206 commands): 198 PASS +
+  the identical 8 documented pre-existing baseline failures + 0 NEW
+  failures. (The && chain itself still stops at the first pre-existing
+  failure — the per-command driver is the documented convention.)
+- New suite cloudstream_phase1_reliability_test: 38 checks PASSED;
+  registered in the package.json test chain. Empirical proof points:
+  the resolver suite's hanging-provider case now completes in ~1.2s
+  (was 11.3s pre-fix); the never-resolving-adapter case (impossible
+  pre-fix) terminates at its deadline.
+- CloudStream suites: parse 78, sync 113, admin_ui 160, runtime 101,
+  extractors 50, adapters 39, resolver 37, downloader_api 144,
+  downloader_ui 170, registry 151 — ALL GREEN.
+- stremio_addons_phase2 203 + phase1_rate_limit 6 — GREEN (shared
+  primitive untouched behavior).
+- Regression pins evolved (sanctioned Phase 1 diffs):
+  cloudstream_registry_integration_test §F1b/§F5 (151 checks).
+
+STEP 12 verification (all boxes checked):
+[x] no indefinite "Finding CloudStream sources…" (server deadlines +
+    client safety nets + envelope settling)
+[x] fetchJson + all network paths propagate the AbortSignal
+[x] nested requests inherit cancellation/deadline (context → JSON/HTML/
+    redirect/base-url; extractor dispatch uses the same context)
+[x] adapter timeout enforced (race — test F)
+[x] overall timeout enforced (test I)
+[x] slow provider cannot block others (tests C/J)
+[x] partial results (tests C/J/K)
+[x] individual failures isolated (worker catch + extractor isolation)
+[x] client loading state always terminates (timeouts + settling)
+[x] retries work (manual retry paths unchanged; settled tabs re-retry)
+[x] concurrent requests isolated (test K)
+[x] security controls intact (suites re-run; nothing weakened)
+[x] no Render/Oracle/Builder dependency (grep-verified)
+[x] existing Mavero Downloader untouched (§F1/§F2/§F3/§F6 pins GREEN)
+[x] existing Stremio/direct streaming untouched (stremio suites GREEN)
+[x] pnpm check passes
+[x] pnpm test passes except the 8 documented pre-existing failures
+[x] pnpm build passes
+[x] worklog updated (this entry + P1 Completion + status tables)
+
+Files changed: see the P1 Completion record (12 tracked files + 1 new
+test suite + driver artifacts under the untracked chain-driver
+convention).
+
+Commit: `fix: enforce cloudstream runtime deadlines and bounded
+downloader 2 loading (Phase 1)` (pushed to origin/main; SHA recorded in
+the P1 Completion record at commit time).
+
+Next action: STOP at Phase 1 completion — Phase 2 (Unified Permanent
+Adapter System) has NOT been started, per the plan's phase discipline.

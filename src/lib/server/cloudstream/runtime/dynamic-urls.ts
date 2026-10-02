@@ -40,6 +40,8 @@ export type DynamicUrlDeps = {
   now?: () => number;
   /** Override the cache TTL (tests). */
   ttlMs?: number;
+  /** External deadline (Permanent Adapter Plan Phase 1) — cancels the urls.json fetch when the owning adapter budget expires. */
+  signal?: AbortSignal;
 };
 
 /** Bounded URL sanity check for a dynamic value (never trusted blindly). */
@@ -76,6 +78,7 @@ export async function dynamicUrls(deps: DynamicUrlDeps = {}): Promise<ReadonlyMa
     const result = await fetchCloudStreamJson(DYNAMIC_URLS_DOCUMENT, {
       ...(deps.fetcher !== undefined ? { fetcher: deps.fetcher } : {}),
       ...(deps.dnsResolver !== undefined ? { dnsResolver: deps.dnsResolver } : {}),
+      ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
     });
     const urls = parseDynamicUrls(result.body);
     cache = { at: now(), urls };

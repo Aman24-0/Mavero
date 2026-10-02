@@ -115,6 +115,10 @@ export function createCloudStreamRuntimeContext(deps: CloudStreamRuntimeDeps): C
           ...(deps.fetcher !== undefined ? { fetcher: deps.fetcher } : {}),
           ...(deps.dnsResolver !== undefined ? { dnsResolver: deps.dnsResolver } : {}),
           ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+          // Permanent Adapter Plan Phase 1: the adapter deadline now cancels
+          // JSON fetches exactly like HTML fetches (the runtime context is
+          // the ONLY network surface — every path observes the deadline).
+          signal: deps.signal,
         });
         success = true;
         return result.body;
@@ -182,6 +186,8 @@ export function createCloudStreamRuntimeContext(deps: CloudStreamRuntimeDeps): C
         ...(deps.fetcher !== undefined ? { fetcher: deps.fetcher } : {}),
         ...(deps.dnsResolver !== undefined ? { dnsResolver: deps.dnsResolver } : {}),
         ...(deps.now !== undefined ? { now: deps.now } : {}),
+        // Phase 1: urls.json resolution is also deadline-bound.
+        signal: deps.signal,
       });
     },
 

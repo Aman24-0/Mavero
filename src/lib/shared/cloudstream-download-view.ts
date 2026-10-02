@@ -425,6 +425,25 @@ export function markCloudStreamTabFailed(
   );
 }
 
+/**
+ * Settles every still-loading tab into a typed failure (Permanent Adapter
+ * Plan Phase 1). Used when the batch resolve ends WITHOUT group results —
+ * a typed envelope error (RATE_LIMITED / INTERNAL_ERROR / …) or a client
+ * timeout — so no tab spinner can outlive the request that owns it.
+ * Already-settled tabs (loaded/empty/failed) are NEVER touched: one failed
+ * request must not reset successful providers.
+ */
+export function settleCloudStreamLoadingTabs(
+  tabs: CloudStreamSourceTab[],
+  code: CloudStreamDownloaderErrorCode,
+): CloudStreamSourceTab[] {
+  return tabs.map((tab) =>
+    tab.status === 'loading'
+      ? { ...tab, status: 'failed' as const, links: [], errorCode: code, errorMessage: undefined }
+      : tab,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Outcome summary (distinct empty / failure messaging)
 // ---------------------------------------------------------------------------

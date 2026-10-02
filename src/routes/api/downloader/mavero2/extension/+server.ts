@@ -114,6 +114,10 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
         ...(episode !== undefined ? { episode } : {}),
       },
       extensionId,
+      // Permanent Adapter Plan Phase 1: an abandoned client request cancels
+      // the server-side resolution (same overall-deadline linkage as the
+      // batch endpoint).
+      { signal: request.signal },
     );
     return json({ ok: true, media: result.media, group: result.group }, { headers: NO_STORE });
   } catch (error) {

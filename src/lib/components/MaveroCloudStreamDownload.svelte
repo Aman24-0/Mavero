@@ -23,6 +23,7 @@
     parseCloudStreamExtensionPayload,
     parseCloudStreamGroupsPayload,
     parseCloudStreamTabsPayload,
+    settleCloudStreamLoadingTabs,
     visibleCloudStreamLinks,
     type CloudStreamFilters,
     type CloudStreamSourceTab,
@@ -276,6 +277,45 @@
     return params;
   }
 
+  // ----- Client-side fetch deadlines (Permanent Adapter Plan Phase 1) -----
+
+  // The server bounds every request (30s/adapter + 40s overall budgets + DB
+  // load), but the BROWSER fetch has no built-in cap: a stalled platform
+  // connection would otherwise leave the panel loading forever (plan §2
+  // problem 3). These client deadlines are safety nets sized above the
+  // legitimate server path so they never fire during a healthy slow resolve.
+  const TABS_FETCH_TIMEOUT_MS = 20_000;
+  const RESOLVE_FETCH_TIMEOUT_MS = 45_000;
+
+  /** fetch + client deadline; `signal` is the component's abort controller. */
+  async function fetchWithTimeout(
+    url: string,
+    signal: AbortSignal,
+    timeoutMs: number,
+  ): Promise<{ response: Response; timedOut: boolean }> {
+    const timeoutController = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort();
+    }, timeoutMs);
+    // Component cancellation (destroy / superseded request) must abort the
+    // SAME controller so the fetch stops for either reason.
+    const onAbort = () => timeoutController.abort();
+    if (signal.aborted) timeoutController.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      const response = await fetch(url, {
+        headers: { accept: 'application/json' },
+        signal: timeoutController.signal,
+      });
+      return { response, timedOut };
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
   // ----- Data flow -----
 
   async function loadTabs(): Promise<void> {
@@ -286,11 +326,19 @@
     tabsFailed = false;
     tabsEnvelope = null;
     try {
-      const response = await fetch(`/api/downloader/mavero2/tabs?${buildParams().toString()}`, {
-        headers: { accept: 'application/json' },
-        signal: abort.signal,
-      });
+      const { response, timedOut } = await fetchWithTimeout(
+        `/api/downloader/mavero2/tabs?${buildParams().toString()}`,
+        abort.signal,
+        TABS_FETCH_TIMEOUT_MS,
+      );
       if (abort.signal.aborted) return;
+      if (timedOut) {
+        tabs = [];
+        consideredExtensions = 0;
+        activeTabId = null;
+        tabsEnvelope = { code: 'PROVIDER_TIMEOUT' };
+        return;
+      }
       const raw: unknown = await response.json().catch(() => null);
       const parsed = parseCloudStreamTabsPayload(raw);
       if (parsed.kind === 'error') {
@@ -324,15 +372,25 @@
     resolving = true;
     resolveEnvelope = null;
     try {
-      const response = await fetch(`/api/downloader/mavero2?${buildParams().toString()}`, {
-        headers: { accept: 'application/json' },
-        signal: abort.signal,
-      });
+      const { response, timedOut } = await fetchWithTimeout(
+        `/api/downloader/mavero2?${buildParams().toString()}`,
+        abort.signal,
+        RESOLVE_FETCH_TIMEOUT_MS,
+      );
       if (abort.signal.aborted) return;
+      if (timedOut) {
+        // Safety net (server budgets normally respond first): no tab spinner
+        // may outlive the request that owns it.
+        tabs = settleCloudStreamLoadingTabs(tabs, 'PROVIDER_TIMEOUT');
+        resolveEnvelope = { code: 'PROVIDER_TIMEOUT' };
+        return;
+      }
       const raw: unknown = await response.json().catch(() => null);
       const parsed = parseCloudStreamGroupsPayload(raw);
       if (parsed.kind === 'error') {
-        // The tabs remain visible; the typed envelope drives the message.
+        // The tabs remain visible; the typed envelope drives the message AND
+        // settles every still-loading tab (no stale spinners — Phase 1).
+        tabs = settleCloudStreamLoadingTabs(tabs, parsed.code);
         resolveEnvelope = { code: parsed.code, ...(parsed.message !== undefined ? { message: parsed.message } : {}) };
         return;
       }
@@ -343,11 +401,7 @@
       if (abort.signal.aborted) return;
       // Transport failure: mark every still-loading tab failed (NETWORK_ERROR)
       // so no tab is left stuck in a spinner — tabs/counts stay visible.
-      tabs = tabs.map((tab) =>
-        tab.status === 'loading'
-          ? { ...tab, status: 'failed' as const, links: [], errorCode: 'NETWORK_ERROR' as const }
-          : tab,
-      );
+      tabs = settleCloudStreamLoadingTabs(tabs, 'NETWORK_ERROR');
       console.warn('[MaveroDownloader2] resolve failed', error);
     } finally {
       if (!abort.signal.aborted) resolving = false;
@@ -368,11 +422,16 @@
     const params = buildParams();
     params.set('extensionId', tab.extensionId);
     try {
-      const response = await fetch(`/api/downloader/mavero2/extension?${params.toString()}`, {
-        headers: { accept: 'application/json' },
-        signal: abort.signal,
-      });
+      const { response, timedOut } = await fetchWithTimeout(
+        `/api/downloader/mavero2/extension?${params.toString()}`,
+        abort.signal,
+        RESOLVE_FETCH_TIMEOUT_MS,
+      );
       if (abort.signal.aborted) return;
+      if (timedOut) {
+        tabs = markCloudStreamTabFailed(tabs, tab.extensionId, 'PROVIDER_TIMEOUT');
+        return;
+      }
       const raw: unknown = await response.json().catch(() => null);
       const parsed = parseCloudStreamExtensionPayload(raw);
       if (parsed.kind === 'error') {

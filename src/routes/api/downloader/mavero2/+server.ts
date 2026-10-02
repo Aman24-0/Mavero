@@ -133,6 +133,10 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
         ...(episode !== undefined ? { episode } : {}),
       },
       extensions !== undefined ? { extensionIds: extensions } : {},
+      // Permanent Adapter Plan Phase 1: an abandoned client request cancels
+      // the server-side resolution (the overall deadline controller links
+      // this signal). The 30s/40s budgets still bound the response path.
+      { signal: request.signal },
     );
     return json(
       {

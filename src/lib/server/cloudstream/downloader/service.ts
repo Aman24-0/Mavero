@@ -135,6 +135,12 @@ export type CloudStreamDownloaderDeps = {
   adapterTimeoutMs?: number;
   /** Overall timeout override (tests). */
   overallTimeoutMs?: number;
+  /**
+   * External cancellation (Permanent Adapter Plan Phase 1): forwarded into
+   * the resolver's overall controller — the API layer passes the client's
+   * request signal so an abandoned request stops server-side resolution.
+   */
+  signal?: AbortSignal;
 };
 
 // ---------------------------------------------------------------------------
@@ -474,6 +480,7 @@ async function resolveThroughOrchestrator(
       ...(deps.dnsResolver !== undefined ? { dnsResolver: deps.dnsResolver } : {}),
       ...(deps.adapterTimeoutMs !== undefined ? { adapterTimeoutMs: deps.adapterTimeoutMs } : {}),
       ...(deps.overallTimeoutMs !== undefined ? { overallTimeoutMs: deps.overallTimeoutMs } : {}),
+      ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
     },
   );
 }

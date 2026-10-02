@@ -50,6 +50,12 @@ export type CloudStreamResolverDeps = {
   overallTimeoutMs?: number;
   /** Injectable clock (tests). */
   now?: () => number;
+  /**
+   * External cancellation (Permanent Adapter Plan Phase 1): the API layer
+   * forwards the client's request signal here — an abandoned request aborts
+   * the overall controller exactly like the overall timer does.
+   */
+  signal?: AbortSignal;
 };
 
 /** Manifold bounded-concurrency map (exported for deterministic tests). */
@@ -81,6 +87,18 @@ function classifyThrown(
   return { category: 'UNEXPECTED', message: 'The provider resolution failed unexpectedly.' };
 }
 
+/** Links an external cancellation into a controller (Phase 1). */
+function linkExternalSignal(external: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!external) return () => {};
+  if (external.aborted) {
+    controller.abort();
+    return () => {};
+  }
+  const onAbort = () => controller.abort();
+  external.addEventListener('abort', onAbort, { once: true });
+  return () => external.removeEventListener('abort', onAbort);
+}
+
 /** Translates a resolve result into a group status. */
 function groupStatusOf(result: CloudStreamLinkResult): CloudStreamResolutionGroup['status'] {
   if (result.failure !== undefined && result.links.length === 0) return 'failed';
@@ -106,6 +124,9 @@ export async function resolveCloudStream(
   // Overall deadline controller.
   const overallController = new AbortController();
   const overallTimer = setTimeout(() => overallController.abort(), overallTimeoutMs);
+  // Phase 1: external cancellation (the API layer's client-disconnect signal)
+  // aborts the SAME controller — client abandonment stops server work.
+  const unlinkExternal = linkExternalSignal(deps.signal, overallController);
 
   // De-duplicate adapter ids while preserving order.
   const requestedIds: string[] = [];
@@ -151,6 +172,23 @@ export async function resolveCloudStream(
       if (overallController.signal.aborted) perAdapterController.abort();
       else overallController.signal.addEventListener('abort', propagate, { once: true });
 
+      // Permanent Adapter Plan Phase 1 (RC-3 fix): the per-adapter deadline
+      // is a PROMISE RACE, not just an abort signal. The worker settles at
+      // the deadline EVEN IF adapter code never observes the signal — no
+      // code path can make the request wait past its budget. The losing
+      // adapter promise is signal-aborted (every runtime fetch observes the
+      // deadline after the F1/F2 signal fixes) and settles promptly; the
+      // race subscription keeps its eventual rejection handled (never an
+      // unhandled rejection).
+      const deadlineRejected = Symbol('cloudstream-adapter-deadline');
+      const deadlinePromise = new Promise<never>((_, reject) => {
+        if (perAdapterController.signal.aborted) {
+          reject(deadlineRejected);
+          return;
+        }
+        perAdapterController.signal.addEventListener('abort', () => reject(deadlineRejected), { once: true });
+      });
+
       const adapterStarted = now();
       let result: CloudStreamLinkResult;
       try {
@@ -170,26 +208,32 @@ export async function resolveCloudStream(
           deadline: perAdapterController.signal,
         };
 
+        const unsupported = (message: string): CloudStreamLinkResult =>
+          ({ links: [], failure: { category: 'UNSUPPORTED', message } });
+        let adapterPromise: Promise<CloudStreamLinkResult>;
         if (isEpisode) {
-          if (adapter.resolveEpisode === undefined) {
-            result = { links: [], failure: { category: 'UNSUPPORTED', message: 'This adapter does not support episode resolution.' } };
-          } else {
-            result = await adapter.resolveEpisode(
-              { ...baseRequest, season: request.season!, episode: request.episode! },
-              ctx,
-            );
-          }
+          adapterPromise = adapter.resolveEpisode === undefined
+            ? Promise.resolve(unsupported('This adapter does not support episode resolution.'))
+            : adapter.resolveEpisode(
+                { ...baseRequest, season: request.season!, episode: request.episode! },
+                ctx,
+              );
         } else {
-          if (!adapter.supports.movie) {
-            result = { links: [], failure: { category: 'UNSUPPORTED', message: 'This adapter does not support movie resolution.' } };
-          } else {
-            result = await adapter.resolveMovie(baseRequest, ctx);
-          }
+          adapterPromise = !adapter.supports.movie
+            ? Promise.resolve(unsupported('This adapter does not support movie resolution.'))
+            : adapter.resolveMovie(baseRequest, ctx);
         }
 
-        // Defensive normalization: a thrown-but-caught adapter still yields
-        // its diagnostics via the context sink.
-        diagnostics.push(...ctx.diagnostics.events());
+        try {
+          result = await Promise.race([adapterPromise, deadlinePromise]);
+          // Defensive normalization: a thrown-but-caught adapter still yields
+          // its diagnostics via the context sink.
+          diagnostics.push(...ctx.diagnostics.events());
+        } catch (error) {
+          const deadlineAborted = perAdapterController.signal.aborted;
+          const classified = classifyThrown(error, deadlineAborted);
+          result = { links: [], failure: classified };
+        }
       } catch (error) {
         const deadlineAborted = perAdapterController.signal.aborted;
         const classified = classifyThrown(error, deadlineAborted);
@@ -226,6 +270,7 @@ export async function resolveCloudStream(
     });
   } finally {
     clearTimeout(overallTimer);
+    unlinkExternal();
   }
 
   return {

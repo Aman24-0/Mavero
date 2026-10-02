@@ -150,6 +150,24 @@ Test at minimum:
 - partial results
 - concurrent Downloader 2 requests.
 
+### Phase 1 implementation record (2026-10-03)
+
+COMPLETED. Verified budget contract (unchanged from the code): 30s per
+adapter, 40s overall, concurrency ≤4, 10s/2 MiB per HTML page, 10s/1 MiB
+per JSON document. Enforced cancellation architecture: the runtime
+context forwards the per-adapter deadline signal into EVERY network path
+(HTML, JSON, redirects, redirect chains, urls.json); the resolver races
+every adapter promise against its deadline (a worker settles at the
+deadline even if adapter code never observes the signal); the API
+endpoints thread the client's request signal into the overall
+controller (abandoned requests stop server work); the UI applies client
+fetch deadlines (tabs 20s, resolve/retry 45s safety nets) and settles
+still-loading tabs on typed envelope errors. Root causes + files +
+tests are recorded in `CLOUDSTREAM_MAVERO_WORKLOG.md` (Session 8 + P1
+Completion). Gates: pnpm check 0/0, pnpm build PASS, full 206-command
+test chain = 198 PASS + the 8 documented pre-existing failures + 0 new.
+No Render/Oracle/Builder dependency exists in the Downloader 2 path.
+
 ---
 
 # 4. Phase 2 — Unified Permanent Adapter System

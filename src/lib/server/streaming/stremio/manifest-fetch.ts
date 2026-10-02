@@ -39,7 +39,27 @@ export type ManifestFetchDeps = {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  /**
+   * Optional external deadline (Permanent Adapter Plan Phase 1). When
+   * provided, it is linked into the internal controller so an external
+   * abort cancels the in-flight fetch + body read exactly like the internal
+   * timeout does. Purely additive: every existing caller passes no signal
+   * and keeps byte-identical behavior.
+   */
+  signal?: AbortSignal;
 };
+
+/** Links an external deadline into the internal controller (Phase 1). */
+function linkExternalSignal(external: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!external) return () => {};
+  if (external.aborted) {
+    controller.abort();
+    return () => {};
+  }
+  const onAbort = () => controller.abort();
+  external.addEventListener('abort', onAbort, { once: true });
+  return () => external.removeEventListener('abort', onAbort);
+}
 
 export type ManifestFetchResult = {
   /** URL of the response actually returned (after redirects). */
@@ -108,6 +128,7 @@ export async function fetchStremioManifest(rawUrl: string, deps: ManifestFetchDe
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const unlink = linkExternalSignal(deps.signal, controller);
   try {
     let currentUrl = assertSafeManifestUrl(rawUrl);
     await assertSafeManifestDestination(currentUrl, resolver);
@@ -152,5 +173,6 @@ export async function fetchStremioManifest(rawUrl: string, deps: ManifestFetchDe
     throw new ManifestServiceError('UNEXPECTED', { cause: error });
   } finally {
     clearTimeout(timer);
+    unlink();
   }
 }

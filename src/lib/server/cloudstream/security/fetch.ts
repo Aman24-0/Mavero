@@ -39,6 +39,8 @@ export type CloudStreamFetchDeps = {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  /** External deadline (Permanent Adapter Plan Phase 1) — linked into the internal controller. */
+  signal?: AbortSignal;
 };
 
 /**
@@ -53,6 +55,7 @@ export async function fetchCloudStreamJson(rawUrl: string, deps: CloudStreamFetc
     timeoutMs: deps.timeoutMs ?? CLOUDSTREAM_DOC_TIMEOUT_MS,
     maxBytes: deps.maxBytes ?? CLOUDSTREAM_DOC_MAX_BYTES,
     maxRedirects: deps.maxRedirects ?? CLOUDSTREAM_MAX_REDIRECTS,
+    ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
   };
   try {
     return await fetchStremioManifest(rawUrl, fetchDeps);

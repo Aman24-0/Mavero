@@ -546,6 +546,10 @@ async function section_runtimeMount(): Promise<void> {
 function section_regression(): void {
   // §F1 the Stremio panel + frozen action model + registry surfaces are
   // byte-identical (public-config.ts is covered additively by §F3).
+  // NOTE — the two Downloader 2 UI surfaces (cloudstream-download-view.ts,
+  // MaveroCloudStreamDownload.svelte) evolved in Permanent Adapter Plan
+  // Phase 1 (deadline propagation + loading-state termination); their
+  // sanctioned evolution is pinned separately in §F1b below.
   for (const frozen of [
     'src/lib/components/MaveroAddonDownload.svelte',
     'src/lib/components/FourKDownload.svelte',
@@ -554,8 +558,6 @@ function section_regression(): void {
     'src/lib/shared/external-player.ts',
     'src/lib/shared/download-link-types.ts',
     'src/lib/shared/downloader-filters.ts',
-    'src/lib/shared/cloudstream-download-view.ts',
-    'src/lib/components/MaveroCloudStreamDownload.svelte',
     'src/lib/components/DownloaderFilterSheet.svelte',
     'src/lib/components/DetailPage.svelte',
     'src/routes/api/downloader/config/+server.ts',
@@ -566,6 +568,93 @@ function section_regression(): void {
     const current = read(frozen);
     const pristine = pristineFile(frozen);
     ok(pristine === null || pristine === current, `§F1: ${frozen} is byte-identical to the pre-CS-5 commit`);
+  }
+
+  // §F1b (Permanent Adapter Plan Phase 1): the two Downloader 2 UI surfaces
+  // legitimately evolved (client-side fetch deadlines, envelope-error tab
+  // settling, the settleCloudStreamLoadingTabs helper). Regression pin: the
+  // view model is ADDITIVE-ONLY vs the pre-CS-5 commit; the component may
+  // remove ONLY the exact superseded fetch/mapping lines listed below.
+  {
+    const view = read('src/lib/shared/cloudstream-download-view.ts');
+    const pristineView = pristineFile('src/lib/shared/cloudstream-download-view.ts');
+    if (pristineView !== null) {
+      const removedView = pristineView.split('\n').filter((line) => !view.includes(line));
+      ok(removedView.length === 0, `§F1b: cloudstream-download-view.ts removes NOTHING (removed ${removedView.length})`);
+      const addedView = view.split('\n').filter((line) => !pristineView.includes(line));
+      ok(
+        addedView.length > 0 && addedView.every((line) =>
+          line.includes('settleCloudStreamLoadingTabs')
+          || line.includes('Permanent Adapter')
+          || line.includes('Phase 1')
+          || line.includes("tab.status === 'loading'")
+          || /^\s*(\/\*\*|\*|\/\/|$)/.test(line)),
+        `§F1b: cloudstream-download-view.ts additions are ONLY the Phase 1 settle helper (added ${addedView.length})`,
+      );
+    }
+
+    const component = read('src/lib/components/MaveroCloudStreamDownload.svelte');
+    const pristineComponent = pristineFile('src/lib/components/MaveroCloudStreamDownload.svelte');
+    if (pristineComponent !== null) {
+      const removed = [...new Set(pristineComponent.split('\n').filter((line) => !component.includes(line)))].sort();
+      // The EXACT superseded lines: the three raw fetch call heads + their
+      // direct-signal lines + the pre-Phase-1 inline NETWORK_ERROR mapping +
+      // the superseded envelope comment. NOTHING else may disappear.
+      const expectedRemoved = [
+        '        // The tabs remain visible; the typed envelope drives the message.',
+        '          ? { ...tab, status: \'failed\' as const, links: [], errorCode: \'NETWORK_ERROR\' as const }',
+        '        signal: abort.signal,',
+        '      tabs = tabs.map((tab) =>',
+        '        tab.status === \'loading\'',
+        '          : tab,',
+        `      const response = await fetch(\`/api/downloader/mavero2/extension?\${params.toString()}\`, {`,
+        `      const response = await fetch(\`/api/downloader/mavero2/tabs?\${buildParams().toString()}\`, {`,
+        `      const response = await fetch(\`/api/downloader/mavero2?\${buildParams().toString()}\`, {`,
+      ].sort();
+      ok(
+        removed.length === expectedRemoved.length && removed.every((line, i) => line === expectedRemoved[i]),
+        `§F1b: MaveroCloudStreamDownload.svelte removes ONLY the superseded fetch/mapping lines (removed ${removed.length}: ${removed.join(' ⏎ ').slice(0, 160)}…)`,
+      );
+      const added = component.split('\n').filter((line) => !pristineComponent.includes(line));
+      ok(
+        added.length > 0 && added.every((line) =>
+          /^\s*(\/\*\*|\*|\/\/|$)/.test(line)
+          || line.includes('settleCloudStreamLoadingTabs')
+          || line.includes('fetchWithTimeout')
+          || line.includes('timedOut')
+          || line.includes('timeoutController')
+          || line.includes('TABS_FETCH_TIMEOUT_MS')
+          || line.includes('RESOLVE_FETCH_TIMEOUT_MS')
+          || line.includes('PROVIDER_TIMEOUT')
+          || line.includes('Phase 1')
+          || line.includes('Permanent Adapter')
+          || line.includes('clearTimeout(timer)')
+          || line.includes('signal.removeEventListener')
+          || line.includes('signal.addEventListener')
+          || line.includes('signal.aborted')
+          || line.includes('const response = await fetch(url')
+          || line.includes('return { response, timedOut }')
+          || line.includes('timeoutMs: number')
+          || line.includes('url: string')
+          || line.includes('signal: AbortSignal')
+          || line.includes('): Promise<{ response: Response; timedOut: boolean }> {')
+          || line.includes('let timedOut = false')
+          || line.includes('const timer = setTimeout(() => {')
+          || line.includes('}, timeoutMs);')
+          || line.includes('/api/downloader/mavero2')
+          || line.includes('abort.signal,')
+          || line.includes('activeTabId = null;')
+          || line.includes('tabs = settleCloudStreamLoadingTabs(tabs, \'NETWORK_ERROR\')')
+          || line.includes('tabs = settleCloudStreamLoadingTabs(tabs, parsed.code)')
+          || line.includes("resolveEnvelope = { code: 'PROVIDER_TIMEOUT' }")),
+        `§F1b: MaveroCloudStreamDownload.svelte additions are ONLY the Phase 1 deadline/settle code (added ${added.length})`,
+      );
+      // The pristine lifecycle contracts survive verbatim (destroy-time
+      // cancellation of every in-flight request + stale-response guards).
+      ok(component.includes('tabsAbort?.abort();'), '§F1b: destroy-time tabs abort survives');
+      ok(component.includes('resolveAbort?.abort();'), '§F1b: destroy-time resolve abort survives');
+      ok(component.includes('retryAborts.values()'), '§F1b: destroy-time retry aborts survive');
+    }
   }
 
   // §F2 the shared downloader module diff is ONLY the new constant.
@@ -639,16 +728,41 @@ function section_regression(): void {
     ok(pristine === null || pristine === current, `§F4: ${adminFile} is untouched (the generic admin CRUD lists the new row automatically)`);
   }
 
-  // §F5 the existing mavero2 API + Downloader 2 UI are untouched by CS-5.
-  for (const csFile of [
-    'src/routes/api/downloader/mavero2/+server.ts',
-    'src/routes/api/downloader/mavero2/tabs/+server.ts',
-    'src/routes/api/downloader/mavero2/extension/+server.ts',
-    'src/lib/server/cloudstream/downloader/service.ts',
-  ]) {
-    const current = read(csFile);
-    const pristine = pristineFile(csFile);
-    ok(pristine === null || pristine === current, `§F5: ${csFile} is byte-identical (CS-5 adds no backend behavior)`);
+  // §F5 the existing mavero2 API + Downloader 2 service evolved ONLY additively.
+  // (CS-5 added no backend behavior; Permanent Adapter Plan Phase 1 added ONLY
+  // the client-disconnect signal threading — every diff line is Phase 1
+  // cancellation code, nothing was removed.)
+  {
+    const untouched = 'src/routes/api/downloader/mavero2/tabs/+server.ts';
+    const currentTabs = read(untouched);
+    const pristineTabs = pristineFile(untouched);
+    ok(pristineTabs === null || pristineTabs === currentTabs, `§F5: ${untouched} is byte-identical (no provider resolution on the tabs path)`);
+
+    for (const csFile of [
+      'src/routes/api/downloader/mavero2/+server.ts',
+      'src/routes/api/downloader/mavero2/extension/+server.ts',
+      'src/lib/server/cloudstream/downloader/service.ts',
+    ]) {
+      const current = read(csFile);
+      const pristine = pristineFile(csFile);
+      if (pristine === null) {
+        ok(true, `§F5: ${csFile} present`);
+        continue;
+      }
+      const removed = pristine.split('\n').filter((line) => !current.includes(line));
+      const added = current.split('\n').filter((line) => !pristine.includes(line));
+      ok(removed.length === 0, `§F5: ${csFile} removes NOTHING (removed ${removed.length})`);
+      ok(
+        added.length > 0 && added.every((line) =>
+          line.includes('Phase 1')
+          || line.includes('Permanent Adapter')
+          || /^\s*(\/\*\*|\*|\/\/|$)/.test(line)
+          || line.includes('{ signal: request.signal }')
+          || line.includes('signal?: AbortSignal;')
+          || line.includes("...(deps.signal !== undefined ? { signal: deps.signal } : {})")),
+        `§F5: ${csFile} additions are ONLY the Phase 1 cancellation threading (added ${added.length})`,
+      );
+    }
   }
 
   // §F6 the existing deep-link tree is untouched.
