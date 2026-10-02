@@ -151,9 +151,22 @@ run('5b. upload-lifecycle actions NEVER sourced from media_operations (no duplic
   assert.doesNotMatch(opsService, /MANAGEMENT_ACTION_TO_TYPE[^}]*'upload':/);
   assert.doesNotMatch(opsService, /MANAGEMENT_ACTION_TO_TYPE[^}]*upload_remote:/);
 });
-run('5c. status=deleted maps to provider_delete-only query', () => {
+run('5c. status=deleted maps to provider_delete AND success (successful deletes ONLY)', () => {
   assert.match(opsService, /status === 'deleted'/);
-  assert.match(opsService, /mb = mb\.eq\('action', 'provider_delete'\)/);
+  // The STATUS filter must pin BOTH action and success (failed deletes excluded).
+  assert.match(opsService, /mb = mb\.eq\('action', 'provider_delete'\)\.eq\('status', 'success'\)/);
+  // The Type filter (operationType==='delete') legitimately matches the action
+  // only — status-orthogonal by design; its dedicated line ends after the
+  // action filter. Both facts are pinned by the behavioral/live tests.
+});
+run('5c2. retryable/stale are DB-side (no post-fetch JS filtering)', () => {
+  assert.match(opsService, /NOT_RETRYABLE_OR/);
+  assert.match(opsService, /query\.retryable === true[\s\S]*?\.in\('error_code', RETRYABLE_ERROR_CODES_LIST\)/);
+  assert.match(opsService, /query\.retryable === false[\s\S]*?\.or\(NOT_RETRYABLE_OR\)/);
+  assert.match(opsService, /query\.stale === false[\s\S]*?\.or\(notStaleOr\(/);
+  // The old desynchronized JS post-filter must be gone.
+  assert.doesNotMatch(opsService, /merged\.filter\(\(i\) => i\.isRetryable\)/);
+  assert.doesNotMatch(opsService, /merged\.filter\(\(i\) => i\.isStale\)/);
 });
 run('5d. jobs API VALID_STATUSES includes deleted', () => {
   assert.match(jobsApi, /'deleted', 'all'\]/);

@@ -711,17 +711,24 @@
                    available when the asset still exists. Delete operations are
                    terminal history — see the Activity tab for the audit record. -->
               <div class="a2-job-drawer-actions">
-                {#if selectedJob.mediaAssetId && selectedJob.operationType !== 'delete'}
+                {#if selectedJob.operationType === 'delete' && selectedJob.status === 'failed'}
+                  <!-- FAILED delete: the provider returned a real error — the file
+                       was NOT deleted, so this is NOT a terminal state. -->
+                  <div class="a2-job-action-unavailable">
+                    <AlertCircle size={12} /> Delete File failed — the file was NOT deleted. Retry Delete File from the Media Library.
+                  </div>
+                {:else if selectedJob.operationType === 'delete'}
+                  <!-- Successful delete: terminal state. -->
+                  <div class="a2-job-action-unavailable">
+                    <Trash2 size={12} /> Delete File is terminal — the historical record lives in the Activity tab.
+                  </div>
+                {:else if selectedJob.mediaAssetId}
                   <button type="button" class="a2-job-action" onclick={() => reconcileJob(selectedJob!)} disabled={actionInProgress}>
                     <RefreshCw size={12} /> Reconcile
                   </button>
                 {:else}
                   <div class="a2-job-action-unavailable">
-                    {#if selectedJob.operationType === 'delete'}
-                      <Trash2 size={12} /> Delete File is terminal — the historical record lives in the Activity tab.
-                    {:else}
-                      <Ban size={12} /> No pipeline actions for management operations.
-                    {/if}
+                    <Ban size={12} /> No pipeline actions for management operations.
                   </div>
                 {/if}
               </div>

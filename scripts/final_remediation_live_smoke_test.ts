@@ -47,15 +47,43 @@ function ok(name: string) { passed++; console.log(`  ok - ${name}`); }
   const uploadRows = all.items.filter((i) => i.origin === 'upload');
   ok(`status=all executes against live schema (${all.total} total: ${uploadRows.length} upload + ${mgmtRows.length} management on page)`);
 
-  // 2. status=deleted — provider_delete operations only.
+  // 2. status=deleted — SUCCESSFUL provider_delete operations only.
+  //    Live DB: 2 successful + 5 FAILED provider_delete rows. The failed
+  //    ones must NOT appear under Deleted (Issue A fix) — live total = 2.
   const deleted = await ops.listJobs({ status: 'deleted', page: 1, limit: 25 });
   assert.ok(deleted.items.every((i) => i.operationType === 'delete'), 'deleted filter returns only delete ops');
-  ok(`status=deleted → ${deleted.total} delete-file operations (live: 2 success + 5 failed provider_deletes = 7 expected)`);
+  assert.ok(deleted.items.every((i) => i.status === 'ready'), 'every Deleted row is a SUCCESSFUL delete (status ready = media_operations success)');
+  assert.ok(deleted.items.every((i) => i.origin === 'management'), 'deleted rows come from media_operations');
+  assert.equal(deleted.total, 2, `live Deleted total must be 2 (successful deletes only; the 5 failed provider_deletes are excluded), got ${deleted.total}`);
+  ok(`status=deleted → ${deleted.total} successful file deletions (5 failed deletes correctly EXCLUDED)`);
 
-  // 3. operationType=delete.
+  // 2b. The failed deletes must appear under the FAILED filter instead.
+  const failedFilter = await ops.listJobs({ status: 'failed', page: 1, limit: 25 });
+  const failedDeletes = failedFilter.items.filter((i) => i.operationType === 'delete' && i.origin === 'management');
+  assert.equal(failedDeletes.length, 5, `live Failed filter must include the 5 failed provider_deletes, got ${failedDeletes.length}`);
+  assert.ok(failedDeletes.every((i) => i.status === 'failed'));
+  // Disjointness: no row in both Deleted and Failed buckets.
+  const overlap = deleted.items.filter((d) => failedFilter.items.some((f) => f.id === d.id));
+  assert.equal(overlap.length, 0, 'no operation may appear in both Deleted and Failed buckets');
+  ok(`status=failed → includes the 5 failed deletes (+ ${failedFilter.total - failedDeletes.length} failed uploads); buckets disjoint`);
+
+  // 2c. Pagination invariant LIVE — Deleted dataset (2 rows) with limit=1:
+  //     page 1 = 1 row + hasMore, page 2 = 1 row + !hasMore, page 3 = empty.
+  const dP1 = await ops.listJobs({ status: 'deleted', page: 1, limit: 1 });
+  assert.equal(dP1.items.length, 1); assert.equal(dP1.total, 2); assert.equal(dP1.hasMore, true);
+  const dP2 = await ops.listJobs({ status: 'deleted', page: 2, limit: 1 });
+  assert.equal(dP2.items.length, 1); assert.equal(dP2.total, 2); assert.equal(dP2.hasMore, false);
+  const dP3 = await ops.listJobs({ status: 'deleted', page: 3, limit: 1 });
+  assert.equal(dP3.items.length, 0, 'no phantom page 3'); assert.equal(dP3.total, 2);
+  ok('Deleted pagination (limit=1): pages 1/1/0, total 2 constant, no phantom page');
+
+  // 3. operationType=delete — the Type filter shows ALL delete outcomes
+  //    (status-orthogonal): live = 7 (2 success + 5 failed) ≥ Deleted's 2.
   const deleteType = await ops.listJobs({ operationType: 'delete', page: 1, limit: 25 });
-  assert.equal(deleteType.total, deleted.total, 'type=delete matches status=deleted');
-  ok('operationType=delete matches the Deleted status filter');
+  assert.ok(deleteType.total >= deleted.total, 'Type=Delete File is status-orthogonal (superset of Deleted)');
+  assert.equal(deleteType.total, 7, `live Type=Delete File total must be 7 (all provider_delete outcomes), got ${deleteType.total}`);
+  assert.equal(deleteType.items.filter((i) => i.status === 'failed').length, 5, 'failed deletes visible via Type filter (status column shows Failed)');
+  ok('operationType=delete → 7 rows (all delete outcomes; status shown per row)');
 
   // 4. status=ready (completed uploads + successful management ops).
   const ready = await ops.listJobs({ status: 'ready', page: 1, limit: 25 });
@@ -65,6 +93,27 @@ function ok(name: string) { passed++; console.log(`  ok - ${name}`); }
   // 5. status=stale — DB-side stale filter executes.
   const stale = await ops.listJobs({ status: 'stale', page: 1, limit: 25 });
   ok(`status=stale executes (live stale count: ${stale.total})`);
+
+  // 5b. retryable/stale boolean filters are DB-side (Issue B fix) — rows,
+  //     total, and hasMore must describe the SAME dataset. These calls also
+  //     exercise the or-grammar against the LIVE PostgREST instance (a
+  //     malformed filter would throw a schema/parse error).
+  //     Live facts: 3 uploads (2 ready + 1 failed with error_code
+  //     STALE_OPERATION — NOT transient) → retryable count = 0, stale = 0.
+  const retryableOnly = await ops.listJobs({ status: 'all', retryable: true, page: 1, limit: 25 });
+  assert.ok(retryableOnly.items.every((i) => i.isRetryable), 'only retryable rows may appear under retryable=true');
+  assert.equal(retryableOnly.total, 0, `live retryable=true must be 0 (STALE_OPERATION is not transient), got ${retryableOnly.total}`);
+  assert.equal(retryableOnly.hasMore, false);
+  ok('retryable=true → 0 live rows (executes against live PostgREST; exact count)');
+
+  const notRetryable = await ops.listJobs({ status: 'all', retryable: false, page: 1, limit: 25 });
+  assert.equal(notRetryable.total, all.total, `retryable=false total (${notRetryable.total}) must equal the unified stream total (${all.total}) when no retryable rows exist`);
+  assert.ok(notRetryable.items.every((i) => !i.isRetryable));
+  ok(`retryable=false → ${notRetryable.total} rows = full unified stream (uploads + management — exact count)`);
+
+  const staleOnly = await ops.listJobs({ status: 'all', stale: true, page: 1, limit: 25 });
+  assert.equal(staleOnly.total, stale.total, 'stale=true agrees with the status=stale DB filter');
+  ok(`stale=true → ${staleOnly.total} rows (agrees with status=stale filter)`);
 
   console.log('--- Live smoke: asset inventory read model ---');
   const control = new HostingControlService(client as any);

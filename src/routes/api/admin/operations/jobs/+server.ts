@@ -9,14 +9,20 @@
  * Query params:
  *   ?q=<text>             Search operation id, media title, provider_asset_id, error code
  *   ?status=queued|uploading|uploaded|processing|ready|failed|cancelled|active|stale|deleted|all
- *                         'deleted' = delete-file operations (provider_delete)
+ *                         'deleted' = SUCCESSFULLY completed delete-file operations
+ *                         (media_operations action='provider_delete' AND status='success';
+ *                         provider 404 counts as success). Failed deletes appear
+ *                         under 'failed', never under 'deleted'.
  *   ?operationType=upload|upload_remote|retry|delete|rename|move|detach|reactivate|link|subtitle|replace|sync|all
  *   ?provider=vidara|abyss
- *   ?retryable=true|false
- *   ?stale=true|false
+ *   ?retryable=true|false  (DB-side filter: failed uploads with transient error codes)
+ *   ?stale=true|false      (DB-side filter: non-terminal uploads stuck > 60 min)
  *   ?sort=newest|oldest|recently_updated|failed|stale
  *   ?page=1
  *   ?limit=25 (max 100)
+ *
+ * Every filter is applied inside the DB queries — rows, total, and hasMore
+ * always describe the same filtered dataset.
  *
  * Security: Admin-only. No credentials exposed. Does NOT expose
  * provider_metadata jsonb or playback_url.

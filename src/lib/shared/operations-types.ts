@@ -88,14 +88,19 @@ export type JobQuery = {
   /**
    * Status filter. In addition to concrete upload statuses:
    *   - 'active'   → non-terminal upload jobs (queued/uploading/uploaded/processing)
-   *   - 'stale'    → non-terminal upload jobs stuck > 60 min (pushed to the DB query)
-   *   - 'deleted'  → delete-file operations (media_operations action='provider_delete')
+   *   - 'stale'    → non-terminal upload jobs stuck > 60 min (DB-side filter)
+   *   - 'deleted'  → SUCCESSFULLY completed delete-file operations only
+   *                  (media_operations action='provider_delete' AND status='success';
+   *                  a provider 404 counts as success). Failed delete attempts
+   *                  appear under 'failed' — never under 'deleted'.
    *   - 'all'      → the full unified stream
    */
   status?: JobStatus | 'active' | 'stale' | 'deleted' | 'all';
   operationType?: JobOperationType | 'all';
   provider?: string;        // adapter id
+  /** DB-side filter: failed uploads with retryable (transient) error codes. */
   retryable?: boolean | null;
+  /** DB-side filter: non-terminal uploads stuck > 60 min. */
   stale?: boolean | null;
   sort?: 'newest' | 'oldest' | 'recently_updated' | 'failed' | 'stale';
   page?: number;

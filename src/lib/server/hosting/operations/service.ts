@@ -33,6 +33,21 @@
  *   row in the first K merged rows must be within the top K of its own
  *   source, so the merged window is exact. total = sum of both counts.
  *
+ *   FILTER INVARIANT (Issue B): every filter — status, operationType,
+ *   provider, search, retryable, stale — is pushed into the per-source
+ *   DB queries. `count: 'exact'` returns the count of the FULL filtered
+ *   set (PostgREST ignores .limit() for exact counts — verified against
+ *   the live instance), so rows, total, page count, and hasMore always
+ *   describe the SAME logical dataset. There is NO post-fetch filtering.
+ *
+ *   Status semantics (Issue A): the Deleted status filter means
+ *   SUCCESSFULLY completed file deletions only (media_operations rows
+ *   with action='provider_delete' AND status='success' — a provider
+ *   404/NOT_FOUND counts as success per ManagementService.deleteAsset).
+ *   FAILED delete attempts appear under the Failed filter, never under
+ *   Deleted. Upload jobs can never be "deleted" (deletion applies to
+ *   media assets via management operations only).
+ *
  * Three read methods:
  *   - listJobs(query) — paginated, filtered UNIFIED operational stream
  *   - listHistory(query) — paginated, filtered audit events from media_operations
@@ -72,6 +87,25 @@ const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 60 minutes
 const STALE_STATES = ['uploading', 'uploaded', 'processing'];
 
 const RETRYABLE_ERROR_CODES = new Set(['RATE_LIMITED', 'TRANSIENT', 'NETWORK', 'TIMEOUT']);
+
+/** Retryable error codes as an array — for PostgREST `.in('error_code', ...)`. */
+const RETRYABLE_ERROR_CODES_LIST = [...RETRYABLE_ERROR_CODES];
+
+/**
+ * Builds the PostgREST or-filter for "NOT retryable" (the complement of
+ * status='failed' AND error_code IN retryables). Three-value-logic-safe:
+ * rows with NULL error_code are included via the explicit is.null arm.
+ * Verified against the live PostgREST instance (G1+G2 = total).
+ */
+const NOT_RETRYABLE_OR = `status.neq.failed,error_code.is.null,error_code.not.in.(${RETRYABLE_ERROR_CODES_LIST.join(',')})`;
+
+/**
+ * Builds the PostgREST or-filter for "NOT stale" (the complement of
+ * status IN stale-states AND updated_at < staleBefore).
+ */
+function notStaleOr(staleBeforeIso: string): string {
+  return `status.not.in.(${STALE_STATES.join(',')}),updated_at.gte.${staleBeforeIso}`;
+}
 
 const HOSTING_ADAPTER_IDS = ['vidara', 'abyss'] as const;
 
@@ -130,21 +164,23 @@ export class OperationsService {
     //
     //  - 'deleted' status or 'delete' type → management ops ONLY
     //    (action='provider_delete').
-    //  - Concrete upload statuses / 'active' / upload-pipeline types /
-    //    retryable/stale-only → uploads ONLY.
+    //  - Concrete upload statuses / 'active' / upload-pipeline types
+    //    → uploads ONLY.
     //  - 'ready'/'failed'/'all' + 'all' types → BOTH sources.
+    //
+    //  retryable/stale are NOT part of source selection: they are
+    //  pushed into each source's DB query with their natural
+    //  per-source semantics (management rows are never stale and
+    //  never retryable — see the pushdown below), so rows, total,
+    //  and hasMore always describe ONE logical dataset.
     // ==========================================================
     const isManagementOnly =
       status === 'deleted' ||
       (operationType !== 'all' && operationType !== 'upload' && operationType !== 'upload_remote' && operationType !== 'retry');
-    // NOTE: retryable/stale use `!= null` (not `!== null`) — the fields may be
-    // undefined when the caller omits them, and undefined must NOT force the
-    // upload-only source (it would silently drop management ops from 'all').
     const isUploadOnly =
       !isManagementOnly &&
       (['queued', 'uploading', 'uploaded', 'processing', 'cancelled', 'active'].includes(status) ||
-        operationType === 'upload' || operationType === 'upload_remote' || operationType === 'retry' ||
-        query.retryable != null || query.stale != null);
+        operationType === 'upload' || operationType === 'upload_remote' || operationType === 'retry');
     const includeUploads = !isManagementOnly;
     const includeManagement = !isUploadOnly;
 
@@ -186,6 +222,28 @@ export class OperationsService {
         qb = qb.in('status', STALE_STATES).lt('updated_at', staleBefore);
       } else if (status !== 'all') {
         qb = qb.eq('status', status as string);
+      }
+
+      // ========================================================
+      // Retryable / stale pushdown (Issue B fix).
+      // These MUST be DB-side filters: rows, total, page count, and
+      // hasMore must all describe the SAME filtered dataset. Post-
+      // fetching and filtering in JS would desynchronize them from
+      // the exact DB count. Grammar verified against live PostgREST.
+      //   retryable = status='failed' AND error_code IN retryables
+      //   stale     = status IN stale-states AND updated_at < cutoff
+      // ========================================================
+      if (query.retryable === true) {
+        qb = qb.eq('status', 'failed').in('error_code', RETRYABLE_ERROR_CODES_LIST);
+      } else if (query.retryable === false) {
+        qb = qb.or(NOT_RETRYABLE_OR);
+      }
+      if (query.stale === true) {
+        const staleBefore = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
+        qb = qb.in('status', STALE_STATES).lt('updated_at', staleBefore);
+      } else if (query.stale === false) {
+        const staleBefore = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
+        qb = qb.or(notStaleOr(staleBefore));
       }
 
       // Operation type filter — derived from source_url (remote vs local) + parent_operation_id (retry)
@@ -251,13 +309,30 @@ export class OperationsService {
       } else if (status === 'failed') {
         mb = mb.eq('status', 'failed');
       } else if (status === 'deleted') {
-        // The Deleted view: delete-file operations (any outcome — successful
-        // deletions plus failed delete attempts; failed ones also surface
-        // under the Failed filter).
-        mb = mb.eq('action', 'provider_delete');
+        // The Deleted view: SUCCESSFULLY completed file deletions ONLY —
+        // the provider confirmed the delete, OR returned 404/NOT_FOUND
+        // (which ManagementService.deleteAsset treats as success since
+        // the file is already gone → terminal deleted state).
+        // FAILED delete attempts do NOT appear here — the provider
+        // returned a real error and the file still exists; those rows
+        // surface under the Failed filter instead (status='failed').
+        mb = mb.eq('action', 'provider_delete').eq('status', 'success');
       } else if (status === 'active' || status === 'stale') {
         // Management ops are instantaneous — nothing is ever "active".
         mb = mb.eq('status', '__none__'); // matches nothing
+      }
+
+      // ========================================================
+      // Retryable / stale pushdown (Issue B fix).
+      // Management ops are instantaneous provider calls: they are
+      // NEVER stale (isStale ≡ false) and never retryable through the
+      // upload pipeline (isRetryable ≡ false — they are retried via the
+      // asset drawer). So the DB-side contribution is exact:
+      //   retryable=true / stale=true  → contribute nothing (empty set)
+      //   retryable=false / stale=false → contribute everything
+      // ========================================================
+      if (query.retryable === true || query.stale === true) {
+        mb = mb.eq('action', '__none__'); // matches nothing
       }
 
       // Operation type filter — map JobOperationType back to DB actions.
@@ -290,12 +365,18 @@ export class OperationsService {
       }
 
       // Sorting — same keys; occurred_at is the management "updated_at".
+      // The per-source fetch order MUST match the merge order below (same
+      // key AND direction) — the merged window is only exact when each
+      // source window comes from the same end of the ordering.
       switch (sort) {
         case 'newest':           mb = mb.order('created_at', { ascending: false }); break;
         case 'oldest':           mb = mb.order('created_at', { ascending: true }); break;
         case 'recently_updated': mb = mb.order('occurred_at', { ascending: false }); break;
         case 'failed':           mb = mb.order('occurred_at', { ascending: false }); break;
-        case 'stale':            mb = mb.order('occurred_at', { ascending: false }); break;
+        // Merge direction for 'stale' is ASCENDING (longest-stuck first) —
+        // the management window must come from the SAME end (oldest
+        // occurred_at first), not the newest.
+        case 'stale':            mb = mb.order('occurred_at', { ascending: true }); break;
         default:                 mb = mb.order('occurred_at', { ascending: false }); break;
       }
 
@@ -399,12 +480,13 @@ export class OperationsService {
       };
     });
 
-    // Post-fetch filters: retryable + stale (upload-sourced only).
-    let merged = [...uploadItems, ...managementItems];
-    if (query.retryable === true) merged = merged.filter((i) => i.isRetryable);
-    else if (query.retryable === false) merged = merged.filter((i) => !i.isRetryable);
-    if (query.stale === true) merged = merged.filter((i) => i.isStale);
-    else if (query.stale === false) merged = merged.filter((i) => !i.isStale);
+    // NOTE: no post-fetch filtering. Every filter (status, operationType,
+    // provider, search, retryable, stale) is pushed into the DB queries
+    // above, so `merged`, `total`, and `hasMore` all describe the SAME
+    // logical dataset. The derived per-row flags (isStale / isRetryable
+    // below) are display badges only — they are computed for EVERY row,
+    // not used to filter.
+    const merged = [...uploadItems, ...managementItems];
 
     // Merge sort — the SAME key each source was sorted by, applied to the
     // combined window. Deterministic and exact (see class doc).
