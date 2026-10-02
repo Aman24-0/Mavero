@@ -14,7 +14,11 @@
    */
 
   type FilterOption = { value: string; label: string; count: number };
-  type FilterSection = { dimension: 'type' | 'quality' | 'language' | 'size'; heading: string; options: FilterOption[]; visible: boolean };
+  // CS-4 (documented additive adaptation): the dimension union gained
+  // 'codec' | 'container' so the CloudStream Downloader 2 panel can reuse
+  // this same sheet for its five filter dimensions. The Stremio downloader
+  // still passes only its original four dimensions — behavior unchanged.
+  type FilterSection = { dimension: 'type' | 'quality' | 'language' | 'size' | 'codec' | 'container'; heading: string; options: FilterOption[]; visible: boolean };
 
   let {
     open = false,

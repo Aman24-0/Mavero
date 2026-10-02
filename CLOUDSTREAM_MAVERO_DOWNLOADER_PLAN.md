@@ -864,6 +864,20 @@ Reuse existing `externalPlayerLaunchFor` behavior where compatible.
 
 Do not create a second Share implementation.
 
+## CS-4 implemented contract (2026-10-02 — see §40.8 for the decisions)
+
+Implemented at `src/lib/components/MaveroCloudStreamDownload.svelte` with
+the pure shared view-model `src/lib/shared/cloudstream-download-view.ts`
+(payload parsing, tab reduction, filtering, error messages — the same
+architecture as `downloader-filters.ts`). Data flow: tabs → ONE batch
+resolve → per-source retry via the extension endpoint (NO N+1). Filters:
+quality/codec/container/language/size, client-side only, REUSING the
+shared matchers for three dimensions. Actions map EXACTLY onto
+`stream-actions.ts`. Five distinct empty states + partial-failure tabs +
+manual-only retries. The panel's props mirror MaveroAddonDownload
+(contentId/mediaType/tmdbId/season/episode/title/onOpenInSheet) so the
+CS-5 registry wiring is a drop-in branch. Full contracts in §40.8.
+
 ------------------------------------------------------------------------
 
 # 15. Action Semantics
@@ -2040,6 +2054,7 @@ src/routes/api/downloader/mavero2/+server.ts                (NEW, CS-3)
 src/routes/api/downloader/mavero2/tabs/+server.ts           (NEW, CS-3)
 src/routes/api/downloader/mavero2/extension/+server.ts      (NEW, CS-3)
 src/lib/components/MaveroCloudStreamDownload.svelte         (NEW, CS-4 user UI)
+src/lib/shared/cloudstream-download-view.ts                (NEW, CS-4 pure view-model)
 src/routes/watch/mavero-downloader-2/movie/[tmdbId]/…       (NEW, CS-5 deep links)
 src/routes/watch/mavero-downloader-2/tv/[tmdbId]/[s]/[e]/…  (NEW, CS-5 deep links)
 supabase/migrations/20261101000000_cloudstream_cs1.sql      (NEW, CS-1)
@@ -2329,3 +2344,139 @@ package.json                                           (MODIFIED: chain registra
 
 No new DB tables, no migrations (the CS-1 catalog provides everything).
 No UI (CS-4). No downloader-registry changes (CS-5).
+
+## 40.8 CS-4 Downloader 2 UI finalization (2026-10-02)
+
+Recorded after implementation, per §33/§34 protocol. Everything below is
+implemented at the CS-4 commit (starting HEAD `59634a9`). AC-006 + D-016
+through D-021 record the contract decisions.
+
+### Component architecture
+
+``` text
+src/lib/components/MaveroCloudStreamDownload.svelte   (panel, mcd-* CSS namespace)
+    imports ↓
+src/lib/shared/cloudstream-download-view.ts           (PURE shared view-model)
+    reuses ↓
+src/lib/shared/downloader-filters.ts                  (quality/size/language matchers — FROZEN file, imported)
+src/lib/shared/stream-actions.ts                      (capability + action model — FROZEN, imported)
+src/lib/shared/presentation-window.ts                 (Show More window — FROZEN, imported)
+src/lib/components/DownloaderFilterSheet.svelte       (shared filter sheet; dimension union widened +codec/+container)
+```
+
+The panel is SEPARATE from MaveroAddonDownload (Stremio) — separate file,
+separate CSS namespace, separate data flow — while reusing the genuinely
+generic primitives. Its props intentionally mirror MaveroAddonDownload
+(`contentId`, `mediaType`, `tmdbId`, `season`, `episode`, `title`,
+`onOpenInSheet`) so the CS-5 registry wiring is a drop-in branch.
+
+### Data flow (NO N+1 — the brief's PERFORMANCE contract)
+
+``` text
+onMount
+  → GET /api/downloader/mavero2/tabs            (tabs only; no provider fetches)
+  → tabs.length > 0 → GET /api/downloader/mavero2   (ONE batch resolve, all sources)
+  → groups fold into tab states (links + counts + statuses)
+per-source retry → GET /api/downloader/mavero2/extension?extensionId=…
+  (ONLY the necessary request — single extension)
+tab switching = PURE VIEW SWITCH (never refetches; the batch holds everything)
+counts = batch group links (never re-resolved for counting)
+```
+
+AbortControllers are cancelled on destroy (no state-after-destroy), and
+stale responses are ignored via the abort signal. NO polling, NO
+long-lived caches, NO localStorage/sessionStorage — URLs expire, so
+reopening the panel re-resolves (§40.7 parity).
+
+### Payload parsing (malformed-response safety)
+
+The view-model validates EVERY field before it reaches component state:
+envelope `ok !== true` → typed error from the closed vocabulary; invalid
+tabs/groups/links are SKIPPED (a malformed link array entry never
+renders); every display string is bounded. The component renders from
+typed, sanitized views only — "undefined"/"null" never appear.
+
+### Filters (client-side ONLY — a filter change never refetches)
+
+Five dimensions: QUALITY / CODEC / CONTAINER / AUDIO (language) / SIZE.
+
+* quality/size/language REUSE the frozen shared matchers + option
+  derivation from `downloader-filters.ts`; the audio class is derived
+  from `audioLanguages` (2 → dual, 3+ → multi, 1 → single, none →
+  unknown) — a pure function of provided data.
+* codec/container are CloudStream-only dimensions (the CS-3 link view
+  carries them; the Stremio stream view does not) — new matchers with
+  unknown-excludes semantics (a link without a known codec cannot
+  confirm a specific codec — it does not match, mirroring the size rule).
+* Removable active chips + Clear; filters reset on tab switch; a section
+  renders only when a real choice exists (>1 option beyond All);
+  filtered-empty state shows "No sources match your filters." + a reset.
+
+### Actions (EXACTLY the shared model — no second MPV/Share)
+
+Per-kind capabilities come from `streamCapabilities`/`downloadActionFor`/
+`playActionFor`: http(s) → Download anchor + Play + Share; hls/dash →
+Play + Share (no Download); magnet → Download via OS handler + Share;
+Pixeldrain → the Info-button pattern (the existing Phase F behavior);
+external links are hidden from the card list (Phase 18 presentation
+parity — D-019). Share uses navigator.share with the magnet-via-text fix
++ clipboard + legacy-copy fallbacks, verbatim from the Stremio panel.
+
+### States
+
+* Loading: tabs state message + skeleton cards; per-source resolving
+  message during retry.
+* Empty (5 DISTINCT): none enabled ("No CloudStream sources are enabled."
+  + admin hint "System → Integrations → Extension" — no admin controls
+  exposed); none compatible ("No compatible CloudStream sources…");
+  no results ("No downloadable sources found."); all failed ("CloudStream
+  sources could not be resolved right now."); filtered-empty ("No sources
+  match your filters." + Clear).
+* Partial failure: loaded sources keep rendering; failed tabs carry
+  Failed pills; the failed ACTIVE source shows its user-readable message
+  + per-source Retry. Never a global error screen.
+* Envelope errors (RATE_LIMITED/INVALID_REQUEST/INTERNAL_ERROR) show
+  friendly messages + MANUAL retry only — no automatic retries.
+
+### Responsive + accessibility
+
+Horizontally scrollable tab strip (hidden scrollbar); 32px action touch
+targets; host badge drops off ≤360px; the 360/700/1024 ladder; no
+horizontal page overflow (verified at 390px + 360px). role=tablist/tab +
+aria-selected, aria-labels on every icon-only action, role=status state
+messages, role=list/listitem cards, aria-busy, focus-visible styles.
+
+### Verification approach
+
+* `cloudstream_downloader_ui_test.ts` — 167 deterministic checks with
+  MOCKED API payloads (never the network): payload parsing incl.
+  malformed bodies; tab reduction; partial/all-failed/no-results
+  outcomes; all five filters + reset + no-match; per-kind capability
+  mapping; error messages; movie/series request shapes; episode context;
+  component source contracts (a11y/responsive/states/security); runtime
+  SSR mounts (movie/series/anime) through vite's SSR module graph
+  (D-020 — the component has no compiled app chunk until CS-5 wires it
+  into a route); existing-downloader regression invariants
+  (MaveroAddonDownload/DownloadSheet/stream-actions/external-player/
+  download-link-types/downloader-filters byte-identical to `59634a9`).
+* Browser visual verification through a TEMPORARY uncommitted dev route
+  with mocked fetch (D-021): 11 screens across desktop + 390px/360px
+  mobile widths, including interactive filter flows and a working
+  per-source retry. The route was deleted before commit — the committed
+  surface contains NO new public route (deep links are CS-5).
+
+### CS-4 file inventory (actual)
+
+``` text
+src/lib/components/MaveroCloudStreamDownload.svelte   (NEW)
+src/lib/shared/cloudstream-download-view.ts           (NEW)
+src/lib/components/DownloaderFilterSheet.svelte       (MODIFIED: additive dimension-union widening — test-pinned)
+scripts/cloudstream_downloader_ui_test.ts             (NEW: 167 checks)
+package.json                                          (MODIFIED: chain registration)
+CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md                 (MODIFIED: §14, §27 note, §30, §40.8)
+CLOUDSTREAM_MAVERO_WORKLOG.md                         (MODIFIED)
+```
+
+No DownloadSheet changes, no provider dropdown changes, no
+download_providers/registry changes, no migrations, no new routes —
+all registry integration stays CS-5.

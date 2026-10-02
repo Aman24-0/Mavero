@@ -6,7 +6,7 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CS-3 COMPLETE — CS-4 pending (not started)
+**Status:** CS-4 COMPLETE — CS-5 pending (not started)
 
 ------------------------------------------------------------------------
 
@@ -83,7 +83,7 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   Initial CloudStream adapters      COMPLETE (CS-2: Bollyflix, MoviesDrive, VegaMovies)
   Extractor layer                   COMPLETE (CS-2: GDFlix, HubCloud/V-Cloud, fastdlserver)
   Downloader 2 backend              COMPLETE (CS-3, 2026-10-02)
-  Downloader 2 UI                   Pending (CS-4)
+  Downloader 2 UI                   COMPLETE (CS-4, 2026-10-02)
   Downloader registry integration   Pending (CS-5)
   Full regression                   Pending (CS-6)
   Production readiness              Pending
@@ -762,28 +762,66 @@ the existing action model).
 
 ## Status
 
-**PENDING**
+**COMPLETED** (2026-10-02, starting HEAD `59634a9` → CS-4 commit; see the
+Phase Completion Log below)
 
 ## Objective
 
-Build the dedicated Downloader 2 user interface.
+Build the dedicated Downloader 2 user interface consuming the CS-3 backend.
 
 ## Planned work
 
--   [ ] Create `MaveroCloudStreamDownload.svelte` or final equivalent.
--   [ ] Extension/source tabs.
--   [ ] Filters.
--   [ ] Stream cards.
--   [ ] Download action.
--   [ ] Existing MPV action.
--   [ ] Existing Share action.
--   [ ] Loading/skeleton.
--   [ ] Empty state.
--   [ ] Partial failure state.
--   [ ] Retry.
--   [ ] Mobile layout.
--   [ ] Accessibility.
--   [ ] UI tests.
+-   [x] Create `MaveroCloudStreamDownload.svelte` or final equivalent.
+      (`src/lib/components/MaveroCloudStreamDownload.svelte` — dedicated,
+      clearly separated from MaveroAddonDownload; `mcd-*` CSS namespace.)
+-   [x] Extension/source tabs.
+      (Backend-driven from `/api/downloader/mavero2/tabs`; never hard-coded;
+      counts from the batch response — NO extra provider requests; Failed
+      pills for failed sources; horizontally scrollable on mobile.)
+-   [x] Filters.
+      (Client-side ONLY — `src/lib/shared/cloudstream-download-view.ts`
+      pure module: quality/codec/container/language/size; REUSES the shared
+      Stremio matchers for quality/size/language + option derivation; new
+      codec/container matchers; a filter change NEVER refetches.)
+-   [x] Stream cards.
+      (Kind icon + filename/sourceName detail + transport label + quality /
+      codec / container / audio / size / host badges; unknown fields are
+      simply absent — no fake "N/A"/"undefined" values; Show More via the
+      REUSED presentation-window helpers.)
+-   [x] Download action.
+      (EXACT `downloadActionFor` flows: direct anchor, magnet anchor,
+      Pixeldrain → Info button (the existing Phase F pattern), external →
+      embedded-sheet via the `onOpenInSheet` callback.)
+-   [x] Existing MPV action.
+      (`playActionFor` → `externalPlayerLaunchFor` — no second MPV.)
+-   [x] Existing Share action.
+      (navigator.share with magnet-via-text fix, clipboard + legacy-copy
+      fallback — verbatim semantics from MaveroAddonDownload.)
+-   [x] Loading/skeleton state.
+      (Tabs loading state + skeleton cards while the batch resolves;
+      per-source "Resolving links from X…" during retry.)
+-   [x] Empty state.
+      (Five DISTINCT states: none enabled + admin hint; none compatible;
+      no results; all failed; filtered-empty — each verified visually.)
+-   [x] Partial failure state.
+      (Successful sources keep rendering; failed tabs show Failed pills;
+      the failed ACTIVE source shows its user-readable message + Retry;
+      never a global error screen.)
+-   [x] Retry.
+      (`retryAll` → tabs + batch; `retryExtension` → the SINGLE-extension
+      `/mavero2/extension` endpoint (only the necessary request); manual
+      only — no automatic retries, RATE_LIMITED respected.)
+-   [x] Mobile layout.
+      (Horizontally scrollable tabs; 32px touch targets; badge drop-off at
+      ≤360px; three-tier responsive ladder 360/700/1024; no horizontal
+      page overflow — verified at 390px AND 360px.)
+-   [x] Accessibility.
+      (role=tablist/tab + aria-selected; aria-labels on every icon-only
+      action; role=status on state messages; role=list/listitem cards;
+      aria-busy; focus-visible styles; semantic buttons everywhere.)
+-   [x] UI tests.
+      (`cloudstream_downloader_ui_test.ts` — 167 deterministic checks with
+      MOCKED API payloads; registered in the `pnpm test` chain.)
 
 ## Critical requirement
 
@@ -793,21 +831,44 @@ Do not implement a second Share system.
 
 Reuse existing action primitives where compatible.
 
+(Verified: `stream-actions.ts`, `external-player.ts`,
+`download-link-types.ts`, `downloader-filters.ts`,
+`presentation-window.ts` are all byte-identical to the pristine CS-3 commit
+— test-asserted in §H of the new suite; the ONLY shared-file change is the
+documented DownloaderFilterSheet dimension-union widening, which is
+type-level only with the Stremio flow passing its original four dimensions
+unchanged.)
+
 ## Completed
 
-None.
+See the CS-4 Completion record + the session entry below. Summary: the
+dedicated Downloader 2 panel, the shared pure view-model (payload parsing +
+tab reduction + filters), 167 deterministic checks, all gates green, and a
+full browser-based visual verification pass (11 states/screens at desktop +
+mobile widths, including interactive filter/retry flows).
 
 ## Failed / unresolved
 
-None.
+None caused by CS-4. The 8 documented PRE-EXISTING baseline failures
+(adult_mode, phase2_repo_hygiene, phase8_accessibility, phase9_source_
+progress, phase9_landscape, phase9_fix, phase9_landscape_drawer_position,
+phase4_registry_integration) fail identically at the pristine pre-CS-4
+commit `59634a9` — the full 204-command chain shows 196 PASS + those 8 +
+0 new failures (driver log: scripts/cs4_full_chain.log).
 
 ## Decisions
 
-None yet.
+-   AC-006 + D-016..D-021 (see the Architecture Change Log + Decision Log):
+    view-model module architecture, the NO-N+1 data flow, the filter-sheet
+    dimension widening, external-link presentation parity, the vite-SSR
+    mount-test approach, and the temporary (uncommitted) visual-verification
+    harness.
 
 ## Next step
 
-CS-5.
+CS-5 (downloader registry integration: `download_providers` entry + slug
+routing in DownloadSheet + deep-link routes — NOT started; strict phase
+boundary honored).
 
 ------------------------------------------------------------------------
 
@@ -1054,18 +1115,81 @@ belongs in phase entries below.
                                 10/30/30 per     downloader can
                                 min)             lock out the
                                                  other
-  D-015          2026-10-02     Request         validateEpisodeScope  Yes (§40.7)
-                 (CS-3,         strictness:     convention applied
-                 AC-005)        series/anime    at the boundary;
-                                REQUIRE          a series is
-                                season+episode, never resolved
-                                movies must     as a movie;
-                                NOT carry        lazy admin-
-                                episode          client imports
-                                context +        (adult-guard
-                                                 pattern) for
-                                                 endpoint
-                                                 testability
+  D-016          2026-10-02     CS-4 UI data     The CS-3 batch       Yes (§40.8)
+                 (CS-4,         flow = tabs +   response already
+                 AC-006)        ONE batch       carries every
+                                resolve +       source's links —
+                                per-source      per-source retry
+                                retry via       re-uses the
+                                /extension      single-extension
+                                endpoint        endpoint; switching
+                                (NO N+1, no     tabs is a pure view
+                                tab-change      switch; counts
+                                refetch, no     derive from the
+                                count          batch links
+                                requests)       (never re-resolved)
+  D-017          2026-10-02     Pure shared     Same architecture    Yes (§40.8)
+                 (CS-4,         view-model      as downloader-
+                 AC-006)        module          filters.ts: the
+                                (cloudstream-   component and the
+                                download-       tests share ONE
+                                view.ts)        implementation of
+                                owns payload    parsing/reduction/
+                                parsing, tab    filtering so the
+                                reduction,      rules can never
+                                filters, and   drift
+                                user-readable
+                                error
+                                messages
+  D-018          2026-10-02     REUSE the       Genuinely generic    Yes (§40.8)
+                 (CS-4,         shared pure     primitives with
+                 AC-006)        quality/size/   identical
+                                language        semantics; codec/
+                                matchers +      container are
+                                option          CloudStream-only
+                                derivation;     (the link view
+                                codec/container carries them,
+                                matchers are    the Stremio
+                                new; the        stream view
+                                filter sheet    does not);
+                                dimension       audio class
+                                union widened   derived from
+                                additively      audioLanguages
+                                (+codec/        count (2→dual,
+                                +container)     3+→multi)
+  D-019          2026-10-02     External-kind   Presentation         Yes (§40.8)
+                 (CS-4,         links hidden    parity with the
+                 AC-006)        from the        existing downloader
+                                card list       (Phase 18); the
+                                (Phase 18       action model's
+                                parity)         external/embedded-
+                                                sheet flow stays
+                                                reachable via
+                                                Pixeldrain links
+  D-020          2026-10-02     Runtime mount   The component is     Yes (§40.8)
+                 (CS-4,         tests load      not in any route's
+                 AC-006)        the component   import graph until
+                                through vite's  CS-5, so no
+                                SSR module      compiled chunk
+                                graph (svelte/  exists; vite's
+                                server via the  ssrLoadModule
+                                SAME loader     evaluates the exact
+                                instance)       component instance
+                                                code (dual-instance
+                                                svelte must be
+                                                avoided — svelte/
+                                                server is loaded
+                                                through vite too)
+  D-021          2026-10-02     Visual          The harness patch    Yes (§40.8)
+                 (CS-4,         verification    mocked window.fetch
+                 AC-006)        uses a          client-side and
+                                TEMPORARY        rendered all states
+                                uncommitted     at desktop + mobile
+                                dev route with  widths; the
+                                mocked fetch    committed surface
+                                (deleted        keeps no new public
+                                before         route (deep links
+                                commit)         are CS-5)
   -------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -1453,6 +1577,80 @@ Plan document updated: Yes (§13, §40.3, §40.7).
 Worklog updated: Yes (this entry + decisions D-013/D-014/D-015 + the
 CS-3 phase entry + completion record + session entry).
 
+### AC-006 --- 2026-10-02
+
+Phase: CS-4
+
+Change: CS-4 UI architecture finalization — the Downloader 2 panel's
+data-flow, view-model, filter, and verification contracts.
+
+Original plan: §14/§27 sketched the component and feature list; §40.4
+listed `MaveroCloudStreamDownload.svelte` as the single CS-4 UI file; the
+tabs endpoint docblock suggested per-tab progressive resolution (the
+Stremio pattern).
+
+New plan: §14/§27 + new §40.8 record the implemented contracts:
+
+``` text
+MaveroCloudStreamDownload.svelte (component, mcd-* namespace)
+    + cloudstream-download-view.ts (PURE shared view-model)
+        parse tabs/groups/extension payloads (malformed-safe)
+        reduce groups → tab states; outcome summaries
+        five client-side filters (quality/codec/container/language/size)
+        user-readable closed-vocabulary error messages
+
+DATA FLOW (NO N+1):
+  mount → GET /mavero2/tabs → ONE batch GET /mavero2 (all sources)
+  per-source retry ONLY → GET /mavero2/extension?extensionId=…
+  tab switching = pure view switch (data already loaded)
+  counts from the batch response (never re-resolved)
+```
+
+Reason: the CS-3 batch response already returns every eligible source's
+group — firing per-tab extension requests would duplicate resolution
+(the brief's PERFORMANCE section forbids N+1). The view-model module
+follows the established downloader-filters.ts architecture so the UI and
+the tests share ONE implementation. Codec/container filters exist because
+the CS-3 link view carries those fields (the Stremio stream view does
+not — they are CloudStream-only dimensions).
+
+Affected files (CS-4):
+- src/lib/components/MaveroCloudStreamDownload.svelte (NEW)
+- src/lib/shared/cloudstream-download-view.ts (NEW)
+- src/lib/components/DownloaderFilterSheet.svelte (MODIFIED — additive
+  dimension-union widening +codec/+container; type-level only, Stremio
+  flow unchanged — test-asserted)
+- scripts/cloudstream_downloader_ui_test.ts (NEW, 167 checks)
+- package.json (test chain registration)
+
+Affected phases: CS-4 (UI), CS-5 (the panel's props intentionally mirror
+MaveroAddonDownload so the registry wiring is a drop-in branch), CS-6
+(regression list gains the Downloader 2 UI checks — already covered by
+the new suite's §F/§G/§H invariants).
+
+Security impact: none negative — the browser only talks to the three
+Mavero API endpoints (never provider URLs, never .cs3 artifacts); no
+localStorage/sessionStorage persistence of expiring URLs; no client
+CloudStream server-module imports (test-asserted); the temp visual
+harness was uncommitted and deleted.
+
+Regression impact: none — MaveroAddonDownload.svelte, DownloadSheet
+.svelte, stream-actions.ts, external-player.ts, download-link-types.ts,
+downloader-filters.ts are byte-identical to the pristine CS-3 commit
+(test-asserted); the DownloaderFilterSheet change is exactly the
+documented union widening; full chain 204 commands → 0 new failures.
+
+Tests required: the 167-check cloudstream_downloader_ui suite (payload
+parsing, tab reduction, partial failure, all five filters + reset +
+no-match, per-kind capabilities, error/empty states, a11y + responsive
+source contracts, SSR mounts, existing-downloader isolation) + re-run
+CS-1/CS-2/CS-3 suites + check + build + full chain + browser visual
+verification.
+
+Plan document updated: Yes (§14, §27, §30, new §40.8).
+Worklog updated: Yes (this entry + decisions D-016..D-021 + the CS-4
+phase entry + completion record + session entry + status tables).
+
 ------------------------------------------------------------------------
 
 # Phase Completion Log
@@ -1789,24 +1987,110 @@ MPV/Share).
 ## CS-4 Completion
 
 ``` text
-Date:
-HEAD/commit:
-Status:
+Date: 2026-10-02
+HEAD/commit: 59634a9 (CS-3, pristine start) → feat(cloudstream): add mavero downloader 2 ui (dedicated commit; pushed to origin/main)
+Status: COMPLETE
 
 UI:
-Filters:
-Actions:
+- MaveroCloudStreamDownload.svelte — the dedicated Downloader 2 panel
+  (props mirror MaveroAddonDownload so CS-5 wires it identically:
+  contentId/mediaType/tmdbId/season/episode/title/onOpenInSheet)
+- src/lib/shared/cloudstream-download-view.ts — the PURE shared view-model:
+  malformed-response-safe payload parsing (closed-vocabulary envelope errors,
+  bounded strings, skipped invalid entries), tab reduction, outcome
+  summaries, episode-context derivation, user-readable error messages
+- Visual language mirrors the Stremio panel (same design tokens, badges,
+  pills, action layout) in an isolated mcd-* namespace
+
+API integration (all three CS-3 endpoints, browser never touches providers):
+- mount → GET /api/downloader/mavero2/tabs (tabs only, no provider fetches)
+- tabs>0 → GET /api/downloader/mavero2 (ONE batch resolve — NO N+1)
+- per-source retry → GET /api/downloader/mavero2/extension?extensionId=…
+  (only the necessary request; switching tabs NEVER refetches)
+- Tab counts derive from the batch response links (no extra requests)
+- AbortControllers cancelled on destroy; stale responses ignored
+
+Filters (client-side only — a filter change NEVER refetches):
+- Five dimensions: QUALITY / CODEC / CONTAINER / AUDIO / SIZE
+- Quality/size/language REUSE the shared Stremio matchers + option
+  derivation (downloader-filters.ts — audio class derived from
+  audioLanguages: 2→dual, 3+→multi); codec/container are new matchers with
+  unknown-excludes semantics (mirrors the size rule)
+- Removable active chips + Clear; reset on tab switch; per-section display
+  only when a real choice exists; "1 of 5" counts; filtered-empty state
+  ("No sources match your filters." + Clear filters action)
+
+Actions (the SINGLE shared model — no second MPV/Share):
+- Download/Play/Share from streamCapabilities/downloadActionFor/
+  playActionFor; http(s)→direct anchor, magnet→OS handler, Pixeldrain→Info
+  button + inline note (the existing Phase F pattern), external→
+  embedded-sheet via onOpenInSheet; hls/dash → Play+Share only (no
+  Download); Share uses navigator.share with magnet-via-text, clipboard +
+  legacy-copy fallbacks (verbatim Stremio semantics)
+
 States:
+- Loading: tabs state + skeleton cards; per-source resolving message
+- Empty (5 distinct): none enabled (+ admin hint System → Integrations →
+  Extension; no admin controls exposed), none compatible, no results,
+  all failed, filtered-empty
+- Partial failure: loaded sources keep rendering + Failed pills on failed
+  tabs + user-readable message + per-source Retry
+- Envelope errors: RATE_LIMITED/INVALID_REQUEST/INTERNAL_ERROR with
+  friendly messages + manual Retry only (no automatic retries)
+- URL lifetime: nothing persisted (no localStorage/sessionStorage) —
+  reopening re-resolves (plan §40.7)
+
 Accessibility:
+- role=tablist/tab + aria-selected; aria-label on every icon-only action;
+  role=status state messages; role=list/listitem cards; aria-busy;
+  focus-visible styles; keyboard-operable native buttons
+
+Responsive:
+- Tabs scroll horizontally (scrollbar hidden); 32px action targets; host
+  badge drops off ≤360px; ladder at 360/700/1024; NO horizontal page
+  overflow (verified at 390px AND 360px via scrollWidth checks)
+
 Tests:
+- cloudstream_downloader_ui_test.ts — 167 checks PASSED (§A payload
+  parsing incl. malformed bodies; §B tab reduction + partial/all-failed/
+  no-results outcomes; §C all five filters + reset + no-match; §D per-kind
+  capability mapping incl. Pixeldrain embedded-sheet; §E error messages +
+  movie/series request shapes + episode context; §F component source
+  contracts — a11y, responsive, states, security/no-storage/no-provider-
+  imports; §G runtime SSR mounts (movie/series/anime) through vite's module
+  graph; §H existing-downloader regression invariants — MaveroAddonDownload,
+  DownloadSheet, stream-actions, external-player, download-link-types,
+  downloader-filters all byte-identical to 59634a9)
+- CS-1 suites re-run: parse 78 + sync 113 + admin_ui 160 — all PASSED
+- CS-2 suites re-run: runtime 101 + extractors 50 + adapters 39 +
+  resolver 37 — all PASSED
+- CS-3 suite re-run: downloader_api 144 — PASSED
+- svelte-kit sync + svelte-check: 0 errors, 0 warnings
+- vite build + netlify adapter: PASS (~29s)
+- Full chain: 204 commands — 196 PASSED + the 8 documented pre-existing
+  baseline failures + 0 NEW failures (driver log:
+  scripts/cs4_full_chain.log)
+- Visual/manual verification (agent-browser + VLM review, dev server):
+  movie tabs/cards/filters/actions (filter apply + chips + clear),
+  filtered-empty, partial-failure tab + per-source retry (re-resolved
+  via the extension endpoint), series S2E4 context, none-enabled,
+  none-compatible, all-failed, no-results, rate-limited, mobile 390px +
+  360px no-overflow + 32px targets, desktop layout — ALL verified
+  (11 screenshots; interaction via a TEMPORARY uncommitted dev route with
+  mocked fetch, deleted before commit)
 
-Failures:
+Failures: None caused by CS-4 (8 pre-existing baseline failures — identical
+set to the CS-3 baseline).
 
-Plan changes:
+Plan changes: new §40.8 (CS-4 UI finalization: view-model module, NO-N+1
+data flow, filter reuse + widening, external-link presentation parity,
+mount-test approach, visual-verification harness); AC-006 recorded.
 
-Remaining work:
+Remaining work: none for CS-4. The component is intentionally NOT wired
+into DownloadSheet/provider dropdown/registry — that is CS-5.
 
-Next phase:
+Next phase: CS-5 — downloader registry integration (download_providers
+entry, slug routing, deep links, public config).
 ```
 
 ## CS-5 Completion
@@ -1959,23 +2243,25 @@ Before GLM declares the project complete:
 
 # Final Status
 
-**Project:** CS-3 complete (Mavero Downloader 2 backend: the three
-`/api/downloader/mavero2*` endpoints + the Downloader 2 service with
-DB+registry extension selection on the CS-2 bounded orchestrator, the
-closed error vocabulary, deterministic ordering, partial-success
-semantics, redaction-safe diagnostics, separate additive rate buckets,
-144 deterministic checks, and a PASSING live smoke — 27 real links
-end-to-end). CS-4 (Mavero Downloader 2 UI) is the next phase — NOT
-started; it must begin with the mandatory phase protocol (read plan +
-worklog, verify repository state, confirm CS-3 exit criteria).
+**Project:** CS-4 complete (Mavero Downloader 2 UI: the dedicated
+MaveroCloudStreamDownload panel + the pure shared view-model
+consuming the three CS-3 endpoints with a NO-N+1 data flow, the five
+client-side filters, per-kind Download/Play/Share via the SINGLE shared
+action model, the five distinct empty states, partial-failure tabs with
+per-source retry, responsive + accessible markup, 167 deterministic
+checks, a zero-new-failures 204-command full chain, and an 11-screen
+browser visual verification pass). CS-5 (downloader registry
+integration) is the next phase — NOT started; it must begin with the
+mandatory phase protocol (read plan + worklog, verify repository state,
+confirm CS-4 exit criteria).
 
 The next agent action is:
 
 ``` text
-READ PLAN (§40 contracts incl. §40.3 + §40.6 + §40.7 CS-3 finalization + §27 CS-4 scope)
-READ WORKLOG (CS-3 entry + AC-005 + D-013..D-015)
+READ PLAN (§40 contracts incl. §40.3 + §40.6 + §40.7 + §40.8 CS-4 finalization + §28 CS-5 scope)
+READ WORKLOG (CS-4 entry + AC-006 + D-016..D-021)
 VERIFY REPOSITORY STATE
-START CS-4 (only after the phase instruction arrives)
+START CS-5 (only after the phase instruction arrives)
 ```
 
 ------------------------------------------------------------------------
@@ -2372,3 +2658,118 @@ for supported movies/series without touching the existing Stremio
 downloader APIs — exercised by the 144 automated checks, the full-chain
 0-new-failures result, and the live smoke resolving 27 real links
 through the exact service the endpoints call.)
+
+## 2026-10-02 — Session 5 (CS-4)
+
+Phase: CS-4 — Mavero Downloader 2 UI
+
+Starting HEAD: `59634a9` (= origin/main, clean tree; CS-3 complete)
+
+Repository state: `main`, clean at start except two untracked CS-3
+working artifacts (scripts/cs3_full_chain.log + driver). Only CS-4 files
+were created/modified during this session (verified via git status/diff
+review before commit — no unrelated files touched; the one existing-file
+change is the documented DownloaderFilterSheet dimension-union widening).
+
+Plan/worklog read:
+- [x] Plan (all 2331 lines incl. §40 contracts + §27 CS-4 scope + §40.7)
+- [x] Worklog (all entries incl. CS-3 + AC-005 + D-013..D-015)
+
+Objective: Implement the Mavero Downloader 2 UI — the dedicated
+CloudStream panel consuming the three CS-3 endpoints (tabs, batch
+resolve, per-extension retry) with the existing action model, filters,
+distinct states, partial-failure UX, responsive/a11y work, and zero
+regressions on existing systems.
+
+Work performed:
+- Phase protocol: verified HEAD/branch/remote/clean tree; re-inspected
+  the CS-3 endpoints + service + error taxonomy, the existing downloader
+  UI (MaveroAddonDownload, DownloadSheet, JsonDownload), the shared
+  action model (stream-actions, external-player, download-link-types),
+  the filter helpers (downloader-filters), the presentation window, and
+  the test conventions (tsx scripts + source contracts + svelte/server
+  mount pattern).
+- Implemented the pure shared view-model
+  (src/lib/shared/cloudstream-download-view.ts): malformed-response-safe
+  payload parsing for all three endpoints, group→tab reduction, outcome
+  summaries, five filter dimensions (quality/codec/container/language/
+  size — REUSING the shared matchers for three of them), active chips +
+  clear, user-readable error messages, episode-context derivation,
+  external-link presentation rule.
+- Implemented MaveroCloudStreamDownload.svelte: tabs → ONE batch resolve
+  → grouped cards with per-kind Download/Play/Share actions (the exact
+  shared flows, including the Pixeldrain Info pattern and the
+  onOpenInSheet embedded-sheet callback), skeleton loading, the five
+  distinct empty states, partial-failure tabs with per-source retry,
+  abort-on-destroy, and the full responsive/a11y contract in an isolated
+  mcd-* namespace.
+- AC-006 protocol followed: contract decisions recorded in PLAN (§14/§27
+  refined + new §40.8) FIRST, then implemented.
+- Widened DownloaderFilterSheet's FilterSection dimension union with
+  codec/container (documented additive adaptation — the sheet is
+  genuinely generic; the Stremio flow still passes its original four
+  dimensions; the widening is test-asserted to be the ONLY change).
+- Wrote the 167-check deterministic suite (mocked API payload objects
+  only — never the network, never live sites) covering all 27 brief
+  items; registered it in the pnpm test chain.
+- Visual verification with agent-browser + VLM image review through a
+  TEMPORARY uncommitted dev route (mocked fetch; neutralized the app's
+  anti-devtool CDP detection inside the harness only): verified movie
+  tabs/cards/filters/actions, filter apply/chips/clear, filtered-empty,
+  partial-failure tab + working per-source retry, series S2·E4 context,
+  none-enabled + admin hint, none-compatible, all-failed, no-results,
+  rate-limited, desktop + mobile 390px/360px with zero horizontal
+  overflow and 32px action targets. 11 screenshots; route + harness
+  deleted before commit.
+- Gates: all 9 CloudStream suites PASS (78+113+160+101+50+39+37+144+167
+  = 889 checks); svelte-check 0/0; vite build + netlify adapter PASS;
+  full 204-command chain → 196 PASS + the 8 documented pre-existing
+  baseline failures + 0 NEW failures (driver log:
+  scripts/cs4_full_chain.log).
+
+Files changed:
+- NEW: src/lib/components/MaveroCloudStreamDownload.svelte
+- NEW: src/lib/shared/cloudstream-download-view.ts
+- NEW: scripts/cloudstream_downloader_ui_test.ts
+- MODIFIED: src/lib/components/DownloaderFilterSheet.svelte (additive
+  dimension-union widening +codec/+container — documented, test-pinned)
+- MODIFIED: package.json (1 test chain registration)
+- MODIFIED: CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§14, §27, §30, §40.8)
+- MODIFIED: this worklog
+
+Tests run: the 167-check CS-4 suite; all 8 CS-1/CS-2/CS-3 suites re-run;
+svelte-kit sync + svelte-check (0/0); vite build + netlify adapter (PASS
+~29s); the full 204-command chain via the driver
+(scripts/cs4_full_chain_driver.mjs → scripts/cs4_full_chain.log); the
+browser visual/manual verification pass.
+
+Results: ALL GREEN for CS-4 scope — 196/204 chain commands PASSED with
+the 8 documented pre-existing baseline failures (identical set to the
+CS-3 baseline — none touch the CS-4 diff surface) and ZERO new failures;
+check 0/0; build PASS; visual verification all-pass across 11 screens.
+
+Issues discovered:
+- AC-006 contract decisions (documented above).
+- The app's anti-devtool protection nukes pages under CDP automation —
+  handled INSIDE the temporary harness only (never in committed code).
+- The vite-SSR dual-svelte-instance pitfall (svelte/server must be
+  loaded through the same loader as the component) — documented in
+  D-020 + the test's comments.
+
+Decisions: AC-006 + D-016..D-021 (see the Decision Log).
+
+Plan updated: Yes (§14, §27, §30, §40.8).
+
+Worklog updated: Yes (this session + CS-4 phase entry + completion
+record + AC-006 + D-016..D-021 + status tables).
+
+Remaining: CS-5 → CS-6 (NOT started — strict phase boundary honored).
+
+Next action: STOP after the CS-4 commit/push; await the CS-5 phase
+instruction.
+
+(CS-4 exit criteria verified: a user can open Mavero Downloader 2 and
+use supported CloudStream results without changing existing downloader
+UI behavior — exercised by the 167 automated checks, the full-chain
+0-new-failures result, the byte-identical regression pins, and the
+browser visual pass over every state at desktop + mobile widths.)
