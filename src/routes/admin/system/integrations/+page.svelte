@@ -2,25 +2,62 @@
   /**
    * Admin 2.0 — Phase 1 — Integrations workspace.
    * Full CRUD for Stremio addons. No redirects to legacy UI.
+   *
+   * CS-1 (AC-001): the page hosts TWO URL-driven tabs:
+   *   [ Add-on ]    — Stremio addon management (EXISTING behavior, unchanged)
+   *   [ Extension ] — CloudStream Extension Manager (new, CS-1)
+   * The "+" button opens an Add Integration selector with two chips:
+   *   [ Stremio ]     → the EXISTING Add Stremio Addon flow (Manifest URL →
+   *                     Preview → Confirm), preserved verbatim behind the
+   *                     selector.
+   *   [ CloudStream ] → the new CloudStream repository add flow
+   *                     (Repository URL → Validate/Fetch → Preview → Confirm).
    */
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
-  import { Puzzle, Check, RefreshCw, Trash2, Power, Edit3 } from 'lucide-svelte';
-  import { ALL_DOWNLOAD_LINK_TYPES, linkTypeLabel, getLinkTypesConfig, type DownloadLinkType } from '$lib/shared/download-link-types';
+  import AdminCloudStreamManager from '$lib/components/admin2/AdminCloudStreamManager.svelte';
+  import { Puzzle, Check, RefreshCw, Trash2, Power, Edit3, Package } from 'lucide-svelte';
+  import { ALL_DOWNLOAD_LINK_TYPES, linkTypeLabel } from '$lib/shared/download-link-types';
+  import type { CloudStreamAdapterStatus, CloudStreamRepositoryPreview } from '$lib/shared/cloudstream-types';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
+  const tab = $derived(data.tab ?? 'addon');
+
   let addSheetOpen = $state(false);
+  /** Selected integration kind in the Add Integration sheet: null | 'stremio' | 'cloudstream'. */
+  let addKind: 'stremio' | 'cloudstream' | null = $state(null);
   let detailSheetOpen = $state(false);
   let detailAddon: any = $state(null);
   let manifestUrl = $state('');
   let preview = $state<any>(null);
   let previewing = $state(false);
   let previewError = $state('');
+
+  // CloudStream add-flow state.
+  let repositoryUrl = $state('');
+  let repositoryPreview: CloudStreamRepositoryPreview | null = $state(null);
+  let repositoryPreviewing = $state(false);
+  let repositoryPreviewError = $state('');
+
+  function openAddSheet() {
+    addSheetOpen = true;
+  }
+
+  function closeAddSheet() {
+    addSheetOpen = false;
+    addKind = null;
+    preview = null;
+    previewError = '';
+    manifestUrl = '';
+    repositoryPreview = null;
+    repositoryPreviewError = '';
+    repositoryUrl = '';
+  }
 
   async function doPreview() {
     if (!manifestUrl.trim()) return;
@@ -56,6 +93,35 @@
     }
   }
 
+  async function doRepositoryPreview() {
+    if (!repositoryUrl.trim()) return;
+    repositoryPreviewing = true;
+    repositoryPreview = null;
+    repositoryPreviewError = '';
+    try {
+      // Standard JSON endpoint (POST /api/admin/integrations/cloudstream/preview)
+      // — same envelope as the Stremio preview endpoint. Validation only:
+      // validates the URL, fetches CS.json, resolves pluginLists, parses
+      // plugins.json and returns bounded extension metadata. Never persists
+      // anything and never fetches/executes .cs3 artifacts.
+      const res = await fetch('/api/admin/integrations/cloudstream/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repositoryUrl }),
+      });
+      const json = await res.json();
+      if (json.ok && json.preview) {
+        repositoryPreview = json.preview;
+      } else {
+        repositoryPreviewError = json?.error?.message ?? 'Unable to preview the CloudStream repository.';
+      }
+    } catch {
+      repositoryPreviewError = 'Network error — could not reach the preview endpoint.';
+    } finally {
+      repositoryPreviewing = false;
+    }
+  }
+
   function openDetail(addon: any) { detailAddon = addon; detailSheetOpen = true; }
   function closeDetail() { detailSheetOpen = false; detailAddon = null; }
 
@@ -63,77 +129,163 @@
     if (!iso) return '—';
     try { return new Date(iso).toLocaleDateString(); } catch { return '—'; }
   }
+
+  function previewAdapterLabel(status: CloudStreamAdapterStatus): string {
+    if (status === 'compatible') return 'Compatible';
+    if (status === 'broken') return 'Broken';
+    if (status === 'unsupported') return 'Unsupported';
+    return 'Adapter required';
+  }
+
+  function previewAdapterTone(status: CloudStreamAdapterStatus): 'good' | 'warn' | 'neutral' | 'bad' {
+    if (status === 'compatible') return 'good';
+    if (status === 'broken') return 'bad';
+    if (status === 'unsupported') return 'neutral';
+    return 'warn';
+  }
 </script>
 
 <svelte:head><title>Integrations — Mavero Admin</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <AdminAppShell active="integrations">
-  <AdminPage eyebrow="System" title="Integrations" accent="cyan">
-    {#snippet actions()}<AdminAddButton label="Add addon" onclick={() => { addSheetOpen = true; }} />{/snippet}
-    {#snippet description()}<p>Manage Stremio addon integrations. Full CRUD available — no redirects to legacy UI.</p>{/snippet}
+  <AdminPage
+    eyebrow="System"
+    title="Integrations"
+    accent="cyan"
+    tabs={[
+      { id: 'addon', label: 'Add-on', href: '?tab=addon', active: tab === 'addon' },
+      { id: 'extension', label: 'Extension', href: '?tab=extension', active: tab === 'extension' },
+    ]}
+  >
+    {#snippet actions()}<AdminAddButton label="Add Integration" onclick={openAddSheet} />{/snippet}
+    {#snippet description()}<p>Manage integrations — Stremio add-ons and CloudStream extensions. Terminology: Add-on = Stremio · Extension = CloudStream.</p>{/snippet}
 
     {#if data.notice}<div class="a2-notice" role="status"><Check size={14} /> {data.notice}</div>{/if}
     {#if form?.message}<div class="a2-form-error" role="alert">{form.message}</div>{/if}
 
-    {#if data.addons.length === 0}
-      <div class="a2-empty"><Puzzle size={32} /><h3>No integrations</h3><p>Add a Stremio addon manifest URL.</p><AdminAddButton label="Add addon" onclick={() => { addSheetOpen = true; }} /></div>
-    {:else}
-      <div class="a2-addon-list">
-        {#each data.addons as addon (addon.id)}
-          <div class="a2-addon-row" data-enabled={addon.enabled}>
-            <div class="a2-addon-row-main">
-              <div class="a2-addon-row-info">
-                <div class="a2-addon-row-name">{addon.name}</div>
-                <div class="a2-addon-row-meta">
-                  {#if addon.version}<span>v{addon.version}</span><span>·</span>{/if}
-                  {#each addon.supportedTypes ?? [] as t}<span class="a2-addon-type">{t}</span>{/each}
-                  {#if addon.lastError}<span>·</span><span class="a2-addon-error">error</span>{/if}
+    {#if tab === 'addon'}
+      {#if data.addons.length === 0}
+        <div class="a2-empty"><Puzzle size={32} /><h3>No integrations</h3><p>Add a Stremio addon manifest URL.</p><AdminAddButton label="Add Integration" onclick={openAddSheet} /></div>
+      {:else}
+        <div class="a2-addon-list">
+          {#each data.addons as addon (addon.id)}
+            <div class="a2-addon-row" data-enabled={addon.enabled}>
+              <div class="a2-addon-row-main">
+                <div class="a2-addon-row-info">
+                  <div class="a2-addon-row-name">{addon.name}</div>
+                  <div class="a2-addon-row-meta">
+                    {#if addon.version}<span>v{addon.version}</span><span>·</span>{/if}
+                    {#each addon.supportedTypes ?? [] as t}<span class="a2-addon-type">{t}</span>{/each}
+                    {#if addon.lastError}<span>·</span><span class="a2-addon-error">error</span>{/if}
+                  </div>
                 </div>
               </div>
+              <div class="a2-addon-row-actions">
+                <AdminStatusBadge label={addon.enabled ? 'Enabled' : 'Disabled'} tone={addon.enabled ? 'good' : 'neutral'} />
+                <form method="POST" action="?/setEnabled" style="display:inline">
+                  <input type="hidden" name="id" value={addon.id} />
+                  <input type="hidden" name="enabled" value={String(!addon.enabled)} />
+                  <button type="submit" class="a2-icon-btn" title={addon.enabled ? 'Disable' : 'Enable'}><Power size={14} /></button>
+                </form>
+                <form method="POST" action="?/refreshAddon" style="display:inline">
+                  <input type="hidden" name="id" value={addon.id} />
+                  <button type="submit" class="a2-icon-btn" title="Refresh"><RefreshCw size={14} /></button>
+                </form>
+                <button type="button" class="a2-icon-btn" onclick={() => openDetail(addon)} title="Configure"><Edit3 size={14} /></button>
+                <form method="POST" action="?/deleteAddon" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this addon? This cannot be undone.')) e.preventDefault(); }}>
+                  <input type="hidden" name="id" value={addon.id} />
+                  <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete"><Trash2 size={14} /></button>
+                </form>
+              </div>
             </div>
-            <div class="a2-addon-row-actions">
-              <AdminStatusBadge label={addon.enabled ? 'Enabled' : 'Disabled'} tone={addon.enabled ? 'good' : 'neutral'} />
-              <form method="POST" action="?/setEnabled" style="display:inline">
-                <input type="hidden" name="id" value={addon.id} />
-                <input type="hidden" name="enabled" value={String(!addon.enabled)} />
-                <button type="submit" class="a2-icon-btn" title={addon.enabled ? 'Disable' : 'Enable'}><Power size={14} /></button>
-              </form>
-              <form method="POST" action="?/refreshAddon" style="display:inline">
-                <input type="hidden" name="id" value={addon.id} />
-                <button type="submit" class="a2-icon-btn" title="Refresh"><RefreshCw size={14} /></button>
-              </form>
-              <button type="button" class="a2-icon-btn" onclick={() => openDetail(addon)} title="Configure"><Edit3 size={14} /></button>
-              <form method="POST" action="?/deleteAddon" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this addon? This cannot be undone.')) e.preventDefault(); }}>
-                <input type="hidden" name="id" value={addon.id} />
-                <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete"><Trash2 size={14} /></button>
-              </form>
-            </div>
-          </div>
-        {/each}
-      </div>
+          {/each}
+        </div>
+      {/if}
+    {:else}
+      <AdminCloudStreamManager
+        repositories={data.cloudstreamRepositories}
+        extensions={data.cloudstreamExtensions}
+        loadError={data.cloudstreamError}
+      />
     {/if}
   </AdminPage>
 </AdminAppShell>
 
-<!-- Add addon sheet -->
+<!-- Add Integration sheet (selector + per-kind flows) -->
 {#if addSheetOpen}
-  <AdminSheet open={addSheetOpen} title="Add Stremio Addon" onClose={() => { addSheetOpen = false; preview = null; previewError = ''; manifestUrl = ''; }}>
+  <AdminSheet open={addSheetOpen} title="Add Integration" onClose={closeAddSheet}>
     <div class="a2-add-flow">
-      <label class="a2-field"><span>Manifest URL</span><input type="url" bind:value={manifestUrl} placeholder="https://example.com/manifest.json" /></label>
-      <button type="button" class="a2-btn-primary" onclick={doPreview} disabled={previewing || !manifestUrl.trim()}>{previewing ? 'Loading…' : 'Preview'}</button>
-      {#if previewError}
-        <div class="a2-form-error" role="alert">{previewError}</div>
-      {/if}
-      {#if preview}
-        <div class="a2-preview">
-          <h4>{preview.name ?? 'Unnamed'}</h4>
-          {#if preview.version}<p class="mono">v{preview.version}</p>{/if}
-          {#if preview.description}<p>{preview.description}</p>{/if}
-          <form method="POST" action="?/confirmAddon">
-            <input type="hidden" name="manifestUrl" value={manifestUrl} />
-            <button type="submit" class="a2-btn-primary">Confirm Add</button>
-          </form>
+      {#if addKind === null}
+        <p class="a2-selector-hint">Choose the integration type to add:</p>
+        <div class="a2-selector-chips" role="group" aria-label="Integration type">
+          <button type="button" class="a2-chip" onclick={() => { addKind = 'stremio'; }}>
+            <Puzzle size={16} />
+            <span>Stremio</span>
+            <span class="a2-chip-sub">Add-on · manifest URL</span>
+          </button>
+          <button type="button" class="a2-chip" onclick={() => { addKind = 'cloudstream'; }}>
+            <Package size={16} />
+            <span>CloudStream</span>
+            <span class="a2-chip-sub">Extension · repository URL</span>
+          </button>
         </div>
+      {:else if addKind === 'stremio'}
+        <div class="a2-flow-head">
+          <button type="button" class="a2-back-link" onclick={() => { addKind = null; preview = null; previewError = ''; }}>← Change type</button>
+        </div>
+        <label class="a2-field"><span>Manifest URL</span><input type="url" bind:value={manifestUrl} placeholder="https://example.com/manifest.json" /></label>
+        <button type="button" class="a2-btn-primary" onclick={doPreview} disabled={previewing || !manifestUrl.trim()}>{previewing ? 'Loading…' : 'Preview'}</button>
+        {#if previewError}
+          <div class="a2-form-error" role="alert">{previewError}</div>
+        {/if}
+        {#if preview}
+          <div class="a2-preview">
+            <h4>{preview.name ?? 'Unnamed'}</h4>
+            {#if preview.version}<p class="mono">v{preview.version}</p>{/if}
+            {#if preview.description}<p>{preview.description}</p>{/if}
+            <form method="POST" action="?/confirmAddon">
+              <input type="hidden" name="manifestUrl" value={manifestUrl} />
+              <button type="submit" class="a2-btn-primary">Confirm Add</button>
+            </form>
+          </div>
+        {/if}
+      {:else if addKind === 'cloudstream'}
+        <div class="a2-flow-head">
+          <button type="button" class="a2-back-link" onclick={() => { addKind = null; repositoryPreview = null; repositoryPreviewError = ''; }}>← Change type</button>
+        </div>
+        <label class="a2-field"><span>Repository URL</span><input type="url" bind:value={repositoryUrl} placeholder="https://raw.githubusercontent.com/…/CS.json" /></label>
+        <button type="button" class="a2-btn-primary" onclick={doRepositoryPreview} disabled={repositoryPreviewing || !repositoryUrl.trim()}>{repositoryPreviewing ? 'Loading…' : 'Preview'}</button>
+        {#if repositoryPreviewError}
+          <div class="a2-form-error" role="alert">{repositoryPreviewError}</div>
+        {/if}
+        {#if repositoryPreview}
+          <div class="a2-preview">
+            <h4>{repositoryPreview.name}</h4>
+            {#if repositoryPreview.description}<p>{repositoryPreview.description}</p>{/if}
+            <p class="mono">{repositoryPreview.pluginListCount} plugin list{repositoryPreview.pluginListCount === 1 ? '' : 's'} · {repositoryPreview.extensionCount} extension{repositoryPreview.extensionCount === 1 ? '' : 's'} discovered</p>
+            {#if repositoryPreview.extensions.length > 0}
+              <div class="a2-cs-preview-list">
+                {#each repositoryPreview.extensions as extension (extension.internalName)}
+                  <div class="a2-cs-preview-row">
+                    <div class="a2-cs-preview-name">{extension.name ?? extension.internalName}</div>
+                    <div class="a2-cs-preview-meta">
+                      <span class="mono">{extension.internalName}</span>
+                      {#if extension.version}<span>·</span><span>v{extension.version}</span>{/if}
+                    </div>
+                    <AdminStatusBadge label={previewAdapterLabel(extension.adapterStatus)} tone={previewAdapterTone(extension.adapterStatus)} dot={false} />
+                  </div>
+                {/each}
+                {#if repositoryPreview.truncated}
+                  <p class="a2-cs-preview-more">+ {repositoryPreview.extensionCount - repositoryPreview.extensions.length} more…</p>
+                {/if}
+              </div>
+            {/if}
+            <form method="POST" action="?/confirmCloudStreamRepository">
+              <input type="hidden" name="repositoryUrl" value={repositoryUrl} />
+              <button type="submit" class="a2-btn-primary">Confirm Add</button>
+            </form>
+          </div>
+        {/if}
       {/if}
     </div>
   </AdminSheet>
@@ -196,8 +348,22 @@
   .a2-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; font-weight: 700; }
   .a2-field input { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 6px 10px; }
   .a2-add-flow { display: flex; flex-direction: column; gap: var(--a2-space-3); }
+  .a2-flow-head { display: flex; }
+  .a2-back-link { background: none; border: none; color: var(--a2-text-muted); font-size: var(--a2-text-2xs); cursor: pointer; padding: 0; }
+  .a2-back-link:hover { color: var(--a2-cyan); }
+  .a2-selector-hint { margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text-muted); }
+  .a2-selector-chips { display: flex; gap: var(--a2-space-3); flex-wrap: wrap; }
+  .a2-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: var(--a2-space-3) var(--a2-space-4); background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-md); color: var(--a2-text); cursor: pointer; min-width: 200px; flex: 1; text-align: left; }
+  .a2-chip:hover { border-color: var(--a2-cyan-border); color: var(--a2-cyan); }
+  .a2-chip span { font-size: var(--a2-text-sm); font-weight: 700; }
+  .a2-chip-sub { font-size: var(--a2-text-2xs) !important; font-weight: 400 !important; color: var(--a2-text-muted); }
   .a2-preview { padding: var(--a2-space-3); background: var(--a2-surface-3); border-radius: var(--a2-radius-sm); display: flex; flex-direction: column; gap: var(--a2-space-2); }
   .a2-preview h4 { margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text-bright); }
+  .a2-cs-preview-list { display: flex; flex-direction: column; gap: var(--a2-space-1); max-height: 280px; overflow-y: auto; }
+  .a2-cs-preview-row { display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-2); padding: var(--a2-space-2); background: var(--a2-surface-2); border-radius: var(--a2-radius-xs); }
+  .a2-cs-preview-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
+  .a2-cs-preview-meta { display: flex; gap: 4px; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+  .a2-cs-preview-more { margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); text-align: center; }
   .a2-detail { display: flex; flex-direction: column; gap: var(--a2-space-3); }
   .a2-dl { display: grid; grid-template-columns: 1fr 1fr; gap: var(--a2-space-2); margin: 0; }
   .a2-dl > div { display: flex; flex-direction: column; }
@@ -210,5 +376,5 @@
   .a2-btn-primary { padding: 10px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
   .a2-btn-secondary { padding: 10px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
-  @media (max-width: 768px) { .a2-addon-row { flex-direction: column; align-items: stretch; } .a2-addon-row-actions { justify-content: flex-end; } .a2-dl { grid-template-columns: 1fr; } }
+  @media (max-width: 768px) { .a2-addon-row { flex-direction: column; align-items: stretch; } .a2-addon-row-actions { justify-content: flex-end; } .a2-dl { grid-template-columns: 1fr; } .a2-selector-chips { flex-direction: column; } }
 </style>

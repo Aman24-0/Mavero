@@ -356,7 +356,8 @@ invalid
 
 ## 6.2 `cloudstream_extensions`
 
-Suggested fields:
+Suggested fields (finalized at CS-1 — see §40.3 and AC-002 for the
+verified real-world plugin metadata shape):
 
 ``` text
 id
@@ -367,9 +368,12 @@ version
 description
 authors
 language
-tv_types
-plugin_url
-hash
+tv_types              -- CloudStream TvType enum NAMES (text[]; AC-002)
+plugin_url            -- .cs3 artifact URL (metadata ONLY — never fetched)
+plugin_status         -- 1 = OK, 2 = DOWN, 3 = BROKEN
+file_hash             -- sha256-… artifact hash (inert metadata)
+file_size_bytes       -- artifact size in bytes (inert metadata)
+source_url            -- upstream repositoryUrl (inert metadata)
 icon_url
 enabled
 status
@@ -391,6 +395,10 @@ unsupported
 broken
 disabled
 ```
+
+Note (CS-1): the persisted `adapter_status` never stores `disabled` —
+it is DERIVED from the `enabled` flag at display time (single source of
+truth; avoids dual-state drift).
 
 ## 6.3 Optional adapter registry
 
@@ -1807,28 +1815,35 @@ the actual repository at HEAD `c4e6abd` (= origin/main, clean tree).
 
 ### CloudStream repository index (CS.json) — parser contract
 
-A CloudStream repository URL points at a JSON index document:
+A CloudStream repository URL points at a JSON index document. The contract
+below reflects the REAL-WORLD CloudStream repository format, verified live
+during CS-1 against the task-brief example repository
+(`https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json`)
+— see AC-002 in the worklog for the discovery record:
 
 ``` ts
 type CloudStreamRepositoryIndex = {
   name?: string;                 // repository display name
   description?: string;
-  icon?: string;                 // repository icon URL (optional)
-  pluginLists?: Array<{
-    name?: string;
-    plugins: string;             // ABSOLUTE http(s) URL to plugins.json
-  }>;
+  iconUrl?: string;              // repository icon URL (canonical; 'icon' tolerated)
+  icon?: string;                 // legacy tolerated alias for iconUrl
+  manifestVersion?: number;      // ignored (inert metadata)
+  // CANONICAL: array of ABSOLUTE http(s) URL strings to plugins.json docs.
+  // Tolerated: { plugins: string } object entries (pre-AC-002 assumption).
+  pluginLists?: Array<string | { plugins: string }>;
 };
 ```
 
 Rules: missing `pluginLists` → repository is parsed but yields zero
-extensions (NOT an error); each `plugins` URL must be absolute http(s),
+extensions (NOT an error); each plugin-list URL must be absolute http(s),
 SSRF-validated, bounded (max 4 plugin lists per repository, max 500
 normalized extension records per repository, 1 MiB per document, 10s
-per-document timeout); relative `plugins` URLs are rejected as invalid;
+per-document timeout); relative plugin-list URLs are rejected as invalid;
 plugin-list documents must be a JSON array.
 
 ### plugins.json — plugin metadata contract
+
+Verified real-world entry shape (AC-002):
 
 ``` ts
 type CloudStreamPluginListEntry = {
@@ -1837,18 +1852,27 @@ type CloudStreamPluginListEntry = {
   version?: number;
   description?: string;
   authors?: string[];
-  language?: string;
-  tvTypes?: number[];            // CloudStream tvType ids
+  language?: string;             // e.g. 'hi', 'en'
+  tvTypes?: string[];            // CloudStream TvType enum NAMES ('Movie',
+                                 // 'TvSeries', 'Anime', …) — numeric ids
+                                 // tolerated via best-effort ordinal map
   apiVersion?: number;
   status?: number;               // 1 = OK, 2 = DOWN, 3 = BROKEN (best effort)
-  file?: string;                 // .cs3 artifact URL — metadata ONLY, never fetched/executed
-  icon?: string;                 // plugin icon URL
+  url?: string;                  // .cs3 artifact URL (canonical) — metadata ONLY, never fetched/executed
+  file?: string;                 // tolerated alias for the .cs3 artifact URL
+  iconUrl?: string;              // plugin icon URL (canonical; 'icon' tolerated)
+  icon?: string;                 // tolerated alias for iconUrl
+  fileHash?: string;             // sha256-… artifact hash (inert metadata; plan §6.2 'hash')
+  fileSize?: number;             // artifact size in bytes (inert metadata)
+  repositoryUrl?: string;        // upstream source repository URL (inert metadata)
 };
 ```
 
 Rules: entries without `internalName` are skipped (malformed); every
-string is length-bounded; the `.cs3` `file` URL is persisted as metadata
-only — Mavero NEVER downloads or executes it.
+string is length-bounded; the `.cs3` artifact URL (`url`, tolerated
+`file`) is persisted as metadata only — Mavero NEVER downloads or
+executes it. `tvTypes` is persisted as enum-name strings (`text[]` DB
+column); numeric ids are normalized to their enum names at parse time.
 
 ### Adapter contract (CS-2)
 

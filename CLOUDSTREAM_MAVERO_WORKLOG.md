@@ -6,7 +6,7 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CS-0 COMPLETE — CS-1 cleared to begin
+**Status:** CS-1 COMPLETE — CS-2 pending (not started)
 
 ------------------------------------------------------------------------
 
@@ -74,11 +74,11 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   Area                              Status
   --------------------------------- ---------
   Architecture approved             Ready
-  Plan document                     Created (v1.0 + CS-0 audit addendum §40)
-  Worklog                           Created + CS-0 recorded
+  Plan document                     Current (v1.0 + §40 + AC-002 corrections)
+  Worklog                           Current (CS-0 + CS-1 recorded)
   CS-0 audit                        COMPLETE (2026-10-02, HEAD c4e6abd)
-  CloudStream repository manager    Pending (CS-1 — cleared to begin)
-  CloudStream DB schema             Pending (CS-1)
+  CloudStream repository manager    COMPLETE (CS-1, 2026-10-02)
+  CloudStream DB schema             COMPLETE (CS-1 migration applied + verified live)
   Mavero adapter runtime            Pending (CS-2)
   Initial CloudStream adapters      Pending (CS-2)
   Extractor layer                   Pending (CS-2)
@@ -313,7 +313,8 @@ Integrations Extension tab, "+" selector, tests).
 
 ## Status
 
-**PENDING**
+**COMPLETE** (2026-10-02, HEAD at CS-0 `8920eaf` → CS-1 commit; see the
+Phase Completion Log below)
 
 ## Objective
 
@@ -324,66 +325,198 @@ Extension Manager.
 
 ### Database
 
--   [ ] Create repository migration.
--   [ ] Create repository model/service.
--   [ ] Create extension metadata model/service.
--   [ ] Add appropriate indexes/constraints.
--   [ ] Verify RLS/auth behavior if applicable.
+-   [x] Create repository migration.
+      (`supabase/migrations/20261101000000_cloudstream_cs1.sql` —
+      `cloudstream_repositories` + `cloudstream_extensions`, RLS
+      admin-only via `public.is_admin()`, NO public SELECT policy, anon
+      revoked, `set_updated_at()` triggers, unique
+      `(repository_id, internal_name)`, FK `on delete cascade`.)
+-   [x] Create repository model/service.
+      (`src/lib/server/cloudstream/repository/service.ts`.)
+-   [x] Create extension metadata model/service.
+      (`src/lib/server/cloudstream/extensions/service.ts`.)
+-   [x] Add appropriate indexes/constraints.
+      (listing indexes + check constraints on every bounded column;
+      `tv_types text[]` enum-name storage per AC-002.)
+-   [x] Verify RLS/auth behavior if applicable.
+      (Applied to LIVE Supabase + verified read-only: RLS enabled on both
+      tables, 2 admin policies, zero public SELECT policies, empty
+      catalog, tracker entry `20261101000000` = 31 entries total.)
 
 ### Repository parser
 
--   [ ] Parse CS.json.
--   [ ] Resolve plugin lists.
--   [ ] Parse plugins.json.
--   [ ] Normalize metadata.
--   [ ] Handle invalid repositories.
--   [ ] Handle timeouts.
--   [ ] Handle redirects safely.
--   [ ] Handle malformed metadata.
+-   [x] Parse CS.json. (Real format per AC-002: `pluginLists` is an array
+      of ABSOLUTE http(s) URL STRINGS; legacy `{ plugins }` object form
+      tolerated; `iconUrl` canonical icon field, `icon` tolerated.)
+-   [x] Resolve plugin lists. (Max 4 lists — surplus ignored, not fatal;
+      sequential fetch = inherently bounded concurrency.)
+-   [x] Parse plugins.json. (Must be a JSON array; entries without
+      `internalName` skipped; `url` canonical .cs3 artifact field,
+      `file` tolerated; `tvTypes` enum-name strings, numeric ids
+      normalized via best-effort ordinal map; `fileHash` / `fileSize` /
+      `repositoryUrl` persisted as inert metadata.)
+-   [x] Normalize metadata. (All strings length-bounded; booleans never
+      coerce to numbers; URLs http(s)-validated even as metadata; max 500
+      extension records per repository.)
+-   [x] Handle invalid repositories. (`INVALID_REPOSITORY` /
+      `PLUGIN_LIST_INVALID`; permanent failures mark the repository
+      `invalid`, transient failures `error`.)
+-   [x] Handle timeouts. (10s per document via the SSRF-safe fetcher;
+      `TIMEOUT` in the closed error taxonomy; verified by test J.)
+-   [x] Handle redirects safely. (Inherited verbatim from
+      `fetchStremioManifest`: bounded redirects, every hop re-validated.)
+-   [x] Handle malformed metadata. (Malformed entries skipped, never
+      fatal; document-level structural failures are typed errors.)
 
 ### Admin
 
--   [ ] Add CloudStream Extension Manager route.
--   [ ] Add repository list.
--   [ ] Add repository form.
--   [ ] Add sync.
--   [ ] Add enable/disable.
--   [ ] Add extension list.
--   [ ] Show compatibility status.
--   [ ] Show errors.
--   [ ] Add refresh/re-check behavior.
+-   [x] Add CloudStream Extension Manager route.
+      (No new route — AC-001: the manager is the `[ Extension ]` tab
+      inside System → Integrations; `AdminCloudStreamManager.svelte`
+      is an isolated component.)
+-   [x] Add repository list. (Cards: name, host, status badges,
+      extension count, last sync/check, last error.)
+-   [x] Add repository form. ("+" → Add Integration selector
+      `[ Stremio ] [ CloudStream ]` chips → CloudStream chip shows the
+      repository add flow: Repository URL → Preview (JSON endpoint) →
+      Confirm.)
+-   [x] Add sync. (`?/syncCloudStreamRepository` — re-fetches the STORED
+      URL, non-destructive reconcile.)
+-   [x] Add enable/disable. (Repository + extension toggles.)
+-   [x] Add extension list. (Grouped per repository: name, internalName,
+      version, language, media types, compatibility badge, errors.)
+-   [x] Show compatibility status. (compatible / adapter_required /
+      unsupported / broken + derived Disabled from `enabled`;
+      code-owned registry EMPTY in CS-1 → everything honestly shows
+      "Adapter required".)
+-   [x] Show errors. (Repository `last_error` + per-row errors; safe
+      curated messages only.)
+-   [x] Add refresh/re-check behavior. (Refresh = repository sync;
+      compatibility is re-derived on every sync from the registry +
+      plugin self-status. A standalone re-check action becomes
+      meaningful in CS-2 when adapters exist.)
 
 ### Security
 
--   [ ] Safe URL validation.
--   [ ] SSRF protection.
--   [ ] Response-size limits.
--   [ ] Timeout.
--   [ ] No plugin execution.
+-   [x] Safe URL validation. (`validateRepositoryUrl` lexical gate +
+      `canonicalRepositoryUrlKey` duplicate identity; the deep
+      SSRF/DNS/redirect/connect validation runs inside
+      `fetchStremioManifest`.)
+-   [x] SSRF protection. (Facade `security/fetch.ts` REUSES
+      `fetchStremioManifest` — D-006; loopback/metadata/private-DNS
+      blocked pre-connect, verified by test I incl. a rebinding-style
+      private-resolution case.)
+-   [x] Response-size limits. (1 MiB per document.)
+-   [x] Timeout. (10s per document.)
+-   [x] No plugin execution. (`.cs3` artifact URL is METADATA ONLY —
+      verified by tests: fetcher call contract asserts only CS.json +
+      plugins.json URLs are ever fetched, never `.cs3`; no eval / new
+      Function / dynamic import anywhere in the domain.)
 
 ### Tests
 
--   [ ] Repository parsing tests.
--   [ ] Metadata normalization tests.
--   [ ] Sync tests.
--   [ ] Admin behavior tests.
--   [ ] Security tests.
+-   [x] Repository parsing tests. (`cloudstream_repository_parse_test.ts`
+      — 78 checks: real + legacy shapes, bounds, sanitization,
+      duplicates, adapter-status derivation.)
+-   [x] Metadata normalization tests. (ibid. sections G–J.)
+-   [x] Sync tests. (`cloudstream_repository_sync_test.ts` — 113
+      checks: create/sync/reconcile, ENABLED-STATE PRESERVATION,
+      non-destructive partial + total failure, permanent-invalid,
+      timeout, SSRF, duplicates, bounds, delete/cascade, preview
+      no-persistence + truncation, admin listing projections,
+      enable/disable validation.)
+-   [x] Admin behavior tests. (`cloudstream_admin_ui_test.ts` — 111
+      checks: tab contract, "+" selector, Stremio flow REGRESSION
+      (all 7 actions + preview endpoint preserved), CloudStream flow,
+      nav unchanged, migration/RLS contract, no dynamic execution,
+      test registration, untouchable surface.)
+-   [x] Security tests. (SSRF/timeout/no-.cs3-fetch inside the sync +
+      UI suites.)
 
 ## Completed
 
-None.
+All CS-1 scope. Implementation summary:
+
+-   **Server domain** (`src/lib/server/cloudstream/` — isolated):
+    `types/index.ts` (domain contracts), `security/fetch.ts` (thin
+    SSRF-safe facade reusing `fetchStremioManifest`, D-006),
+    `repository/errors.ts` (closed error vocabulary + safe messages),
+    `repository/ids.ts` (UUID validation), `repository/parse.ts`
+    (CS.json + plugins.json parsing/normalization per the AC-002
+    contract), `repository/service.ts` (CRUD + sync + preview +
+    non-destructive reconciliation), `extensions/service.ts` (admin
+    listing + enable/disable), `adapters/registry.ts` (code-owned
+    adapter registry — INTENTIONALLY EMPTY in CS-1 + adapter-status
+    derivation).
+-   **Shared types**: `src/lib/shared/cloudstream-types.ts` (view +
+    preview models; hosting-types convention).
+-   **DB**: migration `20261101000000_cloudstream_cs1.sql` + live
+    application + tracker registration + read-only verification.
+-   **API**: `POST /api/admin/integrations/cloudstream/preview`
+    (requireAdmin, readJsonBody, no-store, closed error envelope,
+    discovery-only, no persistence).
+-   **Admin UI**: Integrations page gained `?tab=addon|extension`
+    URL-driven tabs (default `addon`; server-side VALID_TABS 400
+    redirect convention) and the "+" Add Integration selector
+    (`[ Stremio ] [ CloudStream ]` chips); the Stremio flow markup and
+    ALL 7 existing actions are preserved verbatim behind the selector;
+    the Extension tab renders the isolated
+    `AdminCloudStreamManager.svelte`; 5 new additive form actions
+    (`confirmCloudStreamRepository`, `syncCloudStreamRepository`,
+    `setCloudStreamRepositoryEnabled`, `deleteCloudStreamRepository`,
+    `setCloudStreamExtensionEnabled`) redirect to `?tab=extension`.
+-   **Tests**: 3 new suites registered in the `pnpm test` chain (302
+    checks total) + a manual live smoke script
+    (`scripts/cloudstream_cs1_live_smoke.ts`, `pnpm run
+    verify:cloudstream-repo`) that validates the REAL repository
+    format end-to-end (5 extensions discovered from the task-brief
+    URL).
 
 ## Failed / unresolved
 
-None.
+None caused by CS-1. The 8 documented PRE-EXISTING baseline failures
+(adult_mode et al — see the CS-0 entry) remain documented and were
+excluded from the full-suite run exactly as at CS-0; they are NOT
+attributable to CS-1 (verified: 190/190 remaining commands passed).
 
 ## Decisions
 
-None yet.
+-   AC-002 (Architecture Change Log): the parser contract was corrected
+    to the REAL-WORLD CloudStream repository format after live
+    verification against the task-brief example URL revealed the CS-0
+    assumption-based contract was wrong (string pluginLists, `url` /
+    `iconUrl` fields, tvTypes as enum NAMES). Legacy shapes are
+    TOLERATED. Plan §6.2/§40.3 updated first, then implemented
+    (§33 protocol followed).
+-   D-008 (Decision Log): parser follows the real wire format; legacy
+    shapes tolerated for robustness.
+-   `adapter_status` does NOT store `disabled` — DERIVED from `enabled`
+    at display time (single source of truth; avoids dual-state drift).
+    Same for repository `status` vs `enabled`: status reflects sync
+    health (active/error/invalid); enabled is the admin switch. The
+    `disabled` enum values remain in the DB constraints (plan §6
+    vocabulary) but are not written by CS-1 code.
+-   Sync is CONSERVATIVE on removal: extensions are deleted ONLY on a
+    fully successful sync (every referenced plugin list fetched) AND
+    the internalName is genuinely absent. Partial failures never
+    delete rows (staleness beats data loss). A repository with ZERO
+    pluginLists has complete knowledge → removal IS allowed then.
+-   New repositories AND new extensions start DISABLED
+    (streaming_addons precedent: participation only after explicit
+    admin enable).
+-   Plugin lists are fetched SEQUENTIALLY (≤4 lists — inherently
+    bounded, gentle on remote hosts).
+-   Preview is bounded to 60 extensions with an honest `truncated`
+    flag + total count.
+-   The live smoke script hits the real network, so it is a MANUAL
+    verification command (`verify:cloudstream-repo`), NOT part of the
+    `pnpm test` chain.
 
 ## Next step
 
-CS-2 after CS-1 exit criteria pass.
+CS-2 (Mavero CloudStream Compatibility Runtime: adapter interfaces +
+registry with the first ported providers, resolver context, extractors)
+after CS-1 exit criteria pass.
 
 ------------------------------------------------------------------------
 
@@ -725,6 +858,15 @@ belongs in phase entries below.
                                 registry        DB-configurable
                                 (internalName   adapter execution
                                 → adapter)
+  D-008          2026-10-02     Parser follows  Verified live          Yes (§6.2,
+                 (CS-1,         the REAL        (AC-002); legacy       §40.3)
+                 AC-002)        CloudStream     shapes tolerated
+                                wire format     for robustness
+                                (string
+                                pluginLists;
+                                tvTypes enum
+                                names; url/
+                                iconUrl fields)
   -------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -820,6 +962,84 @@ Tests required:
 Plan document updated: Yes (§11, §24 task 12, §30, new §40).
 Worklog updated: Yes (this entry + CS-0 completion).
 
+### AC-002 --- 2026-10-02
+
+Phase: CS-1
+
+Change: CloudStream repository/plugin parser contract corrected to the
+REAL-WORLD CloudStream repository format.
+
+Original plan: §40.3 (CS-0, assumption-based) specified the repository
+index as `pluginLists: Array<{ name, plugins: string }>`, icon field
+`icon`, and plugin entries with `file` (artifact URL), `icon`, and
+`tvTypes` as numeric ids.
+
+New plan: §40.3 + §6.2 now specify the format VERIFIED LIVE against the
+task-brief example repository
+(`https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json`,
+fetched read-only through the SSRF-safe pipeline during the CS-1 live
+smoke test):
+
+``` text
+CS.json (real):                      plugins.json entries (real):
+  name: string                         internalName: string
+  description: string?                 name / version / apiVersion: number
+  iconUrl: string?                     status: 1|2|3
+  manifestVersion: number              authors: string[]
+  pluginLists: string[]  ← URLs        language: 'hi' | 'en' | …
+                                       tvTypes: string[]  ← TvType enum NAMES
+                                       url: .cs3 artifact URL (metadata only)
+                                       iconUrl / fileHash / fileSize /
+                                       repositoryUrl
+```
+
+Parser leniency: the pre-AC-002 object forms
+(`pluginLists: [{ plugins: url }]`, `icon`, `file`, numeric tvTypes via
+best-effort ordinal map) remain TOLERATED so both shapes parse; the
+canonical string forms are what production repositories use.
+
+Reason: the CS-0 audit finalized contracts WITHOUT fetching a live
+repository (CS-0 was documentation-only); the first live validation in
+CS-1 revealed the divergence. Following plan §39 ("when the repository
+and plan disagree: inspect, update the plan, record, continue"), the
+contract is corrected to the verified reality BEFORE shipping the parser.
+
+Affected files:
+- CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§40.3, §6.2 — corrected contracts)
+- src/lib/server/cloudstream/types/index.ts (document + normalized models)
+- src/lib/shared/cloudstream-types.ts (views: tvTypes string[])
+- src/lib/server/cloudstream/repository/parse.ts (string pluginLists, url/
+  file, iconUrl/icon, fileHash/fileSize/repositoryUrl, tvTypes strings)
+- supabase/migrations/20261101000000_cloudstream_cs1.sql (tv_types text[]
+  + file_hash/file_size_bytes/source_url columns)
+- src/lib/server/supabase/database.types.ts (matching types)
+- src/lib/server/cloudstream/repository/service.ts + extensions/service.ts
+- src/lib/components/admin2/AdminCloudStreamManager.svelte (enum-name labels)
+- scripts/cloudstream_*_test.ts (real-format fixtures; leniency coverage)
+
+Affected phases: CS-1 only (parser/schema/UI surface). CS-2 adapter ports
+will consume the corrected `internalName`/tvTypes contract. No change to
+the DB RLS posture, security boundary, or admin IA (AC-001).
+
+Security impact: none — the corrected fields are inert metadata; the
+`.cs3` artifact URL (now `url`, tolerated `file`) remains METADATA ONLY
+and is never fetched/executed; all bounds (4 lists / 500 extensions /
+1 MiB / 10s) unchanged.
+
+Regression impact: none on existing systems (isolated CloudStream domain).
+The CS-1 migration had been applied to the live project minutes before the
+discovery with ZERO rows; the tables were dropped and re-created from the
+amended idempotent migration in the same session (no data existed, the
+tracker entry 20261101000000 stayed valid).
+
+Tests required: parser tests for BOTH canonical (real) and tolerated
+(legacy) shapes; sync tests with real-format fixtures; live smoke test
+against the task-brief repository URL (now passing: 5 extensions
+discovered).
+
+Plan document updated: Yes (§6.2, §40.3).
+Worklog updated: Yes (this entry + CS-1 phase entry + decision D-008).
+
 ------------------------------------------------------------------------
 
 # Phase Completion Log
@@ -888,23 +1108,76 @@ Next phase: CS-1 — safe to begin (exit criteria met).
 ## CS-1 Completion
 
 ``` text
-Date:
-HEAD/commit:
-Status:
+Date: 2026-10-02
+HEAD/commit: 8920eaf (CS-0) → cloudstream: CS-1 repository manager + Integrations Add-on/Extension tabs (dedicated commit; pushed to origin/main)
+Status: COMPLETE
 
 Repository manager:
+- CS.json → pluginLists (REAL string format + legacy tolerance, AC-002) →
+  plugins.json → normalized extension metadata pipeline complete
+- Repository CRUD: add (preview → confirm), sync (non-destructive
+  reconcile, enabled-state preservation, conservative removal),
+  enable/disable, delete (FK cascade), duplicate canonical-URL rejection
+- Preview API: POST /api/admin/integrations/cloudstream/preview
+  (admin-gated, discovery-only, no persistence, bounded to 60 extensions
+  with honest truncation)
+- Adapter registry: code-owned, INTENTIONALLY EMPTY (CS-2 fills it);
+  compatibility derived per plan §18 (broken > unsupported > compatible >
+  adapter_required) — discovery never claims runtime compatibility
+
 Database:
+- Migration 20261101000000_cloudstream_cs1.sql APPLIED to live Supabase
+  and REGISTERED in supabase_migrations.schema_migrations (31 entries)
+- cloudstream_repositories + cloudstream_extensions: RLS admin-only
+  (is_admin()), NO public SELECT policy, anon revoked, updated_at
+  triggers, unique (repository_id, internal_name), FK on delete cascade
+- Read-only live verification passed (tables, columns, RLS, policies,
+  empty catalog, tracker)
+
 Admin UI:
+- System → Integrations: [ Add-on ] [ Extension ] URL-driven tabs
+  (?tab=addon|extension, default addon, server-validated)
+- "+" → Add Integration selector with [ Stremio ] [ CloudStream ] chips
+- Stremio flow preserved VERBATIM (all 7 actions + preview endpoint +
+  markup) behind the selector — regression-tested
+- AdminCloudStreamManager.svelte: repository cards + grouped extension
+  list + compatibility badges + sync/enable/disable/delete + errors
+- AdminAppShell nav NOT modified (no new nav item; AC-001 verified)
+
 Security:
+- fetchStremioManifest REUSED via the cloudstream/security facade (D-006)
+  — full SSRF/DNS/redirect/connect-time re-validation, 1 MiB / 10s /
+  3-redirect bounds per document, JSON-only
+- .cs3 artifact URLs are METADATA ONLY — never fetched (test-asserted via
+  the fetcher call contract), never executed (no eval/Function/import()
+  in the domain — test-asserted)
+- Closed error taxonomy with safe messages only; no internals leak
+
 Tests:
+- cloudstream_repository_parse_test.ts — 78 checks PASSED
+- cloudstream_repository_sync_test.ts — 113 checks PASSED
+- cloudstream_admin_ui_test.ts — 111 checks PASSED
+- pnpm check — 0 errors, 0 warnings
+- pnpm build — PASS (~31s, vite + netlify adapter)
+- Full pnpm test chain minus the 8 documented pre-existing baseline
+  failures — 190/190 commands PASSED (new suites included)
+- Live smoke (manual, verify:cloudstream-repo) — 5 extensions discovered
+  from the real task-brief repository URL
 
-Failures:
+Failures: None caused by CS-1. The 8 pre-existing baseline failures
+remain documented (adult_mode et al) and were excluded as at CS-0.
 
-Plan changes:
+Plan changes: §6.2 + §40.3 corrected to the real-world CloudStream wire
+format (AC-002); §40.4 file inventory realized as planned (all files at
+the predicted paths; no extra shared-file changes beyond package.json
+test registration + database.types.ts).
 
-Remaining work:
+Remaining work: none for CS-1. Standalone extension "re-check
+compatibility" action deferred to CS-2 (registry is empty — a re-check
+is a no-op until adapters exist).
 
-Next phase:
+Next phase: CS-2 — Mavero CloudStream Compatibility Runtime (adapter
+interfaces, first ported providers, extractors, resolver context).
 ```
 
 ## CS-2 Completion
@@ -1126,16 +1399,20 @@ Before GLM declares the project complete:
 
 # Final Status
 
-**Project:** CS-0 complete. CS-1 (CloudStream Repository Manager) is
-cleared to begin.
+**Project:** CS-1 complete (repository manager + DB + Integrations
+Add-on/Extension tabs + "+" Add Integration selector + tests + live
+migration). CS-2 (Mavero CloudStream Compatibility Runtime) is the next
+phase — NOT started; it must begin with the mandatory phase protocol
+(read plan + worklog, verify repository state, confirm CS-1 exit
+criteria).
 
 The next agent action is:
 
 ``` text
-READ PLAN (§40 contracts + file inventory)
-READ WORKLOG (CS-0 entry + AC-001)
+READ PLAN (§40 contracts incl. AC-002 real-format corrections + §25 CS-2 scope)
+READ WORKLOG (CS-1 entry + AC-002 + D-008)
 VERIFY REPOSITORY STATE
-START CS-1
+START CS-2
 ```
 
 ------------------------------------------------------------------------
@@ -1215,3 +1492,98 @@ service, Integrations Extension tab + "+" selector, tests).
 (CS-0 has finalized the implementation contract — plan §40. The audit
 requirement above is satisfied; it applies again at the start of every
 subsequent phase.)
+
+## 2026-10-02 — Session 2 (CS-1)
+
+Phase: CS-1 — CloudStream Repository Manager
+
+Starting HEAD: `8920eaf` (= origin/main, clean tree; CS-0 complete)
+
+Repository state: `main`, clean. Only CS-1 files were created/modified
+during this session (verified via git status/diff review before commit —
+no unrelated files touched).
+
+Plan/worklog read:
+- [x] Plan (all 2018 lines incl. §40 contracts)
+- [x] Worklog (all 1217 lines incl. CS-0 + AC-001)
+
+Objective: Implement the CloudStream Repository Manager (migration,
+parser, sync service, Integrations Add-on/Extension tabs, "+"
+Add Integration selector, tests) with zero regressions on existing
+systems.
+
+Work performed:
+- Phase protocol: verified HEAD/branch/remote, confirmed CS-0 state,
+  re-inspected the audited surfaces (Integrations page, admin-addons,
+  manifest-fetch/ssrf/connect-guard, migration precedent, preview API,
+  AdminPage/AdminSheet/AdminContextTabs, package.json chain, database
+  types, hosting VALID_TABS convention).
+- Implemented the isolated `src/lib/server/cloudstream/` domain (types,
+  errors, ids, parse, services, adapters/registry stub, security facade).
+- AC-002 DISCOVERY: the first live smoke run against the task-brief
+  repository URL revealed the plan §40.3 contract did not match the real
+  CloudStream wire format (string pluginLists; `url`/`iconUrl` fields;
+  tvTypes as enum NAMES). Followed the §33 protocol: STOPPED, updated
+  PLAN §6.2/§40.3 FIRST, recorded AC-002 + D-008 in this worklog, THEN
+  implemented the corrected parser with legacy-shape tolerance.
+- Migration applied to live Supabase; after AC-002 the draft tables
+  (0 rows, applied minutes earlier in-session) were dropped and
+  re-created from the amended idempotent migration; tracker entry
+  `20261101000000` unchanged and verified (31 entries).
+- Built the Integrations Add-on/Extension tabs + "+" Add Integration
+  selector + AdminCloudStreamManager + the 5 additive CloudStream
+  actions + the preview API endpoint.
+- Wrote 3 test suites (302 checks) + a manual live smoke script;
+  registered the suites in the pnpm test chain.
+
+Files changed:
+- NEW: supabase/migrations/20261101000000_cloudstream_cs1.sql
+- NEW: src/lib/server/cloudstream/** (8 modules)
+- NEW: src/lib/shared/cloudstream-types.ts
+- NEW: src/lib/components/admin2/AdminCloudStreamManager.svelte
+- NEW: src/routes/api/admin/integrations/cloudstream/preview/+server.ts
+- NEW: scripts/cloudstream_repository_parse_test.ts,
+  scripts/cloudstream_repository_sync_test.ts,
+  scripts/cloudstream_admin_ui_test.ts,
+  scripts/cloudstream_cs1_live_smoke.ts
+- MODIFIED: src/routes/admin/system/integrations/+page.server.ts (tab
+  load + 5 additive CloudStream actions; Stremio actions untouched)
+- MODIFIED: src/routes/admin/system/integrations/+page.svelte (tabs +
+  selector; Stremio flow preserved behind the selector)
+- MODIFIED: src/lib/server/supabase/database.types.ts (2 new tables)
+- MODIFIED: package.json (3 test registrations + verify:cloudstream-repo)
+- MODIFIED: CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§6.2, §40.3 — AC-002)
+- MODIFIED: this worklog
+
+Tests run: 3 cloudstream suites (78+113+111 checks), pnpm check, pnpm
+build, full chain minus the 8 documented baseline failures, live smoke.
+
+Results: ALL GREEN — 0 errors / 0 warnings on check; build PASS;
+190/190 chain commands PASSED; live smoke discovered 5 extensions from
+the real repository; live DB verification all-PASS.
+
+Issues discovered:
+- AC-002 (real wire format divergence — resolved per protocol).
+- The Management API query endpoint does not execute parametrized
+  inserts ($1 placeholders); the tracker registration used a literal
+  INSERT instead (recorded here for future migrations).
+
+Decisions: AC-002 + D-008 (real wire format + tolerance); derived
+disabled state (no dual-source); conservative removal on partial
+failure; new rows start disabled; sequential ≤4 list fetches; preview
+bounded to 60; live smoke kept out of the CI chain.
+
+Plan updated: Yes (§6.2, §40.3 — AC-002).
+
+Worklog updated: Yes (this session + CS-1 phase entry + completion
+record + AC-002 + D-008 + status tables).
+
+Remaining: CS-2 → CS-6 (NOT started — strict phase boundary honored).
+
+Next action: STOP after the CS-1 commit/push; await the CS-2 phase
+instruction.
+
+(CS-1 exit criteria verified: admin can add/sync a CloudStream
+repository and see normalized extension records and compatibility
+status — exercised by the 302 automated checks and the live smoke run
+against the task-brief repository.)

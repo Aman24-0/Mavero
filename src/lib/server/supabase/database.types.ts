@@ -1659,6 +1659,150 @@ export type Database = {
         }
         Relationships: []
       }
+      // Added by 20261101000000_cloudstream_cs1.sql.
+      // CS-1 CloudStream repository catalog (metadata only). Admin-only CRUD
+      // via RLS; NO public read policy. Repository sync parses CS.json ->
+      // pluginLists -> plugins.json; .cs3 artifacts are never fetched/executed.
+      cloudstream_repositories: {
+        Row: {
+          id: string
+          name: string
+          url: string
+          description: string | null
+          icon_url: string | null
+          enabled: boolean
+          status: string
+          last_synced_at: string | null
+          last_checked_at: string | null
+          last_error: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          url: string
+          description?: string | null
+          icon_url?: string | null
+          enabled?: boolean
+          status?: string
+          last_synced_at?: string | null
+          last_checked_at?: string | null
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          url?: string
+          description?: string | null
+          icon_url?: string | null
+          enabled?: boolean
+          status?: string
+          last_synced_at?: string | null
+          last_checked_at?: string | null
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      // Added by 20261101000000_cloudstream_cs1.sql.
+      // CS-1 CloudStream extension catalog: one row per discovered extension
+      // (internalName) per repository. tv_types stores CloudStream TvType
+      // enum NAMES (real wire format, AC-002). adapter_status derives from the
+      // code-owned adapter registry (empty in CS-1) + plugin self-reported
+      // status; discovery NEVER implies runtime compatibility.
+      cloudstream_extensions: {
+        Row: {
+          id: string
+          repository_id: string
+          internal_name: string
+          name: string | null
+          version: number | null
+          api_version: number | null
+          description: string | null
+          authors: string[]
+          language: string | null
+          tv_types: string[]
+          plugin_url: string | null
+          plugin_status: number | null
+          icon_url: string | null
+          file_hash: string | null
+          file_size_bytes: number | null
+          source_url: string | null
+          enabled: boolean
+          adapter_status: string
+          mavero_adapter_id: string | null
+          adapter_version: string | null
+          last_checked_at: string | null
+          last_error: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          repository_id: string
+          internal_name: string
+          name?: string | null
+          version?: number | null
+          api_version?: number | null
+          description?: string | null
+          authors?: string[]
+          language?: string | null
+          tv_types?: string[]
+          plugin_url?: string | null
+          plugin_status?: number | null
+          icon_url?: string | null
+          file_hash?: string | null
+          file_size_bytes?: number | null
+          source_url?: string | null
+          enabled?: boolean
+          adapter_status?: string
+          mavero_adapter_id?: string | null
+          adapter_version?: string | null
+          last_checked_at?: string | null
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          repository_id?: string
+          internal_name?: string
+          name?: string | null
+          version?: number | null
+          api_version?: number | null
+          description?: string | null
+          authors?: string[]
+          language?: string | null
+          tv_types?: string[]
+          plugin_url?: string | null
+          plugin_status?: number | null
+          icon_url?: string | null
+          file_hash?: string | null
+          file_size_bytes?: number | null
+          source_url?: string | null
+          enabled?: boolean
+          adapter_status?: string
+          mavero_adapter_id?: string | null
+          adapter_version?: string | null
+          last_checked_at?: string | null
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'cloudstream_extensions_repository_id_fkey'
+            columns: ['repository_id']
+            isOneToOne: false
+            referencedRelation: 'cloudstream_repositories'
+            referencedColumns: ['id']
+          },
+        ]
+      }
     }
     Views: {
       // Added by 20260915000000_download_providers.sql.
