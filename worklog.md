@@ -3875,3 +3875,19 @@ Work Log:
 
 Stage Summary:
 - All three issues fixed with root-cause evidence (code + live DB + Vidara API docs + endpoint probes). Next: second independent audit, commit, final report.
+
+---
+Task ID: fix3-final
+Agent: Super Z (main)
+Task: Second independent audit + commit + final report (3-issue fix)
+
+Work Log:
+- SECOND INDEPENDENT AUDIT (fresh-eyes, as a different engineer):
+  A. Asset count: only listProviders + GET sync summary compute provider totals; both use the canonical ready+available predicate; behavioral tests A1-A10 prove deleted/failed/queued/processing/detached can NEVER increment Total Assets; live DB re-derived (1 queued + 3 deleted → 0 usable). No parallel count model.
+  B. Hosting navigation: tabs = exactly [providers, jobs, activity] (source-verified); ?tab=sync and ?tab=attention 303-redirect server-side BEFORE render (no broken route reachable); /admin/media/sync → /admin/hosting; Sync-all byte-identical backend contract (POST /api/admin/media/sync, no param); per-card + drawer Sync preserved; AdminAppShell has no tab links; AdminHostingSync fully removed; mobile action area wraps (640px full-width). 
+  C. Vidara processing: getProcessingStatus = /v1/video/status FIRST (encoding entry → processing + clamped real %) with info fallback for terminal states; the ONLY mavero_status='available' writes are ready-gated + missing-guarded (upload poll ready branch, sync/reconcile ready ternaries, management reactivate); resolver dual gate untouched → processing can NEVER become playable. Degradation paths (404/timeout/garbage JSON/other-filecode encodings) verified non-crashing.
+  D. Regression: git diff contains NONE of the protected files (management/demand/library/resolver/operations/Jobs/History/MediaLibrary/drawer/Assets UI); Jobs/Deleted/pagination invariants re-verified live (live smoke 15/15 with derived ground truth); svelte-check 0/0; build PASS; full suite 187/187; 8 skipped scripts each verified failing at pristine HEAD 025f0c3.
+- COMMIT: cbd601b pushed to origin/main (27 files: +1485/−818, includes deleted AdminHostingSync.svelte).
+
+Stage Summary:
+- FINAL VERDICT: COMPLETE — ALL THREE ISSUES VERIFIED/FIXED. Issue 1 fixed (count semantics, code+behavioral+live). Issue 2 fixed (3-tab IA, same-backend consolidation, redirects, code+tests). Issue 3 fixed (real encoding endpoint, state mapping, progress, code+behavioral+endpoint-probe+live-state evidence). No migration, no production data mutations.
