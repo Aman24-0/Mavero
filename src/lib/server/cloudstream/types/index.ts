@@ -22,6 +22,27 @@ export type {
   CloudStreamRepositoryPreview,
 } from '$lib/shared/cloudstream-types';
 
+// CS-2 adapter-runtime contracts (plan §40.3 finalized / §40.6 — AC-003).
+export type {
+  MaveroCloudStreamAdapter,
+  MaveroCloudStreamExtractor,
+  CloudStreamResolveRequest,
+  CloudStreamEpisodeRequest,
+  CloudStreamLinkResult,
+  CloudStreamResolutionFailure,
+  CloudStreamFailureCategory,
+  CloudStreamRuntimeContext,
+  CloudStreamDiagnosticEvent,
+  CloudStreamDiagnosticSink,
+  CloudStreamDiagnosticStage,
+  CloudStreamResolutionRequest,
+  CloudStreamResolutionGroup,
+  CloudStreamResolutionGroupStatus,
+  CloudStreamResolutionResult,
+} from './runtime';
+
+export type { CloudStreamNormalizedLink, CloudStreamExtractedLink } from '../normalize/links';
+
 import type { CloudStreamRepositoryStatus } from '$lib/shared/cloudstream-types';
 
 // ---------------------------------------------------------------------------

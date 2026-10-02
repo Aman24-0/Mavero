@@ -1874,18 +1874,24 @@ string is length-bounded; the `.cs3` artifact URL (`url`, tolerated
 executes it. `tvTypes` is persisted as enum-name strings (`text[]` DB
 column); numeric ids are normalized to their enum names at parse time.
 
-### Adapter contract (CS-2)
+### Adapter contract (CS-2 — FINALIZED, see AC-003)
 
 ``` ts
 export type MaveroCloudStreamAdapter = {
   /** Matches cloudstream_extensions.internal_name (case-insensitive). */
   id: string;
   version: string;
+  displayName: string;
+  language: string | null;
   supports: { movie: boolean; series: boolean; anime: boolean };
-  resolveMovie(req: CloudStreamResolveRequest): Promise<CloudStreamLinkResult>;
-  resolveEpisode?(req: CloudStreamResolveRequest & {
-    season: number; episode: number;
-  }): Promise<CloudStreamLinkResult>;
+  resolveMovie(
+    req: CloudStreamResolveRequest,
+    ctx: CloudStreamRuntimeContext,
+  ): Promise<CloudStreamLinkResult>;
+  resolveEpisode?(
+    req: CloudStreamEpisodeRequest,
+    ctx: CloudStreamRuntimeContext,
+  ): Promise<CloudStreamLinkResult>;
 };
 
 export type CloudStreamResolveRequest = {
@@ -1895,7 +1901,19 @@ export type CloudStreamResolveRequest = {
   /** Bounded abort deadline — the adapter MUST respect it. */
   deadline: AbortSignal;
 };
+
+export type CloudStreamEpisodeRequest = CloudStreamResolveRequest & {
+  season: number;
+  episode: number;
+};
 ```
+
+The runtime context is an explicit second parameter (AC-003): adapters are
+stateless pure modules and receive EVERYTHING they need — controlled HTTP,
+parsing, extractor invocation, diagnostics — through the context. Adapters
+never import fetch/network primitives directly; the context is the only
+network surface. `CloudStreamLinkResult` returns normalized links plus
+adapter-scoped diagnostics.
 
 Adapters are CODE-OWNED (registry maps `internalName` → adapter
 instance); no DB-configurable adapter execution (plan §6.3 preferred
@@ -2040,3 +2058,93 @@ CS-0 (this audit) → CS-1 (repository manager + DB + Extension tab + "+" select
 CS-1 may begin immediately after this audit: the architecture has no
 unresolved ambiguity (repository parse contract, DB design, admin IA,
 and security boundaries are all finalized above).
+
+## 40.6 CS-2 runtime finalization (AC-003 — verified against real sources)
+
+Recorded BEFORE implementation per §33. Every item below was verified
+against the ACTUAL synced repository
+(`SaurabhKaperwan/CSX@master`, read-only source inspection) and the live
+provider sites.
+
+### Ported providers (3) — source-verified
+
+| internalName | Source files inspected | Extractors used | Verdict |
+|---|---|---|---|
+| Bollyflix | BollyflixProvider.kt + Extractors.kt | GDFlix, fastdlserver, sidexfee `?id=` bypass | PORTABLE — WordPress HTML + JSON-light |
+| MoviesDrive | MoviesDriveProvider.kt + Extractors.kt | GDFlix, HubCloud | PORTABLE — search.php JSON API |
+| VegaMovies | VegaMoviesProvider.kt + Extractors.kt | VCloud (HubCloud logic, vcloud dynamic key) | PORTABLE — search.php JSON API |
+
+### NOT ported (honest `adapter_required`)
+
+| internalName | Reason (verified in source) |
+|---|---|
+| Moviesmod | search/load paths REQUIRE `CloudflareKiller` (an Android WebView Cloudflare bypass) — cannot run in Node/Netlify; its `bypass()` is a fragile multi-POST form chain |
+| CineStream | a 50+-sub-provider aggregator (Torrentio/TorrentsDB/embed scrapers/BuildConfig secrets/Settings UI, 695 KB artifact) — not realistically portable as one adapter |
+
+### CS-2 runtime contracts (new modules under §40.4 inventory)
+
+* **`security/http.ts`** — SSRF-safe HTML/text fetcher. NOT a new security
+  layer: it reuses `assertSafeManifestUrl` + `assertSafeManifestDestination`
+  + `ssrfSafeFetch` (D-006 primitives) with an HTML-tolerant content-type
+  gate, 10s timeout, 2 MiB cap, ≤3 re-validated redirects. This is the
+  ONLY new network surface for adapter/extractor page fetches (the CS-1
+  JSON facade remains for JSON documents).
+* **`runtime/dynamic-urls.ts`** — port of the providers' real
+  `getLatestBaseUrl` behavior: every provider resolves its CURRENT domain
+  from `SaurabhKaperwan/Utils` `urls.json` at runtime (verified live —
+  domains rotate weekly). Cached in-process (10 min TTL), fetched through
+  the SSRF-safe JSON facade, fallback to the baked-in base URL.
+* **`runtime/context.ts`** — the `CloudStreamRuntimeContext` handed to
+  adapters: bounded `fetchHtml`/`fetchJson`/`fetchRedirect`/
+  `resolveRedirects` (all SSRF-guarded), cheerio parsing, extractor
+  dispatch, diagnostics recorder, deadline signal. No raw fetch exposure.
+* **HTML parsing: `cheerio@1.0.0`** — new dependency (justification: the
+  Kotlin sources use Jsoup CSS selectors extensively; cheerio is the
+  established Node equivalent with near-1:1 selector semantics. Jsoup-only
+  pseudo-selectors (`:matches(regex)`, `:containsData`) are ported as
+  explicit post-filters — faithful, verifiable). Installed via a pinned
+  tarball-extraction script because the sandbox npm resolver is broken
+  (`scripts/install_cheerio.mjs`).
+* **`extractors/`** — `CloudStreamExtractor` contract `{ id, matches(url),
+  extract(url, ctx) }`; ported: `gdflix`, `hubcloud` (covers V-Cloud via
+  the `vcloud` dynamic key), `fastdlserver` (redirect hop → re-dispatch).
+* **`adapters/{bollyflix,moviesdrive,vegamovies}.ts`** — faithful ports of
+  the verified search/load/link-discovery flow per provider (search API
+  shape, result matching by title+year, IMDb link discovery, series/movie
+  detection, season/episode button walking, `?id=`/`url=` bypasses).
+* **`resolver/service.ts`** (listed under §40.4) is realized in CS-2 as the
+  DB-FREE bounded orchestrator over adapter instances (≤4 concurrency like
+  ADDON_CONCURRENCY, per-adapter deadline, allSettled isolation — one
+  failing provider never destroys the others). CS-3 layers the API + DB
+  enabled-extension selection on top of this orchestrator.
+* **Admin display derivation** — `toExtensionView` re-derives
+  `adapterStatus`/`maveroAdapterId`/`adapterVersion` LIVE from the code
+  registry (same `deriveAdapterStatus` precedence used at sync time), so
+  the Extension tab reflects real adapter support without requiring a
+  repository re-sync. Persisted row values remain the sync-time snapshot.
+  No new admin page, no IA change (AC-001 intact).
+
+### Security deltas (all inherit D-006 primitives)
+
+* Every adapter/extractor HTTP call goes through the two-stage SSRF guard
+  + connect-time re-validation — including user-influenced extractor URLs
+  resolved from provider pages (private/localhost/metadata/unsafe
+  protocols rejected before ANY socket).
+* **AC-004/D-012 (live discovery)**: `new4.gdflix.io` (the primary GDFlix
+  host) rejects HTTP/1.1 requests with 403 while serving HTTP/2 — the
+  Stremio `ssrfSafeAgent` is HTTP/1.1-only and therefore cannot fetch GDFlix
+  pages. The CloudStream runtime ships its OWN undici Agent
+  (`cloudStreamAgent` in `security/http.ts`) with `allowH2: true` wired to
+  the SAME `createConnectTimeLookup` connect-time validation (imported,
+  not modified, from the Stremio domain) — identical SSRF guarantees,
+  HTTP/2-capable transport. The Stremio pipeline and its agent remain
+  byte-identical (untouchable surface preserved).
+* `vcloud.fit` currently enforces a JavaScript bot challenge (403 for curl
+  AND Node) — the V-Cloud extractor port fails honestly with
+  EXTRACTOR_FAILED on that host until/unless the site relaxes protection.
+  No Cloudflare-bypass machinery is ported (that would be a WebView
+  dependency, out of the Node runtime's scope — same verdict as Moviesmod).
+* Pixeldrain conversion produces download-URL METADATA only (never
+  proxied/fetched by Mavero) — same boundary as stream-actions.
+* Diagnostics record categories/durations/counts, never raw URLs with
+  tokens, cookies, or response bodies.

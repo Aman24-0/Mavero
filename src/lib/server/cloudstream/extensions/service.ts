@@ -18,6 +18,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { CloudStreamRepositoryError } from '../repository/errors';
 import { validateCloudStreamId } from '../repository/ids';
+import { deriveAdapterStatus, lookupCloudStreamAdapter } from '../adapters/registry';
 import type { CloudStreamExtensionView } from '../types';
 
 type CloudStreamClient = SupabaseClient<Database>;
@@ -52,6 +53,13 @@ export type CloudStreamExtensionRow = {
 
 /** Maps a database row into the safe admin view model (with repository name). */
 export function toExtensionView(row: CloudStreamExtensionRow, repositoryName: string): CloudStreamExtensionView {
+  // CS-2: adapter compatibility is re-derived LIVE from the code-owned
+  // registry (same deriveAdapterStatus precedence used at sync time) so the
+  // Extension tab reflects REAL adapter support without requiring a
+  // repository re-sync. The persisted row values remain the sync-time
+  // snapshot (plan §40.6 — AC-003).
+  const liveStatus = deriveAdapterStatus(row.internal_name, row.plugin_status);
+  const liveAdapter = lookupCloudStreamAdapter(row.internal_name);
   return {
     id: row.id,
     repositoryId: row.repository_id,
@@ -71,9 +79,9 @@ export function toExtensionView(row: CloudStreamExtensionRow, repositoryName: st
     fileSizeBytes: row.file_size_bytes,
     sourceUrl: row.source_url,
     enabled: row.enabled,
-    adapterStatus: row.adapter_status as CloudStreamExtensionView['adapterStatus'],
-    maveroAdapterId: row.mavero_adapter_id,
-    adapterVersion: row.adapter_version,
+    adapterStatus: liveStatus,
+    maveroAdapterId: liveAdapter !== null ? liveAdapter.id : row.mavero_adapter_id,
+    adapterVersion: liveAdapter !== null ? liveAdapter.version : row.adapter_version,
     lastCheckedAt: row.last_checked_at,
     lastError: row.last_error,
     createdAt: row.created_at,

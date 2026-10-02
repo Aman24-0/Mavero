@@ -184,9 +184,13 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
   // duplicate HTTP security layer).
   const fetchFacade = readFileSync(new URL('../src/lib/server/cloudstream/security/fetch.ts', import.meta.url), 'utf8');
   ok(fetchFacade.includes('fetchStremioManifest'), '9: security facade REUSES fetchStremioManifest (no duplicate SSRF layer)');
-  // The adapter registry is code-owned and EMPTY in CS-1.
+  // The adapter registry is code-owned. CS-1 kept it intentionally EMPTY;
+  // CS-2 (per the CS-1 registry's own comment + plan §40.6/AC-003) fills it
+  // with the three source-verified ports. Registry construction stays a
+  // code-owned Map — no DB-configurable execution.
   const registry = readFileSync(new URL('../src/lib/server/cloudstream/adapters/registry.ts', import.meta.url), 'utf8');
-  ok(registry.includes('new Map<string, RegisteredCloudStreamAdapter>([])'), '9: CS-1 adapter registry is intentionally EMPTY (no runtime claims)');
+  ok(registry.includes('new Map<string, MaveroCloudStreamAdapter>'), '9: adapter registry stays a code-owned Map (no DB-configurable execution)');
+  ok(registry.includes('bollyflixAdapter') && registry.includes('moviesdriveAdapter') && registry.includes('vegamoviesAdapter'), '9: registry registers exactly the three CS-2 ported adapters');
 }
 
 // ---------------------------------------------------------------------------

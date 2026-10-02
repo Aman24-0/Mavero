@@ -13,3 +13,5 @@ coverage/
 # package-lock.json (npm-format) is stale and not maintained — keep it out of
 # the repo so it can't drift from pnpm-lock.yaml.
 package-lock.json
+# CS-2 bootstrap: regenerable pinned cheerio closure cache (scripts/install_cheerio.mjs)
+.cheerio-deps.json

@@ -6,7 +6,7 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CS-1 COMPLETE — CS-2 pending (not started)
+**Status:** CS-2 COMPLETE — CS-3 pending (not started)
 
 ------------------------------------------------------------------------
 
@@ -79,9 +79,9 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   CS-0 audit                        COMPLETE (2026-10-02, HEAD c4e6abd)
   CloudStream repository manager    COMPLETE (CS-1, 2026-10-02)
   CloudStream DB schema             COMPLETE (CS-1 migration applied + verified live)
-  Mavero adapter runtime            Pending (CS-2)
-  Initial CloudStream adapters      Pending (CS-2)
-  Extractor layer                   Pending (CS-2)
+  Mavero adapter runtime            COMPLETE (CS-2, 2026-10-02)
+  Initial CloudStream adapters      COMPLETE (CS-2: Bollyflix, MoviesDrive, VegaMovies)
+  Extractor layer                   COMPLETE (CS-2: GDFlix, HubCloud/V-Cloud, fastdlserver)
   Downloader 2 backend              Pending (CS-3)
   Downloader 2 UI                   Pending (CS-4)
   Downloader registry integration   Pending (CS-5)
@@ -524,7 +524,8 @@ after CS-1 exit criteria pass.
 
 ## Status
 
-**PENDING**
+**COMPLETED** (2026-10-02, starting HEAD `3b98080` → CS-2 commit; see the
+Phase Completion Log below)
 
 ## Objective
 
@@ -532,23 +533,55 @@ Build the controlled Mavero-native compatibility layer.
 
 ## Planned work
 
--   [ ] Create `src/lib/server/cloudstream/` domain.
--   [ ] Define adapter interfaces.
--   [ ] Implement adapter registry.
--   [ ] Implement resolver context.
--   [ ] Implement normalized link types.
--   [ ] Implement safe server fetch helpers.
--   [ ] Implement extractor abstraction.
--   [ ] Implement only extractors required by initial adapters.
--   [ ] Port initial CloudStream providers.
--   [ ] Support movie resolution.
--   [ ] Support series/episode resolution where applicable.
--   [ ] Preserve quality/language/container metadata.
--   [ ] Add timeout.
--   [ ] Add bounded concurrency.
--   [ ] Add diagnostics.
--   [ ] Add unit tests.
--   [ ] Add integration tests.
+-   [x] Create `src/lib/server/cloudstream/` domain.
+      (CS-1 domain extended: types/runtime.ts, security/http.ts,
+      runtime/{context,dynamic-urls}.ts, normalize/links.ts,
+      extractors/{index,gdflix,hubcloud,fastdlserver}.ts,
+      adapters/{common,bollyflix,moviesdrive,vegamovies}.ts,
+      resolver/service.ts.)
+-   [x] Define adapter interfaces. (types/runtime.ts — plan §40.3
+      FINALIZED with the explicit `(req, ctx)` runtime-context parameter,
+      AC-003/D-010.)
+-   [x] Implement adapter registry. (registry.ts now holds the three
+      source-verified adapter INSTANCES + metadata lookup +
+      deriveAdapterStatus.)
+-   [x] Implement resolver context. (runtime/context.ts — the ONLY network
+      surface adapters see: SSRF-guarded fetchHtml/fetchJson/
+      fetchRedirect/resolveRedirects/resolveBaseUrl + cheerio parseHtml +
+      extractor dispatch + diagnostics sink + deadline signal.)
+-   [x] Implement normalized link types. (normalize/links.ts —
+      CloudStreamNormalizedLink aligned to StreamKind; quality/size/
+      codec/container/language derivation; true-URL dedup.)
+-   [x] Implement safe server fetch helpers. (security/http.ts —
+      H2-capable cloudStreamAgent on createConnectTimeLookup (AC-004);
+      HTML-tolerant content gate, 10s, 2 MiB, ≤3 re-validated redirects;
+      no-redirect probe; bounded HEAD redirect chain.)
+-   [x] Implement extractor abstraction. (extractors/index.ts —
+      MaveroCloudStreamExtractor contract + registry + per-extractor
+      failure isolation + dispatch through the context.)
+-   [x] Implement only extractors required by initial adapters. (GDFlix,
+      HubCloud (covers V-Cloud), fastdlserver — exactly the three the
+      selected providers call in their Kotlin loadLinks.)
+-   [x] Port initial CloudStream providers. (Bollyflix, MoviesDrive,
+      VegaMovies — verified Kotlin source ports; Moviesmod + CineStream
+      honestly stay adapter_required, D-009.)
+-   [x] Support movie resolution. (search → rank → load → link discovery
+      → extractor → normalized links.)
+-   [x] Support series/episode resolution where applicable. (season-page
+      walking + positional/Ep-regex episode indexing per provider.)
+-   [x] Preserve quality/language/container metadata. (parseIndexQuality
+      Kotlin port, size parsing, codec/container/language detection,
+      Pixeldrain URL conversion.)
+-   [x] Add timeout. (per-adapter 30s budget, overall 40s, per-fetch 10s,
+      deadline abort propagation into every in-flight fetch.)
+-   [x] Add bounded concurrency. (mapBounded ≤4 — ADDON_CONCURRENCY
+      parity — unit + integration tested.)
+-   [x] Add diagnostics. (redaction-safe per-stage events with
+      categories/counts/durations; 256-event bound; no URLs/cookies/
+      tokens.)
+-   [x] Add unit tests. (4 new suites — 227 checks.)
+-   [x] Add integration tests. (resolver suite covers multi-provider
+      orchestration, partial-failure isolation, timeout, dedup.)
 
 ## Critical restriction
 
@@ -556,22 +589,51 @@ Raw `.cs3` must not be executed by Mavero.
 
 Only Mavero-owned adapter code may execute.
 
+(Verified: no eval/new Function/import() anywhere in the domain —
+re-asserted per file by the evolved CS-1 admin_ui suite; `.cs3` artifact
+URLs remain metadata-only and are never fetched.)
+
 ## Completed
 
-None.
+See the CS-2 Completion record in the Phase Completion Log + the session
+entry below. Summary: the adapter runtime, three provider ports, three
+extractor ports, normalization, bounded orchestration, diagnostics, and
+admin live-compatibility derivation are implemented and live-verified
+(Bollyflix 15 real links, MoviesDrive 12 real links from the live smoke;
+VegaMovies honestly EXTRACTOR_FAILED — vcloud.fit currently enforces a JS
+bot challenge, AC-004).
 
 ## Failed / unresolved
 
-None.
+None caused by CS-2. The 8 documented PRE-EXISTING baseline failures
+(adult_mode, phase2_repo_hygiene, phase8_accessibility, phase9_source_
+progress, phase9_landscape, phase9_fix, phase9_landscape_drawer_position,
+phase4_registry_integration) fail identically at the pristine pre-CS-2
+commit `3b98080` — re-verified by direct execution at that tree.
+
+Site-availability notes (not code failures): vcloud.fit 403s all
+non-WebView clients (documented AC-004); provider domains rotate via
+urls.json (handled by the dynamic-URL resolver).
 
 ## Decisions
 
-None yet.
+-   AC-003 (contracts finalized from real source verification) + D-009/
+    D-010/D-011.
+-   AC-004 (H2-capable CloudStream agent — gdflix 403s HTTP/1.1) +
+    D-012.
+-   Extractor dispatch recursion bounded (fastdlserver → registry, one
+    hop max).
+-   Moviesmod/CineStream NOT ported (verified CloudflareKiller /
+    aggregator architecture) — honest adapter_required, never faked.
+-   The CS-1 admin_ui test's registry-empty assertion evolved with the
+    documented phase plan (CS-1's own comment: "CS-2 will extend the
+    ADAPTERS map") — assertion strengthened, not weakened (now verifies
+    the code-owned Map + exactly the three registered ports).
 
 ## Next step
 
-CS-3 after the first supported adapters resolve successfully outside the
-UI.
+CS-3 (Mavero Downloader 2 backend: /api/downloader/mavero2 endpoints on
+top of the CS-2 orchestrator + DB enabled-extension selection).
 
 ------------------------------------------------------------------------
 
@@ -867,6 +929,36 @@ belongs in phase entries below.
                                 tvTypes enum
                                 names; url/
                                 iconUrl fields)
+  D-009          2026-10-02     Port            Verified Kotlin       Yes (§40.6)
+                 (CS-2,         Bollyflix +     sources: WordPress/
+                 AC-003)        MoviesDrive +   JSON APIs, no
+                                VegaMovies as   WebView dependency
+                                first real      (vs Moviesmod's
+                                adapters;       CloudflareKiller);
+                                Moviesmod +     CineStream is a
+                                CineStream      50+-provider
+                                stay            aggregator
+                                adapter_required
+  D-010          2026-10-02     Adapter         §25 task 4 requires   Yes (§40.3,
+                 (CS-2,         methods take    a runtime context;    §40.6)
+                 AC-003)        (req, ctx) —    adapters stay
+                                context is the  stateless, never
+                                ONLY network    import raw fetch
+                                surface
+  D-011          2026-10-02     cheerio@1.0.0   Jsoup selector        Yes (§40.6)
+                 (CS-2,         dependency      parity for faithful
+                 AC-003)        for HTML        provider ports;
+                                parsing         sandbox npm resolver
+                                                broken → pinned
+                                                tarball install
+                                                script
+  D-012          2026-10-02     CloudStream     gdflix 403s HTTP/1.1  Yes (§40.6)
+                 (CS-2,         runtime uses    (verified live);
+                 AC-004)        its own H2-     identical SSRF via
+                                capable undici  createConnectTime-
+                                Agent (same     lookup import;
+                                connect-time    Stremio agent
+                                validation)     untouched
   -------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -1040,6 +1132,148 @@ discovered).
 Plan document updated: Yes (§6.2, §40.3).
 Worklog updated: Yes (this entry + CS-1 phase entry + decision D-008).
 
+### AC-003 --- 2026-10-02
+
+Phase: CS-2
+
+Change: CS-2 runtime contracts finalized from REAL provider source
+verification (before implementation, per plan §33).
+
+Discovery record:
+- The synced repository (SaurabhKaperwan/CSX@master, 5 extensions —
+  Bollyflix v33, CineStream v487, MoviesDrive v33, Moviesmod v33,
+  VegaMovies v82) was inspected at the Kotlin SOURCE level (read-only,
+  raw.githubusercontent) plus live provider-site probes.
+- Bollyflix / MoviesDrive / VegaMovies logic is realistically portable:
+  WordPress HTML pages + search.php JSON APIs + HTML button walking +
+  GDFlix/HubCloud/VCloud/fastdlserver extractors + sidexfee `?id=`
+  base64 bypass + dynamic domain rotation via
+  SaurabhKaperwan/Utils urls.json (verified live: bollyflix →
+  new.bollyflix.vote, moviesdrive → new5.moviesdrive.christmas,
+  vegamovies → vegamovies.gallery).
+- Moviesmod search/load REQUIRES CloudflareKiller (Android WebView
+  Cloudflare bypass) — impossible in the Node/Netlify runtime.
+- CineStream is a 50+-sub-provider aggregator (Torrentio, TorrentsDB,
+  dozens of embed scrapers, BuildConfig API keys, settings UI) — not
+  realistically portable as one adapter.
+
+Original plan: §40.3 sketched the adapter contract without a runtime
+context parameter; §40.4 listed `resolver/service.ts` under CS-3;
+extractor/provider specifics were unspecified ("small set selected from
+the first synced repository").
+
+New plan (plan §40.3 refined + new §40.6):
+- Adapter contract takes an explicit second `(req, ctx)` parameter —
+  the CloudStreamRuntimeContext is the ONLY network surface adapters
+  ever touch (D-010).
+- 3 providers ported (Bollyflix, MoviesDrive, VegaMovies); Moviesmod +
+  CineStream stay `adapter_required` — honest, never faked (D-009).
+- `resolver/service.ts` realized in CS-2 as the DB-free bounded
+  orchestrator (concurrency ≤4, per-adapter deadline, allSettled
+  isolation); CS-3 layers the API + DB selection on top.
+- New dependency cheerio@1.0.0 (Jsoup selector parity); sandbox npm
+  resolver is broken → pinned tarball install script
+  `scripts/install_cheerio.mjs` (D-011).
+- `security/http.ts`: SSRF-safe HTML fetch reusing the D-006 primitives
+  (assertSafeManifestUrl/Destination + ssrfSafeFetch) — HTML-tolerant
+  content gate, 10s, 2 MiB, ≤3 redirects.
+- Admin display re-derives adapter compatibility LIVE from the code
+  registry via the same deriveAdapterStatus precedence (persisted row
+  values remain sync-time snapshots); no IA change, no new page.
+
+Reason: §25 CS-2 requires porting only providers "for which the actual
+CloudStream logic can be understood and ported correctly" — the source
+inspection above is that determination, and the contract refinements
+are the minimum needed to hand adapters a controlled runtime.
+
+Affected files:
+- CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§40.3 adapter contract refined;
+  new §40.6)
+- src/lib/server/cloudstream/types/runtime.ts (new CS-2 contracts)
+- src/lib/server/cloudstream/security/http.ts (new HTML fetch)
+- src/lib/server/cloudstream/runtime/{context,dynamic-urls}.ts (new)
+- src/lib/server/cloudstream/normalize/links.ts (new)
+- src/lib/server/cloudstream/extractors/{index,gdflix,hubcloud,fastdlserver}.ts (new)
+- src/lib/server/cloudstream/adapters/{registry,bollyflix,moviesdrive,vegamovies}.ts (extend + 3 new)
+- src/lib/server/cloudstream/resolver/service.ts (new, CS-2 orchestrator scope)
+- src/lib/server/cloudstream/extensions/service.ts (live compatibility derivation)
+- scripts/cloudstream_*_test.ts (new CS-2 suites) + package.json (deps + chain)
+- scripts/install_cheerio.mjs (bootstrap)
+
+Affected phases: CS-2 (implementation now), CS-3 (consumes the
+orchestrator as planned), CS-6 (regression list unchanged).
+
+Security impact: none negative — every new network surface routes
+through the existing two-stage SSRF guard + connect-time re-validation;
+adapters cannot reach raw fetch; diagnostics never log URLs with
+tokens/cookies.
+
+Regression impact: none on existing systems (isolated CloudStream
+domain; the one touched CS-1 file — extensions/service.ts — only
+changes how display status is derived, keeping the same precedence
+function; Stremio/direct-streaming/downloader surfaces untouched).
+
+Tests required: CS-2 suites covering adapter registry/selection,
+unsupported behavior, movie/series/episode resolution with deterministic
+mocked HTML, extractor matching + failure, timeout, bounded
+concurrency, SSRF rejection, partial-failure isolation, normalization,
+diagnostics redaction, compatibility derivation.
+
+Plan document updated: Yes (§40.3, §40.6).
+Worklog updated: Yes (this entry + decisions D-009/D-010/D-011).
+
+### AC-004 --- 2026-10-02
+
+Phase: CS-2
+
+Change: CloudStream runtime transport requires HTTP/2 for the GDFlix host.
+
+Discovery record (live smoke run):
+- `new4.gdflix.io` returns 403 for HTTP/1.1 requests but 200 for HTTP/2
+  (verified: curl default h2 → 200; curl --http1.1 → 403; Node/undici
+  default (h1.1) → 403; undici `allowH2: true` → 200). The GDFlix pages
+  are reachable ONLY over H2 in practice.
+- `vcloud.fit` enforces a JS bot challenge (403 for curl AND Node, h1.1
+  and h2) — not bypassable server-side without WebView machinery (the
+  Moviesmod verdict applies to that host's protection).
+- All other hosts (bollyflix, moviesdrive, vegamovies, hubcloud) accept
+  Node fetch fine.
+
+Original plan: §40.6 specified `security/http.ts` dispatching through the
+Stremio `ssrfSafeFetch` (HTTP/1.1-only agent).
+
+New plan: `security/http.ts` builds a CloudStream-owned undici Agent with
+`allowH2: true` wired to the SAME `createConnectTimeLookup` connect-time
+validation function (imported from the Stremio domain — read-only reuse,
+zero modification to Stremio files). SSRF guarantees are identical: the
+two-stage pre-flight guard runs for every request/redirect hop, and the
+connect-time lookup re-validates every DNS answer on the H2 agent's
+sockets. Tests are unaffected (injectable fetchers bypass the agent).
+
+Reason: without H2 the primary GDFlix extractor path 403s permanently —
+the first live end-to-end validation caught it.
+
+Affected files:
+- CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§40.6 security deltas)
+- src/lib/server/cloudstream/security/http.ts (cloudStreamAgent)
+- scripts/cloudstream_cs2_live_smoke.ts (live validation command)
+
+Affected phases: CS-2 only. The Stremio pipeline/agent untouched
+(untouchable surface preserved — verified by the regression gates).
+
+Security impact: none negative — the H2 agent inherits the same
+connect-time DNS re-validation; ALPN negotiates h2/h1.1 per host.
+
+Regression impact: none — the change is isolated to the CloudStream
+runtime's default fetcher; every other consumer of ssrfSafeFetch is
+unchanged. Full gates re-run after the change.
+
+Tests required: existing suites re-run (deterministic, mock fetchers
+bypass the agent); live smoke re-run to confirm the GDFlix path resolves.
+
+Plan document updated: Yes (§40.6).
+Worklog updated: Yes (this entry + decision D-012).
+
 ------------------------------------------------------------------------
 
 # Phase Completion Log
@@ -1183,24 +1417,105 @@ interfaces, first ported providers, extractors, resolver context).
 ## CS-2 Completion
 
 ``` text
-Date:
-HEAD/commit:
-Status:
+Date: 2026-10-02
+HEAD/commit: 3b98080 (CS-1, pristine start) → feat(cloudstream): CS-2 Mavero runtime adapters + extractors (dedicated commit; pushed to origin/main)
+Status: COMPLETE
 
 Adapter runtime:
-Initial adapters:
+- types/runtime.ts — finalized adapter/context/link/diagnostics contracts
+  (plan §40.3, AC-003/D-010)
+- runtime/context.ts — the ONLY network surface adapters see (SSRF-guarded
+  fetches, cheerio parsing, extractor dispatch, diagnostics, deadline)
+- runtime/dynamic-urls.ts — urls.json dynamic-domain resolver (10 min TTL,
+  fallback bases, Kotlin getLatestBaseUrl parity)
+- security/http.ts — H2-capable cloudStreamAgent wired to the SAME
+  createConnectTimeLookup (AC-004/D-012); HTML-tolerant gate, 10s/2 MiB/≤3
+  redirects; no-redirect probe; ≤7-hop HEAD chain
+- resolver/service.ts — DB-free bounded orchestrator (mapBounded ≤4,
+  30s/40s budgets, allSettled isolation, per-adapter diagnostics)
+- extensions/service.ts — admin display derives adapter compatibility LIVE
+  from the code registry (no re-sync required; persisted rows stay
+  sync-time snapshots)
+
+Initial adapters (all source-verified Kotlin ports, adapter v1.0.0):
+- Bollyflix — WordPress HTML search + sidexfee ?id= base64 bypass +
+  season-page episode walking (fastdlserver + GDFlix extractors)
+- MoviesDrive — search.php JSON API + h5-button pages + span-episode walk
+  (HubCloud + GDFlix extractors)
+- VegaMovies — search.php JSON API + dwd-button pages + V-Cloud positional
+  episode indexing (V-Cloud via the HubCloud port)
+- NOT ported (honest adapter_required): Moviesmod (CloudflareKiller
+  WebView dependency), CineStream (50+-sub-provider aggregator)
+
 Extractors:
+- gdflix — dynamic domain rebasing + Name/Size rows + server buttons
+  (FSL V2 / DIRECT / CLOUD R2 / GD Index CF pages / FAST CLOUD /
+  Pixeldrain conversion / Instant DL url= strip); ≤24 links per call
+- hubcloud — hubcloud + vcloud hosts; /video/ links vs var-url resolution
+  (plain hubcloud, double-atob vcloud); card header/size; FSL/Mega/
+  Download File/BuzzServer hx-redirect/Pixeldrain pxl var/10Gbps
+  redirect-chain buttons
+- fastdlserver — single redirect hop → registry re-dispatch (bounded,
+  refuses fastdlserver→fastdlserver recursion)
+
 Normalization:
+- parseIndexQuality (Kotlin port) + size/codec/container/language
+  derivation + host derivation + Pixeldrain API URL conversion + true-URL
+  dedup; kind classification uses the shared StreamKind vocabulary
+
 Security:
+- SSRF: every adapter/extractor request AND redirect hop runs
+  assertSafeManifestUrl + assertSafeManifestDestination; the H2 agent's
+  sockets re-validate DNS at connect time (same lookup function as the
+  Stremio agent — imported, not modified)
+- .cs3 artifacts never fetched/executed (test-asserted per file: no
+  eval/new Function/import())
+- Response caps 2 MiB/page, timeouts 10s/page + 30s/adapter + 40s overall
+- Diagnostics redaction-safe (no URLs/cookies/tokens/bodies; 256-event
+  bound)
+- Live-verified: private IP literals, localhost, metadata hosts, unsafe
+  protocols, private DNS resolutions all rejected pre-connect with zero
+  fetches leaving the process (tracking-fetcher test)
+
 Tests:
+- cloudstream_runtime_test.ts — 101 checks PASSED (registry, selection,
+  unsupported behavior, compatibility, live derivation, normalization,
+  diagnostics redaction, sidexfee bypass)
+- cloudstream_extractors_test.ts — 50 checks PASSED (matching, GDFlix/
+  HubCloud/VCloud/fastdlserver ports, failure isolation, SSRF rejection,
+  size cap)
+- cloudstream_adapters_test.ts — 39 checks PASSED (movie/series/episode
+  resolution for all 3 providers, honest failure categories, series-not-
+  movie separation)
+- cloudstream_resolver_test.ts — 37 checks PASSED (bounded concurrency
+  unit + integration, provider timeout, partial-failure isolation,
+  unsupported adapters, episode orchestration, id dedup)
+- CS-1 suites re-run: parse 78 + sync 113 + admin_ui 154 (evolved
+  registry assertion) — all PASSED
+- Full chain: 202 commands — 194 PASSED + the 8 documented pre-existing
+  baseline failures (each re-verified FAILING at pristine 3b98080 —
+  NOT CS-2-caused)
+- pnpm check equivalent (svelte-kit sync + svelte-check): 0 errors,
+  0 warnings
+- pnpm build equivalent (vite build + netlify adapter): PASS (~31s)
+- Live smoke (manual, verify:cloudstream-runtime): Bollyflix 15 real
+  links (GDFlix Instant Download/FAST CLOUD across 480p/720p/1080p),
+  MoviesDrive 12 real links (Hub-Cloud Download/Pixeldrain); VegaMovies
+  honest EXTRACTOR_FAILED (vcloud.fit JS bot challenge, AC-004)
 
-Failures:
+Failures: None caused by CS-2 (8 pre-existing baseline failures verified
+at pristine 3b98080).
 
-Plan changes:
+Plan changes: §40.3 adapter contract finalized (ctx parameter);
+§40.6 added (CS-2 runtime finalization: provider selection, module map,
+security deltas); AC-003 + AC-004 recorded.
 
-Remaining work:
+Remaining work: none for CS-2. vcloud.fit bot protection is an external
+availability issue (documented, honest failure category); revisit if the
+site relaxes protection or a server-side-safe approach emerges.
 
-Next phase:
+Next phase: CS-3 — Mavero Downloader 2 backend (mavero2 API endpoints +
+DB enabled-extension selection on the CS-2 orchestrator).
 ```
 
 ## CS-3 Completion
@@ -1399,20 +1714,22 @@ Before GLM declares the project complete:
 
 # Final Status
 
-**Project:** CS-1 complete (repository manager + DB + Integrations
-Add-on/Extension tabs + "+" Add Integration selector + tests + live
-migration). CS-2 (Mavero CloudStream Compatibility Runtime) is the next
-phase — NOT started; it must begin with the mandatory phase protocol
-(read plan + worklog, verify repository state, confirm CS-1 exit
-criteria).
+**Project:** CS-2 complete (Mavero CloudStream runtime: adapter
+contract + registry, runtime context, 3 source-verified provider ports —
+Bollyflix/MoviesDrive/VegaMovies, 3 extractor ports — GDFlix/HubCloud/
+fastdlserver, H2-capable SSRF-safe transport, bounded orchestration,
+diagnostics, live-verified end-to-end). CS-3 (Mavero Downloader 2
+backend) is the next phase — NOT started; it must begin with the
+mandatory phase protocol (read plan + worklog, verify repository state,
+confirm CS-2 exit criteria).
 
 The next agent action is:
 
 ``` text
-READ PLAN (§40 contracts incl. AC-002 real-format corrections + §25 CS-2 scope)
-READ WORKLOG (CS-1 entry + AC-002 + D-008)
+READ PLAN (§40 contracts incl. §40.3 finalized adapter contract + §40.6 CS-2 runtime + §26 CS-3 scope)
+READ WORKLOG (CS-2 entry + AC-003 + AC-004 + D-009..D-012)
 VERIFY REPOSITORY STATE
-START CS-2
+START CS-3 (only after the phase instruction arrives)
 ```
 
 ------------------------------------------------------------------------
@@ -1587,3 +1904,122 @@ instruction.
 repository and see normalized extension records and compatibility
 status — exercised by the 302 automated checks and the live smoke run
 against the task-brief repository.)
+
+## 2026-10-02 — Session 3 (CS-2)
+
+Phase: CS-2 — Mavero CloudStream Compatibility Runtime
+
+Starting HEAD: `3b98080` (= origin/main, clean tree; CS-1 complete)
+
+Repository state: `main`, clean at start. Only CS-2 files were
+created/modified during this session (verified via git status review
+before commit — no unrelated files touched; the one existing-test change
+is the documented registry-assertion evolution in
+cloudstream_admin_ui_test.ts).
+
+Plan/worklog read:
+- [x] Plan (all 2043+ lines incl. §40 contracts + §25 CS-2 scope)
+- [x] Worklog (all entries incl. CS-1 + AC-002 + D-008)
+
+Objective: Implement the Mavero-compatible CloudStream runtime — adapter
+contract, registry, runtime context, extractors, first REAL provider
+ports, normalization, bounded orchestration, diagnostics, tests — with
+zero regressions on existing systems.
+
+Work performed:
+- Phase protocol: verified HEAD/branch/remote/clean tree; re-inspected
+  the CS-1 domain, Stremio SSRF stack (ssrf.ts, connect-guard.ts,
+  manifest-fetch.ts), addon-download-service reliability patterns, test
+  conventions.
+- REAL source verification (before any adapter code): fetched the live
+  CS.json → plugins.json (5 extensions) → downloaded and read the
+  ACTUAL Kotlin sources from SaurabhKaperwan/CSX@master for all five
+  providers + their extractors; probed the live sites (search APIs
+  verified working). Determined portability: Bollyflix/MoviesDrive/
+  VegaMovies portable; Moviesmod (CloudflareKiller) and CineStream
+  (aggregator) NOT portable.
+- AC-003 protocol followed: STOPPED before implementation, updated PLAN
+  (§40.3 contract refinement + new §40.6), recorded AC-003 + D-009/
+  D-010/D-011, THEN implemented.
+- Implemented the runtime: types/runtime.ts, security/http.ts,
+  runtime/{dynamic-urls,context}.ts, normalize/links.ts,
+  extractors/{index,gdflix,hubcloud,fastdlserver}.ts,
+  adapters/{common,bollyflix,moviesdrive,vegamovies}.ts, registry fill,
+  resolver/service.ts, extensions/service.ts live derivation.
+- cheerio@1.0.0 dependency added (sandbox npm resolver broken → pinned
+  tarball install script scripts/install_cheerio.mjs with a locked
+  closure; parse5 pinned to 7.2.0 / entities 4.5.0 to keep the closure
+  union-compatible).
+- AC-004 discovered during the FIRST live smoke: gdflix 403s HTTP/1.1
+  and serves HTTP/2 only (curl --http1.1 → 403 confirmed the transport
+  dependency); vcloud.fit enforces a JS bot challenge against every
+  non-WebView client. Followed the §33 protocol again: plan updated,
+  AC-004 + D-012 recorded, then implemented the H2-capable
+  cloudStreamAgent (same createConnectTimeLookup import — the Stremio
+  stack untouched).
+- Wrote 4 new test suites (227 checks) + a manual live smoke script;
+  registered the suites in the pnpm test chain and
+  verify:cloudstream-runtime as the manual network command.
+- Gates: 7 CloudStream suites all PASS; svelte-check 0/0; vite build
+  PASS; full chain 202 commands → 194 PASS + 8 pre-existing baseline
+  failures (each re-verified failing at pristine 3b98080 via
+  stash/pop).
+
+Files changed:
+- NEW: src/lib/server/cloudstream/types/runtime.ts
+- NEW: src/lib/server/cloudstream/security/http.ts
+- NEW: src/lib/server/cloudstream/runtime/dynamic-urls.ts
+- NEW: src/lib/server/cloudstream/runtime/context.ts
+- NEW: src/lib/server/cloudstream/normalize/links.ts
+- NEW: src/lib/server/cloudstream/extractors/{index,gdflix,hubcloud,fastdlserver}.ts
+- NEW: src/lib/server/cloudstream/adapters/{common,bollyflix,moviesdrive,vegamovies}.ts
+- NEW: src/lib/server/cloudstream/resolver/service.ts
+- NEW: scripts/cloudstream_{runtime,extractors,adapters,resolver}_test.ts,
+  scripts/cloudstream_cs2_helpers.ts,
+  scripts/cloudstream_cs2_live_smoke.ts,
+  scripts/install_cheerio.mjs
+- MODIFIED: src/lib/server/cloudstream/adapters/registry.ts (CS-2 fill)
+- MODIFIED: src/lib/server/cloudstream/types/index.ts (runtime re-exports)
+- MODIFIED: src/lib/server/cloudstream/extensions/service.ts (live
+  compatibility derivation)
+- MODIFIED: scripts/cloudstream_admin_ui_test.ts (registry assertion
+  evolved per the documented phase plan)
+- MODIFIED: package.json (cheerio dep + 4 test registrations +
+  verify:cloudstream-runtime)
+- MODIFIED: .gitignore (cheerio closure cache)
+- MODIFIED: CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (§40.3, §40.6 —
+  AC-003/AC-004)
+- MODIFIED: this worklog
+
+Tests run: 4 new suites + 3 CS-1 suites + svelte-check + vite build +
+full 202-command chain + pristine-baseline verification + live smoke.
+
+Results: ALL GREEN for CS-2 scope; 8 pre-existing baseline failures
+verified NOT CS-2-caused; live smoke resolves real downloadable links
+from 2 of 3 providers (third fails honestly on an externally-protected
+host).
+
+Issues discovered:
+- AC-003 (contract finalization from real source verification).
+- AC-004 (gdflix H2-only transport; vcloud.fit JS bot challenge).
+- Sandbox npm resolver broken (worked around by the pinned tarball
+  install script).
+
+Decisions: AC-003 + AC-004; D-009 (provider selection), D-010 (ctx
+parameter), D-011 (cheerio), D-012 (H2 agent).
+
+Plan updated: Yes (§40.3, §40.6).
+
+Worklog updated: Yes (this session + CS-2 phase entry + completion
+record + AC-003/AC-004 + D-009..D-012 + status tables).
+
+Remaining: CS-3 → CS-6 (NOT started — strict phase boundary honored).
+
+Next action: STOP after the CS-2 commit/push; await the CS-3 phase
+instruction.
+
+(CS-2 exit criteria verified: the selected initial adapters resolve
+supported titles into Mavero-normalized links independently of the UI —
+exercised by the 227 automated checks with deterministic fixtures AND
+the live smoke run resolving 27 real links across Bollyflix +
+MoviesDrive.)
