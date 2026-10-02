@@ -6,7 +6,7 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CS-5 COMPLETE — CS-6 pending (not started)
+**Status:** CS-6 COMPLETE — project complete (all phases CS-0..CS-6 done)
 
 ------------------------------------------------------------------------
 
@@ -85,8 +85,10 @@ The project does NOT execute arbitrary remote `.cs3` plugin code.
   Downloader 2 backend              COMPLETE (CS-3, 2026-10-02)
   Downloader 2 UI                   COMPLETE (CS-4, 2026-10-02)
   Downloader registry integration   COMPLETE (CS-5, 2026-10-02)
-  Full regression                   Pending (CS-6)
-  Production readiness              Pending
+  Full regression                   COMPLETE (CS-6, 2026-10-02)
+  Production readiness              VERIFIED (CS-6 — gates green; catalog
+                                    seeding is an admin action, see §40.10
+                                    limitations)
 
 ------------------------------------------------------------------------
 
@@ -1006,85 +1008,148 @@ pass.
 
 ## Status
 
-**PENDING**
+**COMPLETE** (2026-10-02, starting HEAD `4c17373` -> CS-6 commit; see the
+Phase Completion Log below)
 
 ## Objective
 
-Prove the new CloudStream system does not disturb existing Mavero
-behavior.
+Prove the complete CloudStream system is safe, bounded, regression-free,
+and production-ready — hardening only, feature freeze honored, zero code
+defects found (documentation-only commit).
 
 ## Existing Mavero Downloader
 
--   [ ] Existing downloader opens.
--   [ ] Stremio addons resolve.
--   [ ] Source tabs work.
--   [ ] Filters work.
--   [ ] Download works.
--   [ ] Play works.
--   [ ] Share works.
+-   [x] Existing downloader opens. (vite-SSR mounts of the REAL
+      DownloadSheet render the `.mad` Stremio panel for `mavero-downloader`
+      — registry_integration_test §E; the frozen surface is byte-identical
+      since `3b98080` — `git diff` EMPTY on MaveroAddonDownload,
+      stream-actions, external-player, download-link-types,
+      downloader-filters, the Stremio SSRF stack, and the Stremio domain.)
+-   [x] Stremio addons resolve. (resolver/endpoint files byte-identical;
+      stremio suites pass in the chain: phase19 56 + phaseE 171 + phaseF 18
+      etc.)
+-   [x] Source tabs work. (MaveroAddonDownload byte-identical — pin in the
+      CS-4/CS-5 suites §H.)
+-   [x] Filters work. (downloader-filters.ts byte-identical; matchers
+      reused by the Downloader 2 view model — 170 UI checks.)
+-   [x] Download works. (stream-actions.ts byte-identical; action mapping
+      test-asserted per kind for BOTH panels.)
+-   [x] Play works. (external-player.ts byte-identical — no second MPV.)
+-   [x] Share works. (Share semantics reused verbatim — no second Share.)
 
 ## Existing streaming
 
--   [ ] MovieNexus unaffected.
--   [ ] VidStuck unaffected.
--   [ ] Other direct providers unaffected.
--   [ ] Watch page unaffected.
--   [ ] Resume/playback unaffected.
+-   [x] MovieNexus unaffected. (`src/lib/server/resolver/` +
+      `src/lib/client/player/` byte-identical since `3b98080` — `git diff`
+      EMPTY; moviesnexus_provider_test + vidstuck_provider_test PASS in
+      the chain.)
+-   [x] VidStuck unaffected. (ibid.)
+-   [x] Other direct providers unaffected. (phase7e provider suites pass —
+      20 provider-specific tests PASS in the chain.)
+-   [x] Watch page unaffected. (watch pages byte-identical; phase1-6
+      playback/resume suites pass.)
+-   [x] Resume/playback unaffected. (phase4_progress_resume_test PASS.)
 
 ## Existing other downloaders
 
--   [ ] JSON providers unaffected.
--   [ ] Embed providers unaffected.
--   [ ] Downloader registry unaffected.
+-   [x] JSON providers unaffected. (generic_json_downloader_test PASS;
+      4k/json/iframe dispatch outcomes all re-mounted through the REAL
+      sheet — registry_integration_test §E.)
+-   [x] Embed providers unaffected. (the embed/iframe branch byte-pinned
+      in the additive-only diff assertion.)
+-   [x] Downloader registry unaffected. (download_providers_test PASS;
+      live DB: all 10 pre-existing rows untouched; public config verified
+      live — disabled rows hidden, ordering preserved, no admin fields.)
 
 ## CloudStream
 
--   [ ] Repository sync.
--   [ ] Extension enable/disable.
--   [ ] Compatibility status.
--   [ ] Movie resolution.
--   [ ] Series resolution.
--   [ ] Extractor resolution.
--   [ ] Normalization.
--   [ ] Filters.
--   [ ] Download.
--   [ ] MPV.
--   [ ] Share.
--   [ ] Partial failures.
--   [ ] Timeout.
--   [ ] Disabled extensions.
+-   [x] Repository sync. (113 sync checks + live smoke: 5 extensions
+      discovered from the real CSX repository.)
+-   [x] Extension enable/disable. (113 + 160 admin_ui checks.)
+-   [x] Compatibility status. (101 runtime checks + live derivation.)
+-   [x] Movie resolution. (39 adapter checks + live: Bollyflix 15 +
+      MoviesDrive 12 real links.)
+-   [x] Series resolution. (adapters suite: episode walking for all 3
+      providers; CS-4 suite: series S2E4 request shape + context.)
+-   [x] Extractor resolution. (50 extractor checks + live: GDFlix +
+      HubCloud resolving googleusercontent/pixeldrain direct links.)
+-   [x] Normalization. (runtime suite + 144 API checks; kind mapping onto
+      StreamKind test-asserted per kind.)
+-   [x] Filters. (170 UI checks — five dimensions, reset, no-match.)
+-   [x] Download. (per-kind capability mapping + Pixeldrain Info pattern.)
+-   [x] MPV. (playActionFor -> externalPlayerLaunchFor — reused, not
+      duplicated.)
+-   [x] Share. (navigator.share + clipboard fallbacks — reused verbatim.)
+-   [x] Partial failures. (37 resolver checks + live: VegaMovies
+      EXTRACTOR_FAILED alongside loaded providers.)
+-   [x] Timeout. (resolver suite: provider timeout; per-adapter 30s/
+      overall 40s budgets verified.)
+-   [x] Disabled extensions. (144 API checks: EXTENSION_DISABLED 409 /
+      structured failed groups.)
 
 ## Security
 
--   [ ] SSRF tests.
--   [ ] URL validation.
--   [ ] Redirect handling.
--   [ ] Response limits.
--   [ ] No `.cs3` execution.
--   [ ] No secret leakage.
--   [ ] Concurrency limits.
+-   [x] SSRF tests. (sync suite test I incl. a rebinding-style
+      private-resolution case; runtime/extractor suites: zero-egress
+      private-DNS tracking-fetcher invariants; code audit re-verified the
+      two-stage + connect-time guard on every fetch AND redirect hop.)
+-   [x] URL validation. (parse 78 checks + lexical gates + canonical
+      identity.)
+-   [x] Redirect handling. (bounded 3/page + 7-hop chain, every hop
+      re-validated — code-audited.)
+-   [x] Response limits. (1 MiB JSON / 2 MiB pages, streamed with abort —
+      code-audited + extractor suite size-cap tests.)
+-   [x] No `.cs3` execution. (grep-verified: no fetch of artifact URLs;
+      no eval/new Function/child_process anywhere in the domain.)
+-   [x] No secret leakage. (grep-verified: zero credentials/tokens/keys;
+      service-role client server-side only; live config response carries
+      the public field set only.)
+-   [x] Concurrency limits. (mapBounded <= 4 unit + integration tests;
+      rate limiting ENFORCED live: 429 exactly at the 11th request with
+      retry-after: 60.)
 
 ## Final gates
 
--   [ ] `pnpm check`
--   [ ] `pnpm test`
--   [ ] `pnpm build`
+-   [x] `pnpm check` — 0 errors, 0 warnings.
+-   [x] `pnpm test` — full 205-command chain via the CS-6 driver: 197
+      PASS + the 8 documented pre-existing baseline failures + 0 NEW
+      failures (baseline proven: the driver ran with ZERO tracked-file
+      changes — the tree IS pristine 4c17373 — and the result matches the
+      CS-5 log set-for-set).
+-   [x] `pnpm build` — PASS (vite + netlify adapter, ~35s).
 
 ## Completed
 
-None.
+All CS-6 scope. Documentation-only commit: the audit found NO security,
+correctness, regression, resource, or production-breaking defect; every
+fix-policy category came back empty. See the Phase Completion Log +
+Session 7 entry + plan §40.10 for the full record.
 
 ## Failed / unresolved
 
-None.
+None caused by CS-6 (zero code changes; the identical 8 baseline
+failures + the out-of-chain detail_back_navigation observation remain
+documented — see below).
 
 ## Decisions
 
-None yet.
+-   No fixes required: every fix-policy category (security / correctness /
+    regression / production-breaking / resource / test failures caused by
+    CloudStream) came back empty after a file-by-file audit + live
+    boundary tests. Refactoring healthy code for style was explicitly
+    forbidden and nothing was changed.
+-   The chain-driver convention continues: `cs6_full_chain_driver.mjs` +
+    `cs6_full_chain.log` stay UNTRACKED like their CS-4/CS-5
+    predecessors.
+-   Live smoke credentials (service-role key) were fetched at runtime via
+    the Supabase Management API and written ONLY to untracked temporary
+    files that were deleted after use — no secret ever touched a tracked
+    file or the commit.
 
 ## Next step
 
-Final deployment/readiness review after all gates pass.
+None — CS-6 is the FINAL CloudStream Downloader phase (strict final phase
+boundary: no further CloudStream implementation).
 
 ------------------------------------------------------------------------
 
@@ -2387,25 +2452,76 @@ Next phase: CS-6 — full regression & production hardening.
 ## CS-6 Completion
 
 ``` text
-Date:
-HEAD/commit:
-Status:
+Date: 2026-10-02
+HEAD/commit: 4c17373 (CS-5, pristine start — ZERO tracked-file changes
+before the gates ran) -> fix: harden cloudstream downloader for
+production (documentation-only commit; pushed to origin/main)
+Status: COMPLETE — PROJECT COMPLETE (final phase)
 
 Existing downloader regression:
-Existing streaming regression:
-CloudStream regression:
-Security:
-pnpm check:
-pnpm test:
-pnpm build:
+- Mavero Downloader / Stremio: byte-identical frozen surface (git diff
+  3b98080..HEAD EMPTY on the Stremio SSRF stack, MaveroAddonDownload,
+  stream-actions, external-player, download-link-types,
+  downloader-filters, downloader admin types); stremio suites pass in
+  the chain; the REAL DownloadSheet mounts the Stremio panel for
+  mavero-downloader (registry suite §E)
+- Direct streaming: resolver/ + client/player/ byte-identical; 20+
+  provider suites pass (MovieNexus, VidStuck, phase7e providers)
+- JSON/embed/registry: generic_json + download_providers suites pass;
+  all 10 existing DB rows untouched (live-verified); live public config
+  verified (disabled rows hidden, ordering, no admin fields)
 
-Failures:
+Existing streaming regression: all green (see above — watch/playback/
+resume suites pass; zero diff on the direct-streaming surface)
 
-Final fixes:
+CloudStream regression: all green — 10 suites, 1,035 checks PASSED
+(78+113+160+101+50+39+37+144+170+143); live smokes: repository
+ingestion 5 extensions, runtime 25 real links, downloader backend 27
+real links with partial-failure isolation + response contract
 
-Plan changes:
+Security: file-by-file audit of the full CS-1..CS-5 implementation —
+SSRF two-stage + connect-time re-validation on every fetch and redirect
+hop; .cs3 metadata-only (never fetched, never executed); fail-closed
+bounded validation at all boundaries; closed error vocabulary; safe
+logging; zero secrets; RLS admin-only cloudstream tables (live-verified
+2 policies, no public SELECT, anon revoked); admin gates verified live
+(303 redirects to sign-in for page/preview/all 5 actions); rate limits
+ENFORCED live (429 at request 11, retry-after: 60); deep-link guard
+parity proven; no XSS vectors (no @html/innerHTML); no storage of
+expiring URLs
 
-Final status:
+pnpm check: 0 errors, 0 warnings
+pnpm test: 205 commands -> 197 PASS + 8 documented pre-existing baseline
+failures (identical set to CS-4/CS-5; baseline proven at pristine
+4c17373 with zero tracked changes) + 0 NEW failures (driver:
+scripts/cs6_full_chain_driver.mjs -> scripts/cs6_full_chain.log)
+pnpm build: PASS (vite + netlify adapter, ~35s)
+
+Failures: none caused by CS-6. Remaining pre-existing (documented, not
+CloudStream-related): the 8 baseline failures above + the out-of-chain
+detail_back_navigation formatting observation (CS-5 entry).
+
+Final fixes: NONE — no security/correctness/regression/production/
+resource defect was found. The commit records the verification
+(plan §40.10 + this worklog) and changes no production code.
+
+Plan changes: new §40.10 (CS-6 final hardening & production
+verification record: audit scope + verdict, verification results,
+documented limitations, file inventory).
+
+Final status: PRODUCTION-READY — the complete chain (CloudStream
+Repository -> Extension Manager -> Mavero CloudStream Runtime ->
+Mavero Downloader 2 API -> Mavero Downloader 2 UI -> Provider Registry
+-> user download/play/share actions) is verified safe, bounded,
+regression-free, and green on every required gate, subject only to the
+documented operational limitations: (1) the live catalog is empty — an
+admin must add + sync + enable a repository (System -> Integrations ->
+Extension); (2) vcloud.fit's bot challenge keeps VegaMovies on honest
+EXTRACTOR_FAILED; (3) the 8 pre-existing project baseline test failures
+are unrelated to CloudStream; (4) the dev environment lacks TMDB
+credentials (adult-mode classification fails closed — identical
+boundary for existing and new pages). CS-6 is the FINAL phase — no
+further CloudStream implementation follows.
 ```
 
 ------------------------------------------------------------------------
@@ -2512,25 +2628,34 @@ Before GLM declares the project complete:
 
 # Final Status
 
-**Project:** CS-4 complete (Mavero Downloader 2 UI: the dedicated
-MaveroCloudStreamDownload panel + the pure shared view-model
-consuming the three CS-3 endpoints with a NO-N+1 data flow, the five
-client-side filters, per-kind Download/Play/Share via the SINGLE shared
-action model, the five distinct empty states, partial-failure tabs with
-per-source retry, responsive + accessible markup, 167 deterministic
-checks, a zero-new-failures 204-command full chain, and an 11-screen
-browser visual verification pass). CS-5 (downloader registry
-integration) is the next phase — NOT started; it must begin with the
-mandatory phase protocol (read plan + worklog, verify repository state,
-confirm CS-4 exit criteria).
+**Project:** COMPLETE (CS-0 through CS-6, 2026-10-02). The Mavero
+CloudStream Downloader project delivered: the CloudStream Repository
+Manager (System -> Integrations -> Extension tab, CS-1), the Mavero
+CloudStream compatibility runtime with three source-verified provider
+ports + three extractors (CS-2), the Mavero Downloader 2 backend
+(/api/downloader/mavero2{,/tabs,/extension}, CS-3), the Downloader 2 UI
+(MaveroCloudStreamDownload.svelte, CS-4), and the first-class provider
+registry integration (slug mavero-downloader-2 + deep links, CS-5).
+CS-6 (final hardening & production verification) audited the entire
+implementation file-by-file, found ZERO code defects, and verified every
+gate GREEN: pnpm check 0/0; pnpm build PASS; full 205-command chain ->
+197 PASS + the 8 documented pre-existing baseline failures + 0 new
+failures; 10 CloudStream suites = 1,035 checks PASSED; live DB audit +
+three live smokes (5 extensions discovered; 25 + 27 real downloadable
+links) + live boundary tests (fail-closed validation, enforced rate
+limits, admin gates, deep-link guard parity) all passed. Production-
+ready subject to the documented operational limitations (empty catalog
+awaiting admin seeding; vcloud.fit bot challenge; the 8 unrelated
+pre-existing project test failures). CS-6 is the FINAL phase — the
+strict final phase boundary forbids any further CloudStream
+implementation.
 
 The next agent action is:
 
 ``` text
-READ PLAN (§40 contracts incl. §40.3 + §40.6 + §40.7 + §40.8 CS-4 finalization + §28 CS-5 scope)
-READ WORKLOG (CS-4 entry + AC-006 + D-016..D-021)
-VERIFY REPOSITORY STATE
-START CS-5 (only after the phase instruction arrives)
+NONE — the CloudStream Downloader project is complete.
+(If work resumes on Mavero, it must be a NEW project/task with its own
+plan — not a continuation of the CloudStream phase chain.)
 ```
 
 ------------------------------------------------------------------------
@@ -3164,3 +3289,119 @@ the existing downloaders — exercised by the 143 automated checks
 including REAL-sheet mounts for every dispatch outcome, the full-chain
 0-new-failures result, the byte-identical regression pins, and the live
 config/deep-link verification against the real database.)
+
+## 2026-10-02 — Session 7 (CS-6 — Final Hardening & Production Verification)
+
+Phase: CS-6 — Full Regression & Production Hardening (FINAL phase)
+
+Starting HEAD: `4c17373` (= origin/main; CS-5 complete)
+
+Repository state: `main`, clean except the 4 untracked CS-4/CS-5
+chain-driver artifacts (logs + drivers — kept untracked by convention).
+ZERO tracked files were modified before the gates ran, so the full-chain
+execution IS the pristine-baseline run at `4c17373`.
+
+Plan/worklog read:
+- [x] Plan (all 2618 lines incl. §40 contracts + §40.9 + §29 CS-6 scope)
+- [x] Worklog (all entries incl. CS-5 + AC-007 + D-022..D-024)
+
+Objective: Final production hardening — prove the complete system
+(CloudStream Repository → Extension Manager → Runtime → Downloader 2
+API → Downloader 2 UI → Provider Registry → user actions) is safe,
+bounded, regression-free, and production-ready. Feature freeze: no new
+features, no refactors of healthy code; only fix actually-found defects.
+
+Work performed:
+- Mandatory read-only audit: full PLAN + WORKLOG re-read; git state
+  verified (HEAD 4c17373 = origin/main); the complete CS-1..CS-5
+  implementation re-inspected file-by-file (~9,500 lines: 24 server
+  modules, 3 public API routes, the admin preview endpoint + 5 form
+  actions + Integrations UI, the UI component + shared view model, both
+  migrations, the registry integration surface, and the frozen-surface
+  git-diff proofs).
+- Security hardening audit (repository ingestion / runtime HTTP / user
+  input / logging): all clean — the SSRF two-stage guard + connect-time
+  re-validation covers every fetch AND every redirect hop; `.cs3`
+  artifacts are metadata-only (no fetch call exists; no
+  eval/Function/child_process; the only dynamic imports are four
+  hard-coded Mavero-owned paths); all inputs bounded + fail-closed;
+  logging carries safe fields only; zero secrets in the domain.
+- Resource/DoS audit: every limit verified as ENFORCED (mapBounded ≤4,
+  30s/adapter + 40s overall with abort propagation, 10s/2 MiB per page,
+  ≤3 redirects/page + ≤7-hop chain, ≤24 links/extractor call, 256-event
+  diagnostics cap, ≤16 selected extensions, ≤4 plugin lists, ≤500
+  extensions/repository, 3 additive rate buckets). Eligible resolution
+  fan-out is structurally bounded by the 3-entry code registry.
+- Auth/admin + public API audit: requireAdmin on every CloudStream
+  admin surface (verified LIVE: page, preview POST, and all 5 form
+  actions redirect unauthenticated access to sign-in before any
+  CloudStream logic); RLS live-verified (2 admin-only policies, no
+  public SELECT, anon revoked); live boundary tests — every invalid
+  mavero2 request shape → 400; rate limit 429 exactly at request 11
+  with retry-after: 60; deep-link guard parity proven for BOTH
+  downloader families + all param-bound guards.
+- Live read-only DB audit (Management API): tracker = 32 entries incl.
+  both CloudStream migrations; catalog honestly empty (0/0);
+  mavero-downloader-2 row exact; all 10 existing provider rows
+  untouched.
+- Live smokes (network + real DB; service-role key fetched at runtime
+  via the Management API, stored only in temp untracked files deleted
+  after use): verify:cloudstream-repo 5 checks PASS; verify:cloudstream-
+  runtime PASS (25 real links; VegaMovies honest EXTRACTOR_FAILED);
+  verify:cloudstream-downloader PASS (27 real links end-to-end with
+  partial-failure isolation).
+- Browser verification (dev server + agent-browser): home + sign-in
+  render with zero page errors; no horizontal overflow at 390px; admin
+  surfaces deny unauthenticated access.
+- Gates: pnpm check 0/0; all 10 CloudStream suites = 1,035 checks
+  PASSED; pnpm build PASS (~35s); full 205-command chain via the CS-6
+  driver → 197 PASS + the identical 8 documented pre-existing baseline
+  failures + 0 NEW failures (baseline proven at pristine 4c17373 —
+  zero tracked changes — and set-for-set identical to the CS-5 log).
+- FIX POLICY OUTCOME: no security, correctness, regression,
+  production-breaking, resource, or test defect was found → ZERO code
+  changes. The commit is documentation-only (plan §40.10 + this
+  worklog).
+
+Files changed:
+- MODIFIED: CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md (new §40.10 — CS-6
+  finalization record)
+- MODIFIED: CLOUDSTREAM_MAVERO_WORKLOG.md (this session + CS-6 phase
+  entry + completion record + status tables + Final Status)
+- UNTRACKED (chain-driver convention): scripts/cs6_full_chain_driver.mjs
+  + scripts/cs6_full_chain.log
+
+Tests run: pnpm check; 10 CloudStream suites; pnpm build; full
+205-command chain (driver); live DB audit; 3 live smokes; live dev-server
+boundary tests; browser verification.
+
+Results: ALL GREEN — 0 new failures anywhere; the 8 pre-existing
+baseline failures remain documented and proven unrelated (identical set
+at the pristine CS-5 commit).
+
+Issues discovered: none requiring fixes. Operational observations
+(documented as limitations, not defects): the live CloudStream catalog
+is empty pending admin seeding; vcloud.fit's bot challenge keeps
+VegaMovies on honest EXTRACTOR_FAILED; the dev environment lacks TMDB
+credentials (adult-guard classification fails closed identically for
+existing and new pages).
+
+Decisions: no fixes applied (fix policy categories all empty); the
+chain-driver convention continues (untracked); live-smoke credentials
+handled via runtime-fetched temp files only.
+
+Plan updated: Yes (§40.10).
+Worklog updated: Yes (this session + CS-6 entry + completion record +
+status tables + Final Status).
+
+Remaining: none for the CloudStream project.
+
+Next action: STOP — CS-6 is the final phase. Output the 12-section CS-6
+final report (per the phase instruction's required format) and end the
+CloudStream Downloader project.
+
+(CS-6 exit criteria verified: all critical regression gates pass and
+the worklog contains the final implementation summary — pnpm check
+0/0, pnpm build PASS, full chain 0 new failures, 1,035 CloudStream
+checks green, live smokes + boundary tests green, production-readiness
+verdict recorded with its documented limitations.)

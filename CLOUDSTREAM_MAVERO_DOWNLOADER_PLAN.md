@@ -2615,3 +2615,174 @@ The resolver path, the mavero2 API, the Downloader 2 UI component, the
 Stremio downloader, the direct-streaming providers, and the admin CRUD are
 all untouched — the integration is purely additive, exactly as §3/§31
 require.
+
+## 40.10 CS-6 Final hardening & production verification (2026-10-02)
+
+Recorded after verification, per §33/§34 protocol. CS-6 is HARDENING ONLY —
+feature freeze honored (no new adapters, extractors, providers, UI
+features, admin navigation, or Stremio/repository changes). Starting HEAD
+`4c17373` (pristine CS-5; the audit ran with ZERO tracked-file changes, so
+the full-chain run IS the pristine-baseline run).
+
+### Audit scope + verdict (NO code defects found — zero code changes)
+
+The complete CloudStream implementation (CS-1..CS-5: 24 server modules +
+3 API routes + admin UI + registry integration + 2 migrations + 10 suites)
+was re-inspected file-by-file against the §4..§11 security model:
+
+* **Repository ingestion** — HTTPS enforced (`validateRepositoryUrl` lexical
+  gate + the full `assertSafeManifestUrl` stack), SSRF two-stage guard +
+  connect-time DNS re-validation on every request AND every redirect hop,
+  private-IP/localhost/metadata/NAT64/IPv4-compact blocking (inherited
+  verbatim from the byte-identical Stremio stack — `git diff 3b98080..HEAD`
+  on ssrf.ts/connect-guard.ts/manifest-fetch.ts is EMPTY), 10s/1 MiB/3
+  redirect bounds, malformed index/plugin-list handling typed + non-fatal,
+  duplicate internalName dedup, absolute-URL-only plugin lists, canonical
+  URL identity for duplicate repositories. `.cs3` artifact URLs remain
+  METADATA ONLY — no fetch call exists anywhere in the domain; no
+  `eval`/`new Function`/`child_process`; the only dynamic imports are four
+  hard-coded Mavero-owned module paths (the documented adult-guard
+  laziness pattern).
+* **Runtime HTTP** — same two-stage + connect-time guard incl. the H2
+  agent (`createConnectTimeLookup` imported, not modified); 10s/page,
+  2 MiB/page, ≤3 redirects/page, ≤7-hop HEAD chain with every hop
+  re-validated; per-adapter 30s deadline clamped by the 40s overall
+  budget with abort propagation into every in-flight fetch; mapBounded ≤4
+  adapter concurrency; per-extractor catch isolation; per-adapter catch
+  isolation (one failing provider never destroys others — re-proven live).
+* **User input** — all bounded and fail-closed at every boundary:
+  contentId ≤200, tmdbId `^\d{1,12}$`, season/episode 1..10000
+  both-or-neither, movies must not carry episode context, extensionId
+  ≤200 resolved through DB + code registry BEFORE any adapter runs,
+  explicit selection ≤16 case-insensitively deduped, search titles
+  `encodeURIComponent` + 100-char bound. No SQL string interpolation
+  (parameterized Supabase client), no command execution, no filesystem
+  access, no unsafe dynamic URL construction.
+* **Logging** — server logs carry only safe fields (codes, counts,
+  durations, tmdbId — a public content identifier, the same convention as
+  the existing Stremio downloader logs); diagnostics events carry
+  categories/durations/statuses/extractor ids only (256-event bound; ≤32
+  stages per group in responses); client error messages come exclusively
+  from the closed curated vocabulary — never stack traces, upstream
+  bodies, or URLs with tokens.
+* **Secrets** — zero credentials/tokens/keys in the CloudStream domain
+  (grep-verified; every match is a docblock); the service-role client is
+  created server-side only inside `+server.ts` handlers (never imported by
+  client code); the UI talks ONLY to the three `/api/downloader/mavero2*`
+  endpoints; no localStorage/sessionStorage anywhere.
+* **Authorization** — preview endpoint + all 5 form actions + the page
+  load are `requireAdmin`-gated BEFORE any CloudStream logic (verified
+  live: unauthenticated page/POST/action access all redirect to sign-in);
+  cloudstream_* tables keep RLS enabled with exactly two admin-only
+  policies, zero public SELECT, anon revoked (verified live); the public
+  mavero2 endpoints expose only display metadata + redaction-safe
+  diagnostics.
+* **Registry integrity** — the full chain
+  repositories(enabled)→extensions(enabled)→adapter registered→media
+  support→resolution is enforced at EVERY selection path (all-eligible,
+  explicit-selection, single-extension); duplicate UI providers are
+  structurally impossible (unique `(repository_id, internal_name)` +
+  unique `slug` + `on conflict do nothing`); Mavero Downloader and
+  Mavero Downloader 2 remain separate slug dispatches; CloudStream cannot
+  enter the Stremio path (byte-identical Stremio resolver surface).
+* **Resource/DoS** — every limit is ENFORCED, not just declared (see the
+  live 429 test below). The multiplicative fan-out is structurally
+  bounded: eligible resolution is capped by the 3-entry code-owned
+  adapter registry regardless of catalog size; each adapter's total work
+  is capped by its 30s deadline; extractors cap at ≤24 links per call;
+  the fastdlserver hop refuses self-recursion.
+* **Migrations** — both CloudStream migrations are idempotent
+  (`if not exists` / `on conflict do nothing`), purely additive (no
+  UPDATE/ALTER/DELETE/TRUNCATE of existing data), correctly ordered,
+  and applied to the live project with tracker entries
+  20261101000000 (31) + 20261101000001 (32) — live tracker verified
+  consistent with the repository migration set.
+
+### Verification results (all gates actually run — none claimed)
+
+* `pnpm check` — 0 errors, 0 warnings.
+* All 10 CloudStream suites — 1,035 checks PASSED (78+113+160+101+50+
+  39+37+144+170+143).
+* `pnpm build` — PASS (vite + netlify adapter, ~35s).
+* FULL chain (`scripts/cs6_full_chain_driver.mjs` →
+  `scripts/cs6_full_chain.log`, per-command 180s timeout) — 205
+  commands: 197 PASS + the 8 documented pre-existing baseline failures
+  (identical set to the CS-4/CS-5 baselines) + 0 NEW failures. Baseline
+  proof: the driver ran with ZERO tracked-file modifications (the working
+  tree IS pristine `4c17373`), and the result is byte-for-byte the same
+  set as `scripts/cs5_full_chain.log`.
+* Live read-only DB audit (Supabase Management API) — tracker 32 entries
+  incl. both CloudStream migrations; RLS enabled + exactly 2 admin-only
+  policies per table; catalog honestly empty (0 repositories / 0
+  extensions — admin action, not a defect); `mavero-downloader-2` row
+  exact (enabled, not default, ordering 92, type embed, movie+tv); all 10
+  pre-existing provider rows untouched.
+* Live smokes (network + real DB; service-role key obtained at runtime
+  via the Management API, never written to any tracked file):
+  `verify:cloudstream-repo` — 5 checks passed (real repository ingestion,
+  5 extensions discovered from the task-brief CSX repository);
+  `verify:cloudstream-runtime` — PASS (25 real downloadable links:
+  BollyFlix 13 + MoviesDrive 12; VegaMovies honest EXTRACTOR_FAILED on
+  the externally-protected vcloud.fit host);
+  `verify:cloudstream-downloader` — PASS (27 real links end-to-end
+  through the REAL service path incl. the media echo, deterministic
+  groups, partial-failure isolation, redaction-safe diagnostics).
+* Live dev-server boundary tests (real Supabase, unauthenticated):
+  `/api/downloader/config` exposes mavero-downloader-2 EXACTLY ONCE with
+  origin-rewritten templates, default-first + ascending ordering,
+  disabled rows hidden, no admin-only fields; every invalid mavero2
+  request shape → 400 INVALID_REQUEST (invalid mediaType, movie+season,
+  series-without-episode, malformed tmdbId, 17-extension selection);
+  rate limiting enforced EXACTLY at the bucket boundary (requests 1-10
+  processed, 11-12 → 429 + `retry-after: 60`); deep-link guard parity
+  proven (identical fail-closed 404s for BOTH /watch/mavero-downloader/**
+  and /watch/mavero-downloader-2/** in the no-TMDB-credentials dev
+  environment, plus all param-bound guards); every admin surface
+  (integrations page incl. ?tab=extension, preview endpoint, all 5 form
+  actions) redirects unauthenticated access to sign-in BEFORE any
+  CloudStream logic.
+* Browser verification (dev server + agent-browser): home page and
+  sign-in page render with zero page errors; no horizontal overflow at
+  390px mobile width. (The REAL DownloadSheet wiring — all four dispatch
+  outcomes, exclusive provider switching, movie/series context — is
+  already covered by the vite-SSR mount tests inside the CS-4/CS-5
+  suites, which passed above; a mocked-fetch visual pass was CS-4's
+  documented approach and is not repeated.)
+
+### Documented remaining limitations (pre-existing, not CS-6 defects)
+
+1. The live CloudStream catalog is empty — an administrator must add +
+   sync + enable a repository (System → Integrations → Extension). The
+   panel honestly renders its "No CloudStream sources are enabled." state
+   until then. Operational action, not a code defect.
+2. vcloud.fit enforces a JavaScript bot challenge against all
+   non-WebView clients → the VegaMovies adapter honestly fails with
+   EXTRACTOR_FAILED (AC-004). External availability, documented.
+3. The 8 documented pre-existing baseline failures (adult_mode,
+   phase2_repo_hygiene, phase8_accessibility, phase9_source_progress,
+   phase9_landscape, phase9_fix, phase9_landscape_drawer_position,
+   phase4_registry_integration) remain — proven pre-existing at pristine
+   commits in CS-2..CS-5 and re-proven identical here.
+4. detail_back_navigation_test.ts (standalone, NOT in the chain) fails a
+   formatting-sensitive regex against DetailPage.svelte — proven
+   pre-existing at pristine 065d153 (CS-5 entry).
+5. The dev environment has no TMDB credentials → adult-mode
+   classification fails closed (404) — the SAME boundary behavior for
+   the existing and new deep links (parity proven above).
+
+### CS-6 file inventory (actual)
+
+``` text
+CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md                 (MODIFIED: §40.10)
+CLOUDSTREAM_MAVERO_WORKLOG.md                         (MODIFIED: CS-6 entry)
+scripts/cs6_full_chain_driver.mjs                     (NEW, UNTRACKED by the
+                                                      chain-driver convention)
+scripts/cs6_full_chain.log                            (NEW, UNTRACKED ibid.)
+```
+
+Zero production-code changes: the hardening audit found no security,
+correctness, regression, resource, or production-breaking defect to fix.
+The complete chain (repository ingestion → extension manager → runtime →
+Downloader 2 API → Downloader 2 UI → provider registry → user actions) is
+verified safe, bounded, regression-free, and production-ready subject
+only to the documented limitations above.
