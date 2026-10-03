@@ -6283,3 +6283,13 @@ EVERY POLL / PAGE LOAD / QUEUE runs the RECONCILER:
   API + tracker) — no owner action needed for the schema.
 - The standing Render go-live + production Netlify env items are
   unchanged.
+
+## Session 16 — final state
+
+Implementation commit: `56a1da2` — "fix: durable adapter build lifecycle —
+background execution + deterministic stale recovery (the CineStream
+stale-building incident)" (pushed; HEAD = origin/main verified). The
+admin UI can never leave a provider permanently stuck in building/testing
+merely because the initiating HTTP request ended: builds are durable job
+rows executed by a background function, every write is job-pointer
+guarded, and every poll/page-load sweeps orphans deterministically.
