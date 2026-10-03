@@ -6131,3 +6131,14 @@ and retirement of the user-facing `mavero-downloader-2` entry.
   MoviesDrive adapters, extractors, search, ranking, matching, provider
   networking: UNTOUCHED (byte-pinned by the frozen-file checks in the
   evolved suites).
+
+## Session 15 — final state
+
+Implementation commit: `a64de9c` — "feat: unified Mavero Downloader — one
+downloader, global add-on+plugin ordering, admin position controls, dropdown
+alignment fix, Downloader 2 retirement (FINAL TASK)" (pushed; HEAD =
+origin/main verified). Owner actions: apply migration 20261004000000 in the
+Supabase SQL editor (activates the global ordering table + retires the
+mavero-downloader-2 row; until then the app runs on the deterministic
+fallback ordering with the legacy addon-position path), and the standing
+Render/Netlify env items remain unchanged.
