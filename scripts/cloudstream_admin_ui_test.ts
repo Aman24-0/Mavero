@@ -99,8 +99,17 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
   ok(managerSvelte.includes("?/deleteCloudStreamRepository"), '5: manager posts repository delete');
   ok(managerSvelte.includes('confirm('), '5: destructive delete asks for confirmation');
   ok(managerSvelte.includes("?/setCloudStreamExtensionEnabled"), '5: manager posts extension enable/disable');
-  ok(managerSvelte.includes("import type {\n    CloudStreamAdapterStatus,"), '5: manager consumes the SHARED type contract');
-  ok(managerSvelte.includes('adapter_required'), '5: manager renders adapter compatibility states');
+  // Phase 4 (Integration Manager 2.0) sanctioned pin evolution: the manager
+  // no longer renders the CS-1 catalog adapterStatus labels itself — §13
+  // status vocabulary is derived in the shared view-model — so the pinned
+  // SHARED type contract import evolves from CloudStreamAdapterStatus to
+  // the view types the component actually consumes.
+  ok(managerSvelte.includes("import type {\n    CloudStreamExtensionView,"), '5: manager consumes the SHARED type contract');
+  ok(managerSvelte.includes("cloudstream-integration-manager-view"), '5: manager consumes the Phase 4 shared view-model');
+  // Phase 4 pin evolution: statuses are no longer inline literals in the
+  // component — every §13 status chip is derived from the shared view-model
+  // presentation so UI and tests cannot drift.
+  ok(managerSvelte.includes('providerStatusPresentation('), '5: manager renders adapter lifecycle states via the §13 presentation');
   // The manager must NOT introduce a second player/MPV/Share implementation.
   for (const forbidden of ['externalPlayerLaunchFor', 'mpv', 'shareActionFor', 'downloadActionFor']) {
     ok(!managerSvelte.includes(forbidden), `5: manager does NOT re-implement "${forbidden}"`);

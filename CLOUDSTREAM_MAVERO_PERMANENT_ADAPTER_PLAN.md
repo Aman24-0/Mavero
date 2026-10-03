@@ -1188,3 +1188,97 @@ commands = 207 PASS + 1 documented pre-existing baseline failure
 18/18 (hardened); verify:cloudstream-phase35 62/62; secret scan of all
 tracked files: zero exposures. Phase 4 remains NOT started. See
 CLOUDSTREAM_MAVERO_WORKLOG.md Session 11 for the complete record.
+
+
+### Phase 4 implementation record (2026-10-03)
+
+COMPLETED. Integration Manager 2.0 (§11) + No Page Refresh / No Scroll
+Jump (§12) + Provider Status UX (§13) — the Extension manager redesigned
+for LARGE repositories (the plan's 84-extension premise, problem list
+#7/#8/#10). NO schema migration (the migration set is pinned identical to
+the Phase 3.5 tip); NO changes to the Downloader 2 runtime, the Builder,
+the resolver, the Stremio Add-on tab (byte-pinned), or any direct
+streaming/embed provider.
+
+Architecture (three additive layers, single sources of truth):
+
+1. PURE VIEW-MODEL — src/lib/shared/cloudstream-integration-manager-view.ts
+   (the cloudstream-download-view.ts pattern applied to the admin
+   manager): §11 search (provider name, internal/source name, repository
+   name); the seven status filters (All/Enabled/Disabled/Compatible/
+   Adapter Required/Runtime Required/Failed — Compatible = an executable
+   adapter exists, ANY enabled state, orthogonal to the enabled/disabled
+   buckets); the three media filters; four deterministic sorts (name/
+   status/enabled/last-tested; tie-break chain internalName → id;
+   last-tested nulls ALWAYS last); pagination (25 rows/page, page
+   clamping, pageCount >= 1 even when empty — "pagination is sufficient",
+   the plan's own note, no virtualization); per-repository + aggregate
+   stats headers in the EXACT §11 example shape (Enabled/Compatible/
+   Adapter Required/Runtime Required/Failed, computed over the RAW
+   catalog, never the filtered subset); the CLOSED §13 presentation
+   (ACTIVE + Last tested, COMPATIBLE + Adapter: Ready(+generated
+   provenance), ADAPTER REQUIRED + Create Adapter, RUNTIME REQUIRED + the
+   not-convertible explanation + NO actions, ADAPTER FAILED + Reason +
+   Retry, BUILDING/TESTING transient); bulk helpers (create-adapter
+   eligibility = adapter_required|failed — "where valid"; chunking at
+   MAX_BULK_IDS=100 shared with the server); the one-call
+   projectIntegrationManager projection. UI and tests import the SAME
+   module (no drift).
+
+2. SERVER SURFACE (additive, admin-gated) — two JSON mutation endpoints
+   following the preview-endpoint security contract verbatim
+   (requireAdmin BEFORE any logic, readJsonBody 256 KiB bound, NO_STORE,
+   UUID-validated ids, the closed error taxonomy, no internals leaked):
+   POST /api/admin/integrations/cloudstream/extensions (setEnabled |
+   setEnabledBulk | createAdapter | testProvider) and
+   /api/admin/integrations/cloudstream/repositories (setEnabled).
+   createAdapter/testProvider reuse the EXACT form-action services —
+   there is no second Builder path; testProvider NEVER contacts the
+   Builder. Responses return the FRESH views so the client patches only
+   affected rows; failure responses still carry the updated row (a failed
+   build legitimately moves the row to failed + lastBuildError inline).
+   extensions/service.ts gained setExtensionsEnabledBulk (ONE update over
+   the id set, <= 100 ids, stale ids ignored, zero-matches = honest
+   NOT_FOUND) + getExtensionViewForAdmin; existing functions untouched.
+
+3. UI — AdminCloudStreamManager.svelte (the only rewritten file): sticky
+   toolbar (search/status/media/repository/sort + direction), stats
+   headers, per-repo stats lines + repository view-filter button,
+   selection model (checkboxes, select-all-FILTERED with indeterminate
+   state, bulk bar with Enable/Disable Selected + Create Adapters (N
+   eligible) + Stop), the sequential bulk create-adapter queue (one
+   bounded request per item, per-item results, stoppable — a single
+   server-side loop would exceed Netlify function limits), §12
+   fetch-based mutations for EVERY toggle (each form KEEPS its SvelteKit
+   action as the no-JS fallback; onsubmit only prevents default when JS
+   runs) with per-row pending + duplicate-click guards + inline errors +
+   aria-busy, §13 chips/notes/actions, the §9 test panel preserved,
+   pagination footer, empty/no-match/error states, mobile + a11y.
+   §12 state model: props + reactive patch maps (SvelteMap) overlaid
+   through $derived — no prop capture, no invalidateAll, no reload; the
+   page's load/action surface is byte-identical (pinned). §12 scope
+   decision (audited): plan §2 problem #8 is explicitly about EXTENSION
+   toggles; the Stremio Add-on tab stays DO-NOT-DISTURB per §1/§15.
+
+Gates: pnpm check 0 errors / 0 warnings; pnpm build PASS (~28.6s); full
+209-command chain = 201 PASS + the 8 documented pre-existing baseline
+failures (PROVEN pre-existing at pristine 434d02b in this environment —
+all 8 re-run with the Phase 4 tree stashed, all 8 fail identically) + 0
+NEW; NEW suite cloudstream_phase4_integration_manager_test (213 checks:
+view-model + bulk service + endpoint behavioral + component contracts +
+vite-SSR mounts on an 84-row catalog + regression pins — registered in
+the pnpm chain under tsconfig.behavioral.json, the $env-stub convention
+so the createAdapter endpoint action proves the unconfigured-Builder
+honest 503 + row revert); Phase 3 offline 208/208; admin UI 161/161 (two
+sanctioned pin evolutions, documented in-file); phase2 195/195; LIVE:
+verify:cloudstream-phase2 12/12, verify:cloudstream-phase3 18/18, and
+the Phase 3.5 deployed-builder chain re-run with the Phase 4 tree
+62/62 (security 19, e2e 26, independence 7, rollback 8, cleanup 2) —
+the verified production integration is NOT regressed. One defect found
+and fixed by the new tests (the enabled-sort comparator direction);
+two CS-1 pins evolved for the sanctioned redesign (net +1 check).
+
+Deferred (unchanged from Phase 3.5, owner actions): the Render
+web-service go-live (workspace billing) + the production Netlify env
+vars. Phase 5 (Full Verification) NOT started — see
+CLOUDSTREAM_MAVERO_WORKLOG.md Session 12 for the complete record.

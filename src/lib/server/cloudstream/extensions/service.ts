@@ -24,6 +24,7 @@ import {
   effectiveMediaTypes,
   executableAdapterForExtension,
 } from '$lib/server/extensions/adapter-registry';
+import { MAX_BULK_IDS } from '$lib/shared/cloudstream-integration-manager-view';
 import type { CloudStreamExtensionView } from '../types';
 import type { ExtensionProviderMetadata } from '$lib/shared/cloudstream-types';
 
@@ -185,6 +186,67 @@ export async function setExtensionEnabled(client: CloudStreamClient, id: unknown
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new CloudStreamRepositoryError('NOT_FOUND', { message: 'Extension not found.' });
+}
+
+/**
+ * Phase 4 (plan §11 bulk operations): enables or disables a BOUNDED batch of
+ * extensions in ONE database round-trip and returns the fresh admin views of
+ * every row that actually changed (the caller patches its local state from
+ * exactly these rows — §12 "invalidate only affected data").
+ *
+ * Bounds and honesty rules:
+ *   * ids: non-empty array, every id UUID-validated (INVALID_ID otherwise),
+ *     at most MAX_BULK_IDS per call (the shared view-model constant — the
+ *     API surface and the UI chunking use the SAME bound).
+ *   * Stale/unknown ids are silently ignored (they simply do not appear in
+ *     the returned views; the caller prunes its selection from the response).
+ *     When NOTHING matched, the honest NOT_FOUND error surfaces instead of a
+ *     silent no-op.
+ *   * The update is ONE statement over the id set — partial DB failures
+ *     throw (no swallowed errors).
+ */
+export async function setExtensionsEnabledBulk(
+  client: CloudStreamClient,
+  ids: readonly unknown[],
+  enabled: boolean,
+): Promise<CloudStreamExtensionView[]> {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new CloudStreamRepositoryError('INVALID_ID', { message: 'At least one extension id is required.' });
+  }
+  if (ids.length > MAX_BULK_IDS) {
+    throw new CloudStreamRepositoryError('INVALID_ID', { message: `Bulk updates accept at most ${MAX_BULK_IDS} extensions per request.` });
+  }
+  const extensionIds = ids.map((id) => validateCloudStreamId(id, 'Extension'));
+
+  const { data, error } = await client
+    .from('cloudstream_extensions')
+    .update({ enabled })
+    .in('id', extensionIds)
+    .select('*');
+  if (error) throw error;
+  const rows = (data ?? []) as unknown as CloudStreamExtensionRow[];
+  if (rows.length === 0) {
+    throw new CloudStreamRepositoryError('NOT_FOUND', { message: 'No matching extensions were found.' });
+  }
+
+  const repoRows = await listRepositoryIdNameRows(client);
+  const repoNames = new Map(repoRows.map((row) => [row.id, row.name]));
+  return rows.map((row) => toExtensionView(row, repoNames.get(row.repository_id) ?? 'Unknown repository'));
+}
+
+/** Loads ONE extension's fresh admin view (post-mutation patch source). */
+export async function getExtensionViewForAdmin(client: CloudStreamClient, id: unknown): Promise<CloudStreamExtensionView | null> {
+  const extensionId = validateCloudStreamId(id, 'Extension');
+  const { data, error } = await client
+    .from('cloudstream_extensions')
+    .select('*')
+    .eq('id', extensionId)
+    .maybeSingle();
+  if (error !== null || data === null) return null;
+  const row = data as unknown as CloudStreamExtensionRow;
+  const repoRows = await listRepositoryIdNameRows(client);
+  const repoName = repoRows.find((repoRow) => repoRow.id === row.repository_id)?.name ?? 'Unknown repository';
+  return toExtensionView(row, repoName);
 }
 
 // ---------------------------------------------------------------------------

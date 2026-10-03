@@ -2906,9 +2906,16 @@ The next agent action is:
 CORRECTION (2026-10-03, Permanent Adapter Plan): the CS-0..CS-6 chain is
 complete and stays frozen; work has CONTINUED under the new
 CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (its own plan, per this
-file's rule). Phase 1 (Core Runtime Reliability + Downloader 2 Fixes)
-is COMPLETE — see the P1 Completion record + Session 8.
-Next: Phase 2 — Unified Permanent Adapter System (not started).
+file's rule). Phases 1 (runtime reliability), 2 (unified permanent
+adapter system), 3 (permanent adapter builder + artifacts + atomic
+promotion), 3.5 (deployed-builder production verification; Render go-live
+deferred to the owner's billing action), and 4 (Integration Manager 2.0 —
+§11 search/filters/sorts/pagination/stats/bulk + §12 no-refresh toggles +
+§13 status vocabulary) are ALL COMPLETE — see the phase records in the
+plan + Sessions 8-12.
+Next: Phase 5 — Full Verification (plan §16), NOT started; awaiting user
+confirmation per the phase-boundary rule. Owner actions outstanding:
+the Render web-service go-live + the production Netlify env vars.
 ```
 
 ------------------------------------------------------------------------
@@ -5284,3 +5291,185 @@ Honest limitations (this session):
   credential exists in this environment.
 - The dedicated Mavero-Adapter-Builder repository remains staged locally
   (PAT cannot create GitHub repositories).
+
+---
+
+## 2026-10-03 — Session 12 (Permanent Adapter Plan — Phase 4: Integration Manager 2.0)
+
+Phase: Phase 4 — Integration Manager 2.0 (plan §11 + §12 + §13).
+
+Starting HEAD: `434d02b` (= origin/main; the Phase 3.5 tip, verified by
+`git rev-parse` + `git status` — clean tracked tree before any change).
+
+Repository state: clean at start; pnpm activated via corepack (10.30.3,
+the packageManager pin); the recurring untracked driver/log files under
+scripts/ untouched.
+
+Plan/worklog read:
+- [x] Plan (CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md, all 1191 lines)
+- [x] Worklog (Sessions 8–11 + Phase Completion Log + conventions)
+- [x] adapter-builder/DEPLOYMENT.md + the Phase 3/3.5 implementation files
+      (adapter-builder/*, extensions/builder/*, extensions/service,
+      AdminCloudStreamManager.svelte, +page.server.ts, the preview endpoint)
+
+Objective: implement ONLY the documented Phase 4 scope — §11 (search,
+status/media/repository filters, deterministic sorting, pagination +
+bounded rendering, per-repository stats headers, bulk operations),
+§12 (no-full-page-refresh/no-scroll-jump extension + repository toggles
+with targeted state updates), §13 (the closed provider-status vocabulary) —
+without touching the Downloader 2 runtime, the Builder, the Stremio tab,
+or any direct streaming provider, and with zero schema migrations.
+
+Work performed (§2 problem list #7/#8/#10 closed):
+- §11 scope decision (audited, not expanded): problem #8 in the plan §2
+  says "Toggling one EXTENSION refreshes the page" — §12 is therefore the
+  Extension-manager contract; the Stremio Add-on tab stays DO-NOT-DISTURB
+  (§1/§15) and its forms/actions are byte-pinned untouched.
+- NEW src/lib/shared/cloudstream-integration-manager-view.ts — the PURE
+  view-model (the cloudstream-download-view.ts architecture applied to the
+  admin manager): search matching (name/internalName/repositoryName), the
+  7 status + 3 media filters with honest bucket semantics (Compatible =
+  executable adapter present, ANY enabled state; enabled/disabled are
+  orthogonal buckets), 4 deterministic sorts with tie-break chains
+  (internalName → id; last_tested nulls ALWAYS last), pagination
+  (INTEGRATION_PAGE_SIZE=25, page clamping), per-repository + aggregate
+  stats (the exact §11 example header shape, computed over the RAW
+  catalog), the §13 providerStatusPresentation closed vocabulary
+  (ACTIVE/COMPATIBLE/ADAPTER REQUIRED/RUNTIME REQUIRED/ADAPTER FAILED +
+  Reason + Retry, with provenance notes), bulk-selection helpers
+  (eligibleForBulkCreateAdapter "where valid", pruneSelection,
+  chunkBulkIds at MAX_BULK_IDS=100), and the one-call
+  projectIntegrationManager projection. One defect found by its own tests
+  and fixed: the enabled-sort comparator direction (desc = enabled-first).
+- NEW server surface (additive, admin-gated, no migrations):
+  POST /api/admin/integrations/cloudstream/extensions
+    (action: setEnabled | setEnabledBulk | createAdapter | testProvider)
+  POST /api/admin/integrations/cloudstream/repositories
+    (action: setEnabled)
+  Both follow the preview-endpoint security contract verbatim:
+  requireAdmin BEFORE any logic, readJsonBody (256 KiB), NO_STORE headers,
+  UUID-validated ids, the closed CloudStreamRepositoryError taxonomy, and
+  classifyAdminMutationError for unknowns (no internals/stack leaks).
+  createAdapter/testProvider reuse the EXACT form-action services
+  (createAdapterForExtension / testExtensionProvider — no parallel
+  orchestration); responses return the FRESH views so the client patches
+  only affected rows; failures still return the updated row view (a
+  failed build legitimately moves the row to 'failed' + lastBuildError).
+- extensions/service.ts (additive): setExtensionsEnabledBulk (ONE update
+  over the id set, ≤ MAX_BULK_IDS per call — the shared view-model
+  constant; stale ids ignored; zero matches = honest NOT_FOUND) and
+  getExtensionViewForAdmin (fresh single-row view for the patch
+  contract). toExtensionView/listExtensionsForAdmin untouched.
+- AdminCloudStreamManager.svelte REWRITTEN (the only rewritten file):
+  sticky §11 toolbar (search + status/media/repository/sort selects +
+  direction toggle), aggregate/repository §11 stats header, per-repository
+  stats lines on every repository card + a repository "view" filter
+  button, §11 selection model (checkboxes + select-all-FILTERED with
+  indeterminate state + bulk bar: Enable/Disable Selected + Create
+  Adapters (N eligible) + Stop), the sequential bulk create-adapter queue
+  (one bounded request per item, per-item results, stoppable, honest
+  not-eligible refusal), §12 fetch-based mutations (every mutation form
+  keeps its action as the NO-JS fallback; onsubmit only preventDefaults
+  when JS runs) with per-row pending (SvelteSet) + duplicate-click guards
+  + inline row errors + aria-busy, §13 status chips/notes/actions from
+  providerStatusPresentation (RUNTIME REQUIRED rows offer NO actions and
+  never an Enable toggle — enabling would be a no-op lie), §9 test panel
+  preserved, pagination footer (Showing X–Y of Z, Page N of M), empty +
+  no-match + load-error states, mobile layout (toolbar un-sticks ≤768px),
+  a11y (aria-labels on every control, role=status/alert, aria-live for
+  progress/notices). State model: props + reactive PATCH MAPS (SvelteMap)
+  overlaid via $derived — no prop capture, no invalidateAll, no reload,
+  SSR renders the pristine server data.
+
+Files changed:
+- src/lib/shared/cloudstream-integration-manager-view.ts (NEW)
+- src/routes/api/admin/integrations/cloudstream/extensions/+server.ts (NEW)
+- src/routes/api/admin/integrations/cloudstream/repositories/+server.ts (NEW)
+- src/lib/server/cloudstream/extensions/service.ts (additive bulk + view)
+- src/lib/components/admin2/AdminCloudStreamManager.svelte (rewritten)
+- scripts/cloudstream_phase4_integration_manager_test.ts (NEW)
+- scripts/cloudstream_admin_ui_test.ts (2 sanctioned pin evolutions,
+  documented in-file: the SHARED-type import pin follows the component's
+  actual contract, and the inline adapter-compatibility literal pin
+  becomes the stronger view-model presentation pin)
+- package.json (the new suite registered in the pnpm test chain,
+  209 commands total)
+- CLOUDSTREAM_MAVERO_WORKLOG.md (this session) +
+  CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (Phase 4 record)
+- NO migrations (pinned: the migration set is identical to 434d02b)
+
+Tests run (all deterministic offline unless marked live):
+- NEW scripts/cloudstream_phase4_integration_manager_test.ts (213 checks,
+  tsconfig.behavioral.json — the $env-stub convention so the createAdapter
+  endpoint action resolves the unconfigured-Builder honest refusal):
+  §A view-model (search/filters/sorts/pagination/stats/§13/bulk/projection),
+  §B bulk service behavioral (fake client), §C endpoint behavioral (auth
+  gate 303, malformed shapes 400/413, bulk bounds, fresh views, the
+  BUILDER_UNAVAILABLE 503 + row revert, testProvider refusals, repository
+  toggle), §D component source contracts (§11/§12/§13, a11y, no server
+  imports, same-orchestration pins), §E vite-SSR runtime mounts (84-row
+  catalog: exactly 25 rows render, Page 1 of 4, stats/toolbar/§13 chips;
+  empty + error states), §F regression pins (byte-identical
+  +page.svelte/+page.server.ts vs 434d02b, resolver/downloader never
+  import the new endpoints or builder-client, migration set identical,
+  endpoint security conventions).
+- pnpm check: 0 errors / 0 warnings.
+- pnpm build: PASS (~28.6s, netlify adapter).
+- Full chain (scripts/p4_full_chain_driver.mjs → scripts/p4_full_chain.log,
+  untracked driver convention): 209 commands = 201 PASS + 8 documented
+  pre-existing baseline failures + 0 NEW.
+- Phase 3 offline suite 208/208; cloudstream_admin_ui_test 161/161;
+  cloudstream_phase2_unified_adapters 195/195.
+- LIVE (production Supabase, untracked creds convention):
+  verify:cloudstream-phase2 12/12; verify:cloudstream-phase3 18/18 (boots
+  the Builder in-process, 12 real links with the Builder stopped);
+  the p35 deployed-builder chain re-run with the Phase 4 tree:
+  security 19 + e2e 26 + independence 7 + rollback 8 + cleanup 2 = 62/62
+  (TOTAL 0) — the Phase 3.5 verified integration is NOT regressed.
+
+Results: every gate GREEN. Baseline honesty: the 8 failing members
+(adult_mode, phase2_repo_hygiene, phase8_accessibility, phase9_* x4,
+phase4_registry_integration) were PROVEN pre-existing at pristine 434d02b
+in THIS environment (all 8 re-run with the Phase 4 tree stashed — all 8
+fail identically); they are unrelated to the CloudStream Permanent Adapter
+Plan (the p35 record's "1 baseline member" reflected its resumed partial
+run; the fresh full run shows the honest 8).
+
+Issues discovered:
+- The enabled-sort comparator direction bug (found + fixed by the §A
+  tests before it could ship).
+- The stale p35 baseline classification (documented above, driver fixed).
+- Nothing else: zero Phase 4 defects found by the deployed-chain re-run.
+
+Decisions:
+- D-P4-1: §12 scope = the Extension manager (plan §2 #8 is explicitly
+  about extension toggles); the Stremio Add-on tab stays untouched
+  (byte-pinned).
+- D-P4-2: pagination (25/page) over virtualization — the plan's own
+  "pagination is sufficient" note; the list is already fully loaded
+  client-side.
+- D-P4-3: bulk Create Adapters runs as a client-driven sequential queue
+  (one bounded request per item with progress + Stop) — a single
+  server-side loop would blow Netlify function limits for 40+ providers;
+  each item goes through the SAME createAdapterForExtension orchestration.
+- D-P4-4: props + reactive patch maps (no local mirror arrays) — the
+  Svelte-5-idiomatic §12 targeted-update model (also removes every
+  prop-capture warning; check 0/0).
+- D-P4-5: RUNTIME REQUIRED rows hide the Enable toggle (§13: they "remain
+  disabled"; enabling would be a resolution no-op).
+- D-P4-6: the CS-1 admin UI test's 2 pins evolved for the sanctioned
+  redesign (documented in-file; +1 net check: 161).
+
+Plan updated: Yes (Phase 4 implementation record appended).
+
+Worklog updated: Yes (this session).
+
+Remaining: none for Phase 4. DEFERRED (owner actions, unchanged from
+Phase 3.5): the Render web-service go-live itself (billing) + the
+production Netlify env vars; the Phase 3.5 deployed-chain re-run here
+covers the full integration proof in the meantime. Phase 5 (Full
+Verification per plan §16) NOT started — awaiting confirmation per the
+phase-boundary rule.
+
+Next action: user confirmation to begin Phase 5, or further Phase 4
+iteration.
