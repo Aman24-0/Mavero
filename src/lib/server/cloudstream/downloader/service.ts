@@ -72,7 +72,10 @@ import type {
 } from '$lib/shared/cloudstream-types';
 import type { MaveroCloudStreamAdapter } from '../types/runtime';
 import type { CloudStreamResolutionGroup, CloudStreamResolutionResult } from '../types/runtime';
-import { lookupCloudStreamAdapterInstance } from '../adapters/registry';
+import {
+  canonicalAdapterKeyForRow,
+  executableAdapterForExtension,
+} from '$lib/server/extensions/adapter-registry';
 import { resolveCloudStream } from '../resolver/service';
 import type { SafeDnsResolver } from '$lib/server/streaming/stremio/ssrf';
 import { CloudStreamDownloaderError, downloaderErrorMessage, failureCategoryToErrorCode } from './errors';
@@ -107,6 +110,9 @@ export type CloudStreamExtensionSelectionRow = {
   name: string | null;
   icon_url: string | null;
   enabled: boolean;
+  /** Phase 2 — the unified catalog carries cloudstream + nuvio rows; only
+   * cloudstream rows can bind a native code adapter (type-aware eligibility). */
+  integration_type: string;
 };
 
 /** Repository rows needed for participation + deterministic ordering. */
@@ -253,6 +259,17 @@ export type EligibleCloudStreamExtension = {
  * Selects the ELIGIBLE extensions for a media type from the catalog:
  * repository enabled AND extension enabled AND adapter registered AND
  * media-type support. Ordered by repository creation order → internal_name.
+ *
+ * PHASE 2 (type-aware + canonical dedup):
+ *   * Adapter binding goes through the unified permanent adapter registry —
+ *     ONLY cloudstream rows bind native code adapters. A Nuvio row whose
+ *     provider id collides with a native adapter id (e.g. 'MoviesDrive')
+ *     is honestly ineligible until a Nuvio adapter exists (Phase 3+).
+ *   * Selection deduplicates by CANONICAL adapter key — the same provider
+ *     registered in multiple enabled repositories resolves exactly once
+ *     (deterministic: repository creation order), so the same adapter never
+ *     burns budget twice. Catalog rows are NOT merged (repository-level
+ *     identity preserved — no premature cross-repo dedup).
  */
 export function selectEligibleExtensions(
   catalog: CloudStreamExtensionCatalog,
@@ -261,11 +278,16 @@ export function selectEligibleExtensions(
   const repoOrder = new Map(catalog.repositories.map((repo, index) => [repo.id, index]));
   const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
   const eligible: EligibleCloudStreamExtension[] = [];
+  const seenCanonicalKeys = new Set<string>();
   for (const row of catalog.extensions) {
     if (!repoEnabled.has(row.repository_id)) continue;
     if (!row.enabled) continue;
-    const adapter = lookupCloudStreamAdapterInstance(row.internal_name);
+    const adapter = executableAdapterForExtension(row);
     if (adapter === null) continue;
+    // Canonical dedup: same provider across repositories resolves once.
+    const canonicalKey = canonicalAdapterKeyForRow(row);
+    if (seenCanonicalKeys.has(canonicalKey)) continue;
+    seenCanonicalKeys.add(canonicalKey);
     if (!adapterSupportsMediaType(adapter, mediaType)) continue;
     eligible.push({ row, adapter, repositoryOrder: repoOrder.get(row.repository_id) ?? 0 });
   }
@@ -449,7 +471,7 @@ async function defaultLoadCatalog(client: CloudStreamClient): Promise<CloudStrea
 
   const { data: extData, error: extError } = await client
     .from('cloudstream_extensions')
-    .select('repository_id, internal_name, name, icon_url, enabled');
+    .select('repository_id, internal_name, name, icon_url, enabled, integration_type');
   if (extError) throw extError;
   const extensions = (extData ?? []) as unknown as CloudStreamExtensionSelectionRow[];
 
@@ -627,7 +649,9 @@ export async function resolveCloudStreamDownloads(
         structured.push({ extensionId: requestedId, code: 'EXTENSION_DISABLED' });
         continue;
       }
-      const adapter = lookupCloudStreamAdapterInstance(row.internal_name);
+      // Phase 2: type-aware binding — a Nuvio row (even one whose id matches
+      // a native adapter) has no executable adapter → ADAPTER_NOT_AVAILABLE.
+      const adapter = executableAdapterForExtension(row);
       if (adapter === null) {
         structured.push({ extensionId: requestedId, code: 'ADAPTER_NOT_AVAILABLE' });
         continue;
@@ -702,7 +726,9 @@ export async function resolveCloudStreamExtensionDownload(
   if (!repoEnabled.has(row.repository_id) || !row.enabled) {
     throw new CloudStreamDownloaderError('EXTENSION_DISABLED', downloaderErrorMessage('EXTENSION_DISABLED'));
   }
-  const adapter = lookupCloudStreamAdapterInstance(row.internal_name);
+  // Phase 2: type-aware binding — a Nuvio row (even one whose id matches a
+  // native adapter) has no executable adapter → ADAPTER_NOT_AVAILABLE.
+  const adapter = executableAdapterForExtension(row);
   if (adapter === null) {
     throw new CloudStreamDownloaderError('ADAPTER_NOT_AVAILABLE', downloaderErrorMessage('ADAPTER_NOT_AVAILABLE'));
   }

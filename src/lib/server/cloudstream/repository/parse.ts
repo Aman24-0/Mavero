@@ -34,6 +34,7 @@
  */
 
 import { CloudStreamRepositoryError } from './errors';
+import { canonicalMediaTypeFromTvType } from '$lib/server/extensions/nuvio';
 import type {
   CloudStreamPluginListEntry,
   NormalizedCloudStreamExtension,
@@ -179,8 +180,11 @@ export function parseRepositoryIndex(body: unknown): ParsedCloudStreamRepository
 
   const rawLists = doc['pluginLists'];
   // Missing pluginLists → valid repository with ZERO extensions (plan §40.3).
+  // (Phase 2 note: the repository service dispatcher detects the Nuvio
+  // `scrapers` signature BEFORE this parser runs, so this branch only ever
+  // sees genuine CloudStream-shaped documents.)
   if (rawLists === undefined || rawLists === null) {
-    return { name: name ?? 'Unnamed repository', description, iconUrl, pluginLists: [] };
+    return { name: name ?? 'Unnamed repository', description, iconUrl, integrationType: 'cloudstream', pluginLists: [] };
   }
   if (!Array.isArray(rawLists)) {
     throw new CloudStreamRepositoryError('INVALID_REPOSITORY', { message: 'The CloudStream repository pluginLists must be a list.' });
@@ -215,7 +219,7 @@ export function parseRepositoryIndex(body: unknown): ParsedCloudStreamRepository
     pluginLists.push({ name: null, url: pluginsUrl });
   }
 
-  return { name: name ?? 'Unnamed repository', description, iconUrl, pluginLists };
+  return { name: name ?? 'Unnamed repository', description, iconUrl, integrationType: 'cloudstream', pluginLists };
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +291,13 @@ export function parsePluginList(body: unknown): NormalizedCloudStreamExtension[]
     const key = internalName.toLowerCase();
     if (seen.has(key)) continue; // duplicate internalName in one document → first wins
     seen.add(key);
+    // Phase 2: canonical media support derived from the TvType enum names
+    // (the same derivation the live view uses — one source of truth).
+    const mediaTypes: Array<'movie' | 'tv'> = [];
+    for (const tvType of boundedTvTypes(plugin['tvTypes'])) {
+      const canonical = canonicalMediaTypeFromTvType(tvType);
+      if (canonical !== null && !mediaTypes.includes(canonical)) mediaTypes.push(canonical);
+    }
     normalized.push({
       internalName,
       name: boundedString(plugin['name'], EXTENSION_NAME_MAX),
@@ -306,6 +317,12 @@ export function parsePluginList(body: unknown): NormalizedCloudStreamExtension[]
       fileHash: boundedString(plugin['fileHash'], FILE_HASH_MAX),
       fileSizeBytes: boundedInt(plugin['fileSize']),
       sourceUrl: boundedUrl(plugin['repositoryUrl']),
+      // Phase 2 — unified Extension catalog fields (CloudStream defaults).
+      integrationType: 'cloudstream',
+      mediaTypes,
+      moduleUrl: null,
+      versionText: null,
+      providerMetadata: null,
     });
   }
   return normalized;

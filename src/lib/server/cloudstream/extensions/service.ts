@@ -19,7 +19,13 @@ import type { Database } from '$lib/server/supabase/database.types';
 import { CloudStreamRepositoryError } from '../repository/errors';
 import { validateCloudStreamId } from '../repository/ids';
 import { deriveAdapterStatus, lookupCloudStreamAdapter } from '../adapters/registry';
+import {
+  deriveOperationalAdapterState,
+  effectiveMediaTypes,
+  executableAdapterForExtension,
+} from '$lib/server/extensions/adapter-registry';
 import type { CloudStreamExtensionView } from '../types';
+import type { ExtensionProviderMetadata } from '$lib/shared/cloudstream-types';
 
 type CloudStreamClient = SupabaseClient<Database>;
 
@@ -45,6 +51,15 @@ export type CloudStreamExtensionRow = {
   adapter_status: string;
   mavero_adapter_id: string | null;
   adapter_version: string | null;
+  // Phase 2 — unified Extension catalog columns.
+  integration_type: string;
+  media_types: string[] | null;
+  adapter_state: string;
+  provider_metadata: Record<string, unknown> | null;
+  module_url: string | null;
+  version_text: string | null;
+  last_tested_at: string | null;
+  last_test_error: string | null;
   last_checked_at: string | null;
   last_error: string | null;
   created_at: string;
@@ -53,13 +68,16 @@ export type CloudStreamExtensionRow = {
 
 /** Maps a database row into the safe admin view model (with repository name). */
 export function toExtensionView(row: CloudStreamExtensionRow, repositoryName: string): CloudStreamExtensionView {
-  // CS-2: adapter compatibility is re-derived LIVE from the code-owned
-  // registry (same deriveAdapterStatus precedence used at sync time) so the
-  // Extension tab reflects REAL adapter support without requiring a
-  // repository re-sync. The persisted row values remain the sync-time
-  // snapshot (plan §40.6 — AC-003).
-  const liveStatus = deriveAdapterStatus(row.internal_name, row.plugin_status);
-  const liveAdapter = lookupCloudStreamAdapter(row.internal_name);
+  const integrationType = row.integration_type === 'nuvio' ? 'nuvio' : 'cloudstream';
+  // CS-2 + Phase 2: adapter compatibility is re-derived LIVE (same
+  // precedence used at sync time) so the Extension tab reflects REAL adapter
+  // support without requiring a repository re-sync. Derivation is TYPE-AWARE:
+  // a Nuvio row never binds the CloudStream code registry (a Nuvio provider
+  // whose id matches a native adapter honestly stays adapter_required).
+  const liveStatus = integrationType === 'nuvio'
+    ? 'adapter_required' as const
+    : deriveAdapterStatus(row.internal_name, row.plugin_status);
+  const liveAdapter = executableAdapterForExtension(row);
   return {
     id: row.id,
     repositoryId: row.repository_id,
@@ -86,7 +104,38 @@ export function toExtensionView(row: CloudStreamExtensionRow, repositoryName: st
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // ---- Phase 2 — unified Extension catalog / registry fields ----
+    integrationType,
+    mediaTypes: effectiveMediaTypes(row),
+    adapterState: deriveOperationalAdapterState(row, row.adapter_state),
+    moduleUrl: row.module_url,
+    versionText: row.version_text,
+    providerMetadata: sanitizeProviderMetadata(row.provider_metadata),
+    lastTestedAt: row.last_tested_at,
+    lastTestError: row.last_test_error,
   };
+}
+
+/** Projects the bounded stored provider_metadata onto the safe view shape. */
+function sanitizeProviderMetadata(
+  metadata: Record<string, unknown> | null,
+): ExtensionProviderMetadata | null {
+  if (metadata === null || typeof metadata !== 'object') return null;
+  const view: ExtensionProviderMetadata = {};
+  if (Array.isArray(metadata['formats'])) {
+    view.formats = (metadata['formats'] as unknown[]).filter((f): f is string => typeof f === 'string').slice(0, 20);
+  }
+  if (Array.isArray(metadata['contentLanguage'])) {
+    view.contentLanguage = (metadata['contentLanguage'] as unknown[]).filter((f): f is string => typeof f === 'string').slice(0, 10);
+  }
+  if (typeof metadata['limited'] === 'boolean') view.limited = metadata['limited'];
+  if (typeof metadata['manifestEnabled'] === 'boolean') view.manifestEnabled = metadata['manifestEnabled'];
+  if (Array.isArray(metadata['types'])) {
+    view.types = (metadata['types'] as unknown[]).filter((f): f is string => typeof f === 'string').slice(0, 20);
+  }
+  if (typeof metadata['filename'] === 'string') view.filename = metadata['filename'];
+  if (typeof metadata['manifestUrl'] === 'string') view.manifestUrl = metadata['manifestUrl'];
+  return Object.keys(view).length > 0 ? view : null;
 }
 
 /**

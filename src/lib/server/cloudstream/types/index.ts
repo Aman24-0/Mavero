@@ -20,6 +20,11 @@ export type {
   CloudStreamExtensionView,
   CloudStreamExtensionPreview,
   CloudStreamRepositoryPreview,
+  ExtensionIntegrationType,
+  ExtensionMediaType,
+  PermanentAdapterState,
+  AdapterOperationalState,
+  ExtensionProviderMetadata,
 } from '$lib/shared/cloudstream-types';
 
 // CS-2 adapter-runtime contracts (plan §40.3 finalized / §40.6 — AC-003).
@@ -97,7 +102,12 @@ export type CloudStreamPluginListEntry = {
 // Normalized catalog models (parser output / DB persistence shape)
 // ---------------------------------------------------------------------------
 
-/** Sanitized extension metadata normalized from plugins.json entries. */
+/**
+ * Sanitized extension metadata normalized from plugins.json entries.
+ * (Permanent Adapter Plan Phase 2: the SAME normalized shape carries BOTH
+ * integration types — Nuvio providers are mapped onto it by the repository
+ * service, so one reconcile path writes the unified catalog.)
+ */
 export type NormalizedCloudStreamExtension = {
   internalName: string;
   name: string | null;
@@ -118,13 +128,32 @@ export type NormalizedCloudStreamExtension = {
   fileSizeBytes: number | null;
   /** Upstream source repository URL (inert metadata). */
   sourceUrl: string | null;
+  // ---------------------------------------------------------------------
+  // Phase 2 — unified Extension catalog fields (Nuvio + CloudStream).
+  // ---------------------------------------------------------------------
+  /** Which integration produced this normalized entry. */
+  integrationType: 'cloudstream' | 'nuvio';
+  /** Canonical media support ('movie' | 'tv'; empty = none known). */
+  mediaTypes: Array<'movie' | 'tv'>;
+  /** Nuvio provider JS module URL — METADATA ONLY, never fetched/executed. */
+  moduleUrl: string | null;
+  /** String provider version (Nuvio '1.1.1'); null for CloudStream plugins. */
+  versionText: string | null;
+  /** Bounded type-specific manifest metadata (Nuvio formats/contentLanguage/…). */
+  providerMetadata: Record<string, unknown> | null;
 };
 
-/** Parsed repository index + resolved plugin-list URLs. */
+/**
+ * Parsed repository index + resolved plugin-list URLs.
+ * (Phase 2: `integrationType` records which manifest schema produced this —
+ * 'nuvio' means the extensions came from the manifest itself and
+ * pluginLists is empty.)
+ */
 export type ParsedCloudStreamRepository = {
   name: string;
   description: string | null;
   iconUrl: string | null;
+  integrationType: 'cloudstream' | 'nuvio';
   pluginLists: Array<{ name: string | null; url: string }>;
 };
 

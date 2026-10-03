@@ -6,8 +6,9 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CONTINUED — Permanent Adapter Plan Phase 1 COMPLETE (runtime
-reliability + Downloader 2 fixes; CS-0..CS-6 history below)
+**Status:** CONTINUED — Permanent Adapter Plan Phase 2 COMPLETE (unified
+permanent adapter system + Nuvio extension catalog; Phase 1 runtime
+reliability + Downloader 2 fixes COMPLETE; CS-0..CS-6 history below)
 
 ------------------------------------------------------------------------
 
@@ -2629,6 +2630,147 @@ per the plan, later phases cover the adapter registry/lifecycle,
 Nuvio, the Builder, and the Integration Manager redesign).
 ```
 
+## P2 Completion (Permanent Adapter Plan — Phase 2)
+
+``` text
+Date: 2026-10-03
+Plan: CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md §4 (Phase 2)
+HEAD/commit: 96d87c6 (start, = origin/main, Phase 1 present) → the
+"feat: unified permanent adapter system + nuvio extension catalog
+(Phase 2)" commit (SHA recorded below; pushed to origin/main)
+Status: COMPLETE (architecture/registration/readiness only — the Phase 3
+Builder was NOT started; no Render/Oracle dependency exists anywhere)
+
+Audit findings (full detail in the Session 9 entry): the CS-1 catalog
+(two tables, admin-only RLS, no public read) had NO integration-type /
+lifecycle / registry columns; the "Nuvio manifest → 0 extensions" root
+cause = parseRepositoryIndex requires pluginLists (a scrapers[] manifest
+parses as a valid-empty CloudStream repository); Nuvio schema verified
+live against three real repos (phisher98/phisher-nuvio-providers,
+LiquidBromineOxide/All-in-One-Nuvio, Gowaru/gowaru-nuvio-providers);
+IDENTITY-CONFLATION HAZARD found in the Downloader 2 selection (binding
+by internal_name only — a Nuvio provider whose id matches a native
+adapter would silently ride it).
+
+Architecture delivered:
+- ONE unified Extension catalog (same two tables, same Integrations →
+  Extension tab, same admin actions) with integration_type
+  ('cloudstream'|'nuvio', default cloudstream — every pre-Phase-2 row
+  unchanged), canonical media_types, persisted adapter_state
+  (native|generated|adapter_required|runtime_required|failed|building|
+  testing — the last three are Phase 3 Builder states, set by NOTHING in
+  Phase 2), provider_metadata (bounded 8 KiB), module_url (Nuvio JS
+  module — METADATA ONLY, never fetched/executed), version_text,
+  last_tested_at/last_test_error (Phase 3 validation facts, all null).
+- Generic schema-signature dispatch in discoverRepository:
+  pluginLists present → CloudStream path byte-identical; scrapers array →
+  Nuvio manifest path (ONE fetch, providers from the manifest itself —
+  "0 extensions" is gone); scrapers non-array → INVALID_REPOSITORY;
+  neither → valid-empty CloudStream (unchanged).
+- Unified permanent adapter registry
+  (src/lib/server/extensions/adapter-registry.ts): canonical identity
+  `${type}:${provider key}`; TYPE-AWARE executable binding (only
+  cloudstream rows bind native code adapters — a Nuvio 'MoviesDrive'
+  row stays adapter_required); lifecycle state machine with an honest
+  BUILDER_UNAVAILABLE refusal for every CREATE_ADAPTER/BUILDING/TESTING
+  transition (no pretense, no Render/Oracle call, no generated adapter);
+  registry index (duplicate canonical keys collapse deterministically —
+  first by repository creation order).
+- Downloader 2 eligibility now routes through the registry: type-aware
+  binding (the conflation hazard is closed) + canonical dedup (the same
+  provider in multiple enabled repositories resolves exactly once);
+  behavior for cloudstream rows byte-identical (pinned by tests).
+- Admin data contract: view models carry integrationType, mediaTypes,
+  adapterState (derived operational active/disabled), moduleUrl,
+  versionText, formats/contentLanguage metadata, lastTestedAt,
+  lastTestError; small UI additions (type chip, adapter-state badge,
+  Nuvio-aware copy) — NO Integration Manager redesign (Phase 4).
+
+Migration: 20261101000002_extension_phase2_unified_adapters.sql —
+ADDITIVE + IDEMPOTENT (add column if not exists ×9, one index, an
+adapter_state backfill UPDATE over cloudstream_extensions ONLY).
+Applied to LIVE Supabase + tracker entry 20261101000002 (33 entries);
+re-run verified no-op; column existence + backfill verified live
+(87 adapter_required → adapter_required, 4 compatible → native,
+1 unsupported → runtime_required; all integration_type cloudstream);
+RLS/policies/grants untouched; download_providers never referenced.
+
+Files changed (13 tracked + 7 new):
+- NEW supabase/migrations/20261101000002_extension_phase2_unified_adapters.sql
+- NEW src/lib/server/extensions/nuvio.ts (detection + parsing + identity)
+- NEW src/lib/server/extensions/adapter-registry.ts (unified registry)
+- NEW src/lib/shared/extension-adapter-types.ts (shared type contracts)
+- NEW scripts/cloudstream_phase2_unified_adapters_test.ts (195 checks)
+- NEW scripts/cloudstream_phase2_live_smoke.ts (real-manifest smoke,
+  registered as verify:cloudstream-phase2)
+- src/lib/server/cloudstream/repository/{service,parse}.ts (dispatch +
+  unified column writes + type-aware status derivation)
+- src/lib/server/cloudstream/extensions/service.ts (type-aware live
+  view derivation + new fields)
+- src/lib/server/cloudstream/downloader/service.ts (type-aware +
+  canonical-dedup selection through the registry)
+- src/lib/server/cloudstream/types/index.ts, src/lib/shared/
+  cloudstream-types.ts, src/lib/server/supabase/database.types.ts
+  (unified contracts + new columns)
+- src/lib/components/admin2/AdminCloudStreamManager.svelte +
+  src/routes/admin/system/integrations/+page.svelte (type chip,
+  adapter-state badge, Nuvio-aware copy — minimal)
+- package.json (test chain + verify script); regression pins evolved
+  (cloudstream_runtime_test fixture +2 checks; cloudstream_
+  registry_integration_test §A10/§F5 sanctioned Phase 2 diffs, 152)
+
+Tests:
+- cloudstream_phase2_unified_adapters_test — 195 checks PASSED
+  (detection precedence, provider extraction/metadata/media parsing,
+  malformed/empty/invalid/duplicate manifests, module URL rules,
+  registry canonical identity + type-aware binding + lifecycle model +
+  honest Builder refusal, duplicate registration prevention, enable/
+  disable operational states, Nuvio service integration (fake client),
+  fetch-call contract (manifest only — JS never fetched), CloudStream
+  path unchanged, mixed-catalog eligibility, explicit Nuvio selection →
+  ADAPTER_NOT_AVAILABLE, SSRF/protocol/size/JSON security, static
+  no-eval/new-Function/Render/Oracle pins, migration additivity pins)
+- cloudstream_phase2_live_smoke — 12 checks PASSED against the REAL
+  repos: phisher-nuvio-providers 49 providers, All-in-One-Nuvio 61
+  providers (both were "0 extensions" pre-Phase 2), all honestly
+  adapter_required with canonical media types
+- All 12 CloudStream suites re-run GREEN: parse 78 + sync 113 +
+  admin_ui 160 + runtime 103 + extractors 50 + adapters 39 + resolver 37
+  + downloader_api 144 + downloader_ui 170 + registry 152 + phase1 38 +
+  phase2 195
+- pnpm check: 0 errors, 0 warnings
+- pnpm build: PASS (~31s, vite + adapter-netlify)
+- Full chain (p2_full_chain_driver, 207 commands): 199 PASS + the 8
+  documented pre-existing baseline failures (identical set) + 0 NEW
+
+Security: the Nuvio manifest is fetched ONLY through the existing
+SSRF-safe pipeline (URL validation, DNS + connect-time re-validation,
+≤3 redirects, 10s/1MiB, JSON-only — inherited, not duplicated); the
+provider JS module URL is stored as inert metadata and NEVER fetched or
+executed (fetch-call contract test); no eval/new Function/shell/Render/
+Oracle anywhere (static pins); Phase 1 deadline/cancellation behavior
+untouched (phase1 suite 38 GREEN; the resolver/runtime files were not
+modified); RLS/admin authorization preserved; Stremio addons, direct
+streaming providers, Mavero Downloader 1 and the download_providers
+registry untouched (§F pins GREEN).
+
+Known limitations (documented, not defects):
+- Nuvio providers are CATALOG-ONLY in Phase 2: no Nuvio JS is ever
+  executed, so a Nuvio extension can never resolve links until Phase 3
+  generates a permanent adapter (honest ADAPTER_NOT_AVAILABLE).
+- 'generated'/'failed'/'building'/'testing' adapter states exist in the
+  model/migration but NOTHING writes them in Phase 2 (no Builder).
+- Cross-repository LINK deduplication (plan §10) is deferred to a later
+  phase (per the Phase 2 scope boundary); only adapter-IDENTITY dedup at
+  resolution is implemented.
+- The 4 pre-existing adapter_status vocabulary remains alongside
+  adapter_state (UI + test compatibility; documented mapping).
+
+Next phase: Phase 3 — Adapter Builder Service (NOT started; Render/
+Oracle Builder, generated-adapter execution, and validation flows all
+belong there per the plan's phase discipline).
+```
+
 ------------------------------------------------------------------------
 
 # Daily / Session Log
@@ -3717,3 +3859,273 @@ the P1 Completion record at commit time).
 
 Next action: STOP at Phase 1 completion — Phase 2 (Unified Permanent
 Adapter System) has NOT been started, per the plan's phase discipline.
+
+------------------------------------------------------------------------
+
+## 2026-10-03 — Session 9 (Permanent Adapter Plan — Phase 2: Unified Permanent Adapter System)
+
+Phase: Phase 2 of `CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md` (unified
+permanent adapter architecture, adapter registry/lifecycle,
+CloudStream/Nuvio extension modeling, Nuvio manifest/provider detection).
+Phase 3 (Builder), Phase 4 (Integration Manager 2.0) and Phase 5 are NOT
+started; Render/Oracle are NOT involved.
+
+Starting HEAD: `96d87c6` (= origin/main; Phase 1 present — verified:
+15 files, runtime deadlines + bounded loading + phase1 reliability suite).
+Working tree: restored the recurring 13-file upload-feature deletions
+(session-1 convention) before any gate run; remaining noise is mode-bit
+only (0 tracked content changes — `git diff --numstat`).
+
+Plan/worklog read:
+- [x] CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (all 983 lines, incl.
+      the Phase 1 implementation record)
+- [x] Worklog P1 Completion + Session 8 + conventions
+
+STEP 1 — read-only audit findings (schema, services, registry, resolver,
+downloader selection, admin UI, integration model, migrations):
+
+SCHEMA (verified against migrations + database.types.ts, not assumed):
+- `cloudstream_repositories` (20261101000000_cloudstream_cs1.sql):
+  id/name/url(unique)/description/icon_url/enabled/status
+  (active|disabled|error|invalid)/last_synced_at/last_checked_at/
+  last_error/timestamps. RLS admin-only CRUD, anon revoked, NO public
+  read (server-side reads via admin client only).
+- `cloudstream_extensions` (same migration): repository_id (FK cascade) +
+  internal_name UNIQUE(repository_id, internal_name); name/version(int)/
+  api_version/description/authors[]/language/tv_types[] (CloudStream
+  TvType enum NAMES)/plugin_url (.cs3 METADATA ONLY — never fetched)/
+  plugin_status(1-3)/icon_url/file_hash/file_size_bytes/source_url/
+  enabled/adapter_status(compatible|adapter_required|unsupported|broken)/
+  mavero_adapter_id/adapter_version/last_checked_at/last_error.
+  'disabled' is NOT persisted — DERIVED from `enabled` at display time
+  (no dual-source state drift, CS-1 convention).
+- `download_providers` (CS-5, 20261101000001): 'mavero-downloader-2'
+  slug row registered; untouched by Phase 2.
+- NO adapter-registry/lifecycle/integration-type columns exist anywhere
+  yet — the Phase 2 migration is genuinely required (no duplication).
+
+CODE (verified at HEAD):
+- Code-owned adapter registry (adapters/registry.ts): 3 native instances
+  (Bollyflix, MoviesDrive, VegaMovies); lookup by internalName
+  case-insensitive; deriveAdapterStatus(internalName, pluginStatus) →
+  compatible/adapter_required/unsupported/broken.
+- Repository pipeline: service.discoverRepository → fetchCloudStreamJson
+  (SSRF-safe: URL validation, DNS resolve+connect re-validation, ≤3
+  redirects, 10s/1MiB, JSON-only) → parseRepositoryIndex (CS.json →
+  pluginLists ≤4) → parsePluginList (≤500 ext, internalName dedupe).
+- NUVIO ROOT CAUSE (the "0 extensions" problem): a Nuvio manifest has
+  `scrapers[]` and NO `pluginLists` → parseRepositoryIndex returns a
+  VALID repository with ZERO plugin lists → repository saved ACTIVE with
+  0 extensions. Honest but useless — the schema was never recognized.
+- Nuvio manifest schema VERIFIED against three live repos
+  (phisher98/phisher-nuvio-providers, LiquidBromineOxide/All-in-One-Nuvio,
+  Gowaru/gowaru-nuvio-providers — fetched during this audit, not
+  hard-coded): root { name, version, scrapers[] }; scraper
+  { id, name, description?, version (STRING e.g. "1.1.1"), author
+  (STRING), supportedTypes: ["movie"|"tv"|"anime"], filename (RELATIVE
+  JS module path), enabled (self-reported), formats?, logo?,
+  contentLanguage?, limited? }. Schema is generic/stable — detection by
+  signature (scrapers array), NOT by repository URL.
+- Extension admin ops (extensions/service.ts): listExtensionsForAdmin
+  (LIVE re-derivation of adapter status from the code registry),
+  setExtensionEnabled. Admin actions in
+  /admin/system/integrations/+page.server.ts (?tab=addon|extension — the
+  unified Integrations IA already exists: Add-on = Stremio, Extension =
+  CloudStream; Nuvio joins the SAME Extension tab, no new navigation).
+- Downloader 2 eligibility (downloader/service.ts): row exists AND
+  repository enabled AND extension enabled AND
+  lookupCloudStreamAdapterInstance(internal_name) AND media support.
+  IDENTITY-CONFLATION HAZARD found: eligibility binds by internal_name
+  ONLY — a Nuvio provider row whose id collides with a native adapter
+  (e.g. MoviesDrive exists as a Nuvio scraper id) would silently ride
+  the CloudStream native adapter. Phase 2 MUST make binding type-aware.
+- Phase 1 verified intact at HEAD (budgets 30s/40s/≤4; deadline race;
+  signal propagation; UI safety nets) — Phase 2 must not regress it.
+
+DESIGN (fixed before implementation — additive + surgical):
+- D-P2-1 Unified catalog: Nuvio manifests are added through the SAME
+  Extension tab into the SAME cloudstream_repositories/extensions tables
+  with a new `integration_type` ('cloudstream'|'nuvio', default
+  'cloudstream'). No new tables, no second management system, no
+  top-level Nuvio navigation. Stremio Add-on untouched.
+- D-P2-2 Generic detection precedence in discoverRepository:
+  pluginLists present → CloudStream path (byte-identical behavior);
+  else scrapers array → Nuvio path; else scrapers non-array →
+  INVALID_REPOSITORY; else → valid-empty CloudStream (unchanged).
+- D-P2-3 Nuvio normalization: id→internal_name (unique per repo, dedupe
+  first-wins); version string→version_text; author→authors[0];
+  supportedTypes→media_types (canonical movie/tv; anime→tv; raw types in
+  provider_metadata); filename→module_url (resolved vs manifest URL,
+  http(s) only, METADATA ONLY — never fetched); formats/contentLanguage/
+  limited/self-enabled→provider_metadata (bounded 8KiB JSON); logo→
+  icon_url; manifest enabled NEVER writes the DB enabled flag (admin
+  switch, starts false, preserved across syncs — CS-1 convention).
+- D-P2-4 Canonical identity: `${type}:${lowercased provider key}`
+  (cloudstream:bollyflix / nuvio:moviesdrive). Row identity stays
+  (repository_id, internal_name) — same provider in multiple repos =
+  multiple distinguishable rows, ONE canonical key; registry lookup
+  dedupes at resolution level (deterministic repo-creation order);
+  catalog never prematurely merges. Native binding is TYPE-AWARE:
+  only cloudstream rows bind to the code registry (a Nuvio MoviesDrive
+  row stays adapter_required until a Nuvio adapter exists).
+- D-P2-5 Lifecycle: persisted `adapter_state` CHECK (native|generated|
+  adapter_required|runtime_required|failed|building|testing — building/
+  testing are Phase-3 builder states, set by NOTHING in Phase 2).
+  Display-level operational states add active|disabled DERIVED from
+  `enabled` (CS-1 no-dual-source convention preserved). Existing
+  adapter_status vocabulary stays untouched (UI + tests depend on it).
+- D-P2-6 Unified registry module
+  (src/lib/server/extensions/adapter-registry.ts — new umbrella domain):
+  canonical key computation, lookup by canonical identity, type-aware
+  executable-adapter binding (cloudstream native ONLY in Phase 2;
+  nuvio/generated → null), lifecycle state machine (CREATE_ADAPTER/
+  BUILDING/TESTING transitions exist in the model but refuse with
+  BUILDER_UNAVAILABLE — no Render/Oracle call, no pretense), and the
+  eligibility facade the Downloader 2 selection routes through.
+- D-P2-7 Admin data contract (view models gain fields, no redesign):
+  integrationType, mediaTypes, adapterState, moduleUrl, versionText,
+  formats, contentLanguage, lastTestedAt, lastTestError. Small UI
+  additions: CloudStream/Nuvio type chip + adapter-state label.
+- D-P2-8 One additive idempotent migration
+  (20261101000002_extension_phase2_unified_adapters.sql):
+  repositories.integration_type; extensions.integration_type/
+  media_types/adapter_state/provider_metadata/module_url/version_text/
+  last_tested_at/last_test_error + adapter_state backfill from
+  adapter_status + index (integration_type, adapter_state). RLS/policies/
+  grants untouched.
+- D-P2-9 Security: Nuvio manifest fetched ONLY through the existing
+  SSRF-safe fetchCloudStreamJson pipeline; provider JS NEVER fetched or
+  executed (module_url is metadata; fetch-call contract test); no
+  eval/new Function; bounded parsing everywhere.
+- D-P2-10 Downloader 2 selection becomes type-aware via the registry
+  facade — behavior for cloudstream rows byte-identical (pinned by
+  tests); Nuvio rows never bind native adapters; resolution dedupes
+  per canonical adapter key (same adapter never runs twice).
+
+Status: IN PROGRESS — implementation begins after this entry.
+
+Implementation performed (after the audit/design above):
+
+- Migration 20261101000002_extension_phase2_unified_adapters.sql:
+  additive + idempotent (9 × `add column if not exists` across both
+  catalog tables, 1 index, adapter_state backfill derived from the
+  adapter_status snapshot). Applied to LIVE Supabase via the Management
+  API; tracker entry 20261101000002 registered (33 entries); re-run
+  verified as a no-op; live column + backfill verification: 87
+  adapter_required, 4 → native, 1 → runtime_required, all rows
+  integration_type cloudstream. RLS/policies/grants/anon-revoke
+  untouched; download_providers never referenced.
+- src/lib/server/extensions/nuvio.ts (NEW): schema-signature detection
+  (detectExtensionManifestKind with the fixed precedence:
+  pluginLists > scrapers-array > malformed-scrapers > unknown), Nuvio
+  manifest parsing (parseNuvioManifest — id-required entries, malformed
+  skipped+counted, case-insensitive in-manifest dedupe, 500-provider
+  cap), canonical media-type mapping (movie; tv/series/anime → tv),
+  module-URL resolution (http(s) only, METADATA ONLY), and the bounded
+  provider_metadata builder (8 KiB guard, extensible fields).
+- src/lib/server/extensions/adapter-registry.ts (NEW): canonical
+  adapter key (`${type}:${provider key}`), TYPE-AWARE executable
+  binding (executableAdapterForExtension — defensive: anything not
+  explicitly 'nuvio' behaves as cloudstream), persisted lifecycle
+  derivation (deriveAdapterState: live native > plugin DOWN/BROKEN →
+  runtime_required > persisted generated/failed > adapter_required),
+  operational projection (deriveOperationalAdapterState: native/
+  generated + enabled → active/disabled — 'active'/'disabled' are
+  NEVER persisted, the CS-1 no-dual-source convention), the lifecycle
+  state machine (adapter_required→building→testing→generated/failed,
+  failed→building; native/runtime_required terminal) with
+  requestCreateAdapterTransition REFUSING everything via
+  BUILDER_UNAVAILABLE (Phase 3 entry point, zero pretense), the
+  registry index (buildRegistryIndex — one entry per canonical key,
+  deterministic first-row-wins) + canonical lookup.
+- repository/service.ts: discoverRepository dispatches by manifest
+  schema (CloudStream path byte-identical); the Nuvio path maps
+  providers onto the SAME normalized extension shape (toNuvioExtension:
+  id→internal_name, string version→version_text, author→authors[0],
+  contentLanguage[0]→language, logo→icon_url, manifestUrl→source_url,
+  moduleUrl/providerMetadata on their own columns, plugin_status null);
+  reconcileExtensions writes the unified columns for BOTH types; the
+  repository row records integration_type; deriveAdapterStatusFor
+  Extension keeps the legacy adapter_status TYPE-AWARE (Nuvio rows are
+  honestly adapter_required — a provider id matching a native adapter
+  never claims 'compatible').
+- extensions/service.ts: type-aware LIVE view derivation (Nuvio rows
+  never bind the code registry; maveroAdapterId/adapterVersion stay
+  null) + the Phase 2 view fields (integrationType, mediaTypes via
+  effectiveMediaTypes, adapterState via deriveOperationalAdapterState,
+  moduleUrl, versionText, bounded sanitizeProviderMetadata projection,
+  lastTestedAt/lastTestError).
+- downloader/service.ts: CloudStreamExtensionSelectionRow gains
+  integration_type (catalog select updated); selectEligibleExtensions,
+  the explicit-selection path, and resolveCloudStreamExtensionDownload
+  all bind through executableAdapterForExtension (type-aware — the
+  identity-conflation hazard is closed); selection dedupes by canonical
+  adapter key (same provider across repositories resolves once,
+  deterministic repo-creation order; catalog rows NOT merged).
+- Shared contracts: extension-adapter-types.ts (NEW) + cloudstream-types
+  .ts view/preview extensions + database.types.ts new columns +
+  cloudstream/types re-exports. Admin UI: type chip + adapter-state
+  badge + Nuvio-aware copy (minimal, NO redesign).
+- Tests: cloudstream_phase2_unified_adapters_test.ts (NEW — 195
+  checks), cloudstream_phase2_live_smoke.ts (NEW — 12 checks against
+  the real phisher98 + All-in-One manifests, registered as verify:
+  cloudstream-phase2); runtime test fixture evolved for the new columns
+  (+2 checks → 103); registry integration pins §A10 (two sanctioned
+  migrations, Phase 2 never touches download_providers) + §F5 (the ONLY
+  removed lines are the exact 5 legacy lookup lines) evolved → 152.
+
+Gates (all GREEN):
+- pnpm check: 0 errors, 0 warnings.
+- pnpm build: PASS (~31s, vite + adapter-netlify).
+- pnpm test full chain (p2_full_chain_driver, 207 commands): 199 PASS +
+  the identical 8 documented pre-existing baseline failures + 0 NEW
+  failures.
+- CloudStream suites: parse 78, sync 113, admin_ui 160, runtime 103,
+  extractors 50, adapters 39, resolver 37, downloader_api 144,
+  downloader_ui 170, registry 152, phase1 38, phase2 195 — ALL GREEN.
+- Live smoke (real network): phisher-nuvio-providers → 49 providers,
+  All-in-One-Nuvio → 61 providers, all nuvio-typed, all honestly
+  adapter_required, canonical media types derived. The pre-Phase-2
+  behavior for these manifests was "0 extensions".
+
+Verification checklist (Phase 2, all boxes checked):
+[x] existing CloudStream adapters still work (D-section pins + the 12
+    suite re-runs; MoviesDrive native binding still resolves end-to-end)
+[x] existing Downloader 2 behavior preserved (cloudstream rows: the
+    same 5-condition eligibility, byte-identical ordering; §F5 pins)
+[x] Nuvio manifests are recognized (schema-signature detection; live
+    smoke against two real repos)
+[x] Nuvio providers no longer appear as 0 extensions (49 + 61 real
+    providers; service tests pin discovery counts)
+[x] Nuvio provider metadata stored correctly (version_text, media
+    types, module_url, provider_metadata, provenance — row-level pins)
+[x] unified adapter registry works (canonical identity, lookup, index)
+[x] adapter lifecycle/status model works (persisted states + derived
+    operational states + state machine + honest Builder refusal)
+[x] native adapters remain active (4 live rows → native; B/M/V resolve)
+[x] unsupported providers remain honestly marked (runtime_required /
+    adapter_required — never falsely compatible)
+[x] no raw .cs3 execution (plugin_url metadata only — unchanged)
+[x] no arbitrary Nuvio JS execution (module_url metadata only; the
+    fetch-call contract test proves JS is never fetched)
+[x] no Render/Oracle runtime dependency (static hostname pins + grep)
+[x] existing RLS/security intact (migration touches no policy; suites)
+[x] existing Stremio integration intact (stremio suites re-run GREEN)
+[x] direct streaming providers untouched (no edits outside the
+    CloudStream/extension domain)
+[x] Phase 1 timeout/cancellation behavior intact (phase1 38 GREEN;
+    resolver/runtime/context files not modified in Phase 2)
+[x] pnpm check passes
+[x] pnpm test passes except the 8 documented pre-existing failures
+[x] pnpm build passes
+[x] worklog updated (this entry + P2 Completion + status header)
+
+Files changed: 13 tracked + 7 new (see the P2 Completion record).
+Commit: `feat: unified permanent adapter system + nuvio extension
+catalog (Phase 2)` (pushed to origin/main; SHA recorded in the P2
+Completion record at commit time).
+
+Next action: STOP at Phase 2 completion — Phase 3 (Adapter Builder
+Service) has NOT been started, per the plan's phase discipline. No
+Render/Oracle Builder, no generated-adapter execution, no Integration
+Manager 2.0 redesign, no cross-repository link deduplication.

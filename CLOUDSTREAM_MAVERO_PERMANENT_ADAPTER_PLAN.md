@@ -980,3 +980,56 @@ DOWNLOAD       → Mavero only
 ```
 
 The external Builder must never become a hidden runtime dependency for users.
+
+---
+
+### Phase 2 implementation record (2026-10-03)
+
+COMPLETED. The unified Extension catalog is the SAME two CS-1 tables +
+the SAME Integrations → Extension tab (no new navigation, no duplicate
+management system), extended additively by migration
+20261101000002_extension_phase2_unified_adapters.sql (applied to live
+Supabase, idempotent, RLS untouched, tracker entry 33):
+`integration_type` ('cloudstream'|'nuvio', default cloudstream) on both
+tables + `media_types`, `adapter_state` (native|generated|
+adapter_required|runtime_required|failed|building|testing — Builder
+states reserved for Phase 3, set by NOTHING in Phase 2),
+`provider_metadata` (bounded 8 KiB), `module_url` (Nuvio JS module —
+inert metadata, NEVER fetched/executed), `version_text`,
+`last_tested_at`, `last_test_error` on extensions.
+
+Nuvio manifests are detected GENERically by schema signature (root
+`scrapers` array; precedence: pluginLists > scrapers > malformed →
+INVALID_REPOSITORY > valid-empty CloudStream) inside
+repository/service.ts discovery — verified live against
+phisher98/phisher-nuvio-providers (49 providers), All-in-One-Nuvio (61
+providers) and Gowaru (audit); the pre-Phase-2 "0 extensions" failure
+is closed. Provider identity: id → internal_name, unique per
+(repository, provider), in-manifest dedupe first-wins; canonical
+registry identity `${integration_type}:${provider key}` — the same
+provider in multiple repositories stays multiple distinguishable rows
+with ONE canonical key (resolution-level dedup only; no premature
+cross-repo merging). Manifest self-reported `enabled` is metadata ONLY
+(the admin DB switch starts false, preserved across syncs).
+
+The unified permanent adapter registry
+(src/lib/server/extensions/adapter-registry.ts) carries the full §4
+field list (adapter id + provider/repository identity + integration
+type + adapter state + media types + enabled + validation/test status +
+last tested/error + adapter version + provenance). Native binding is
+TYPE-AWARE: only cloudstream rows bind the code registry — a Nuvio
+provider whose id matches a native adapter (e.g. MoviesDrive) stays
+honestly ADAPTER_REQUIRED until Phase 3. The lifecycle state machine
+models DETECTED→ADAPTER_REQUIRED→CREATE_ADAPTER→BUILDING→TESTING→READY/
+FAILED, but every Builder transition REFUSES with BUILDER_UNAVAILABLE —
+no Render/Oracle call, no generated adapter, no pretense. Downloader 2
+eligibility routes through the registry (type-aware + canonical-key
+dedup; cloudstream behavior byte-identical, pinned by tests).
+
+Gates: pnpm check 0/0, pnpm build PASS, full chain (207 commands) =
+199 PASS + the 8 documented pre-existing failures + 0 new; new suites
+cloudstream_phase2_unified_adapters_test (195 checks) +
+cloudstream_phase2_live_smoke (12 checks, verify:cloudstream-phase2).
+Phase 1 deadline/cancellation behavior untouched. Phase 3 (Builder) NOT
+started — see CLOUDSTREAM_MAVERO_WORKLOG.md (Session 9 + P2 Completion)
+for the complete record.

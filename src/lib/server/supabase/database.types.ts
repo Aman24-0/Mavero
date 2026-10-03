@@ -1672,6 +1672,9 @@ export type Database = {
           icon_url: string | null
           enabled: boolean
           status: string
+          // Added by 20261101000002_extension_phase2_unified_adapters.sql.
+          // Phase 2 unified Extension catalog: manifest schema this repo syncs.
+          integration_type: string
           last_synced_at: string | null
           last_checked_at: string | null
           last_error: string | null
@@ -1686,6 +1689,7 @@ export type Database = {
           icon_url?: string | null
           enabled?: boolean
           status?: string
+          integration_type?: string
           last_synced_at?: string | null
           last_checked_at?: string | null
           last_error?: string | null
@@ -1700,6 +1704,7 @@ export type Database = {
           icon_url?: string | null
           enabled?: boolean
           status?: string
+          integration_type?: string
           last_synced_at?: string | null
           last_checked_at?: string | null
           last_error?: string | null
@@ -1736,6 +1741,16 @@ export type Database = {
           adapter_status: string
           mavero_adapter_id: string | null
           adapter_version: string | null
+          // Added by 20261101000002_extension_phase2_unified_adapters.sql.
+          // Phase 2 unified Extension catalog + permanent adapter registry.
+          integration_type: string
+          media_types: string[]
+          adapter_state: string
+          provider_metadata: Record<string, unknown> | null
+          module_url: string | null
+          version_text: string | null
+          last_tested_at: string | null
+          last_test_error: string | null
           last_checked_at: string | null
           last_error: string | null
           created_at: string
@@ -1762,6 +1777,14 @@ export type Database = {
           adapter_status?: string
           mavero_adapter_id?: string | null
           adapter_version?: string | null
+          integration_type?: string
+          media_types?: string[]
+          adapter_state?: string
+          provider_metadata?: Record<string, unknown> | null
+          module_url?: string | null
+          version_text?: string | null
+          last_tested_at?: string | null
+          last_test_error?: string | null
           last_checked_at?: string | null
           last_error?: string | null
           created_at?: string
@@ -1788,6 +1811,14 @@ export type Database = {
           adapter_status?: string
           mavero_adapter_id?: string | null
           adapter_version?: string | null
+          integration_type?: string
+          media_types?: string[]
+          adapter_state?: string
+          provider_metadata?: Record<string, unknown> | null
+          module_url?: string | null
+          version_text?: string | null
+          last_tested_at?: string | null
+          last_test_error?: string | null
           last_checked_at?: string | null
           last_error?: string | null
           created_at?: string

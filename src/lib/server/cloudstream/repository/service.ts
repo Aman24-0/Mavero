@@ -39,8 +39,19 @@ import {
 } from './parse';
 import { fetchCloudStreamJson } from '../security/fetch';
 import { deriveAdapterStatus, lookupCloudStreamAdapter } from '../adapters/registry';
+import {
+  buildNuvioProviderMetadata,
+  detectExtensionManifestKind,
+  parseNuvioManifest,
+  type NormalizedNuvioProvider,
+} from '$lib/server/extensions/nuvio';
+import {
+  deriveAdapterState,
+  effectiveMediaTypes,
+} from '$lib/server/extensions/adapter-registry';
 import type { CloudStreamExtensionRow } from '../extensions/service';
 import type {
+  CloudStreamAdapterStatus,
   CloudStreamExtensionPreview,
   CloudStreamRepositoryPreview,
   CloudStreamRepositoryStatus,
@@ -68,6 +79,7 @@ export type CloudStreamRepositoryRow = {
   icon_url: string | null;
   enabled: boolean;
   status: string;
+  integration_type: string;
   last_synced_at: string | null;
   last_checked_at: string | null;
   last_error: string | null;
@@ -89,9 +101,50 @@ type DiscoveryResult = {
   fullSuccess: boolean;
 };
 
+/** Maps one normalized Nuvio provider onto the unified catalog insert shape. */
+function toNuvioExtension(provider: NormalizedNuvioProvider): NormalizedCloudStreamExtension {
+  return {
+    internalName: provider.id,
+    name: provider.name,
+    version: null,
+    apiVersion: null,
+    description: provider.description,
+    authors: provider.author !== null ? [provider.author] : [],
+    // Nuvio manifests have no single language field — contentLanguage lives
+    // in provider metadata (nothing invented here).
+    language: provider.contentLanguage.length > 0 ? provider.contentLanguage[0] : null,
+    tvTypes: [...provider.rawTypes],
+    // Nuvio has no .cs3 artifact — the JS module URL is the analogous inert
+    // provenance field, stored on its own column (module_url).
+    pluginUrl: null,
+    pluginStatus: null,
+    iconUrl: provider.logoUrl,
+    fileHash: null,
+    fileSizeBytes: null,
+    // Provenance: the manifest document the provider was discovered from.
+    sourceUrl: provider.manifestUrl,
+    integrationType: 'nuvio',
+    mediaTypes: [...provider.mediaTypes],
+    moduleUrl: provider.moduleUrl,
+    versionText: provider.versionText,
+    providerMetadata: buildNuvioProviderMetadata(provider),
+  };
+}
+
 /**
  * Runs the full discovery pipeline against a repository URL:
  * CS.json → pluginLists → plugins.json → normalized extension metadata.
+ *
+ * PHASE 2 (Unified Extension catalog): the fetched document is dispatched by
+ * MANIFEST SCHEMA SIGNATURE before any CloudStream-specific parsing —
+ *   * `pluginLists` present → CloudStream path (byte-identical to CS-1…CS-6
+ *     behavior: same fetches, same parses, same failures);
+ *   * `scrapers` array → Nuvio manifest path (the manifest itself is the
+ *     provider list — ONE fetch, no plugin-list follow-ups, so Nuvio
+ *     repositories never show "0 extensions" again);
+ *   * `scrapers` present but malformed → INVALID_REPOSITORY (honest failure
+ *     instead of a silently empty catalog);
+ *   * neither → valid-empty CloudStream repository (unchanged).
  * Plugin lists are fetched SEQUENTIALLY (bounded: max 4 lists — inherently
  * bounded concurrency, gentle on remote hosts). A failing plugin list never
  * aborts the whole discovery — its failure is recorded and the remaining
@@ -105,6 +158,30 @@ async function discoverRepository(rawUrl: string, deps: CloudStreamSyncDeps = {}
     ...(deps.maxBytes !== undefined ? { maxBytes: deps.maxBytes } : {}),
   };
   const { body } = await fetchCloudStreamJson(rawUrl, fetchDeps);
+
+  // ---- Phase 2 schema dispatch ---------------------------------------
+  const detection = detectExtensionManifestKind(body);
+  if (detection.malformedScrapers) {
+    throw new CloudStreamRepositoryError('INVALID_REPOSITORY', { message: 'The Nuvio manifest scrapers must be a list.' });
+  }
+  if (detection.kind === 'nuvio') {
+    const manifest = parseNuvioManifest(body, rawUrl);
+    const extensions = manifest.providers.slice(0, MAX_EXTENSIONS_PER_REPOSITORY).map(toNuvioExtension);
+    return {
+      parsed: {
+        name: manifest.name,
+        description: null,
+        iconUrl: null,
+        integrationType: 'nuvio',
+        pluginLists: [],
+      },
+      extensions,
+      listFailures: [],
+      // Single-document discovery: the manifest itself is authoritative.
+      fullSuccess: true,
+    };
+  }
+  // ---- CloudStream path (unchanged from CS-1) ------------------------
   const parsed = parseRepositoryIndex(body);
 
   const extensions: NormalizedCloudStreamExtension[] = [];
@@ -172,6 +249,7 @@ function toRepositoryView(row: CloudStreamRepositoryRow, extensionCount: number)
     iconUrl: row.icon_url,
     enabled: row.enabled,
     status: row.status as CloudStreamRepositoryView['status'],
+    integrationType: row.integration_type === 'nuvio' ? 'nuvio' : 'cloudstream',
     extensionCount,
     lastSyncedAt: row.last_synced_at,
     lastCheckedAt: row.last_checked_at,
@@ -210,10 +288,29 @@ function toExtensionPreview(extension: NormalizedCloudStreamExtension): CloudStr
     internalName: extension.internalName,
     name: extension.name,
     version: extension.version,
+    versionText: extension.versionText,
     language: extension.language,
     tvTypes: extension.tvTypes,
-    adapterStatus: deriveAdapterStatus(extension.internalName, extension.pluginStatus),
+    adapterStatus: deriveAdapterStatusForExtension(extension),
+    integrationType: extension.integrationType,
+    mediaTypes: effectiveMediaTypes({
+      integration_type: extension.integrationType,
+      tv_types: extension.tvTypes,
+      media_types: extension.mediaTypes,
+    }),
   };
+}
+
+/**
+ * TYPE-AWARE legacy adapter_status derivation (Phase 2): a Nuvio provider
+ * never claims 'compatible' via the CloudStream code registry even when its
+ * provider id collides with a native adapter id (e.g. 'MoviesDrive' exists in
+ * both ecosystems). Nuvio rows are honestly 'adapter_required' until a Nuvio
+ * adapter exists (Phase 3+).
+ */
+function deriveAdapterStatusForExtension(extension: NormalizedCloudStreamExtension): CloudStreamAdapterStatus {
+  if (extension.integrationType === 'nuvio') return 'adapter_required';
+  return deriveAdapterStatus(extension.internalName, extension.pluginStatus);
 }
 
 /** Safe preview of a CloudStream repository — discovery only, NO persistence. */
@@ -235,6 +332,7 @@ export async function previewRepository(
     name: discovery.parsed.name,
     description: discovery.parsed.description,
     iconUrl: discovery.parsed.iconUrl,
+    integrationType: discovery.parsed.integrationType,
     pluginListCount: discovery.parsed.pluginLists.length,
     extensionCount: total,
     extensions: shown.map(toExtensionPreview),
@@ -272,6 +370,7 @@ export async function createRepositoryFromUrl(
     icon_url: discovery.parsed.iconUrl,
     enabled: false,
     status,
+    integration_type: discovery.parsed.integrationType,
     last_synced_at: status === 'active' ? now : null,
     last_checked_at: now,
     last_error: lastError,
@@ -436,6 +535,13 @@ type ExtensionInsertRow = CloudStreamExtensionInsert;
  *     when `allowRemoval` (the sync was fully successful — every referenced
  *     plugin list was fetched). Partial failures NEVER delete rows.
  *
+ * PHASE 2 (unified catalog): the same single upsert writes BOTH integration
+ * types — integration_type, canonical media_types, the derived adapter_state
+ * snapshot, and the type-specific columns (module_url / version_text /
+ * provider_metadata for Nuvio rows; null for CloudStream rows). The
+ * Phase-3-Builder columns (last_tested_at / last_test_error) are NEVER
+ * written here — validation facts belong to the future Builder/Tester.
+ *
  * A single upsert (conflict target repository_id+internal_name) writes the
  * merged set deterministically.
  */
@@ -462,66 +568,69 @@ async function reconcileExtensions(
   for (const extension of discovered) {
     const key = extension.internalName.toLowerCase();
     discoveredKeys.add(key);
-    const adapterStatus = deriveAdapterStatus(extension.internalName, extension.pluginStatus);
+    // Type-aware legacy status + binding (Nuvio rows never bind the
+    // CloudStream code registry — see deriveAdapterStatusForExtension).
+    const adapterStatus = deriveAdapterStatusForExtension(extension);
     const adapter = adapterStatus === 'compatible' ? lookupCloudStreamAdapter(extension.internalName) : null;
     const existingRow = existingByKey.get(key);
+    // Phase 2: persisted lifecycle snapshot — type-aware (a Nuvio row never
+    // derives 'native' even when its provider id matches a CloudStream
+    // adapter); Builder outcomes are never written by sync code.
+    const adapterState = deriveAdapterState(
+      {
+        integration_type: extension.integrationType,
+        internal_name: extension.internalName,
+        plugin_status: extension.pluginStatus,
+      },
+      existingRow?.adapter_state ?? null,
+    );
+    const baseRow = {
+      repository_id: repositoryId,
+      internal_name: extension.internalName,
+      name: extension.name,
+      version: extension.version,
+      api_version: extension.apiVersion,
+      description: extension.description,
+      authors: extension.authors,
+      language: extension.language,
+      tv_types: extension.tvTypes,
+      plugin_url: extension.pluginUrl,
+      plugin_status: extension.pluginStatus,
+      icon_url: extension.iconUrl,
+      file_hash: extension.fileHash,
+      file_size_bytes: extension.fileSizeBytes,
+      source_url: extension.sourceUrl,
+      // Phase 2 — unified Extension catalog columns.
+      integration_type: extension.integrationType,
+      media_types: extension.mediaTypes,
+      adapter_state: adapterState,
+      module_url: extension.moduleUrl,
+      version_text: extension.versionText,
+      provider_metadata: extension.providerMetadata,
+      adapter_status: adapterStatus,
+      mavero_adapter_id: adapter?.id ?? null,
+      adapter_version: adapter?.version ?? null,
+      last_checked_at: now,
+      last_error: null,
+      updated_at: now,
+    };
     if (existingRow) {
       updatedCount += 1;
       merged.push({
+        ...baseRow,
         id: existingRow.id,
-        repository_id: repositoryId,
-        internal_name: extension.internalName,
-        name: extension.name,
-        version: extension.version,
-        api_version: extension.apiVersion,
-        description: extension.description,
-        authors: extension.authors,
-        language: extension.language,
-        tv_types: extension.tvTypes,
-        plugin_url: extension.pluginUrl,
-        plugin_status: extension.pluginStatus,
-        icon_url: extension.iconUrl,
-        file_hash: extension.fileHash,
-        file_size_bytes: extension.fileSizeBytes,
-        source_url: extension.sourceUrl,
         // PRESERVED across syncs unless explicitly changed by the admin.
         enabled: existingRow.enabled,
-        adapter_status: adapterStatus,
-        mavero_adapter_id: adapter?.id ?? null,
-        adapter_version: adapter?.version ?? null,
-        last_checked_at: now,
-        last_error: null,
         created_at: existingRow.created_at,
-        updated_at: now,
       });
     } else {
       insertedCount += 1;
       merged.push({
+        ...baseRow,
         id: crypto.randomUUID(),
-        repository_id: repositoryId,
-        internal_name: extension.internalName,
-        name: extension.name,
-        version: extension.version,
-        api_version: extension.apiVersion,
-        description: extension.description,
-        authors: extension.authors,
-        language: extension.language,
-        tv_types: extension.tvTypes,
-        plugin_url: extension.pluginUrl,
-        plugin_status: extension.pluginStatus,
-        icon_url: extension.iconUrl,
-        file_hash: extension.fileHash,
-        file_size_bytes: extension.fileSizeBytes,
-        source_url: extension.sourceUrl,
         // New extensions start DISABLED (streaming_addons precedent).
         enabled: false,
-        adapter_status: adapterStatus,
-        mavero_adapter_id: adapter?.id ?? null,
-        adapter_version: adapter?.version ?? null,
-        last_checked_at: now,
-        last_error: null,
         created_at: now,
-        updated_at: now,
       });
     }
   }

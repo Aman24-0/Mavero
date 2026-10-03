@@ -21,6 +21,45 @@ export type CloudStreamRepositoryStatus = 'active' | 'disabled' | 'error' | 'inv
  */
 export type CloudStreamAdapterStatus = 'compatible' | 'adapter_required' | 'unsupported' | 'broken';
 
+// ---------------------------------------------------------------------------
+// Unified Extension catalog contracts (Permanent Adapter Plan Phase 2).
+// The SAME catalog tables/views serve BOTH integration types — one
+// Extension system, one Extension tab, no separate Nuvio surface.
+// ---------------------------------------------------------------------------
+
+export type {
+  ExtensionIntegrationType,
+  PermanentAdapterState,
+  AdapterOperationalState,
+  ExtensionMediaType,
+} from '$lib/shared/extension-adapter-types';
+
+import type {
+  ExtensionIntegrationType,
+  AdapterOperationalState,
+  ExtensionMediaType,
+} from '$lib/shared/extension-adapter-types';
+
+/**
+ * Bounded, type-specific raw manifest metadata (Nuvio formats,
+ * contentLanguage, limited, self-reported enabled, raw supportedTypes, raw
+ * filename, manifestUrl — extensible for future manifest variants).
+ * Inert metadata only; never executed.
+ */
+export type ExtensionProviderMetadata = {
+  formats?: string[];
+  contentLanguage?: string[];
+  limited?: boolean;
+  /** Provider self-reported enabled state (manifest field — NOT the admin switch). */
+  manifestEnabled?: boolean;
+  /** Raw provider types as written in the manifest (pre-canonicalization). */
+  types?: string[];
+  /** Raw module path as written in the manifest (pre-resolution). */
+  filename?: string;
+  /** The manifest document URL this provider was discovered from. */
+  manifestUrl?: string;
+};
+
 /** Administrator-facing safe view of one CloudStream repository. */
 export type CloudStreamRepositoryView = {
   id: string;
@@ -30,6 +69,8 @@ export type CloudStreamRepositoryView = {
   iconUrl: string | null;
   enabled: boolean;
   status: CloudStreamRepositoryStatus;
+  /** Phase 2: which manifest schema this repository row syncs (cloudstream | nuvio). */
+  integrationType: ExtensionIntegrationType;
   extensionCount: number;
   lastSyncedAt: string | null;
   lastCheckedAt: string | null;
@@ -66,6 +107,24 @@ export type CloudStreamExtensionView = {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
+  // ---------------------------------------------------------------------
+  // Phase 2 — unified Extension catalog / permanent adapter registry.
+  // ---------------------------------------------------------------------
+  /** Which integration this provider row belongs to (cloudstream | nuvio). */
+  integrationType: ExtensionIntegrationType;
+  /** Canonical media support ('movie' | 'tv'; empty = none known). */
+  mediaTypes: ExtensionMediaType[];
+  /** DERIVED operational state (active/disabled from enabled; see extension-adapter-types). */
+  adapterState: AdapterOperationalState;
+  /** Nuvio provider JS module URL — METADATA ONLY, never fetched/executed. */
+  moduleUrl: string | null;
+  /** String provider version (Nuvio '1.1.1'); null for integer-versioned CloudStream plugins. */
+  versionText: string | null;
+  /** Bounded type-specific manifest metadata (formats, contentLanguage, …). */
+  providerMetadata: ExtensionProviderMetadata | null;
+  /** Permanent-adapter validation facts (Phase 3+ Builder/Tester; null in Phase 2). */
+  lastTestedAt: string | null;
+  lastTestError: string | null;
 };
 
 /** Preview of an extension inside the repository add flow (no ids yet). */
@@ -73,10 +132,16 @@ export type CloudStreamExtensionPreview = {
   internalName: string;
   name: string | null;
   version: number | null;
+  /** Phase 2: string provider version (Nuvio '1.1.1'). */
+  versionText: string | null;
   language: string | null;
   /** CloudStream TvType enum NAMES. */
   tvTypes: string[];
   adapterStatus: CloudStreamAdapterStatus;
+  /** Phase 2: which integration this previewed provider belongs to. */
+  integrationType: ExtensionIntegrationType;
+  /** Phase 2: canonical media support preview ('movie' | 'tv'). */
+  mediaTypes: ExtensionMediaType[];
 };
 
 // ---------------------------------------------------------------------------
@@ -212,6 +277,8 @@ export type CloudStreamRepositoryPreview = {
   name: string;
   description: string | null;
   iconUrl: string | null;
+  /** Phase 2: detected manifest schema ('cloudstream' | 'nuvio'). */
+  integrationType: ExtensionIntegrationType;
   pluginListCount: number;
   extensionCount: number;
   extensions: CloudStreamExtensionPreview[];

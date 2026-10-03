@@ -253,7 +253,7 @@
         <div class="a2-flow-head">
           <button type="button" class="a2-back-link" onclick={() => { addKind = null; repositoryPreview = null; repositoryPreviewError = ''; }}>← Change type</button>
         </div>
-        <label class="a2-field"><span>Repository URL</span><input type="url" bind:value={repositoryUrl} placeholder="https://raw.githubusercontent.com/…/CS.json" /></label>
+        <label class="a2-field"><span>Repository URL</span><input type="url" bind:value={repositoryUrl} placeholder="https://raw.githubusercontent.com/…/CS.json or …/manifest.json" /></label>
         <button type="button" class="a2-btn-primary" onclick={doRepositoryPreview} disabled={repositoryPreviewing || !repositoryUrl.trim()}>{repositoryPreviewing ? 'Loading…' : 'Preview'}</button>
         {#if repositoryPreviewError}
           <div class="a2-form-error" role="alert">{repositoryPreviewError}</div>
@@ -262,7 +262,7 @@
           <div class="a2-preview">
             <h4>{repositoryPreview.name}</h4>
             {#if repositoryPreview.description}<p>{repositoryPreview.description}</p>{/if}
-            <p class="mono">{repositoryPreview.pluginListCount} plugin list{repositoryPreview.pluginListCount === 1 ? '' : 's'} · {repositoryPreview.extensionCount} extension{repositoryPreview.extensionCount === 1 ? '' : 's'} discovered</p>
+            <p class="mono">{repositoryPreview.integrationType === 'nuvio' ? 'Nuvio manifest' : 'CloudStream repository'} · {repositoryPreview.pluginListCount} plugin list{repositoryPreview.pluginListCount === 1 ? '' : 's'} · {repositoryPreview.extensionCount} extension{repositoryPreview.extensionCount === 1 ? '' : 's'} discovered</p>
             {#if repositoryPreview.extensions.length > 0}
               <div class="a2-cs-preview-list">
                 {#each repositoryPreview.extensions as extension (extension.internalName)}
@@ -271,6 +271,8 @@
                     <div class="a2-cs-preview-meta">
                       <span class="mono">{extension.internalName}</span>
                       {#if extension.version}<span>·</span><span>v{extension.version}</span>{/if}
+                      {#if !extension.version && extension.versionText}<span>·</span><span>v{extension.versionText}</span>{/if}
+                      {#if extension.mediaTypes.length > 0}<span>·</span><span>{extension.mediaTypes.join(' / ')}</span>{/if}
                     </div>
                     <AdminStatusBadge label={previewAdapterLabel(extension.adapterStatus)} tone={previewAdapterTone(extension.adapterStatus)} dot={false} />
                   </div>

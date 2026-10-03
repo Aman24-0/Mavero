@@ -98,6 +98,15 @@ const ok = (condition: unknown, label: string) => counter.ok(condition, label, a
     adapter_status: 'adapter_required', // CS-1-era persisted snapshot
     mavero_adapter_id: null,
     adapter_version: null,
+    // Phase 2 — unified Extension catalog columns (cloudstream defaults).
+    integration_type: 'cloudstream',
+    media_types: ['movie', 'tv'],
+    adapter_state: 'adapter_required',
+    provider_metadata: null,
+    module_url: null,
+    version_text: null,
+    last_tested_at: null,
+    last_test_error: null,
     last_checked_at: null,
     last_error: null,
     created_at: '2026-10-02T00:00:00Z',
@@ -107,6 +116,9 @@ const ok = (condition: unknown, label: string) => counter.ok(condition, label, a
   ok(view.adapterStatus === 'compatible', 'C: persisted adapter_required row derives LIVE compatible status');
   ok(view.maveroAdapterId === 'Bollyflix', 'C: live maveroAdapterId populated from registry');
   ok(view.adapterVersion === '1.0.0', 'C: live adapterVersion populated from registry');
+  // Phase 2: unified registry fields on the admin view.
+  ok(view.integrationType === 'cloudstream', 'C: view carries the integration type');
+  ok(view.adapterState === 'disabled', 'C: native adapter + disabled row derives disabled operational state');
 
   const unregistered = toExtensionView({ ...baseRow, id: '00000000-0000-4000-8000-000000000002', internal_name: 'CineStream' }, 'CSX');
   ok(unregistered.adapterStatus === 'adapter_required', 'C: CineStream still adapter_required in the admin view');

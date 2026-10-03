@@ -197,11 +197,25 @@ function section_registry(): void {
   const pristinePhase19 = pristineFile('supabase/migrations/20260920000000_phase19_mavero_4k_downloaders.sql');
   ok(pristinePhase19 === null || pristinePhase19 === phase19, '§A9: the existing mavero-downloader seed migration is byte-identical to the pre-CS-5 commit');
 
-  // §A10 no OTHER registry migration was added by CS-5.
+  // §A10 no OTHER registry migration was added by CS-5 (Phase 2 evolution:
+  // the sanctioned unified-adapter migration 20261101000002 is the ONLY other
+  // addition — it adds catalog columns and never touches download_providers).
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   const pristineMigrations = pristineMigrationNames();
+  const phase2Migration = '20261101000002_extension_phase2_unified_adapters.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
-  ok(added.length === 1 && added[0] === migrationName, `§A10: exactly ONE new migration (${added.join(', ') || 'none'})`);
+  const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
+  const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
+  ok(
+    added.length === 2
+      && added.includes(migrationName)
+      && added.includes(phase2Migration),
+    `§A10: exactly the CS-5 + Phase 2 migrations were added (${added.join(', ') || 'none'})`,
+  );
+  ok(
+    !/\b(download_providers)\b/i.test(phase2SqlNoComments),
+    '§A10: the Phase 2 migration never touches the download_providers registry',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -730,8 +744,10 @@ function section_regression(): void {
 
   // §F5 the existing mavero2 API + Downloader 2 service evolved ONLY additively.
   // (CS-5 added no backend behavior; Permanent Adapter Plan Phase 1 added ONLY
-  // the client-disconnect signal threading — every diff line is Phase 1
-  // cancellation code, nothing was removed.)
+  // the client-disconnect signal threading; Phase 2 replaced the three legacy
+  // registry-lookup call sites + the import + the catalog select with the
+  // TYPE-AWARE unified-registry equivalents — the ONLY removed lines are those
+  // exact pre-Phase-2 lookup lines, nothing else.)
   {
     const untouched = 'src/routes/api/downloader/mavero2/tabs/+server.ts';
     const currentTabs = read(untouched);
@@ -751,16 +767,34 @@ function section_regression(): void {
       }
       const removed = pristine.split('\n').filter((line) => !current.includes(line));
       const added = current.split('\n').filter((line) => !pristine.includes(line));
-      ok(removed.length === 0, `§F5: ${csFile} removes NOTHING (removed ${removed.length})`);
+      // Phase 2 sanctioned removals: ONLY the legacy untyped registry lookup
+      // (import + 3 call sites) and the pre-unification catalog select.
+      const sanctionedRemoval = (line: string) =>
+        line === "import { lookupCloudStreamAdapterInstance } from '../adapters/registry';"
+        || line === '    const adapter = lookupCloudStreamAdapterInstance(row.internal_name);'
+        || line === '      const adapter = lookupCloudStreamAdapterInstance(row.internal_name);'
+        || line === '  const adapter = lookupCloudStreamAdapterInstance(row.internal_name);'
+        || line === "    .select('repository_id, internal_name, name, icon_url, enabled');";
+      ok(
+        removed.every(sanctionedRemoval),
+        `§F5: ${csFile} removes NOTHING except the sanctioned legacy lookup lines (removed ${removed.length})`,
+      );
       ok(
         added.length > 0 && added.every((line) =>
           line.includes('Phase 1')
           || line.includes('Permanent Adapter')
+          || line.includes('Phase 2')
+          || line.includes('PHASE 2')
+          || line.includes('canonicalAdapterKeyForRow')
+          || line.includes('executableAdapterForExtension')
+          || line.includes('seenCanonicalKeys')
+          || line.includes('integration_type')
+          || line.includes('adapter-registry')
           || /^\s*(\/\*\*|\*|\/\/|$)/.test(line)
           || line.includes('{ signal: request.signal }')
           || line.includes('signal?: AbortSignal;')
           || line.includes("...(deps.signal !== undefined ? { signal: deps.signal } : {})")),
-        `§F5: ${csFile} additions are ONLY the Phase 1 cancellation threading (added ${added.length})`,
+        `§F5: ${csFile} additions are ONLY the Phase 1 cancellation threading + Phase 2 type-aware registry binding (added ${added.length})`,
       );
     }
   }

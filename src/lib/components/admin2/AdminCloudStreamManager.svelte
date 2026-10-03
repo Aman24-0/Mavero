@@ -38,11 +38,44 @@
   // ---------------------------------------------------------------------------
 
   /** tvTypes are CloudStream enum NAMES (AC-002) — displayed verbatim with a
-   * soft prettifier for the compound names (e.g. AsianDrama → Asian drama). */
+   * soft prettifier for the compound names (e.g. AsianDrama → Asian drama).
+   * Nuvio rows carry the manifest's raw supportedTypes (lowercase) — also
+   * displayed verbatim. */
   function tvTypeLabel(name: string): string {
     if (name === 'TvSeries') return 'Series';
     if (name === 'AsianDrama') return 'Asian drama';
     return name;
+  }
+
+  /** Phase 2: integration type chip label (unified Extension catalog). */
+  function integrationTypeLabel(type: 'cloudstream' | 'nuvio'): string {
+    return type === 'nuvio' ? 'Nuvio' : 'CloudStream';
+  }
+
+  /** Phase 2: derived operational adapter state label (unified registry). */
+  function adapterStateLabel(state: string): string {
+    switch (state) {
+      case 'active': return 'Active';
+      case 'disabled': return 'Disabled';
+      case 'native': return 'Native adapter';
+      case 'generated': return 'Generated adapter';
+      case 'runtime_required': return 'Runtime required';
+      case 'failed': return 'Adapter failed';
+      case 'building': return 'Building';
+      case 'testing': return 'Testing';
+      default: return 'Adapter required';
+    }
+  }
+
+  function adapterStateTone(state: string): 'good' | 'warn' | 'neutral' | 'bad' {
+    switch (state) {
+      case 'active': return 'good';
+      case 'native':
+      case 'generated': return 'good';
+      case 'runtime_required': return 'neutral';
+      case 'failed': return 'bad';
+      default: return 'warn';
+    }
   }
 
   const ADAPTER_STATUS_LABELS: Record<CloudStreamAdapterStatus, { label: string; tone: 'good' | 'warn' | 'neutral' | 'bad' }> = {
@@ -102,8 +135,8 @@
 {#if repositories.length === 0}
   <div class="cs-empty">
     <Box size={32} />
-    <h3>No CloudStream repositories</h3>
-    <p>Add a CloudStream repository URL (e.g. a CS.json index) to discover extensions.</p>
+    <h3>No extension repositories</h3>
+    <p>Add a CloudStream repository URL (a CS.json index) or a Nuvio provider manifest URL to discover extensions.</p>
   </div>
 {:else}
   <!-- Repositories -->
@@ -115,6 +148,7 @@
           <div class="cs-repo-main">
             <div class="cs-repo-name">{repository.name}</div>
             <div class="cs-repo-meta">
+              <span class="cs-ext-type">{integrationTypeLabel(repository.integrationType)}</span>
               <span class="mono">{hostOf(repository.url)}</span>
               <span>·</span>
               <span>{repository.extensionCount} extensions</span>
@@ -139,7 +173,7 @@
             </form>
             <form method="POST" action="?/syncCloudStreamRepository" style="display:inline">
               <input type="hidden" name="id" value={repository.id} />
-              <button type="submit" class="a2-icon-btn" title="Sync repository (re-fetch CS.json and plugin lists)"><RefreshCw size={14} /></button>
+              <button type="submit" class="a2-icon-btn" title="Sync repository (re-fetch the repository document and reconcile extensions)"><RefreshCw size={14} /></button>
             </form>
             <form method="POST" action="?/deleteCloudStreamRepository" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this repository and its discovered extensions?')) e.preventDefault(); }}>
               <input type="hidden" name="id" value={repository.id} />
@@ -158,7 +192,7 @@
     </h4>
     <p class="cs-compat-note">
       Discovered extensions are catalog metadata only. Runtime compatibility requires a Mavero adapter
-      (Add-on = Stremio · Extension = CloudStream).
+      (Add-on = Stremio · Extension = CloudStream or Nuvio).
     </p>
     {#each repositories as repository (repository.id)}
       {@const repoExtensions = extensionsByRepository.get(repository.id) ?? []}
@@ -171,8 +205,10 @@
                 <div class="cs-ext-main">
                   <div class="cs-ext-name">{extension.name ?? extension.internalName}</div>
                   <div class="cs-ext-meta">
+                    <span class="cs-ext-type">{integrationTypeLabel(extension.integrationType)}</span>
                     <span class="mono">{extension.internalName}</span>
                     {#if extension.version}<span>·</span><span>v{extension.version}</span>{/if}
+                    {#if !extension.version && extension.versionText}<span>·</span><span>v{extension.versionText}</span>{/if}
                     {#if extension.language}<span>·</span><span>{extension.language}</span>{/if}
                     {#if extension.tvTypes.length > 0}
                       <span>·</span>
@@ -189,6 +225,12 @@
                     label={extension.enabled ? 'Enabled' : ADAPTER_STATUS_LABELS[extension.adapterStatus].label}
                     tone={extension.enabled ? 'good' : ADAPTER_STATUS_LABELS[extension.adapterStatus].tone}
                   />
+                  {#if !extension.enabled}
+                    <AdminStatusBadge
+                      label={adapterStateLabel(extension.adapterState)}
+                      tone={adapterStateTone(extension.adapterState)}
+                    />
+                  {/if}
                   <form method="POST" action="?/setCloudStreamExtensionEnabled" style="display:inline">
                     <input type="hidden" name="id" value={extension.id} />
                     <input type="hidden" name="enabled" value={String(!extension.enabled)} />
