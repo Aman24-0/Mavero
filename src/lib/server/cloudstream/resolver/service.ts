@@ -39,6 +39,22 @@ export const CLOUDSTREAM_ADAPTER_TIMEOUT_MS = 30_000;
 /** Overall budget across all adapters (OVERALL_TIMEOUT_MS parity). */
 export const CLOUDSTREAM_RESOLUTION_TIMEOUT_MS = 40_000;
 
+/**
+ * Adapter instance lookup with the Phase 3 generated-adapter map: the
+ * NATIVE code registry wins (plan §16 precedence); generated instances
+ * (keyed by lowercase adapter id) serve only ids the native registry does
+ * not bind. Absent map → native-only behavior, byte-identical to Phase 2.
+ */
+function lookupAdapterInstance(
+  adapterId: string,
+  generated: ReadonlyMap<string, MaveroCloudStreamAdapter> | undefined,
+): MaveroCloudStreamAdapter | null {
+  const native = lookupCloudStreamAdapterInstance(adapterId);
+  if (native !== null) return native;
+  if (generated === undefined) return null;
+  return generated.get(adapterId.trim().toLowerCase()) ?? null;
+}
+
 export type CloudStreamResolverDeps = {
   /** Injectable fetcher (tests never touch the real network). */
   fetcher?: typeof fetch;
@@ -56,6 +72,13 @@ export type CloudStreamResolverDeps = {
    * the overall controller exactly like the overall timer does.
    */
   signal?: AbortSignal;
+  /**
+   * Phase 3 (D-P3-8): injectable adapter instances (generated adapters).
+   * Native registry lookups take PRECEDENCE (plan §16); absent map =
+   * native-only behavior, byte-identical to Phase 2. Downloader 2 builds
+   * this map from PERSISTED artifacts only — never from the Builder.
+   */
+  adapterInstances?: ReadonlyMap<string, MaveroCloudStreamAdapter>;
 };
 
 /** Manifold bounded-concurrency map (exported for deterministic tests). */
@@ -133,7 +156,7 @@ export async function resolveCloudStream(
   const seenIds = new Set<string>();
   for (const rawId of Array.isArray(request.adapterIds) ? request.adapterIds : []) {
     if (typeof rawId !== 'string' || rawId.length === 0) continue;
-    const instance = lookupCloudStreamAdapterInstance(rawId);
+    const instance = lookupAdapterInstance(rawId, deps.adapterInstances);
     const canonicalId = instance !== null ? instance.id : rawId;
     const key = canonicalId.toLowerCase();
     if (seenIds.has(key)) continue;
@@ -146,7 +169,7 @@ export async function resolveCloudStream(
 
   try {
     await mapBounded(requestedIds, CLOUDSTREAM_ADAPTER_CONCURRENCY, async (adapterId) => {
-      const adapter = lookupCloudStreamAdapterInstance(adapterId);
+      const adapter = lookupAdapterInstance(adapterId, deps.adapterInstances);
       if (adapter === null) {
         groups.push({
           adapterId,

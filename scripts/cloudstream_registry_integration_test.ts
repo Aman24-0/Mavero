@@ -197,24 +197,33 @@ function section_registry(): void {
   const pristinePhase19 = pristineFile('supabase/migrations/20260920000000_phase19_mavero_4k_downloaders.sql');
   ok(pristinePhase19 === null || pristinePhase19 === phase19, '§A9: the existing mavero-downloader seed migration is byte-identical to the pre-CS-5 commit');
 
-  // §A10 no OTHER registry migration was added by CS-5 (Phase 2 evolution:
-  // the sanctioned unified-adapter migration 20261101000002 is the ONLY other
-  // addition — it adds catalog columns and never touches download_providers).
+  // §A10 no OTHER registry migration was added by CS-5 (Phase 3 evolution:
+  // the sanctioned unified-adapter migration 20261101000002 and the Phase 3
+  // builder migration 20261101000003 are the ONLY other additions — they add
+  // catalog columns/tables and never touch download_providers).
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   const pristineMigrations = pristineMigrationNames();
   const phase2Migration = '20261101000002_extension_phase2_unified_adapters.sql';
+  const phase3Migration = '20261101000003_extension_phase3_builder.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
+  const phase3Sql = read(`supabase/migrations/${phase3Migration}`);
+  const phase3SqlNoComments = phase3Sql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 2
+    added.length === 3
       && added.includes(migrationName)
-      && added.includes(phase2Migration),
-    `§A10: exactly the CS-5 + Phase 2 migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(phase2Migration)
+      && added.includes(phase3Migration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 migrations were added (${added.join(', ') || 'none'})`,
   );
   ok(
     !/\b(download_providers)\b/i.test(phase2SqlNoComments),
     '§A10: the Phase 2 migration never touches the download_providers registry',
+  );
+  ok(
+    !/\b(download_providers)\b/i.test(phase3SqlNoComments),
+    '§A10: the Phase 3 migration never touches the download_providers registry',
   );
 }
 
@@ -774,7 +783,24 @@ function section_regression(): void {
         || line === '    const adapter = lookupCloudStreamAdapterInstance(row.internal_name);'
         || line === '      const adapter = lookupCloudStreamAdapterInstance(row.internal_name);'
         || line === '  const adapter = lookupCloudStreamAdapterInstance(row.internal_name);'
-        || line === "    .select('repository_id, internal_name, name, icon_url, enabled');";
+        || line === "    .select('repository_id, internal_name, name, icon_url, enabled');"
+        // Phase 3 sanctioned removals: ONLY the Phase 2 binding/select/lookup
+        // lines replaced by their generated-map equivalents (type-aware
+        // binding call sites gained the optional map argument; the catalog
+        // select gained the Phase 3 columns; the row lookup gained the
+        // canonical-key alias; the orchestrator call gained the map).
+        || line === '    const adapter = executableAdapterForExtension(row);'
+        || line === '      const adapter = executableAdapterForExtension(row);'
+        || line === '  const adapter = executableAdapterForExtension(row);'
+        || line === "    .select('repository_id, internal_name, name, icon_url, enabled, integration_type');"
+        || line === '  return { repositories, extensions };'
+        || line === "    const rowByKey = new Map(catalog.extensions.map((row) => [row.internal_name.toLowerCase(), row] as const));"
+        || line === '      ? await resolveThroughOrchestrator(content, request, resolvable.map(({ adapter }) => adapter.id), deps)'
+        || line === '    (candidate) => candidate.internal_name.toLowerCase() === extensionId.trim().toLowerCase(),'
+        || line === '  const result = await resolveThroughOrchestrator(content, request, [adapter.id], deps);'
+        || line.trim().startsWith('// Phase 2: type-aware binding')
+        || line.trim().startsWith('// native adapter) has no executable adapter')
+        || line.trim().startsWith('// a native adapter) has no executable adapter');
       ok(
         removed.every(sanctionedRemoval),
         `§F5: ${csFile} removes NOTHING except the sanctioned legacy lookup lines (removed ${removed.length})`,
@@ -785,16 +811,38 @@ function section_regression(): void {
           || line.includes('Permanent Adapter')
           || line.includes('Phase 2')
           || line.includes('PHASE 2')
+          || line.includes('Phase 3')
+          || line.includes('PHASE 3')
+          || line.includes('generatedArtifacts')
+          || line.includes('generatedAdapters')
+          || line.includes('generated_adapter_version')
+          || line.includes('buildGeneratedAdapterMap')
+          || line.includes('adapterInstances')
+          || line.includes('canonicalAdapterKeyForRow')
+          || line.includes('selectedInstances')
+          || line.includes('rowByKey.set')
+          || line.includes('rowByKey = new Map')
+          || line.includes('adapter_state')
+          || line.includes(': undefined;')
+          || line.includes('activeGenerated')
+          || line.includes('artifactData')
+          || line.includes('artifactError')
+          || line.includes('cloudstream_adapter_artifacts')
+          || line.includes("canonical_key', keys")
+          || line.includes('for (const row of catalog.extensions)')
+          || line.includes('candidate.internal_name.toLowerCase() === extensionId.trim().toLowerCase()')
+          || line.includes('new Map([[adapter.id.toLowerCase(), adapter]]))')
           || line.includes('canonicalAdapterKeyForRow')
           || line.includes('executableAdapterForExtension')
           || line.includes('seenCanonicalKeys')
           || line.includes('integration_type')
           || line.includes('adapter-registry')
+          || line.includes('generated-registry')
           || /^\s*(\/\*\*|\*|\/\/|$)/.test(line)
           || line.includes('{ signal: request.signal }')
           || line.includes('signal?: AbortSignal;')
           || line.includes("...(deps.signal !== undefined ? { signal: deps.signal } : {})")),
-        `§F5: ${csFile} additions are ONLY the Phase 1 cancellation threading + Phase 2 type-aware registry binding (added ${added.length})`,
+        `§F5: ${csFile} additions are ONLY the Phase 1 cancellation threading + Phase 2/3 registry binding evolution (added ${added.length})`,
       );
     }
   }

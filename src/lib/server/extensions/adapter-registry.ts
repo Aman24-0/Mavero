@@ -84,13 +84,23 @@ export type ExtensionRegistryRow = {
 };
 
 /**
+ * Phase 3 (D-P3-8): the generated-adapter binding surface. Callers that
+ * loaded READY artifact rows (the Downloader 2 catalog loader, the admin
+ * test action) build this canonical-key → instance map through
+ * generated-registry.ts and pass it here. The map is ALWAYS optional:
+ * absent map = native-only behavior, byte-identical to Phase 2.
+ */
+export type GeneratedAdapterBinding = ReadonlyMap<string, MaveroCloudStreamAdapter>;
+
+/**
  * The EXECUTABLE adapter for one extension row, or null.
  *
- * Phase 2 truth table:
+ * Phase 3 truth table (native precedence — plan §16):
  *   cloudstream row + code-registered internalName → the native instance
- *   nuvio row (any id, even one colliding with a native adapter)  → null
- *   generated state (Phase 3+ writes)                              → null
- *   anything else                                                  → null
+ *   row whose CANONICAL KEY is in the generated map         → the generated
+ *   instance (only when the native registry has no binding)
+ *   nuvio row without a generated artifact                    → null
+ *   anything else                                             → null
  *
  * Defensive normalization: any integration_type that is not explicitly
  * 'nuvio' is treated as 'cloudstream' (the column default) — a not-yet-
@@ -98,10 +108,20 @@ export type ExtensionRegistryRow = {
  *
  * This is the single place the Downloader 2 eligibility asks "can this row
  * execute a Mavero adapter?" — one source of truth, no parallel logic.
+ * Generated instances come from PERSISTED artifacts only: the external
+ * Builder is never in this path (plan §3).
  */
-export function executableAdapterForExtension(row: ExtensionRegistryRow): MaveroCloudStreamAdapter | null {
-  if (row.integration_type === 'nuvio') return null;
-  return lookupCloudStreamAdapterInstance(row.internal_name);
+export function executableAdapterForExtension(
+  row: ExtensionRegistryRow,
+  generatedAdapters?: GeneratedAdapterBinding,
+): MaveroCloudStreamAdapter | null {
+  // NATIVE FIRST: a healthy native binding is never overridden by a
+  // generated adapter (plan §16 native precedence).
+  const native = row.integration_type === 'nuvio' ? null : lookupCloudStreamAdapterInstance(row.internal_name);
+  if (native !== null) return native;
+  if (generatedAdapters === undefined) return null;
+  const canonicalKey = canonicalAdapterKeyForRow(row);
+  return generatedAdapters.get(canonicalKey) ?? null;
 }
 
 /** True when the row's canonical identity is bound to an executable adapter. */
@@ -123,9 +143,11 @@ const BUILDER_STATES: ReadonlySet<PermanentAdapterState> = new Set(['building', 
  *   cloudstream + code adapter bound   → 'native'
  *   cloudstream + plugin DOWN (2)      → 'runtime_required' (not convertible now)
  *   cloudstream + plugin BROKEN (3)    → 'runtime_required'
- *   nuvio (always, in Phase 2)         → 'adapter_required'
- *   persisted Builder outcome          → respected for non-native rows
- *     ('generated'/'failed' — Phase 3+ writes; Phase 2 never sets them)
+ *   nuvio (without a generated state)  → 'adapter_required'
+ *   persisted Builder outcomes         → respected for non-native rows
+ *     ('generated'/'failed'/'runtime_required'/'building'/'testing' —
+ *     Phase 3 writes: builder verdicts and in-flight builds survive
+ *     repository re-syncs; only a live native binding overrides them)
  *
  * Native binding is type-aware (see executableAdapterForExtension), so a
  * Nuvio provider whose id matches a native adapter still derives
@@ -142,8 +164,16 @@ export function deriveAdapterState(
     if (row.plugin_status === 2 || row.plugin_status === 3) return 'runtime_required';
   }
   // Respect persisted Builder outcomes the code registry cannot override
-  // (Phase 3+ writes 'generated'/'failed'; Phase 2 writes neither).
-  if (persistedState === 'generated' || persistedState === 'failed') return persistedState;
+  // (Phase 3 writes these; Phase 2 wrote none of them).
+  if (
+    persistedState === 'generated'
+    || persistedState === 'failed'
+    || persistedState === 'runtime_required'
+    || persistedState === 'building'
+    || persistedState === 'testing'
+  ) {
+    return persistedState;
+  }
   return 'adapter_required';
 }
 

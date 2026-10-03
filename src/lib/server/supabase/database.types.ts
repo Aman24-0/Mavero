@@ -1751,6 +1751,12 @@ export type Database = {
           version_text: string | null
           last_tested_at: string | null
           last_test_error: string | null
+          // Added by 20261101000003_extension_phase3_builder.sql.
+          // Phase 3 Builder bookkeeping: active artifact pointer + provenance.
+          generated_adapter_version: number | null
+          builder_version: string | null
+          last_build_at: string | null
+          last_build_error: string | null
           last_checked_at: string | null
           last_error: string | null
           created_at: string
@@ -1785,6 +1791,10 @@ export type Database = {
           version_text?: string | null
           last_tested_at?: string | null
           last_test_error?: string | null
+          generated_adapter_version?: number | null
+          builder_version?: string | null
+          last_build_at?: string | null
+          last_build_error?: string | null
           last_checked_at?: string | null
           last_error?: string | null
           created_at?: string
@@ -1819,6 +1829,10 @@ export type Database = {
           version_text?: string | null
           last_tested_at?: string | null
           last_test_error?: string | null
+          generated_adapter_version?: number | null
+          builder_version?: string | null
+          last_build_at?: string | null
+          last_build_error?: string | null
           last_checked_at?: string | null
           last_error?: string | null
           created_at?: string
@@ -1833,6 +1847,59 @@ export type Database = {
             referencedColumns: ['id']
           },
         ]
+      }
+      // Added by 20261101000003_extension_phase3_builder.sql.
+      // Phase 3 permanent adapter artifacts: IMMUTABLE versioned Builder
+      // output (constrained declarative DSL — NO executable code). One row
+      // per (canonical_key, adapter_version); sha256-verified before
+      // persistence AND before interpretation. Old versions retained
+      // forever; the ACTIVE version is the extension row's
+      // generated_adapter_version pointer (atomic promotion). Admin-only
+      // via RLS (CS-1 posture).
+      cloudstream_adapter_artifacts: {
+        Row: {
+          id: string
+          canonical_key: string
+          integration_type: string
+          provider_id: string
+          adapter_version: number
+          strategy: string
+          artifact: Record<string, unknown>
+          artifact_hash: string
+          source_revision: string | null
+          builder_version: string
+          test_report: Record<string, unknown> | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          canonical_key: string
+          integration_type: string
+          provider_id: string
+          adapter_version: number
+          strategy?: string
+          artifact: Record<string, unknown>
+          artifact_hash: string
+          source_revision?: string | null
+          builder_version: string
+          test_report?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          canonical_key?: string
+          integration_type?: string
+          provider_id?: string
+          adapter_version?: number
+          strategy?: string
+          artifact?: Record<string, unknown>
+          artifact_hash?: string
+          source_revision?: string | null
+          builder_version?: string
+          test_report?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Relationships: []
       }
     }
     Views: {

@@ -6,9 +6,11 @@
 **Plan:** `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`\
 **Worklog:** `CLOUDSTREAM_MAVERO_WORKLOG.md`\
 **Primary implementation agent:** GLM AI Agent\
-**Status:** CONTINUED — Permanent Adapter Plan Phase 2 COMPLETE (unified
-permanent adapter system + Nuvio extension catalog; Phase 1 runtime
-reliability + Downloader 2 fixes COMPLETE; CS-0..CS-6 history below)
+**Status:** CONTINUED — Permanent Adapter Plan Phase 3 COMPLETE
+(Permanent Adapter Builder Service: standalone deployable Builder,
+versioned hash-verified artifacts, test-before-ready promotion, generated
+adapters in Downloader 2 with ZERO Builder dependency; Phase 1 + Phase 2
+COMPLETE; CS-0..CS-6 history below)
 
 ------------------------------------------------------------------------
 
@@ -3785,7 +3787,249 @@ Fix design (STEP 3-6, before implementation):
   code; concurrency stays 4 per the plan's "unless the audit proves a
   different existing contract" — it does not).
 
-Status: IN PROGRESS — implementation begins after this entry.
+Status: COMPLETE — Phase 3 implemented, tested, live-verified, and
+committed. Full record below (implementation, files, migration, tests,
+gates, honest limitations).
+
+## Session 10 — Phase 3 IMPLEMENTATION RECORD (2026-10-03)
+
+Implementation (all D-P3 designs, additive + surgical):
+
+- ARTIFACT LAYER (§9): src/lib/shared/adapter-artifact.ts — schema v1
+  'declarative' artifact (bounded DSL: baseUrl static|dynamic + search
+  urlTemplate + html|json candidate extraction + rank-title-year match +
+  movie/episode link extraction + resolution rules passthrough|regex-
+  extract|regex-extract-extractor|redirects|extractor + limits), closed
+  analysis verdicts (SUPPORTED/PARTIALLY_SUPPORTED/UNSUPPORTED/
+  REQUIRES_RUNTIME/REQUIRES_MANUAL_ADAPTER), test report contract,
+  Builder API contracts (closed 9-code error taxonomy), canonical JSON +
+  validateAdapterArtifact (every bound enforced), canonicalArtifactId.
+  artifact-hash.ts (server domain): sha256 over canonical serialization,
+  constant-time verify. NO executable code in any artifact.
+- DSL INTERPRETER (§9/D-P3-3): src/lib/server/extensions/builder/
+  dsl-interpreter.ts — executes validated specs against the EXISTING
+  CloudStreamRuntimeContext (the native adapters' exact security model:
+  SSRF-guarded fetches, deadlines, diagnostics, extractor registry).
+  Hard interpreter caps re-clamp every spec fan-out (40 candidates/links,
+  4 detail pages, 2048-char URLs). Dynamic baseUrl via the spec's own
+  domains document (10-min immutable cache, baked-in fallback). Season-
+  scoped episode walk (the generic season-header detector gates the
+  episode-anchor region; the requested season's header opens it). Per-link
+  resolution with honest rule semantics (first-match-wins, per-link
+  isolation — one broken link never breaks the rest). The NEW
+  regex-extract-extractor rule models the moviesdrive-family two-level
+  walk (raw link page -> regex next-level hubcloud URL -> Mavero-owned
+  extractor registry).
+- BUILDER SERVICE (§2/§4/§5/§7/§14 — adapter-builder/, standalone
+  deployable): config.ts (BUILDER_SECRET/PORT + 9 env-tunable limits),
+  context.ts (build-time runtime context = the SAME production context
+  factory with tighter budgets — test-what-you-ship), cloudstream-
+  families.ts (the source-verified bollyflix/moviesdrive/vegamovies
+  DSL templates + keyword containment matching + exact-native-id
+  refusal — .cs3 NEVER fetched/executed), sandbox.ts (the hardened
+  Nuvio realm: fresh V8 context with codeGeneration disabled; POISON
+  constructor/proto chains; neutralize() binds host methods to their
+  receiver (fixes receiver-sensitive cheerio/Promise semantics while
+  severing every escape chain); REALM-NATIVE promise bridge for fetch
+  (the brand-check-correct construction — raw host promises leak
+  constructors, neutralize proxies break Promise.prototype.then); the
+  guarded recording fetch (TMDB stub with realistic imdb_id, domains-
+  json key recording, allowlisted header recording, request/byte
+  budgets, 15s per fetch, two-stage SSRF guard + DNS revalidation);
+  instrumented cheerio (selector ops per document digest); bounded
+  console/timers; module/exports capture; runGetStreams wall-clock race
+  with output validation (64 streams bounded)), nuvio-compiler.ts (the
+  EVIDENCE-BASED trace compiler: fetch segmentation by query candidates
+  (title/encoded/imdb id), evidence-selected domains key, search
+  template derivation ({query} substitution incl. imdb-id searches),
+  JSON evidence walk (dotted paths found by the OBSERVED detail link —
+  absolute OR site-relative permalink), HTML selector evidence (best-
+  coverage + most-specific candidate over the refetched detail page),
+  follow-chain second-level pattern derivation (regex-extract-extractor
+  from the OBSERVED next-level fetch), honest refusal on ANY unevidenced
+  step), server.ts (node:http /health + /build; bearer auth with
+  timing-safe sha256 digest compare; requestId+body replay window
+  (2048-entry LRU + TTL) + 15-min timestamp skew; body cap with drain-
+  and-respond (413); closed error taxonomy mapping incl. sandbox error
+  conversion; overall build deadline race; executeBuild injectable
+  fetcher/DNS for offline tests; NO runtime routes AT ALL — plan §3).
+- MAVERO-SIDE CLIENT (§4/§5): builder-client.ts — the ONLY Builder
+  caller (admin orchestration only; statically pinned absent from the
+  runtime path): env-driven config (PRIVATE_ADAPTER_BUILDER_URL/SECRET/
+  TIMEOUT_MS; unconfigured = honest BUILDER_UNAVAILABLE), bounded
+  timeout via signal, closed outcome mapping (unreachable/401 ->
+  BUILDER_UNAVAILABLE; 502/504 -> BUILDER_TIMEOUT; unreadable shape ->
+  BUILDER_UNAVAILABLE).
+- GENERATED REGISTRY (§9/§16/D-P3-8): generated-registry.ts — READY
+  artifact rows -> MaveroCloudStreamAdapter instances through the
+  interpreter. IDENTITY SEPARATION: the instance id is the CANONICAL KEY
+  ('nuvio:moviesdrive'), never the bare provider id — collisions with
+  native adapters are structurally impossible and §16 precedence needs
+  no shadowing. Read-time validation: schema + identity coherence +
+  sha256 integrity BEFORE any instance is produced (tampered rows
+  refuse). Bounded immutable-entry cache (64 entries, 5-min hygiene TTL).
+- BUILD ORCHESTRATION (§7/§10/§11/§12/§13/D-P3-7): build-service.ts —
+  lifecycle guards (native -> NATIVE_ADAPTER_EXISTS; runtime_required/
+  generated/building/testing -> closed refusals), CAS transitions
+  (adapter_required|failed -> building -> testing -> generated|failed;
+  concurrent admin actions isolated), version lineage (next = previous
+  max + 1), the Builder call, MAVERO-SIDE validation (schema + identity
+  + version + integrity + builder-test-report), the INDEPENDENT
+  representative test through the standard resolver (READY is NEVER
+  granted on Builder 200 alone — I23 pins it), immutable artifact INSERT
+  + the ATOMIC promotion UPDATE (adapter_state='generated' +
+  generated_adapter_version + builder_version + last_tested_at in ONE
+  state-guarded update; failed builds NEVER touch the old pointer),
+  honest failure recording (closed codes, bounded last_build_error).
+  Builder-unavailability reverts the row to its prior state (nothing
+  attempted, never 'failed').
+- TEST PROVIDER (§15/D-P3-10): test-service.ts — the admin Test action
+  for BOTH integration types: native-first-then-generated binding,
+  representative movie/episode resolution through the standard bounded
+  resolver (the exact Downloader 2 machinery), normalized link views
+  (bounded sample), last_tested_at/last_test_error bookkeeping. Defaults:
+  Inception/27205/2010/tt1375666 with admin overrides (title/year/tmdb/
+  imdb/season/episode) — the imdb id matters: moviesdrive-family
+  providers search by it.
+- DOWNLOADER 2 INTEGRATION (§17/D-P3-8): adapter-registry.ts —
+  executableAdapterForExtension gained the optional generated-binding map
+  (native FIRST; absent map = Phase 2 behavior byte-identical) +
+  deriveAdapterState now respects ALL persisted Builder outcomes
+  (generated/failed/runtime_required/building/testing survive repository
+  re-syncs). resolver/service.ts — optional injectable adapterInstances
+  map (native precedence in the lookup; absent = byte-identical).
+  downloader/service.ts — catalog gained generatedArtifacts (one plain
+  select for generated rows, skipped when none); selection/building/
+  explicit-selection/single-extension paths bind generated adapters from
+  PERSISTED artifacts only; rows addressable by internal_name AND
+  canonical key (the generated adapters' resolver identity).
+- ADMIN SURFACE (§7/§15, minimal — NO Integration Manager redesign):
+  two new actions (createCloudStreamAdapter + testCloudStreamProvider
+  with optional test inputs), Hammer/FlaskConical buttons in
+  AdminCloudStreamManager (Create Adapter for adapter_required/failed
+  rows with a confirm; Test Provider for native/generated rows), the
+  inline Test results panel (normalized links, case outcomes, adapter
+  kind/version), plan §13 state messaging (runtime_required notice,
+  failed reason, generated version/builder/tested provenance). The view
+  gained the Phase 3 bookkeeping fields (generatedAdapterVersion,
+  builderVersion, lastBuildAt, lastBuildError).
+- DB (§18/§19): migration 20261101000003_extension_phase3_builder.sql —
+  ADDITIVE + IDEMPOTENT: cloudstream_adapter_artifacts (canonical_key
+  identity, UNIQUE(canonical_key, adapter_version), artifact jsonb,
+  64-hex artifact_hash, source_revision, builder_version, test_report,
+  NO updated_at by design — rows are immutable; RLS admin-only mirroring
+  CS-1 (is_admin() policy, anon revoked) + 4 bookkeeping columns on
+  cloudstream_extensions (generated_adapter_version/builder_version/
+  last_build_at/last_build_error) + the active-version partial index.
+  Applied to LIVE Supabase via the Management API + tracker entry
+  20261101000003 (34 entries); verified live: table + columns + RLS +
+  policy + 0 anon grants + 0 artifact rows (nothing generated yet —
+  honest); download_providers never referenced. database.types.ts
+  extended additively.
+
+Migration: 20261101000003_extension_phase3_builder.sql (see above; live
+application + tracker + read-only verification recorded).
+
+Files changed (13 tracked + 11 new tracked-to-be + driver convention):
+- NEW adapter-builder/{config,context,cloudstream-families,sandbox,
+  nuvio-compiler,server}.ts (the standalone deployable Builder; run:
+  BUILDER_SECRET=... pnpm exec tsx --tsconfig ./jsconfig.json
+  adapter-builder/server.ts)
+- NEW src/lib/shared/adapter-artifact.ts; src/lib/server/extensions/
+  builder/{artifact-hash,dsl-interpreter,builder-client,generated-
+  registry,build-service,test-service}.ts
+- NEW supabase/migrations/20261101000003_extension_phase3_builder.sql
+- NEW scripts/cloudstream_phase3_builder_test.ts (208 checks, in the
+  pnpm test chain) + scripts/cloudstream_phase3_live_smoke.ts
+  (verify:cloudstream-phase3)
+- src/lib/server/extensions/adapter-registry.ts (generated binding +
+  persisted-outcome derivation), cloudstream/resolver/service.ts
+  (injectable instances), cloudstream/downloader/service.ts (artifacts
+  select + generated binding + canonical-key addressing),
+  cloudstream/extensions/service.ts + shared/cloudstream-types.ts
+  (bookkeeping view fields + ProviderTestResultView), supabase/
+  database.types.ts, routes/admin/system/integrations/+page.server.ts
+  (+page.svelte) + components/admin2/AdminCloudStreamManager.svelte
+  (two actions + state messaging + test panel), .env.example (the three
+  PRIVATE_ADAPTER_BUILDER_* vars), package.json (test chain + verify
+  script), scripts/cloudstream_registry_integration_test.ts (sanctioned
+  §A10/§F5 Phase 3 pin evolution), scripts/p3_full_chain_driver.mjs +
+  log (untracked driver convention).
+
+Tests:
+- cloudstream_phase3_builder_test — 208 checks PASSED (§A artifact
+  contracts incl. 15 validation-edge rejections + canonical JSON +
+  integrity; §B DSL interpreter: JSON/HTML search, dynamic base + save-
+  fallback, episode season scoping, regex-extract, per-link isolation,
+  honest failure taxonomy; §C sandbox static scan + output validation
+  bounds; §D compiler evidence + honest refusals (no outputs, unevidenced
+  detail link); §E executeBuild: the FULL offline Nuvio pipeline (module
+  fetch -> sandbox -> compile -> live verify -> artifact), tv-capable
+  PARTIALLY_SUPPORTED, anti-hallucination guard, forbidden module
+  rejection, missing-exports UNSUPPORTED, family matching + native-id
+  refusal + clone family build through the REAL hubcloud extractor
+  fixtures + .cs3-never-fetched pin; §F Builder HTTP: health, 401s, 404
+  runtime routes, replay 409, timestamp skew, malformed body, 413 drain;
+  §G client outcomes; §H registry: canonical identity, tamper/hash/
+  identity refusal, cache, map binding, H12 absent-map honesty, H13/13b
+  native precedence + distinct canonical identity; §I orchestration:
+  native/runtime_required/unknown refusals, unavailability revert (NOT
+  failed), happy path (building -> testing -> generated + atomic
+  pointer + immutable row + test report), version bump (previous+1,
+  old rows retained), REQUIRES_RUNTIME -> runtime_required, identity
+  tamper -> failed + nothing persisted, independent-test failure ->
+  failed (READY never on 200), concurrent-build isolation; §J test
+  provider: adapter_required honesty, generated test pass, input
+  parsing; §K DOWNLOADER 2 INDEPENDENCE: 11 runtime files statically
+  pinned free of builder imports/env, the generated adapter resolves
+  with the Builder UNREACHABLE (K6/K7), eligibility + canonical
+  identity, participation baseline unaffected; §L migration additivity
+  pins (13 checks incl. nothing dropped/altered, unique constraint, RLS
+  posture, anon revoke, Phase 2 untouched).
+- cloudstream_phase3_live_smoke — 18 checks PASSED against the REAL
+  world: the standalone Builder boots in-process (the deployable code);
+  the REAL phisher-nuvio-providers repository discovers 49 providers;
+  the REAL moviesdrive.js module runs in the sandbox (TMDB stub -> TVVVV
+  domains.json -> imdb-id search -> detail page -> mdrive.lol mirrors ->
+  hubcloud.ist -> module extractors -> a REAL pixeldrain stream
+  observed); the compiler evidences the whole chain; the artifact v1
+  (PARTIALLY_SUPPORTED, movie-only — honest) passes Builder-side live
+  verification + Mavero's independent test; the row promotes atomically
+  ('generated' v1); [Test Provider] PASSES with 12 links; the Builder is
+  STOPPED and Downloader 2 still resolves 12 REAL links from the
+  persisted artifact (native adapters participating; the known VegaMovies
+  live EXTRACTOR_FAILED unchanged); cleanup leaves the catalog exactly
+  as the admin left it.
+- Regression sweep: ALL 12 existing CloudStream suites re-run GREEN
+  (parse 78, sync 113, admin_ui 160, runtime 103, extractors 50,
+  adapters 39, resolver 37, downloader api 144, downloader ui 170,
+  registry integration 153 (sanctioned pin evolution), phase1 38,
+  phase2 195); cloudstream_cs1_live_smoke 5 checks PASS.
+- FULL CHAIN (scripts/p3_full_chain_driver.mjs -> p3_full_chain.log):
+  208 commands = 200 PASS + the identical 8 documented pre-existing
+  baseline failures + 0 NEW (set-for-set the documented baseline).
+
+Gates: pnpm check 0 errors/0 warnings; pnpm build PASS (~30s);
+verify:cloudstream-phase3 18 checks PASS (live).
+
+Honest limitations (deferred, never faked):
+- Nuvio v1 compiles MOVIE-ONLY artifacts (PARTIALLY_SUPPORTED for tv-
+  capable providers; episode-trace compilation lands in a later builder
+  version — the episode walk patterns need episode-case trace evidence).
+- The DSL vocabulary covers the search-page-scraper archetype + the
+  two-level hubcloud-family extraction; providers with deeper/different
+  chains (POSTs, JS-rendered pages, auth flows) honestly refuse with
+  REQUIRES_RUNTIME.
+- The Builder's CloudStream path covers the three source-verified
+  families (keyword containment); every other .cs3 provider is honestly
+  REQUIRES_RUNTIME (the .cs3 cannot be analyzed server-side — never
+  fetched, never executed).
+- Anti-hallucination compares exact URLs, hostnames, or registrable
+  labels (the module's chain and Mavero's extractor registry land on
+  sibling domains of the same service — pixeldrain.com/.dev).
+- The admin create-adapter action is synchronous (bounded by the builder
+  timeout); long builds hold the request open. A queued/background build
+  is a Phase 4+ UX consideration, not a correctness gap.
 
 Implementation performed (STEP 3-6, after the audit above):
 - F1 manifest-fetch.ts: additive optional `signal` on ManifestFetchDeps +
@@ -4003,7 +4247,249 @@ DESIGN (fixed before implementation — additive + surgical):
   tests); Nuvio rows never bind native adapters; resolution dedupes
   per canonical adapter key (same adapter never runs twice).
 
-Status: IN PROGRESS — implementation begins after this entry.
+Status: COMPLETE — Phase 3 implemented, tested, live-verified, and
+committed. Full record below (implementation, files, migration, tests,
+gates, honest limitations).
+
+## Session 10 — Phase 3 IMPLEMENTATION RECORD (2026-10-03)
+
+Implementation (all D-P3 designs, additive + surgical):
+
+- ARTIFACT LAYER (§9): src/lib/shared/adapter-artifact.ts — schema v1
+  'declarative' artifact (bounded DSL: baseUrl static|dynamic + search
+  urlTemplate + html|json candidate extraction + rank-title-year match +
+  movie/episode link extraction + resolution rules passthrough|regex-
+  extract|regex-extract-extractor|redirects|extractor + limits), closed
+  analysis verdicts (SUPPORTED/PARTIALLY_SUPPORTED/UNSUPPORTED/
+  REQUIRES_RUNTIME/REQUIRES_MANUAL_ADAPTER), test report contract,
+  Builder API contracts (closed 9-code error taxonomy), canonical JSON +
+  validateAdapterArtifact (every bound enforced), canonicalArtifactId.
+  artifact-hash.ts (server domain): sha256 over canonical serialization,
+  constant-time verify. NO executable code in any artifact.
+- DSL INTERPRETER (§9/D-P3-3): src/lib/server/extensions/builder/
+  dsl-interpreter.ts — executes validated specs against the EXISTING
+  CloudStreamRuntimeContext (the native adapters' exact security model:
+  SSRF-guarded fetches, deadlines, diagnostics, extractor registry).
+  Hard interpreter caps re-clamp every spec fan-out (40 candidates/links,
+  4 detail pages, 2048-char URLs). Dynamic baseUrl via the spec's own
+  domains document (10-min immutable cache, baked-in fallback). Season-
+  scoped episode walk (the generic season-header detector gates the
+  episode-anchor region; the requested season's header opens it). Per-link
+  resolution with honest rule semantics (first-match-wins, per-link
+  isolation — one broken link never breaks the rest). The NEW
+  regex-extract-extractor rule models the moviesdrive-family two-level
+  walk (raw link page -> regex next-level hubcloud URL -> Mavero-owned
+  extractor registry).
+- BUILDER SERVICE (§2/§4/§5/§7/§14 — adapter-builder/, standalone
+  deployable): config.ts (BUILDER_SECRET/PORT + 9 env-tunable limits),
+  context.ts (build-time runtime context = the SAME production context
+  factory with tighter budgets — test-what-you-ship), cloudstream-
+  families.ts (the source-verified bollyflix/moviesdrive/vegamovies
+  DSL templates + keyword containment matching + exact-native-id
+  refusal — .cs3 NEVER fetched/executed), sandbox.ts (the hardened
+  Nuvio realm: fresh V8 context with codeGeneration disabled; POISON
+  constructor/proto chains; neutralize() binds host methods to their
+  receiver (fixes receiver-sensitive cheerio/Promise semantics while
+  severing every escape chain); REALM-NATIVE promise bridge for fetch
+  (the brand-check-correct construction — raw host promises leak
+  constructors, neutralize proxies break Promise.prototype.then); the
+  guarded recording fetch (TMDB stub with realistic imdb_id, domains-
+  json key recording, allowlisted header recording, request/byte
+  budgets, 15s per fetch, two-stage SSRF guard + DNS revalidation);
+  instrumented cheerio (selector ops per document digest); bounded
+  console/timers; module/exports capture; runGetStreams wall-clock race
+  with output validation (64 streams bounded)), nuvio-compiler.ts (the
+  EVIDENCE-BASED trace compiler: fetch segmentation by query candidates
+  (title/encoded/imdb id), evidence-selected domains key, search
+  template derivation ({query} substitution incl. imdb-id searches),
+  JSON evidence walk (dotted paths found by the OBSERVED detail link —
+  absolute OR site-relative permalink), HTML selector evidence (best-
+  coverage + most-specific candidate over the refetched detail page),
+  follow-chain second-level pattern derivation (regex-extract-extractor
+  from the OBSERVED next-level fetch), honest refusal on ANY unevidenced
+  step), server.ts (node:http /health + /build; bearer auth with
+  timing-safe sha256 digest compare; requestId+body replay window
+  (2048-entry LRU + TTL) + 15-min timestamp skew; body cap with drain-
+  and-respond (413); closed error taxonomy mapping incl. sandbox error
+  conversion; overall build deadline race; executeBuild injectable
+  fetcher/DNS for offline tests; NO runtime routes AT ALL — plan §3).
+- MAVERO-SIDE CLIENT (§4/§5): builder-client.ts — the ONLY Builder
+  caller (admin orchestration only; statically pinned absent from the
+  runtime path): env-driven config (PRIVATE_ADAPTER_BUILDER_URL/SECRET/
+  TIMEOUT_MS; unconfigured = honest BUILDER_UNAVAILABLE), bounded
+  timeout via signal, closed outcome mapping (unreachable/401 ->
+  BUILDER_UNAVAILABLE; 502/504 -> BUILDER_TIMEOUT; unreadable shape ->
+  BUILDER_UNAVAILABLE).
+- GENERATED REGISTRY (§9/§16/D-P3-8): generated-registry.ts — READY
+  artifact rows -> MaveroCloudStreamAdapter instances through the
+  interpreter. IDENTITY SEPARATION: the instance id is the CANONICAL KEY
+  ('nuvio:moviesdrive'), never the bare provider id — collisions with
+  native adapters are structurally impossible and §16 precedence needs
+  no shadowing. Read-time validation: schema + identity coherence +
+  sha256 integrity BEFORE any instance is produced (tampered rows
+  refuse). Bounded immutable-entry cache (64 entries, 5-min hygiene TTL).
+- BUILD ORCHESTRATION (§7/§10/§11/§12/§13/D-P3-7): build-service.ts —
+  lifecycle guards (native -> NATIVE_ADAPTER_EXISTS; runtime_required/
+  generated/building/testing -> closed refusals), CAS transitions
+  (adapter_required|failed -> building -> testing -> generated|failed;
+  concurrent admin actions isolated), version lineage (next = previous
+  max + 1), the Builder call, MAVERO-SIDE validation (schema + identity
+  + version + integrity + builder-test-report), the INDEPENDENT
+  representative test through the standard resolver (READY is NEVER
+  granted on Builder 200 alone — I23 pins it), immutable artifact INSERT
+  + the ATOMIC promotion UPDATE (adapter_state='generated' +
+  generated_adapter_version + builder_version + last_tested_at in ONE
+  state-guarded update; failed builds NEVER touch the old pointer),
+  honest failure recording (closed codes, bounded last_build_error).
+  Builder-unavailability reverts the row to its prior state (nothing
+  attempted, never 'failed').
+- TEST PROVIDER (§15/D-P3-10): test-service.ts — the admin Test action
+  for BOTH integration types: native-first-then-generated binding,
+  representative movie/episode resolution through the standard bounded
+  resolver (the exact Downloader 2 machinery), normalized link views
+  (bounded sample), last_tested_at/last_test_error bookkeeping. Defaults:
+  Inception/27205/2010/tt1375666 with admin overrides (title/year/tmdb/
+  imdb/season/episode) — the imdb id matters: moviesdrive-family
+  providers search by it.
+- DOWNLOADER 2 INTEGRATION (§17/D-P3-8): adapter-registry.ts —
+  executableAdapterForExtension gained the optional generated-binding map
+  (native FIRST; absent map = Phase 2 behavior byte-identical) +
+  deriveAdapterState now respects ALL persisted Builder outcomes
+  (generated/failed/runtime_required/building/testing survive repository
+  re-syncs). resolver/service.ts — optional injectable adapterInstances
+  map (native precedence in the lookup; absent = byte-identical).
+  downloader/service.ts — catalog gained generatedArtifacts (one plain
+  select for generated rows, skipped when none); selection/building/
+  explicit-selection/single-extension paths bind generated adapters from
+  PERSISTED artifacts only; rows addressable by internal_name AND
+  canonical key (the generated adapters' resolver identity).
+- ADMIN SURFACE (§7/§15, minimal — NO Integration Manager redesign):
+  two new actions (createCloudStreamAdapter + testCloudStreamProvider
+  with optional test inputs), Hammer/FlaskConical buttons in
+  AdminCloudStreamManager (Create Adapter for adapter_required/failed
+  rows with a confirm; Test Provider for native/generated rows), the
+  inline Test results panel (normalized links, case outcomes, adapter
+  kind/version), plan §13 state messaging (runtime_required notice,
+  failed reason, generated version/builder/tested provenance). The view
+  gained the Phase 3 bookkeeping fields (generatedAdapterVersion,
+  builderVersion, lastBuildAt, lastBuildError).
+- DB (§18/§19): migration 20261101000003_extension_phase3_builder.sql —
+  ADDITIVE + IDEMPOTENT: cloudstream_adapter_artifacts (canonical_key
+  identity, UNIQUE(canonical_key, adapter_version), artifact jsonb,
+  64-hex artifact_hash, source_revision, builder_version, test_report,
+  NO updated_at by design — rows are immutable; RLS admin-only mirroring
+  CS-1 (is_admin() policy, anon revoked) + 4 bookkeeping columns on
+  cloudstream_extensions (generated_adapter_version/builder_version/
+  last_build_at/last_build_error) + the active-version partial index.
+  Applied to LIVE Supabase via the Management API + tracker entry
+  20261101000003 (34 entries); verified live: table + columns + RLS +
+  policy + 0 anon grants + 0 artifact rows (nothing generated yet —
+  honest); download_providers never referenced. database.types.ts
+  extended additively.
+
+Migration: 20261101000003_extension_phase3_builder.sql (see above; live
+application + tracker + read-only verification recorded).
+
+Files changed (13 tracked + 11 new tracked-to-be + driver convention):
+- NEW adapter-builder/{config,context,cloudstream-families,sandbox,
+  nuvio-compiler,server}.ts (the standalone deployable Builder; run:
+  BUILDER_SECRET=... pnpm exec tsx --tsconfig ./jsconfig.json
+  adapter-builder/server.ts)
+- NEW src/lib/shared/adapter-artifact.ts; src/lib/server/extensions/
+  builder/{artifact-hash,dsl-interpreter,builder-client,generated-
+  registry,build-service,test-service}.ts
+- NEW supabase/migrations/20261101000003_extension_phase3_builder.sql
+- NEW scripts/cloudstream_phase3_builder_test.ts (208 checks, in the
+  pnpm test chain) + scripts/cloudstream_phase3_live_smoke.ts
+  (verify:cloudstream-phase3)
+- src/lib/server/extensions/adapter-registry.ts (generated binding +
+  persisted-outcome derivation), cloudstream/resolver/service.ts
+  (injectable instances), cloudstream/downloader/service.ts (artifacts
+  select + generated binding + canonical-key addressing),
+  cloudstream/extensions/service.ts + shared/cloudstream-types.ts
+  (bookkeeping view fields + ProviderTestResultView), supabase/
+  database.types.ts, routes/admin/system/integrations/+page.server.ts
+  (+page.svelte) + components/admin2/AdminCloudStreamManager.svelte
+  (two actions + state messaging + test panel), .env.example (the three
+  PRIVATE_ADAPTER_BUILDER_* vars), package.json (test chain + verify
+  script), scripts/cloudstream_registry_integration_test.ts (sanctioned
+  §A10/§F5 Phase 3 pin evolution), scripts/p3_full_chain_driver.mjs +
+  log (untracked driver convention).
+
+Tests:
+- cloudstream_phase3_builder_test — 208 checks PASSED (§A artifact
+  contracts incl. 15 validation-edge rejections + canonical JSON +
+  integrity; §B DSL interpreter: JSON/HTML search, dynamic base + save-
+  fallback, episode season scoping, regex-extract, per-link isolation,
+  honest failure taxonomy; §C sandbox static scan + output validation
+  bounds; §D compiler evidence + honest refusals (no outputs, unevidenced
+  detail link); §E executeBuild: the FULL offline Nuvio pipeline (module
+  fetch -> sandbox -> compile -> live verify -> artifact), tv-capable
+  PARTIALLY_SUPPORTED, anti-hallucination guard, forbidden module
+  rejection, missing-exports UNSUPPORTED, family matching + native-id
+  refusal + clone family build through the REAL hubcloud extractor
+  fixtures + .cs3-never-fetched pin; §F Builder HTTP: health, 401s, 404
+  runtime routes, replay 409, timestamp skew, malformed body, 413 drain;
+  §G client outcomes; §H registry: canonical identity, tamper/hash/
+  identity refusal, cache, map binding, H12 absent-map honesty, H13/13b
+  native precedence + distinct canonical identity; §I orchestration:
+  native/runtime_required/unknown refusals, unavailability revert (NOT
+  failed), happy path (building -> testing -> generated + atomic
+  pointer + immutable row + test report), version bump (previous+1,
+  old rows retained), REQUIRES_RUNTIME -> runtime_required, identity
+  tamper -> failed + nothing persisted, independent-test failure ->
+  failed (READY never on 200), concurrent-build isolation; §J test
+  provider: adapter_required honesty, generated test pass, input
+  parsing; §K DOWNLOADER 2 INDEPENDENCE: 11 runtime files statically
+  pinned free of builder imports/env, the generated adapter resolves
+  with the Builder UNREACHABLE (K6/K7), eligibility + canonical
+  identity, participation baseline unaffected; §L migration additivity
+  pins (13 checks incl. nothing dropped/altered, unique constraint, RLS
+  posture, anon revoke, Phase 2 untouched).
+- cloudstream_phase3_live_smoke — 18 checks PASSED against the REAL
+  world: the standalone Builder boots in-process (the deployable code);
+  the REAL phisher-nuvio-providers repository discovers 49 providers;
+  the REAL moviesdrive.js module runs in the sandbox (TMDB stub -> TVVVV
+  domains.json -> imdb-id search -> detail page -> mdrive.lol mirrors ->
+  hubcloud.ist -> module extractors -> a REAL pixeldrain stream
+  observed); the compiler evidences the whole chain; the artifact v1
+  (PARTIALLY_SUPPORTED, movie-only — honest) passes Builder-side live
+  verification + Mavero's independent test; the row promotes atomically
+  ('generated' v1); [Test Provider] PASSES with 12 links; the Builder is
+  STOPPED and Downloader 2 still resolves 12 REAL links from the
+  persisted artifact (native adapters participating; the known VegaMovies
+  live EXTRACTOR_FAILED unchanged); cleanup leaves the catalog exactly
+  as the admin left it.
+- Regression sweep: ALL 12 existing CloudStream suites re-run GREEN
+  (parse 78, sync 113, admin_ui 160, runtime 103, extractors 50,
+  adapters 39, resolver 37, downloader api 144, downloader ui 170,
+  registry integration 153 (sanctioned pin evolution), phase1 38,
+  phase2 195); cloudstream_cs1_live_smoke 5 checks PASS.
+- FULL CHAIN (scripts/p3_full_chain_driver.mjs -> p3_full_chain.log):
+  208 commands = 200 PASS + the identical 8 documented pre-existing
+  baseline failures + 0 NEW (set-for-set the documented baseline).
+
+Gates: pnpm check 0 errors/0 warnings; pnpm build PASS (~30s);
+verify:cloudstream-phase3 18 checks PASS (live).
+
+Honest limitations (deferred, never faked):
+- Nuvio v1 compiles MOVIE-ONLY artifacts (PARTIALLY_SUPPORTED for tv-
+  capable providers; episode-trace compilation lands in a later builder
+  version — the episode walk patterns need episode-case trace evidence).
+- The DSL vocabulary covers the search-page-scraper archetype + the
+  two-level hubcloud-family extraction; providers with deeper/different
+  chains (POSTs, JS-rendered pages, auth flows) honestly refuse with
+  REQUIRES_RUNTIME.
+- The Builder's CloudStream path covers the three source-verified
+  families (keyword containment); every other .cs3 provider is honestly
+  REQUIRES_RUNTIME (the .cs3 cannot be analyzed server-side — never
+  fetched, never executed).
+- Anti-hallucination compares exact URLs, hostnames, or registrable
+  labels (the module's chain and Mavero's extractor registry land on
+  sibling domains of the same service — pixeldrain.com/.dev).
+- The admin create-adapter action is synchronous (bounded by the builder
+  timeout); long builds hold the request open. A queued/background build
+  is a Phase 4+ UX consideration, not a correctness gap.
 
 Implementation performed (after the audit/design above):
 
@@ -4130,3 +4616,458 @@ Next action: STOP at Phase 2 completion — Phase 3 (Adapter Builder
 Service) has NOT been started, per the plan's phase discipline. No
 Render/Oracle Builder, no generated-adapter execution, no Integration
 Manager 2.0 redesign, no cross-repository link deduplication.
+
+## 2026-10-03 — Session 10 (Permanent Adapter Plan — Phase 3: Permanent Adapter Builder Service)
+
+Phase: Phase 3 of `CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md` (§7 —
+Builder Service, §8 — validation, §9 artifact model, §10 test-before-ready,
+§11 persistence, §12 versioning, §14 security limits, §15 test-provider
+backend contract, §16 native adapter protection, §17 Downloader 2
+independence, §18/§19 DB + storage). Phase 4 (Integration Manager 2.0
+redesign) and Phase 5 are NOT started. Render/Oracle NEVER enter the
+Downloader 2 runtime path.
+
+Starting HEAD: `eda62fe` (= origin/main; Phase 2 present — verified:
+a445fd1 "feat: unified permanent adapter system + nuvio extension catalog
+(Phase 2)" + worklog SHA record; git status clean except the recurring
+untracked full-chain driver logs; `git fetch origin` → in sync).
+
+Plan/worklog read:
+- [x] CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (all 1035 lines, incl.
+      the Phase 1 + Phase 2 implementation records)
+- [x] Worklog P2 Completion + Session 9 + conventions
+- [x] Live catalog audit (read-only, Management API): 3 cloudstream
+      repositories (Megix/Indflix/Phisher), 87 adapter_required + 4 native
+      (Bollyflix, MoviesDrive, Vegamovies, VegaMovies — case-variant rows)
+      + 1 runtime_required; ZERO nuvio rows yet (Phase 2 smoke was
+      preview-only); tracker 33 entries, latest 20261101000002.
+
+STEP 1 — read-only audit findings (Phase 2 architecture at HEAD):
+
+- adapter-registry.ts (verified at HEAD, not assumed): canonical identity
+  `${integration_type}:${provider key}`; TYPE-AWARE executable binding
+  (executableAdapterForExtension: nuvio rows → null, cloudstream rows →
+  code registry lookup — the ONLY place Downloader 2 eligibility asks
+  "can this row execute?"); deriveAdapterState (live native binding wins
+  > cloudstream plugin_status 2/3 → runtime_required > persisted
+  'generated'/'failed' respected > adapter_required); operational
+  active/disabled DERIVED from enabled (never persisted);
+  LIFECYCLE_TRANSITIONS = adapter_required→[building, runtime_required],
+  building→[testing, failed], testing→[generated, failed],
+  generated→[failed], failed→[building], runtime_required/native
+  terminal; requestCreateAdapterTransition currently REFUSES everything
+  with BUILDER_UNAVAILABLE (the Phase 3 entry point, zero pretense).
+- Lifecycle vocabulary at HEAD maps EXACTLY to the Phase 3 contract:
+  ADAPTER_REQUIRED='adapter_required' (persisted), CREATE_ADAPTER=
+  requestCreateAdapterTransition (refuses until Phase 3), BUILDING/
+  TESTING='building'/'testing' (persisted, written by NOTHING), READY=
+  'generated' (persisted, written by NOTHING), FAILED='failed',
+  DISABLED=derived-from-enabled, NATIVE=code-registry binding,
+  RUNTIME_REQUIRED='runtime_required'. Phase 3 writes building/testing/
+  generated/failed via the Builder orchestration ONLY.
+- Reconcile (repository/service.ts): adapter_state is re-derived per sync
+  via deriveAdapterState(type-aware, plugin_status, EXISTING persisted
+  state) — 'generated'/'failed' survive repository re-syncs (verified in
+  code; to be pinned by Phase 3 tests). enabled is preserved across syncs
+  (CS-1 convention). No Phase 2 code path writes builder states.
+- Downloader 2 (downloader/service.ts): selection = 5-condition
+  eligibility (row exists + repository enabled + row enabled + executable
+  adapter via executableAdapterForExtension + media support) + canonical
+  dedup; ALL binding through the registry facade; the orchestrator
+  (resolver/service.ts) resolves adapterIds through the CODE registry
+  (lookupCloudStreamAdapterInstance) with bounded concurrency 4, 30s/
+  adapter, 40s overall, deadline-race per adapter (Phase 1 intact).
+  NO builder/Render/Oracle reference anywhere (static pins in the Phase 2
+  suite).
+- extensions/service.ts (admin view): LIVE type-aware derivation; nuvio
+  rows currently derive legacy adapter_status 'adapter_required' and
+  adapter_state via deriveOperationalAdapterState; view carries
+  lastTestedAt/lastTestError (null everywhere in Phase 2).
+- Admin actions (+page.server.ts): repository CRUD/sync + extension
+  enable/disable ONLY — no create-adapter action, no test-provider
+  action (§15 backend contract is new Phase 3 work).
+- Env convention: `$env/dynamic/private` with PRIVATE_ prefix, dynamic
+  import inside functions for testability (.env.example documents each
+  server-only secret). Phase 3 adds PRIVATE_ADAPTER_BUILDER_URL /
+  PRIVATE_ADAPTER_BUILDER_SECRET / PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS.
+- SSRF primitives reusable by the Builder: streaming/stremio/ssrf.ts
+  exports normalizeGuardedHostname/parseIpv4Literal/expandIpv6/
+  isBlockedIpv4/isBlockedIpv6/isBlockedIpAddress/assertSafeManifestUrl/
+  assertSafeManifestDestination/SafeDnsResolver (pure node, importable
+  under tsx through the repo tsconfig path alias — the same mechanism
+  every script/*_test.ts already uses).
+- Nuvio provider module format VERIFIED LIVE (fetched during this
+  audit, not assumed): phisher-nuvio-providers/providers/moviesdrive.js
+  is a 42 KB bundled CJS file — `if (typeof module !== "undefined" &&
+  module.exports) { ... module.exports = { getStreams }; }` else
+  global.getStreams; `getStreams(tmdbId, mediaType, season, episode)` →
+  Promise<Array<{name, title, url, quality, size, headers, provider}>>;
+  sandbox needs: global fetch (incl. `redirect:"manual"` + response
+  .text()/.json()/.ok/.headers.get), console, require('cheerio-without-
+  node-native'), URL/URLSearchParams; network: TMDB API (has own key),
+  phisher TVVVV domains.json, provider site, pixeldrain/hubcloud/gdflix.
+  MoviesDrive class = search-page scraper archetype (search → candidates
+  → detail page → per-server extractors).
+
+DESIGN (fixed before implementation — additive + surgical):
+
+- D-P3-1 RUNTIME SEPARATION (plan §1/§3 hard rule): the Builder is a
+  BUILD-TIME-ONLY external service. Mavero calls it ONLY from the admin
+  create-adapter orchestration. The Downloader 2 runtime path NEVER
+  imports the builder client, NEVER fetches ADAPTER_BUILDER_URL, and
+  resolves generated adapters from PERSISTED artifacts only. Enforced by
+  static pins + behavioral tests (builder unreachable → READY adapters
+  resolve; ADAPTER_REQUIRED rows never call the builder).
+- D-P3-2 CONSTRAINED ARTIFACT (plan §9 "prefer a constrained adapter
+  representation/DSL"): the permanent artifact is a VERSIONED JSON
+  document (schemaVersion 1, strategy 'declarative') — a bounded DSL
+  pipeline (baseUrl static/dynamic-urls.json + search urlTemplate +
+  candidate extraction selectors + rank-title-year match + movie/episode
+  link extraction + per-link resolution rules passthrough|regex|redirects
+  |extractor + limits). NO executable code in the artifact. Integrity =
+  sha256 over the canonical JSON serialization. Artifact ≤ 64 KiB,
+  bounded selectors/regexes/templates/headers. The DSL vocabulary covers
+  the search-page-scraper archetype (the structure of ALL source-verified
+  providers: Bollyflix/MoviesDrive/VegaMovies families).
+- D-P3-3 DSL INTERPRETER, ONE IMPLEMENTATION, TWO CONTEXTS: the
+  interpreter (src/lib/server/extensions/builder/dsl-interpreter.ts)
+  executes a declarative spec against the EXISTING CloudStreamRuntime-
+  Context (SSRF-safe fetchHtml/fetchJson/parseHtml/resolveRedirects/
+  resolveBaseUrl/runExtractor + deadline + diagnostics) — so a generated
+  adapter behaves exactly like a native port inside the SAME security
+  model. The Builder imports the SAME interpreter (via the repo tsconfig
+  path alias under tsx) for build-time testing — test-what-you-ship.
+- D-P3-4 BUILDER SERVICE (deployable standalone, adapter-builder/):
+  zero-external-deploy-deps Node HTTP service (node:http + repo deps via
+  tsx) run with `pnpm exec tsx --tsconfig ./jsconfig.json
+  adapter-builder/server.ts`; deployable to Render/Oracle/any host —
+  deployment target is CONFIGURATION (BUILDER_SECRET, BUILDER_PORT,
+  limits via env), never hard-coded in business logic. API: GET /health,
+  POST /build. Auth: Authorization Bearer shared secret, timing-safe
+  compare, requestId replay window (LRU + TTL), timestamp skew bound.
+  Closed error taxonomy: BUILD_INVALID_REQUEST, BUILD_UNSUPPORTED_
+  PROVIDER, BUILD_SOURCE_UNAVAILABLE, BUILD_GENERATION_FAILED,
+  BUILD_VALIDATION_FAILED, BUILD_TEST_FAILED, BUILD_TIMEOUT,
+  BUILD_RESOURCE_LIMIT, BUILD_INTERNAL_ERROR. No stack traces in
+  responses. All §14 limits enforced (body/source/artifact sizes, build/
+  test timeouts, request counts, response caps, redirect caps, http(s)
+  only, SSRF + DNS revalidation via the shared ssrf.ts primitives).
+- D-P3-5 CLOUDSTREAM STRATEGY (plan §7 — .cs3 is NEVER executed): the
+  Builder never fetches/executes .cs3. Convertibility comes from the
+  source-verified FAMILY knowledge base (bollyflix/moviesdrive/vegamovies
+  site structures — the same structures the CS-2 native ports verified).
+  A cloudstream row whose internal_name matches a supported family AND
+  is not already natively bound → DSL generated from the family template
+  + Builder-side live test. Everything else → BUILD_UNSUPPORTED_PROVIDER
+  with verdict REQUIRES_RUNTIME (honest — the .cs3 cannot be analyzed
+  server-side). NATIVE PRECEDENCE (§16): natively-bound rows refuse
+  create-adapter outright; generated adapters never override healthy
+  native bindings.
+- D-P3-6 NUVIO STRATEGY (plan §8): the Builder fetches the module text
+  (bounded, SSRF-guarded), runs STATIC analysis (forbidden-pattern scan:
+  process/fs/child_process/net require, node: imports, hostile globals;
+  export-shape detection), then DYNAMIC analysis inside a HARDENED vm
+  sandbox (fresh realm; ONLY hardened host shims: recording fetch with
+  TMDB stub + per-build request/byte budgets, instrumented cheerio shim
+  that records selector ops per document, bounded console; constructor/
+  __proto__ poisoned on every host shim to cut escape chains; response
+  objects built realm-internally from primitives). The compiler matches
+  the observed fetch/selector trace against the search-page-scraper
+  archetype and emits the DSL (TMDB dropped — Mavero already supplies
+  title/year/tmdbId in resolve requests; domains.json → dynamic baseUrl).
+  The verifier re-runs the DSL through the shared interpreter and checks
+  anti-hallucination (every DSL link URL observed in the trace) —
+  mismatch ⇒ honest REQUIRES_RUNTIME verdict, never a fake adapter.
+- D-P3-7 BUILD ORCHESTRATION (Mavero side, build-service.ts):
+  admin action → lifecycle guard (native → refuse NATIVE_ADAPTER_EXISTS;
+  runtime_required → refuse; adapter_required/failed → building) →
+  POST /build (bounded: PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS, default
+  conservative for serverless) → artifact VALIDATION (schemaVersion,
+  identity = integration type + provider id, sha256 recompute, size
+  bounds, media types, closed analysis verdict, test report) →
+  adapter_state='testing' → MAVERO-SIDE INDEPENDENT TEST (plan §10/§11:
+  Mavero runs the representative movie/tv case through ITS runtime —
+  READY is NEVER granted on Builder HTTP 200 alone) → on pass: persist
+  immutable artifact row (version = previous+1) + ATOMIC pointer
+  promotion (single UPDATE setting adapter_state='generated' +
+  generated_adapter_version + builder_version + last_tested_at; WHERE
+  guards the expected prior state) → on any failure: adapter_state=
+  'failed' + last_build_error (closed code + bounded message); the OLD
+  READY adapter/pointer is NEVER touched by a failed build (§12/§13).
+- D-P3-8 GENERATED-ADAPTER BINDING: generated-registry.ts loads READY
+  artifacts by canonical key + active version (bounded immutable-entry
+  cache), validates hash, and produces MaveroCloudStreamAdapter
+  instances through the interpreter. Binding precedence in selection:
+  NATIVE code registry FIRST, then generated (explicit §16 precedence).
+  The downloader catalog loader gains one plain select (artifacts for
+  generated rows) joined in code (CS-1 convention); resolver gains an
+  optional injectable adapter-instance map (default behavior byte-
+  identical when absent).
+- D-P3-9 DB (§18 — additive + idempotent only): migration
+  20261101000003_extension_phase3_builder.sql creates
+  cloudstream_adapter_artifacts (immutable versioned artifacts: canonical
+  key, integration type, provider id, adapter_version, strategy,
+  artifact jsonb, artifact_hash, source_revision, builder_version,
+  test_report, timestamps; UNIQUE(canonical_key, adapter_version); RLS
+  admin-only mirroring the CS-1 policies; anon revoked) and adds
+  generated_adapter_version / builder_version / last_build_at /
+  last_build_error to cloudstream_extensions. Old versions retained
+  forever (rollback = repoint generated_adapter_version). Tracker entry
+  registered; applied via the Management API + verified live.
+- D-P3-10 TEST-PROVIDER BACKEND (§15): test-service.ts implements the
+  admin Test action backend for CloudStream AND Nuvio extensions (bind
+  native-or-generated adapter → bounded representative resolution
+  through the standard resolver → normalized result view + last_tested_
+  at/last_test_error write). Minimal UI buttons (Create Adapter for
+  adapter_required/failed rows; Test Provider for native/generated rows)
+  — NO Integration Manager redesign (Phase 4).
+- D-P3-11 HONESTY RULES: builder verdict REQUIRES_RUNTIME → extension
+  runtime_required (stays disabled); compile mismatch → REQUIRES_RUNTIME
+  (never a fake 'generated'); no .cs3 execution; no module JS execution
+  in Mavero EVER (only the constrained DSL interpreter); builder
+  unavailability → controlled admin error BUILDER_UNAVAILABLE, zero
+  Downloader 2 impact, zero Render wake-up.
+
+Status: COMPLETE — Phase 3 implemented, tested, live-verified, and
+committed. Full record below (implementation, files, migration, tests,
+gates, honest limitations).
+
+## Session 10 — Phase 3 IMPLEMENTATION RECORD (2026-10-03)
+
+Implementation (all D-P3 designs, additive + surgical):
+
+- ARTIFACT LAYER (§9): src/lib/shared/adapter-artifact.ts — schema v1
+  'declarative' artifact (bounded DSL: baseUrl static|dynamic + search
+  urlTemplate + html|json candidate extraction + rank-title-year match +
+  movie/episode link extraction + resolution rules passthrough|regex-
+  extract|regex-extract-extractor|redirects|extractor + limits), closed
+  analysis verdicts (SUPPORTED/PARTIALLY_SUPPORTED/UNSUPPORTED/
+  REQUIRES_RUNTIME/REQUIRES_MANUAL_ADAPTER), test report contract,
+  Builder API contracts (closed 9-code error taxonomy), canonical JSON +
+  validateAdapterArtifact (every bound enforced), canonicalArtifactId.
+  artifact-hash.ts (server domain): sha256 over canonical serialization,
+  constant-time verify. NO executable code in any artifact.
+- DSL INTERPRETER (§9/D-P3-3): src/lib/server/extensions/builder/
+  dsl-interpreter.ts — executes validated specs against the EXISTING
+  CloudStreamRuntimeContext (the native adapters' exact security model:
+  SSRF-guarded fetches, deadlines, diagnostics, extractor registry).
+  Hard interpreter caps re-clamp every spec fan-out (40 candidates/links,
+  4 detail pages, 2048-char URLs). Dynamic baseUrl via the spec's own
+  domains document (10-min immutable cache, baked-in fallback). Season-
+  scoped episode walk (the generic season-header detector gates the
+  episode-anchor region; the requested season's header opens it). Per-link
+  resolution with honest rule semantics (first-match-wins, per-link
+  isolation — one broken link never breaks the rest). The NEW
+  regex-extract-extractor rule models the moviesdrive-family two-level
+  walk (raw link page -> regex next-level hubcloud URL -> Mavero-owned
+  extractor registry).
+- BUILDER SERVICE (§2/§4/§5/§7/§14 — adapter-builder/, standalone
+  deployable): config.ts (BUILDER_SECRET/PORT + 9 env-tunable limits),
+  context.ts (build-time runtime context = the SAME production context
+  factory with tighter budgets — test-what-you-ship), cloudstream-
+  families.ts (the source-verified bollyflix/moviesdrive/vegamovies
+  DSL templates + keyword containment matching + exact-native-id
+  refusal — .cs3 NEVER fetched/executed), sandbox.ts (the hardened
+  Nuvio realm: fresh V8 context with codeGeneration disabled; POISON
+  constructor/proto chains; neutralize() binds host methods to their
+  receiver (fixes receiver-sensitive cheerio/Promise semantics while
+  severing every escape chain); REALM-NATIVE promise bridge for fetch
+  (the brand-check-correct construction — raw host promises leak
+  constructors, neutralize proxies break Promise.prototype.then); the
+  guarded recording fetch (TMDB stub with realistic imdb_id, domains-
+  json key recording, allowlisted header recording, request/byte
+  budgets, 15s per fetch, two-stage SSRF guard + DNS revalidation);
+  instrumented cheerio (selector ops per document digest); bounded
+  console/timers; module/exports capture; runGetStreams wall-clock race
+  with output validation (64 streams bounded)), nuvio-compiler.ts (the
+  EVIDENCE-BASED trace compiler: fetch segmentation by query candidates
+  (title/encoded/imdb id), evidence-selected domains key, search
+  template derivation ({query} substitution incl. imdb-id searches),
+  JSON evidence walk (dotted paths found by the OBSERVED detail link —
+  absolute OR site-relative permalink), HTML selector evidence (best-
+  coverage + most-specific candidate over the refetched detail page),
+  follow-chain second-level pattern derivation (regex-extract-extractor
+  from the OBSERVED next-level fetch), honest refusal on ANY unevidenced
+  step), server.ts (node:http /health + /build; bearer auth with
+  timing-safe sha256 digest compare; requestId+body replay window
+  (2048-entry LRU + TTL) + 15-min timestamp skew; body cap with drain-
+  and-respond (413); closed error taxonomy mapping incl. sandbox error
+  conversion; overall build deadline race; executeBuild injectable
+  fetcher/DNS for offline tests; NO runtime routes AT ALL — plan §3).
+- MAVERO-SIDE CLIENT (§4/§5): builder-client.ts — the ONLY Builder
+  caller (admin orchestration only; statically pinned absent from the
+  runtime path): env-driven config (PRIVATE_ADAPTER_BUILDER_URL/SECRET/
+  TIMEOUT_MS; unconfigured = honest BUILDER_UNAVAILABLE), bounded
+  timeout via signal, closed outcome mapping (unreachable/401 ->
+  BUILDER_UNAVAILABLE; 502/504 -> BUILDER_TIMEOUT; unreadable shape ->
+  BUILDER_UNAVAILABLE).
+- GENERATED REGISTRY (§9/§16/D-P3-8): generated-registry.ts — READY
+  artifact rows -> MaveroCloudStreamAdapter instances through the
+  interpreter. IDENTITY SEPARATION: the instance id is the CANONICAL KEY
+  ('nuvio:moviesdrive'), never the bare provider id — collisions with
+  native adapters are structurally impossible and §16 precedence needs
+  no shadowing. Read-time validation: schema + identity coherence +
+  sha256 integrity BEFORE any instance is produced (tampered rows
+  refuse). Bounded immutable-entry cache (64 entries, 5-min hygiene TTL).
+- BUILD ORCHESTRATION (§7/§10/§11/§12/§13/D-P3-7): build-service.ts —
+  lifecycle guards (native -> NATIVE_ADAPTER_EXISTS; runtime_required/
+  generated/building/testing -> closed refusals), CAS transitions
+  (adapter_required|failed -> building -> testing -> generated|failed;
+  concurrent admin actions isolated), version lineage (next = previous
+  max + 1), the Builder call, MAVERO-SIDE validation (schema + identity
+  + version + integrity + builder-test-report), the INDEPENDENT
+  representative test through the standard resolver (READY is NEVER
+  granted on Builder 200 alone — I23 pins it), immutable artifact INSERT
+  + the ATOMIC promotion UPDATE (adapter_state='generated' +
+  generated_adapter_version + builder_version + last_tested_at in ONE
+  state-guarded update; failed builds NEVER touch the old pointer),
+  honest failure recording (closed codes, bounded last_build_error).
+  Builder-unavailability reverts the row to its prior state (nothing
+  attempted, never 'failed').
+- TEST PROVIDER (§15/D-P3-10): test-service.ts — the admin Test action
+  for BOTH integration types: native-first-then-generated binding,
+  representative movie/episode resolution through the standard bounded
+  resolver (the exact Downloader 2 machinery), normalized link views
+  (bounded sample), last_tested_at/last_test_error bookkeeping. Defaults:
+  Inception/27205/2010/tt1375666 with admin overrides (title/year/tmdb/
+  imdb/season/episode) — the imdb id matters: moviesdrive-family
+  providers search by it.
+- DOWNLOADER 2 INTEGRATION (§17/D-P3-8): adapter-registry.ts —
+  executableAdapterForExtension gained the optional generated-binding map
+  (native FIRST; absent map = Phase 2 behavior byte-identical) +
+  deriveAdapterState now respects ALL persisted Builder outcomes
+  (generated/failed/runtime_required/building/testing survive repository
+  re-syncs). resolver/service.ts — optional injectable adapterInstances
+  map (native precedence in the lookup; absent = byte-identical).
+  downloader/service.ts — catalog gained generatedArtifacts (one plain
+  select for generated rows, skipped when none); selection/building/
+  explicit-selection/single-extension paths bind generated adapters from
+  PERSISTED artifacts only; rows addressable by internal_name AND
+  canonical key (the generated adapters' resolver identity).
+- ADMIN SURFACE (§7/§15, minimal — NO Integration Manager redesign):
+  two new actions (createCloudStreamAdapter + testCloudStreamProvider
+  with optional test inputs), Hammer/FlaskConical buttons in
+  AdminCloudStreamManager (Create Adapter for adapter_required/failed
+  rows with a confirm; Test Provider for native/generated rows), the
+  inline Test results panel (normalized links, case outcomes, adapter
+  kind/version), plan §13 state messaging (runtime_required notice,
+  failed reason, generated version/builder/tested provenance). The view
+  gained the Phase 3 bookkeeping fields (generatedAdapterVersion,
+  builderVersion, lastBuildAt, lastBuildError).
+- DB (§18/§19): migration 20261101000003_extension_phase3_builder.sql —
+  ADDITIVE + IDEMPOTENT: cloudstream_adapter_artifacts (canonical_key
+  identity, UNIQUE(canonical_key, adapter_version), artifact jsonb,
+  64-hex artifact_hash, source_revision, builder_version, test_report,
+  NO updated_at by design — rows are immutable; RLS admin-only mirroring
+  CS-1 (is_admin() policy, anon revoked) + 4 bookkeeping columns on
+  cloudstream_extensions (generated_adapter_version/builder_version/
+  last_build_at/last_build_error) + the active-version partial index.
+  Applied to LIVE Supabase via the Management API + tracker entry
+  20261101000003 (34 entries); verified live: table + columns + RLS +
+  policy + 0 anon grants + 0 artifact rows (nothing generated yet —
+  honest); download_providers never referenced. database.types.ts
+  extended additively.
+
+Migration: 20261101000003_extension_phase3_builder.sql (see above; live
+application + tracker + read-only verification recorded).
+
+Files changed (13 tracked + 11 new tracked-to-be + driver convention):
+- NEW adapter-builder/{config,context,cloudstream-families,sandbox,
+  nuvio-compiler,server}.ts (the standalone deployable Builder; run:
+  BUILDER_SECRET=... pnpm exec tsx --tsconfig ./jsconfig.json
+  adapter-builder/server.ts)
+- NEW src/lib/shared/adapter-artifact.ts; src/lib/server/extensions/
+  builder/{artifact-hash,dsl-interpreter,builder-client,generated-
+  registry,build-service,test-service}.ts
+- NEW supabase/migrations/20261101000003_extension_phase3_builder.sql
+- NEW scripts/cloudstream_phase3_builder_test.ts (208 checks, in the
+  pnpm test chain) + scripts/cloudstream_phase3_live_smoke.ts
+  (verify:cloudstream-phase3)
+- src/lib/server/extensions/adapter-registry.ts (generated binding +
+  persisted-outcome derivation), cloudstream/resolver/service.ts
+  (injectable instances), cloudstream/downloader/service.ts (artifacts
+  select + generated binding + canonical-key addressing),
+  cloudstream/extensions/service.ts + shared/cloudstream-types.ts
+  (bookkeeping view fields + ProviderTestResultView), supabase/
+  database.types.ts, routes/admin/system/integrations/+page.server.ts
+  (+page.svelte) + components/admin2/AdminCloudStreamManager.svelte
+  (two actions + state messaging + test panel), .env.example (the three
+  PRIVATE_ADAPTER_BUILDER_* vars), package.json (test chain + verify
+  script), scripts/cloudstream_registry_integration_test.ts (sanctioned
+  §A10/§F5 Phase 3 pin evolution), scripts/p3_full_chain_driver.mjs +
+  log (untracked driver convention).
+
+Tests:
+- cloudstream_phase3_builder_test — 208 checks PASSED (§A artifact
+  contracts incl. 15 validation-edge rejections + canonical JSON +
+  integrity; §B DSL interpreter: JSON/HTML search, dynamic base + save-
+  fallback, episode season scoping, regex-extract, per-link isolation,
+  honest failure taxonomy; §C sandbox static scan + output validation
+  bounds; §D compiler evidence + honest refusals (no outputs, unevidenced
+  detail link); §E executeBuild: the FULL offline Nuvio pipeline (module
+  fetch -> sandbox -> compile -> live verify -> artifact), tv-capable
+  PARTIALLY_SUPPORTED, anti-hallucination guard, forbidden module
+  rejection, missing-exports UNSUPPORTED, family matching + native-id
+  refusal + clone family build through the REAL hubcloud extractor
+  fixtures + .cs3-never-fetched pin; §F Builder HTTP: health, 401s, 404
+  runtime routes, replay 409, timestamp skew, malformed body, 413 drain;
+  §G client outcomes; §H registry: canonical identity, tamper/hash/
+  identity refusal, cache, map binding, H12 absent-map honesty, H13/13b
+  native precedence + distinct canonical identity; §I orchestration:
+  native/runtime_required/unknown refusals, unavailability revert (NOT
+  failed), happy path (building -> testing -> generated + atomic
+  pointer + immutable row + test report), version bump (previous+1,
+  old rows retained), REQUIRES_RUNTIME -> runtime_required, identity
+  tamper -> failed + nothing persisted, independent-test failure ->
+  failed (READY never on 200), concurrent-build isolation; §J test
+  provider: adapter_required honesty, generated test pass, input
+  parsing; §K DOWNLOADER 2 INDEPENDENCE: 11 runtime files statically
+  pinned free of builder imports/env, the generated adapter resolves
+  with the Builder UNREACHABLE (K6/K7), eligibility + canonical
+  identity, participation baseline unaffected; §L migration additivity
+  pins (13 checks incl. nothing dropped/altered, unique constraint, RLS
+  posture, anon revoke, Phase 2 untouched).
+- cloudstream_phase3_live_smoke — 18 checks PASSED against the REAL
+  world: the standalone Builder boots in-process (the deployable code);
+  the REAL phisher-nuvio-providers repository discovers 49 providers;
+  the REAL moviesdrive.js module runs in the sandbox (TMDB stub -> TVVVV
+  domains.json -> imdb-id search -> detail page -> mdrive.lol mirrors ->
+  hubcloud.ist -> module extractors -> a REAL pixeldrain stream
+  observed); the compiler evidences the whole chain; the artifact v1
+  (PARTIALLY_SUPPORTED, movie-only — honest) passes Builder-side live
+  verification + Mavero's independent test; the row promotes atomically
+  ('generated' v1); [Test Provider] PASSES with 12 links; the Builder is
+  STOPPED and Downloader 2 still resolves 12 REAL links from the
+  persisted artifact (native adapters participating; the known VegaMovies
+  live EXTRACTOR_FAILED unchanged); cleanup leaves the catalog exactly
+  as the admin left it.
+- Regression sweep: ALL 12 existing CloudStream suites re-run GREEN
+  (parse 78, sync 113, admin_ui 160, runtime 103, extractors 50,
+  adapters 39, resolver 37, downloader api 144, downloader ui 170,
+  registry integration 153 (sanctioned pin evolution), phase1 38,
+  phase2 195); cloudstream_cs1_live_smoke 5 checks PASS.
+- FULL CHAIN (scripts/p3_full_chain_driver.mjs -> p3_full_chain.log):
+  208 commands = 200 PASS + the identical 8 documented pre-existing
+  baseline failures + 0 NEW (set-for-set the documented baseline).
+
+Gates: pnpm check 0 errors/0 warnings; pnpm build PASS (~30s);
+verify:cloudstream-phase3 18 checks PASS (live).
+
+Honest limitations (deferred, never faked):
+- Nuvio v1 compiles MOVIE-ONLY artifacts (PARTIALLY_SUPPORTED for tv-
+  capable providers; episode-trace compilation lands in a later builder
+  version — the episode walk patterns need episode-case trace evidence).
+- The DSL vocabulary covers the search-page-scraper archetype + the
+  two-level hubcloud-family extraction; providers with deeper/different
+  chains (POSTs, JS-rendered pages, auth flows) honestly refuse with
+  REQUIRES_RUNTIME.
+- The Builder's CloudStream path covers the three source-verified
+  families (keyword containment); every other .cs3 provider is honestly
+  REQUIRES_RUNTIME (the .cs3 cannot be analyzed server-side — never
+  fetched, never executed).
+- Anti-hallucination compares exact URLs, hostnames, or registrable
+  labels (the module's chain and Mavero's extractor registry land on
+  sibling domains of the same service — pixeldrain.com/.dev).
+- The admin create-adapter action is synchronous (bounded by the builder
+  timeout); long builds hold the request open. A queued/background build
+  is a Phase 4+ UX consideration, not a correctness gap.

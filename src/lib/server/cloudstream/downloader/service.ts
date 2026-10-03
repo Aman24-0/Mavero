@@ -76,6 +76,7 @@ import {
   canonicalAdapterKeyForRow,
   executableAdapterForExtension,
 } from '$lib/server/extensions/adapter-registry';
+import { buildGeneratedAdapterMap, type GeneratedAdapterArtifactRow } from '$lib/server/extensions/builder/generated-registry';
 import { resolveCloudStream } from '../resolver/service';
 import type { SafeDnsResolver } from '$lib/server/streaming/stremio/ssrf';
 import { CloudStreamDownloaderError, downloaderErrorMessage, failureCategoryToErrorCode } from './errors';
@@ -113,6 +114,10 @@ export type CloudStreamExtensionSelectionRow = {
   /** Phase 2 — the unified catalog carries cloudstream + nuvio rows; only
    * cloudstream rows can bind a native code adapter (type-aware eligibility). */
   integration_type: string;
+  /** Phase 3 — persisted adapter_state + active artifact pointer (the
+   * generated-binding inputs; joined in code with the artifact rows). */
+  adapter_state: string;
+  generated_adapter_version: number | null;
 };
 
 /** Repository rows needed for participation + deterministic ordering. */
@@ -126,6 +131,10 @@ export type CloudStreamRepositorySelectionRow = {
 export type CloudStreamExtensionCatalog = {
   repositories: CloudStreamRepositorySelectionRow[];
   extensions: CloudStreamExtensionSelectionRow[];
+  /** Phase 3 (D-P3-8): READY artifact rows for generated extensions — the
+   * ONLY source of generated adapter instances (persisted artifacts, never
+   * the Builder). Empty array = native-only behavior, byte-identical. */
+  generatedArtifacts: GeneratedAdapterArtifactRow[];
 };
 
 export type CloudStreamDownloaderDeps = {
@@ -270,6 +279,11 @@ export type EligibleCloudStreamExtension = {
  *     (deterministic: repository creation order), so the same adapter never
  *     burns budget twice. Catalog rows are NOT merged (repository-level
  *     identity preserved — no premature cross-repo dedup).
+ *
+ * PHASE 3 (D-P3-8): generated adapters bind from PERSISTED artifacts
+ * (catalog.generatedArtifacts → generated-registry instances) with NATIVE
+ * precedence — a healthy native binding is never overridden (plan §16).
+ * Absent artifacts = Phase 2 behavior, byte-identical.
  */
 export function selectEligibleExtensions(
   catalog: CloudStreamExtensionCatalog,
@@ -277,12 +291,15 @@ export function selectEligibleExtensions(
 ): EligibleCloudStreamExtension[] {
   const repoOrder = new Map(catalog.repositories.map((repo, index) => [repo.id, index]));
   const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+  const generatedAdapters = (catalog.generatedArtifacts ?? []).length > 0
+    ? buildGeneratedAdapterMap(catalog.generatedArtifacts)
+    : undefined;
   const eligible: EligibleCloudStreamExtension[] = [];
   const seenCanonicalKeys = new Set<string>();
   for (const row of catalog.extensions) {
     if (!repoEnabled.has(row.repository_id)) continue;
     if (!row.enabled) continue;
-    const adapter = executableAdapterForExtension(row);
+    const adapter = executableAdapterForExtension(row, generatedAdapters);
     if (adapter === null) continue;
     // Canonical dedup: same provider across repositories resolves once.
     const canonicalKey = canonicalAdapterKeyForRow(row);
@@ -471,11 +488,29 @@ async function defaultLoadCatalog(client: CloudStreamClient): Promise<CloudStrea
 
   const { data: extData, error: extError } = await client
     .from('cloudstream_extensions')
-    .select('repository_id, internal_name, name, icon_url, enabled, integration_type');
+    .select('repository_id, internal_name, name, icon_url, enabled, integration_type, adapter_state, generated_adapter_version');
   if (extError) throw extError;
   const extensions = (extData ?? []) as unknown as CloudStreamExtensionSelectionRow[];
 
-  return { repositories, extensions };
+  // Phase 3 (D-P3-8): one additional plain select for the ACTIVE artifacts
+  // of generated rows — the ONLY source of generated adapter instances.
+  // Skipped entirely when no row is generated (pure-cloudstream catalogs:
+  // behavior byte-identical to Phase 2, no extra query).
+  let generatedArtifacts: GeneratedAdapterArtifactRow[] = [];
+  const activeGenerated = extensions.filter(
+    (row) => row.adapter_state === 'generated' && row.generated_adapter_version !== null,
+  );
+  if (activeGenerated.length > 0) {
+    const keys = [...new Set(activeGenerated.map((row) => canonicalAdapterKeyForRow(row)))];
+    const { data: artifactData, error: artifactError } = await client
+      .from('cloudstream_adapter_artifacts')
+      .select('canonical_key, integration_type, provider_id, adapter_version, strategy, artifact, artifact_hash')
+      .in('canonical_key', keys);
+    if (artifactError) throw artifactError;
+    generatedArtifacts = (artifactData ?? []) as unknown as GeneratedAdapterArtifactRow[];
+  }
+
+  return { repositories, extensions, generatedArtifacts };
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +523,7 @@ async function resolveThroughOrchestrator(
   request: CloudStreamDownloadRequest,
   adapterIds: string[],
   deps: CloudStreamDownloaderDeps,
+  adapterInstances?: ReadonlyMap<string, MaveroCloudStreamAdapter>,
 ): Promise<CloudStreamResolutionResult> {
   return resolveCloudStream(
     {
@@ -503,6 +539,7 @@ async function resolveThroughOrchestrator(
       ...(deps.adapterTimeoutMs !== undefined ? { adapterTimeoutMs: deps.adapterTimeoutMs } : {}),
       ...(deps.overallTimeoutMs !== undefined ? { overallTimeoutMs: deps.overallTimeoutMs } : {}),
       ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+      ...(adapterInstances !== undefined ? { adapterInstances } : {}),
     },
   );
 }
@@ -604,12 +641,17 @@ export async function resolveCloudStreamDownloads(
   if (requestedIds.length === 0) {
     // Mode 1: all eligible extensions in deterministic catalog order.
     const eligible = selectEligibleExtensions(catalog, request.mediaType);
+    // Phase 3: generated adapter instances travel with the resolution —
+    // the resolver binds native FIRST, then these (plan §16 precedence).
+    const adapterInstances = new Map<string, MaveroCloudStreamAdapter>();
+    for (const { adapter } of eligible) adapterInstances.set(adapter.id.toLowerCase(), adapter);
     const result = eligible.length > 0
       ? await resolveThroughOrchestrator(
           content,
           request,
           eligible.map(({ adapter }) => adapter.id),
           deps,
+          adapterInstances,
         )
       : null;
     const byAdapter = new Map(result?.groups.map((group) => [group.adapterId, group]) ?? []);
@@ -634,11 +676,22 @@ export async function resolveCloudStreamDownloads(
       ordered.push(rawId.trim());
     }
 
-    const rowByKey = new Map(catalog.extensions.map((row) => [row.internal_name.toLowerCase(), row] as const));
+    const rowByKey = new Map<string, CloudStreamExtensionSelectionRow>();
+    for (const row of catalog.extensions) {
+      // Phase 3: rows are addressable by BOTH the bare internal_name (the
+      // Phase 2 contract) and the canonical key (the generated adapters'
+      // resolver identity — id separation makes collisions impossible).
+      rowByKey.set(row.internal_name.toLowerCase(), row);
+      rowByKey.set(canonicalAdapterKeyForRow(row), row);
+    }
     const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+    const generatedAdapters = (catalog.generatedArtifacts ?? []).length > 0
+      ? buildGeneratedAdapterMap(catalog.generatedArtifacts)
+      : undefined;
 
     const resolvable: Array<{ row: CloudStreamExtensionSelectionRow; adapter: MaveroCloudStreamAdapter }> = [];
     const structured: Array<{ extensionId: string; code: CloudStreamDownloaderErrorCode }> = [];
+    const selectedInstances = new Map<string, MaveroCloudStreamAdapter>();
     for (const requestedId of ordered) {
       const row = rowByKey.get(requestedId.toLowerCase());
       if (row === undefined) {
@@ -649,9 +702,10 @@ export async function resolveCloudStreamDownloads(
         structured.push({ extensionId: requestedId, code: 'EXTENSION_DISABLED' });
         continue;
       }
-      // Phase 2: type-aware binding — a Nuvio row (even one whose id matches
-      // a native adapter) has no executable adapter → ADAPTER_NOT_AVAILABLE.
-      const adapter = executableAdapterForExtension(row);
+      // Type-aware binding with generated fallback (native FIRST — §16):
+      // a Nuvio row binds only its generated artifact; a cloudstream row
+      // binds its native adapter or its generated artifact.
+      const adapter = executableAdapterForExtension(row, generatedAdapters);
       if (adapter === null) {
         structured.push({ extensionId: requestedId, code: 'ADAPTER_NOT_AVAILABLE' });
         continue;
@@ -661,10 +715,11 @@ export async function resolveCloudStreamDownloads(
         continue;
       }
       resolvable.push({ row, adapter });
+      selectedInstances.set(adapter.id.toLowerCase(), adapter);
     }
 
     const result = resolvable.length > 0
-      ? await resolveThroughOrchestrator(content, request, resolvable.map(({ adapter }) => adapter.id), deps)
+      ? await resolveThroughOrchestrator(content, request, resolvable.map(({ adapter }) => adapter.id), deps, selectedInstances)
       : null;
     const byAdapter = new Map(result?.groups.map((group) => [group.adapterId, group]) ?? []);
     const structuredByCanonical = new Map<string, CloudStreamDownloaderErrorCode>();
@@ -717,7 +772,11 @@ export async function resolveCloudStreamExtensionDownload(
   const { content, catalog } = await loadContentAndCatalog(client, request, deps);
 
   const row = catalog.extensions.find(
-    (candidate) => candidate.internal_name.toLowerCase() === extensionId.trim().toLowerCase(),
+    (candidate) =>
+      candidate.internal_name.toLowerCase() === extensionId.trim().toLowerCase()
+      // Phase 3: generated adapters are addressable by their canonical key
+      // (the resolver identity; id separation, §16).
+      || canonicalAdapterKeyForRow(candidate) === extensionId.trim().toLowerCase(),
   );
   if (row === undefined) {
     throw new CloudStreamDownloaderError('EXTENSION_NOT_FOUND', downloaderErrorMessage('EXTENSION_NOT_FOUND'));
@@ -726,9 +785,11 @@ export async function resolveCloudStreamExtensionDownload(
   if (!repoEnabled.has(row.repository_id) || !row.enabled) {
     throw new CloudStreamDownloaderError('EXTENSION_DISABLED', downloaderErrorMessage('EXTENSION_DISABLED'));
   }
-  // Phase 2: type-aware binding — a Nuvio row (even one whose id matches a
-  // native adapter) has no executable adapter → ADAPTER_NOT_AVAILABLE.
-  const adapter = executableAdapterForExtension(row);
+  // Type-aware binding with generated fallback (native FIRST — §16).
+  const generatedAdapters = (catalog.generatedArtifacts ?? []).length > 0
+    ? buildGeneratedAdapterMap(catalog.generatedArtifacts)
+    : undefined;
+  const adapter = executableAdapterForExtension(row, generatedAdapters);
   if (adapter === null) {
     throw new CloudStreamDownloaderError('ADAPTER_NOT_AVAILABLE', downloaderErrorMessage('ADAPTER_NOT_AVAILABLE'));
   }
@@ -736,7 +797,7 @@ export async function resolveCloudStreamExtensionDownload(
     throw new CloudStreamDownloaderError('UNSUPPORTED_MEDIA', downloaderErrorMessage('UNSUPPORTED_MEDIA'));
   }
 
-  const result = await resolveThroughOrchestrator(content, request, [adapter.id], deps);
+  const result = await resolveThroughOrchestrator(content, request, [adapter.id], deps, new Map([[adapter.id.toLowerCase(), adapter]]));
   const group = result.groups.find((candidate) => candidate.adapterId === adapter.id);
   if (group === undefined) {
     // Defensive: the orchestrator always emits one group per adapter id.

@@ -16,21 +16,24 @@
    * ports adapters. No raw plugin execution controls exist here.
    */
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
-  import { RefreshCw, Trash2, Power, Package, Layers, AlertTriangle, Box } from 'lucide-svelte';
+  import { RefreshCw, Trash2, Power, Package, Layers, AlertTriangle, Box, Hammer, FlaskConical } from 'lucide-svelte';
   import type {
     CloudStreamAdapterStatus,
     CloudStreamExtensionView,
     CloudStreamRepositoryView,
+    ProviderTestResultView,
   } from '$lib/shared/cloudstream-types';
 
   let {
     repositories = [] as CloudStreamRepositoryView[],
     extensions = [] as CloudStreamExtensionView[],
     loadError = null as string | null,
+    providerTest = null as ProviderTestResultView | null,
   }: {
     repositories?: CloudStreamRepositoryView[];
     extensions?: CloudStreamExtensionView[];
     loadError?: string | null;
+    providerTest?: ProviderTestResultView | null;
   } = $props();
 
   // ---------------------------------------------------------------------------
@@ -123,6 +126,29 @@
 
   /** The count of extensions an admin has explicitly enabled. */
   const enabledExtensionCount = $derived(extensions.filter((extension) => extension.enabled).length);
+
+  /** Phase 3: whether a row offers the Create Adapter action (plan §13). */
+  function canCreateAdapter(extension: CloudStreamExtensionView): boolean {
+    const state = extension.adapterState;
+    return state === 'adapter_required' || state === 'failed';
+  }
+
+  /** Phase 3: whether a row has an executable adapter to Test (plan §9/§15). */
+  function canTestProvider(extension: CloudStreamExtensionView): boolean {
+    const state = extension.adapterState;
+    return state === 'native' || state === 'generated' || state === 'active' || state === 'disabled';
+  }
+
+  /** Phase 3: the extension the last test result belongs to (if visible). */
+  const testedExtension = $derived(
+    providerTest !== null
+      ? extensions.find((extension) =>
+          extension.internalName.toLowerCase() === providerTest.adapterId.toLowerCase()
+          // Generated adapters carry their canonical key as the resolver id.
+          || `${extension.integrationType}:${extension.internalName.toLowerCase()}` === providerTest.adapterId.toLowerCase(),
+        ) ?? null
+      : null,
+  );
 </script>
 
 {#if loadError}
@@ -194,6 +220,40 @@
       Discovered extensions are catalog metadata only. Runtime compatibility requires a Mavero adapter
       (Add-on = Stremio · Extension = CloudStream or Nuvio).
     </p>
+
+    <!-- Phase 3 — Test Provider result panel (plan §9: normalized results) -->
+    {#if providerTest !== null}
+      <div class="cs-test-panel" data-passed={providerTest.passed}>
+        <div class="cs-test-header">
+          <FlaskConical size={14} />
+          <span class="cs-test-title">
+            Test results — {testedExtension?.name ?? testedExtension?.internalName ?? providerTest.adapterId}
+            ({providerTest.adapterKind === 'generated' ? `generated adapter v${providerTest.adapterVersion}` : `native adapter v${providerTest.adapterVersion}`})
+          </span>
+          <AdminStatusBadge label={providerTest.passed ? 'Passed' : 'Failed'} tone={providerTest.passed ? 'good' : 'bad'} />
+        </div>
+        {#each providerTest.cases as testCase (testCase.kind)}
+          <div class="cs-test-case">
+            <span>{testCase.kind === 'movie' ? 'Movie' : 'Episode'}</span>
+            <span>{testCase.linksFound} link{testCase.linksFound === 1 ? '' : 's'}</span>
+            <span>· {Math.round(testCase.durationMs)} ms</span>
+            {#if testCase.note}<span class="cs-test-note">· {testCase.note}</span>{/if}
+          </div>
+        {/each}
+        {#if providerTest.links.length > 0}
+          <div class="cs-test-links">
+            {#each providerTest.links.slice(0, 8) as link (link.url)}
+              <div class="cs-test-link">
+                <span class="cs-test-link-name">{link.sourceName}</span>
+                {#if link.quality}<span class="cs-ext-type">{link.quality}</span>{/if}
+                <span class="mono">{link.host ?? link.url.slice(0, 60)}</span>
+              </div>
+            {/each}
+            {#if providerTest.links.length > 8}<div class="cs-test-case">+ {providerTest.links.length - 8} more…</div>{/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
     {#each repositories as repository (repository.id)}
       {@const repoExtensions = extensionsByRepository.get(repository.id) ?? []}
       {#if repoExtensions.length > 0}
@@ -219,6 +279,15 @@
                   {#if extension.lastError}
                     <div class="cs-repo-error" role="alert"><AlertTriangle size={12} /> {extension.lastError}</div>
                   {/if}
+                  {#if extension.adapterState === 'runtime_required'}
+                    <div class="cs-state-note">This provider cannot be converted into a permanent Mavero adapter and remains disabled.</div>
+                  {/if}
+                  {#if extension.adapterState === 'failed' && extension.lastBuildError}
+                    <div class="cs-repo-error" role="alert"><AlertTriangle size={12} /> {extension.lastBuildError}</div>
+                  {/if}
+                  {#if (extension.adapterState === 'generated' || extension.adapterState === 'active') && extension.generatedAdapterVersion !== null}
+                    <div class="cs-state-note">Generated adapter v{extension.generatedAdapterVersion}{extension.builderVersion ? ` · ${extension.builderVersion}` : ''}{extension.lastTestedAt ? ` · tested ${formatDate(extension.lastTestedAt)}` : ''}</div>
+                  {/if}
                 </div>
                 <div class="cs-ext-actions">
                   <AdminStatusBadge
@@ -230,6 +299,19 @@
                       label={adapterStateLabel(extension.adapterState)}
                       tone={adapterStateTone(extension.adapterState)}
                     />
+                  {/if}
+                  {#if canCreateAdapter(extension)}
+                    <form method="POST" action="?/createCloudStreamAdapter" style="display:inline"
+                          onsubmit={(e) => { if (!confirm('Create a permanent adapter through the external Adapter Builder? This runs a build and live test (up to a few minutes).')) e.preventDefault(); }}>
+                      <input type="hidden" name="id" value={extension.id} />
+                      <button type="submit" class="a2-icon-btn cs-build-btn" title="Create Adapter (external Builder + live test)"><Hammer size={14} /></button>
+                    </form>
+                  {/if}
+                  {#if canTestProvider(extension)}
+                    <form method="POST" action="?/testCloudStreamProvider" style="display:inline">
+                      <input type="hidden" name="id" value={extension.id} />
+                      <button type="submit" class="a2-icon-btn" title="Test Provider (representative resolution)"><FlaskConical size={14} /></button>
+                    </form>
                   {/if}
                   <form method="POST" action="?/setCloudStreamExtensionEnabled" style="display:inline">
                     <input type="hidden" name="id" value={extension.id} />
@@ -346,6 +428,42 @@
     padding-top: var(--a2-space-2);
   }
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
+  .cs-state-note {
+    font-size: var(--a2-text-2xs);
+    color: var(--a2-text-muted);
+    line-height: 1.5;
+  }
+  .cs-build-btn:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
+  .cs-test-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--a2-space-2);
+    padding: var(--a2-space-3) var(--a2-space-4);
+    background: var(--a2-surface-2);
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-md);
+  }
+  .cs-test-panel[data-passed="false"] { border-color: var(--a2-red-border); }
+  .cs-test-header { display: flex; align-items: center; gap: var(--a2-space-2); color: var(--a2-text-bright); font-size: var(--a2-text-sm); }
+  .cs-test-title { flex: 1; min-width: 0; }
+  .cs-test-case {
+    display: flex;
+    gap: var(--a2-space-2);
+    flex-wrap: wrap;
+    font-size: var(--a2-text-2xs);
+    color: var(--a2-text-muted);
+  }
+  .cs-test-links { display: flex; flex-direction: column; gap: var(--a2-space-1); }
+  .cs-test-link {
+    display: flex;
+    gap: var(--a2-space-2);
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: var(--a2-text-2xs);
+    color: var(--a2-text);
+  }
+  .cs-test-link-name { font-weight: 600; }
+  .cs-test-note { color: var(--a2-red); }
   @media (max-width: 768px) {
     .cs-repo-card, .cs-ext-row { flex-direction: column; align-items: stretch; }
     .cs-repo-actions, .cs-ext-actions { justify-content: flex-end; }

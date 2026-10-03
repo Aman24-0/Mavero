@@ -60,6 +60,11 @@ export type CloudStreamExtensionRow = {
   version_text: string | null;
   last_tested_at: string | null;
   last_test_error: string | null;
+  // Phase 3 — Builder bookkeeping columns.
+  generated_adapter_version: number | null;
+  builder_version: string | null;
+  last_build_at: string | null;
+  last_build_error: string | null;
   last_checked_at: string | null;
   last_error: string | null;
   created_at: string;
@@ -113,6 +118,11 @@ export function toExtensionView(row: CloudStreamExtensionRow, repositoryName: st
     providerMetadata: sanitizeProviderMetadata(row.provider_metadata),
     lastTestedAt: row.last_tested_at,
     lastTestError: row.last_test_error,
+    // ---- Phase 3 — Builder bookkeeping ----
+    generatedAdapterVersion: row.generated_adapter_version,
+    builderVersion: row.builder_version,
+    lastBuildAt: row.last_build_at,
+    lastBuildError: row.last_build_error,
   };
 }
 

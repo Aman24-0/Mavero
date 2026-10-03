@@ -206,6 +206,7 @@
         repositories={data.cloudstreamRepositories}
         extensions={data.cloudstreamExtensions}
         loadError={data.cloudstreamError}
+        providerTest={form?.providerTest ?? null}
       />
     {/if}
   </AdminPage>

@@ -42,8 +42,11 @@ import {
   deleteRepositoryById,
 } from '$lib/server/cloudstream/repository/service';
 import { listExtensionsForAdmin, setExtensionEnabled } from '$lib/server/cloudstream/extensions/service';
+import { createAdapterForExtension } from '$lib/server/extensions/builder/build-service';
+import { testExtensionProvider } from '$lib/server/extensions/builder/test-service';
 import { CloudStreamRepositoryError } from '$lib/server/cloudstream/repository/errors';
 import type { CloudStreamExtensionView, CloudStreamRepositoryView } from '$lib/server/cloudstream/types';
+import type { ProviderTestResultView } from '$lib/shared/cloudstream-types';
 
 const REDIRECT = '/admin/system/integrations';
 
@@ -270,6 +273,60 @@ export const actions: Actions = {
     } catch (error) {
       if (isRedirect(error)) throw error;
       return cloudstreamActionError(error, 'Unable to update the extension.');
+    }
+  },
+
+  // -----------------------------------------------------------------
+  // Phase 3 — Permanent Adapter Builder actions (plan §7/§15 — additive)
+  // -----------------------------------------------------------------
+  createCloudStreamAdapter: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: `${REDIRECT}?tab=extension` });
+    try {
+      const form = await request.formData();
+      const id = String(form.get('id') ?? '');
+      // Optional representative test inputs (defaults: a universally
+      // indexed movie; providers in other languages benefit from overrides).
+      const testInputs = {
+        testTmdbId: String(form.get('testTmdbId') ?? '') || undefined,
+        testTitle: String(form.get('testTitle') ?? '') || undefined,
+        testYear: String(form.get('testYear') ?? '') || undefined,
+        testImdbId: String(form.get('testImdbId') ?? '') || undefined,
+      };
+      const outcome = await createAdapterForExtension(locals.supabase, id, testInputs);
+      if (!outcome.ok) {
+        return fail(outcome.code === 'BUILDER_UNAVAILABLE' || outcome.code === 'BUILDER_TIMEOUT' ? 503 : 400, {
+          message: outcome.message,
+        });
+      }
+      const notice = `Adapter v${outcome.adapterVersion} created and tested (${outcome.testCases.map((testCase) => `${testCase.kind}: ${testCase.linksFound} link${testCase.linksFound === 1 ? '' : 's'}`).join(', ')}). Enable it to use it in Downloader 2.`;
+      throw redirect(303, `${REDIRECT}?tab=extension&notice=${encodeURIComponent(notice)}`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return cloudstreamActionError(error, 'Unable to create the adapter.');
+    }
+  },
+  testCloudStreamProvider: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: `${REDIRECT}?tab=extension` });
+    try {
+      const form = await request.formData();
+      const id = String(form.get('id') ?? '');
+      const testInputs = {
+        testTmdbId: String(form.get('testTmdbId') ?? '') || undefined,
+        testTitle: String(form.get('testTitle') ?? '') || undefined,
+        testYear: String(form.get('testYear') ?? '') || undefined,
+        testImdbId: String(form.get('testImdbId') ?? '') || undefined,
+        testSeason: String(form.get('testSeason') ?? '') || undefined,
+        testEpisode: String(form.get('testEpisode') ?? '') || undefined,
+      };
+      const outcome = await testExtensionProvider(locals.supabase, id, testInputs);
+      if (!outcome.ok) {
+        return fail(400, { message: outcome.message });
+      }
+      // No redirect: the result renders inline (plan §9 test result UI).
+      return { providerTest: outcome.result };
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return cloudstreamActionError(error, 'Unable to test the provider.');
     }
   },
 };

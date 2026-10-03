@@ -125,6 +125,43 @@ export type CloudStreamExtensionView = {
   /** Permanent-adapter validation facts (Phase 3+ Builder/Tester; null in Phase 2). */
   lastTestedAt: string | null;
   lastTestError: string | null;
+  // ---------------------------------------------------------------------
+  // Phase 3 — Builder bookkeeping (admin view projection).
+  // ---------------------------------------------------------------------
+  /** The ACTIVE generated artifact version (generated rows only). */
+  generatedAdapterVersion: number | null;
+  /** The builder that produced the active artifact (provenance). */
+  builderVersion: string | null;
+  /** Last create-adapter attempt time (any outcome). */
+  lastBuildAt: string | null;
+  /** Closed-vocabulary last build failure (code + bounded message). */
+  lastBuildError: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Test Provider result views (plan §9/§15: normalized results)
+// ---------------------------------------------------------------------------
+
+/** One representative test case outcome (movie or episode). */
+export type ProviderTestCaseView = {
+  kind: 'movie' | 'episode';
+  passed: boolean;
+  note: string | null;
+  linksFound: number;
+  durationMs: number;
+};
+
+/** The Test Provider action result (admin view; NO redirect — inline UI). */
+export type ProviderTestResultView = {
+  passed: boolean;
+  testedAt: string;
+  /** Which executable binding served the test. */
+  adapterKind: 'native' | 'generated';
+  adapterId: string;
+  adapterVersion: string;
+  cases: ProviderTestCaseView[];
+  /** Normalized sample links (bounded — the Downloader 2 link view shape). */
+  links: CloudStreamDownloadLinkView[];
 };
 
 /** Preview of an extension inside the repository add flow (no ids yet). */
