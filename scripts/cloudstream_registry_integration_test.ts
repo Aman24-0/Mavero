@@ -800,7 +800,17 @@ function section_regression(): void {
         || line === '  const result = await resolveThroughOrchestrator(content, request, [adapter.id], deps);'
         || line.trim().startsWith('// Phase 2: type-aware binding')
         || line.trim().startsWith('// native adapter) has no executable adapter')
-        || line.trim().startsWith('// a native adapter) has no executable adapter');
+        || line.trim().startsWith('// a native adapter) has no executable adapter')
+        // Source-discovery AUDIT sanctioned removals: ONLY the two
+        // single-extension row-lookup lines replaced by the deterministic
+        // `resolveExtensionRow` call (the unordered raw `find` over the
+        // catalog could land on a disabled same-name row from another
+        // repository/integration type — the per-tab RETRY collision). The
+        // Phase 3 Mode 2 rowByKey.set block removal is covered above via
+        // the generic-closure lines (none of its lines appear in the
+        // pristine file).
+        || line === '  const row = catalog.extensions.find('
+        || line === '  if (row === undefined) {';
       ok(
         removed.every(sanctionedRemoval),
         `§F5: ${csFile} removes NOTHING except the sanctioned legacy lookup lines (removed ${removed.length})`,
@@ -855,7 +865,40 @@ function section_regression(): void {
           || /^\s*(\/\*\*|\*|\/\/|$)/.test(line)
           || line.includes('{ signal: request.signal }')
           || line.includes('signal?: AbortSignal;')
-          || line.includes("...(deps.signal !== undefined ? { signal: deps.signal } : {})")),
+          || line.includes("...(deps.signal !== undefined ? { signal: deps.signal } : {})")
+          // Source-discovery AUDIT sanctioned additions: the deterministic,
+          // collision-free row resolution (resolveExtensionRow /
+          // buildRequestedRowMap / catalogOrder / rank classes) replacing
+          // the raw unordered `find` + last-wins rowByKey map in BOTH the
+          // Mode 2 explicit-selection path and the single-extension retry
+          // path (the MoviesDrive Admin-Test-vs-Downloader-2 defect class).
+          || line.includes('resolveExtensionRow')
+          || line.includes('buildRequestedRowMap')
+          || line.includes('catalogOrder')
+          || line.includes('requestedId')
+          || line.includes('orderedRepos')
+          || line.includes('a.created_at.localeCompare')
+          || line.includes('keysFor')
+          || line.includes('ranked')
+          || line.includes('rank')
+          || line.includes('CloudStreamExtensionSelectionRow')
+          || line.includes('row.internal_name.toLowerCase()')
+          || line.includes('return map;')
+          || line.includes('typeof requestedId')
+          || line === '  ];'
+          || line === '    .map((row) => {'
+          || line === '    })'
+          || line === 'import {'
+          || line === '  executableAdapterForExtension,'
+          || line === '  return [...catalog.extensions].sort((a, b) =>'
+          || line === '    || a.internal_name.localeCompare(b.internal_name));'
+          || line === 'const ROW_RESOLUTION_RANK = { executableEnabled: 0, executable: 1, enabled: 2, other: 3 } as const;'
+          || line === '  if (key.length === 0) return null;'
+          || line === '        : executable ? ROW_RESOLUTION_RANK.executable'
+          || line === '        : enabled ? ROW_RESOLUTION_RANK.enabled'
+          || line === '        : ROW_RESOLUTION_RANK.other;'
+          || line === '      if (resolved !== null) map.set(key, resolved);'
+          || line === '  if (row === null) {'),
         `§F5: ${csFile} additions are ONLY the Phase 1 cancellation threading + Phase 2/3 registry binding evolution (added ${added.length})`,
       );
     }

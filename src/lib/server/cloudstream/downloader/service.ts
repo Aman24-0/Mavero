@@ -319,6 +319,124 @@ export function countEnabledExtensions(catalog: CloudStreamExtensionCatalog): nu
 }
 
 // ---------------------------------------------------------------------------
+// Deterministic row resolution by REQUESTED EXTENSION ID (audit fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sorts catalog rows into the deterministic catalog order (repository
+ * creation order → internal_name — the CS-1/CS-3 selection convention).
+ *
+ * Rationale (source-discovery audit): `defaultLoadCatalog` selects rows
+ * WITHOUT an ORDER BY (PostgREST returns an unspecified physical order),
+ * and the Phase 2 unified catalog lets the SAME provider name exist in
+ * MULTIPLE repositories AND under BOTH integration types (e.g. the enabled
+ * cloudstream 'MoviesDrive' row plus disabled nuvio 'moviesdrive' rows).
+ * Any first-wins/last-wins pick over the raw array is therefore order-
+ * dependent and can resolve a requested extension id to a DIFFERENT row
+ * than the eligibility selection would pick — producing EXTENSION_DISABLED
+ * for a source that is active in Downloader 2 tabs (the MoviesDrive
+ * Admin-Test-passes-but-Downloader-2-fails class). Sorting first makes every
+ * id resolution deterministic regardless of DB row order.
+ */
+function catalogOrder(catalog: CloudStreamExtensionCatalog): CloudStreamExtensionSelectionRow[] {
+  // The repository order is DATA-DERIVED (created_at, then id as the stable
+  // tie-break) — never the caller's array position. defaultLoadCatalog
+  // selects repositories ordered by created_at, but the deterministic
+  // guarantee must not silently depend on that (order-independent under any
+  // caller's array order — pinned by the audit regression suite).
+  const orderedRepos = [...catalog.repositories].sort((a, b) =>
+    a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  const repoOrder = new Map(orderedRepos.map((repo, index) => [repo.id, index]));
+  return [...catalog.extensions].sort((a, b) =>
+    (repoOrder.get(a.repository_id) ?? 0) - (repoOrder.get(b.repository_id) ?? 0)
+    || a.internal_name.localeCompare(b.internal_name));
+}
+
+/** Rank classes for resolving one requested id to a catalog row (lower wins). */
+const ROW_RESOLUTION_RANK = { executableEnabled: 0, executable: 1, enabled: 2, other: 3 } as const;
+
+/**
+ * Resolves ONE requested extension id to its authoritative catalog row.
+ *
+ * Matching (same surface the Phase 2/3 contract exposes):
+ *   1. CANONICAL KEY exact match ('cloudstream:moviesdrive' | 'nuvio:…')
+ *      — unambiguous, integration-type-qualified.
+ *   2. BARE internal name (case-insensitive) — the legacy Phase 2 address.
+ *
+ * Selection among multiple matches (deterministic, audit fix):
+ *   a. rows that bind an EXECUTABLE adapter (native registry, or an ACTIVE
+ *      generated artifact — the canonical key is SHARED by same-provider rows
+ *      from multiple repositories) AND are repo-enabled + row-enabled win
+ *      first: this is exactly the row the eligibility selection and the
+ *      tabs/batch path resolve (first-eligible-row-wins), so the
+ *      single-extension RETRY addresses the same row the tab shows;
+ *   b. then executable-but-disabled rows (binding exists, row switched off);
+ *   c. then enabled rows without a binding (honest EXTENSION_DISABLED /
+ *      ADAPTER_NOT_AVAILABLE for the right identity);
+ *   d. then everything else — first in deterministic catalog order.
+ *
+ * The within-class tie-break is the deterministic catalog order (repository
+ * creation → internal_name) — identical to the eligibility discipline, so
+ * id resolution and eligibility can never disagree.
+ */
+export function resolveExtensionRow(
+  catalog: CloudStreamExtensionCatalog,
+  requestedId: string,
+): CloudStreamExtensionSelectionRow | null {
+  if (typeof requestedId !== 'string' || requestedId.length === 0 || requestedId.length > 200) return null;
+  const key = requestedId.trim().toLowerCase();
+  if (key.length === 0) return null;
+
+  const generatedAdapters = (catalog.generatedArtifacts ?? []).length > 0
+    ? buildGeneratedAdapterMap(catalog.generatedArtifacts)
+    : undefined;
+  const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+
+  const ranked = catalogOrder(catalog)
+    .filter((row) => row.internal_name.toLowerCase() === key || canonicalAdapterKeyForRow(row) === key)
+    .map((row) => {
+      const executable = executableAdapterForExtension(row, generatedAdapters) !== null;
+      const enabled = repoEnabled.has(row.repository_id) && row.enabled;
+      const rank = executable && enabled ? ROW_RESOLUTION_RANK.executableEnabled
+        : executable ? ROW_RESOLUTION_RANK.executable
+        : enabled ? ROW_RESOLUTION_RANK.enabled
+        : ROW_RESOLUTION_RANK.other;
+      return { row, rank };
+    })
+    .sort((a, b) => a.rank - b.rank);
+
+  return ranked.length > 0 ? ranked[0]!.row : null;
+}
+
+/**
+ * Builds the requested-id → row map for Mode 2 (explicit selection).
+ *
+ * Canonical keys are collision-free per row set but the SAME canonical key
+ * legitimately exists for one provider in multiple repositories; the BARE
+ * name additionally collides ACROSS integration types. Every key maps
+ * through `resolveExtensionRow` so the map picks the same authoritative row
+ * the single-extension endpoint and the eligibility selection would pick
+ * (previously a plain last-wins overwrite — the deterministic EXTENSION_DISABLED
+ * MoviesDrive defect).
+ */
+export function buildRequestedRowMap(
+  catalog: CloudStreamExtensionCatalog,
+): Map<string, CloudStreamExtensionSelectionRow> {
+  const map = new Map<string, CloudStreamExtensionSelectionRow>();
+  const keysFor = (row: CloudStreamExtensionSelectionRow): string[] => [
+    row.internal_name.toLowerCase(),
+    canonicalAdapterKeyForRow(row),
+  ];
+  for (const row of catalogOrder(catalog)) {
+    for (const key of keysFor(row)) {
+      const resolved = resolveExtensionRow(catalog, key);
+      if (resolved !== null) map.set(key, resolved);
+    }
+  }
+  return map;
+}
+
+// ---------------------------------------------------------------------------
 // Group shaping (normalization → Downloader 2 response views)
 // ---------------------------------------------------------------------------
 
@@ -704,14 +822,12 @@ export async function resolveCloudStreamDownloads(
       ordered.push(rawId.trim());
     }
 
-    const rowByKey = new Map<string, CloudStreamExtensionSelectionRow>();
-    for (const row of catalog.extensions) {
-      // Phase 3: rows are addressable by BOTH the bare internal_name (the
-      // Phase 2 contract) and the canonical key (the generated adapters'
-      // resolver identity — id separation makes collisions impossible).
-      rowByKey.set(row.internal_name.toLowerCase(), row);
-      rowByKey.set(canonicalAdapterKeyForRow(row), row);
-    }
+    // Audit fix: deterministic, collision-free row resolution. The previous
+    // plain last-wins map let a DISABLED same-name row (e.g. a nuvio
+    // 'moviesdrive' clone) shadow the ENABLED cloudstream row the
+    // eligibility/tabs path would pick — an explicit selection then failed
+    // with EXTENSION_DISABLED despite the source being active.
+    const rowByKey = buildRequestedRowMap(catalog);
     const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
     const generatedAdapters = (catalog.generatedArtifacts ?? []).length > 0
       ? buildGeneratedAdapterMap(catalog.generatedArtifacts)
@@ -799,14 +915,12 @@ export async function resolveCloudStreamExtensionDownload(
   const startedAt = Date.now();
   const { content, catalog } = await loadContentAndCatalog(client, request, deps);
 
-  const row = catalog.extensions.find(
-    (candidate) =>
-      candidate.internal_name.toLowerCase() === extensionId.trim().toLowerCase()
-      // Phase 3: generated adapters are addressable by their canonical key
-      // (the resolver identity; id separation, §16).
-      || canonicalAdapterKeyForRow(candidate) === extensionId.trim().toLowerCase(),
-  );
-  if (row === undefined) {
+  // Audit fix: deterministic id resolution — the previous raw `find` over the
+  // UNORDERED catalog array could land on a disabled same-name row from
+  // another repository/integration type (e.g. a nuvio 'vegamovies' clone
+  // shadowing the enabled cloudstream row on the per-tab RETRY path).
+  const row = resolveExtensionRow(catalog, extensionId);
+  if (row === null) {
     throw new CloudStreamDownloaderError('EXTENSION_NOT_FOUND', downloaderErrorMessage('EXTENSION_NOT_FOUND'));
   }
   const repoEnabled = new Set(catalog.repositories.filter((repo) => repo.enabled).map((repo) => repo.id));

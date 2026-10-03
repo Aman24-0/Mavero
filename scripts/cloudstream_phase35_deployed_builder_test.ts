@@ -57,6 +57,36 @@ const STATE_FILE = '/tmp/p35_state.json';
 const TEST_INPUTS = { testTitle: 'Inception', testYear: '2010', testTmdbId: '27205', testImdbId: 'tt1375666' };
 const LOAD_CONTENT = async () => ({ mediaType: 'movie' as const, tmdbId: '27205', title: 'Inception', year: 2010 });
 
+/**
+ * AUDIT FIX (source-discovery audit): scoped artifact cleanup. The canonical
+ * key can be SHARED with a production generated row (the owner's All-in-One
+ * 'moviesdrive' row, activated 2026-10-03) — deleting ALL versions for the
+ * key would destroy production artifacts. This removes ONLY versions no
+ * SURVIVING extension row points at (the test's rows disappear with its
+ * repository, so its versions become deletable). MUST be called AFTER the
+ * test repository is deleted.
+ */
+async function deleteTestArtifactsOnly(client: SupabaseClient<Database>): Promise<void> {
+  const { data: pointerRows } = await client
+    .from('cloudstream_extensions')
+    .select('integration_type, internal_name, generated_adapter_version')
+    .eq('adapter_state', 'generated')
+    .not('generated_adapter_version', 'is', null);
+  const preserved = new Set(
+    (pointerRows ?? []).map((row) =>
+      `${(row as { integration_type: string }).integration_type}:${(row as { internal_name: string }).internal_name.trim().toLowerCase()}@${(row as { generated_adapter_version: number }).generated_adapter_version}`),
+  );
+  const { data: artifacts } = await client
+    .from('cloudstream_adapter_artifacts')
+    .select('id, canonical_key, adapter_version')
+    .eq('canonical_key', CANONICAL_KEY);
+  for (const artifact of (artifacts ?? []) as Array<{ id: string; canonical_key: string; adapter_version: number }>) {
+    if (!preserved.has(`${artifact.canonical_key}@${artifact.adapter_version}`)) {
+      await client.from('cloudstream_adapter_artifacts').delete().eq('id', artifact.id);
+    }
+  }
+}
+
 const BUILDER_URL = (liveEnv['P35_BUILDER_URL'] ?? '').replace(/\/+$/, '');
 const BUILDER_SECRET = liveEnv['P35_BUILDER_SECRET'] ?? '';
 
@@ -240,8 +270,9 @@ async function stageE2E(): Promise<void> {
   const existing = await listRepositories(client);
   const prior = existing.find((repo) => repo.url === MANIFEST_URL);
   if (prior !== undefined) {
-    await client.from('cloudstream_adapter_artifacts').delete().eq('canonical_key', CANONICAL_KEY);
     await deleteRepositoryById(client, prior.id);
+    // Scoped cleanup: only versions no surviving row points at (audit fix).
+    await deleteTestArtifactsOnly(client);
     console.log('  cleaned a prior run');
   }
 
@@ -456,15 +487,28 @@ async function stageCleanup(): Promise<void> {
   console.log('=== Stage: cleanup ===\n');
   const client = makeClient();
 
-  await client.from('cloudstream_adapter_artifacts').delete().eq('canonical_key', CANONICAL_KEY);
+  // Repository FIRST (its rows disappear with it), then the scoped artifact
+  // cleanup (production pointers are always preserved — audit fix).
   const repos = await listRepositories(client);
   const repo = repos.find((candidate) => candidate.url === MANIFEST_URL);
   if (repo !== undefined) await deleteRepositoryById(client, repo.id);
+  await deleteTestArtifactsOnly(client);
 
   const finalRepos = await listRepositories(client);
   ok(!finalRepos.some((candidate) => candidate.url === MANIFEST_URL), 'C1 the test repository is removed');
-  const { count } = await client.from('cloudstream_adapter_artifacts').select('id', { count: 'exact', head: true }).eq('canonical_key', CANONICAL_KEY);
-  ok((count ?? 0) === 0, 'C2 the test artifacts are removed');
+  const { data: leftoverArtifacts } = await client.from('cloudstream_adapter_artifacts').select('canonical_key, adapter_version').eq('canonical_key', CANONICAL_KEY);
+  const { data: survivingPointers } = await client
+    .from('cloudstream_extensions')
+    .select('integration_type, internal_name, generated_adapter_version')
+    .eq('adapter_state', 'generated')
+    .not('generated_adapter_version', 'is', null);
+  const surviving = new Set(
+    (survivingPointers ?? []).map((row) =>
+      `${(row as { integration_type: string }).integration_type}:${(row as { internal_name: string }).internal_name.trim().toLowerCase()}@${(row as { generated_adapter_version: number }).generated_adapter_version}`),
+  );
+  ok(((leftoverArtifacts ?? []) as Array<{ canonical_key: string; adapter_version: number }>).every(
+    (artifact) => surviving.has(`${artifact.canonical_key}@${artifact.adapter_version}`),
+  ), 'C2 the test artifacts are removed (every remaining version is pointed at by a surviving production row)');
   await import('node:fs/promises').then((fs) => fs.rm(STATE_FILE, { force: true }));
 
   console.log(`\ncleanup stage: ${passed} checks PASSED\n`);

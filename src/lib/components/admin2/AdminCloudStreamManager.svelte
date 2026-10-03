@@ -37,7 +37,7 @@
    * `$lib/shared/cloudstream-integration-manager-view.ts` (pure).
    */
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
-  import { RefreshCw, Trash2, Power, Package, Layers, AlertTriangle, Box, Hammer, FlaskConical, Search, ArrowUpDown, Eye, X, StopCircle } from 'lucide-svelte';
+  import { RefreshCw, Trash2, Power, Package, Layers, AlertTriangle, Box, Hammer, FlaskConical, Search, ArrowUpDown, Eye, X, StopCircle, Link2, Check } from 'lucide-svelte';
   import { SvelteSet, SvelteMap } from 'svelte/reactivity';
   import type {
     CloudStreamExtensionView,
@@ -90,6 +90,9 @@
   /** Local post-mutation patches keyed by extension id (fetch-path updates). */
   const rowPatches = new SvelteMap<string, CloudStreamExtensionView>();
   const repositoryPatches = new SvelteMap<string, CloudStreamRepositoryView>();
+  /** §14 Copy Repo Link: repositories whose URL was just copied (2s feedback). */
+  const copiedRepoIds = new SvelteSet<string>();
+  let copyingRepoId = $state<string | null>(null);
 
   const rows = $derived<CloudStreamExtensionView[]>(
     extensions.map((extension) => rowPatches.get(extension.id) ?? extension),
@@ -308,6 +311,52 @@
       }
     } finally {
       pendingRepoIds.delete(repository.id);
+    }
+  }
+
+  /**
+   * §14 Copy Repo Link: copies the ACTUAL repository URL to the clipboard
+   * with the modern async clipboard API, falling back to a transient
+   * off-screen textarea + execCommand for non-secure contexts. Pure client
+   * action — no page reload, no server round-trip. Feedback: the button
+   * flips to a "Copied" state for 2s (aria-live polite).
+   */
+  async function copyRepoLink(repository: CloudStreamRepositoryView): Promise<void> {
+    if (copyingRepoId !== null || typeof repository.url !== 'string' || repository.url.length === 0) return;
+    copyingRepoId = repository.id;
+    try {
+      let copied = false;
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText !== undefined) {
+          await navigator.clipboard.writeText(repository.url);
+          copied = true;
+        }
+      } catch {
+        // Clipboard permission denied / insecure context — fall through.
+      }
+      if (!copied) {
+        const textarea = document.createElement('textarea');
+        textarea.value = repository.url;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        try {
+          textarea.select();
+          copied = document.execCommand('copy');
+        } finally {
+          textarea.remove();
+        }
+      }
+      if (copied) {
+        copiedRepoIds.add(repository.id);
+        setTimeout(() => { copiedRepoIds.delete(repository.id); }, 2_000);
+      } else {
+        setRepoError(repository.id, 'The repository URL could not be copied — the browser blocked clipboard access.');
+      }
+    } finally {
+      copyingRepoId = null;
     }
   }
 
@@ -544,8 +593,58 @@
         {@const summary = repositorySummaries.find((item) => item.repository.id === repository.id)}
         {@const repoPending = pendingRepoIds.has(repository.id)}
         <div class="cs-repo-card" data-enabled={repository.enabled} data-pending={repoPending} aria-busy={repoPending}>
-          <div class="cs-repo-main">
+          <div class="cs-repo-head">
             <div class="cs-repo-name">{repository.name}</div>
+            <div class="cs-repo-badges">
+              <AdminStatusBadge label={repository.enabled ? 'Enabled' : 'Disabled'} tone={repository.enabled ? 'good' : 'neutral'} />
+              <AdminStatusBadge label={repository.status} tone={REPOSITORY_STATUS_TONES[repository.status] ?? 'neutral'} />
+            </div>
+          </div>
+          <!-- §14: ONE full-width action row immediately below the status tags.
+               Labeled, consistently sized buttons; wraps only when genuinely
+               necessary (tablet/mobile). Copy Repo Link is a pure client
+               action (no page reload, honest copied feedback). -->
+          <div class="cs-repo-action-row" role="group" aria-label="Repository actions for {repository.name}">
+            <button
+              type="button"
+              class="cs-repo-action"
+              aria-pressed={repositoryId === repository.id}
+              title="View this repository's extensions"
+              aria-label="View {repository.name} extensions"
+              onclick={() => { repositoryId = repositoryId === repository.id ? 'all' : repository.id; resetPage(); }}
+            ><Eye size={13} /> <span>View</span></button>
+            <form method="POST" action="?/setCloudStreamRepositoryEnabled" class="cs-repo-action-form"
+                  onsubmit={(event) => { event.preventDefault(); void toggleRepository(repository); }}>
+              <input type="hidden" name="id" value={repository.id} />
+              <input type="hidden" name="enabled" value={String(!repository.enabled)} />
+              <button type="submit" class="cs-repo-action" disabled={repoPending} title={repository.enabled ? 'Disable repository' : 'Enable repository'} aria-label="{repository.enabled ? 'Disable' : 'Enable'} repository {repository.name}"><Power size={13} /> <span>{repository.enabled ? 'Disable' : 'Enable'}</span></button>
+            </form>
+            <form method="POST" action="?/syncCloudStreamRepository" class="cs-repo-action-form">
+              <input type="hidden" name="id" value={repository.id} />
+              <button type="submit" class="cs-repo-action" title="Sync repository (re-fetch the repository document and reconcile extensions)" aria-label="Sync repository {repository.name}"><RefreshCw size={13} /> <span>Sync</span></button>
+            </form>
+            <button
+              type="button"
+              class="cs-repo-action"
+              data-copied={copiedRepoIds.has(repository.id)}
+              title="Copy the repository URL to the clipboard"
+              aria-label="Copy repository URL for {repository.name}"
+              aria-live="polite"
+              disabled={copyingRepoId === repository.id}
+              onclick={() => { void copyRepoLink(repository); }}
+            >
+              {#if copiedRepoIds.has(repository.id)}
+                <Check size={13} /> <span>Copied</span>
+              {:else}
+                <Link2 size={13} /> <span>Copy Repo Link</span>
+              {/if}
+            </button>
+            <form method="POST" action="?/deleteCloudStreamRepository" class="cs-repo-action-form" onsubmit={(e) => { if (!confirm('Delete this repository and its discovered extensions?')) e.preventDefault(); }}>
+              <input type="hidden" name="id" value={repository.id} />
+              <button type="submit" class="cs-repo-action cs-repo-action-danger" title="Delete repository" aria-label="Delete repository {repository.name}"><Trash2 size={13} /> <span>Delete</span></button>
+            </form>
+          </div>
+          <div class="cs-repo-main">
             <div class="cs-repo-meta">
               <span class="cs-ext-type">{integrationTypeLabel(repository.integrationType)}</span>
               <span class="mono">{hostOf(repository.url)}</span>
@@ -577,32 +676,6 @@
             {#if repoErrors[repository.id]}
               <div class="cs-repo-error" role="alert"><AlertTriangle size={12} /> {repoErrors[repository.id]}</div>
             {/if}
-          </div>
-          <div class="cs-repo-actions">
-            <AdminStatusBadge label={repository.enabled ? 'Enabled' : 'Disabled'} tone={repository.enabled ? 'good' : 'neutral'} />
-            <AdminStatusBadge label={repository.status} tone={REPOSITORY_STATUS_TONES[repository.status] ?? 'neutral'} />
-            <button
-              type="button"
-              class="a2-icon-btn"
-              title="View this repository's extensions"
-              aria-label="View {repository.name} extensions"
-              aria-pressed={repositoryId === repository.id}
-              onclick={() => { repositoryId = repositoryId === repository.id ? 'all' : repository.id; resetPage(); }}
-            ><Eye size={14} /></button>
-            <form method="POST" action="?/setCloudStreamRepositoryEnabled" style="display:inline"
-                  onsubmit={(event) => { event.preventDefault(); void toggleRepository(repository); }}>
-              <input type="hidden" name="id" value={repository.id} />
-              <input type="hidden" name="enabled" value={String(!repository.enabled)} />
-              <button type="submit" class="a2-icon-btn" disabled={repoPending} title={repository.enabled ? 'Disable repository' : 'Enable repository'} aria-label="{repository.enabled ? 'Disable' : 'Enable'} repository {repository.name}"><Power size={14} /></button>
-            </form>
-            <form method="POST" action="?/syncCloudStreamRepository" style="display:inline">
-              <input type="hidden" name="id" value={repository.id} />
-              <button type="submit" class="a2-icon-btn" title="Sync repository (re-fetch the repository document and reconcile extensions)"><RefreshCw size={14} /></button>
-            </form>
-            <form method="POST" action="?/deleteCloudStreamRepository" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this repository and its discovered extensions?')) e.preventDefault(); }}>
-              <input type="hidden" name="id" value={repository.id} />
-              <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete repository"><Trash2 size={14} /></button>
-            </form>
           </div>
         </div>
       {/each}
@@ -947,7 +1020,21 @@
     line-height: 1.5;
   }
   .cs-repo-list, .cs-ext-list { display: flex; flex-direction: column; gap: var(--a2-space-2); }
-  .cs-repo-card, .cs-ext-row {
+  /* §14 repository card: a COLUMN — header (name + status badges), ONE
+     full-width action row immediately below the tags, then the meta/stats.
+     The old side-by-side actions column stacked awkwardly on narrow screens
+     (right-aligned controls + large blank space). */
+  .cs-repo-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--a2-space-2);
+    padding: var(--a2-space-3) var(--a2-space-4);
+    background: var(--a2-surface-2);
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-md);
+    min-width: 0;
+  }
+  .cs-ext-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -959,8 +1046,64 @@
   }
   .cs-repo-card[data-enabled="false"], .cs-ext-row[data-enabled="false"] { opacity: 0.6; }
   .cs-repo-card[data-pending="true"], .cs-ext-row[data-pending="true"] { opacity: 0.75; }
+  .cs-repo-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--a2-space-2);
+    min-width: 0;
+  }
+  .cs-repo-name {
+    font-size: var(--a2-text-sm);
+    font-weight: 600;
+    color: var(--a2-text-bright);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .cs-repo-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  /* ONE clean full-width action row: equal-growth labeled buttons. Desktop =
+     one row; tablet/mobile = compact wrapping only when genuinely necessary
+     (each button keeps ≥96px usable width — never horizontal overflow). */
+  .cs-repo-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--a2-space-1);
+    width: 100%;
+    min-width: 0;
+  }
+  .cs-repo-action-form { display: flex; flex: 1 1 96px; min-width: 0; }
+  .cs-repo-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex: 1 1 96px;
+    min-width: 0;
+    min-height: 40px;
+    padding: 6px 10px;
+    background: var(--a2-surface-3);
+    border: 1px solid var(--a2-border-strong);
+    border-radius: var(--a2-radius-sm);
+    color: var(--a2-text);
+    font-size: var(--a2-text-2xs);
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .cs-repo-action:disabled { opacity: 0.45; cursor: default; }
+  .cs-repo-action span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .cs-repo-action:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
+  .cs-repo-action-danger:hover { color: var(--a2-red); border-color: var(--a2-red-border); }
+  .cs-repo-action[data-copied='true'] { color: var(--a2-green); border-color: rgba(0, 255, 156, 0.35); }
   .cs-repo-main, .cs-ext-main { min-width: 0; display: flex; flex-direction: column; gap: var(--a2-space-1); flex: 1; }
-  .cs-repo-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
   .cs-ext-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
   .cs-repo-meta, .cs-ext-meta {
     display: flex;
@@ -994,7 +1137,7 @@
     font-size: var(--a2-text-2xs);
     color: var(--a2-red);
   }
-  .cs-repo-actions, .cs-ext-actions { display: flex; align-items: center; gap: var(--a2-space-1); flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .cs-ext-actions { display: flex; align-items: center; gap: var(--a2-space-1); flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
   .a2-icon-btn {
     display: inline-flex;
     align-items: center;
@@ -1009,7 +1152,6 @@
   }
   .a2-icon-btn:disabled { opacity: 0.45; cursor: default; }
   .a2-icon-btn:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
-  .a2-icon-btn-danger:hover { color: var(--a2-red); border-color: var(--a2-red-border); }
   .cs-build-btn:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
   .cs-row-select, .cs-select-all input { width: 18px; height: 18px; accent-color: var(--a2-cyan); flex-shrink: 0; }
   .cs-select-all {
@@ -1255,8 +1397,15 @@
   .cs-test-note { color: var(--a2-red); }
 
   @media (max-width: 768px) {
-    .cs-repo-card, .cs-ext-row { flex-direction: column; align-items: stretch; }
-    .cs-repo-actions, .cs-ext-actions { justify-content: flex-end; }
+    /* §14: repository cards are already column-shaped with a full-width
+       action row; on narrow phones the badges wrap under the name and the
+       action buttons wrap 3+2 while staying evenly sized and reachable. */
+    .cs-repo-head { flex-direction: column; align-items: stretch; }
+    .cs-repo-badges { justify-content: flex-start; }
+    .cs-repo-action { flex: 1 1 calc(50% - var(--a2-space-1)); }
+    .cs-repo-action-form { flex: 1 1 calc(50% - var(--a2-space-1)); }
+    .cs-ext-row { flex-direction: column; align-items: stretch; }
+    .cs-ext-actions { justify-content: flex-end; }
     .cs-toolbar { position: static; }
     .cs-toolbar-field { flex: 1 1 45%; min-width: 0; }
     .cs-pager { justify-content: center; }

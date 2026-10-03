@@ -23,6 +23,7 @@ import type {
   AdapterBuildRequest,
   AdapterBuildResponse,
 } from '$lib/shared/adapter-artifact';
+import { ADAPTER_BUILDER_ERROR_CODES } from '$lib/shared/adapter-artifact';
 
 /** Client configuration (env-driven; absent Builder = honest unavailability). */
 export type BuilderClientConfig = {
@@ -102,18 +103,53 @@ export async function requestAdapterBuild(
     if (response.status === 401 || response.status === 403) {
       return { ok: false, code: 'BUILDER_UNAVAILABLE', message: 'The Adapter Builder rejected the request authorization.' };
     }
-    if (response.status === 504 || response.status === 502) {
-      // Builder-side timeout / upstream unavailability: controlled outcome.
-      return { ok: false, code: 'BUILDER_TIMEOUT', message: 'The Adapter Builder did not respond in time.' };
-    }
+    // AUDIT FIX (honest errors — the Moviebox/Render investigation): parse
+    // the Builder's STRUCTURED error body BEFORE falling back to status-code
+    // guesses. The Builder answers every failure with a closed-vocabulary
+    // `{ok:false, error:{code, message, verdict?}}` body — including the 502
+    // (BUILD_SOURCE_UNAVAILABLE — e.g. a 404 provider module) and 504
+    // (BUILD_TIMEOUT — the Builder's own overall budget) paths. Discarding
+    // the body and mapping every 502/504 to a generic "did not respond in
+    // time" hid the real reason (a stale manifest module URL was reported
+    // as a builder timeout). The Builder's own code + message now surface
+    // through the existing `!response.ok` handling in build-service (verdict
+    // transitions + last_build_error bookkeeping) — no new vocabulary, no
+    // weakened boundary; the client still validates the closed error codes
+    // and bounded message length it is willing to accept.
     let body: unknown;
     try {
       body = await response.json();
     } catch {
+      // No usable body: honest status-based fallbacks.
+      if (response.status === 502 || response.status === 504) {
+        return { ok: false, code: 'BUILDER_TIMEOUT', message: 'The Adapter Builder did not respond in time.' };
+      }
       return { ok: false, code: 'BUILDER_UNAVAILABLE', message: 'The Adapter Builder returned an unreadable response.' };
     }
     const shaped = body as AdapterBuildResponse;
     if (typeof shaped !== 'object' || shaped === null || typeof shaped['ok'] !== 'boolean') {
+      if (response.status === 502 || response.status === 504) {
+        return { ok: false, code: 'BUILDER_TIMEOUT', message: 'The Adapter Builder did not respond in time.' };
+      }
+      return { ok: false, code: 'BUILDER_UNAVAILABLE', message: 'The Adapter Builder returned an unexpected response shape.' };
+    }
+    // Closed-vocabulary gate: a failure body must carry a KNOWN Builder
+    // error code + bounded safe message — anything else is treated as an
+    // unusable response (never propagated verbatim into admin surfaces).
+    if (shaped.ok === false) {
+      const failure = shaped.error as { code?: unknown; message?: unknown } | undefined;
+      if (
+        typeof failure?.code === 'string'
+        && (ADAPTER_BUILDER_ERROR_CODES as readonly string[]).includes(failure.code)
+        && typeof failure.message === 'string'
+        && failure.message.length > 0
+        && failure.message.length <= 500
+      ) {
+        return { ok: true, response: shaped };
+      }
+      if (response.status === 502 || response.status === 504) {
+        return { ok: false, code: 'BUILDER_TIMEOUT', message: 'The Adapter Builder did not respond in time.' };
+      }
       return { ok: false, code: 'BUILDER_UNAVAILABLE', message: 'The Adapter Builder returned an unexpected response shape.' };
     }
     return { ok: true, response: shaped };

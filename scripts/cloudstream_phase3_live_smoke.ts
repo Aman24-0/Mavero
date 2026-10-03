@@ -48,6 +48,38 @@ for (const line of readFileSync(path.join(REPO_ROOT, '..', 'scripts', 'mavero_li
 
 const MANIFEST_URL = 'https://raw.githubusercontent.com/phisher98/phisher-nuvio-providers/main/manifest.json';
 const PROVIDER_ID = 'MoviesDrive';
+const CANONICAL_KEY = `nuvio:${PROVIDER_ID.toLowerCase()}`;
+
+/**
+ * AUDIT FIX (source-discovery audit): scoped artifact cleanup. The smoke's
+ * canonical key can legitimately be SHARED with a production generated row
+ * (e.g. the owner's All-in-One 'moviesdrive' row, activated 2026-10-03) —
+ * deleting ALL versions for the key would destroy production artifacts.
+ * This helper removes ONLY versions no SURVIVING extension row points at
+ * (the smoke's own rows disappear with its repository, so its versions
+ * become deletable; production pointers are always preserved). MUST be
+ * called AFTER the smoke repository is deleted.
+ */
+async function deleteSmokeArtifactsOnly(client: SupabaseClient<Database>): Promise<void> {
+  const { data: pointerRows } = await client
+    .from('cloudstream_extensions')
+    .select('integration_type, internal_name, generated_adapter_version')
+    .eq('adapter_state', 'generated')
+    .not('generated_adapter_version', 'is', null);
+  const preserved = new Set(
+    (pointerRows ?? []).map((row) =>
+      `${(row as { integration_type: string }).integration_type}:${(row as { internal_name: string }).internal_name.trim().toLowerCase()}@${(row as { generated_adapter_version: number }).generated_adapter_version}`),
+  );
+  const { data: artifacts } = await client
+    .from('cloudstream_adapter_artifacts')
+    .select('id, canonical_key, adapter_version')
+    .eq('canonical_key', CANONICAL_KEY);
+  for (const artifact of (artifacts ?? []) as Array<{ id: string; canonical_key: string; adapter_version: number }>) {
+    if (!preserved.has(`${artifact.canonical_key}@${artifact.adapter_version}`)) {
+      await client.from('cloudstream_adapter_artifacts').delete().eq('id', artifact.id);
+    }
+  }
+}
 
 let passed = 0;
 function ok(condition: unknown, label: string) {
@@ -83,17 +115,28 @@ async function main(): Promise<void> {
   };
 
   // ---------------------------------------------------------------------
-  // 2. Fresh repository state (idempotent re-runs).
+  // 2. Fresh repository state (idempotent re-runs) + production baseline.
   // ---------------------------------------------------------------------
   const existing = await listRepositories(client);
   const prior = existing.find((repo) => repo.url === MANIFEST_URL);
   if (prior !== undefined) {
     await deleteRepositoryById(client, prior.id);
-    // Remove any artifacts from a prior smoke run (no FK cascade — honest
-    // immutable rows are only deleted by this explicit cleanup).
-    await client.from('cloudstream_adapter_artifacts').delete().eq('canonical_key', `nuvio:${PROVIDER_ID.toLowerCase()}`);
+    // Remove only the artifacts a prior smoke run created (no FK cascade —
+    // honest immutable rows are deleted ONLY by this explicit scoped
+    // cleanup; production pointers are always preserved — audit fix).
+    await deleteSmokeArtifactsOnly(client);
     console.log('  cleaned a prior smoke repository');
   }
+
+  // Production baseline (audit fix): was the canonical key ALREADY eligible
+  // in Downloader 2 before this smoke touched anything? A production row
+  // (e.g. the owner's All-in-One 'moviesdrive') legitimately owns the tab;
+  // the honest-refusal branch must then assert NO DUPLICATION (dedup), not
+  // absence.
+  const baselineTabs = await listCloudStreamDownloadTabs(client, { mediaType: 'movie', contentId: 'movie-27205' }, {
+    loadContent: async () => ({ mediaType: 'movie' as const, tmdbId: '27205', title: 'Inception', year: 2010 }),
+  });
+  const productionOwnedTab = baselineTabs.tabs.some((tab) => tab.extensionId.toLowerCase() === CANONICAL_KEY);
 
   const { repository } = await createRepositoryFromUrl(client, MANIFEST_URL);
   ok(repository.extensionCount >= 1, `L2 the real Nuvio repository discovers ${repository.extensionCount} providers`);
@@ -216,21 +259,37 @@ async function main(): Promise<void> {
     const tabs = await listCloudStreamDownloadTabs(client, { mediaType: 'movie', contentId: 'movie-27205' }, {
       loadContent: async () => ({ mediaType: 'movie', tmdbId: '27205', title: 'Inception', year: 2010 }),
     });
-    ok(!tabs.tabs.some((tab) => tab.extensionId.toLowerCase() === `nuvio:${PROVIDER_ID.toLowerCase()}`), 'L15b an un-promoted provider never appears in Downloader 2');
+    ok(!tabs.tabs.some((tab) => tab.extensionId.toLowerCase() === CANONICAL_KEY) || productionOwnedTab, 'L15b an un-promoted provider never appears in Downloader 2 (a pre-existing production tab for the same canonical key is legitimate — never a smoke artifact)');
+    if (productionOwnedTab) {
+      ok(tabs.tabs.filter((tab) => tab.extensionId.toLowerCase() === CANONICAL_KEY).length === 1, 'L15b2 the production-owned tab appears exactly once (canonical dedup)');
+    }
   }
 
   // ---------------------------------------------------------------------
   // 7. Cleanup — the production catalog stays as the admin left it.
   // ---------------------------------------------------------------------
-  await client.from('cloudstream_adapter_artifacts').delete().eq('canonical_key', `nuvio:${PROVIDER_ID.toLowerCase()}`);
+  // Repository FIRST (its rows disappear with it), then the scoped artifact
+  // cleanup (production pointers are always preserved — audit fix).
   await deleteRepositoryById(client, repository.id);
+  await deleteSmokeArtifactsOnly(client);
   const finalRepos = await listRepositories(client);
   ok(!finalRepos.some((repo) => repo.url === MANIFEST_URL), 'L17 cleanup: the smoke repository is removed');
-  const { count: leftoverArtifacts } = await client
+  const { data: leftoverArtifacts } = await client
     .from('cloudstream_adapter_artifacts')
-    .select('id', { count: 'exact', head: true })
-    .eq('canonical_key', `nuvio:${PROVIDER_ID.toLowerCase()}`);
-  ok((leftoverArtifacts ?? 0) === 0, 'L18 cleanup: the smoke artifacts are removed');
+    .select('canonical_key, adapter_version')
+    .eq('canonical_key', CANONICAL_KEY);
+  const { data: survivingPointers } = await client
+    .from('cloudstream_extensions')
+    .select('integration_type, internal_name, generated_adapter_version')
+    .eq('adapter_state', 'generated')
+    .not('generated_adapter_version', 'is', null);
+  const surviving = new Set(
+    (survivingPointers ?? []).map((row) =>
+      `${(row as { integration_type: string }).integration_type}:${(row as { internal_name: string }).internal_name.trim().toLowerCase()}@${(row as { generated_adapter_version: number }).generated_adapter_version}`),
+  );
+  ok(((leftoverArtifacts ?? []) as Array<{ canonical_key: string; adapter_version: number }>).every(
+    (artifact) => surviving.has(`${artifact.canonical_key}@${artifact.adapter_version}`),
+  ), 'L18 cleanup: every remaining artifact for the key is pointed at by a surviving production row (smoke artifacts removed, production artifacts untouched)');
 
   console.log(`\ncloudstream_phase3_live_smoke: ${passed} checks PASSED`);
 }

@@ -1348,3 +1348,60 @@ go-live (billing) + the production Netlify env vars + the PAT-dependent
 Management-API ledger check + a post-go-live p35 re-run against the Render
 URL. The plan is now FULLY implemented (Phases 1–5). See
 CLOUDSTREAM_MAVERO_WORKLOG.md Session 13 for the complete record.
+
+---
+
+# 17. Source-Discovery Audit — IMPLEMENTATION RECORD (2026-10-03, post-Phase-5 continuation task)
+
+The owner added 5 repositories (Megix + Indflix CloudStream; Yoru's +
+All-in-One-Nuvio + Michat88 Nuvio — 133 extension rows) and requested a
+full autonomous source-discovery / repair / permanent-adapter audit. This
+was a continuation task under this plan (NOT a new phase): the permanent
+adapter lifecycle, the Builder, and Downloader 2 were exercised exactly
+as designed.
+
+Completed (full record: CLOUDSTREAM_MAVERO_WORKLOG.md Session 14):
+
+* **3 Mavero defects FIXED with regression coverage (73-check
+  scripts/cloudstream_audit_regression_test.ts, registered in the pnpm
+  chain):** (1) Downloader 2 row-resolution collisions — deterministic
+  `resolveExtensionRow`/`buildRequestedRowMap` (data-derived catalog
+  order; executable+enabled ranking) replace the last-wins Mode 2 map and
+  the unordered single-extension `find` (the MoviesDrive
+  Admin-Test-vs-Downloader-2 discrepancy class, reproduced live); (2)
+  Builder client honest errors — the Builder's structured
+  closed-vocabulary failure bodies (BUILD_SOURCE_UNAVAILABLE /
+  BUILD_TIMEOUT / …) now surface verbatim instead of the blind
+  502/504 → "did not respond in time" mislabel (the Moviebox root cause
+  was Michat88's 404 module URL, NOT a Render cold start); (3) live-smoke
+  cleanup scope — the phase3/p35 smokes deleted ALL artifacts for a
+  canonical key, destroying the new production adapter (same-key
+  collision); both now delete ONLY versions no surviving row points at,
+  and the phase3 smoke is production-state-aware.
+* **§14 Integration Manager repository card redesigned:** one full-width
+  action row below the status badges (View / Enable-Disable / Sync / COPY
+  REPO LINK / Delete — labeled, consistently sized; no-JS form fallbacks
+  preserved; clipboard + execCommand fallback + 2s Copied feedback, no
+  reload). Verified in headless Chromium at 390/412/768/1280px (no
+  overflow; balanced wrapping; all buttons ≥40px).
+* **Source audit result (truthful, not compatibility-maximized):** 125
+  unique Nuvio modules executed in the real Builder sandbox with
+  category-appropriate test inputs → exactly 1 convertible
+  (All-in-One moviesdrive, PARTIALLY_SUPPORTED movie-only). 124 honest
+  refusals, root-cause-verified by sampling (broken/Cloudflare-challenged
+  provider proxies, zero usable streams from broken search backends,
+  crypto-js capability refusals ×17, 2 modules >512KiB, 1 module 404).
+  Every adapter_required row now carries its honest per-row reason via
+  the REAL createAdapterForExtension pipeline (83 rows processed).
+* **Permanent adapter CREATED + ACTIVATED:** nuvio:moviesdrive v1
+  (declarative, artifact hash-verified, Builder-versioned) — Admin Test
+  12 links (kind=generated), Downloader 2 tabs/batch/single-extension
+  all load 12 links, with the Builder never running at resolution time.
+* **VegaMovies investigated:** vcloud.fit serves a Cloudflare JS bot
+  challenge to every fetch path — provider-side; the native adapter stays
+  with the honest EXTRACTOR_FAILED (no browser automation, per §11).
+* **Gates:** pnpm check 0/0; pnpm build PASS; full chain 210/210; live:
+  phase2 12/12, phase3 18/18 (production artifact preserved — scoped
+  cleanup proven), CS-1 5/5, discrepancy repro all-paths 12 links. No
+  security boundary weakened (sandbox, SSRF/DNS/redirect/size caps,
+  closed vocabularies, Builder-never-in-runtime all re-pinned).
