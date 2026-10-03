@@ -5473,3 +5473,9 @@ phase-boundary rule.
 
 Next action: user confirmation to begin Phase 5, or further Phase 4
 iteration.
+
+Phase 4 final commit: `ca1b823` — "feat: integration manager 2.0 —
+search/filters/bulk/pagination + no-refresh toggles + §13 status ux
+(Phase 4)" (pushed to origin/main; 434d02b..ca1b823; verified
+HEAD = origin/main = ca1b823 after push; the committed tree re-verified:
+Phase 4 suite 213/213, admin UI 161/161, Phase 3 offline 208/208).
