@@ -47,13 +47,14 @@ import {
   setExtensionsEnabledBulk,
   getExtensionViewForAdmin,
 } from '$lib/server/cloudstream/extensions/service';
+import { setExtensionPosition } from '$lib/server/downloader/source-order';
 import { createAdapterForExtension } from '$lib/server/extensions/builder/build-service';
 import { testExtensionProvider } from '$lib/server/extensions/builder/test-service';
 import type { CloudStreamExtensionView } from '$lib/server/cloudstream/types';
 
 const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
 
-const VALID_ACTIONS = new Set(['setEnabled', 'setEnabledBulk', 'createAdapter', 'testProvider']);
+const VALID_ACTIONS = new Set(['setEnabled', 'setEnabledBulk', 'createAdapter', 'testProvider', 'setPosition']);
 
 /** The optional representative test-input override fields (form-action parity). */
 const TEST_INPUT_FIELDS = ['testTmdbId', 'testTitle', 'testYear', 'testImdbId', 'testSeason', 'testEpisode'] as const;
@@ -65,6 +66,7 @@ type MutateBody = {
   id?: unknown;
   ids?: unknown;
   enabled?: unknown;
+  position?: unknown;
 } & Partial<Record<TestInputField, unknown>>;
 
 function invalid(status: 400 | 404 | 413 | 503, code: string, message: string, extension: CloudStreamExtensionView | null = null) {
@@ -140,6 +142,40 @@ export const POST: RequestHandler = async ({ request, locals }) => {
         return invalid(error.code === 'NOT_FOUND' ? 404 : 400, 'VALIDATION', error.message);
       }
       return unexpected(error, 'Unable to update the extensions.');
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // setPosition (FINAL TASK, PART G): moves ONE CloudStream/Nuvio
+  // extension to a 1-based GLOBAL position (the unified add-on + plugin
+  // ordering namespace). Never contacts the Builder; the response carries
+  // the moved row's fresh view + the fresh global position map so the
+  // client patches EVERY displayed position (not just the moved row).
+  // ---------------------------------------------------------------------
+  if (action === 'setPosition') {
+    if (typeof body.id !== 'string' || body.id.length === 0) {
+      return invalid(400, 'VALIDATION', 'An extension id is required.');
+    }
+    const rawPosition = body.position;
+    const position = typeof rawPosition === 'number' ? rawPosition : Number(rawPosition);
+    if (!Number.isSafeInteger(position) || position < 1) {
+      return invalid(400, 'VALIDATION', 'Position must be a whole number starting at 1.');
+    }
+    try {
+      const { result, positions } = await setExtensionPosition(locals.supabase, body.id, position);
+      if (!result.ok) {
+        const status = result.code === 'TABLE_MISSING' ? 503 : result.code === 'NOT_FOUND' ? 404 : 400;
+        return invalid(status, result.code, result.message);
+      }
+      const extension = await getExtensionViewForAdmin(locals.supabase, body.id);
+      const positionEntries: Record<string, number> = {};
+      for (const [key, value] of positions) positionEntries[key] = value;
+      return json(
+        { ok: true, extension, position: result.position, positions: positionEntries },
+        { headers: NO_STORE_HEADERS },
+      );
+    } catch (error) {
+      return unexpected(error, 'Unable to update the extension position.');
     }
   }
 

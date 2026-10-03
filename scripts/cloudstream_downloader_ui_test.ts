@@ -554,21 +554,66 @@ function section_regression(): void {
 
   const sheet = read('src/lib/components/DownloadSheet.svelte');
   const pristineSheet = pristineFile('src/lib/components/DownloadSheet.svelte');
-  // §H27 (CS-5 evolution — the assertion's own comment anticipated this):
-  // DownloadSheet was byte-identical through CS-4; CS-5 wires the panel in
-  // through the documented slug branch. The invariant EVOLVES to: every
-  // change vs the pristine CS-3 commit belongs to the CS-5 wiring (the
-  // import, the constant, the extended skip condition, the derived flag,
-  // the render branch, or comments) — full line-level calibration lives in
-  // the CS-5 suite (cloudstream_registry_integration_test.ts §C6).
+  // §H27 (FINAL TASK evolution — second documented recalibration; the first
+  // was CS-5, which this suite recorded when the panel was wired IN): the
+  // unified Mavero Downloader task RETIRES the separate Downloader 2 slug
+  // branch and swaps the mavero-downloader inline panel to
+  // MaveroUnifiedDownload (add-on + plugin sources in one rail). The
+  // invariant evolves to: every change vs the pristine CS-3 commit belongs
+  // to (a) the CS-5 wiring lineage, (b) the FINAL TASK unified-panel swap +
+  // Downloader-2 branch removal, or (c) the PART J dropdown alignment fix.
+  // The structural pins below assert exactly that shape; the byte-level
+  // line calibration is retired (it cannot survive two sanctioned
+  // recalibrations while staying meaningful).
   if (pristineSheet !== null) {
-    const removedLines = pristineSheet.split('\n').filter((line) => !sheet.includes(line));
-    const addedLines = sheet.split('\n').filter((line) => !pristineSheet.includes(line));
-    const codeRemovals = removedLines.filter((line) => !line.trim().startsWith('//'));
-    ok(codeRemovals.length === 1, `§H27: exactly ONE code line was removed from DownloadSheet since CS-3 (the old no-URL skip condition — removed ${codeRemovals.length})`);
-    ok(addedLines.every((line) => line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID') || line.includes('MaveroCloudStreamDownload') || line.includes('isMaveroDownloader2') || line.trim().startsWith('//') || line.trim().startsWith('<!--') || line.includes('CS-5') || line.includes('Mavero Downloader 2') || line.includes('providers also NEVER build') || line.includes("own inline panels (no iframe, no URL template). Generic type='json'") || line.includes('resolved server-side by /api/downloader/json') || line.includes('The iframe URL state stays null for all four') || line.includes('rendered INLINE through the SAME') || line.includes('as the Stremio downloader above') || line.includes('media-context props') || line.includes('episode/title + the shared embedded-sheet callback') || line.includes('its own resolution against the CS-3 mavero2 API') || line.includes('resolver is never involved, and the two panels never share') || line.includes('state (mutually exclusive {#if} branches: switching providers') || line.includes('unmounts this panel, so reopening re-resolves fresh')), `§H27: every DownloadSheet change since CS-3 is CS-5 wiring (added ${addedLines.length})`);
+    // Comment-STripped comparison (recalibration-safe): HTML <!-- -->,
+    // CSS /* */ and // line comments are removed from BOTH files first, so
+    // the diff is code-only and survives any sanctioned comment evolution.
+    const stripComments = (text: string): string[] =>
+      text
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .map((line) => line.replace(/\s*\/\/.*$/, '').trimEnd())
+        .filter((line) => line.trim().length > 0);
+    const pristineCode = stripComments(pristineSheet);
+    const sheetCode = stripComments(sheet);
+    // Every removal must be a line the two sanctioned evolutions explain:
+    // the CS-5 import/branch/constants that the FINAL TASK removed, the old
+    // no-URL skip condition (CS-5), the old MaveroAddonDownload wiring
+    // (FINAL TASK swap), or the PART J CSS lines.
+    const codeRemovals = pristineCode.filter((line) => !sheetCode.includes(line));
+    ok(
+      codeRemovals.every((line) =>
+        line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
+        || line.includes('MaveroCloudStreamDownload')
+        || line.includes('MaveroAddonDownload')
+        || line.includes('isMaveroDownloader2')
+        || line.includes('justify-content: space-between')
+        || line.includes('.dl-item-name { overflow: hidden;')),
+      `§H27: every removed DownloadSheet code line belongs to the sanctioned CS-5/FINAL-TASK evolutions (removed ${codeRemovals.length})`,
+    );
+    const codeAdditions = sheetCode.filter((line) => !pristineCode.includes(line));
+    ok(
+      codeAdditions.some((line) => line.includes('MaveroUnifiedDownload'))
+      && codeAdditions.every((line) =>
+        line.includes('MaveroUnifiedDownload')
+        || line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
+        || line.includes('MaveroCloudStreamDownload')
+        || line.includes('isMaveroDownloader')
+        || line.includes('.dl-item-name')
+        || line.includes('.dl-item-badge')
+        || line.includes('.dl-dropdown-item')
+        || line.includes('flex-start')
+        || line.includes('min-width: 0')
+        || line.includes('margin-left: auto')
+        || line.includes('retired')
+        || line.includes('unified')
+        || line.includes('retire')),
+      `§H27: every added DownloadSheet code line is the unified-panel swap, the retirement, or the PART J dropdown fix (added ${codeAdditions.length})`,
+    );
   } else {
-    ok(true, '§H27: pristine sheet unavailable — CS-5 wiring checked structurally');
+    ok(true, '§H27: pristine sheet unavailable — FINAL TASK wiring checked structurally');
   }
 
   // §H27 the frozen shared action model is untouched.
@@ -605,23 +650,34 @@ function section_regression(): void {
   // §H27 the Stremio panel still passes exactly its four original dimensions.
   ok(addon.includes("dimension: 'type'") && addon.includes("dimension: 'quality'") && !addon.includes("dimension: 'codec'"), '§H27: MaveroAddonDownload still passes only its original four filter dimensions');
 
-  // §H27 registry / migration surface — CS-5 evolution (the original
-  // assertion guarded against PREMATURE registry integration; CS-5 is the
-  // documented phase for it): the ONLY registry migration is the CS-5 seed,
-  // and the wiring is registered through the canonical constant.
+  // §H27 registry / migration surface — FINAL TASK evolution (the original
+  // assertion guarded against PREMATURE registry integration; CS-5 was the
+  // documented wiring phase; the FINAL TASK is the documented retirement
+  // phase): the registry migrations are exactly the CS-5 seed (wiring) +
+  // the unified-downloader global-order migration (ordering + retire).
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   ok(migrations.length > 0, '§H27: the migrations directory is intact (sanity)');
-  const registryMigrations = migrations.filter((name) => /cs4|downloader2|cs5/i.test(name));
-  ok(registryMigrations.length === 1 && registryMigrations[0] === '20261101000001_cloudstream_cs5_downloader2.sql', `§H27: the ONLY registry migration is the CS-5 Downloader 2 seed (${registryMigrations.join(', ') || 'none'})`);
+  const registryMigrations = migrations.filter((name) => /cs4|downloader2|cs5|unified_downloader/i.test(name));
+  ok(
+    registryMigrations.length === 2
+    && registryMigrations.includes('20261101000001_cloudstream_cs5_downloader2.sql')
+    && registryMigrations.includes('20261004000000_unified_downloader_global_order.sql'),
+    `§H27: the registry migrations are exactly the CS-5 seed + the FINAL TASK unified-order/retire migration (${registryMigrations.join(', ') || 'none'})`,
+  );
   ok(!read('src/lib/components/MaveroCloudStreamDownload.svelte').includes('download_providers'), '§H27: the Downloader 2 UI never touches the download_providers registry');
 
-  // §H27 (CS-5 evolution — was "not wired" through CS-4): the panel IS wired
-  // into the existing provider dropdown now, via the canonical slug branch.
-  ok(sheet.includes("import MaveroCloudStreamDownload from '$components/MaveroCloudStreamDownload.svelte'"), '§H27: DownloadSheet imports the Downloader 2 component (the CS-5 wiring)');
-  ok((sheet.match(/<MaveroCloudStreamDownload/g) ?? []).length === 1, '§H27: the Downloader 2 component renders exactly ONCE (the slug branch)');
-  ok(sheet.includes("MAVERO_DOWNLOADER_2_PROVIDER_ID"), '§H27: the sheet dispatches on the canonical slug constant (no string literals)');
+  // §H27 (FINAL TASK evolution — the CS-5 wiring is RETIRED): the sheet no
+  // longer imports/renders the Downloader 2 component or dispatches on its
+  // slug constant — the provider row is disabled (migration) and its plugin
+  // sources resolve through the UNIFIED panel the mavero-downloader slug
+  // renders instead.
+  ok(!sheet.includes("import MaveroCloudStreamDownload from"), '§H27: DownloadSheet NO LONGER imports the Downloader 2 component (retired)');
+  ok((sheet.match(/<MaveroCloudStreamDownload/g) ?? []).length === 0, '§H27: the Downloader 2 component renders ZERO times in the sheet (retired)');
+  ok(!sheet.includes('isMaveroDownloader2'), '§H27: the retired slug branch is gone');
+  ok(sheet.includes("import MaveroUnifiedDownload from '$components/MaveroUnifiedDownload.svelte'"), '§H27: DownloadSheet imports the UNIFIED downloader panel (the FINAL TASK wiring)');
+  ok((sheet.match(/<MaveroUnifiedDownload/g) ?? []).length === 1, '§H27: the unified panel renders exactly ONCE (the mavero-downloader branch)');
   const sharedDownloader = read('src/lib/shared/downloader.ts');
-  ok(sharedDownloader.includes("export const MAVERO_DOWNLOADER_2_PROVIDER_ID = 'mavero-downloader-2';"), '§H27: the Downloader 2 provider slug is registered in the shared downloader module (CS-5)');
+  ok(sharedDownloader.includes("export const MAVERO_DOWNLOADER_2_PROVIDER_ID = 'mavero-downloader-2';"), '§H27: the Downloader 2 provider slug constant REMAINS registered (retired row, harmless back-compat)');
 }
 
 // ---------------------------------------------------------------------------

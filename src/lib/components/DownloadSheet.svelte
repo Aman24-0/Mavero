@@ -11,15 +11,13 @@
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
     MAVERO_DOWNLOADER_PROVIDER_ID,
-    MAVERO_DOWNLOADER_2_PROVIDER_ID,
     FOURK_DOWNLOADER_PROVIDER_ID,
     providerUsesExternalServers,
     type DownloadMediaType,
     type DownloadUrlCandidate,
     type PublicDownloadProvider,
   } from '$lib/shared/downloader';
-  import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
-  import MaveroCloudStreamDownload from '$components/MaveroCloudStreamDownload.svelte';
+  import MaveroUnifiedDownload from '$components/MaveroUnifiedDownload.svelte';
   import FourKDownload from '$components/FourKDownload.svelte';
   import JsonDownload from '$components/JsonDownload.svelte';
   import DownloaderIcon from '$components/source/DownloaderIcon.svelte';
@@ -140,12 +138,16 @@
   // addon-links panel INLINE (no iframe, no URL template) — candidate
   // building is skipped for it entirely.
   $: if (activeProvider && open) {
-    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === MAVERO_DOWNLOADER_2_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID || activeProvider.type === 'json') {
-      // Mavero Downloader + Mavero Downloader 2 + 4K Downloader render their
-      // own inline panels (no iframe, no URL template). Generic type='json'
+    if (activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID || activeProvider.type === 'json') {
+      // Mavero Downloader (the UNIFIED panel: add-on + plugin sources in
+      // one chip rail — FINAL TASK) and 4K Downloader render their own
+      // inline panels (no iframe, no URL template). Generic type='json'
       // providers also NEVER build a client-side iframe URL — their API is
       // resolved server-side by /api/downloader/json and rendered inline by
-      // JsonDownload. The iframe URL state stays null for all four.
+      // JsonDownload. The iframe URL state stays null for all three. The
+      // retired 'mavero-downloader-2' slug no longer has a branch here —
+      // its registry row is disabled (migration 20261004000000) and its
+      // CloudStream sources resolve through the unified panel above.
       urlCandidates = [];
       alternateUrl = null;
       useAlternate = false;
@@ -238,7 +240,7 @@
       // handlers. Without this reset, if the user closes the sheet via
       // X or backdrop (NOT the "Back" button) while the embedded overlay
       // is visible with an error, reopening the sheet would re-render
-      // the overlay on top of the freshly-mounted MaveroAddonDownload
+      // the overlay on top of the freshly-mounted unified downloader panel
       // panel, showing the stale error from the prior session.
       embeddedSheetUrl = null;
       embeddedSheetLoading = false;
@@ -280,7 +282,7 @@
 
   // ----- Phase D: embedded-sheet overlay for third-party provider/download pages -----
   // When the user clicks Download on an external/provider-page stream card inside
-  // MaveroAddonDownload, the callback `onOpenInSheet(url)` fires. The DownloadSheet
+  // MaveroUnifiedDownload, the callback `onOpenInSheet(url)` fires. The DownloadSheet
   // sets `embeddedSheetUrl` and shows an iframe overlay that reuses the SAME
   // iframe load/error + external-open-fallback mechanism as the provider iframes.
   // No second DownloadSheet, no new iframe architecture — just a conditional
@@ -360,16 +362,14 @@
   $: sheetTitle = title || 'Download';
   $: iframeTitle = activeProvider ? `${activeProvider.name} for ${title || 'this title'}` : 'Download';
   $: hasProviders = filteredProviders.length > 0;
-  // Phase 14: the built-in Mavero Downloader renders its addon panel INLINE.
+  // Phase 14 → FINAL TASK: the built-in Mavero Downloader renders the
+  // UNIFIED source panel INLINE — one chip rail carrying BOTH add-on
+  // (green) and CloudStream/Nuvio plugin (blue) sources, globally ordered.
+  // The separate Downloader-2 inline branch is RETIRED: the provider row
+  // is disabled at the registry level and its plugin resolution lives on
+  // inside this panel (the same /mavero2 backend, permanent adapters,
+  // never the Builder).
   $: isMaveroDownloader = activeProvider?.slug === MAVERO_DOWNLOADER_PROVIDER_ID;
-  // CS-5: Mavero Downloader 2 renders the CloudStream extensions panel
-  // INLINE — the same slug-special-casing mechanism as the Stremio downloader
-  // above, but a COMPLETELY SEPARATE resolution path (the CS-3 mavero2 API,
-  // never the Stremio addon resolver). Selecting between the two never
-  // crosses state: the {#if} chain below unmounts one panel before the
-  // other mounts (fresh component state, fresh resolution on open — the
-  // URL-lifetime contract, plan §40.7).
-  $: isMaveroDownloader2 = activeProvider?.slug === MAVERO_DOWNLOADER_2_PROVIDER_ID;
   // Phase 19: the 4K Downloader renders its panel INLINE (no iframe — JSON API).
   $: is4kDownloader = activeProvider?.slug === FOURK_DOWNLOADER_PROVIDER_ID;
   // Generic JSON downloader (type='json'): renders the JsonDownload inline
@@ -479,33 +479,18 @@
             </button>
           </div>
         {:else if isMaveroDownloader}
-          <!-- Phase 14: the BUILT-IN Mavero Downloader — the addon-grouped
-               "best available links" panel rendered INLINE (no cross-origin
-               iframe, no URL template). The server ranks + filters; this
-               surface only presents states and the three link actions. -->
+          <!-- FINAL TASK: the BUILT-IN Mavero Downloader — the UNIFIED
+               source panel rendered INLINE (no cross-origin iframe, no URL
+               template). ONE chip rail carries BOTH source kinds, globally
+               ordered: green Stremio add-on chips (the existing flow, per
+               /api/downloader/mavero/addon fetches) + blue CloudStream/Nuvio
+               plugin chips (the /mavero2 batch + per-source retry — the
+               permanent-adapter path, never the Builder). The two resolution
+               engines stay separate under one presentation layer; switching
+               providers unmounts this panel (fresh state, fresh resolution
+               on open — the URL-lifetime contract, plan §40.7). -->
           <div class="dl-mavero-panel">
-            <MaveroAddonDownload
-              contentId={maveroContentId}
-              mediaType={maveroMediaType}
-              {tmdbId}
-              {season}
-              {episode}
-              {title}
-              onOpenInSheet={openEmbeddedSheet}
-            />
-          </div>
-        {:else if isMaveroDownloader2}
-          <!-- CS-5: Mavero Downloader 2 — the CloudStream extensions panel
-               rendered INLINE through the SAME slug-special-casing mechanism
-               as the Stremio downloader above. It receives the IDENTICAL
-               media-context props (contentId/mediaType/tmdbId/season/
-               episode/title + the shared embedded-sheet callback) and mounts
-               its own resolution against the CS-3 mavero2 API — the Stremio
-               resolver is never involved, and the two panels never share
-               state (mutually exclusive {#if} branches: switching providers
-               unmounts this panel, so reopening re-resolves fresh). -->
-          <div class="dl-mavero-panel">
-            <MaveroCloudStreamDownload
+            <MaveroUnifiedDownload
               contentId={maveroContentId}
               mediaType={maveroMediaType}
               {tmdbId}
@@ -659,13 +644,13 @@
 
       <!-- Phase D: embedded-sheet iframe overlay for third-party provider/download
            pages. When the user clicks Download on an external/provider-page stream
-           card inside MaveroAddonDownload, the `onOpenInSheet(url)` callback fires
+           card inside MaveroUnifiedDownload, the `onOpenInSheet(url)` callback fires
            and `embeddedSheetUrl` is set. This overlay renders the provider page in
            an iframe — reusing the SAME onload/onerror + external-open-fallback
            mechanism as the provider iframes above. If the iframe is blocked by
            CSP / X-Frame-Options / browser security, the user sees the external-open
            fallback. No proxy, no CSP bypass, no scraping. The "Back" button
-           returns to the MaveroAddonDownload panel. -->
+           returns to the downloader panel. -->
       {#if embeddedSheetUrl}
         <div class="dl-embedded-overlay">
           <div class="dl-embedded-header">
@@ -835,7 +820,16 @@
   .dl-dropdown-item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    /* PART J fix (Nxsha Space / VidVault / Cineverse): the provider name
+       must start immediately after the icon with the normal flex gap —
+       NOT pushed to the right edge. space-between distributed the 2-child
+       case (icon + name, no badge) to opposite edges, which looked broken
+       for every icon-bearing provider. Normal flow + a flexible name +
+       badge pinned to the end via margin-left:auto keeps: icon-adjacent
+       titles, right-aligned Default badges, truncation for long names,
+       and correct alignment for non-icon providers (name takes the
+       available row, badge still right). */
+    justify-content: flex-start;
     gap: 10px;
     width: 100%;
     padding: 9px 11px;
@@ -851,9 +845,16 @@
   }
   .dl-dropdown-item:hover { background: rgba(255, 255, 255, 0.06); color: #f5f5f5; }
   .dl-dropdown-item.active { background: rgba(255, 255, 255, 0.1); color: #fff; }
-  .dl-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl-item-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .dl-item-badge {
     flex: 0 0 auto;
+    margin-left: auto;
     padding: 2px 7px;
     border-radius: 999px;
     color: #0d0d0d;
@@ -899,7 +900,7 @@
   /* Phase D: embedded-sheet overlay for third-party provider/download pages.
      Covers the body when an embeddedSheetUrl is set — the iframe + error
      + external-open fallback reuse the SAME visual language as the provider
-     iframes. The "Back" button returns to the MaveroAddonDownload panel. */
+     iframes. The "Back" button returns to the downloader panel. */
   .dl-embedded-overlay {
     position: absolute;
     inset: 0;

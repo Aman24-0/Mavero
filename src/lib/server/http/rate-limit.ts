@@ -96,6 +96,11 @@ export const RATE_LIMIT_RULES = {
   downloaderMavero2: { limit: 10, windowMs: 60_000 },
   downloaderMavero2Tabs: { limit: 30, windowMs: 60_000 },
   downloaderMavero2Extension: { limit: 30, windowMs: 60_000 },
+  // FINAL TASK (unified Mavero Downloader): the merged source-list endpoint.
+  // Same cost profile as the two tabs endpoints it composes; SEPARATE bucket
+  // so the unified panel can never lock out the standalone panels (the
+  // additive-only convention).
+  downloaderUnifiedSources: { limit: 30, windowMs: 60_000 },
   search: { limit: 30, windowMs: 60_000 },
   stremioSession: { limit: 20, windowMs: 60_000 },
   pairingCreate: { limit: 10, windowMs: 60_000 },

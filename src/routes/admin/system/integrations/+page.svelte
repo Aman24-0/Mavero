@@ -125,6 +125,15 @@
   function openDetail(addon: any) { detailAddon = addon; detailSheetOpen = true; }
   function closeDetail() { detailSheetOpen = false; detailAddon = null; }
 
+  /** FINAL TASK: the add-on's current GLOBAL rank (fallback: the legacy
+   *  0-based ordering + 1, so the input is never empty pre-backfill). */
+  function addonGlobalPosition(addonId: string): number {
+    const global = data.globalPositions?.[`addon:${addonId}`];
+    if (typeof global === 'number') return global;
+    const addon = data.addons.find((candidate) => candidate.id === addonId);
+    return (addon?.ordering ?? 0) + 1;
+  }
+
   function formatDate(iso: string | null): string {
     if (!iso) return '—';
     try { return new Date(iso).toLocaleDateString(); } catch { return '—'; }
@@ -207,6 +216,7 @@
         extensions={data.cloudstreamExtensions}
         loadError={data.cloudstreamError}
         providerTest={form?.providerTest ?? null}
+        globalPositions={data.globalPositions}
       />
     {/if}
   </AdminPage>
@@ -320,11 +330,18 @@
       </form>
 
       <h4 class="a2-detail-section">Position</h4>
+      <!-- FINAL TASK: the position control now operates on the GLOBAL
+           source order (add-ons + plugins interleaved) — the input shows
+           the add-on's global rank, and moving it shifts plugin sources
+           too. Same form-action shape as the add-on-only control it
+           replaces (the action routes to the global ordering with the
+           legacy add-on-only path as the pre-migration fallback). -->
       <form method="POST" action="?/setAddonPosition" style="display:flex; gap:8px; align-items:center;">
         <input type="hidden" name="id" value={detailAddon.id} />
-        <input type="number" name="position" value={detailAddon.ordering ?? 0} style="width:80px" />
+        <input type="number" name="position" value={addonGlobalPosition(detailAddon.id)} min="1" style="width:80px" aria-label="Global position" />
         <button type="submit" class="a2-btn-secondary">Set Position</button>
       </form>
+      <p class="a2-position-hint">The position spans add-ons AND plugin sources — one unified order in the Mavero Downloader.</p>
     </div>
   </AdminSheet>
 {/if}
@@ -374,6 +391,7 @@
   .a2-dl dd { margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text); }
   .a2-error-text { color: var(--a2-red); }
   .a2-detail-desc { margin: 0; font-size: var(--a2-text-sm); color: var(--a2-text-muted); }
+  .a2-position-hint { margin: 4px 0 0; font-size: var(--a2-text-xs); color: var(--a2-text-muted); }
   .a2-detail-section { font-size: var(--a2-text-xs); font-weight: 700; color: var(--a2-text-bright); margin: var(--a2-space-3) 0 var(--a2-space-1); }
   .a2-checkbox { display: flex; align-items: center; gap: var(--a2-space-2); font-size: var(--a2-text-sm); color: var(--a2-text); }
   .a2-btn-primary { padding: 10px 16px; background: var(--a2-cyan); color: var(--a2-surface-1); border: none; border-radius: var(--a2-radius-sm); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }

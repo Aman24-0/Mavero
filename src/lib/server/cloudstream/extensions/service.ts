@@ -20,6 +20,7 @@ import { CloudStreamRepositoryError } from '../repository/errors';
 import { validateCloudStreamId } from '../repository/ids';
 import { deriveAdapterStatus, lookupCloudStreamAdapter } from '../adapters/registry';
 import {
+  canonicalAdapterKeyForRow,
   deriveOperationalAdapterState,
   effectiveMediaTypes,
   executableAdapterForExtension,
@@ -114,6 +115,10 @@ export function toExtensionView(row: CloudStreamExtensionRow, repositoryName: st
     integrationType,
     mediaTypes: effectiveMediaTypes(row),
     adapterState: deriveOperationalAdapterState(row, row.adapter_state),
+    // FINAL TASK (unified downloader): the global-ordering identity — the
+    // same type-aware canonical key the catalog dedup + the ordering table
+    // key on (extension:<canonicalKey>).
+    canonicalKey: canonicalAdapterKeyForRow(row),
     moduleUrl: row.module_url,
     versionText: row.version_text,
     providerMetadata: sanitizeProviderMetadata(row.provider_metadata),

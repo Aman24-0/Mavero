@@ -1,15 +1,15 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
+  import MaveroUnifiedDownload from '$components/MaveroUnifiedDownload.svelte';
 
   /**
    * MAVERO Downloader — standalone movie deep link (Phase 14).
    *
-   * The same addon-downloader panel the DownloadSheet renders inline,
+   * The same UNIFIED downloader panel the DownloadSheet renders inline
    * hosted as a real page so the built-in provider's URL template
    * (`/watch/mavero-downloader/movie/{tmdbId}`) is a valid, shareable,
    * back-button-friendly target. The panel fetches
-   * `/api/downloader/mavero` itself and never renders addon configuration.
+   * `/api/downloader/mavero/sources` itself (add-on + plugin sources) and never renders configuration.
    */
   $: tmdbId = page.params.tmdbId ?? '';
 </script>
@@ -20,7 +20,7 @@
 </svelte:head>
 
 <div class="downloader-page">
-  <MaveroAddonDownload
+  <MaveroUnifiedDownload
     contentId={`movie-${tmdbId}`}
     mediaType="movie"
     {tmdbId}

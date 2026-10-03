@@ -740,6 +740,10 @@ export async function listCloudStreamDownloadTabs(
     // kept in the contract for CS-4 shape stability (plan §40.3 tabs sketch).
     enabled: true,
     compatible: true,
+    // FINAL TASK (unified downloader): the global-ordering identity — the
+    // same type-aware canonical key the eligibility selection deduped on, so
+    // the ordering key and the user-visible source identity never disagree.
+    canonicalKey: canonicalAdapterKeyForRow(row),
   }));
 
   return {

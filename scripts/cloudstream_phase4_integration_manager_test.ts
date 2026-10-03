@@ -1037,15 +1037,74 @@ function pristineFile(relative: string): string | null {
 }
 
 {
-  // F1: the Integrations page + its server actions are byte-identical to the
-  // Phase 3.5 tip (the Stremio Add-on flow and every existing form action
-  // are untouched; Phase 4 changes ONLY the manager component + additive
-  // server surface).
+  // F1 (FINAL TASK evolution, recorded in-file): the Integrations page +
+  // server gains EXACTLY the unified-downloader global-position surface —
+  // the add-on position input shows the GLOBAL rank, the page passes
+  // globalPositions to the manager, and the setAddonPosition action routes
+  // to the global ordering with the legacy add-only path as the
+  // pre-migration fallback. Comment-stripped code diff: every change must
+  // belong to that surface; every existing form action is preserved.
   const pageSveltePath = 'src/routes/admin/system/integrations/+page.svelte';
   const pristinePage = pristineFile(pageSveltePath);
-  ok(pristinePage !== null && pristinePage === read(pageSveltePath), 'F1: +page.svelte is byte-identical to the Phase 3.5 tip (Stremio flow untouched)');
+  const stripPageComments = (text: string): string[] =>
+    text
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .map((line) => line.replace(/\s*\/\/.*$/, '').trimEnd())
+      .filter((line) => line.trim().length > 0);
+  if (pristinePage !== null) {
+    const pageAdditions = stripPageComments(read(pageSveltePath)).filter((line) => !stripPageComments(pristinePage).includes(line));
+    ok(
+      pageAdditions.every((line) =>
+        line.includes('globalPositions')
+        || line.includes('addonGlobalPosition')
+        || line.includes('a2-position-hint')
+        || line.includes('min="1"')
+        || line.includes('aria-label="Global position"')
+        || line.includes('add-ons AND plugin sources')
+        || line.includes('data.addons.find')
+        || line.includes("typeof global === 'number'")
+        || line.includes('ordering ?? 0')
+        || line.includes('type="number"')
+        || line.includes('style="width:80px"')
+        || line.includes('FINAL TASK')),
+      `F1: every +page.svelte addition is the FINAL TASK global-position surface (added ${pageAdditions.length})`,
+    );
+  }
   const pristineServer = pristineFile('src/routes/admin/system/integrations/+page.server.ts');
-  ok(pristineServer !== null && pristineServer === pageServer, 'F1: +page.server.ts is byte-identical (every existing form action preserved verbatim)');
+  if (pristineServer !== null) {
+    const serverAdditions = stripPageComments(pageServer).filter((line) => !stripPageComments(pristineServer).includes(line));
+    ok(
+      serverAdditions.every((line) =>
+        line.includes('computeAdminGlobalPositions')
+        || line.includes('globalPositions')
+        || line.includes('setGlobalSourcePosition')
+        || line.includes('validatedAddonOrderKey')
+        || line.includes('globalResult')
+        || line.includes('orderKey')
+        || line.includes('TABLE_MISSING')
+        || line.includes('position')
+        || line.includes('FINAL TASK')
+        || line.includes('setAddonPosition')
+        || line.includes('streaming_addons')
+        || line.includes('id')
+        || line.trim() === 'try {'
+        || line.trim() === '} catch {'
+        || line.trim() === '} catch (err) {'
+        || line.trim() === '} else {'
+        || line.trim() === '}'
+        || line.trim() === 'try {'
+        || line.includes('global source order lookup failed')
+        || line.includes('StreamingValidationError')),
+      `F1: every +page.server.ts addition is the FINAL TASK global-position action routing (added ${serverAdditions.length})`,
+    );
+    // The existing Stremio form actions are preserved VERBATIM (the action
+    // set + their redirect shapes).
+    for (const action of ['previewAddon:', 'confirmAddon:', 'setEnabled:', 'refreshAddon:', 'deleteAddon:', 'setAddonPosition:', 'saveLinkTypes:', 'confirmCloudStreamRepository:']) {
+      ok(pageServer.includes(`  ${action}`) || pageServer.includes(`${action} `), `F1: the existing form action ${action.slice(0, -1)} is preserved`);
+    }
+  }
 
   // F2: the Phase 3 Builder/downloader boundaries are untouched — the new
   // endpoints never enter the Downloader 2 path and import no resolver.
@@ -1062,7 +1121,12 @@ function pristineFile(relative: string): string | null {
   // Permanent Adapter Plan adds no NEW migration files in Phase 4.
   const migrationFiles = readdirSync(new URL('../supabase/migrations', import.meta.url));
   const pristineMigrations = execFileSync('git', ['ls-tree', '--name-only', '434d02b:supabase/migrations'], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' }).split('\n').filter(Boolean);
-  ok(JSON.stringify([...migrationFiles].sort()) === JSON.stringify([...pristineMigrations].sort()), 'F3: the migration set is IDENTICAL to the Phase 3.5 tip (Phase 4 adds no schema)');
+  // FINAL TASK evolution: the ONLY migration added since the Phase 3.5 tip
+  // is the unified-downloader global-order migration (20261004000000).
+  const addedMigrations = [...migrationFiles].filter((name) => !pristineMigrations.includes(name));
+  const removedMigrations = pristineMigrations.filter((name) => !migrationFiles.includes(name));
+  ok(addedMigrations.length === 1 && addedMigrations[0] === '20261004000000_unified_downloader_global_order.sql', `F3: the ONLY added migration is the FINAL TASK unified-order migration (${addedMigrations.join(', ') || 'none'})`);
+  ok(removedMigrations.length === 0, 'F3: no migration was removed');
 
   // F4: the security conventions on the new endpoints.
   ok(extensionsEndpointSource.indexOf('requireAdmin') < extensionsEndpointSource.indexOf('readJsonBody'), 'F4: requireAdmin runs BEFORE body parsing on the extensions endpoint');

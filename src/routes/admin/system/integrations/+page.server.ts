@@ -44,6 +44,7 @@ import {
 import { listExtensionsForAdmin, setExtensionEnabled } from '$lib/server/cloudstream/extensions/service';
 import { createAdapterForExtension } from '$lib/server/extensions/builder/build-service';
 import { testExtensionProvider } from '$lib/server/extensions/builder/test-service';
+import { computeAdminGlobalPositions, setGlobalSourcePosition, validatedAddonOrderKey } from '$lib/server/downloader/source-order';
 import { CloudStreamRepositoryError } from '$lib/server/cloudstream/repository/errors';
 import type { CloudStreamExtensionView, CloudStreamRepositoryView } from '$lib/server/cloudstream/types';
 import type { ProviderTestResultView } from '$lib/shared/cloudstream-types';
@@ -83,6 +84,21 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // The Add-on tab data loads exactly as before (unchanged behavior).
   const addons = await listAdminAddons(locals.supabase);
 
+  // FINAL TASK: the GLOBAL source ordering state (the merged add-on +
+  // plugin rank map). Loaded for BOTH tabs (the add-on detail sheet's
+  // position input shows the GLOBAL rank; the Extension manager renders
+  // the position control per row). Degrades to the fallback map when the
+  // ordering table is absent (pre-migration) — the admin position display
+  // still works; only explicit reordering waits for the migration.
+  let globalPositions: Record<string, number> = {};
+  try {
+    for (const [key, value] of await computeAdminGlobalPositions(locals.supabase)) {
+      globalPositions[key] = value;
+    }
+  } catch (err) {
+    console.warn('[Integrations] global source order lookup failed', err instanceof Error ? err.message : err);
+  }
+
   // The Extension tab loads the CloudStream catalog; failures degrade
   // gracefully (the page still renders with an error notice) instead of
   // taking the whole Integrations page down.
@@ -103,6 +119,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   return {
     addons,
     tab,
+    globalPositions,
     cloudstreamRepositories,
     cloudstreamExtensions,
     cloudstreamError,
@@ -169,7 +186,26 @@ export const actions: Actions = {
       const form = await request.formData();
       const id = String(form.get('id') ?? '');
       const position = parseInt(String(form.get('position') ?? '0'), 10);
-      await setAddonPosition(locals.supabase, id, position);
+      // FINAL TASK: the add-on position now moves the source inside the ONE
+      // GLOBAL ordering namespace (add-ons + plugins interleaved; the RPC
+      // resyncs streaming_addons.ordering so the legacy readers agree).
+      // Pre-migration (ordering table absent) the action falls back to the
+      // EXISTING add-on-only setAddonPosition — zero behavior regression
+      // until the migration lands.
+      let orderKey: string;
+      try {
+        orderKey = validatedAddonOrderKey(id);
+      } catch {
+        throw new StreamingValidationError('Addon not found.');
+      }
+      const globalResult = await setGlobalSourcePosition(locals.supabase, orderKey, position);
+      if (!globalResult.ok) {
+        if (globalResult.code === 'TABLE_MISSING') {
+          await setAddonPosition(locals.supabase, id, position);
+        } else {
+          throw new Error(globalResult.message);
+        }
+      }
       throw redirect(303, `${REDIRECT}?notice=Addon%20position%20updated.`);
     } catch (error) {
       if (isRedirect(error)) throw error;

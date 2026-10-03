@@ -2,7 +2,29 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { render } from 'svelte/server';
+// FINAL TASK evolution: the panel is loaded through VITE's SSR graph (ONE
+// svelte runtime instance — the D-020 convention). The old built-chunk
+// import worked only because the legacy panel used no onDestroy (the
+// unified panel does — and the built chunk bundles its OWN svelte runtime
+// copy, so mixing it with node's svelte/server render would break the SSR
+// context). The regression intent (a REAL runtime mount, not a source
+// contract) is preserved: vite compiles + executes the ACTUAL component
+// module, including its lifecycle registration.
+const { createServer: createViteServer } = await import('vite');
+const viteServer = await createViteServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+const svelteServerMod = (await viteServer.ssrLoadModule('svelte/server')) as {
+  render: (component: unknown, options: { props: Record<string, unknown> }) => { body: string };
+};
+const render = svelteServerMod.render;
+const unifiedPanelMod = (await viteServer.ssrLoadModule('/src/lib/components/MaveroUnifiedDownload.svelte')) as {
+  default: unknown;
+};
+const UnifiedPanel = unifiedPanelMod.default;
+const globalAny = globalThis as Record<string, unknown>;
+if (typeof globalAny.requestAnimationFrame !== 'function') {
+  globalAny.requestAnimationFrame = (callback: () => void) => setTimeout(callback, 0) as unknown as number;
+  globalAny.cancelAnimationFrame = (handle: number) => clearTimeout(handle);
+}
 
 /**
  * Phase E Runtime Regression Test — DownloadSheet → MaveroAddonDownload
@@ -38,7 +60,7 @@ import { render } from 'svelte/server';
  * `render()` from `svelte/server` to ACTUALLY MOUNT the component path:
  *
  *   DownloadSheet(open=true, providersLoading=false, providersFailed=false,
- *     providers=[mavero-downloader]) → MaveroAddonDownload mounts →
+ *     providers=[mavero-downloader]) → the unified panel mounts →
  *     presentationResult computed → visibleStreams/remainingStreams
  *     populated → no exception.
  *
@@ -55,21 +77,14 @@ function ok(condition: unknown, label: string) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
-// The compiled server chunks are produced by `pnpm run build`. They live
-// in .svelte-kit/output/server/chunks/. Importing them runs the ACTUAL
-// compiled Svelte component code — the same code that ships to Netlify.
-//
-// We resolve via a relative path so the test works regardless of the
-// current working directory.
-const CHUNKS_DIR = path.join(REPO_ROOT, '.svelte-kit', 'output', 'server', 'chunks');
-
-// Use file:// URLs so node treats these as ESM and resolves the relative
-// imports inside the compiled chunks correctly (the chunks import from
-// "./index.js", "./SelectionSheet.js", etc. — file URLs keep the same
-// resolution behavior as production).
-function chunkUrl(name: string): string {
-  return `file://${path.join(CHUNKS_DIR, name)}`;
-}
+// FINAL TASK evolution (recorded in-file): the shipped inline-panel chunk
+// is now MaveroUnifiedDownload.js (DownloadSheet -> the UNIFIED downloader
+// carrying add-on + plugin sources). MaveroAddonDownload is no longer
+// imported by any route, so the compiler no longer emits its chunk — the
+// component file remains in the tree as reusable code and its SOURCE-level
+// regression checks still apply (the presentation-window init pattern).
+// The runtime mount intent (the presentation-window init crash class) now
+// exercises the panel that ACTUALLY ships.
 
 // ---------------------------------------------------------------------------
 // §1 — Root-cause file content audit (the bug is GONE from source)
@@ -122,7 +137,6 @@ async function section_runtimeMountMavero(): Promise<void> {
   // (signature: `(renderer, props) => void`). This is the SAME function
   // the production server calls during SSR; we exercise it directly to
   // reproduce the production runtime path.
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   // Test A — empty stream collection (filteredStreams === []).
   // presentationResult = selectPresentationWindow([]) returns { initial: [], remaining: [], total: 0 }.
@@ -130,7 +144,7 @@ async function section_runtimeMountMavero(): Promise<void> {
   let emptyErr: unknown = null;
   let emptyHtml = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'movie-123',
         mediaType: 'movie',
@@ -145,11 +159,11 @@ async function section_runtimeMountMavero(): Promise<void> {
   } catch (err) {
     emptyErr = err;
   }
-  ok(emptyErr === null, `§2A: MaveroAddonDownload mounts with empty stream collection WITHOUT throwing (no "undefined.initial" TypeError) — got: ${emptyErr instanceof Error ? emptyErr.message : String(emptyErr)}`);
-  ok(emptyHtml.length > 0, '§2A: MaveroAddonDownload renders non-empty HTML for empty collection');
-  // The empty state ("No Stremio addons enabled" or "Finding addons…") is
+  ok(emptyErr === null, `§2A: the unified panel mounts with empty stream collection WITHOUT throwing (no "undefined.initial" TypeError) — got: ${emptyErr instanceof Error ? emptyErr.message : String(emptyErr)}`);
+  ok(emptyHtml.length > 0, '§2A: the unified panel renders non-empty HTML for empty collection');
+  // The empty state ("No Stremio addons enabled" or "Finding sources…") is
   // rendered — proves the component body ran to completion.
-  ok(/mad\b/.test(emptyHtml), '§2A: rendered HTML contains the .mad container (component body ran to completion)');
+  ok(/mud\b/.test(emptyHtml), '§2A: rendered HTML contains the .mad container (component body ran to completion)');
 
   // Test B — verify the component instance code (the buggy line was INSIDE
   // the instance body — `let visibleStreams = presentationResult.initial`).
@@ -181,13 +195,12 @@ async function section_runtimeMountSheet(): Promise<void> {
   // triggers. But we still verify each scenario to ensure no NEW bug is
   // introduced by the fix (e.g. an empty visibleStreams [] causing a
   // downstream render error).
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   // Test C — movie media type.
   let err2: unknown = null;
   let html2 = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'movie-123',
         mediaType: 'movie',
@@ -200,14 +213,14 @@ async function section_runtimeMountSheet(): Promise<void> {
     });
     html2 = result.body;
   } catch (err) { err2 = err; }
-  ok(err2 === null, `§3C (movie): MaveroAddonDownload mounts WITHOUT throwing — got: ${err2 instanceof Error ? err2.message : String(err2)}`);
-  ok(html2.length > 0, '§3C (movie): MaveroAddonDownload renders non-empty HTML');
+  ok(err2 === null, `§3C (movie): the unified panel mounts WITHOUT throwing — got: ${err2 instanceof Error ? err2.message : String(err2)}`);
+  ok(html2.length > 0, '§3C (movie): the unified panel renders non-empty HTML');
 
   // Test D — series media type with season/episode.
   let err3: unknown = null;
   let html3 = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'tv-456',
         mediaType: 'series',
@@ -220,14 +233,14 @@ async function section_runtimeMountSheet(): Promise<void> {
     });
     html3 = result.body;
   } catch (err) { err3 = err; }
-  ok(err3 === null, `§3D (series with season/episode): MaveroAddonDownload mounts WITHOUT throwing — got: ${err3 instanceof Error ? err3.message : String(err3)}`);
-  ok(html3.length > 0, '§3D (series): MaveroAddonDownload renders non-empty HTML');
+  ok(err3 === null, `§3D (series with season/episode): the unified panel mounts WITHOUT throwing — got: ${err3 instanceof Error ? err3.message : String(err3)}`);
+  ok(html3.length > 0, '§3D (series): the unified panel renders non-empty HTML');
 
   // Test E — anime media type.
   let err4: unknown = null;
   let html4 = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'anime-789',
         mediaType: 'anime',
@@ -240,13 +253,13 @@ async function section_runtimeMountSheet(): Promise<void> {
     });
     html4 = result.body;
   } catch (err) { err4 = err; }
-  ok(err4 === null, `§3E (anime with onOpenInSheet callback): MaveroAddonDownload mounts WITHOUT throwing — got: ${err4 instanceof Error ? err4.message : String(err4)}`);
-  ok(html4.length > 0, '§3E (anime): MaveroAddonDownload renders non-empty HTML');
+  ok(err4 === null, `§3E (anime with onOpenInSheet callback): the unified panel mounts WITHOUT throwing — got: ${err4 instanceof Error ? err4.message : String(err4)}`);
+  ok(html4.length > 0, '§3E (anime): the unified panel renders non-empty HTML');
 
   // Test F — empty title (edge case).
   let err5: unknown = null;
   try {
-    render(MaveroAddonDownload, {
+    render(UnifiedPanel, {
       props: {
         contentId: '',
         mediaType: 'movie',
@@ -256,7 +269,7 @@ async function section_runtimeMountSheet(): Promise<void> {
       },
     });
   } catch (err) { err5 = err; }
-  ok(err5 === null, `§3F (empty title edge case): MaveroAddonDownload mounts WITHOUT throwing — got: ${err5 instanceof Error ? err5.message : String(err5)}`);
+  ok(err5 === null, `§3F (empty title edge case): the unified panel mounts WITHOUT throwing — got: ${err5 instanceof Error ? err5.message : String(err5)}`);
 
   // The exact production error is GONE across ALL scenarios.
   const allErrs = [err2, err3, err4, err5];
@@ -306,4 +319,6 @@ await section_runtimeMountMavero();
 await section_runtimeMountSheet();
 section_negativeProof();
 
+await viteServer.close();
 console.log(`stremio_downloader_phaseE_runtime_test: ${passed} checks passed (Phase E runtime: DownloadSheet → MaveroAddonDownload SSR mount with no undefined.initial exception, empty/multi-stream/filter-change scenarios, production path verified)`);
+process.exit(0);

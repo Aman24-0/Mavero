@@ -5960,3 +5960,174 @@ production DB ends with the owner's 5 repositories, the 4 working native
 adapters (3 enabled CloudStream + VegaMovies honestly extractor-blocked
 by the provider), the activated generated adapter nuvio:moviesdrive v1,
 and honest per-row reasons on every remaining source.
+
+---
+
+# Session 15 — FINAL TASK: UNIFIED MAVERO DOWNLOADER + GLOBAL SOURCE ORDERING RECORD (2026-10-04)
+
+Scope (the FINAL TASK spec, surgical — NOT a new phase system; the Permanent
+Adapter Plan stays COMPLETE): ONE user-facing Mavero Downloader carrying BOTH
+source kinds, ONE global ordering namespace spanning add-ons + plugins, admin
+position controls for extensions, the Nxsha/VidVault dropdown-alignment fix,
+and retirement of the user-facing `mavero-downloader-2` entry.
+
+## Startup audit (verified, not assumed)
+
+- HEAD `e53a5ec` = origin/main, clean tracked tree (the 13 recurring
+  environmental upload-file deletions + 136 mode-bit changes restored per the
+  session convention).
+- LIVE DB (read-only probes): `download_providers` 11 rows
+  (mavero-downloader default ord 90, mavero-downloader-2 ENABLED ord 92);
+  `streaming_addons` 10 rows dense ordering 0..9 (PenguPlay…FebBox);
+  `cloudstream_extensions` 5 rows / 2 enabled (Bollyflix + MoviesDrive,
+  native adapters — the owner has since disabled VegaMovies, Vegamovies and
+  nuvio:moviesdrive; the owner's live state is respected untouched);
+  NO global-ordering table exists (probe: count=null for every candidate);
+  `set_addon_position` RPC present. NO Management-API PAT in this
+  environment (DDL → the documented owner action; DML-through-PostgREST
+  available for reads).
+
+## Implementation
+
+1. **Shared model** — `src/lib/shared/unified-downloader.ts` (NEW, pure):
+   `addon:<uuid>` / `extension:<canonicalAdapterKey>` ordering keys +
+   `rankUnifiedSources` (the ONE ranking rule: positioned sources by
+   position → unpositioned add-ons by (ordering, name) → unpositioned
+   extensions by catalog order; dense 1..N positions; malformed/stale rows
+   skipped; deterministic ties).
+2. **Migration** `20261004000000_unified_downloader_global_order.sql` (NEW):
+   `downloader_source_order` table (key CHECK + position ≥ 1 + index +
+   set_updated_at trigger; NO unique(position) — the set_addon_position
+   single-statement-renumber precedent) + RLS admin-only (CS-1 posture,
+   anon revoked) + `set_downloader_source_position(text,int)` RPC
+   (is_admin gate + advisory lock + range validation + ONE-statement dense
+   renumber + streaming_addons.ordering resync for addon:* moves) +
+   first-run-only deterministic backfill (ALL add-ons by (ordering, name,
+   created_at) → 1..N preserving the live order EXACTLY, then repo-enabled +
+   enabled extensions by catalog order; re-runs no-op) + the idempotent
+   retire statement (mavero-downloader-2 → enabled=false, row preserved).
+   Verified on PGlite (30 checks: apply/re-run/fresh-project, backfill
+   exactness, RLS posture, retire, move/insert/no-op/range/admin-gate, addon
+   resync, extension-moves-never-touch-addons).
+3. **Ordering service** `src/lib/server/downloader/source-order.ts` (NEW):
+   `getGlobalSourceOrder` (PGRST205 → [] — the pre-migration fallback
+   activates), `setGlobalSourcePosition` (RPC-first; PGRST202 → deterministic
+   read-modify-write; honest TABLE_MISSING for the add-on legacy fallback),
+   `computeAdminGlobalPositions` (the merged rank map over ALL add-ons +
+   enabled extensions, canonical dedup), `setExtensionPosition` (row →
+   canonical key, never the bare name). JS regex NOTE: the migration's POSIX
+   `[^[:space:]]` is `\S` in JS (a real bug caught by the new suite).
+4. **Unified endpoint** `GET /api/downloader/mavero/sources` (NEW): composes
+   `listAddonDownloadTargets` + `listCloudStreamDownloadTabs` (the EXISTING
+   engines, unchanged) + `rankUnifiedSources` over the persisted order;
+   per-kind honest degradation flags (addonCatalogFailed /
+   extensionCatalogFailed); own rate-limit bucket
+   (downloaderUnifiedSources 30/min — the additive-only convention); adult
+   guard before any catalog access; no-store; NEVER the Builder.
+   `CloudStreamDownloadTabView.canonicalKey` added (additive, optional) +
+   populated from the eligibility canonical key.
+5. **Unified panel** `MaveroUnifiedDownload.svelte` (NEW ~1300 lines): ONE
+   chip rail — GREEN add-on chips (--accent, the existing treatment verbatim)
+   + BLUE plugin chips (--accent-2) with kind dots; resolution engines stay
+   SEPARATE per kind (add-ons → the per-addon /mavero/addon fetches with
+   per-source abort+retry; plugins → the ONE /mavero2 batch + /mavero2/
+   extension retry); normalized UnifiedLinkView through ONE card renderer;
+   per-kind filter models (the EXISTING rules — filterStreams for add-ons,
+   filterCloudStreamLinks for plugins, reset on source switch); shared
+   presentation window / Show More / stream-actions / share / pixeldrain /
+   embedded-sheet callback; episode context line (SSR-visible from props,
+   refined by the plugin media echo); skeletons; reduced-motion; the
+   360/700/1024 breakpoint family.
+6. **DownloadSheet** (MODIFIED): the mavero-downloader slug renders the
+   UNIFIED panel (replaces MaveroAddonDownload inline); the
+   mavero-downloader-2 special-casing branch + import REMOVED (the row is
+   disabled by the migration; the standalone /watch/mavero-downloader-2
+   pages + MaveroCloudStreamDownload + MaveroAddonDownload components are
+   PRESERVED as reusable code — nothing deleted). PART J fix: the shared
+   `.dl-dropdown-item` layout drops `justify-content: space-between`
+   (the Nxsha Space / VidVault / Cineverse right-push bug);
+   `.dl-item-name` takes `flex:1 1 auto; min-width:0` (truncation intact);
+   `.dl-item-badge` pins via `margin-left:auto` — icon-bearing AND non-icon
+   providers share ONE correct layout.
+7. **Standalone deep links** `/watch/mavero-downloader/**` (MODIFIED): render
+   the unified panel (deep-link parity with the sheet; guards untouched).
+8. **Admin** (MODIFIED): the Extension tab rows gain the Position control
+   (`Position [N] Set Position` — the add-on UX mirrored; shown for native/
+   generated + enabled rows) through the fetch-based `setPosition` action on
+   the extensions mutation endpoint (admin-gated; response carries the fresh
+   global position map so EVERY displayed position patches — no reload); the
+   Add-on detail sheet position input shows the GLOBAL rank and its action
+   routes to `setGlobalSourcePosition` with the LEGACY setAddonPosition as
+   the TABLE_MISSING fallback (zero regression pre-migration); the page load
+   computes `globalPositions` for BOTH tabs; the Add-on / Extension tabs stay
+   SEPARATE (PART I) — only the user-facing order unifies.
+
+## Retirement state (honest sequencing)
+
+- The retire lives INSIDE the migration (idempotent disable, row preserved).
+  NO Management-API PAT in this sandbox → the migration apply is the owner's
+  action (Supabase SQL editor). Pre-migration the app is fully functional:
+  the unified downloader works with the deterministic fallback ordering; the
+  add-on position control falls back to the legacy add-on-only path; the
+  extension position control reports the honest TABLE_MISSING message. Both
+  deploy orders (code-first or migration-first) self-heal within the other's
+  landing; the transitional states are documented and non-breaking (a
+  manually re-enabled mavero-downloader-2 row renders the generic embed flow
+  through its still-existing deep-link pages).
+
+## Tests (0 NEW failures; the full chain is ALL GREEN)
+
+- NEW suites (registered in the pnpm chain — 212 commands total):
+  `unified_downloader_test.ts` — 117 checks (§A pure ranking incl. the PART F
+  example order; §B the service against fake PostgREST incl. degradation
+  paths; §C the endpoint validation/bucket/guard/composition scans; §D the
+  panel contracts incl. green/blue + engine URLs + no Builder; §E admin
+  contracts; §F the PART J fix; §G the retirement; §H vite-SSR mounts incl.
+  the sheet+panel integration); `unified_downloader_migration_test.ts` — 30
+  PGlite checks.
+- SANCTIONED pin evolutions (documented in-file, the CS-5 precedent):
+  cloudstream_downloader_ui_test §H27 (retired wiring → unified wiring,
+  comment-stripped code diff), cloudstream_registry_integration_test §A10/
+  §C1-C6/§D4/§F6 (the migration + wiring + deep-link parity),
+  cloudstream_phase4_integration_manager_test §F1/§F3 (the admin position
+  surface + the single added migration),
+  stremio_downloader_phaseE/F_runtime_test (the shipped panel chunk is now
+  the unified one — mounted through ONE vite svelte instance because the
+  built chunk bundles its own svelte runtime and onDestroy breaks under the
+  dual-instance render; the regression intent — the real runtime mount
+  against the presentation-window init crash — is preserved; vite close +
+  exit added: the unclosed server previously hung the process).
+- Full chain: **212/212 ALL GREEN** (scripts/final_full_chain.log).
+- Focused: phaseE 22, phaseF 44, phase4 222, registry 155, ui 172, api 144,
+  admin UI 161 — all pass.
+- Responsive + behavioral audit (REAL headless Chromium, client-hydrated
+  DownloadSheet + unified panel with route-stubbed APIs; session artifacts
+  `unified_responsive_audit.ts` + `unified_responsive_page.html`, untracked
+  per the audit-script convention): **100/100** at 390/412/768/1280px — no
+  overflow; green/blue chips structurally identical with the correct
+  accents; failed pill; counts; source switching; Show More (4→12);
+  filters open; Download/Play/Share hrefs; real per-source RETRY through the
+  stubbed /mavero2/extension (the failed Bollyflix recovers); the dropdown
+  icon+title adjacency (gap 10px, NOT pushed right), badge pinned, active
+  state, Escape closes.
+- LIVE (read-only, real Supabase, injected content per the cs2/cs3 smoke
+  convention): the merged unified list serves 7 sources — 5 GREEN add-ons
+  (PenguPlay, HdHub, AIOStreams, Flix-Streams Free, DesiFlix) + 2 BLUE
+  plugins (Bollyflix, MoviesDrive) in the documented pre-migration fallback
+  order; getGlobalSourceOrder → 0 rows (table absent, honest); the
+  mavero-downloader-2 row still enabled pre-apply (retire lands with the
+  migration). The HTTP endpoints sit behind the adult-guard boundary which
+  needs TMDB creds (absent here — fail-closed 404, IDENTICAL for all three
+  downloader endpoints — verified unchanged).
+- Gates: `pnpm check` 0 errors / 0 warnings; `pnpm build` PASS (30.49s).
+
+## Security / boundary confirmation
+
+- The unified panel + sources endpoint NEVER reference the Builder (source
+  scans + comment-stripped scans pin it); plugin resolution stays the
+  /mavero2 permanent-adapter path; .cs3 never executed; the
+  downloader_source_order table is admin-only (RLS + revoked anon); the
+  setPosition action is admin-gated BEFORE body parsing; Bollyflix /
+  MoviesDrive adapters, extractors, search, ranking, matching, provider
+  networking: UNTOUCHED (byte-pinned by the frozen-file checks in the
+  evolved suites).

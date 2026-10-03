@@ -2,7 +2,29 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { render } from 'svelte/server';
+// FINAL TASK evolution: the panel is loaded through VITE's SSR graph (ONE
+// svelte runtime instance — the D-020 convention). The old built-chunk
+// import worked only because the legacy panel used no onDestroy (the
+// unified panel does — and the built chunk bundles its OWN svelte runtime
+// copy, so mixing it with node's svelte/server render would break the SSR
+// context). The regression intent (a REAL runtime mount, not a source
+// contract) is preserved: vite compiles + executes the ACTUAL component
+// module, including its lifecycle registration.
+const { createServer: createViteServer } = await import('vite');
+const viteServer = await createViteServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+const svelteServerMod = (await viteServer.ssrLoadModule('svelte/server')) as {
+  render: (component: unknown, options: { props: Record<string, unknown> }) => { body: string };
+};
+const render = svelteServerMod.render;
+const unifiedPanelMod = (await viteServer.ssrLoadModule('/src/lib/components/MaveroUnifiedDownload.svelte')) as {
+  default: unknown;
+};
+const UnifiedPanel = unifiedPanelMod.default;
+const globalAny = globalThis as Record<string, unknown>;
+if (typeof globalAny.requestAnimationFrame !== 'function') {
+  globalAny.requestAnimationFrame = (callback: () => void) => setTimeout(callback, 0) as unknown as number;
+  globalAny.cancelAnimationFrame = (handle: number) => clearTimeout(handle);
+}
 
 /**
  * Phase F Runtime Regression Test — §17 Required Scenarios.
@@ -121,12 +143,11 @@ async function section_sheetMaveroProvider(): Promise<void> {
   // This proves: when the user opens DownloadSheet → activeProvider =
   // mavero-downloader → isMaveroDownloader=true → MaveroAddonDownload
   // mounts → no `undefined.initial` exception.
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   let err: unknown = null;
   let html = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'movie-123',
         mediaType: 'movie',
@@ -139,9 +160,9 @@ async function section_sheetMaveroProvider(): Promise<void> {
     });
     html = result.body;
   } catch (e) { err = e; }
-  ok(err === null, `§17.1 (DownloadSheet→MaveroDownloader path): MaveroAddonDownload mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
+  ok(err === null, `§17.1 (DownloadSheet→MaveroDownloader path): the unified panel mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
   ok(html.length > 0, '§17.1: rendered HTML is non-empty (component body ran to completion)');
-  ok(/mad\b/.test(html), '§17.1: rendered HTML contains the .mad container (inline panel mounted)');
+  ok(/mud\b/.test(html), '§17.1: rendered HTML contains the .mad container (inline panel mounted)');
   ok(
     !(err instanceof Error) || !/Cannot read properties of undefined \(reading 'initial'\)/.test(err.message),
     '§17.1: NO "undefined.initial" TypeError (the production bug is GONE)',
@@ -189,16 +210,15 @@ async function section_providerLoading(): Promise<void> {
   // test phaseE_final_test §1 already verifies the Loading branch
   // exists. Here we verify the MaveroAddonDownload component handles
   // its OWN loading state (the addon tab pills show "loading" status).
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   // The component starts in tabsLoading=true state and calls loadTabs()
   // in onMount. At SSR time, onMount hasn't fired yet — the initial
-  // state is rendered. The "Finding addons…" state message should
+  // state is rendered. The "Finding sources…" state message should
   // be present in the HTML.
   let err: unknown = null;
   let html = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'movie-123',
         mediaType: 'movie',
@@ -209,9 +229,9 @@ async function section_providerLoading(): Promise<void> {
     });
     html = result.body;
   } catch (e) { err = e; }
-  ok(err === null, `§17.3 (provider loading): MaveroAddonDownload mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
-  // The "Finding addons…" or similar loading message should be in the SSR output.
-  ok(/Finding|addons/i.test(html) || /mad-state/.test(html), '§17.3: SSR output contains the loading state message (Finding addons… or .mad-state)');
+  ok(err === null, `§17.3 (provider loading): the unified panel mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
+  // The "Finding sources…" or similar loading message should be in the SSR output.
+  ok(/Finding|addons/i.test(html) || /mud-state/.test(html), '§17.3: SSR output contains the loading state message (Finding sources… or .mad-state)');
 }
 
 // ---------------------------------------------------------------------------
@@ -219,21 +239,14 @@ async function section_providerLoading(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function section_providerError(): Promise<void> {
-  // Verify the DownloadSheet source contains the Error branch with Retry.
-  // (We can't mount DownloadSheet alone, but the source-contract test
-  // phaseE_final_test §1 already verifies the branch renders.) Here we
-  // verify the DownloaderFilterSheet — which is its own chunk — mounts
-  // without error.
-  const filterSheetName = 'DownloaderFilterSheet.js';
-  let filterSheetFound = false;
-  try {
-    await import(chunkUrl(filterSheetName));
-    filterSheetFound = true;
-  } catch { /* chunk may not exist as a separate file */ }
-  // If the chunk doesn't exist as a separate file, it's inlined into
-  // MaveroAddonDownload.js. That's fine — we already verify MaveroAddonDownload
-  // mounts in §17.1. The filter sheet is rendered INSIDE MaveroAddonDownload.
-  ok(true, `§17.4 (provider error state): DownloaderFilterSheet chunk ${filterSheetFound ? 'exists separately' : 'is inlined into MaveroAddonDownload'} — either way, the error state is rendered by DownloadSheet (verified by source-contract test phaseE_final_test §1)`);
+  // FINAL TASK evolution: the filter sheet is loaded through the SAME vite
+  // SSR graph as the panel (one svelte instance) and mounts without error —
+  // the DownloaderFilterSheet remains the shared filter surface for BOTH
+  // source kinds (add-on + plugin sections).
+  const filterSheetMod = (await viteServer.ssrLoadModule('/src/lib/components/DownloaderFilterSheet.svelte')) as {
+    default: unknown;
+  };
+  ok(filterSheetMod.default !== null && filterSheetMod.default !== undefined, '§17.4: the shared DownloaderFilterSheet loads through the same SSR graph (the unified panel renders BOTH source kinds through it)');
 }
 
 // ---------------------------------------------------------------------------
@@ -248,12 +261,11 @@ async function section_providerEmpty(): Promise<void> {
   //
   // At SSR time, tabs is empty (loadTabs() hasn't fired). The "No Stremio
   // addons enabled" state message should be in the HTML.
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   let err: unknown = null;
   let html = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'movie-123',
         mediaType: 'movie',
@@ -264,7 +276,7 @@ async function section_providerEmpty(): Promise<void> {
     });
     html = result.body;
   } catch (e) { err = e; }
-  ok(err === null, `§17.5 (empty state): MaveroAddonDownload mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
+  ok(err === null, `§17.5 (empty state): the unified panel mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
   ok(html.length > 0, '§17.5: rendered HTML is non-empty (component body completed initialization)');
 }
 
@@ -273,12 +285,11 @@ async function section_providerEmpty(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function section_zeroStreams(): Promise<void> {
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   let err: unknown = null;
   let html = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'movie-empty',
         mediaType: 'movie',
@@ -289,7 +300,7 @@ async function section_zeroStreams(): Promise<void> {
     });
     html = result.body;
   } catch (e) { err = e; }
-  ok(err === null, `§17.6 (zero streams): MaveroAddonDownload mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
+  ok(err === null, `§17.6 (zero streams): the unified panel mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
   ok(html.length > 0, '§17.6: rendered HTML is non-empty');
 }
 
@@ -298,12 +309,11 @@ async function section_zeroStreams(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function section_movie(): Promise<void> {
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   let err: unknown = null;
   let html = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'movie-550',
         mediaType: 'movie',
@@ -316,9 +326,9 @@ async function section_movie(): Promise<void> {
     });
     html = result.body;
   } catch (e) { err = e; }
-  ok(err === null, `§17.14 (movie): MaveroAddonDownload mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
+  ok(err === null, `§17.14 (movie): the unified panel mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
   ok(html.length > 0, '§17.14: rendered HTML is non-empty');
-  ok(/mad\b/.test(html), '§17.14: rendered HTML contains .mad container');
+  ok(/mud\b/.test(html), '§17.14: rendered HTML contains .mad container');
 }
 
 // ---------------------------------------------------------------------------
@@ -326,12 +336,11 @@ async function section_movie(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function section_series(): Promise<void> {
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   let err: unknown = null;
   let html = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'tv-1399',
         mediaType: 'series',
@@ -344,7 +353,7 @@ async function section_series(): Promise<void> {
     });
     html = result.body;
   } catch (e) { err = e; }
-  ok(err === null, `§17.15 (series S2E5): MaveroAddonDownload mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
+  ok(err === null, `§17.15 (series S2E5): the unified panel mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
   ok(html.length > 0, '§17.15: rendered HTML is non-empty');
 }
 
@@ -353,12 +362,11 @@ async function section_series(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function section_anime(): Promise<void> {
-  const { M: MaveroAddonDownload } = await import(chunkUrl('MaveroAddonDownload.js'));
 
   let err: unknown = null;
   let html = '';
   try {
-    const result = render(MaveroAddonDownload, {
+    const result = render(UnifiedPanel, {
       props: {
         contentId: 'anime-12345',
         mediaType: 'anime',
@@ -371,7 +379,7 @@ async function section_anime(): Promise<void> {
     });
     html = result.body;
   } catch (e) { err = e; }
-  ok(err === null, `§17.16 (anime): MaveroAddonDownload mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
+  ok(err === null, `§17.16 (anime): the unified panel mounts WITHOUT throwing — got: ${err instanceof Error ? err.message : String(err)}`);
   ok(html.length > 0, '§17.16: rendered HTML is non-empty');
 }
 
@@ -514,4 +522,6 @@ await section_anime();
 await section_embeddedPage();
 await section_setAddonLinkTypesAtomic();
 
+await viteServer.close();
 console.log(`stremio_downloader_phaseF_runtime_test: ${passed} checks passed (Phase F runtime: §17.1-§17.19 mount scenarios + §F8 setAddonLinkTypes atomic RPC wiring verified)`);
+process.exit(0);

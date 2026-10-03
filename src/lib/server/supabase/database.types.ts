@@ -1901,6 +1901,32 @@ export type Database = {
         }
         Relationships: []
       }
+      // Added by 20261004000000_unified_downloader_global_order.sql.
+      // FINAL TASK (unified Mavero Downloader): the ONE canonical global
+      // source order spanning BOTH unified-downloader source kinds:
+      //   addon:<uuid>              (Stremio add-on row id)
+      //   extension:<canonicalKey>  (cloudstream:/nuvio: internal name)
+      // Positions are 1-based, kept dense by set_downloader_source_position.
+      // Admin-only via RLS (CS-1 posture); read deterministically (positioned
+      // first, then unpositioned addons, then unpositioned extensions).
+      downloader_source_order: {
+        Row: {
+          source_key: string
+          position: number
+          updated_at: string
+        }
+        Insert: {
+          source_key: string
+          position: number
+          updated_at?: string
+        }
+        Update: {
+          source_key?: string
+          position?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       // Added by 20260915000000_download_providers.sql.
@@ -2151,6 +2177,17 @@ export type Database = {
       // operations; rejects out-of-range positions and renumbers 0..N-1.
       set_addon_position: {
         Args: { p_addon_id: string; p_position: number }
+        Returns: number
+      }
+      // Added by 20261004000000_unified_downloader_global_order.sql.
+      // FINAL TASK: ATOMIC absolute global source position (1-based, spans
+      // add-ons AND extensions in ONE namespace). SECURITY DEFINER with an
+      // explicit is_admin() check + advisory lock; validates the position
+      // range, renumbers densely 1..N in one statement, and resyncs
+      // streaming_addons.ordering to the addon-relative ranks for addon:*
+      // moves. Returns the final position of the moved source.
+      set_downloader_source_position: {
+        Args: { p_source_key: string; p_position: number }
         Returns: number
       }
     }

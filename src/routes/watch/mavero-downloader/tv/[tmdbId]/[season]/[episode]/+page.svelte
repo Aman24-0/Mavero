@@ -1,13 +1,13 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import MaveroAddonDownload from '$components/MaveroAddonDownload.svelte';
+  import MaveroUnifiedDownload from '$components/MaveroUnifiedDownload.svelte';
 
   /**
    * MAVERO Downloader — standalone episode deep link (Phase 14).
    *
    * `/watch/mavero-downloader/tv/{tmdbId}/{season}/{episode}` — the TV
    * counterpart of the built-in provider's URL template. The panel fetches
-   * `/api/downloader/mavero` with the bounded season/episode context; the
+   * `/api/downloader/mavero` with the bounded season/episode context (add-on + plugin sources); the
    * canonical content pipeline (getDetail + identifier normalization)
    * decides the actual addon ids — the URL params are only inputs.
    */
@@ -22,7 +22,7 @@
 </svelte:head>
 
 <div class="downloader-page">
-  <MaveroAddonDownload
+  <MaveroUnifiedDownload
     contentId={`series-${tmdbId}`}
     mediaType="series"
     {tmdbId}

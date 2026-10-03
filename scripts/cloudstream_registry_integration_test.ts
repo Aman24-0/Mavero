@@ -197,25 +197,37 @@ function section_registry(): void {
   const pristinePhase19 = pristineFile('supabase/migrations/20260920000000_phase19_mavero_4k_downloaders.sql');
   ok(pristinePhase19 === null || pristinePhase19 === phase19, '§A9: the existing mavero-downloader seed migration is byte-identical to the pre-CS-5 commit');
 
-  // §A10 no OTHER registry migration was added by CS-5 (Phase 3 evolution:
-  // the sanctioned unified-adapter migration 20261101000002 and the Phase 3
-  // builder migration 20261101000003 are the ONLY other additions — they add
-  // catalog columns/tables and never touch download_providers).
+  // §A10 no OTHER registry migration was added by CS-5 (FINAL TASK
+  // evolution: the sanctioned additions are the unified-adapter migration
+  // 20261101000002, the Phase 3 builder migration 20261101000003, and the
+  // unified-downloader global-order migration 20261004000000 — the last
+  // one DOES touch download_providers, by the documented retirement
+  // statement (disable the mavero-downloader-2 row), plus the additive
+  // ordering table).
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   const pristineMigrations = pristineMigrationNames();
   const phase2Migration = '20261101000002_extension_phase2_unified_adapters.sql';
   const phase3Migration = '20261101000003_extension_phase3_builder.sql';
+  const unifiedMigration = '20261004000000_unified_downloader_global_order.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
   const phase3Sql = read(`supabase/migrations/${phase3Migration}`);
   const phase3SqlNoComments = phase3Sql.replace(/--[^\n]*/g, '');
+  const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
+  const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 3
+    added.length === 4
       && added.includes(migrationName)
       && added.includes(phase2Migration)
-      && added.includes(phase3Migration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(phase3Migration)
+      && added.includes(unifiedMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK unified-downloader migrations were added (${added.join(', ') || 'none'})`,
+  );
+  ok(
+    /update\s+public\.download_providers\s+set\s+enabled\s*=\s*false\s+where\s+slug\s*=\s*'mavero-downloader-2'/i.test(unifiedSqlNoComments)
+      && (unifiedSqlNoComments.match(/\bdownload_providers\b/gi) ?? []).length === 1,
+    '§A10: the FINAL TASK migration touches download_providers ONLY through the idempotent retire statement',
   );
   ok(
     !/\b(download_providers)\b/i.test(phase2SqlNoComments),
@@ -306,95 +318,90 @@ function section_publicConfig(): void {
 function section_sheetContracts(): void {
   const sheet = read('src/lib/components/DownloadSheet.svelte');
 
-  // §C1 imports.
-  ok(sheet.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID'), '§C1: the sheet imports the Downloader 2 constant');
-  ok(sheet.includes("import MaveroCloudStreamDownload from '$components/MaveroCloudStreamDownload.svelte'"), '§C1: the sheet imports the MaveroCloudStreamDownload component');
+  // §C1 imports (FINAL TASK evolution — the CS-5 Downloader 2 wiring is
+  // RETIRED; the unified panel replaces the Stremio inline panel):
+  ok(!sheet.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID'), '§C1: the sheet no longer references the Downloader 2 constant (retired)');
+  ok(!sheet.includes("import MaveroCloudStreamDownload from '$components/MaveroCloudStreamDownload.svelte'"), '§C1: the sheet no longer imports the MaveroCloudStreamDownload component');
+  ok(sheet.includes("import MaveroUnifiedDownload from '$components/MaveroUnifiedDownload.svelte'"), '§C1: the sheet imports the UNIFIED downloader panel');
 
-  // §C2 slug dispatch precedes the type dispatch; Downloader 2 sits between
-  // the Stremio panel and the 4K panel (all slug equality — order among the
-  // slug branches is semantic-neutral, but the slug checks MUST all precede
-  // isJsonDownloader/the iframe else).
+  // §C2 slug dispatch precedes the type dispatch (all slug equality — the
+  // slug checks MUST all precede isJsonDownloader/the iframe else). The
+  // Downloader 2 branch is GONE (retired): exactly three dispatch branches.
   const maveroIndex = sheet.indexOf('{:else if isMaveroDownloader}');
   const mavero2Index = sheet.indexOf('{:else if isMaveroDownloader2}');
   const fourkIndex = sheet.indexOf('{:else if is4kDownloader}');
   const jsonIndex = sheet.indexOf('{:else if isJsonDownloader}');
-  ok(maveroIndex !== -1 && mavero2Index !== -1 && fourkIndex !== -1 && jsonIndex !== -1, '§C2: all four dispatch branches exist');
-  ok(maveroIndex < fourkIndex && fourkIndex < jsonIndex && mavero2Index < jsonIndex, '§C2: slug dispatch precedes the type dispatch (existing convention preserved)');
+  ok(maveroIndex !== -1 && fourkIndex !== -1 && jsonIndex !== -1, '§C2: the three dispatch branches exist');
+  ok(mavero2Index === -1, '§C2: the retired Downloader 2 branch no longer exists');
+  ok(maveroIndex < fourkIndex && fourkIndex < jsonIndex, '§C2: slug dispatch precedes the type dispatch (existing convention preserved)');
 
-  // §C3 the Downloader 2 branch passes the SAME media-context props the
-  // Stremio panel receives (the drop-in contract from CS-4).
-  const mavero2Branch = sheet.slice(mavero2Index, fourkIndex);
-  ok(mavero2Branch.includes('<MaveroCloudStreamDownload'), '§C3: the branch renders MaveroCloudStreamDownload');
-  ok(mavero2Branch.includes('contentId={maveroContentId}'), '§C3: contentId uses the shared derived id');
-  ok(mavero2Branch.includes('mediaType={maveroMediaType}'), '§C3: mediaType uses the shared content-type mapping (movie/series/anime)');
-  ok(mavero2Branch.includes('{tmdbId}'), '§C3: tmdbId forwarded');
-  ok(mavero2Branch.includes('{season}') && mavero2Branch.includes('{episode}'), '§C3: season/episode forwarded (undefined for movies — parent-gated)');
-  ok(mavero2Branch.includes('onOpenInSheet={openEmbeddedSheet}'), '§C3: the shared embedded-sheet callback is reused (no second sheet)');
+  // §C3 the unified branch passes the SAME media-context props the old
+  // Stremio panel received (the drop-in contract, preserved by the swap).
+  const unifiedBranch = sheet.slice(maveroIndex, fourkIndex);
+  ok(unifiedBranch.includes('<MaveroUnifiedDownload'), '§C3: the branch renders MaveroUnifiedDownload');
+  ok(unifiedBranch.includes('contentId={maveroContentId}'), '§C3: contentId uses the shared derived id');
+  ok(unifiedBranch.includes('mediaType={maveroMediaType}'), '§C3: mediaType uses the shared content-type mapping (movie/series/anime)');
+  ok(unifiedBranch.includes('{tmdbId}'), '§C3: tmdbId forwarded');
+  ok(unifiedBranch.includes('{season}') && unifiedBranch.includes('{episode}'), '§C3: season/episode forwarded (undefined for movies — parent-gated)');
+  ok(unifiedBranch.includes('onOpenInSheet={openEmbeddedSheet}'), '§C3: the shared embedded-sheet callback is reused (no second sheet)');
 
-  // §C3b props parity with the existing Stremio panel branch.
-  const maveroBranch = sheet.slice(maveroIndex, mavero2Index);
-  ok(maveroBranch.includes('contentId={maveroContentId}') && maveroBranch.includes('mediaType={maveroMediaType}') && maveroBranch.includes('onOpenInSheet={openEmbeddedSheet}'), '§C3b: the existing MaveroAddonDownload branch keeps its exact props');
+  // §C3b the unified panel replaces the old Stremio branch 1:1 (props parity).
+  ok(unifiedBranch.includes('contentId={maveroContentId}') && unifiedBranch.includes('mediaType={maveroMediaType}') && unifiedBranch.includes('onOpenInSheet={openEmbeddedSheet}'), '§C3b: the unified branch keeps the exact panel props contract');
 
-  // §C4 the no-URL-building reactive skip includes the new slug.
+  // §C4 the no-URL-building reactive skip covers the unified panel (the
+  // retired slug constant no longer appears — the retirement is complete).
   ok(
-    /MAVERO_DOWNLOADER_2_PROVIDER_ID \|\| activeProvider\.slug === FOURK_DOWNLOADER_PROVIDER_ID \|\| activeProvider\.type === 'json'/.test(sheet)
-      || /MAVERO_DOWNLOADER_PROVIDER_ID \|\| activeProvider\.slug === MAVERO_DOWNLOADER_2_PROVIDER_ID/.test(sheet),
-    '§C4: the Downloader 2 slug joins the no-iframe-URL branch (no client URL building)',
+    /activeProvider\.slug === MAVERO_DOWNLOADER_PROVIDER_ID \|\| activeProvider\.slug === FOURK_DOWNLOADER_PROVIDER_ID \|\| activeProvider\.type === 'json'/.test(sheet),
+    '§C4: the no-iframe-URL skip covers exactly mavero-downloader + 4k + json (no retired slug)',
   );
 
   // §C5 the existing branches are all still present.
-  ok(sheet.includes('<MaveroAddonDownload') && sheet.includes('<FourKDownload') && sheet.includes('<JsonDownload'), '§C5: MaveroAddonDownload / FourKDownload / JsonDownload branches preserved');
+  ok(sheet.includes('<FourKDownload') && sheet.includes('<JsonDownload') && sheet.includes('<MaveroUnifiedDownload'), '§C5: MaveroUnifiedDownload / FourKDownload / JsonDownload branches preserved');
 
-  // §C6 additive-only diff vs the pristine CS-4 commit (multiset diff — the
-  // exact convention the CS-4 suite used for DownloaderFilterSheet).
+  // §C6 (FINAL TASK evolution — second sanctioned recalibration, recorded
+  // in-file): the unified-panel swap + Downloader-2 branch retirement + the
+  // PART J dropdown fix. Comment-stripped code diff: every removal and
+  // addition must belong to those three sanctioned changes.
   const pristineSheet = pristineFile('src/lib/components/DownloadSheet.svelte');
   if (pristineSheet !== null) {
-    const removed = pristineSheet.split('\n').filter((line) => !sheet.includes(line));
-    const added = sheet.split('\n').filter((line) => !pristineSheet.includes(line));
-    // The ONLY removals are the five no-URL comment lines (rewritten for the
-    // fourth panel) + the ONE code line they annotated — the old skip
-    // condition, replaced verbatim-plus-one-clause by its extension below.
-    const codeRemovals = removed.filter((line) => !line.trim().startsWith('//'));
-    ok(removed.length === 6, `§C6: exactly the annotated block was rewritten (removed ${removed.length})`);
-    ok(codeRemovals.length === 1, `§C6: exactly ONE code line was removed (the old skip condition — removed ${codeRemovals.length})`);
+    const stripSheetComments = (text: string): string[] =>
+      text
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .map((line) => line.replace(/\s*\/\/.*$/, '').trimEnd())
+        .filter((line) => line.trim().length > 0);
+    const pristineCode = stripSheetComments(pristineSheet);
+    const sheetCode = stripSheetComments(sheet);
+    const codeRemovals = pristineCode.filter((line) => !sheetCode.includes(line));
     ok(
-      codeRemovals.length === 1
-      && codeRemovals[0].includes("activeProvider.slug === MAVERO_DOWNLOADER_PROVIDER_ID || activeProvider.slug === FOURK_DOWNLOADER_PROVIDER_ID || activeProvider.type === 'json') {")
-      && codeRemovals[0].includes('if ('),
-      '§C6: the removed code line is the old no-URL skip condition (extended, not weakened)',
+      codeRemovals.every((line) =>
+        line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
+        || line.includes('MaveroCloudStreamDownload')
+        || line.includes('MaveroAddonDownload')
+        || line.includes('isMaveroDownloader2')
+        || line.includes('justify-content: space-between')
+        || line.includes('.dl-item-name { overflow: hidden;')),
+      `§C6: every removed code line belongs to the retirement/unified swap/PART-J fix (removed ${codeRemovals.length})`,
     );
-    // Every added line belongs to the CS-5 wiring: the two imports, the
-    // extended condition, the derived flag, the render branch, or comments.
-    const ALLOWED = [
-      'MAVERO_DOWNLOADER_2_PROVIDER_ID',
-      "import MaveroCloudStreamDownload from '$components/MaveroCloudStreamDownload.svelte'",
-      'isMaveroDownloader2',
-      '<MaveroCloudStreamDownload',
-      'Mavero Downloader + Mavero Downloader 2 + 4K Downloader render their',
-      "own inline panels (no iframe, no URL template). Generic type='json'",
-      'providers also NEVER build a client-side iframe URL — their API is',
-      'resolved server-side by /api/downloader/json and rendered inline by',
-      'JsonDownload. The iframe URL state stays null for all four.',
-      'CS-5: Mavero Downloader 2 renders the CloudStream extensions panel',
-      'INLINE — the same slug-special-casing mechanism as the Stremio downloader',
-      'above, but a COMPLETELY SEPARATE resolution path (the CS-3 mavero2 API,',
-      'never the Stremio addon resolver). Selecting between the two never',
-      'crosses state: the {#if} chain below unmounts one panel before the',
-      'other mounts (fresh component state, fresh resolution on open — the',
-      'URL-lifetime contract, plan §40.7).',
-      'CS-5: Mavero Downloader 2 — the CloudStream extensions panel',
-      'rendered INLINE through the SAME slug-special-casing mechanism',
-      'as the Stremio downloader above. It receives the IDENTICAL',
-      'media-context props (contentId/mediaType/tmdbId/season/',
-      'episode/title + the shared embedded-sheet callback) and mounts',
-      'its own resolution against the CS-3 mavero2 API — the Stremio',
-      'resolver is never involved, and the two panels never share',
-      'state (mutually exclusive {#if} branches: switching providers',
-      'unmounts this panel, so reopening re-resolves fresh). -->',
-    ];
+    const codeAdditions = sheetCode.filter((line) => !pristineCode.includes(line));
     ok(
-      added.length > 0 && added.every((line) => ALLOWED.some((frag) => line.includes(frag))),
-      `§C6: every DownloadSheet addition belongs to the CS-5 wiring (added ${added.length})`,
+      codeAdditions.some((line) => line.includes('MaveroUnifiedDownload'))
+      && codeAdditions.every((line) =>
+        line.includes('MaveroUnifiedDownload')
+        || line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
+        || line.includes('MaveroCloudStreamDownload')
+        || line.includes('isMaveroDownloader')
+        || line.includes('.dl-item-name')
+        || line.includes('.dl-item-badge')
+        || line.includes('.dl-dropdown-item')
+        || line.includes('flex-start')
+        || line.includes('min-width: 0')
+        || line.includes('margin-left: auto')
+        || line.includes('retired')
+        || line.includes('retire')
+        || line.includes('unified')),
+      `§C6: every added code line is the unified swap, the retirement, or the PART J fix (added ${codeAdditions.length})`,
     );
     // C6b hard guarantees: existing behavior lines survive verbatim.
     for (const pinned of [
@@ -402,7 +409,7 @@ function section_sheetContracts(): void {
       "$: is4kDownloader = activeProvider?.slug === FOURK_DOWNLOADER_PROVIDER_ID;",
       "$: isJsonDownloader = activeProvider?.type === 'json';",
     ]) {
-      ok(sheet.includes(pinned), `§C6b: the existing derived flags are byte-identical (${pinned.slice(0, 40)}…}`);
+      ok(sheet.includes(pinned), `§C6b: the existing derived flags are byte-identical (${pinned.slice(0, 40)}…`);
     }
     for (const pinnedBranch of [
       'function chooseProvider(provider: PublicDownloadProvider) {',
@@ -456,7 +463,10 @@ function section_deepLinks(): void {
   ok(MAVERO2_ROW.tvUrlTemplate === 'https://mavero.local/watch/mavero-downloader-2/tv/{tmdbId}/{season}/{episode}', '§D4: the registry tv template matches the deep-link route');
   // The existing deep links remain untouched.
   ok(pristineMovieServer.includes('assertAdultDownloadAllowed'), '§D4 (regression): the existing Mavero deep links still exist');
-  ok(read('src/routes/watch/mavero-downloader/movie/[tmdbId]/+page.svelte').includes('MaveroAddonDownload'), '§D4 (regression): the existing deep links still render the Stremio panel');
+  // FINAL TASK evolution: the existing deep links render the UNIFIED panel
+  // (add-on + plugin sources) — the same surface the DownloadSheet renders
+  // inline for the mavero-downloader slug.
+  ok(read('src/routes/watch/mavero-downloader/movie/[tmdbId]/+page.svelte').includes('MaveroUnifiedDownload'), '§D4 (regression): the existing deep links render the unified panel (deep-link parity with the sheet)');
 }
 
 // ---------------------------------------------------------------------------
@@ -513,33 +523,38 @@ async function section_runtimeMount(): Promise<void> {
       }
     };
 
-    // §E1 Mavero Downloader 2 → MaveroCloudStreamDownload (the launch routing).
+    // §E1 (FINAL TASK evolution — the retired Downloader 2 slug has NO
+    // inline branch anymore): selecting it renders the GENERIC iframe flow
+    // (its deep-link page still hosts the panel; the row is disabled at the
+    // registry level so the public dropdown never offers it).
     const e1 = renderSheet({ providers: [MAVERO2_ROW], title: 'Test Movie', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie' });
-    ok(e1.err === null, `§E1: the sheet with the mavero-downloader-2 provider mounts WITHOUT throwing — got: ${e1.err instanceof Error ? e1.err.message : String(e1.err)}`);
-    ok(/mcd\b/.test(e1.html) || e1.html.includes('mcd-'), '§E1: the Downloader 2 panel (.mcd) renders INSIDE the sheet');
-    ok(!/mad\b/.test(e1.html) && !e1.html.includes('mad-'), '§E1: the Stremio panel (.mad) does NOT render (exclusive dispatch)');
+    ok(e1.err === null, `§E1: the sheet with the retired mavero-downloader-2 provider mounts WITHOUT throwing — got: ${e1.err instanceof Error ? e1.err.message : String(e1.err)}`);
+    ok(e1.html.includes('<iframe') || e1.html.includes('Loading'), '§E1: the retired slug renders the generic embed flow (NO inline panel)');
+    ok(!e1.html.includes('mud-') && !e1.html.includes('mcd-') && !e1.html.includes('mad-'), '§E1: no built-in inline panel mounts for the retired slug');
     ok(e1.html.includes('Mavero Downloader 2'), '§E1: the dropdown label shows the registry name');
 
-    // §E2 Mavero Downloader → MaveroAddonDownload (existing behavior unchanged).
+    // §E2 Mavero Downloader → the UNIFIED panel (.mud — add-on +
+    // plugin sources; the FINAL TASK launch routing).
     const e2 = renderSheet({ providers: [MAVERO_ROW], title: 'Test Movie', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie' });
     ok(e2.err === null, `§E2: the sheet with the mavero-downloader provider still mounts — got: ${e2.err instanceof Error ? e2.err.message : String(e2.err)}`);
-    ok(/mad\b/.test(e2.html) || e2.html.includes('mad-'), '§E2: the Stremio panel (.mad) renders (existing launch routing)');
-    ok(!/mcd\b/.test(e2.html) && !e2.html.includes('mcd-'), '§E2: the Downloader 2 panel does NOT render for the Stremio provider');
+    ok(/mud\b/.test(e2.html) || e2.html.includes('mud-'), '§E2: the UNIFIED panel (.mud) renders (the FINAL TASK launch routing)');
+    ok(!/mad\b/.test(e2.html) && !e2.html.includes('mad-'), '§E2: the old Stremio-only panel (.mad) does NOT render (replaced by the unified panel)');
+    ok(e2.html.includes('Finding sources'), '§E2: the unified panel renders its loading state at SSR (fetch starts on mount)');
 
     // §E3 exclusive dispatch with BOTH providers selectable — the selected
     // provider alone mounts; switching remounts the other branch (no state
-    // leak between the two panels).
+    // leak between the branches).
     const e3a = renderSheet({ providers: [MAVERO_ROW, MAVERO2_ROW], selectedProviderId: MAVERO2_ROW.id, title: 'T', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie' });
-    ok(e3a.html.includes('mcd-') && !e3a.html.includes('mad-'), '§E3: selected Downloader 2 → ONLY the Downloader 2 panel mounts');
+    ok(!e3a.html.includes('mud-') && !e3a.html.includes('mad-'), '§E3: selected (retired) Downloader 2 → NO inline panel mounts (generic flow)');
     const e3b = renderSheet({ providers: [MAVERO_ROW, MAVERO2_ROW], selectedProviderId: MAVERO_ROW.id, title: 'T', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie' });
-    ok(e3b.html.includes('mad-') && !e3b.html.includes('mcd-'), '§E3: selected Mavero Downloader → ONLY the Stremio panel mounts (no stale Downloader 2 state)');
+    ok(e3b.html.includes('mud-') && !e3b.html.includes('mad-') && !e3b.html.includes('mcd-'), '§E3: selected Mavero Downloader → ONLY the unified panel mounts (no stale inline state)');
     ok(e3a.html.includes('Mavero Downloader 2') && e3a.html.includes('Mavero Downloader'), '§E3: the dropdown lists BOTH providers with their registry labels');
 
     // §E4 another provider → the existing iframe flow.
     const e4 = renderSheet({ providers: [CINEVERSE_ROW], title: 'Toxic', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie', releaseYear: 2024 });
     ok(e4.err === null, '§E4: the sheet with an embed provider mounts');
     ok(e4.html.includes('<iframe'), '§E4: an embed provider still renders the iframe branch (existing behavior)');
-    ok(!e4.html.includes('mcd-') && !e4.html.includes('mad-'), '§E4: neither built-in panel renders for a third-party provider');
+    ok(!e4.html.includes('mud-') && !e4.html.includes('mcd-') && !e4.html.includes('mad-'), '§E4: neither built-in panel renders for a third-party provider');
 
     // §E5 a type=json provider → the JsonDownload branch.
     const e5 = renderSheet({ providers: [JSON_ROW], title: 'Test Movie', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie' });
@@ -547,15 +562,16 @@ async function section_runtimeMount(): Promise<void> {
     ok(!e5.html.includes('<iframe'), '§E5: the json provider is never iframed');
 
     // §E6 movie context: NO episode context line reaches the panel.
-    const e6 = renderSheet({ providers: [MAVERO2_ROW], title: 'Test Movie', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie', season: undefined, episode: undefined });
+    const e6 = renderSheet({ providers: [MAVERO_ROW], title: 'Test Movie', mediaType: 'movie', tmdbId: '123', contentId: 'movie-123', contentType: 'movie', season: undefined, episode: undefined });
     ok(!e6.html.includes('Season '), '§E6 (movie): no Season/Episode context is displayed — no episode context is sent');
 
-    // §E7 series context: season+episode flow through the sheet into the panel.
-    const e7 = renderSheet({ providers: [MAVERO2_ROW], title: 'Arcane', mediaType: 'tv', tmdbId: '94605', contentId: 'series-94605', contentType: 'series', season: 2, episode: 4 });
-    ok(e7.html.includes('Season 2 · Episode 4'), '§E7 (series): season/episode are preserved and reach the Downloader 2 panel (episode context line rendered)');
+    // §E7 series context: season+episode flow through the sheet into the
+    // unified panel (the episode context line renders at SSR from the props).
+    const e7 = renderSheet({ providers: [MAVERO_ROW], title: 'Arcane', mediaType: 'tv', tmdbId: '94605', contentId: 'series-94605', contentType: 'series', season: 2, episode: 4 });
+    ok(e7.html.includes('Season 2 · Episode 4'), '§E7 (series): season/episode are preserved and reach the unified panel (episode context line rendered)');
 
     // §E8 anime context (contentType='anime' rides the series pipeline).
-    const e8 = renderSheet({ providers: [MAVERO2_ROW], title: 'Anime', mediaType: 'tv', tmdbId: '12345', contentId: 'anime-12345', contentType: 'anime', season: 1, episode: 1 });
+    const e8 = renderSheet({ providers: [MAVERO_ROW], title: 'Anime', mediaType: 'tv', tmdbId: '12345', contentId: 'anime-12345', contentType: 'anime', season: 1, episode: 1 });
     ok(e8.html.includes('Season 1 · Episode 1'), '§E8 (anime): the anime content type is forwarded with its episode context');
   } finally {
     await server.close();
@@ -904,16 +920,24 @@ function section_regression(): void {
     }
   }
 
-  // §F6 the existing deep-link tree is untouched.
-  for (const deepFile of [
+  // §F6 the existing deep-link tree is untouched — FINAL TASK evolution:
+  // the two +page.svelte leaves now render the UNIFIED panel (deep-link
+  // parity with the DownloadSheet); the +page.server.ts files (the adult
+  // guards + param validation) remain byte-identical.
+  for (const deepServerFile of [
     'src/routes/watch/mavero-downloader/movie/[tmdbId]/+page.server.ts',
-    'src/routes/watch/mavero-downloader/movie/[tmdbId]/+page.svelte',
     'src/routes/watch/mavero-downloader/tv/[tmdbId]/[season]/[episode]/+page.server.ts',
+  ]) {
+    const current = read(deepServerFile);
+    const pristine = pristineFile(deepServerFile);
+    ok(pristine === null || pristine === current, `§F6: ${deepServerFile} is byte-identical (guards/validation unchanged)`);
+  }
+  for (const deepPageFile of [
+    'src/routes/watch/mavero-downloader/movie/[tmdbId]/+page.svelte',
     'src/routes/watch/mavero-downloader/tv/[tmdbId]/[season]/[episode]/+page.svelte',
   ]) {
-    const current = read(deepFile);
-    const pristine = pristineFile(deepFile);
-    ok(pristine === null || pristine === current, `§F6: ${deepFile} is byte-identical (existing deep links unchanged)`);
+    const current = read(deepPageFile);
+    ok(current.includes('MaveroUnifiedDownload'), `§F6: ${deepPageFile} renders the unified panel (deep-link parity)`);
   }
 }
 

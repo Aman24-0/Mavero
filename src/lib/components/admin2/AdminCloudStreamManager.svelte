@@ -37,7 +37,7 @@
    * `$lib/shared/cloudstream-integration-manager-view.ts` (pure).
    */
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
-  import { RefreshCw, Trash2, Power, Package, Layers, AlertTriangle, Box, Hammer, FlaskConical, Search, ArrowUpDown, Eye, X, StopCircle, Link2, Check } from 'lucide-svelte';
+  import { RefreshCw, Trash2, Power, Package, Layers, AlertTriangle, Box, Hammer, FlaskConical, Search, ArrowUpDown, Eye, X, StopCircle, Link2, Check, MoveVertical, Loader2 } from 'lucide-svelte';
   import { SvelteSet, SvelteMap } from 'svelte/reactivity';
   import type {
     CloudStreamExtensionView,
@@ -69,11 +69,14 @@
     extensions = [] as CloudStreamExtensionView[],
     loadError = null as string | null,
     providerTest = null as ProviderTestResultView | null,
+    globalPositions = {} as Record<string, number>,
   }: {
     repositories?: CloudStreamRepositoryView[];
     extensions?: CloudStreamExtensionView[];
     loadError?: string | null;
     providerTest?: ProviderTestResultView | null;
+    /** FINAL TASK (PART G): canonical ordering key → current 1-based global position. */
+    globalPositions?: Record<string, number>;
   } = $props();
 
   // ---------------------------------------------------------------------------
@@ -93,6 +96,25 @@
   /** §14 Copy Repo Link: repositories whose URL was just copied (2s feedback). */
   const copiedRepoIds = new SvelteSet<string>();
   let copyingRepoId = $state<string | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // FINAL TASK (PART G) — global source position state.
+  // ---------------------------------------------------------------------------
+  /** Live global positions: the page-load snapshot overlaid with fetch-path patches (canonical key → 1-based rank). */
+  let positionPatches = $state<Record<string, number>>({});
+  const globalPositionOf = (canonicalKey: string | undefined): number | null => {
+    if (!canonicalKey) return null;
+    const patched = positionPatches[`extension:${canonicalKey}`];
+    if (typeof patched === 'number') return patched;
+    const initial = globalPositions[`extension:${canonicalKey}`];
+    return typeof initial === 'number' ? initial : null;
+  };
+  /** The number inputs (row id → raw string; validated server-side). */
+  const positionInputs = new SvelteMap<string, string>();
+  /** Rows with a position mutation in flight (duplicate-click guard). */
+  const positionPendingIds = new SvelteSet<string>();
+  const positionInputValue = (extension: CloudStreamExtensionView): string =>
+    positionInputs.get(extension.id) ?? String(globalPositionOf(extension.canonicalKey) ?? '');
 
   const rows = $derived<CloudStreamExtensionView[]>(
     extensions.map((extension) => rowPatches.get(extension.id) ?? extension),
@@ -250,6 +272,8 @@
     extensions?: CloudStreamExtensionView[];
     providerTest?: ProviderTestResultView;
     outcome?: { adapterVersion?: number; notes?: string; testCases?: Array<{ kind: string; linksFound: number }> };
+    /** FINAL TASK: the fresh global position map after a setPosition move. */
+    positions?: Record<string, number>;
     error?: { code?: string; message?: string };
   };
 
@@ -285,6 +309,42 @@
       }
     } finally {
       pendingIds.delete(extension.id);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // FINAL TASK (PART G) — global position mutation: async action → the
+  // response's FRESH position map patches every displayed position (not
+  // just the moved row); the moved row's view is re-patched as usual.
+  // ---------------------------------------------------------------------------
+  async function setExtensionPositionTo(extension: CloudStreamExtensionView): Promise<void> {
+    if (positionPendingIds.has(extension.id) || pendingIds.has(extension.id) || bulkRunning) return;
+    const raw = positionInputs.get(extension.id) ?? String(globalPositionOf(extension.canonicalKey) ?? '');
+    const position = Number(raw);
+    if (!Number.isSafeInteger(position) || position < 1) {
+      setRowError(extension.id, 'Position must be a whole number starting at 1.');
+      return;
+    }
+    positionPendingIds.add(extension.id);
+    setRowError(extension.id, null);
+    localNotice = null;
+    try {
+      const response = await postExtensionMutation({
+        action: 'setPosition',
+        id: extension.id,
+        position,
+      });
+      if (response.ok) {
+        patchRow(response.extension ?? null);
+        if (response.positions && typeof response.positions === 'object') {
+          positionPatches = { ...response.positions };
+        }
+        positionInputs.delete(extension.id);
+      } else {
+        setRowError(extension.id, response.error?.message ?? 'Unable to set the position.');
+      }
+    } finally {
+      positionPendingIds.delete(extension.id);
     }
   }
 
@@ -921,6 +981,42 @@
               {#if extension.enabled && status.kind !== 'active'}
                 <AdminStatusBadge label="Enabled" tone="good" dot={false} />
               {/if}
+              <!-- FINAL TASK (PART G): the global position control — the
+                   plugin counterpart of the add-on position UX ("Position:
+                   [N] Set Position"), operating in the ONE unified ordering
+                   namespace. Shown for rows that CAN be user-facing sources
+                   (native/generated adapter + enabled). -->
+              {#if extension.enabled && (extension.adapterState === 'native' || extension.adapterState === 'generated')}
+                <div class="cs-position" data-pending={positionPendingIds.has(extension.id)}>
+                  <label class="cs-position-label" for={`position-${extension.id}`}>Position</label>
+                  <input
+                    id={`position-${extension.id}`}
+                    class="cs-position-input"
+                    type="number"
+                    inputmode="numeric"
+                    min="1"
+                    step="1"
+                    value={positionInputValue(extension)}
+                    oninput={(event) => { positionInputs.set(extension.id, (event.currentTarget as HTMLInputElement).value); }}
+                    disabled={positionPendingIds.has(extension.id) || bulkRunning}
+                    aria-label={`Global position for ${rowName(extension)}`}
+                  />
+                  <button
+                    type="button"
+                    class="a2-icon-btn cs-position-btn"
+                    disabled={positionPendingIds.has(extension.id) || pending || bulkRunning}
+                    onclick={() => { void setExtensionPositionTo(extension); }}
+                    title="Set the global position (unified add-on + plugin order)"
+                    aria-label={`Set global position for ${rowName(extension)}`}
+                  >
+                    {#if positionPendingIds.has(extension.id)}
+                      <span class="cs-position-spin" role="status" aria-label="Setting position"><Loader2 size={14} class="cs-spin" /></span>
+                    {:else}
+                      <MoveVertical size={14} />
+                    {/if}
+                  </button>
+                </div>
+              {/if}
               {#if status.canCreateAdapter}
                 <form method="POST" action="?/createCloudStreamAdapter" style="display:inline"
                       onsubmit={(event) => { event.preventDefault(); void createAdapterFor(extension); }}>
@@ -1405,9 +1501,32 @@
     .cs-repo-action { flex: 1 1 calc(50% - var(--a2-space-1)); }
     .cs-repo-action-form { flex: 1 1 calc(50% - var(--a2-space-1)); }
     .cs-ext-row { flex-direction: column; align-items: stretch; }
-    .cs-ext-actions { justify-content: flex-end; }
+    .cs-ext-actions { justify-content: flex-start; }
     .cs-toolbar { position: static; }
     .cs-toolbar-field { flex: 1 1 45%; min-width: 0; }
     .cs-pager { justify-content: center; }
   }
+
+  /* ===== FINAL TASK (PART G) — global source position control ===== */
+  .cs-position { display: inline-flex; align-items: center; gap: var(--a2-space-1); flex-shrink: 0; }
+  .cs-position[data-pending='true'] { opacity: 0.75; }
+  .cs-position-label { font-size: var(--a2-text-xs); font-weight: 700; color: var(--a2-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .cs-position-input {
+    width: 64px;
+    padding: 6px 8px;
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-surface-3);
+    color: var(--a2-text);
+    font: inherit;
+    font-size: var(--a2-text-sm);
+    text-align: center;
+  }
+  .cs-position-input:focus-visible { outline: none; border-color: var(--a2-cyan); box-shadow: 0 0 0 2px var(--a2-cyan-soft); }
+  .cs-position-input:disabled { opacity: 0.6; }
+  .cs-position-btn { min-width: 36px; min-height: 36px; }
+  .cs-position-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .cs-position-spin { display: inline-flex; animation: cs-position-spin 0.9s linear infinite; }
+  @keyframes cs-position-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .cs-position-spin { animation: none; } }
 </style>

@@ -116,6 +116,15 @@ export type CloudStreamExtensionView = {
   mediaTypes: ExtensionMediaType[];
   /** DERIVED operational state (active/disabled from enabled; see extension-adapter-types). */
   adapterState: AdapterOperationalState;
+  /**
+   * FINAL TASK (unified downloader): the type-aware canonical adapter key
+   * ('cloudstream:<internal_name>' | 'nuvio:<internal_name>') — the GLOBAL
+   * ORDERING identity (downloader_source_order keys on extension:<key>).
+   * Derived from the row's integration type + internal name; populated by
+   * toExtensionView. OPTIONAL in the shape for back-compat with older
+   * fixtures.
+   */
+  canonicalKey?: string;
   /** Nuvio provider JS module URL — METADATA ONLY, never fetched/executed. */
   moduleUrl: string | null;
   /** String provider version (Nuvio '1.1.1'); null for integer-versioned CloudStream plugins. */
@@ -295,6 +304,15 @@ export type CloudStreamDownloadTabView = {
   supportedMediaTypes: Array<'movie' | 'series' | 'anime'>;
   enabled: boolean;
   compatible: boolean;
+  /**
+   * FINAL TASK (unified downloader): the type-aware canonical adapter key
+   * ('cloudstream:<internal_name>' / 'nuvio:<internal_name>') — the global
+   * ordering identity. Populated by listCloudStreamDownloadTabs; OPTIONAL in
+   * the wire contract so older payloads (and the existing UI) parse
+   * unchanged. The bare extensionId and the canonical key legitimately
+   * differ (native adapters use the bare internal name as their id).
+   */
+  canonicalKey?: string;
 };
 
 /** The request media context, echoed as resolved server-side. */
