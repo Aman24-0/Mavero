@@ -5949,3 +5949,14 @@ Render web-service go-live (billing) + production Netlify env vars
 (PRIVATE_ADAPTER_BUILDER_URL/_SECRET/_TIMEOUT_MS). Michat88 should fix
 its manifest's moviebox.js entry (or remove it) — the row honestly
 records the 404 until then.
+
+## 7. Final state
+
+Audit commit: `91bacb8` — "fix: source-discovery audit — deterministic
+downloader row resolution, honest builder errors, scoped smoke cleanup,
+repo action row + copy link, first production generated adapter
+(nuvio:moviesdrive v1)" (pushed; HEAD = origin/main verified). The
+production DB ends with the owner's 5 repositories, the 4 working native
+adapters (3 enabled CloudStream + VegaMovies honestly extractor-blocked
+by the provider), the activated generated adapter nuvio:moviesdrive v1,
+and honest per-row reasons on every remaining source.
